@@ -1,0 +1,17 @@
+node_modules
+out
+dist
+release
+coverage
+resources/bin
+package-lock.json
+bun.lock
+bun.lockb
+*.icns
+*.ico
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
