@@ -10,15 +10,15 @@ change tracking.
 
 ## Tech Stack
 
-| Layer           | Tech                                                      |
-| --------------- | --------------------------------------------------------- |
-| Desktop         | Electron 39.4.0, electron-vite, electron-builder          |
-| UI              | React 19, TypeScript 5.4.5, Tailwind CSS                  |
-| Components      | Radix UI, Lucide icons, Motion, Sonner                    |
-| State           | Jotai, Zustand, React Query                               |
-| Backend         | tRPC, Drizzle ORM, better-sqlite3                         |
-| AI              | @anthropic-ai/claude-agent-sdk, @zed-industries/codex-acp |
-| Package Manager | bun                                                       |
+| Layer           | Tech                                                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| Desktop         | Electron 39.4.0, electron-vite, electron-builder                                                    |
+| UI              | React 19, TypeScript 5.4.5, Tailwind CSS                                                            |
+| Components      | Radix UI, Lucide icons, Motion, Sonner                                                              |
+| State           | Jotai, Zustand, React Query                                                                         |
+| Backend         | tRPC, Drizzle ORM, better-sqlite3                                                                   |
+| AI              | @anthropic-ai/claude-agent-sdk, @zed-industries/codex-acp                                           |
+| Package Manager | npm (`package-lock.json` is the CI source of truth; `bun.lock`/`bun.lockb` are inherited leftovers) |
 
 ## Project Conventions
 
@@ -44,7 +44,12 @@ change tracking.
 
 ### Testing Strategy
 
-[Testing approach not yet established - to be defined]
+- Commit gate: `npm run check` (lint, style check, Vitest tests, production build)
+- Unit tests: Vitest (`vitest.config.ts`, tests under `tests/`); pure logic
+  (permissions, scope resolution, worktree defaults, search filters, manifests)
+  gets focused unit coverage
+- `npm run ts:check` is separate until inherited type debt is cleaned up
+- Manual test matrices per stage live in the vault stage plans
 
 ### Git Workflow
 
