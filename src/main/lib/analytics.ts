@@ -257,7 +257,7 @@ export function trackProjectOpened(project: { id: string; hasGitRemote: boolean 
  */
 export function trackWorkspaceCreated(workspace: {
   id: string
-  projectId: string
+  projectId: string | null
   useWorktree: boolean
   repository?: string
 }) {

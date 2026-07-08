@@ -36,6 +36,8 @@ import { AgentWebSearchCollapsible } from "../ui/agent-web-search-collapsible"
 import { CopyButton, PlayButton, getMessageTextContent } from "../ui/message-action-buttons"
 import { useFileOpen } from "../mentions"
 import { GitActivityBadges } from "../ui/git-activity-badges"
+import { formatPermissionMode, getHarnessChipMeta, getModelChipMeta } from "../constants"
+import { formatModelDisplayName } from "../../../../shared/model-catalog"
 import { ForkContext } from "./isolated-message-group"
 import { MemoizedTextPart } from "./memoized-text-part"
 
@@ -359,6 +361,7 @@ interface MessageStateSnapshot {
   textLengths: number[]
   partStates: (string | undefined)[]
   lastPartInputJson: string | undefined
+  metadataJson: string | undefined
 }
 const messageStateCache = new Map<string, MessageStateSnapshot>()
 
@@ -421,6 +424,7 @@ function areMessagePropsEqual(
     partStates: nextParts.map((p: any) => p.state),
     // Track tool input changes - this is critical for tool streaming!
     lastPartInputJson: lastPart?.input ? JSON.stringify(lastPart.input) : undefined,
+    metadataJson: next.message?.metadata ? JSON.stringify(next.message.metadata) : undefined,
   }
 
   // Get cached state from previous render
@@ -452,6 +456,11 @@ function areMessagePropsEqual(
     return false // Tool input changed
   }
 
+  if (cachedState.metadataJson !== currentState.metadataJson) {
+    messageStateCache.set(cacheKey!, currentState)
+    return false // Model/run metadata changed
+  }
+
   // Compare ALL part states (detects Edit plan file streaming!)
   for (let i = 0; i < currentState.partStates.length; i++) {
     if (cachedState.partStates[i] !== currentState.partStates[i]) {
@@ -462,6 +471,66 @@ function areMessagePropsEqual(
 
   // Nothing changed - skip re-render
   return true
+}
+
+function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefined }) {
+  const rawMetadata = metadata as
+    | (AgentMessageMetadata & {
+        harness?: string
+        model?: string
+        permissionMode?: string
+        worktreePath?: string | null
+      })
+    | null
+  const harness = rawMetadata?.harness
+  const model = rawMetadata?.model
+  const permissionMode = rawMetadata?.permissionMode
+  const worktreePath = rawMetadata?.worktreePath
+
+  if (!harness && !model && !permissionMode && !worktreePath) {
+    return null
+  }
+
+  const harnessMeta = getHarnessChipMeta(harness)
+  const modelMeta = getModelChipMeta(model, harness)
+  const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1)
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1 pb-1">
+      <span
+        className={cn(
+          "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium",
+          harnessMeta.className,
+        )}
+      >
+        {harness ? harnessMeta.name : "Unknown"}
+      </span>
+      {model && (
+        <span
+          title={model}
+          className={cn(
+            "inline-flex max-w-[220px] items-center rounded border px-1.5 py-0.5 text-[10px]",
+            modelMeta.className,
+          )}
+        >
+          <span className="truncate">{formatModelDisplayName(model)}</span>
+        </span>
+      )}
+      {permissionMode && (
+        <span className="inline-flex max-w-[180px] items-center rounded border border-border bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="truncate">{formatPermissionMode(permissionMode)}</span>
+        </span>
+      )}
+      {worktreeName && (
+        <span
+          title={worktreeName}
+          className="inline-flex max-w-[180px] items-center rounded border border-border bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+        >
+          <span className="truncate">{worktreeName}</span>
+        </span>
+      )}
+    </div>
+  )
 }
 
 export const AssistantMessageItem = memo(function AssistantMessageItem({
@@ -484,7 +553,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   // Note: no useMemo — AI SDK mutates parts in-place, so the array reference
   // doesn't change and useMemo would return stale results.
   const messageParts = normalizeAcpParts(
-    (message?.parts || []).map((part) => normalizeCodexToolPart(part) as any),
+    (message?.parts || []).map((part: any) => normalizeCodexToolPart(part) as any),
   )
 
   const contentParts = useMemo(
@@ -913,6 +982,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
 
   return (
     <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
+      <ProducerChips metadata={msgMetadata} />
       <div className="flex flex-col gap-1.5">
         {shouldCollapse && visibleStepsCount > 0 && (
           <CollapsibleSteps stepsCount={visibleStepsCount}>

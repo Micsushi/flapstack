@@ -29,7 +29,7 @@ export interface FileMentionOption {
   description?: string // skill/agent/tool description
   tools?: string[] // agent allowed tools
   model?: string // agent model
-  source?: "user" | "project" // skill/agent source
+  source?: "user" | "project" | "plugin" // skill/agent source
   mcpServer?: string // MCP server name for tools
 }
 
@@ -81,6 +81,8 @@ type AgentsMentionsEditorProps = {
   onShiftTab?: () => void // callback for Shift+Tab (e.g., mode switching)
   onFocus?: () => void
   onBlur?: () => void
+  // Terminal-style sent-message recall on ArrowUp/ArrowDown; return true when handled
+  onHistoryNavigate?: (direction: "up" | "down") => boolean
 }
 
 // Append text to element (no styling in input, ultrathink only in sent messages)
@@ -502,6 +504,7 @@ export const AgentsMentionsEditor = memo(
       onShiftTab,
       onFocus,
       onBlur,
+      onHistoryNavigate,
     },
     ref,
   ) {
@@ -1070,6 +1073,23 @@ export const AgentsMentionsEditor = memo(
           e.preventDefault()
           onShiftTab?.()
         }
+        // Terminal-style history recall (skip while mention/slash dropdowns own the arrows)
+        if (
+          (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+          !e.shiftKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.nativeEvent.isComposing &&
+          !triggerActive.current &&
+          !slashTriggerActive.current &&
+          onHistoryNavigate
+        ) {
+          const handled = onHistoryNavigate(e.key === "ArrowUp" ? "up" : "down")
+          if (handled) {
+            e.preventDefault()
+          }
+        }
       },
       [
         onSubmit,
@@ -1077,6 +1097,7 @@ export const AgentsMentionsEditor = memo(
         onCloseTrigger,
         onCloseSlashTrigger,
         onShiftTab,
+        onHistoryNavigate,
         restoreCursor,
         onContentChange,
         getCurrentState,

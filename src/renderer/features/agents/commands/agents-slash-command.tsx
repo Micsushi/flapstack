@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, mem
 import { createPortal } from "react-dom"
 import { IconSpinner } from "../../../components/ui/icons"
 import type { SlashCommandOption, SlashTriggerPayload } from "./types"
-import { filterBuiltinCommands, BUILTIN_SLASH_COMMANDS } from "./builtin-commands"
+import { BUILTIN_SLASH_COMMANDS } from "./builtin-commands"
 import type { AgentMode } from "../atoms"
 
 interface AgentsSlashCommandProps {
@@ -34,15 +34,6 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const placementRef = useRef<"above" | "below" | null>(null)
-  const [debouncedSearchText, setDebouncedSearchText] = useState(searchText)
-
-  // Debounce search text (300ms to match file mention)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchText(searchText)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [searchText])
 
   // Fetch custom commands from filesystem
   const { data: fileCommands = [], isLoading } = trpc.commands.list.useQuery(
@@ -113,7 +104,7 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
 
   // Combine builtin and repository commands, filtered by search
   const options: SlashCommandOption[] = useMemo(() => {
-    let builtinFiltered = filterBuiltinCommands(debouncedSearchText)
+    let builtinFiltered = filterSlashCommands(BUILTIN_SLASH_COMMANDS, searchText)
 
     // Hide /plan when already in Plan mode, hide /agent when already in Agent mode
     if (mode !== undefined) {
@@ -129,30 +120,19 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
       builtinFiltered = builtinFiltered.filter((cmd) => !disabledCommands.includes(cmd.name))
     }
 
-    // Filter custom commands by search
-    let customFiltered = customCommands
-    if (debouncedSearchText) {
-      const query = debouncedSearchText.toLowerCase()
-      customFiltered = customCommands.filter(
-        (cmd) =>
-          cmd.name.toLowerCase().includes(query) || cmd.command.toLowerCase().includes(query),
-      )
-    }
+    const customFiltered = filterSlashCommands(customCommands, searchText)
 
-    // Sort all commands by name length (shorter = closer match), then alphabetically for stability
-    return [...customFiltered, ...builtinFiltered].sort(
-      (a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name),
-    )
-  }, [debouncedSearchText, customCommands, mode, disabledCommands])
+    return rankSlashCommands([...customFiltered, ...builtinFiltered], searchText)
+  }, [searchText, customCommands, mode, disabledCommands])
 
   // Track previous values for smarter selection reset
   const prevIsOpenRef = useRef(isOpen)
-  const prevSearchRef = useRef(debouncedSearchText)
+  const prevSearchRef = useRef(searchText)
 
   // CONSOLIDATED: Single useLayoutEffect for selection management
   useLayoutEffect(() => {
     const didJustOpen = isOpen && !prevIsOpenRef.current
-    const didSearchChange = debouncedSearchText !== prevSearchRef.current
+    const didSearchChange = searchText !== prevSearchRef.current
 
     // Reset to 0 when opening or search changes
     if (didJustOpen || didSearchChange) {
@@ -165,8 +145,8 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
 
     // Update refs
     prevIsOpenRef.current = isOpen
-    prevSearchRef.current = debouncedSearchText
-  }, [isOpen, debouncedSearchText, options.length, selectedIndex])
+    prevSearchRef.current = searchText
+  }, [isOpen, searchText, options.length, selectedIndex])
 
   // Reset placement when closed
   useEffect(() => {
@@ -376,12 +356,76 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
       {/* Empty state */}
       {!isLoading && options.length === 0 && (
         <div className="h-7 px-1.5 mx-1 flex items-center text-xs text-muted-foreground">
-          {debouncedSearchText
-            ? `No commands matching "${debouncedSearchText}"`
-            : "No commands available"}
+          {searchText ? `No commands matching "${searchText}"` : "No commands available"}
         </div>
       )}
     </div>,
     document.body,
   )
 })
+
+function filterSlashCommands(
+  commands: SlashCommandOption[],
+  searchText: string,
+): SlashCommandOption[] {
+  const query = normalizeSlashQuery(searchText)
+  if (!query) return commands
+
+  return commands.filter((command) => getSlashCommandScore(command, query) > 0)
+}
+
+function rankSlashCommands(
+  commands: SlashCommandOption[],
+  searchText: string,
+): SlashCommandOption[] {
+  const query = normalizeSlashQuery(searchText)
+  if (!query) {
+    return [...commands].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  return [...commands].sort((a, b) => {
+    const scoreDelta = getSlashCommandScore(b, query) - getSlashCommandScore(a, query)
+    if (scoreDelta !== 0) return scoreDelta
+    return a.name.length - b.name.length || a.name.localeCompare(b.name)
+  })
+}
+
+function normalizeSlashQuery(searchText: string): string {
+  return searchText.trim().replace(/^\//, "").toLowerCase()
+}
+
+function getSlashCommandScore(command: SlashCommandOption, query: string): number {
+  if (!query) return 1
+
+  const name = command.name.toLowerCase()
+  const commandText = command.command.replace(/^\//, "").toLowerCase()
+  const description = command.description.toLowerCase()
+  const tokens = tokenizeSearchTarget(`${name} ${description}`)
+
+  if (name === query || commandText === query) return 1000
+  if (name.startsWith(query) || commandText.startsWith(query)) return 900
+  if (tokens.some((token) => token.startsWith(query))) return 760
+  if (query.length > 1 && (name.includes(query) || commandText.includes(query))) return 560
+  if (query.length > 1 && tokens.some((token) => token.includes(query))) return 420
+  if (query.length > 2 && fuzzyMatch(name, query)) return 280
+  if (query.length > 2 && fuzzyMatch(description, query)) return 160
+  return 0
+}
+
+function tokenizeSearchTarget(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean)
+}
+
+function fuzzyMatch(value: string, query: string): boolean {
+  let queryIndex = 0
+  for (const char of value) {
+    if (char === query[queryIndex]) {
+      queryIndex += 1
+      if (queryIndex === query.length) return true
+    }
+  }
+  return false
+}

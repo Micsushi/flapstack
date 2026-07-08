@@ -177,18 +177,25 @@ export const commandsRouter = router({
         .optional(),
     )
     .query(async ({ input }) => {
-      const userCommandsDir = path.join(os.homedir(), ".claude", "commands")
-      const userCommandsPromise = scanCommandsDirectory(userCommandsDir, "user")
+      const userCommandsDirs = [
+        path.join(os.homedir(), ".claude", "commands"),
+        path.join(os.homedir(), ".codex", "commands"),
+      ]
+      const userCommandsPromise = Promise.all(
+        userCommandsDirs.map((dir) => scanCommandsDirectory(dir, "user")),
+      ).then((groups) => dedupeCommands(groups.flat()))
 
       let projectCommandsPromise = Promise.resolve<FileCommand[]>([])
       if (input?.projectPath) {
-        const projectCommandsDir = path.join(input.projectPath, ".claude", "commands")
-        projectCommandsPromise = scanCommandsDirectory(
-          projectCommandsDir,
-          "project",
-          "",
-          input.projectPath,
-        )
+        const projectCommandsDirs = [
+          path.join(input.projectPath, ".claude", "commands"),
+          path.join(input.projectPath, ".codex", "commands"),
+        ]
+        projectCommandsPromise = Promise.all(
+          projectCommandsDirs.map((dir) =>
+            scanCommandsDirectory(dir, "project", "", input.projectPath),
+          ),
+        ).then((groups) => dedupeCommands(groups.flat()))
       }
 
       // Discover plugin commands
@@ -353,3 +360,13 @@ export const commandsRouter = router({
       return { success: true }
     }),
 })
+
+function dedupeCommands(commands: FileCommand[]): FileCommand[] {
+  const seen = new Set<string>()
+  return commands.filter((command) => {
+    const key = `${command.source}:${command.pluginName || ""}:${command.name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}

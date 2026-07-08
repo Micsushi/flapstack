@@ -11,7 +11,7 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceDeleted,
 } from "../../analytics"
-import { chats, getDatabase, projects, subChats } from "../../db"
+import { chats, getDatabase, projects, subChats, tasks } from "../../db"
 import {
   createWorktreeForChat,
   fetchGitHubPRStatus,
@@ -26,7 +26,9 @@ import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
 import { terminalManager } from "../../terminal/manager"
+import { getResolvedWorktreeStatus, listWorktreeOptions } from "../../worktree-resolver"
 import { publicProcedure, router } from "../index"
+import { ensureTaskPrimaryWorktree } from "./tasks"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -213,31 +215,46 @@ export const chatsRouter = router({
   /**
    * List all non-archived chats (optionally filter by project)
    */
-  list: publicProcedure.input(z.object({ projectId: z.string().optional() })).query(({ input }) => {
-    const db = getDatabase()
-    const conditions = [isNull(chats.archivedAt)]
-    if (input.projectId) {
-      conditions.push(eq(chats.projectId, input.projectId))
-    }
-    return db
-      .select()
-      .from(chats)
-      .where(and(...conditions))
-      .orderBy(desc(chats.updatedAt))
-      .all()
-  }),
+  list: publicProcedure
+    .input(
+      z.object({
+        projectId: z.string().optional(),
+        taskId: z.string().optional(),
+        scope: z.enum(["global", "project", "task"]).optional(),
+      }),
+    )
+    .query(({ input }) => {
+      const db = getDatabase()
+      const conditions = [isNull(chats.archivedAt)]
+      if (input.projectId) conditions.push(eq(chats.projectId, input.projectId))
+      if (input.taskId) conditions.push(eq(chats.taskId, input.taskId))
+      if (input.scope) conditions.push(eq(chats.scope, input.scope))
+
+      return db
+        .select()
+        .from(chats)
+        .where(and(...conditions))
+        .orderBy(desc(chats.pinnedAt), desc(chats.updatedAt))
+        .all()
+    }),
 
   /**
    * List archived chats (optionally filter by project)
    */
   listArchived: publicProcedure
-    .input(z.object({ projectId: z.string().optional() }))
+    .input(
+      z.object({
+        projectId: z.string().optional(),
+        taskId: z.string().optional(),
+        scope: z.enum(["global", "project", "task"]).optional(),
+      }),
+    )
     .query(({ input }) => {
       const db = getDatabase()
       const conditions = [isNotNull(chats.archivedAt)]
-      if (input.projectId) {
-        conditions.push(eq(chats.projectId, input.projectId))
-      }
+      if (input.projectId) conditions.push(eq(chats.projectId, input.projectId))
+      if (input.taskId) conditions.push(eq(chats.taskId, input.taskId))
+      if (input.scope) conditions.push(eq(chats.scope, input.scope))
       return db
         .select()
         .from(chats)
@@ -261,10 +278,84 @@ export const chatsRouter = router({
       .orderBy(subChats.createdAt)
       .all()
 
-    const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+    const project = chat.projectId
+      ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+      : null
 
     return { ...chat, subChats: chatSubChats, project }
   }),
+
+  listWorktreeOptions: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
+    return listWorktreeOptions(input.id)
+  }),
+
+  createWorktreeForExistingChat: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        baseBranch: z.string().optional(),
+        branchType: z.enum(["local", "remote"]).optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDatabase()
+      const requestingWindowId = ctx.getWindow?.()?.id ?? null
+      const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+      if (!chat) throw new Error("Chat not found")
+      if (chat.scope === "global") throw new Error("Global chats do not have project worktrees")
+
+      const task = chat.taskId
+        ? db.select().from(tasks).where(eq(tasks.id, chat.taskId)).get()
+        : null
+      const projectId = chat.projectId ?? task?.projectId
+      const project = projectId
+        ? db.select().from(projects).where(eq(projects.id, projectId)).get()
+        : null
+      if (!project) throw new Error("Project not found")
+
+      const result = await createWorktreeForChat(
+        project.path,
+        sanitizeProjectName(project.name),
+        chat.id,
+        input.baseBranch,
+        input.branchType,
+        {
+          onSetupComplete: (setupResult: WorktreeSetupResult) => {
+            if (setupResult.success) return
+            const message =
+              setupResult.errors[0] || "Worktree setup failed. Check your setup commands."
+            sendWorktreeSetupFailure(requestingWindowId, {
+              kind: "setup-failed",
+              message,
+              projectId: project.id,
+            })
+          },
+        },
+      )
+
+      if (!result.success || !result.worktreePath) {
+        sendWorktreeSetupFailure(requestingWindowId, {
+          kind: "create-failed",
+          message: result.error || "Worktree creation failed.",
+          projectId: project.id,
+        })
+        throw new Error(result.error || "Worktree creation failed")
+      }
+
+      const updatedChat = db
+        .update(chats)
+        .set({
+          worktreePath: result.worktreePath,
+          branch: result.branch,
+          baseBranch: result.baseBranch,
+          updatedAt: new Date(),
+        })
+        .where(eq(chats.id, chat.id))
+        .returning()
+        .get()
+
+      return updatedChat
+    }),
 
   /**
    * Create a new chat with optional git worktree
@@ -272,7 +363,10 @@ export const chatsRouter = router({
   create: publicProcedure
     .input(
       z.object({
-        projectId: z.string(),
+        projectId: z.string().optional(),
+        taskId: z.string().optional(),
+        scope: z.enum(["global", "project", "task"]).default("project"),
+        harness: z.string().optional(),
         name: z.string().optional(),
         model: z.string().optional(),
         initialMessage: z.string().optional(),
@@ -309,17 +403,41 @@ export const chatsRouter = router({
       const db = getDatabase()
       const requestingWindowId = ctx.getWindow?.()?.id ?? null
 
-      // Get project path
-      const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
+      let project = input.projectId
+        ? db.select().from(projects).where(eq(projects.id, input.projectId)).get()
+        : null
+      const task = input.taskId
+        ? db.select().from(tasks).where(eq(tasks.id, input.taskId)).get()
+        : null
+
+      if (input.scope === "global" && (input.projectId || input.taskId)) {
+        throw new Error("Global chats cannot have projectId or taskId")
+      }
+      if (input.scope === "project" && (!input.projectId || input.taskId)) {
+        throw new Error("Project chats require projectId and cannot have taskId")
+      }
+      if (input.scope === "task") {
+        if (!task) throw new Error("Task not found")
+        if (input.projectId && input.projectId !== task.projectId) {
+          throw new Error("Task does not belong to project")
+        }
+        project = db.select().from(projects).where(eq(projects.id, task.projectId)).get()
+      }
+
       console.log("[chats.create] found project:", project)
-      if (!project) throw new Error("Project not found")
+      if (input.scope !== "global" && !project) throw new Error("Project not found")
 
       // Create chat (fast path)
       const chat = db
         .insert(chats)
         .values({
           name: input.name,
-          projectId: input.projectId,
+          projectId: project?.id ?? null,
+          taskId: task?.id ?? null,
+          scope: input.scope,
+          permissionMode: task?.defaultPermissionMode ?? project?.defaultPermissionMode,
+          harness: input.harness,
+          model: input.model,
         })
         .returning()
         .get()
@@ -368,8 +486,30 @@ export const chatsRouter = router({
         baseBranch?: string
       } = {}
 
-      // Only create worktree if useWorktree is true
-      if (input.useWorktree) {
+      // Only create worktree if useWorktree is true and the chat has a project.
+      if (input.scope === "global") {
+        console.log("[chats.create] global scope - no worktree")
+      } else if (
+        input.scope === "task" &&
+        task &&
+        (input.useWorktree || task.primaryWorktreePath)
+      ) {
+        const taskWithWorktree = task.primaryWorktreePath
+          ? task
+          : await ensureTaskPrimaryWorktree(task.id)
+        console.log("[chats.create] task scope - using task primary worktree")
+        db.update(chats)
+          .set({
+            worktreePath: taskWithWorktree.primaryWorktreePath,
+            branch: taskWithWorktree.primaryBranch,
+          })
+          .where(eq(chats.id, chat.id))
+          .run()
+        worktreeResult = {
+          worktreePath: taskWithWorktree.primaryWorktreePath ?? undefined,
+          branch: taskWithWorktree.primaryBranch ?? undefined,
+        }
+      } else if (input.useWorktree && project) {
         console.log(
           "[chats.create] creating worktree with baseBranch:",
           input.baseBranch,
@@ -422,7 +562,7 @@ export const chatsRouter = router({
           db.update(chats).set({ worktreePath: project.path }).where(eq(chats.id, chat.id)).run()
           worktreeResult = { worktreePath: project.path }
         }
-      } else {
+      } else if (project) {
         // Local mode: use project path directly, no branch info
         console.log("[chats.create] local mode - using project path directly")
         db.update(chats).set({ worktreePath: project.path }).where(eq(chats.id, chat.id)).run()
@@ -431,7 +571,7 @@ export const chatsRouter = router({
 
       const response = {
         ...chat,
-        worktreePath: worktreeResult.worktreePath || project.path,
+        worktreePath: worktreeResult.worktreePath || project?.path || null,
         branch: worktreeResult.branch,
         baseBranch: worktreeResult.baseBranch,
         subChats: [subChat],
@@ -440,7 +580,7 @@ export const chatsRouter = router({
       // Track workspace created
       trackWorkspaceCreated({
         id: chat.id,
-        projectId: input.projectId,
+        projectId: project?.id ?? null,
         useWorktree: input.useWorktree,
       })
 
@@ -458,6 +598,93 @@ export const chatsRouter = router({
       return db
         .update(chats)
         .set({ name: input.name, updatedAt: new Date() })
+        .where(eq(chats.id, input.id))
+        .returning()
+        .get()
+    }),
+
+  pin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(chats)
+      .set({ pinnedAt: new Date(), updatedAt: new Date() })
+      .where(eq(chats.id, input.id))
+      .returning()
+      .get()
+  }),
+
+  unpin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(chats)
+      .set({ pinnedAt: null, updatedAt: new Date() })
+      .where(eq(chats.id, input.id))
+      .returning()
+      .get()
+  }),
+
+  move: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        scope: z.enum(["project", "task"]),
+        projectId: z.string().optional(),
+        taskId: z.string().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      const db = getDatabase()
+      const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+      if (!chat) throw new Error("Chat not found")
+
+      if (input.scope === "project") {
+        if (!input.projectId) throw new Error("Project move requires projectId")
+        const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
+        if (!project) throw new Error("Project not found")
+        const keepExistingWorktree = Boolean(
+          chat.worktreePath && chat.worktreePath !== project.path,
+        )
+
+        return db
+          .update(chats)
+          .set({
+            scope: "project",
+            projectId: project.id,
+            taskId: null,
+            worktreePath: keepExistingWorktree ? chat.worktreePath : project.path,
+            branch: keepExistingWorktree ? chat.branch : null,
+            baseBranch: keepExistingWorktree ? chat.baseBranch : null,
+            updatedAt: new Date(),
+          })
+          .where(eq(chats.id, input.id))
+          .returning()
+          .get()
+      }
+
+      if (!input.taskId) throw new Error("Task move requires taskId")
+      const task = db.select().from(tasks).where(eq(tasks.id, input.taskId)).get()
+      if (!task) throw new Error("Task not found")
+      const project = db.select().from(projects).where(eq(projects.id, task.projectId)).get()
+      if (!project) throw new Error("Project not found")
+      const keepExistingWorktree = Boolean(
+        chat.worktreePath &&
+        chat.worktreePath !== project.path &&
+        chat.worktreePath !== task.primaryWorktreePath,
+      )
+
+      return db
+        .update(chats)
+        .set({
+          scope: "task",
+          projectId: project.id,
+          taskId: task.id,
+          worktreePath: keepExistingWorktree
+            ? chat.worktreePath
+            : (task.primaryWorktreePath ?? project.path),
+          branch: keepExistingWorktree ? chat.branch : task.primaryBranch,
+          baseBranch: keepExistingWorktree ? chat.baseBranch : null,
+          updatedAt: new Date(),
+        })
         .where(eq(chats.id, input.id))
         .returning()
         .get()
@@ -512,7 +739,9 @@ export const chatsRouter = router({
 
       // Optionally delete worktree in background (don't await)
       if (input.deleteWorktree && chat?.worktreePath && chat?.branch) {
-        const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+        const project = chat.projectId
+          ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+          : null
 
         if (project) {
           removeWorktree(project.path, chat.worktreePath)
@@ -610,7 +839,9 @@ export const chatsRouter = router({
 
     // Cleanup worktree if it was created (has branch = was a real worktree, not just project path)
     if (chat?.worktreePath && chat?.branch) {
-      const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+      const project = chat.projectId
+        ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+        : null
       if (project) {
         const result = await removeWorktree(project.path, chat.worktreePath)
         if (!result.success) {
@@ -652,7 +883,7 @@ export const chatsRouter = router({
 
     const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
 
-    const project = chat
+    const project = chat?.projectId
       ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
       : null
 
@@ -1710,7 +1941,9 @@ export const chatsRouter = router({
         throw new Error("Chat not found")
       }
 
-      const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+      const project = chat.projectId
+        ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+        : null
 
       // Query sub-chats: either a specific one or all for the chat
       let chatSubChats

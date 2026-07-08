@@ -18,10 +18,47 @@ export const projects = sqliteTable("projects", {
   gitRepo: text("git_repo"),
   // Custom project icon (absolute path to local image file)
   iconPath: text("icon_path"),
+  defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+  pinnedAt: integer("pinned_at", { mode: "timestamp" }),
+  archivedAt: integer("archived_at", { mode: "timestamp" }),
 })
 
 export const projectsRelations = relations(projects, ({ many }) => ({
   chats: many(chats),
+  tasks: many(tasks),
+}))
+
+// ============ TASKS ============
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+    primaryWorktreePath: text("primary_worktree_path"),
+    primaryBranch: text("primary_branch"),
+    pinnedAt: integer("pinned_at", { mode: "timestamp" }),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [index("tasks_project_id_idx").on(table.projectId)],
+)
+
+export const tasksRelations = relations(tasks, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [tasks.projectId],
+    references: [projects.id],
+  }),
+  chats: many(chats),
+  attachments: many(attachments),
 }))
 
 // ============ CHATS ============
@@ -32,12 +69,16 @@ export const chats = sqliteTable(
       .primaryKey()
       .$defaultFn(() => createId()),
     name: text("name"),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("project"),
+    permissionMode: text("permission_mode").notNull().default("ask-before-edits"),
+    harness: text("harness"),
+    model: text("model"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     archivedAt: integer("archived_at", { mode: "timestamp" }),
+    pinnedAt: integer("pinned_at", { mode: "timestamp" }),
     // Worktree fields (for git isolation per chat)
     worktreePath: text("worktree_path"),
     branch: text("branch"),
@@ -46,7 +87,11 @@ export const chats = sqliteTable(
     prUrl: text("pr_url"),
     prNumber: integer("pr_number"),
   },
-  (table) => [index("chats_worktree_path_idx").on(table.worktreePath)],
+  (table) => [
+    index("chats_worktree_path_idx").on(table.worktreePath),
+    index("chats_task_id_idx").on(table.taskId),
+    index("chats_scope_idx").on(table.scope),
+  ],
 )
 
 export const chatsRelations = relations(chats, ({ one, many }) => ({
@@ -54,7 +99,13 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
     fields: [chats.projectId],
     references: [projects.id],
   }),
+  task: one(tasks, {
+    fields: [chats.taskId],
+    references: [tasks.id],
+  }),
   subChats: many(subChats),
+  runs: many(agentRuns),
+  attachments: many(attachments),
 }))
 
 // ============ SUB-CHATS ============
@@ -69,15 +120,147 @@ export const subChats = sqliteTable("sub_chats", {
   sessionId: text("session_id"), // Claude SDK session ID for resume
   streamId: text("stream_id"), // Track in-progress streams
   mode: text("mode").notNull().default("agent"), // "plan" | "agent"
+  harness: text("harness"),
+  model: text("model"),
+  permissionMode: text("permission_mode"),
+  worktreePath: text("worktree_path"),
+  runStatus: text("run_status"),
   messages: text("messages").notNull().default("[]"), // JSON array
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 })
 
-export const subChatsRelations = relations(subChats, ({ one }) => ({
+export const subChatsRelations = relations(subChats, ({ one, many }) => ({
   chat: one(chats, {
     fields: [subChats.chatId],
     references: [chats.id],
+  }),
+  runs: many(agentRuns),
+}))
+
+// ============ AGENT RUNS ============
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    subChatId: text("sub_chat_id").references(() => subChats.id, { onDelete: "set null" }),
+    harness: text("harness").notNull(),
+    model: text("model"),
+    permissionMode: text("permission_mode").notNull(),
+    worktreePath: text("worktree_path"),
+    promptMessageId: text("prompt_message_id"),
+    status: text("status").notNull().default("running"),
+    startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+    beforeCheckpointId: text("before_checkpoint_id"),
+    afterCheckpointId: text("after_checkpoint_id"),
+  },
+  (table) => [index("agent_runs_chat_id_idx").on(table.chatId)],
+)
+
+export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
+  chat: one(chats, {
+    fields: [agentRuns.chatId],
+    references: [chats.id],
+  }),
+  subChat: one(subChats, {
+    fields: [agentRuns.subChatId],
+    references: [subChats.id],
+  }),
+  checkpoints: many(checkpoints),
+  manifest: many(fileChangeManifests),
+}))
+
+// ============ CHECKPOINTS ============
+export const checkpoints = sqliteTable(
+  "checkpoints",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    worktreePath: text("worktree_path"),
+    gitCommit: text("git_commit"),
+    gitStatusJson: text("git_status_json"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [index("checkpoints_run_id_idx").on(table.runId)],
+)
+
+export const checkpointsRelations = relations(checkpoints, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [checkpoints.runId],
+    references: [agentRuns.id],
+  }),
+}))
+
+// ============ FILE CHANGE MANIFESTS ============
+export const fileChangeManifests = sqliteTable(
+  "file_change_manifests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    filePath: text("file_path").notNull(),
+    changeType: text("change_type").notNull(),
+    additions: integer("additions").notNull().default(0),
+    deletions: integer("deletions").notNull().default(0),
+    beforeHash: text("before_hash"),
+    afterHash: text("after_hash"),
+  },
+  (table) => [index("file_change_manifests_run_id_idx").on(table.runId)],
+)
+
+export const fileChangeManifestsRelations = relations(fileChangeManifests, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [fileChangeManifests.runId],
+    references: [agentRuns.id],
+  }),
+}))
+
+// ============ ATTACHMENTS ============
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    sourcePath: text("source_path"),
+    storedPath: text("stored_path"),
+    contentText: text("content_text"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("attachments_chat_id_idx").on(table.chatId),
+    index("attachments_task_id_idx").on(table.taskId),
+  ],
+)
+
+export const attachmentsRelations = relations(attachments, ({ one }) => ({
+  chat: one(chats, {
+    fields: [attachments.chatId],
+    references: [chats.id],
+  }),
+  task: one(tasks, {
+    fields: [attachments.taskId],
+    references: [tasks.id],
   }),
 }))
 
@@ -115,10 +298,20 @@ export const anthropicSettings = sqliteTable("anthropic_settings", {
 // ============ TYPE EXPORTS ============
 export type Project = typeof projects.$inferSelect
 export type NewProject = typeof projects.$inferInsert
+export type Task = typeof tasks.$inferSelect
+export type NewTask = typeof tasks.$inferInsert
 export type Chat = typeof chats.$inferSelect
 export type NewChat = typeof chats.$inferInsert
 export type SubChat = typeof subChats.$inferSelect
 export type NewSubChat = typeof subChats.$inferInsert
+export type AgentRun = typeof agentRuns.$inferSelect
+export type NewAgentRun = typeof agentRuns.$inferInsert
+export type Checkpoint = typeof checkpoints.$inferSelect
+export type NewCheckpoint = typeof checkpoints.$inferInsert
+export type FileChangeManifest = typeof fileChangeManifests.$inferSelect
+export type NewFileChangeManifest = typeof fileChangeManifests.$inferInsert
+export type Attachment = typeof attachments.$inferSelect
+export type NewAttachment = typeof attachments.$inferInsert
 export type ClaudeCodeCredential = typeof claudeCodeCredentials.$inferSelect
 export type NewClaudeCodeCredential = typeof claudeCodeCredentials.$inferInsert
 export type AnthropicAccount = typeof anthropicAccounts.$inferSelect

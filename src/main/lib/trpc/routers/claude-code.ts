@@ -1,5 +1,7 @@
 import { eq, sql } from "drizzle-orm"
 import { safeStorage, shell } from "electron"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { z } from "zod"
 import { getAuthManager } from "../../../index"
 import { getClaudeShellEnvironment } from "../../claude"
@@ -7,6 +9,8 @@ import { getExistingClaudeToken } from "../../claude-token"
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
+
+const execFileAsync = promisify(execFile)
 
 /**
  * Encrypt token using Electron's safeStorage
@@ -86,6 +90,72 @@ function storeOAuthToken(oauthToken: string, setAsActive = true): string {
   return newId
 }
 
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+async function openClaudeAuthTerminal(): Promise<string> {
+  const shellEnv = getClaudeShellEnvironment()
+  const pathPrefix = shellEnv.PATH || process.env.PATH || ""
+  const command = [
+    `export PATH=${shellSingleQuote(pathPrefix)}:$PATH`,
+    "clear",
+    "echo 'Flapstack: starting Claude Code authentication...'",
+    "echo",
+    "claude setup-token",
+    "status=$?",
+    "echo",
+    "if [ $status -eq 0 ]; then echo 'Claude auth command finished. Return to Flapstack and click Check connection.'; else echo 'Claude auth command exited with code '$status'. Fix the message above, then try again.'; fi",
+    "echo",
+    "echo 'This terminal can stay open.'",
+  ].join("; ")
+
+  if (process.platform === "darwin") {
+    const script = [
+      `tell application "Terminal"`,
+      `activate`,
+      `do script "${escapeAppleScriptString(command)}"`,
+      `end tell`,
+    ].join("\n")
+    await execFileAsync("osascript", ["-e", script])
+    return "Terminal"
+  }
+
+  if (process.platform === "win32") {
+    await execFileAsync("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      `Start-Process powershell -ArgumentList '-NoExit','-Command',${JSON.stringify(command)}`,
+    ])
+    return "PowerShell"
+  }
+
+  const linuxLaunchers = ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]
+  for (const launcher of linuxLaunchers) {
+    try {
+      if (launcher === "gnome-terminal") {
+        await execFileAsync(launcher, ["--", "bash", "-lc", `${command}; exec bash -l`])
+      } else if (launcher === "konsole") {
+        await execFileAsync(launcher, ["-e", "bash", "-lc", `${command}; exec bash -l`])
+      } else {
+        await execFileAsync(launcher, [
+          "-e",
+          `bash -lc ${shellSingleQuote(`${command}; exec bash -l`)}`,
+        ])
+      }
+      return launcher
+    } catch {
+      // Try the next common terminal launcher.
+    }
+  }
+
+  throw new Error("Could not open a terminal. Run `claude setup-token` in your terminal.")
+}
+
 /**
  * Claude Code OAuth router for desktop
  * Uses server only for sandbox creation, stores token locally
@@ -98,15 +168,18 @@ export const claudeCodeRouter = router({
    */
   hasExistingCliConfig: publicProcedure.query(() => {
     const shellEnv = getClaudeShellEnvironment()
+    const hasSystemToken = !!getExistingClaudeToken()?.trim()
     const hasConfig = !!(
       shellEnv.ANTHROPIC_API_KEY ||
       shellEnv.ANTHROPIC_AUTH_TOKEN ||
-      shellEnv.ANTHROPIC_BASE_URL
+      shellEnv.ANTHROPIC_BASE_URL ||
+      hasSystemToken
     )
     return {
       hasConfig,
       hasApiKey: !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_AUTH_TOKEN),
       baseUrl: shellEnv.ANTHROPIC_BASE_URL || null,
+      hasSystemToken,
     }
   }),
 
@@ -116,6 +189,7 @@ export const claudeCodeRouter = router({
    */
   getIntegration: publicProcedure.query(() => {
     const db = getDatabase()
+    const systemToken = getExistingClaudeToken()?.trim()
 
     // First try multi-account system
     const settings = db
@@ -149,10 +223,10 @@ export const claudeCodeRouter = router({
       .get()
 
     return {
-      isConnected: !!cred?.oauthToken,
+      isConnected: !!cred?.oauthToken || !!systemToken,
       connectedAt: cred?.connectedAt?.toISOString() ?? null,
-      accountId: null,
-      displayName: null,
+      accountId: systemToken && !cred?.oauthToken ? "system-claude-code" : null,
+      displayName: systemToken && !cred?.oauthToken ? "Claude Code CLI" : null,
     }
   }),
 
@@ -243,6 +317,14 @@ export const claudeCodeRouter = router({
     storeOAuthToken(token)
     console.log("[ClaudeCode] Token imported from system")
     return { success: true }
+  }),
+
+  /**
+   * Open a local terminal to run Claude Code's interactive auth flow.
+   */
+  startLocalCliAuth: publicProcedure.mutation(async () => {
+    const terminal = await openClaudeAuthTerminal()
+    return { success: true, terminal }
   }),
 
   /**

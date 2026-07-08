@@ -81,6 +81,13 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     description: "Compact conversation context to reduce token usage",
     category: "builtin",
   },
+  {
+    id: "builtin:caveman",
+    name: "caveman",
+    command: "/caveman",
+    description: "Set caveman mode for this thread",
+    category: "builtin",
+  },
   // Prompt-based commands
   {
     id: "builtin:review",

@@ -26,11 +26,22 @@ export function setIsQuitting(value: boolean): void {
   isQuitting = value
 }
 
+function shouldShowInactive(): boolean {
+  return process.env.FLAPSTACK_NO_FOCUS === "1" || process.argv.includes("--no-focus")
+}
+
 // Helper to get window from IPC event
 function getWindowFromEvent(event: Electron.IpcMainInvokeEvent): BrowserWindow | null {
   const webContents = event.sender
   const win = BrowserWindow.fromWebContents(webContents)
   return win && !win.isDestroyed() ? win : null
+}
+
+interface DesktopNotificationOptions {
+  title: string
+  body: string
+  chatId?: string
+  subChatId?: string
 }
 
 // Register IPC handlers for window operations (only once)
@@ -80,9 +91,9 @@ function registerIpcHandlers(): void {
     } else if (process.platform === "win32" && win) {
       // Windows: Update title with count as fallback
       if (count !== null && count > 0) {
-        win.setTitle(`Flapstack (${count})`)
+        win.setTitle(`${app.getName()} (${count})`)
       } else {
-        win.setTitle("Flapstack")
+        win.setTitle(app.getName())
         win.setOverlayIcon(null, "")
       }
     }
@@ -101,7 +112,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle("app:show-notification", (event, options: { title: string; body: string }) => {
+  ipcMain.handle("app:show-notification", (event, options: DesktopNotificationOptions) => {
     try {
       if (!Notification.isSupported()) {
         console.warn("[Main] Notifications not supported on this system")
@@ -129,6 +140,12 @@ function registerIpcHandlers(): void {
         if (win) {
           if (win.isMinimized()) win.restore()
           win.focus()
+        }
+        if (!event.sender.isDestroyed()) {
+          event.sender.send("app:notification-clicked", {
+            chatId: options.chatId,
+            subChatId: options.subChatId,
+          })
         }
       })
 
@@ -243,7 +260,7 @@ function registerIpcHandlers(): void {
     const win = getWindowFromEvent(event)
     if (win) {
       // Show just the title, or default app name if empty
-      win.setTitle(title || "Flapstack")
+      win.setTitle(title || app.getName())
     }
   })
 
@@ -474,7 +491,11 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
     if (process.platform === "darwin") {
       window.setWindowButtonVisibility(false)
     }
-    window.show()
+    if (shouldShowInactive()) {
+      window.showInactive()
+    } else {
+      window.show()
+    }
   })
 
   // Emit fullscreen change events and manage traffic lights
@@ -594,7 +615,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
     const url = new URL(devServerUrl)
     buildParams(url.searchParams)
     window.loadURL(url.toString())
-    if (!app.isPackaged && windowId === "main") {
+    if (!app.isPackaged && windowId === "main" && process.env.FLAPSTACK_OPEN_DEVTOOLS === "1") {
       window.webContents.openDevTools()
     }
   } else {

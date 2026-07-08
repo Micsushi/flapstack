@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { router, publicProcedure } from "../index"
 import { getDatabase, projects } from "../../db"
-import { eq, desc } from "drizzle-orm"
+import { eq, desc, isNull, isNotNull } from "drizzle-orm"
 import { dialog, BrowserWindow, app } from "electron"
 import { basename, join } from "path"
 import { exec } from "node:child_process"
@@ -12,8 +12,10 @@ import { extname } from "node:path"
 import { getGitRemoteInfo } from "../../git"
 import { trackProjectOpened } from "../../analytics"
 import { getLaunchDirectory } from "../../cli"
+import { permissionModes } from "../../permissions"
 
 const execAsync = promisify(exec)
+const permissionModeSchema = z.enum(permissionModes)
 
 export const projectsRouter = router({
   /**
@@ -29,7 +31,22 @@ export const projectsRouter = router({
    */
   list: publicProcedure.query(() => {
     const db = getDatabase()
-    return db.select().from(projects).orderBy(desc(projects.updatedAt)).all()
+    return db
+      .select()
+      .from(projects)
+      .where(isNull(projects.archivedAt))
+      .orderBy(desc(projects.pinnedAt), desc(projects.updatedAt))
+      .all()
+  }),
+
+  listArchived: publicProcedure.query(() => {
+    const db = getDatabase()
+    return db
+      .select()
+      .from(projects)
+      .where(isNotNull(projects.archivedAt))
+      .orderBy(desc(projects.archivedAt))
+      .all()
   }),
 
   /**
@@ -174,6 +191,58 @@ export const projectsRouter = router({
         .returning()
         .get()
     }),
+
+  updateDefaultPermissionMode: publicProcedure
+    .input(z.object({ id: z.string(), permissionMode: permissionModeSchema }))
+    .mutation(({ input }) => {
+      const db = getDatabase()
+      return db
+        .update(projects)
+        .set({ defaultPermissionMode: input.permissionMode, updatedAt: new Date() })
+        .where(eq(projects.id, input.id))
+        .returning()
+        .get()
+    }),
+
+  pin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(projects)
+      .set({ pinnedAt: new Date(), updatedAt: new Date() })
+      .where(eq(projects.id, input.id))
+      .returning()
+      .get()
+  }),
+
+  unpin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(projects)
+      .set({ pinnedAt: null, updatedAt: new Date() })
+      .where(eq(projects.id, input.id))
+      .returning()
+      .get()
+  }),
+
+  archive: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(projects)
+      .set({ archivedAt: new Date(), updatedAt: new Date() })
+      .where(eq(projects.id, input.id))
+      .returning()
+      .get()
+  }),
+
+  restore: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
+    const db = getDatabase()
+    return db
+      .update(projects)
+      .set({ archivedAt: null, updatedAt: new Date() })
+      .where(eq(projects.id, input.id))
+      .returning()
+      .get()
+  }),
 
   /**
    * Delete a project and all its chats

@@ -1,6 +1,6 @@
 "use client"
 
-import { Brain, ChevronRight, Zap } from "lucide-react"
+import { Brain, ChevronDown, ChevronRight, Zap } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion } from "motion/react"
@@ -24,8 +24,8 @@ import { Checkbox } from "../../../components/ui/checkbox"
 import { Button } from "../../../components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { cn } from "../../../lib/utils"
-import type { CodexThinkingLevel } from "../lib/models"
-import { formatCodexThinkingLabel } from "../lib/models"
+import type { ClaudeEffortLevel, CodexThinkingLevel } from "../lib/models"
+import { formatClaudeEffortLabel, formatCodexThinkingLabel } from "../lib/models"
 
 const CROSS_PROVIDER_DIALOG_DISMISSED_KEY = "agent-model-selector:skip-cross-provider-dialog"
 
@@ -41,12 +41,14 @@ type ClaudeModelOption = {
   id: string
   name: string
   version: string
+  efforts?: readonly ClaudeEffortLevel[]
 }
 
 type CodexModelOption = {
   id: string
   name: string
   thinkings: CodexThinkingLevel[]
+  supportsFastMode?: boolean
 }
 
 interface AgentModelSelectorProps {
@@ -73,6 +75,8 @@ interface AgentModelSelectorProps {
     isConnected: boolean
     thinkingEnabled: boolean
     onThinkingChange: (enabled: boolean) => void
+    selectedEffort: ClaudeEffortLevel
+    onSelectEffort: (effort: ClaudeEffortLevel) => void
   }
   codex: {
     models: CodexModelOption[]
@@ -80,6 +84,8 @@ interface AgentModelSelectorProps {
     onSelectModel: (modelId: string) => void
     selectedThinking: CodexThinkingLevel
     onSelectThinking: (thinking: CodexThinkingLevel) => void
+    fastModeEnabled: boolean
+    onFastModeChange: (enabled: boolean) => void
     isConnected: boolean
   }
 }
@@ -89,6 +95,12 @@ type FlatModelItem =
   | { type: "codex"; model: CodexModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
   | { type: "custom" }
+
+type ModelGroup = {
+  id: "claude-code" | "codex"
+  label: string
+  items: FlatModelItem[]
+}
 
 function CodexThinkingSubMenu({
   thinkings,
@@ -103,14 +115,14 @@ function CodexThinkingSubMenu({
   const subMenuRef = useRef<HTMLDivElement>(null)
   const [showSub, setShowSub] = useState(false)
   const [subPos, setSubPos] = useState({ top: 0, left: 0 })
-  const closeTimeout = useRef<ReturnType<typeof setTimeout>>()
+  const closeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const scheduleClose = useCallback(() => {
     closeTimeout.current = setTimeout(() => setShowSub(false), 150)
   }, [])
 
   const cancelClose = useCallback(() => {
-    clearTimeout(closeTimeout.current)
+    if (closeTimeout.current) clearTimeout(closeTimeout.current)
   }, [])
 
   const handleTriggerEnter = useCallback(() => {
@@ -145,7 +157,9 @@ function CodexThinkingSubMenu({
   )
 
   useEffect(() => {
-    return () => clearTimeout(closeTimeout.current)
+    return () => {
+      if (closeTimeout.current) clearTimeout(closeTimeout.current)
+    }
   }, [])
 
   return (
@@ -189,6 +203,117 @@ function CodexThinkingSubMenu({
                   className="flex items-center justify-between gap-4 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
                 >
                   <span>{formatCodexThinkingLabel(thinking)}</span>
+                  {isSelected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
+                </button>
+              )
+            })}
+          </div>,
+          document.body,
+        )}
+    </div>
+  )
+}
+
+function ClaudeEffortSubMenu({
+  efforts,
+  selectedEffort,
+  onSelectEffort,
+}: {
+  efforts: readonly ClaudeEffortLevel[]
+  selectedEffort: ClaudeEffortLevel
+  onSelectEffort: (effort: ClaudeEffortLevel) => void
+}) {
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const subMenuRef = useRef<HTMLDivElement>(null)
+  const [showSub, setShowSub] = useState(false)
+  const [subPos, setSubPos] = useState({ top: 0, left: 0 })
+  const closeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const scheduleClose = useCallback(() => {
+    closeTimeout.current = setTimeout(() => setShowSub(false), 150)
+  }, [])
+
+  const cancelClose = useCallback(() => {
+    if (closeTimeout.current) clearTimeout(closeTimeout.current)
+  }, [])
+
+  const handleTriggerEnter = useCallback(() => {
+    cancelClose()
+    if (triggerRef.current) {
+      const triggerRect = triggerRef.current.getBoundingClientRect()
+      setSubPos({
+        top: triggerRect.top - 4,
+        left: triggerRect.right + 6,
+      })
+    }
+    setShowSub(true)
+  }, [cancelClose])
+
+  const handleTriggerLeave = useCallback(
+    (e: React.MouseEvent) => {
+      const related = e.relatedTarget as Node | null
+      if (subMenuRef.current?.contains(related)) return
+      scheduleClose()
+    },
+    [scheduleClose],
+  )
+
+  const handleSubLeave = useCallback(
+    (e: React.MouseEvent) => {
+      const related = e.relatedTarget as Node | null
+      if (triggerRef.current?.contains(related)) return
+      scheduleClose()
+    },
+    [scheduleClose],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeout.current) clearTimeout(closeTimeout.current)
+    }
+  }, [])
+
+  return (
+    <div className="py-1">
+      <div
+        ref={triggerRef}
+        onMouseEnter={handleTriggerEnter}
+        onMouseLeave={handleTriggerLeave}
+        className={cn(
+          "flex items-center justify-between gap-1.5 min-h-[32px] py-[5px] px-1.5 mx-1 rounded-md text-sm cursor-default select-none outline-none transition-colors",
+          showSub
+            ? "dark:bg-neutral-800 bg-accent text-foreground"
+            : "dark:hover:bg-neutral-800 hover:text-foreground",
+        )}
+      >
+        <div className="flex items-center gap-1.5">
+          <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span>Effort</span>
+        </div>
+        <div className="flex items-center gap-1 text-muted-foreground">
+          <span className="text-xs">{formatClaudeEffortLabel(selectedEffort)}</span>
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+        </div>
+      </div>
+
+      {showSub &&
+        createPortal(
+          <div
+            ref={subMenuRef}
+            onMouseEnter={cancelClose}
+            onMouseLeave={handleSubLeave}
+            className="fixed z-50 min-w-[180px] overflow-auto rounded-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-lg py-1 animate-in fade-in-0 zoom-in-95 slide-in-from-left-2"
+            style={{ top: subPos.top, left: subPos.left }}
+          >
+            {efforts.map((effort) => {
+              const isSelected = selectedEffort === effort
+              return (
+                <button
+                  key={effort}
+                  onClick={() => onSelectEffort(effort)}
+                  className="flex items-center justify-between gap-4 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
+                >
+                  <span>{formatClaudeEffortLabel(effort)}</span>
                   {isSelected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
                 </button>
               )
@@ -329,58 +454,73 @@ export function AgentModelSelector({
   const [search, setSearch] = useState("")
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [pendingProvider, setPendingProvider] = useState<AgentProviderId | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>({
+    "claude-code": true,
+    codex: true,
+  })
 
   const canSelectProvider = (provider: AgentProviderId) =>
     allowProviderSwitch || selectedAgentId === provider
 
-  // Build flat list of all models (show all regardless of connection status)
-  const allModels = useMemo<FlatModelItem[]>(() => {
-    const items: FlatModelItem[] = []
+  const modelGroups = useMemo<ModelGroup[]>(() => {
+    const claudeItems: FlatModelItem[] = []
 
     if (claude.isOffline && claude.ollamaModels.length > 0) {
       for (const m of claude.ollamaModels) {
-        items.push({
+        claudeItems.push({
           type: "ollama",
           modelName: m,
           isRecommended: m === claude.recommendedOllamaModel,
         })
       }
     } else if (claude.hasCustomModelConfig) {
-      items.push({ type: "custom" })
+      claudeItems.push({ type: "custom" })
     } else {
       for (const m of claude.models) {
-        items.push({ type: "claude", model: m })
+        claudeItems.push({ type: "claude", model: m })
       }
     }
 
+    const codexItems: FlatModelItem[] = []
     for (const m of codex.models) {
-      items.push({ type: "codex", model: m })
+      codexItems.push({ type: "codex", model: m })
     }
 
-    return items
+    return [
+      { id: "claude-code", label: "Claude Code", items: claudeItems },
+      { id: "codex", label: "Codex", items: codexItems },
+    ]
   }, [claude, codex])
 
   // Filter by search
-  const filteredModels = useMemo(() => {
-    if (!search.trim()) return allModels
+  const filteredGroups = useMemo(() => {
+    if (!search.trim()) return modelGroups
     const q = search.toLowerCase().trim()
-    return allModels.filter((item) => {
-      switch (item.type) {
-        case "claude":
-          return (
-            item.model.name.toLowerCase().includes(q) ||
-            item.model.version.toLowerCase().includes(q) ||
-            `${item.model.name} ${item.model.version}`.toLowerCase().includes(q)
-          )
-        case "codex":
-          return item.model.name.toLowerCase().includes(q)
-        case "ollama":
-          return item.modelName.toLowerCase().includes(q)
-        case "custom":
-          return "custom model".includes(q)
-      }
-    })
-  }, [allModels, search])
+    return modelGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => {
+          switch (item.type) {
+            case "claude":
+              return (
+                item.model.name.toLowerCase().includes(q) ||
+                item.model.version.toLowerCase().includes(q) ||
+                item.model.id.toLowerCase().includes(q) ||
+                `${item.model.name} ${item.model.version}`.toLowerCase().includes(q)
+              )
+            case "codex":
+              return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
+            case "ollama":
+              return item.modelName.toLowerCase().includes(q)
+            case "custom":
+              return "custom model".includes(q)
+          }
+        }),
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [modelGroups, search])
+
+  const filteredModelCount = filteredGroups.reduce((count, group) => count + group.items.length, 0)
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -392,9 +532,14 @@ export function AgentModelSelector({
     [onOpenChange],
   )
 
+  const selectedCodexModel =
+    codex.models.find((m) => m.id === codex.selectedModelId) || codex.models[0]
+  const codexFastAvailable = selectedCodexModel?.supportsFastMode === true
   const triggerIcon =
     selectedAgentId === "claude-code" && claude.isOffline && claude.ollamaModels.length > 0 ? (
       <Zap className="h-4 w-4" />
+    ) : selectedAgentId === "codex" && codex.fastModeEnabled && codexFastAvailable ? (
+      <Zap className="h-4 w-4 text-amber-500" />
     ) : selectedAgentId === "codex" ? (
       <CodexIcon className="h-3.5 w-3.5" />
     ) : (
@@ -497,19 +642,6 @@ export function AgentModelSelector({
     handleOpenChange(false)
   }
 
-  const getItemIcon = (item: FlatModelItem) => {
-    switch (item.type) {
-      case "claude":
-        return <ClaudeCodeIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-      case "codex":
-        return <CodexIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-      case "ollama":
-        return <Zap className="h-4 w-4 text-muted-foreground shrink-0" />
-      case "custom":
-        return <ClaudeCodeIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-    }
-  }
-
   const getItemLabel = (item: FlatModelItem): string => {
     switch (item.type) {
       case "claude":
@@ -560,6 +692,24 @@ export function AgentModelSelector({
             !claude.isOffline &&
             !claude.hasCustomModelConfig && (
               <>
+                {(() => {
+                  const selectedClaudeModel =
+                    claude.models.find((m) => m.id === claude.selectedModelId) || claude.models[0]
+                  const efforts = selectedClaudeModel?.efforts
+                  if (!efforts || efforts.length === 0) return null
+                  const selectedEffort = efforts.includes(claude.selectedEffort)
+                    ? claude.selectedEffort
+                    : efforts.includes("high")
+                      ? "high"
+                      : efforts[0]
+                  return (
+                    <ClaudeEffortSubMenu
+                      efforts={efforts}
+                      selectedEffort={selectedEffort}
+                      onSelectEffort={claude.onSelectEffort}
+                    />
+                  )
+                })()}
                 <div
                   className="flex items-center justify-between min-h-[32px] py-[5px] px-1.5 mx-1"
                   onClick={(e) => e.stopPropagation()}
@@ -581,11 +731,25 @@ export function AgentModelSelector({
           {/* Codex thinking level selector with hover sub-menu */}
           {selectedAgentId === "codex" &&
             (() => {
-              const selectedCodexModel =
-                codex.models.find((m) => m.id === codex.selectedModelId) || codex.models[0]
               if (!selectedCodexModel) return null
               return (
                 <>
+                  {selectedCodexModel.supportsFastMode && (
+                    <div
+                      className="flex items-center justify-between min-h-[32px] py-[5px] px-1.5 mx-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                        <span className="text-sm">Fast mode</span>
+                      </div>
+                      <Switch
+                        checked={codex.fastModeEnabled}
+                        onCheckedChange={codex.onFastModeChange}
+                        className="scale-75"
+                      />
+                    </div>
+                  )}
                   <CodexThinkingSubMenu
                     thinkings={selectedCodexModel.thinkings}
                     selectedThinking={codex.selectedThinking}
@@ -597,30 +761,81 @@ export function AgentModelSelector({
             })()}
 
           <CommandList className="max-h-[300px] overflow-y-auto">
-            {filteredModels.length > 0 ? (
-              <CommandGroup>
-                {filteredModels.map((item) => {
-                  const selected = isItemSelected(item)
-                  const disabled = isItemDisabled(item)
-                  const crossProvider = isItemCrossProvider(item)
-                  return (
-                    <CommandItem
-                      key={getItemKey(item)}
-                      value={getItemKey(item)}
-                      onSelect={() => handleItemClick(item)}
-                      disabled={disabled}
-                      className={cn("gap-2", crossProvider && "opacity-60")}
+            {filteredModelCount > 0 ? (
+              filteredGroups.map((group, index) => {
+                const isExpanded = search.trim() ? true : expandedGroups[group.id]
+                return (
+                  <CommandGroup key={group.id}>
+                    {index > 0 && <CommandSeparator />}
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                      onClick={(e) => {
+                        // The popover content is portaled but React events still
+                        // bubble to ancestors (e.g. the chat input's focus-grabbing
+                        // wrapper), which would blur the popover and dismiss it.
+                        e.stopPropagation()
+                        setExpandedGroups((current) => ({
+                          ...current,
+                          [group.id]: !current[group.id],
+                        }))
+                      }}
+                      className="flex w-[calc(100%-8px)] items-center justify-between gap-2 py-1.5 px-2 mx-1 mt-1 rounded-md border border-border/60 bg-muted/45 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground"
                     >
-                      {getItemIcon(item)}
-                      <span className="truncate flex-1">{getItemLabel(item)}</span>
-                      {crossProvider && (
-                        <span className="text-[10px] text-muted-foreground shrink-0">New chat</span>
-                      )}
-                      {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
-                    </CommandItem>
-                  )
-                })}
-              </CommandGroup>
+                      <span className="flex items-center gap-1.5">
+                        {group.id === "codex" ? (
+                          <CodexIcon className="h-3 w-3 shrink-0" />
+                        ) : (
+                          <ClaudeCodeIcon className="h-3 w-3 shrink-0" />
+                        )}
+                        <span>{group.label}</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="rounded-sm bg-background/80 px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-muted-foreground">
+                          {group.items.length}
+                        </span>
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 transition-transform",
+                            !isExpanded && "-rotate-90",
+                          )}
+                        />
+                      </span>
+                    </button>
+                    {isExpanded &&
+                      group.items.map((item) => {
+                        const selected = isItemSelected(item)
+                        const disabled = isItemDisabled(item)
+                        const crossProvider = isItemCrossProvider(item)
+                        return (
+                          <CommandItem
+                            key={getItemKey(item)}
+                            value={getItemKey(item)}
+                            onSelect={() => handleItemClick(item)}
+                            disabled={disabled}
+                            className={cn("gap-2 pl-6", crossProvider && "opacity-60")}
+                          >
+                            <span className="truncate flex-1">{getItemLabel(item)}</span>
+                            {crossProvider && (
+                              <span className="text-[10px] text-muted-foreground shrink-0">
+                                New chat
+                              </span>
+                            )}
+                            {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
+                          </CommandItem>
+                        )
+                      })}
+                  </CommandGroup>
+                )
+              })
             ) : (
               <CommandEmpty>No models found.</CommandEmpty>
             )}

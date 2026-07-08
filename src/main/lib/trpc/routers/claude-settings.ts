@@ -114,13 +114,12 @@ async function writeClaudeSettings(settings: Record<string, unknown>): Promise<v
 export const claudeSettingsRouter = router({
   /**
    * Get the includeCoAuthoredBy setting
-   * Returns true if setting is not explicitly set to false
+   * Returns true only when setting is explicitly enabled.
    */
   getIncludeCoAuthoredBy: publicProcedure.query(async () => {
     const settings = await readClaudeSettings()
-    // Default is true (include co-authored-by)
-    // Only return false if explicitly set to false
-    return settings.includeCoAuthoredBy !== false
+    // Default is false. Users can opt in explicitly.
+    return settings.includeCoAuthoredBy === true
   }),
 
   /**
@@ -132,10 +131,10 @@ export const claudeSettingsRouter = router({
       const settings = await readClaudeSettings()
 
       if (input.enabled) {
-        // Remove the setting to use default (true)
-        delete settings.includeCoAuthoredBy
+        // Explicitly enable because the app default is false.
+        settings.includeCoAuthoredBy = true
       } else {
-        // Explicitly set to false to disable
+        // Keep the setting explicit so downstream Claude tooling also sees it.
         settings.includeCoAuthoredBy = false
       }
 

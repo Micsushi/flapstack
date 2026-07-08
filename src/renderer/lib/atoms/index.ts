@@ -182,6 +182,7 @@ export type SettingsTab =
   | "projects"
   | "debug"
   | "beta"
+  | "future"
   | "keyboard"
 export const agentsSettingsDialogActiveTabAtom = atom<SettingsTab>("preferences")
 // Derived atom: maps settings open/close to desktopView navigation
@@ -386,7 +387,7 @@ export const desktopNotificationsEnabledAtom = atomWithStorage<boolean>(
 // (e.g. when working in a different chat). When disabled, only notify when the app is in the background.
 export const notifyWhenFocusedAtom = atomWithStorage<boolean>(
   "preferences:notify-when-focused",
-  false,
+  true,
   undefined,
   { getOnInit: true },
 )
@@ -421,11 +422,11 @@ export const betaGitFeaturesEnabledAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
-// Kanban board view
-// When enabled, shows Kanban button in sidebar to view workspaces as a board
+// Kanban board view scaffold.
+// Hidden by default for MVP1; tasks are folder-like work areas, not a board view.
 export const betaKanbanEnabledAtom = atomWithStorage<boolean>(
   "preferences:beta-kanban-enabled",
-  true, // Default ON — graduated from beta
+  false,
   undefined,
   { getOnInit: true },
 )
@@ -458,22 +459,23 @@ export const betaUpdatesEnabledAtom = atomWithStorage<boolean>(
 )
 
 // Preferences - Ctrl+Tab Quick Switch Target
-// When "workspaces" (default), Ctrl+Tab switches between workspaces, and Opt+Ctrl+Tab switches between agents
-// When "agents", Ctrl+Tab switches between agents, and Opt+Ctrl+Tab switches between workspaces
+// Internal "workspaces" value is kept for localStorage compatibility; UI presents it as chats.
+// When "workspaces" (default), Ctrl+Tab switches between chats, and Opt+Ctrl+Tab switches between agents.
+// When "agents", Ctrl+Tab switches between agents, and Opt+Ctrl+Tab switches between chats.
 export type CtrlTabTarget = "workspaces" | "agents"
 export const ctrlTabTargetAtom = atomWithStorage<CtrlTabTarget>(
   "preferences:ctrl-tab-target",
-  "workspaces", // Default: Ctrl+Tab switches workspaces, Opt+Ctrl+Tab switches agents
+  "workspaces", // Default: Ctrl+Tab switches chats, Opt+Ctrl+Tab switches agents
   undefined,
   { getOnInit: true },
 )
 
 // Preferences - Auto-advance after archive
-// Controls where to navigate after archiving a workspace
+// Controls where to navigate after archiving a chat.
 export type AutoAdvanceTarget = "next" | "previous" | "close"
 export const autoAdvanceTargetAtom = atomWithStorage<AutoAdvanceTarget>(
   "preferences:auto-advance-target",
-  "next", // Default: go to next workspace
+  "next", // Default: go to next chat
   undefined,
   { getOnInit: true },
 )
@@ -798,7 +800,7 @@ export function normalizeCodexApiKey(apiKey: string): string | null {
 // Models are shown by default; only hidden models are stored
 export const hiddenModelsAtom = atomWithStorage<string[]>(
   "preferences:hidden-models-v4",
-  ["gpt-5.1-codex-max", "gpt-5.1-codex-mini"],
+  [],
   undefined,
   { getOnInit: true },
 )
@@ -873,9 +875,20 @@ export const devToolsUnlockedAtom = atom<boolean>(false)
 
 import type { ExternalApp } from "../../../shared/external-apps"
 
+if (typeof window !== "undefined") {
+  const key = "preferences:preferred-editor"
+  const migratedKey = "preferences:preferred-editor-default-vscode-migrated"
+  const current = localStorage.getItem(key)
+
+  if (current === JSON.stringify("cursor") && localStorage.getItem(migratedKey) === null) {
+    localStorage.setItem(key, JSON.stringify("vscode"))
+    localStorage.setItem(migratedKey, "true")
+  }
+}
+
 export const preferredEditorAtom = atomWithStorage<ExternalApp>(
   "preferences:preferred-editor",
-  "cursor",
+  "vscode",
   undefined,
   { getOnInit: true },
 )

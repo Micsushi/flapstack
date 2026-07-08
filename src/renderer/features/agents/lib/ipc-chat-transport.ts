@@ -1,10 +1,9 @@
-import * as Sentry from "@sentry/electron/renderer"
 import type { ChatTransport, UIMessage } from "ai"
 import { toast } from "sonner"
 import {
-  claudeLoginModalConfigAtom,
   agentsLoginModalOpenAtom,
   autoOfflineModeAtom,
+  claudeLoginModalConfigAtom,
   type CustomClaudeConfig,
   customClaudeConfigAtom,
   enableTasksAtom,
@@ -22,12 +21,37 @@ import {
   compactingSubChatsAtom,
   expiredUserQuestionsAtom,
   MODEL_ID_MAP,
-  pendingAuthRetryMessageAtom,
   pendingUserQuestionsAtom,
   subChatModelIdAtomFamily,
+  subChatClaudeEffortAtomFamily,
 } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+
+function openClaudeLoginModal() {
+  appStore.set(claudeLoginModalConfigAtom, {
+    hideCustomModelSettingsLink: true,
+    autoStartAuth: true,
+  })
+  appStore.set(agentsLoginModalOpenAtom, true)
+}
+
+function captureTransportException(
+  error: unknown,
+  context: Parameters<(typeof import("@sentry/electron/renderer"))["captureException"]>[1],
+): void {
+  if (!import.meta.env.PROD || !import.meta.env.VITE_SENTRY_DSN) {
+    return
+  }
+
+  import("@sentry/electron/renderer")
+    .then((Sentry) => {
+      Sentry.captureException(error, context)
+    })
+    .catch(() => {
+      // Sentry is best-effort and must not break local test builds.
+    })
+}
 
 // Error categories and their user-friendly messages
 const ERROR_TOAST_CONFIG: Record<
@@ -40,10 +64,10 @@ const ERROR_TOAST_CONFIG: Record<
 > = {
   AUTH_FAILED_SDK: {
     title: "Not logged in",
-    description: "Run 'claude login' in your terminal to authenticate",
+    description: "Start Claude Code authentication from Flapstack, then retry.",
     action: {
-      label: "Copy command",
-      onClick: () => navigator.clipboard.writeText("claude login"),
+      label: "Connect",
+      onClick: openClaudeLoginModal,
     },
   },
   INVALID_API_KEY_SDK: {
@@ -154,6 +178,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     // Read model selection dynamically per sub-chat (so split panes stay independent)
     const selectedModelId = appStore.get(subChatModelIdAtomFamily(this.config.subChatId))
     const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
+    const claudeEffort = appStore.get(subChatClaudeEffortAtomFamily(this.config.subChatId))
 
     const storedCustomConfig = appStore.get(customClaudeConfigAtom) as CustomClaudeConfig
     const customConfig = normalizeCustomClaudeConfig(storedCustomConfig)
@@ -191,6 +216,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             mode: currentMode,
             sessionId,
             ...(maxThinkingTokens && { maxThinkingTokens }),
+            effort: claudeEffort,
             ...(modelString && { model: modelString }),
             ...(customConfig && { customConfig }),
             ...(selectedOllamaModel && { selectedOllamaModel }),
@@ -318,21 +344,15 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
 
               // Handle authentication errors - show Claude login modal
               if (chunk.type === "auth-error") {
-                // Store the failed message for retry after successful auth
-                // readyToRetry=false prevents immediate retry - modal sets it to true on OAuth success
-                appStore.set(pendingAuthRetryMessageAtom, {
-                  subChatId: this.config.subChatId,
-                  provider: "claude-code",
-                  prompt,
-                  ...(images.length > 0 && { images }),
-                  readyToRetry: false,
+                toast.error("Claude Code authentication required", {
+                  description:
+                    "Flapstack uses your local Claude Code credentials. Start Claude login, then retry this message.",
+                  duration: 12000,
+                  action: {
+                    label: "Connect",
+                    onClick: openClaudeLoginModal,
+                  },
                 })
-                appStore.set(claudeLoginModalConfigAtom, {
-                  hideCustomModelSettingsLink: false,
-                  autoStartAuth: false,
-                })
-                // Show the Claude Code login modal
-                appStore.set(agentsLoginModalOpenAtom, true)
                 // Use controller.error() instead of controller.close() so that
                 // the SDK Chat properly resets status from "streaming" to "ready"
                 // This allows user to retry sending messages after failed auth
@@ -369,7 +389,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                 console.error(`[SDK ERROR] ========================================`)
 
                 // Track error in Sentry
-                Sentry.captureException(new Error(chunk.errorText || "Claude transport error"), {
+                captureTransportException(new Error(chunk.errorText || "Claude transport error"), {
                   tags: {
                     errorCategory: category,
                     mode: currentMode,
@@ -453,7 +473,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                 `[SD] R:ERROR sub=${subId} n=${chunkCount} last=${lastChunkType} err=${err.message}`,
               )
               // Track transport errors in Sentry
-              Sentry.captureException(err, {
+              captureTransportException(err, {
                 tags: {
                   errorCategory: "TRANSPORT_ERROR",
                   mode: currentMode,

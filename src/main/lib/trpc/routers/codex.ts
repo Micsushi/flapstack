@@ -1,7 +1,7 @@
 import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import { observable } from "@trpc/server/observable"
 import { streamText } from "ai"
-import { eq } from "drizzle-orm"
+import { and, eq, ne } from "drizzle-orm"
 import { app } from "electron"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -14,10 +14,22 @@ import {
   normalizeCodexAssistantMessage,
   normalizeCodexStreamChunk,
 } from "../../../../shared/codex-tool-normalizer"
+import {
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CODEX_MODEL_WITH_THINKING,
+} from "../../../../shared/model-catalog"
+import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { getClaudeShellEnvironment } from "../../claude/env"
 import { resolveProjectPathFromWorktree } from "../../claude-config"
-import { getDatabase, projects as projectsTable, subChats } from "../../db"
+import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
+import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
+import {
+  buildCodexPermissionApplication,
+  getGlobalDefault,
+  parsePermissionMode,
+  type PermissionMode,
+} from "../../permissions"
 import { publicProcedure, router } from "../index"
 
 const imageAttachmentSchema = z.object({
@@ -124,7 +136,7 @@ const AUTH_HINTS = [
   "401",
   "403",
 ]
-const DEFAULT_CODEX_MODEL = "gpt-5.3-codex/high"
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_THINKING
 const CODEX_MCP_TOOLS_FETCH_TIMEOUT_MS = 40_000
 const CODEX_USAGE_POLL_ATTEMPTS = 3
 const CODEX_USAGE_POLL_INTERVAL_MS = 200
@@ -147,6 +159,8 @@ type CodexUsageMetadata = {
   totalTokens?: number
   modelContextWindow?: number
 }
+
+type CodexRunStatus = "success" | "failure" | "cancelled"
 
 const codexMcpListEntrySchema = z
   .object({
@@ -1003,6 +1017,124 @@ function parseStoredMessages(raw: string | null | undefined): any[] {
   }
 }
 
+function resolveCodexPermissionMode(params: {
+  subChatPermissionMode?: string | null
+  chatPermissionMode?: string | null
+}): PermissionMode {
+  return (
+    parsePermissionMode(params.subChatPermissionMode) ||
+    parsePermissionMode(params.chatPermissionMode) ||
+    getGlobalDefault()
+  )
+}
+
+async function createCodexRun(params: {
+  runId: string
+  chatId: string
+  subChatId: string
+  model: string
+  permissionMode: PermissionMode
+  worktreePath: string | null
+  promptMessageId?: string
+}) {
+  const db = getDatabase()
+  const existingRun = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
+
+  if (existingRun) {
+    return existingRun
+  }
+
+  db.update(agentRuns)
+    .set({
+      status: "cancelled",
+      completedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(agentRuns.subChatId, params.subChatId),
+        eq(agentRuns.status, "running"),
+        ne(agentRuns.id, params.runId),
+      ),
+    )
+    .run()
+
+  const run = db
+    .insert(agentRuns)
+    .values({
+      id: params.runId,
+      chatId: params.chatId,
+      subChatId: params.subChatId,
+      harness: "codex",
+      model: params.model,
+      permissionMode: params.permissionMode,
+      worktreePath: params.worktreePath,
+      promptMessageId: params.promptMessageId,
+      status: "running",
+    })
+    .returning()
+    .get()
+
+  db.update(subChats)
+    .set({
+      harness: "codex",
+      model: params.model,
+      permissionMode: params.permissionMode,
+      worktreePath: params.worktreePath,
+      runStatus: "running",
+      updatedAt: new Date(),
+    })
+    .where(eq(subChats.id, params.subChatId))
+    .run()
+
+  // Keep the chat-level identity chip in sync with the latest run
+  db.update(chats)
+    .set({ harness: "codex", model: params.model })
+    .where(eq(chats.id, params.chatId))
+    .run()
+
+  const before = await captureCheckpoint(run.id, params.worktreePath, "before")
+  return db
+    .update(agentRuns)
+    .set({ beforeCheckpointId: before.id })
+    .where(eq(agentRuns.id, run.id))
+    .returning()
+    .get()
+}
+
+async function completeCodexRun(params: {
+  runId: string
+  subChatId: string
+  status: CodexRunStatus
+}) {
+  const db = getDatabase()
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
+  if (!run || run.completedAt) return run
+
+  const after = await captureCheckpoint(run.id, run.worktreePath, "after")
+  await captureNoChangeManifest(run.id)
+
+  const completedRun = db
+    .update(agentRuns)
+    .set({
+      status: params.status,
+      completedAt: new Date(),
+      afterCheckpointId: after.id,
+    })
+    .where(eq(agentRuns.id, params.runId))
+    .returning()
+    .get()
+
+  db.update(subChats)
+    .set({
+      runStatus: params.status,
+      updatedAt: new Date(),
+    })
+    .where(eq(subChats.id, params.subChatId))
+    .run()
+
+  return completedRun
+}
+
 function extractPromptFromStoredMessage(message: any): string {
   if (!message || !Array.isArray(message.parts)) return ""
 
@@ -1531,6 +1663,22 @@ export const codexRouter = router({
         })
 
         let isActive = true
+        let runCompletionStatus: CodexRunStatus = "failure"
+        let runCompleted = false
+
+        const completeRunOnce = async (status: CodexRunStatus) => {
+          if (runCompleted) return
+          runCompleted = true
+          try {
+            await completeCodexRun({
+              runId: input.runId,
+              subChatId: input.subChatId,
+              status,
+            })
+          } catch (runError) {
+            console.error("[codex] Failed to complete run:", runError)
+          }
+        }
 
         const safeEmit = (chunk: any) => {
           if (!isActive) return
@@ -1565,13 +1713,35 @@ export const codexRouter = router({
               throw new Error("Sub-chat not found")
             }
 
+            const existingChat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+            if (!existingChat) {
+              throw new Error("Chat not found")
+            }
+
             const existingMessages = parseStoredMessages(existingSubChat.messages)
-            const requestedModelId = extractCodexModelId(input.model) || DEFAULT_CODEX_MODEL
+            const startupContext = await buildHarnessStartupContext({
+              cwd: input.cwd,
+              projectPath: input.projectPath,
+              harness: "codex",
+            })
+            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const fallbackModel = input.authConfig?.apiKey?.trim()
+              ? DEFAULT_CODEX_MODEL
+              : DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING
+            const requestedModelId = extractCodexModelId(input.model) || fallbackModel
             const selectedModelId = preprocessCodexModelName({
               modelId: requestedModelId,
               authConfig: input.authConfig,
             })
             const metadataModel = selectedModelId
+            const permissionMode = resolveCodexPermissionMode({
+              subChatPermissionMode: existingSubChat.permissionMode,
+              chatPermissionMode: existingChat.permissionMode,
+            })
+            const permissionApplication = buildCodexPermissionApplication({
+              permissionMode,
+              cwd: input.cwd,
+            })
 
             const lastMessage = existingMessages[existingMessages.length - 1]
             const isDuplicatePrompt =
@@ -1579,6 +1749,8 @@ export const codexRouter = router({
               extractPromptFromStoredMessage(lastMessage) === input.prompt
 
             let messagesForStream = existingMessages
+            let promptMessageId =
+              isDuplicatePrompt && typeof lastMessage?.id === "string" ? lastMessage.id : undefined
             const isAuthoritativeRun = () => {
               const currentStream = activeStreams.get(input.subChatId)
               return !currentStream || currentStream.runId === input.runId
@@ -1603,9 +1775,13 @@ export const codexRouter = router({
               if (!message || message.role !== "assistant") return message
               if (!Array.isArray(message.parts)) return message
 
-              const cleanedParts = message.parts.filter(
-                (part: any) => part?.state !== "input-streaming",
-              )
+              const cleanedParts = message.parts
+                .filter((part: any) => part?.state !== "input-streaming")
+                .map((part: any) =>
+                  part?.type === "text" && part?.state === "streaming"
+                    ? { ...part, state: "done" }
+                    : part,
+                )
 
               if (cleanedParts.length === 0) {
                 return null
@@ -1628,6 +1804,7 @@ export const codexRouter = router({
                 parts: buildUserParts(input.prompt, input.images),
                 metadata: { model: metadataModel },
               }
+              promptMessageId = userMessage.id
 
               messagesForStream = [...existingMessages, userMessage]
 
@@ -1639,6 +1816,16 @@ export const codexRouter = router({
                 .where(eq(subChats.id, input.subChatId))
                 .run()
             }
+
+            await createCodexRun({
+              runId: input.runId,
+              chatId: input.chatId,
+              subChatId: input.subChatId,
+              model: metadataModel,
+              permissionMode,
+              worktreePath: input.cwd || null,
+              promptMessageId,
+            })
 
             if (input.forceNewSession) {
               cleanupProvider(input.subChatId)
@@ -1696,7 +1883,7 @@ export const codexRouter = router({
               messages: [
                 {
                   role: "user",
-                  content: buildModelMessageContent(input.prompt, input.images),
+                  content: buildModelMessageContent(promptForModel, input.images),
                 },
               ],
               tools: provider.tools,
@@ -1714,7 +1901,11 @@ export const codexRouter = router({
 
                 if (part.type === "finish") {
                   return {
+                    harness: "codex",
                     model: metadataModel,
+                    permissionMode,
+                    permissionApplication,
+                    runId: input.runId,
                     sessionId,
                     durationMs: Date.now() - startedAt,
                     resultSubtype: part.finishReason === "error" ? "error" : "success",
@@ -1723,12 +1914,22 @@ export const codexRouter = router({
 
                 if (sessionId) {
                   return {
+                    harness: "codex",
                     model: metadataModel,
+                    permissionMode,
+                    permissionApplication,
+                    runId: input.runId,
                     sessionId,
                   }
                 }
 
-                return { model: metadataModel }
+                return {
+                  harness: "codex",
+                  model: metadataModel,
+                  permissionMode,
+                  permissionApplication,
+                  runId: input.runId,
+                }
               },
               onFinish: async ({ responseMessage, isContinuation }) => {
                 try {
@@ -1738,10 +1939,25 @@ export const codexRouter = router({
                         ...responseMessage,
                         metadata: {
                           ...((responseMessage as any)?.metadata || {}),
+                          harness: "codex",
+                          model: metadataModel,
+                          permissionMode,
+                          permissionApplication,
+                          runId: input.runId,
                           ...usageMetadata,
                         },
                       }
-                    : responseMessage
+                    : {
+                        ...responseMessage,
+                        metadata: {
+                          ...((responseMessage as any)?.metadata || {}),
+                          harness: "codex",
+                          model: metadataModel,
+                          permissionMode,
+                          permissionApplication,
+                          runId: input.runId,
+                        },
+                      }
                   const cleanedResponseMessage =
                     cleanAssistantMessageForPersistence(responseWithUsage)
 
@@ -1801,9 +2017,16 @@ export const codexRouter = router({
               safeEmit({ type: "finish" })
             }
 
+            runCompletionStatus = "success"
+            await completeRunOnce(runCompletionStatus)
             safeComplete()
           } catch (error) {
             const normalized = extractCodexError(error)
+            runCompletionStatus =
+              abortController.signal.aborted ||
+              activeStreams.get(input.subChatId)?.cancelRequested === true
+                ? "cancelled"
+                : "failure"
 
             console.error("[codex] chat stream error:", error)
             if (isCodexAuthError(normalized)) {
@@ -1811,10 +2034,18 @@ export const codexRouter = router({
             } else {
               safeEmit({ type: "error", errorText: normalized.message })
             }
+            await completeRunOnce(runCompletionStatus)
             safeEmit({ type: "finish" })
             safeComplete()
           } finally {
             const activeStream = activeStreams.get(input.subChatId)
+            if (!runCompleted) {
+              const finalStatus =
+                abortController.signal.aborted || activeStream?.cancelRequested
+                  ? "cancelled"
+                  : runCompletionStatus
+              await completeRunOnce(finalStatus)
+            }
             if (activeStream?.runId === input.runId) {
               const shouldCleanupProvider =
                 abortController.signal.aborted || activeStream.cancelRequested

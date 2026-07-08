@@ -16,7 +16,13 @@ import {
   subChatCodexModelIdAtomFamily,
   subChatCodexThinkingAtomFamily,
 } from "../atoms"
-import { CODEX_MODELS, type CodexThinkingLevel } from "./models"
+import {
+  CODEX_MODELS,
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CODEX_MODEL_WITH_THINKING,
+  type CodexAuthSurface,
+  type CodexThinkingLevel,
+} from "./models"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 
@@ -39,7 +45,7 @@ type ImageAttachment = {
 
 // When a sub-chat hits auth-error, force one fresh Codex ACP session on next send.
 const forceFreshSessionSubChats = new Set<string>()
-const DEFAULT_CODEX_MODEL = "gpt-5.3-codex/high"
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_THINKING
 function getStoredCodexCredentials(): {
   hasApiKey: boolean
   hasSubscription: boolean
@@ -82,13 +88,19 @@ async function resolveCodexCredentialsForAuthError(): Promise<{
 function getSelectedCodexModel(subChatId: string): string {
   const selectedModelId = appStore.get(subChatCodexModelIdAtomFamily(subChatId))
   const selectedThinking = appStore.get(subChatCodexThinkingAtomFamily(subChatId))
+  const authSurface: CodexAuthSurface = getStoredCodexCredentials().hasApiKey
+    ? "api-key"
+    : "chatgpt"
+  const eligibleModels = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
+  const defaultModel =
+    authSurface === "chatgpt" ? DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING : DEFAULT_CODEX_MODEL
   const selectedModel =
-    CODEX_MODELS.find((model) => model.id === selectedModelId) ||
-    CODEX_MODELS.find((model) => model.id === "gpt-5.3-codex") ||
-    CODEX_MODELS[0]
+    eligibleModels.find((model) => model.id === selectedModelId) ||
+    eligibleModels.find((model) => model.id === defaultModel.split("/")[0]) ||
+    eligibleModels[0]
 
   if (!selectedModel) {
-    return DEFAULT_CODEX_MODEL
+    return defaultModel
   }
 
   const normalizedThinking = selectedModel.thinkings.includes(
@@ -100,7 +112,7 @@ function getSelectedCodexModel(subChatId: string): string {
       : selectedModel.thinkings[0]
 
   if (!normalizedThinking) {
-    return DEFAULT_CODEX_MODEL
+    return defaultModel
   }
 
   return `${selectedModel.id}/${normalizedThinking}`

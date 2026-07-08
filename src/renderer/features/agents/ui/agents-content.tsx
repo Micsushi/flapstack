@@ -33,12 +33,9 @@ import {
   subChatsQuickSwitchOpenAtom,
   subChatsQuickSwitchSelectedIndexAtom,
   ctrlTabTargetAtom,
-  betaKanbanEnabledAtom,
   chatSourceModeAtom,
 } from "../../../lib/atoms"
 import { NewChatForm } from "../main/new-chat-form"
-import { KanbanView } from "../../kanban"
-import { AutomationsView, AutomationsDetailView, InboxView } from "../../automations"
 import { ChatView } from "../main/active-chat"
 import { api } from "../../../lib/mock-api"
 import { trpc } from "../../../lib/trpc"
@@ -75,8 +72,6 @@ export function AgentsContent() {
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
   const selectedDraftId = useAtomValue(selectedDraftIdAtom)
   const showNewChatForm = useAtomValue(showNewChatFormAtom)
-  const betaKanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
-  const betaAutomationsEnabled = false
   const [selectedTeamId] = useAtom(selectedTeamIdAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
@@ -137,6 +132,10 @@ export function AgentsContent() {
   // Refs to avoid effect re-running when dialog state changes (prevents keyup event loss)
   const subChatQuickSwitchOpenRef = useRef(subChatQuickSwitchOpen)
   const subChatQuickSwitchSelectedIndexRef = useRef(subChatQuickSwitchSelectedIndex)
+  const pendingNotificationNavigationRef = useRef<{
+    chatId?: string
+    subChatId?: string
+  } | null>(null)
   subChatQuickSwitchOpenRef.current = subChatQuickSwitchOpen
   subChatQuickSwitchSelectedIndexRef.current = subChatQuickSwitchSelectedIndex
 
@@ -162,6 +161,30 @@ export function AgentsContent() {
       window.desktopApi.setWindowTitle(activeSubChatName || "")
     }
   }, [activeSubChatName])
+
+  useEffect(() => {
+    if (!isDesktopApp() || !window.desktopApi?.onNotificationClicked) return
+
+    return window.desktopApi.onNotificationClicked(({ chatId, subChatId }) => {
+      if (chatId) {
+        setSelectedChatId(chatId)
+        if (isMobile) {
+          setMobileViewMode("chat")
+        }
+      }
+
+      if (!subChatId) return
+
+      const store = useAgentSubChatStore.getState()
+      if (!chatId || store.chatId === chatId) {
+        store.addToOpenSubChats(subChatId)
+        store.setActiveSubChat(subChatId)
+        return
+      }
+
+      pendingNotificationNavigationRef.current = { chatId, subChatId }
+    })
+  }, [isMobile, setMobileViewMode, setSelectedChatId])
 
   // Fetch teams for header
   const { data: teams } = api.teams.getUserTeams.useQuery(undefined, {
@@ -712,6 +735,20 @@ export function AgentsContent() {
   const subChatsStoreChatId = useAgentSubChatStore((state) => state.chatId)
   const subChatsCount = useAgentSubChatStore((state) => state.allSubChats.length)
 
+  useEffect(() => {
+    const pending = pendingNotificationNavigationRef.current
+    if (!pending?.subChatId || !pending.chatId || subChatsStoreChatId !== pending.chatId) return
+    if (subChatsCount === 0) return
+
+    const subChatExists = allSubChats.some((subChat) => subChat.id === pending.subChatId)
+    if (!subChatExists) return
+
+    const store = useAgentSubChatStore.getState()
+    store.addToOpenSubChats(pending.subChatId)
+    store.setActiveSubChat(pending.subChatId)
+    pendingNotificationNavigationRef.current = null
+  }, [allSubChats, subChatsCount, subChatsStoreChatId])
+
   // Check if sub-chats are still loading (store not yet initialized for this chat)
   const isLoadingSubChats =
     selectedChatId !== null && (subChatsStoreChatId !== selectedChatId || subChatsCount === 0)
@@ -772,15 +809,9 @@ export function AgentsContent() {
   if (isMobile) {
     return (
       <div className="flex h-full bg-background" data-agents-page data-mobile-view>
-        {/* Mobile: Settings/Automations/Inbox fullscreen views */}
+        {/* Mobile: Settings fullscreen view */}
         {desktopView === "settings" ? (
           <SettingsContent />
-        ) : betaAutomationsEnabled && desktopView === "automations" ? (
-          <AutomationsView />
-        ) : betaAutomationsEnabled && desktopView === "automations-detail" ? (
-          <AutomationsDetailView />
-        ) : betaAutomationsEnabled && desktopView === "inbox" ? (
-          <InboxView />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -903,12 +934,6 @@ export function AgentsContent() {
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
           {desktopView === "settings" ? (
             <SettingsContent />
-          ) : betaAutomationsEnabled && desktopView === "automations" ? (
-            <AutomationsView />
-          ) : betaAutomationsEnabled && desktopView === "automations-detail" ? (
-            <AutomationsDetailView />
-          ) : betaAutomationsEnabled && desktopView === "inbox" ? (
-            <InboxView />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               <ChatView
@@ -924,8 +949,6 @@ export function AgentsContent() {
             <div className="h-full flex flex-col relative overflow-hidden">
               <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
             </div>
-          ) : betaKanbanEnabled ? (
-            <KanbanView />
           ) : (
             <div className="h-full flex flex-col relative overflow-hidden">
               <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />

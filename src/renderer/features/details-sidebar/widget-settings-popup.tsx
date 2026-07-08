@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react"
 import { useAtom } from "jotai"
-import { GripVertical, Box, TerminalSquare, ListTodo } from "lucide-react"
+import { GripVertical, Box, TerminalSquare, ListTodo, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -28,6 +28,8 @@ function getWidgetIcon(widgetId: WidgetId) {
       return Box
     case "todo":
       return ListTodo
+    case "runs":
+      return History
     case "plan":
       return PlanIcon
     case "terminal":

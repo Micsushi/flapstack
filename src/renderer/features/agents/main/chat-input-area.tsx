@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu"
 import {
@@ -48,23 +49,34 @@ import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import {
   lastSelectedCodexModelIdAtom,
+  lastSelectedClaudeEffortAtom,
+  lastSelectedCodexFastModeAtom,
   lastSelectedCodexThinkingAtom,
   lastSelectedModelIdAtom,
+  subChatClaudeEffortAtomFamily,
+  subChatCodexFastModeAtomFamily,
   subChatCodexModelIdAtomFamily,
   subChatCodexThinkingAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
+  selectedTargetWorktreePathAtomFamily,
   getNextMode,
   type AgentMode,
   type SubChatFileChange,
 } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
+import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
 import { AgentModelSelector } from "../components/agent-model-selector"
 import { AgentSendButton } from "../components/agent-send-button"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
 import { clearSubChatDraft, saveSubChatDraftWithAttachments } from "../lib/drafts"
-import { CLAUDE_MODELS, CODEX_MODELS, type CodexThinkingLevel } from "../lib/models"
+import {
+  CLAUDE_MODELS,
+  CODEX_MODELS,
+  type ClaudeEffortLevel,
+  type CodexThinkingLevel,
+} from "../lib/models"
 import type { DiffTextContext, SelectedTextContext } from "../lib/queue-utils"
 import {
   AgentsFileMention,
@@ -90,6 +102,12 @@ import {
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import { customHotkeysAtom } from "../../../lib/atoms"
 import { toast } from "sonner"
+import type { RunPermissionMode } from "../../../../shared/harness-types"
+import {
+  formatPermissionMode,
+  RUN_PERMISSION_MODE_OPTIONS,
+  RUN_PERMISSION_MODE_LABELS,
+} from "../constants"
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
@@ -148,6 +166,7 @@ export interface ChatInputAreaProps {
   images: UploadedImage[]
   files: UploadedFile[]
   onAddAttachments: (files: File[]) => void
+  onPersistAttachments?: (files: File[]) => void
   onRemoveImage: (id: string) => void
   onRemoveFile: (id: string) => void
   isUploading: boolean
@@ -169,6 +188,8 @@ export interface ChatInputAreaProps {
   subChatId: string
   parentChatId: string
   provider?: "claude-code" | "codex"
+  targetWorktreePath?: string | null
+  onTargetWorktreePathChange?: (path: string | null) => void
   teamId?: string
   repository?: string
   sandboxId?: string
@@ -205,6 +226,7 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.subChatId !== nextProps.subChatId ||
     prevProps.parentChatId !== nextProps.parentChatId ||
     prevProps.provider !== nextProps.provider ||
+    prevProps.targetWorktreePath !== nextProps.targetWorktreePath ||
     prevProps.teamId !== nextProps.teamId ||
     prevProps.repository !== nextProps.repository ||
     prevProps.sandboxId !== nextProps.sandboxId ||
@@ -234,6 +256,7 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.onCreateNewSubChat !== nextProps.onCreateNewSubChat ||
     prevProps.onModeChange !== nextProps.onModeChange ||
     prevProps.onAddAttachments !== nextProps.onAddAttachments ||
+    prevProps.onPersistAttachments !== nextProps.onPersistAttachments ||
     prevProps.onRemoveImage !== nextProps.onRemoveImage ||
     prevProps.onRemoveFile !== nextProps.onRemoveFile ||
     prevProps.onRemoveTextContext !== nextProps.onRemoveTextContext ||
@@ -244,6 +267,7 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.onSubmitWithQuestionAnswer !== nextProps.onSubmitWithQuestionAnswer ||
     prevProps.onProviderChange !== nextProps.onProviderChange ||
     prevProps.onContinueWithProvider !== nextProps.onContinueWithProvider ||
+    prevProps.onTargetWorktreePathChange !== nextProps.onTargetWorktreePathChange ||
     prevProps.onSendFromQueue !== nextProps.onSendFromQueue
   ) {
     return false
@@ -367,6 +391,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   images,
   files,
   onAddAttachments,
+  onPersistAttachments,
   onRemoveImage,
   onRemoveFile,
   isUploading,
@@ -382,6 +407,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   subChatId,
   parentChatId,
   provider = "claude-code",
+  targetWorktreePath,
+  onTargetWorktreePathChange,
   teamId,
   repository,
   sandboxId,
@@ -401,6 +428,23 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [hasContent, setHasContent] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
+  const selectedTargetWorktreePathAtom = useMemo(
+    () => selectedTargetWorktreePathAtomFamily(subChatId),
+    [subChatId],
+  )
+  const [storedTargetWorktreePath, setStoredTargetWorktreePath] = useAtom(
+    selectedTargetWorktreePathAtom,
+  )
+  const currentTargetWorktreePath = targetWorktreePath ?? storedTargetWorktreePath
+  const trpcUtils = trpc.useUtils()
+  const updateTargetWorktreePath = useCallback(
+    (path: string | null) => {
+      setStoredTargetWorktreePath(path)
+      onTargetWorktreePathChange?.(path)
+      agentChatStore.delete(subChatId)
+    },
+    [onTargetWorktreePathChange, setStoredTargetWorktreePath, subChatId],
+  )
 
   // Mention dropdown state
   const [showMentionDropdown, setShowMentionDropdown] = useState(false)
@@ -450,9 +494,23 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const [selectedSubChatCodexThinking, setSelectedSubChatCodexThinking] =
     useAtom(subChatCodexThinkingAtom)
+  const subChatClaudeEffortAtom = useMemo(
+    () => subChatClaudeEffortAtomFamily(subChatId),
+    [subChatId],
+  )
+  const [selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort] =
+    useAtom(subChatClaudeEffortAtom)
+  const subChatCodexFastModeAtom = useMemo(
+    () => subChatCodexFastModeAtomFamily(subChatId),
+    [subChatId],
+  )
+  const [selectedSubChatCodexFastMode, setSelectedSubChatCodexFastMode] =
+    useAtom(subChatCodexFastModeAtom)
   const setLastSelectedModelId = useSetAtom(lastSelectedModelIdAtom)
+  const setLastSelectedClaudeEffort = useSetAtom(lastSelectedClaudeEffortAtom)
   const setLastSelectedCodexModelId = useSetAtom(lastSelectedCodexModelIdAtom)
   const setLastSelectedCodexThinking = useSetAtom(lastSelectedCodexThinkingAtom)
+  const setLastSelectedCodexFastMode = useSetAtom(lastSelectedCodexFastModeAtom)
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
   const availableModels = useAvailableModels()
   const [selectedModel, setSelectedModel] = useState(
@@ -477,6 +535,22 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatModelId(selectedModel.id)
   }, [provider, selectedModel?.id, setSelectedSubChatModelId])
 
+  const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
+    const efforts = selectedModel?.efforts
+    if (!efforts || efforts.length === 0) return "high"
+    if (efforts.includes(selectedSubChatClaudeEffort as ClaudeEffortLevel)) {
+      return selectedSubChatClaudeEffort as ClaudeEffortLevel
+    }
+    if (efforts.includes("high")) return "high"
+    return efforts[0]!
+  }, [selectedModel?.efforts, selectedSubChatClaudeEffort])
+
+  useEffect(() => {
+    if (provider !== "claude-code") return
+    if (selectedSubChatClaudeEffort === selectedClaudeEffort) return
+    setSelectedSubChatClaudeEffort(selectedClaudeEffort)
+  }, [provider, selectedClaudeEffort, selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort])
+
   const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
   const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
   const hiddenModels = useAtomValue(hiddenModelsAtom)
@@ -487,9 +561,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
   const codexUiModels = useMemo(() => {
-    let models = hasAppCodexApiKey
-      ? CODEX_MODELS.filter((model) => model.id !== "gpt-5.3-codex")
-      : CODEX_MODELS
+    const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
+    const models = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
     return models.filter((model) => !hiddenModels.includes(model.id))
   }, [hasAppCodexApiKey, hiddenModels])
   const selectedCodexModel = useMemo(
@@ -499,6 +572,9 @@ export const ChatInputArea = memo(function ChatInputArea({
       CODEX_MODELS[0]!,
     [codexUiModels, selectedSubChatCodexModelId],
   )
+
+  const codexFastModeEnabled =
+    selectedCodexModel.supportsFastMode === true && selectedSubChatCodexFastMode
 
   const selectedCodexThinking = useMemo<CodexThinkingLevel>(() => {
     if (selectedCodexModel.thinkings.includes(selectedSubChatCodexThinking as CodexThinkingLevel)) {
@@ -523,6 +599,15 @@ export const ChatInputArea = memo(function ChatInputArea({
     selectedSubChatCodexThinking,
     selectedCodexThinking,
     setSelectedSubChatCodexThinking,
+  ])
+
+  useEffect(() => {
+    if (selectedCodexModel.supportsFastMode || !selectedSubChatCodexFastMode) return
+    setSelectedSubChatCodexFastMode(false)
+  }, [
+    selectedCodexModel.supportsFastMode,
+    selectedSubChatCodexFastMode,
+    setSelectedSubChatCodexFastMode,
   ])
 
   // Materialize resolved Codex model/thinking into per-subChat storage once mounted.
@@ -593,6 +678,80 @@ export const ChatInputArea = memo(function ChatInputArea({
     hasCustomClaudeConfig,
     selectedModel,
   ])
+
+  const { data: permissionResolution } = trpc.permissions.resolveForChat.useQuery(
+    { chatId: parentChatId },
+    { enabled: !!parentChatId },
+  )
+  const resolvedPermissionMode = permissionResolution?.mode ?? "ask-before-edits"
+  const [requestedPermissionMode, setRequestedPermissionMode] =
+    useState<RunPermissionMode>(resolvedPermissionMode)
+  const setChatPermissionModeMutation = trpc.permissions.setChatMode.useMutation({
+    onSuccess: (_result, variables) => {
+      trpcUtils.permissions.resolveForChat.invalidate({ chatId: variables.chatId })
+      trpcUtils.chats.list.invalidate()
+    },
+    onError: (error) => {
+      setRequestedPermissionMode(resolvedPermissionMode)
+      toast.error(`Failed to update permission mode: ${error.message}`)
+    },
+  })
+
+  useEffect(() => {
+    setRequestedPermissionMode(resolvedPermissionMode)
+  }, [parentChatId, resolvedPermissionMode])
+
+  const handlePermissionModeChange = useCallback(
+    (mode: RunPermissionMode) => {
+      setRequestedPermissionMode(mode)
+      setChatPermissionModeMutation.mutate({ chatId: parentChatId, mode })
+    },
+    [parentChatId, setChatPermissionModeMutation],
+  )
+
+  const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
+    { id: parentChatId },
+    { enabled: !!parentChatId && !sandboxId },
+  )
+  const createWorktreeMutation = trpc.chats.createWorktreeForExistingChat.useMutation({
+    onSuccess: (chat) => {
+      updateTargetWorktreePath(chat.worktreePath ?? null)
+      trpcUtils.chats.list.invalidate()
+      trpcUtils.chats.get.invalidate({ id: parentChatId })
+      trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId })
+      toast.success("Worktree created", {
+        description: chat.worktreePath ?? undefined,
+      })
+    },
+    onError: (error) => {
+      toast.error(`Failed to create worktree: ${error.message}`)
+    },
+  })
+
+  const defaultWorktreeOption = useMemo(
+    () => worktreeOptions.find((option) => option.isDefault) ?? worktreeOptions[0],
+    [worktreeOptions],
+  )
+  const selectedWorktreePath =
+    currentTargetWorktreePath ?? defaultWorktreeOption?.path ?? projectPath
+  const selectedWorktreeOption = useMemo(
+    () => worktreeOptions.find((option) => option.path === selectedWorktreePath),
+    [selectedWorktreePath, worktreeOptions],
+  )
+  const hasWorktreeChoices = worktreeOptions.length > 0
+  const selectedWorktreeLabel =
+    selectedWorktreeOption?.label ?? (selectedWorktreePath ? "Selected worktree" : "No worktree")
+  const isNonDefaultWorktree =
+    Boolean(selectedWorktreePath) &&
+    Boolean(defaultWorktreeOption?.path) &&
+    selectedWorktreePath !== defaultWorktreeOption?.path
+  const canCreateWorktree = Boolean(parentChatId) && Boolean(projectPath) && !sandboxId
+
+  useEffect(() => {
+    if (currentTargetWorktreePath) return
+    if (!defaultWorktreeOption?.path) return
+    setStoredTargetWorktreePath(defaultWorktreeOption.path)
+  }, [currentTargetWorktreePath, defaultWorktreeOption?.path, setStoredTargetWorktreePath])
   const canSwitchProvider = messageTokenData.messageCount === 0 && !isStreaming && !sandboxId
 
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
@@ -959,6 +1118,84 @@ export const ChatInputArea = memo(function ChatInputArea({
     [editorRef, onInputContentChange],
   )
 
+  // Terminal-style input history: ArrowUp recalls previously sent messages,
+  // ArrowDown walks back toward the newest and then restores the blank/stashed draft.
+  const historyIndexRef = useRef<number | null>(null)
+  const historyStashedDraftRef = useRef("")
+  const historyLastSetValueRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    historyIndexRef.current = null
+    historyStashedDraftRef.current = ""
+    historyLastSetValueRef.current = null
+  }, [subChatId])
+
+  const getSentMessageHistory = useCallback((): string[] => {
+    const messages = agentChatStore.get(subChatId)?.messages ?? []
+    const entries: string[] = []
+    for (const message of messages) {
+      if (message.role !== "user") continue
+      const text = (message.parts ?? [])
+        .filter((part: any) => part.type === "text" && typeof part.text === "string")
+        .map((part: any) => part.text)
+        .join("\n")
+        .trim()
+      if (!text) continue
+      // Collapse consecutive duplicates like shell history
+      if (entries[entries.length - 1] === text) continue
+      entries.push(text)
+    }
+    return entries
+  }, [subChatId])
+
+  const handleHistoryNavigate = useCallback(
+    (direction: "up" | "down"): boolean => {
+      const editor = editorRef.current
+      if (!editor) return false
+      const value = editor.getValue()
+      // Any manual edit since the last recall exits browsing mode
+      const isBrowsing =
+        historyIndexRef.current !== null && value === historyLastSetValueRef.current
+
+      if (direction === "up") {
+        const entries = getSentMessageHistory()
+        if (entries.length === 0) return false
+        if (isBrowsing) {
+          const nextIndex = Math.min(historyIndexRef.current!, entries.length) - 1
+          if (nextIndex < 0) return true // already at oldest; swallow like a shell
+          historyIndexRef.current = nextIndex
+          historyLastSetValueRef.current = entries[nextIndex]
+          editor.setValue(entries[nextIndex])
+          return true
+        }
+        // Only engage from an empty input so ArrowUp still moves the caret while typing
+        if (value.trim().length > 0) return false
+        historyStashedDraftRef.current = value
+        historyIndexRef.current = entries.length - 1
+        historyLastSetValueRef.current = entries[entries.length - 1]
+        editor.setValue(entries[entries.length - 1])
+        return true
+      }
+
+      if (!isBrowsing) return false
+      const entries = getSentMessageHistory()
+      const nextIndex = historyIndexRef.current! + 1
+      if (nextIndex >= entries.length) {
+        // Walked past the newest message: restore whatever was there before browsing
+        historyIndexRef.current = null
+        historyLastSetValueRef.current = null
+        editor.setValue(historyStashedDraftRef.current)
+        historyStashedDraftRef.current = ""
+        return true
+      }
+      historyIndexRef.current = nextIndex
+      historyLastSetValueRef.current = entries[nextIndex]
+      editor.setValue(entries[nextIndex])
+      return true
+    },
+    [editorRef, getSentMessageHistory],
+  )
+
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
@@ -1191,8 +1428,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Image extensions that should be handled as attachments (base64)
   const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"])
 
-  const trpcUtils = trpc.useUtils()
-
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault()
@@ -1212,6 +1447,10 @@ export const ChatInputArea = memo(function ChatInputArea({
         }
       }
 
+      if (otherFiles.length > 0) {
+        onPersistAttachments?.(otherFiles)
+      }
+
       // Handle images via existing attachment system (base64)
       if (imageFiles.length > 0) {
         onAddAttachments(imageFiles)
@@ -1219,8 +1458,6 @@ export const ChatInputArea = memo(function ChatInputArea({
 
       // Process other files - for text files, read content and add as file mention
       for (const file of otherFiles) {
-        // Get file path using Electron's webUtils API (more reliable than file.path)
-        // @ts-expect-error - Electron's webUtils API
         const filePath: string | undefined =
           window.webUtils?.getPathForFile?.(file) || (file as File & { path?: string }).path
 
@@ -1289,7 +1526,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         })
       })
     },
-    [editorRef, projectPath, onCacheFileContent, onAddAttachments, trpcUtils],
+    [editorRef, projectPath, onCacheFileContent, onAddAttachments, onPersistAttachments, trpcUtils],
   )
 
   return (
@@ -1436,6 +1673,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                   onSubmit={onSubmitWithQuestionAnswer || handleEditorSubmit}
                   onForceSubmit={onForceSend}
                   onShiftTab={toggleMode}
+                  onHistoryNavigate={handleHistoryNavigate}
                   placeholder={
                     isStreaming ? "Add to the queue" : "Plan, @ for context, / for commands"
                   }
@@ -1654,6 +1892,11 @@ export const ChatInputArea = memo(function ChatInputArea({
                         isConnected: isClaudeConnected,
                         thinkingEnabled,
                         onThinkingChange: setThinkingEnabled,
+                        selectedEffort: selectedClaudeEffort,
+                        onSelectEffort: (effort) => {
+                          setSelectedSubChatClaudeEffort(effort)
+                          setLastSelectedClaudeEffort(effort)
+                        },
                       }}
                       codex={{
                         models: codexUiModels,
@@ -1671,6 +1914,10 @@ export const ChatInputArea = memo(function ChatInputArea({
 
                           setSelectedSubChatCodexModelId(model.id)
                           setSelectedSubChatCodexThinking(nextThinking)
+                          if (!model.supportsFastMode) {
+                            setSelectedSubChatCodexFastMode(false)
+                            setLastSelectedCodexFastMode(false)
+                          }
                           setLastSelectedCodexModelId(model.id)
                           setLastSelectedCodexThinking(nextThinking)
                         },
@@ -1679,10 +1926,148 @@ export const ChatInputArea = memo(function ChatInputArea({
                           setSelectedSubChatCodexThinking(thinking)
                           setLastSelectedCodexThinking(thinking)
                         },
+                        fastModeEnabled: codexFastModeEnabled,
+                        onFastModeChange: (enabled) => {
+                          const nextEnabled = selectedCodexModel.supportsFastMode ? enabled : false
+                          setSelectedSubChatCodexFastMode(nextEnabled)
+                          setLastSelectedCodexFastMode(nextEnabled)
+                        },
                         isConnected: codexOnboardingCompleted,
                       }}
                     />
                   </div>
+
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="hidden sm:flex max-w-[170px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
+                        <span className="truncate">
+                          {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]}
+                        </span>
+                        <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="start"
+                      sideOffset={6}
+                      className="!min-w-[220px]"
+                      onCloseAutoFocus={(e) => e.preventDefault()}
+                    >
+                      {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
+                        <DropdownMenuItem
+                          key={mode}
+                          onClick={() => handlePermissionModeChange(mode)}
+                          className="justify-between gap-2"
+                        >
+                          <span>{RUN_PERMISSION_MODE_LABELS[mode]}</span>
+                          {requestedPermissionMode === mode && (
+                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                      {requestedPermissionMode === "custom" && (
+                        <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
+                          Custom toggles are stored as a Stage 1 scaffold; this run will use the
+                          backend resolved mode below.
+                        </div>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  {requestedPermissionMode === "custom" && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button className="hidden md:flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50">
+                          Custom
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        sideOffset={6}
+                        className="w-64 text-xs"
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <div className="space-y-2">
+                          <div className="font-medium text-foreground">Best-effort custom mode</div>
+                          <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
+                            {["file write", "shell", "network", "git", "browser", "MCP tools"].map(
+                              (label) => (
+                                <div key={label} className="rounded border bg-muted/20 px-2 py-1">
+                                  {label}
+                                </div>
+                              ),
+                            )}
+                          </div>
+                          <p className="text-muted-foreground">
+                            Harness adapters may not enforce every toggle yet.
+                          </p>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+
+                  {hasWorktreeChoices && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="hidden md:flex max-w-[180px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
+                          <span className="truncate">
+                            {isNonDefaultWorktree ? "Worktree: " : ""}
+                            {selectedWorktreeLabel}
+                          </span>
+                          <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className="!min-w-[260px] max-w-[420px]"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                      >
+                        {worktreeOptions.map((option) => (
+                          <DropdownMenuItem
+                            key={option.path}
+                            onClick={() => updateTargetWorktreePath(option.path)}
+                            className="items-start justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate">
+                                {option.label}
+                                {option.isDefault ? " (default)" : ""}
+                              </div>
+                              <div className="truncate text-[11px] text-muted-foreground">
+                                {option.path}
+                              </div>
+                            </div>
+                            {selectedWorktreePath === option.path && (
+                              <CheckIcon className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            )}
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={!canCreateWorktree || createWorktreeMutation.isPending}
+                          onClick={() => createWorktreeMutation.mutate({ id: parentChatId })}
+                          className="items-start gap-3"
+                        >
+                          <RefreshCw
+                            className={cn(
+                              "h-3.5 w-3.5 mt-0.5 shrink-0",
+                              createWorktreeMutation.isPending && "animate-spin",
+                            )}
+                          />
+                          <div className="min-w-0">
+                            <div>
+                              {createWorktreeMutation.isPending
+                                ? "Creating worktree..."
+                                : "Create new worktree"}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              Creates the git worktree, branch, and runs setup commands.
+                            </div>
+                          </div>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">

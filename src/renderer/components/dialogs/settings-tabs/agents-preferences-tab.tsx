@@ -15,6 +15,11 @@ import {
   type CtrlTabTarget,
 } from "../../../lib/atoms"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
+import type { RunPermissionMode } from "../../../../shared/harness-types"
+import {
+  RUN_PERMISSION_MODE_LABELS,
+  RUN_PERMISSION_MODE_OPTIONS,
+} from "../../../features/agents/constants"
 
 // Editor icon imports
 import cursorIcon from "../../../assets/app-icons/cursor.svg"
@@ -150,6 +155,14 @@ export function AgentsPreferencesTab() {
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
 
+  const { data: globalPermissionDefault, refetch: refetchGlobalPermissionDefault } =
+    trpc.permissions.getGlobalDefault.useQuery()
+  const setGlobalPermissionDefaultMutation = trpc.permissions.setGlobalDefault.useMutation({
+    onSuccess: () => {
+      refetchGlobalPermissionDefault()
+    },
+  })
+
   // Co-authored-by setting from Claude settings.json
   const { data: includeCoAuthoredBy, refetch: refetchCoAuthoredBy } =
     trpc.claudeSettings.getIncludeCoAuthoredBy.useQuery()
@@ -161,6 +174,10 @@ export function AgentsPreferencesTab() {
 
   const handleCoAuthoredByToggle = (enabled: boolean) => {
     setCoAuthoredByMutation.mutate({ enabled })
+  }
+
+  const handleGlobalPermissionDefaultChange = (mode: RunPermissionMode) => {
+    setGlobalPermissionDefaultMutation.mutate({ mode })
   }
 
   // Sync opt-out status to main process
@@ -218,13 +235,39 @@ export function AgentsPreferencesTab() {
         </div>
         <div className="flex items-center justify-between p-4 border-t border-border">
           <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Default Permission</span>
+            <span className="text-xs text-muted-foreground">
+              Permission mode copied into new chats when no project or task default overrides it
+            </span>
+          </div>
+          <Select
+            value={globalPermissionDefault?.mode ?? "ask-before-edits"}
+            onValueChange={(value: RunPermissionMode) => handleGlobalPermissionDefaultChange(value)}
+            disabled={setGlobalPermissionDefaultMutation.isPending}
+          >
+            <SelectTrigger className="w-auto px-2">
+              <span className="text-xs">
+                {RUN_PERMISSION_MODE_LABELS[globalPermissionDefault?.mode ?? "ask-before-edits"]}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {RUN_PERMISSION_MODE_LABELS[mode]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between p-4 border-t border-border">
+          <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Include Co-Authored-By</span>
             <span className="text-xs text-muted-foreground">
               Add "Co-authored-by: Claude" to git commits made by Claude
             </span>
           </div>
           <Switch
-            checked={includeCoAuthoredBy ?? true}
+            checked={includeCoAuthoredBy ?? false}
             onCheckedChange={handleCoAuthoredByToggle}
             disabled={setCoAuthoredByMutation.isPending}
           />
@@ -283,12 +326,10 @@ export function AgentsPreferencesTab() {
             onValueChange={(value: CtrlTabTarget) => setCtrlTabTarget(value)}
           >
             <SelectTrigger className="w-auto px-2">
-              <span className="text-xs">
-                {ctrlTabTarget === "workspaces" ? "Workspaces" : "Agents"}
-              </span>
+              <span className="text-xs">{ctrlTabTarget === "workspaces" ? "Chats" : "Agents"}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="workspaces">Workspaces</SelectItem>
+              <SelectItem value="workspaces">Chats</SelectItem>
               <SelectItem value="agents">Agents</SelectItem>
             </SelectContent>
           </Select>
@@ -297,7 +338,7 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Auto-advance</span>
             <span className="text-xs text-muted-foreground">
-              Where to go after archiving a workspace
+              Where to go after archiving a chat
             </span>
           </div>
           <Select
@@ -307,16 +348,16 @@ export function AgentsPreferencesTab() {
             <SelectTrigger className="w-auto px-2">
               <span className="text-xs">
                 {autoAdvanceTarget === "next"
-                  ? "Go to next workspace"
+                  ? "Go to next chat"
                   : autoAdvanceTarget === "previous"
-                    ? "Go to previous workspace"
-                    : "Close workspace"}
+                    ? "Go to previous chat"
+                    : "Close chat"}
               </span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="next">Go to next workspace</SelectItem>
-              <SelectItem value="previous">Go to previous workspace</SelectItem>
-              <SelectItem value="close">Close workspace</SelectItem>
+              <SelectItem value="next">Go to next chat</SelectItem>
+              <SelectItem value="previous">Go to previous chat</SelectItem>
+              <SelectItem value="close">Close chat</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -324,7 +365,7 @@ export function AgentsPreferencesTab() {
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Preferred Editor</span>
             <span className="text-xs text-muted-foreground">
-              Default app for opening workspaces
+              Default app for opening project folders
             </span>
           </div>
           <DropdownMenu>

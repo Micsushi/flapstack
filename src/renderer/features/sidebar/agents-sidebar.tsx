@@ -2,7 +2,7 @@
 
 import React from "react"
 import { useState, useRef, useMemo, useEffect, useCallback, memo, forwardRef } from "react"
-import { createPortal } from "react-dom"
+import { createPortal, flushSync } from "react-dom"
 import { motion, AnimatePresence } from "motion/react"
 import { Button as ButtonCustom } from "../../components/ui/button"
 import { cn } from "../../lib/utils"
@@ -26,7 +26,6 @@ import {
   selectedTeamIdAtom,
   type ChatSourceMode,
   showWorkspaceIconAtom,
-  betaKanbanEnabledAtom,
 } from "../../lib/atoms"
 import {
   useRemoteChats,
@@ -39,7 +38,22 @@ import {
 } from "../../lib/hooks/use-remote-chats"
 import { usePrefetchLocalChat } from "../../lib/hooks/use-prefetch-local-chat"
 import { ArchivePopover } from "../agents/ui/archive-popover"
-import { ChevronDown, MoreHorizontal, Columns3 } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronRight,
+  MoreHorizontal,
+  Pin,
+  MessageSquarePlus,
+  ListPlus,
+  FolderGit2,
+  FolderPlus,
+  FolderOpen,
+  GitBranch,
+  MessageSquare,
+  ClipboardList,
+  Star,
+  Plus,
+} from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
 const useCombinedAuth = () => ({ userId: null })
@@ -49,6 +63,7 @@ const AuthDialog = () => null
 // import { DiscordIcon } from "@/components/icons"
 import { DiscordIcon } from "../../icons"
 import { AgentsRenameSubChatDialog } from "../agents/components/agents-rename-subchat-dialog"
+import { RenameDialog } from "../../components/rename-dialog"
 import { OpenLocallyDialog } from "../agents/components/open-locally-dialog"
 import { useAutoImport } from "../agents/hooks/use-auto-import"
 import { ConfirmArchiveDialog } from "../../components/confirm-archive-dialog"
@@ -86,11 +101,11 @@ import {
   GitHubLogo,
   LoadingDot,
   ArchiveIcon,
+  UnarchiveIcon,
   TrashIcon,
   QuestionCircleIcon,
   QuestionIcon,
   KeyboardIcon,
-  TicketIcon,
   CloudIcon,
 } from "../../components/ui/icons"
 import { Logo } from "../../components/ui/logo"
@@ -127,9 +142,10 @@ import { Checkbox } from "../../components/ui/checkbox"
 import { useHaptic } from "./hooks/use-haptic"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
-
-// Feedback URL: uses env variable for hosted version, falls back to public Discord for open source
-const FEEDBACK_URL = import.meta.env.VITE_FEEDBACK_URL || "https://discord.gg/8ektTZGnj4"
+import { ScopedSearchPanel } from "../search/scoped-search-panel"
+import { getModelChipMeta } from "../agents/constants"
+import { formatModelDisplayName } from "../../../shared/model-catalog"
+import { moveIdInOrder, type DragInsertPosition } from "./sidebar-ordering"
 
 // GitHub avatar with loading placeholder
 const GitHubAvatar = React.memo(function GitHubAvatar({
@@ -168,6 +184,376 @@ const GitHubAvatar = React.memo(function GitHubAvatar({
   )
 })
 
+const SidebarChip = React.memo(function SidebarChip({
+  className,
+  title,
+  children,
+}: {
+  className?: string
+  title?: string
+  children: React.ReactNode
+}) {
+  // Ellipsis must live on an inner block element: text-overflow does not
+  // render on the flex container itself, so `truncate` here would hard-clip.
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex min-w-0 max-w-full items-center rounded border px-1.5 py-0 text-[10px] font-medium leading-4",
+        className,
+      )}
+    >
+      <span className="truncate">{children}</span>
+    </span>
+  )
+})
+
+const PROJECT_COLOR_PRESETS = [
+  "#38bdf8",
+  "#22c55e",
+  "#f59e0b",
+  "#f97316",
+  "#ef4444",
+  "#ec4899",
+  "#14b8a6",
+  "#84cc16",
+  "#eab308",
+  "#06b6d4",
+  "#64748b",
+]
+
+const DEFAULT_PROJECT_COLOR = PROJECT_COLOR_PRESETS[0]
+const GLOBAL_SECTION_COLOR = "#64748b"
+const ACTIVE_CHAT_BORDER_COLOR = "#a78bfa"
+const SCOPED_SECTION_BACKGROUND_OPACITY = 0.25
+const TASK_SECTION_BACKGROUND_OPACITY = 0.34
+const SCOPED_CHAT_BACKGROUND_OPACITY = 0.09
+const SCOPED_CHAT_BACKGROUND_HOVER_OPACITY = 0.14
+const LEGACY_GENERATED_WORKTREE_CHIP_CUTOFF = new Date("2026-07-07T17:35:00.000Z")
+const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
+
+function clampColorChannel(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)))
+}
+
+function normalizeHexColor(color?: string | null) {
+  if (!color) return DEFAULT_PROJECT_COLOR
+  const trimmed = color.trim()
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    return `#${trimmed
+      .slice(1)
+      .split("")
+      .map((char) => `${char}${char}`)
+      .join("")}`
+  }
+  return DEFAULT_PROJECT_COLOR
+}
+
+function hexToRgb(color?: string | null) {
+  const hex = normalizeHexColor(color).slice(1)
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  }
+}
+
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }) {
+  return `#${[r, g, b]
+    .map((channel) => clampColorChannel(channel).toString(16).padStart(2, "0"))
+    .join("")}`
+}
+
+function mixHexColor(color: string, target: "#000000" | "#ffffff", amount: number) {
+  const source = hexToRgb(color)
+  const destination = hexToRgb(target)
+  return rgbToHex({
+    r: source.r + (destination.r - source.r) * amount,
+    g: source.g + (destination.g - source.g) * amount,
+    b: source.b + (destination.b - source.b) * amount,
+  })
+}
+
+function rgbaFromHex(color: string, alpha: number) {
+  const { r, g, b } = hexToRgb(color)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number) {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const huePrime = hue / 60
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1))
+  const match = lightness - chroma / 2
+  let r = 0
+  let g = 0
+  let b = 0
+
+  if (huePrime < 1) {
+    r = chroma
+    g = x
+  } else if (huePrime < 2) {
+    r = x
+    g = chroma
+  } else if (huePrime < 3) {
+    g = chroma
+    b = x
+  } else if (huePrime < 4) {
+    g = x
+    b = chroma
+  } else if (huePrime < 5) {
+    r = x
+    b = chroma
+  } else {
+    r = chroma
+    b = x
+  }
+
+  return rgbToHex({
+    r: (r + match) * 255,
+    g: (g + match) * 255,
+    b: (b + match) * 255,
+  })
+}
+
+function getProjectTint(baseColor?: string | null) {
+  const base = mixHexColor(normalizeHexColor(baseColor), "#000000", 0.38)
+  const chat = mixHexColor(base, "#ffffff", 0.3)
+  const task = mixHexColor(base, "#000000", 0.34)
+  const taskChat = mixHexColor(base, "#ffffff", 0.18)
+  return { base, task, chat, taskChat }
+}
+
+function getNextAvailableProjectColor(usedColors: Set<string>, colorIndex: number) {
+  const preset = PROJECT_COLOR_PRESETS.find((color) => !usedColors.has(color))
+  if (preset) return preset
+
+  for (let offset = 0; offset < 360; offset += 1) {
+    const hue = (colorIndex * 137.508 + offset * 31) % 360
+    const generated = hslToHex(hue, 0.72, 0.55)
+    if (!usedColors.has(generated)) return generated
+  }
+
+  return DEFAULT_PROJECT_COLOR
+}
+
+function getElementInsertPosition(element: HTMLElement, clientY: number): DragInsertPosition {
+  const rect = element.getBoundingClientRect()
+  return clientY > rect.top + rect.height / 2 ? "after" : "before"
+}
+
+function getDragInsertPosition(event: React.DragEvent<HTMLElement>): DragInsertPosition {
+  return getElementInsertPosition(event.currentTarget, event.clientY)
+}
+
+function findSidebarPointerDropTarget(clientX: number, clientY: number) {
+  const target = document.elementFromPoint(clientX, clientY)
+  if (!(target instanceof HTMLElement)) return null
+
+  const dropElement = target.closest<HTMLElement>(
+    "[data-sidebar-drag-target-kind][data-sidebar-drag-target-id]",
+  )
+  if (!dropElement) return null
+
+  const kind = dropElement.dataset.sidebarDragTargetKind
+  const id = dropElement.dataset.sidebarDragTargetId
+  if (!kind || !id) return null
+
+  return {
+    kind,
+    id,
+    position: getElementInsertPosition(dropElement, clientY),
+  }
+}
+
+function useSidebarPointerDragSource({
+  disabled,
+  kind,
+  id,
+  blockSelector,
+  onDragStartItem,
+  onDragOverItem,
+  onDropItem,
+  onDragEndItem,
+  onDragStarted,
+  onDragFinished,
+}: {
+  disabled: boolean
+  kind: string
+  id: string
+  blockSelector: string
+  onDragStartItem: (kind: string, id: string) => void
+  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragEndItem: () => void
+  onDragStarted?: () => void
+  onDragFinished?: () => void
+}) {
+  return useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (disabled || event.button !== 0) return
+      if (event.target instanceof HTMLElement && event.target.closest(blockSelector)) return
+
+      const sourceElement = event.currentTarget
+      const startX = event.clientX
+      const startY = event.clientY
+      let dragStarted = false
+      document.body.dataset.sidebarPointerDragging = "true"
+
+      const cleanup = () => {
+        document.removeEventListener("pointermove", handlePointerMove, true)
+        document.removeEventListener("pointerup", handlePointerUp, true)
+        document.removeEventListener("pointercancel", handlePointerCancel, true)
+        sourceElement.removeAttribute("data-pointer-drag-source")
+        delete document.body.dataset.sidebarPointerDragging
+        document.body.style.cursor = ""
+      }
+
+      const startDrag = (pointerEvent: PointerEvent) => {
+        dragStarted = true
+        onDragStarted?.()
+        sourceElement.setAttribute("data-pointer-drag-source", "true")
+        document.body.style.cursor = "grabbing"
+        onDragStartItem(kind, id)
+
+        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        if (target) onDragOverItem(target.kind, target.id, target.position)
+      }
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        const movedX = pointerEvent.clientX - startX
+        const movedY = pointerEvent.clientY - startY
+        if (!dragStarted) {
+          if (Math.hypot(movedX, movedY) < SIDEBAR_POINTER_DRAG_THRESHOLD) return
+          startDrag(pointerEvent)
+        }
+
+        pointerEvent.preventDefault()
+        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        if (target) onDragOverItem(target.kind, target.id, target.position)
+      }
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        cleanup()
+        if (!dragStarted) return
+
+        pointerEvent.preventDefault()
+        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        if (target) {
+          onDropItem(target.kind, target.id, target.position)
+        } else {
+          onDragEndItem()
+        }
+        onDragFinished?.()
+      }
+
+      const handlePointerCancel = () => {
+        cleanup()
+        if (dragStarted) {
+          onDragEndItem()
+          onDragFinished?.()
+        }
+      }
+
+      document.addEventListener("pointermove", handlePointerMove, true)
+      document.addEventListener("pointerup", handlePointerUp, true)
+      document.addEventListener("pointercancel", handlePointerCancel, true)
+    },
+    [
+      blockSelector,
+      disabled,
+      id,
+      kind,
+      onDragEndItem,
+      onDragOverItem,
+      onDragStartItem,
+      onDragFinished,
+      onDragStarted,
+      onDropItem,
+    ],
+  )
+}
+
+function normalizeWorktreePath(path?: string | null) {
+  return path?.trim().replace(/[\\/]+$/, "") ?? null
+}
+
+function getWorktreeDisplayName(path?: string | null) {
+  const normalized = normalizeWorktreePath(path)
+  return normalized?.split(/[\\/]/).filter(Boolean).at(-1) ?? null
+}
+
+function sanitizeProjectNameForWorktreePath(name?: string | null) {
+  const sanitized =
+    name
+      ?.toLowerCase()
+      .replace(/[\s_]+/g, "-")
+      .replace(/[^a-z0-9\-.]/g, "")
+      .replace(/-{2,}/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 50) ?? ""
+
+  return sanitized || "project"
+}
+
+function isGeneratedProjectWorktreePath({
+  scope,
+  taskId,
+  worktreePath,
+  branch,
+  baseBranch,
+  projectName,
+  createdAt,
+}: {
+  scope?: "global" | "project" | "task" | null
+  taskId?: string | null
+  worktreePath?: string | null
+  branch?: string | null
+  baseBranch?: string | null
+  projectName?: string | null
+  createdAt?: Date | null
+}) {
+  const normalizedWorktreePath = normalizeWorktreePath(worktreePath)
+  if (scope !== "project" || taskId || !normalizedWorktreePath || !branch || !baseBranch) {
+    return false
+  }
+  if (!createdAt || createdAt.getTime() >= LEGACY_GENERATED_WORKTREE_CHIP_CUTOFF.getTime()) {
+    return false
+  }
+
+  const projectSlug = sanitizeProjectNameForWorktreePath(projectName)
+  return normalizedWorktreePath.includes(`/.flapstack/worktrees/${projectSlug}/`)
+}
+
+function DropSeparator({
+  className,
+  onDragEnter,
+  onDragOver,
+  onDrop,
+}: {
+  className?: string
+  onDragEnter?: (event: React.DragEvent<HTMLDivElement>) => void
+  onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void
+  onDrop?: (event: React.DragEvent<HTMLDivElement>) => void
+}) {
+  return (
+    <div
+      className={cn("pointer-events-none relative z-10 h-0", className)}
+      aria-hidden="true"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <motion.div
+        initial={{ opacity: 0, scaleX: 0.2 }}
+        animate={{ opacity: 1, scaleX: 1 }}
+        transition={{ type: "spring", stiffness: 560, damping: 34, mass: 0.55 }}
+        className="absolute left-0 right-0 top-0 h-0.5 origin-left -translate-y-1/2 rounded-full bg-primary shadow-[0_0_0_1px_hsl(var(--background)),0_0_10px_hsl(var(--primary)/0.45)]"
+      />
+    </div>
+  )
+}
+
 // Component to render chat icon with loading status
 const ChatIcon = React.memo(function ChatIcon({
   isSelected,
@@ -178,8 +564,6 @@ const ChatIcon = React.memo(function ChatIcon({
   isMultiSelectMode = false,
   isChecked = false,
   onCheckboxClick,
-  gitOwner,
-  gitProvider,
   showIcon = true,
 }: {
   isSelected: boolean
@@ -190,17 +574,11 @@ const ChatIcon = React.memo(function ChatIcon({
   isMultiSelectMode?: boolean
   isChecked?: boolean
   onCheckboxClick?: (e: React.MouseEvent) => void
-  gitOwner?: string | null
-  gitProvider?: string | null
   showIcon?: boolean
 }) {
-  // Show GitHub avatar if available, otherwise blank project icon
   const renderMainIcon = () => {
-    if (gitOwner && gitProvider === "github") {
-      return <GitHubAvatar gitOwner={gitOwner} />
-    }
     return (
-      <GitHubLogo
+      <MessageSquare
         className={cn(
           "h-4 w-4 flex-shrink-0 transition-colors",
           isSelected ? "text-foreground" : "text-muted-foreground",
@@ -422,9 +800,12 @@ const AgentChatItem = React.memo(function AgentChatItem({
   isMobileFullscreen,
   isDesktop,
   isPinned,
+  isStarred,
+  harness,
+  model,
+  hasCustomWorktree,
+  worktreeLabel,
   displayText,
-  gitOwner,
-  gitProvider,
   stats,
   selectedChatIdsSize,
   canShowPinOption,
@@ -439,6 +820,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onMouseLeave,
   onArchive,
   onTogglePin,
+  onToggleStar,
   onRenameClick,
   onCopyBranch,
   onArchiveAllBelow,
@@ -452,6 +834,16 @@ const AgentChatItem = React.memo(function AgentChatItem({
   nameRefCallback,
   formatTime,
   isJustCreated,
+  dragKind,
+  dragItemId,
+  tintColor,
+  isDragging,
+  isDragOver,
+  dragOverPosition,
+  onDragStartItem,
+  onDragOverItem,
+  onDropItem,
+  onDragEndItem,
 }: {
   chatId: string
   chatName: string | null
@@ -470,9 +862,12 @@ const AgentChatItem = React.memo(function AgentChatItem({
   isMobileFullscreen: boolean
   isDesktop: boolean
   isPinned: boolean
+  isStarred: boolean
+  harness?: string | null
+  model?: string | null
+  hasCustomWorktree: boolean
+  worktreeLabel?: string | null
   displayText: string
-  gitOwner: string | null | undefined
-  gitProvider: string | null | undefined
   stats: { fileCount: number; additions: number; deletions: number } | undefined
   selectedChatIdsSize: number
   canShowPinOption: boolean
@@ -492,6 +887,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onMouseLeave: () => void
   onArchive: (chatId: string) => void
   onTogglePin: (chatId: string) => void
+  onToggleStar: (chatId: string) => void
   onRenameClick: (chat: { id: string; name: string | null; isRemote?: boolean }) => void
   onCopyBranch: (branch: string) => void
   onArchiveAllBelow: (chatId: string) => void
@@ -505,9 +901,78 @@ const AgentChatItem = React.memo(function AgentChatItem({
   nameRefCallback: (chatId: string, el: HTMLSpanElement | null) => void
   formatTime: (dateStr: string) => string
   isJustCreated: boolean
+  dragKind:
+    | "global-chat"
+    | "project-chat"
+    | "project-child"
+    | "task-chat"
+    | "remote-chat"
+    | "pinned-chat"
+    | "starred-chat"
+  dragItemId?: string
+  tintColor?: string | null
+  isDragging: boolean
+  isDragOver: boolean
+  dragOverPosition?: DragInsertPosition | null
+  onDragStartItem: (kind: string, id: string) => void
+  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragEndItem: () => void
 }) {
   // Resolved hotkey for context menu
   const archiveWorkspaceHotkey = useResolvedHotkeyDisplay("archive-workspace")
+  const modelLabel = model?.trim()
+  const harnessChip = getModelChipMeta(modelLabel, harness)
+  const identityChipLabel =
+    formatModelDisplayName(modelLabel) || (harness ? harnessChip.name : null)
+  const effectiveDragItemId = dragItemId ?? chatId
+  const suppressClickRef = useRef(false)
+  const handlePointerDragStart = useSidebarPointerDragSource({
+    disabled: isMultiSelectMode,
+    kind: dragKind,
+    id: effectiveDragItemId,
+    blockSelector: "button,a,input,textarea,select,[role='menuitem']",
+    onDragStartItem,
+    onDragOverItem,
+    onDropItem,
+    onDragEndItem,
+    onDragStarted: () => {
+      suppressClickRef.current = true
+    },
+    onDragFinished: () => {
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
+    },
+  })
+  const normalizedTint = tintColor ? normalizeHexColor(tintColor) : null
+  const tintStyle: React.CSSProperties | undefined = normalizedTint
+    ? ({
+        "--sidebar-chat-bg": rgbaFromHex(normalizedTint, SCOPED_CHAT_BACKGROUND_OPACITY),
+        "--sidebar-chat-bg-hover": rgbaFromHex(
+          normalizedTint,
+          SCOPED_CHAT_BACKGROUND_HOVER_OPACITY,
+        ),
+      } as React.CSSProperties)
+    : undefined
+  const tintMarkerStyle: React.CSSProperties | undefined = normalizedTint
+    ? {
+        backgroundColor: rgbaFromHex(normalizedTint, 0.78),
+        boxShadow: `0 0 0 1px ${rgbaFromHex(normalizedTint, 0.18)}`,
+      }
+    : undefined
+  const chatItemStyle: React.CSSProperties | undefined =
+    tintStyle || isSelected
+      ? {
+          ...tintStyle,
+          ...(isSelected
+            ? {
+                borderColor: ACTIVE_CHAT_BORDER_COLOR,
+                boxShadow: `0 0 0 1px ${rgbaFromHex(ACTIVE_CHAT_BORDER_COLOR, 0.28)}`,
+              }
+            : null),
+        }
+      : undefined
 
   return (
     <ContextMenu>
@@ -515,7 +980,15 @@ const AgentChatItem = React.memo(function AgentChatItem({
         <div
           data-chat-item
           data-chat-index={globalIndex}
+          data-sidebar-drag-source
+          data-sidebar-drag-target-kind={dragKind}
+          data-sidebar-drag-target-id={effectiveDragItemId}
+          onPointerDown={handlePointerDragStart}
           onClick={(e) => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false
+              return
+            }
             // On real mobile (touch devices), onTouchEnd handles the click
             // In desktop app with narrow window, we still use mouse clicks
             if (isMobileFullscreen && !isDesktop) return
@@ -540,28 +1013,51 @@ const AgentChatItem = React.memo(function AgentChatItem({
           }}
           onMouseLeave={onMouseLeave}
           className={cn(
-            "w-full text-left py-1.5 cursor-pointer group relative",
-            "transition-colors duration-75",
+            "w-full text-left py-1 cursor-pointer group relative",
+            "transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out",
+            "border border-transparent text-foreground",
             "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
             // In multi-select: px-3 compensates for removed container px-2, keeping text aligned
-            isMultiSelectMode ? "px-3" : "pl-2 pr-2",
+            isMultiSelectMode ? "px-3" : normalizedTint ? "pl-4 pr-1.5" : "pl-2 pr-1.5",
             !isMultiSelectMode && "rounded-md",
             isSelected
-              ? "bg-foreground/5 text-foreground"
+              ? "bg-violet-500/[0.055]"
               : isFocused
-                ? "bg-foreground/5 text-foreground"
+                ? "bg-foreground/5"
                 : // On mobile, no hover effect to prevent double-tap issue
                   isMobileFullscreen
-                  ? "text-muted-foreground"
-                  : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+                  ? ""
+                  : "hover:bg-foreground/5",
             isChecked &&
               (isMobileFullscreen ? "bg-primary/10" : "bg-primary/10 hover:bg-primary/15"),
+            dragKind === "project-chat" &&
+              "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]",
+            dragKind === "project-child" &&
+              "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]",
+            dragKind === "task-chat" &&
+              (normalizedTint
+                ? "my-0.5 bg-[var(--sidebar-chat-bg)] hover:bg-[var(--sidebar-chat-bg-hover)]"
+                : "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]"),
+            dragKind === "global-chat" &&
+              (normalizedTint
+                ? "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]"
+                : "hover:bg-slate-500/[0.035]"),
+            isDragOver && "translate-x-0.5 border-primary/35 bg-primary/[0.055] shadow-sm",
+            isDragging && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
           )}
+          style={chatItemStyle}
         >
-          <div className="flex items-start gap-2.5">
+          {normalizedTint && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-1.5 top-1.5 bottom-1.5 w-[2px] rounded-full"
+              style={tintMarkerStyle}
+            />
+          )}
+          <div className="flex items-start gap-2">
             {/* Icon container - only render if showIcon or in multi-select mode */}
             {(showIcon || isMultiSelectMode) && (
-              <div className="pt-0.5">
+              <div className="pt-[2px]">
                 <ChatIcon
                   isSelected={isSelected}
                   isLoading={isLoading}
@@ -571,21 +1067,23 @@ const AgentChatItem = React.memo(function AgentChatItem({
                   isMultiSelectMode={isMultiSelectMode}
                   isChecked={isChecked}
                   onCheckboxClick={(e) => onCheckboxClick(e, chatId)}
-                  gitOwner={gitOwner}
-                  gitProvider={gitProvider}
                   showIcon={showIcon}
                 />
               </div>
             )}
             <div className="flex-1 min-w-0 flex flex-col gap-0.5">
               <div className="flex items-center gap-1">
+                {isPinned && <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />}
+                {isStarred && (
+                  <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
+                )}
                 <span
                   ref={(el) => nameRefCallback(chatId, el)}
-                  className="truncate block text-sm leading-tight flex-1"
+                  className="truncate block text-sm leading-5 flex-1 text-white"
                 >
                   <TypewriterText
                     text={chatName || ""}
-                    placeholder="New workspace"
+                    placeholder="New chat"
                     id={chatId}
                     isJustCreated={isJustCreated}
                     showPlaceholder={true}
@@ -593,7 +1091,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 </span>
                 {/* Archive button or inline loader/status when icon is hidden */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
-                  <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center relative">
+                  <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center relative">
                     {/* Inline loader/status when icon is hidden - always visible, hides on hover */}
                     {!showIcon &&
                       (hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) && (
@@ -648,25 +1146,171 @@ const AgentChatItem = React.memo(function AgentChatItem({
                           </AnimatePresence>
                         </div>
                       )}
-                    {/* Archive button - appears on hover */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onArchive(chatId)
-                      }}
-                      tabIndex={-1}
-                      className="absolute inset-0 flex items-center justify-center text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
-                      aria-label="Archive workspace"
-                    >
-                      <ArchiveIcon className="h-3.5 w-3.5" />
-                    </button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          onClick={(e) => e.stopPropagation()}
+                          tabIndex={-1}
+                          className="absolute inset-0 flex items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:pointer-events-auto"
+                          aria-label="Chat actions"
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48" sideOffset={4}>
+                        {isRemote && (
+                          <>
+                            <DropdownMenuItem onSelect={() => onOpenLocally(chatId)}>
+                              Fork Locally
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                          </>
+                        )}
+                        <DropdownMenuItem onSelect={() => onTogglePin(chatId)} className="gap-2">
+                          <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+                          {isPinned ? "Unpin chat" : "Pin chat"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => onToggleStar(chatId)} className="gap-2">
+                          <Star className="h-3.5 w-3.5 text-muted-foreground" />
+                          {isStarred ? "Unstar chat" : "Star chat"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => onRenameClick({ id: chatId, name: chatName, isRemote })}
+                        >
+                          Rename chat
+                        </DropdownMenuItem>
+                        {chatBranch && (
+                          <DropdownMenuItem onSelect={() => onCopyBranch(chatBranch)}>
+                            Copy branch name
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>Export chat</DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent sideOffset={6} alignOffset={-4}>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                exportChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "markdown",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Download as Markdown
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                exportChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "json",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Download as JSON
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                exportChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "text",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Download as Text
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                copyChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "markdown",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Copy as Markdown
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                copyChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "json",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Copy as JSON
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                copyChat({
+                                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                                  format: "text",
+                                  isRemote,
+                                })
+                              }
+                            >
+                              Copy as Text
+                            </DropdownMenuItem>
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                        {isDesktop && (
+                          <DropdownMenuItem
+                            onSelect={async () => {
+                              const result = await window.desktopApi?.newWindow({ chatId })
+                              if (result?.blocked) {
+                                toast.info("This chat is already open in another window", {
+                                  description: "Switching to the existing window.",
+                                  duration: 3000,
+                                })
+                              }
+                            }}
+                          >
+                            Open in new window
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => onArchive(chatId)} className="gap-2">
+                          <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                          Archive chat
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => onArchiveAllBelow(chatId)}
+                          disabled={isLastInFilteredChats}
+                        >
+                          Archive all below
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => onArchiveOthers(chatId)}
+                          disabled={filteredChatsLength === 1}
+                        >
+                          Archive others
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-1 text-[11px] text-muted-foreground/60 min-w-0">
-                {/* Cloud icon for remote chats */}
+              <div className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground/60">
                 {isRemote && <CloudIcon className="h-2.5 w-2.5 flex-shrink-0" />}
-                <span className="truncate flex-1 min-w-0">{displayText}</span>
+                {(identityChipLabel || hasCustomWorktree) && (
+                  <div className="flex min-w-0 flex-wrap items-center gap-1">
+                    {identityChipLabel && (
+                      <SidebarChip className={harnessChip.className} title={modelLabel}>
+                        {identityChipLabel}
+                      </SidebarChip>
+                    )}
+                    {hasCustomWorktree && (
+                      <SidebarChip className="border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300">
+                        {worktreeLabel ?? "Worktree"}
+                      </SidebarChip>
+                    )}
+                  </div>
+                )}
+                {displayText && <span className="truncate min-w-0">{displayText}</span>}
+                <span className="flex-1 min-w-0" />
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   {stats && (stats.additions > 0 || stats.deletions > 0) && (
                     <>
@@ -691,8 +1335,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
               <>
                 <ContextMenuItem onClick={areAllSelectedPinned ? onBulkUnpin : onBulkPin}>
                   {areAllSelectedPinned
-                    ? `Unpin ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "workspace")}`
-                    : `Pin ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "workspace")}`}
+                    ? `Unpin ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "chat")}`
+                    : `Pin ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "chat")}`}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
               </>
@@ -700,7 +1344,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
             <ContextMenuItem onClick={onBulkArchive} disabled={archiveBatchPending}>
               {archiveBatchPending
                 ? "Archiving..."
-                : `Archive ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "workspace")}`}
+                : `Archive ${selectedChatIdsSize} ${pluralize(selectedChatIdsSize, "chat")}`}
             </ContextMenuItem>
           </>
         ) : (
@@ -714,12 +1358,15 @@ const AgentChatItem = React.memo(function AgentChatItem({
               </>
             )}
             <ContextMenuItem onClick={() => onTogglePin(chatId)}>
-              {isPinned ? "Unpin workspace" : "Pin workspace"}
+              {isPinned ? "Unpin chat" : "Pin chat"}
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onToggleStar(chatId)}>
+              {isStarred ? "Unstar chat" : "Star chat"}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => onRenameClick({ id: chatId, name: chatName, isRemote })}
             >
-              Rename workspace
+              Rename chat
             </ContextMenuItem>
             {chatBranch && (
               <ContextMenuItem onClick={() => onCopyBranch(chatBranch)}>
@@ -727,7 +1374,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
               </ContextMenuItem>
             )}
             <ContextMenuSub>
-              <ContextMenuSubTrigger>Export workspace</ContextMenuSubTrigger>
+              <ContextMenuSubTrigger>Export chat</ContextMenuSubTrigger>
               <ContextMenuSubContent sideOffset={6} alignOffset={-4}>
                 <ContextMenuItem
                   onClick={() =>
@@ -803,7 +1450,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 onClick={async () => {
                   const result = await window.desktopApi?.newWindow({ chatId })
                   if (result?.blocked) {
-                    toast.info("This workspace is already open in another window", {
+                    toast.info("This chat is already open in another window", {
                       description: "Switching to the existing window.",
                       duration: 3000,
                     })
@@ -815,7 +1462,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
             )}
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => onArchive(chatId)} className="justify-between">
-              Archive workspace
+              Archive chat
               {archiveWorkspaceHotkey && <Kbd>{archiveWorkspaceHotkey}</Kbd>}
             </ContextMenuItem>
             <ContextMenuItem
@@ -853,7 +1500,26 @@ function chatListSectionPropsAreEqual(
   if (prevProps.areAllSelectedPinned !== nextProps.areAllSelectedPinned) return false
   if (prevProps.archivePending !== nextProps.archivePending) return false
   if (prevProps.archiveBatchPending !== nextProps.archiveBatchPending) return false
+  if (prevProps.lifecyclePending !== nextProps.lifecyclePending) return false
   if (prevProps.title !== nextProps.title) return false
+  if (prevProps.lifecycleTarget?.type !== nextProps.lifecycleTarget?.type) return false
+  if (prevProps.lifecycleTarget?.id !== nextProps.lifecycleTarget?.id) return false
+  if (prevProps.lifecycleTarget?.isPinned !== nextProps.lifecycleTarget?.isPinned) return false
+  if (prevProps.lifecycleTarget?.isStarred !== nextProps.lifecycleTarget?.isStarred) return false
+  if (prevProps.sectionId !== nextProps.sectionId) return false
+  if (prevProps.sectionDragId !== nextProps.sectionDragId) return false
+  if (prevProps.hideHeader !== nextProps.hideHeader) return false
+  if (prevProps.parentProjectId !== nextProps.parentProjectId) return false
+  if (prevProps.isCollapsed !== nextProps.isCollapsed) return false
+  if (prevProps.isDraggingSection !== nextProps.isDraggingSection) return false
+  if (prevProps.isDragOverSection !== nextProps.isDragOverSection) return false
+  if (prevProps.draggingKind !== nextProps.draggingKind) return false
+  if (prevProps.draggingId !== nextProps.draggingId) return false
+  if (prevProps.dragOverKind !== nextProps.dragOverKind) return false
+  if (prevProps.dragOverId !== nextProps.dragOverId) return false
+  if (prevProps.dragOverPosition !== nextProps.dragOverPosition) return false
+  if (prevProps.dragOverSectionPosition !== nextProps.dragOverSectionPosition) return false
+  if (prevProps.projectColor !== nextProps.projectColor) return false
   if (prevProps.isMobileFullscreen !== nextProps.isMobileFullscreen) return false
   if (prevProps.isDesktop !== nextProps.isDesktop) return false
   if (prevProps.showIcon !== nextProps.showIcon) return false
@@ -869,10 +1535,12 @@ function chatListSectionPropsAreEqual(
   if (prevProps.workspacePendingQuestions !== nextProps.workspacePendingQuestions) return false
   if (prevProps.selectedChatIds !== nextProps.selectedChatIds) return false
   if (prevProps.pinnedChatIds !== nextProps.pinnedChatIds) return false
+  if (prevProps.starredChatIds !== nextProps.starredChatIds) return false
   if (prevProps.justCreatedIds !== nextProps.justCreatedIds) return false
 
   // Check Maps by reference
   if (prevProps.projectsMap !== nextProps.projectsMap) return false
+  if (prevProps.taskDefaultWorktrees !== nextProps.taskDefaultWorktrees) return false
   if (prevProps.workspaceFileStats !== nextProps.workspaceFileStats) return false
 
   // Callback functions are stable from useCallback in parent
@@ -883,13 +1551,39 @@ function chatListSectionPropsAreEqual(
 
 interface ChatListSectionProps {
   title: string
+  kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
+  sectionId?: string
+  sectionDragId?: string
+  hideHeader?: boolean
+  parentProjectId?: string | null
+  projectColor?: string | null
+  isCollapsed?: boolean
+  isDraggingSection?: boolean
+  isDragOverSection?: boolean
+  dragOverSectionPosition?: DragInsertPosition | null
+  draggingKind?: string | null
+  draggingId?: string | null
+  dragOverKind?: string | null
+  dragOverId?: string | null
+  dragOverPosition?: DragInsertPosition | null
+  lifecycleTarget?: {
+    type: "project" | "task"
+    id: string
+    isPinned: boolean
+    isStarred?: boolean
+  }
   chats: Array<{
     id: string
     name: string | null
     branch: string | null
     updatedAt: Date | null
     projectId: string | null
+    taskId: string | null
+    scope?: "global" | "project" | "task" | null
     isRemote: boolean
+    harness?: string | null
+    model?: string | null
+    worktreePath?: string | null
     meta?: { repository?: string; branch?: string | null } | null
     remoteStats?: { fileCount: number; additions: number; deletions: number } | null
   }>
@@ -912,8 +1606,10 @@ interface ChatListSectionProps {
       gitProvider?: string | null
       gitRepo?: string | null
       name?: string | null
+      path?: string | null
     }
   >
+  taskDefaultWorktrees: Map<string, string | null>
   workspaceFileStats: Map<string, { fileCount: number; additions: number; deletions: number }>
   filteredChats: Array<{ id: string }>
   canShowPinOption: boolean
@@ -930,6 +1626,7 @@ interface ChatListSectionProps {
   onMouseLeave: () => void
   onArchive: (chatId: string) => void
   onTogglePin: (chatId: string) => void
+  onToggleStar: (chatId: string) => void
   onRenameClick: (chat: { id: string; name: string | null; isRemote?: boolean }) => void
   onCopyBranch: (branch: string) => void
   onArchiveAllBelow: (chatId: string) => void
@@ -938,16 +1635,46 @@ interface ChatListSectionProps {
   onBulkPin: () => void
   onBulkUnpin: () => void
   onBulkArchive: () => void
+  onCreateProjectChat?: (projectId: string) => void
+  onCreateProjectTask?: (projectId: string) => void
+  onCreateTaskChat?: (taskId: string) => void
+  onChangeProjectColor?: (projectId: string, color: string) => void
+  onToggleSection?: (sectionId: string) => void
+  onDragStartItem: (kind: string, id: string) => void
+  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragEndItem: () => void
+  onToggleLifecyclePin: (type: "project" | "task", id: string, isPinned: boolean) => void
+  onToggleLifecycleStar: (type: "project" | "task", id: string) => void
+  onArchiveLifecycle: (type: "project" | "task", id: string) => void
   archivePending: boolean
   archiveBatchPending: boolean
+  lifecyclePending: boolean
   nameRefCallback: (chatId: string, el: HTMLSpanElement | null) => void
   formatTime: (dateStr: string) => string
   justCreatedIds: Set<string>
+  starredChatIds: Set<string>
 }
 
 // Memoized Chat List Section component
 const ChatListSection = React.memo(function ChatListSection({
   title,
+  kind = "global",
+  sectionId,
+  sectionDragId,
+  hideHeader = false,
+  parentProjectId,
+  projectColor,
+  isCollapsed = false,
+  isDraggingSection = false,
+  isDragOverSection = false,
+  dragOverSectionPosition,
+  draggingKind,
+  draggingId,
+  dragOverKind,
+  dragOverId,
+  dragOverPosition,
+  lifecycleTarget,
   chats,
   selectedChatId,
   selectedChatIsRemote,
@@ -963,6 +1690,7 @@ const ChatListSection = React.memo(function ChatListSection({
   pinnedChatIds,
   projectsMap,
   workspaceFileStats,
+  taskDefaultWorktrees,
   filteredChats,
   canShowPinOption,
   areAllSelectedPinned,
@@ -973,6 +1701,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onMouseLeave,
   onArchive,
   onTogglePin,
+  onToggleStar,
   onRenameClick,
   onCopyBranch,
   onArchiveAllBelow,
@@ -981,13 +1710,87 @@ const ChatListSection = React.memo(function ChatListSection({
   onBulkPin,
   onBulkUnpin,
   onBulkArchive,
+  onCreateProjectChat,
+  onCreateProjectTask,
+  onCreateTaskChat,
+  onChangeProjectColor,
+  onToggleSection,
+  onDragStartItem,
+  onDragOverItem,
+  onDropItem,
+  onDragEndItem,
+  onToggleLifecyclePin,
+  onToggleLifecycleStar,
+  onArchiveLifecycle,
   archivePending,
   archiveBatchPending,
+  lifecyclePending,
   nameRefCallback,
   formatTime,
   justCreatedIds,
+  starredChatIds,
 }: ChatListSectionProps) {
-  if (chats.length === 0) return null
+  const isGlobalSection = kind === "global"
+  const isProjectSection = kind === "project"
+  const isTaskSection = kind === "task"
+  const isTopLevelScopedSection = isGlobalSection || isProjectSection
+  const sectionDragKind =
+    lifecycleTarget?.type === "project"
+      ? "project"
+      : lifecycleTarget?.type === "task" && parentProjectId
+        ? "project-child"
+        : "task"
+  const effectiveSectionDragId = sectionDragId ?? lifecycleTarget?.id
+  const suppressSectionClickRef = useRef(false)
+  const handleSectionPointerDragStart = useSidebarPointerDragSource({
+    disabled: !lifecycleTarget || isMultiSelectMode || !effectiveSectionDragId,
+    kind: sectionDragKind,
+    id: effectiveSectionDragId ?? "",
+    blockSelector:
+      "[data-section-action],a,input,textarea,select,[role='menuitem'],[data-radix-collection-item]",
+    onDragStartItem,
+    onDragOverItem,
+    onDropItem,
+    onDragEndItem,
+    onDragStarted: () => {
+      suppressSectionClickRef.current = true
+    },
+    onDragFinished: () => {
+      window.setTimeout(() => {
+        suppressSectionClickRef.current = false
+      }, 0)
+    },
+  })
+  const chatDragKind =
+    kind === "project" && hideHeader && parentProjectId
+      ? "project-child"
+      : kind === "project"
+        ? "project-chat"
+        : kind === "task"
+          ? "task-chat"
+          : kind === "remote"
+            ? "remote-chat"
+            : kind === "pinned"
+              ? "pinned-chat"
+              : kind === "starred"
+                ? "starred-chat"
+                : "global-chat"
+  const scopedTint = getProjectTint(isGlobalSection ? GLOBAL_SECTION_COLOR : projectColor)
+  const sectionTint = isTaskSection ? scopedTint.task : scopedTint.base
+  const chatTint = isTaskSection
+    ? scopedTint.taskChat
+    : isTopLevelScopedSection
+      ? scopedTint.chat
+      : null
+  const sectionStyle: React.CSSProperties | undefined =
+    isTopLevelScopedSection || isTaskSection
+      ? {
+          backgroundColor: rgbaFromHex(
+            sectionTint,
+            isTaskSection ? TASK_SECTION_BACKGROUND_OPACITY : SCOPED_SECTION_BACKGROUND_OPACITY,
+          ),
+        }
+      : undefined
 
   // Pre-compute global indices map to avoid O(n²) findIndex in map()
   const globalIndexMap = useMemo(() => {
@@ -996,99 +1799,617 @@ const ChatListSection = React.memo(function ChatListSection({
     return map
   }, [filteredChats])
 
+  const canCollapse = Boolean(sectionId && (isTopLevelScopedSection || isTaskSection))
+  const headerIcon = isProjectSection ? (
+    <FolderGit2 className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+  ) : isGlobalSection ? (
+    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+  ) : isTaskSection ? (
+    <ClipboardList className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+  ) : kind === "remote" ? (
+    <CloudIcon className="h-3.5 w-3.5 flex-shrink-0 text-violet-400" />
+  ) : kind === "pinned" ? (
+    <Pin className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
+  ) : kind === "starred" ? (
+    <Star className="h-3.5 w-3.5 flex-shrink-0 fill-amber-400 text-amber-400" />
+  ) : (
+    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+  )
+
+  if (chats.length === 0 && !lifecycleTarget) return null
+
+  const showBeforeSectionDrop = isDragOverSection && dragOverSectionPosition === "before"
+  const showAfterSectionDrop = isDragOverSection && dragOverSectionPosition === "after"
+  const isTaskScopedDrag = draggingKind === "task-chat"
+  // During any drag, the cursor passing over a header still fires CSS :hover,
+  // which reveals the header's "+" (add chat) and "⋯" buttons. That looks like
+  // "adding a chat to this task" and is misleading mid-drag, so hide them while
+  // a drag is active.
+  const isAnyDragActive = Boolean(draggingKind)
+  const sectionDropSeparatorClass =
+    isTaskSection && isTaskScopedDrag ? (isMultiSelectMode ? "ml-6 mr-3" : "ml-6") : ""
+  const usesSectionDropSeparator = hideHeader && Boolean(sectionDragId)
+  const handleSeparatorDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "move"
+  }, [])
+  const handleSeparatorDragOver = useCallback(
+    (
+      event: React.DragEvent<HTMLDivElement>,
+      kind: string,
+      id: string,
+      position: DragInsertPosition,
+    ) => {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "move"
+      onDragOverItem(kind, id, position)
+    },
+    [onDragOverItem],
+  )
+  const handleSeparatorDrop = useCallback(
+    (
+      event: React.DragEvent<HTMLDivElement>,
+      kind: string,
+      id: string,
+      position: DragInsertPosition,
+    ) => {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "move"
+      onDropItem(kind, id, position)
+    },
+    [onDropItem],
+  )
+
+  const dropdownLifecycleMenu = lifecycleTarget ? (
+    <>
+      {lifecycleTarget.type === "project" && (
+        <>
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onCreateProjectChat?.(lifecycleTarget.id)}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New chat
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
+          >
+            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New task
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <div
+            className="px-2 py-1.5"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+              Project color
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {PROJECT_COLOR_PRESETS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className="h-5 w-5 rounded-full border border-foreground/15 transition-transform hover:scale-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                  style={{
+                    backgroundColor: color,
+                    boxShadow:
+                      normalizeHexColor(projectColor) === color
+                        ? `0 0 0 2px ${rgbaFromHex(color, 0.75)}`
+                        : undefined,
+                  }}
+                  onClick={() => onChangeProjectColor?.(lifecycleTarget.id, color)}
+                  aria-label={`Set project color ${color}`}
+                />
+              ))}
+              <label
+                className="relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-foreground/20 bg-background text-[10px] text-muted-foreground hover:text-foreground"
+                title="Custom color"
+              >
+                <input
+                  type="color"
+                  value={normalizeHexColor(projectColor)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  onChange={(event) =>
+                    onChangeProjectColor?.(lifecycleTarget.id, event.target.value)
+                  }
+                />
+                +
+              </label>
+            </div>
+          </div>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      {lifecycleTarget.type === "task" && (
+        <>
+          <DropdownMenuItem
+            className="gap-2"
+            onSelect={() => onCreateTaskChat?.(lifecycleTarget.id)}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New chat
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() =>
+          onToggleLifecyclePin(lifecycleTarget.type, lifecycleTarget.id, lifecycleTarget.isPinned)
+        }
+        disabled={lifecyclePending}
+      >
+        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+        {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
+      >
+        <Star className="h-3.5 w-3.5 text-muted-foreground" />
+        {lifecycleTarget.isStarred ? "Unstar" : "Star"}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        className="gap-2"
+        onSelect={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
+        disabled={lifecyclePending}
+      >
+        <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
+        Archive
+      </DropdownMenuItem>
+    </>
+  ) : null
+
+  const contextLifecycleMenu = lifecycleTarget ? (
+    <>
+      {lifecycleTarget.type === "project" && (
+        <>
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onCreateProjectChat?.(lifecycleTarget.id)}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New chat
+          </ContextMenuItem>
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
+          >
+            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New task
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <div
+            className="px-2 py-1.5"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+              Project color
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {PROJECT_COLOR_PRESETS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className="h-5 w-5 rounded-full border border-foreground/15 transition-transform hover:scale-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                  style={{
+                    backgroundColor: color,
+                    boxShadow:
+                      normalizeHexColor(projectColor) === color
+                        ? `0 0 0 2px ${rgbaFromHex(color, 0.75)}`
+                        : undefined,
+                  }}
+                  onClick={() => onChangeProjectColor?.(lifecycleTarget.id, color)}
+                  aria-label={`Set project color ${color}`}
+                />
+              ))}
+              <label
+                className="relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-foreground/20 bg-background text-[10px] text-muted-foreground hover:text-foreground"
+                title="Custom color"
+              >
+                <input
+                  type="color"
+                  value={normalizeHexColor(projectColor)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  onChange={(event) =>
+                    onChangeProjectColor?.(lifecycleTarget.id, event.target.value)
+                  }
+                />
+                +
+              </label>
+            </div>
+          </div>
+          <ContextMenuSeparator />
+        </>
+      )}
+      {lifecycleTarget.type === "task" && (
+        <>
+          <ContextMenuItem className="gap-2" onClick={() => onCreateTaskChat?.(lifecycleTarget.id)}>
+            <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
+            New chat
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </>
+      )}
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() =>
+          onToggleLifecyclePin(lifecycleTarget.type, lifecycleTarget.id, lifecycleTarget.isPinned)
+        }
+        disabled={lifecyclePending}
+      >
+        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+        {lifecycleTarget.isPinned ? "Unpin" : "Pin"}
+      </ContextMenuItem>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => onToggleLifecycleStar(lifecycleTarget.type, lifecycleTarget.id)}
+      >
+        <Star className="h-3.5 w-3.5 text-muted-foreground" />
+        {lifecycleTarget.isStarred ? "Unstar" : "Star"}
+      </ContextMenuItem>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => onArchiveLifecycle(lifecycleTarget.type, lifecycleTarget.id)}
+        disabled={lifecyclePending}
+      >
+        <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
+        Archive
+      </ContextMenuItem>
+    </>
+  ) : null
+
   return (
     <>
-      <div className={cn("flex items-center h-4 mb-1", isMultiSelectMode ? "pl-3" : "pl-2")}>
-        <h3 className="text-xs font-medium text-muted-foreground whitespace-nowrap">{title}</h3>
-      </div>
-      <div className="list-none p-0 m-0 mb-3">
-        {chats.map((chat) => {
-          const isLoading = loadingChatIds.has(chat.id)
-          // For remote chats, compare without prefix; for local, compare directly
-          // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
-          const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
-          const isSelected =
-            selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
-          const isPinned = pinnedChatIds.has(chat.id)
-          const globalIndex = globalIndexMap.get(chat.id) ?? -1
-          const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
+      {showBeforeSectionDrop && effectiveSectionDragId && (
+        <DropSeparator
+          className={sectionDropSeparatorClass}
+          onDragEnter={handleSeparatorDragEnter}
+          onDragOver={(event) =>
+            handleSeparatorDragOver(event, sectionDragKind, effectiveSectionDragId, "before")
+          }
+          onDrop={(event) =>
+            handleSeparatorDrop(event, sectionDragKind, effectiveSectionDragId, "before")
+          }
+        />
+      )}
+      {!hideHeader && (
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              data-sidebar-drag-source
+              data-sidebar-drag-target-kind={sectionDragKind}
+              data-sidebar-drag-target-id={effectiveSectionDragId}
+              onPointerDown={handleSectionPointerDragStart}
+              className={cn(
+                "relative flex items-center gap-1 group/section",
+                "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
+                isTopLevelScopedSection || isTaskSection
+                  ? "h-7 mt-3 mb-1 rounded-md pl-2 pr-1"
+                  : "h-5 mb-0.5",
+                isTaskSection
+                  ? isMultiSelectMode
+                    ? "ml-6 pr-3"
+                    : "ml-6"
+                  : isTopLevelScopedSection
+                    ? ""
+                    : isMultiSelectMode
+                      ? "pl-3 pr-3"
+                      : "pl-2 pr-1",
+                Boolean(lifecycleTarget) &&
+                  !isMultiSelectMode &&
+                  "cursor-grab active:cursor-grabbing",
+                isDragOverSection && "brightness-110 ring-1 ring-primary/30 shadow-sm",
+                isDraggingSection && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
+              )}
+              style={sectionStyle}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (suppressSectionClickRef.current) {
+                    suppressSectionClickRef.current = false
+                    return
+                  }
+                  if (canCollapse && sectionId) onToggleSection?.(sectionId)
+                }}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-1.5 text-left",
+                  canCollapse ? "cursor-pointer" : "cursor-default",
+                )}
+              >
+                {canCollapse ? (
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 flex-shrink-0 transition-transform",
+                      isTopLevelScopedSection || isTaskSection
+                        ? "text-white/80"
+                        : "text-muted-foreground",
+                      isCollapsed && "-rotate-90",
+                    )}
+                  />
+                ) : (
+                  headerIcon
+                )}
+                {canCollapse && headerIcon}
+                {lifecycleTarget?.isPinned && (
+                  <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />
+                )}
+                {lifecycleTarget?.isStarred && (
+                  <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
+                )}
+                <h3
+                  className={cn(
+                    "whitespace-nowrap truncate flex-1",
+                    isTopLevelScopedSection || isTaskSection
+                      ? "text-[11px] font-semibold uppercase tracking-wide text-white"
+                      : "text-xs font-medium text-muted-foreground",
+                  )}
+                >
+                  {title}
+                </h3>
+              </button>
+              {lifecycleTarget && !isMultiSelectMode && (
+                <button
+                  type="button"
+                  data-section-action
+                  onClick={(event) => {
+                    if (lifecycleTarget.type === "project") {
+                      // Ctrl/Cmd+click creates a task instead of a chat
+                      if (event.ctrlKey || event.metaKey) {
+                        onCreateProjectTask?.(lifecycleTarget.id)
+                      } else {
+                        onCreateProjectChat?.(lifecycleTarget.id)
+                      }
+                    } else {
+                      onCreateTaskChat?.(lifecycleTarget.id)
+                    }
+                  }}
+                  onContextMenu={(event) => {
+                    // macOS turns Ctrl+click into a contextmenu event instead of a click
+                    if (lifecycleTarget.type === "project" && event.ctrlKey) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onCreateProjectTask?.(lifecycleTarget.id)
+                    }
+                  }}
+                  className={cn(
+                    "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                    isTopLevelScopedSection || isTaskSection
+                      ? "text-white/75 hover:bg-white/10 hover:text-white"
+                      : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+                    isAnyDragActive && "!opacity-0 pointer-events-none",
+                    "group-data-[pointer-drag-source=true]/section:!opacity-0",
+                    "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
+                  )}
+                  aria-label={
+                    lifecycleTarget.type === "project"
+                      ? "New project chat (Ctrl/Cmd+click: new task)"
+                      : "New task chat"
+                  }
+                  title={
+                    lifecycleTarget.type === "project"
+                      ? "New chat · Ctrl/Cmd+click for new task"
+                      : undefined
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {lifecycleTarget && !isMultiSelectMode && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      data-section-action
+                      className={cn(
+                        "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                        isTopLevelScopedSection || isTaskSection
+                          ? "text-white/75 hover:bg-white/10 hover:text-white"
+                          : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+                        isAnyDragActive && "!opacity-0 pointer-events-none",
+                        "group-data-[pointer-drag-source=true]/section:!opacity-0",
+                        "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
+                      )}
+                      aria-label={`${lifecycleTarget.type} actions`}
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-52" sideOffset={4}>
+                    {dropdownLifecycleMenu}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          </ContextMenuTrigger>
+          {lifecycleTarget && (
+            <ContextMenuContent className="w-52">{contextLifecycleMenu}</ContextMenuContent>
+          )}
+        </ContextMenu>
+      )}
+      {!isCollapsed && chats.length > 0 && (
+        <div
+          className={cn(
+            "list-none p-0 m-0",
+            isTaskSection ? "mb-2 ml-9 pl-2" : isTopLevelScopedSection ? "mb-2 ml-4 pl-2" : "mb-3",
+          )}
+        >
+          {chats.map((chat) => {
+            const isLoading = loadingChatIds.has(chat.id)
+            // For remote chats, compare without prefix; for local, compare directly
+            // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
+            const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
+            const isSelected =
+              selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
+            const isPinned = pinnedChatIds.has(chat.id)
+            const globalIndex = globalIndexMap.get(chat.id) ?? -1
+            const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
 
-          // For remote chats, get repo info from meta; for local, from projectsMap
-          const project = chat.projectId ? projectsMap.get(chat.projectId) : null
-          const repoName = chat.isRemote ? chat.meta?.repository : project?.gitRepo || project?.name
-          const displayText = chat.branch
-            ? repoName
-              ? `${repoName} • ${chat.branch}`
-              : chat.branch
-            : repoName || (chat.isRemote ? "Remote project" : "Local project")
+            // For remote chats, get repo info from meta; for local, from projectsMap
+            const project = chat.projectId ? projectsMap.get(chat.projectId) : null
+            const repoName = chat.isRemote
+              ? chat.meta?.repository
+              : project?.gitRepo || project?.name
+            const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
 
-          const isChecked = selectedChatIds.has(chat.id)
-          // TODO: remote stats disabled — backend no longer computes them (was causing 50s+ loads)
-          // Will re-enable once stats are precomputed at write time
-          const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
-          const hasPendingPlan = workspacePendingPlans.has(chat.id)
-          const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
-          const isLastInFilteredChats = globalIndex === filteredChats.length - 1
-          const isJustCreated = justCreatedIds.has(chat.id)
+            const isChecked = selectedChatIds.has(chat.id)
+            // TODO: remote stats disabled — backend no longer computes them (was causing 50s+ loads)
+            // Will re-enable once stats are precomputed at write time
+            const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
+            const hasPendingPlan = workspacePendingPlans.has(chat.id)
+            const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
+            const isLastInFilteredChats = globalIndex === filteredChats.length - 1
+            const isJustCreated = justCreatedIds.has(chat.id)
+            const isStarred = starredChatIds.has(chat.id)
+            const defaultWorktreePath = chat.taskId
+              ? (taskDefaultWorktrees.get(chat.taskId) ?? project?.path ?? null)
+              : (project?.path ?? null)
+            const normalizedChatWorktreePath = normalizeWorktreePath(chat.worktreePath)
+            const normalizedDefaultWorktreePath = normalizeWorktreePath(defaultWorktreePath)
+            const isGeneratedDefaultProjectWorktree = isGeneratedProjectWorktreePath({
+              scope: chat.scope,
+              taskId: chat.taskId,
+              worktreePath: chat.worktreePath,
+              branch: chat.branch,
+              baseBranch: chat.baseBranch,
+              projectName: project?.name,
+              createdAt: chat.createdAt,
+            })
+            const hasCustomWorktree = Boolean(
+              normalizedChatWorktreePath &&
+              !isGeneratedDefaultProjectWorktree &&
+              (!normalizedDefaultWorktreePath ||
+                normalizedChatWorktreePath !== normalizedDefaultWorktreePath),
+            )
+            const worktreeLabel = hasCustomWorktree
+              ? getWorktreeDisplayName(normalizedChatWorktreePath)
+              : null
+            const itemDragId = sectionDragId ?? chat.id
+            const showBeforeChatDrop =
+              !usesSectionDropSeparator &&
+              dragOverKind === chatDragKind &&
+              dragOverId === itemDragId &&
+              dragOverPosition === "before"
+            const showAfterChatDrop =
+              !usesSectionDropSeparator &&
+              dragOverKind === chatDragKind &&
+              dragOverId === itemDragId &&
+              dragOverPosition === "after"
 
-          // For remote chats, extract gitOwner from meta.repository (e.g. "owner/repo" -> "owner")
-          const gitOwner = chat.isRemote ? chat.meta?.repository?.split("/")[0] : project?.gitOwner
-          const gitProvider = chat.isRemote ? "github" : project?.gitProvider
-
-          return (
-            <AgentChatItem
-              key={chat.id}
-              chatId={chat.id}
-              chatName={chat.name}
-              chatBranch={chat.branch}
-              chatUpdatedAt={chat.updatedAt}
-              chatProjectId={chat.projectId ?? ""}
-              globalIndex={globalIndex}
-              isSelected={isSelected}
-              isLoading={isLoading}
-              hasUnseenChanges={unseenChanges.has(chat.id)}
-              hasPendingPlan={hasPendingPlan}
-              hasPendingQuestion={hasPendingQuestion}
-              isMultiSelectMode={isMultiSelectMode}
-              isChecked={isChecked}
-              isFocused={isFocused}
-              isMobileFullscreen={isMobileFullscreen}
-              isDesktop={isDesktop}
-              isPinned={isPinned}
-              displayText={displayText}
-              gitOwner={gitOwner}
-              gitProvider={gitProvider}
-              stats={stats ?? undefined}
-              selectedChatIdsSize={selectedChatIds.size}
-              canShowPinOption={canShowPinOption}
-              areAllSelectedPinned={areAllSelectedPinned}
-              filteredChatsLength={filteredChats.length}
-              isLastInFilteredChats={isLastInFilteredChats}
-              showIcon={showIcon}
-              onChatClick={onChatClick}
-              onCheckboxClick={onCheckboxClick}
-              onMouseEnter={onMouseEnter}
-              onMouseLeave={onMouseLeave}
-              onArchive={onArchive}
-              onTogglePin={onTogglePin}
-              onRenameClick={onRenameClick}
-              onCopyBranch={onCopyBranch}
-              onArchiveAllBelow={onArchiveAllBelow}
-              onArchiveOthers={onArchiveOthers}
-              onOpenLocally={onOpenLocally}
-              onBulkPin={onBulkPin}
-              onBulkUnpin={onBulkUnpin}
-              onBulkArchive={onBulkArchive}
-              archivePending={archivePending}
-              archiveBatchPending={archiveBatchPending}
-              isRemote={chat.isRemote}
-              nameRefCallback={nameRefCallback}
-              formatTime={formatTime}
-              isJustCreated={isJustCreated}
-            />
-          )
-        })}
-      </div>
+            return (
+              <React.Fragment key={chat.id}>
+                {showBeforeChatDrop && (
+                  <DropSeparator
+                    onDragEnter={handleSeparatorDragEnter}
+                    onDragOver={(event) =>
+                      handleSeparatorDragOver(event, chatDragKind, itemDragId, "before")
+                    }
+                    onDrop={(event) =>
+                      handleSeparatorDrop(event, chatDragKind, itemDragId, "before")
+                    }
+                  />
+                )}
+                <AgentChatItem
+                  key={chat.id}
+                  chatId={chat.id}
+                  chatName={chat.name}
+                  chatBranch={chat.branch}
+                  chatUpdatedAt={chat.updatedAt}
+                  chatProjectId={chat.projectId ?? ""}
+                  globalIndex={globalIndex}
+                  isSelected={isSelected}
+                  isLoading={isLoading}
+                  hasUnseenChanges={unseenChanges.has(chat.id)}
+                  hasPendingPlan={hasPendingPlan}
+                  hasPendingQuestion={hasPendingQuestion}
+                  isMultiSelectMode={isMultiSelectMode}
+                  isChecked={isChecked}
+                  isFocused={isFocused}
+                  isMobileFullscreen={isMobileFullscreen}
+                  isDesktop={isDesktop}
+                  isPinned={isPinned}
+                  isStarred={isStarred}
+                  harness={chat.harness}
+                  model={chat.model}
+                  hasCustomWorktree={hasCustomWorktree}
+                  worktreeLabel={worktreeLabel}
+                  displayText={displayText}
+                  stats={stats ?? undefined}
+                  selectedChatIdsSize={selectedChatIds.size}
+                  canShowPinOption={canShowPinOption}
+                  areAllSelectedPinned={areAllSelectedPinned}
+                  filteredChatsLength={filteredChats.length}
+                  isLastInFilteredChats={isLastInFilteredChats}
+                  showIcon={showIcon}
+                  onChatClick={onChatClick}
+                  onCheckboxClick={onCheckboxClick}
+                  onMouseEnter={onMouseEnter}
+                  onMouseLeave={onMouseLeave}
+                  onArchive={onArchive}
+                  onTogglePin={onTogglePin}
+                  onToggleStar={onToggleStar}
+                  onRenameClick={onRenameClick}
+                  onCopyBranch={onCopyBranch}
+                  onArchiveAllBelow={onArchiveAllBelow}
+                  onArchiveOthers={onArchiveOthers}
+                  onOpenLocally={onOpenLocally}
+                  onBulkPin={onBulkPin}
+                  onBulkUnpin={onBulkUnpin}
+                  onBulkArchive={onBulkArchive}
+                  archivePending={archivePending}
+                  archiveBatchPending={archiveBatchPending}
+                  isRemote={chat.isRemote}
+                  nameRefCallback={nameRefCallback}
+                  formatTime={formatTime}
+                  isJustCreated={isJustCreated}
+                  dragKind={chatDragKind}
+                  dragItemId={hideHeader ? sectionDragId : undefined}
+                  tintColor={chatTint}
+                  isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
+                  isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
+                  dragOverPosition={
+                    dragOverKind === chatDragKind && dragOverId === itemDragId
+                      ? dragOverPosition
+                      : null
+                  }
+                  onDragStartItem={onDragStartItem}
+                  onDragOverItem={onDragOverItem}
+                  onDropItem={onDropItem}
+                  onDragEndItem={onDragEndItem}
+                />
+                {showAfterChatDrop && (
+                  <DropSeparator
+                    onDragEnter={handleSeparatorDragEnter}
+                    onDragOver={(event) =>
+                      handleSeparatorDragOver(event, chatDragKind, itemDragId, "after")
+                    }
+                    onDrop={(event) =>
+                      handleSeparatorDrop(event, chatDragKind, itemDragId, "after")
+                    }
+                  />
+                )}
+              </React.Fragment>
+            )
+          })}
+        </div>
+      )}
+      {showAfterSectionDrop && effectiveSectionDragId && (
+        <DropSeparator
+          className={sectionDropSeparatorClass}
+          onDragEnter={handleSeparatorDragEnter}
+          onDragOver={(event) =>
+            handleSeparatorDragOver(event, sectionDragKind, effectiveSectionDragId, "after")
+          }
+          onDrop={(event) =>
+            handleSeparatorDrop(event, sectionDragKind, effectiveSectionDragId, "after")
+          }
+        />
+      )}
     </>
   )
 }, chatListSectionPropsAreEqual)
@@ -1120,89 +2441,6 @@ const ArchiveButton = memo(
     },
   ),
 )
-
-// Isolated Kanban Button - clears selection to show Kanban view
-const KanbanButton = memo(function KanbanButton() {
-  const kanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
-  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
-  const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
-  const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
-  const setDesktopView = useSetAtom(desktopViewAtom)
-
-  // Resolved hotkey for tooltip (respects custom bindings)
-  const openKanbanHotkey = useResolvedHotkeyDisplay("open-kanban")
-
-  const handleClick = useCallback(() => {
-    // Clear selected chat, draft, and new form state to show Kanban view
-    setSelectedChatId(null)
-    setSelectedDraftId(null)
-    setShowNewChatForm(false)
-    setDesktopView(null) // Clear automations/inbox view
-  }, [setSelectedChatId, setSelectedDraftId, setShowNewChatForm, setDesktopView])
-
-  // Hide button if feature is disabled
-  if (!kanbanEnabled) return null
-
-  return (
-    <Tooltip delayDuration={500}>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={handleClick}
-          className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-        >
-          <Columns3 className="h-4 w-4" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>
-        Kanban View
-        {openKanbanHotkey && <Kbd>{openKanbanHotkey}</Kbd>}
-      </TooltipContent>
-    </Tooltip>
-  )
-})
-
-// Custom SVG icons matching web's icons.tsx
-function SidebarInboxIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M3 12H7.5C8.12951 12 8.72229 12.2964 9.1 12.8L9.4 13.2C9.77771 13.7036 10.3705 14 11 14H13C13.6295 14 14.2223 13.7036 14.6 13.2L14.9 12.8C15.2777 12.2964 15.8705 12 16.5 12H21M21.7365 11.5389L18.5758 6.00772C18.2198 5.38457 17.5571 5 16.8394 5H7.16065C6.44293 5 5.78024 5.38457 5.42416 6.00772L2.26351 11.5389C2.09083 11.841 2 12.1831 2 12.5311V17C2 18.1046 2.89543 19 4 19H20C21.1046 19 22 18.1046 22 17V12.5311C22 12.1831 21.9092 11.841 21.7365 11.5389Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-function SidebarAutomationsIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" {...props}>
-      <path
-        d="M9.50006 5.39844C7.09268 6.1897 5.1897 8.09268 4.39844 10.5001M19.8597 14.5001C19.9518 14.0142 20.0001 13.5128 20.0001 13.0001C20.0001 10.9895 19.2584 9.1522 18.0337 7.74679M6.70841 19.0001C8.11868 20.2448 9.97117 21.0001 12.0001 21.0001C12.5127 21.0001 13.0141 20.9518 13.5 20.8597"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="5" r="2.5" stroke="currentColor" strokeWidth="2" />
-      <circle cx="20" cy="17" r="2.5" stroke="currentColor" strokeWidth="2" />
-      <circle cx="4" cy="17" r="2.5" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  )
-}
-
-// Isolated Inbox Button - full-width navigation link matching web layout
-const InboxButton = memo(function InboxButton() {
-  return null
-})
-
-// Isolated Automations Button - full-width navigation link matching web layout
-const AutomationsButton = memo(function AutomationsButton() {
-  return null
-})
 
 // Isolated Archive Section - subscribes to archivePopoverOpenAtom internally
 // to prevent sidebar re-renders when popover opens/closes
@@ -1621,6 +2859,8 @@ export function AgentsSidebar({
   const isSidebarHoveredRef = useRef(false)
   const closeButtonRef = useRef<HTMLDivElement>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [isSearchFocused, setIsSearchFocused] = useState(false)
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false)
   const [focusedChatIndex, setFocusedChatIndex] = useState<number>(-1) // -1 means no focus
   const hoveredChatIndexRef = useRef<number>(-1) // Track hovered chat for X hotkey - ref to avoid re-renders
 
@@ -1664,6 +2904,10 @@ export function AgentsSidebar({
     isRemote?: boolean
   } | null>(null)
   const [renameLoading, setRenameLoading] = useState(false)
+  const [newTaskProject, setNewTaskProject] = useState<{
+    id: string
+    name: string
+  } | null>(null)
 
   // Confirm archive dialog state
   const [confirmArchiveDialogOpen, setConfirmArchiveDialogOpen] = useState(false)
@@ -1679,8 +2923,51 @@ export function AgentsSidebar({
   // Track initial mount to skip footer animation on load
   const hasFooterAnimated = useRef(false)
 
-  // Pinned chats (stored in localStorage per project)
-  const [pinnedChatIds, setPinnedChatIds] = useState<Set<string>>(new Set())
+  // Remote pinned chats stay local because sandbox chats are not backed by the local DB.
+  const [remotePinnedChatIds, setRemotePinnedChatIds] = useState<Set<string>>(new Set())
+  const [starredChatIds, setStarredChatIds] = useState<Set<string>>(new Set())
+  const [starredProjectIds, setStarredProjectIds] = useState<Set<string>>(new Set())
+  const [starredTaskIds, setStarredTaskIds] = useState<Set<string>>(new Set())
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set())
+  const [manualOrderByKey, setManualOrderByKey] = useState<Record<string, string[]>>({})
+  const [projectColorsById, setProjectColorsById] = useState<Record<string, string>>(() => {
+    try {
+      const storedProjectColors = localStorage.getItem("flapstack-sidebar-project-colors")
+      return storedProjectColors ? JSON.parse(storedProjectColors) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [manualProjectColorIds, setManualProjectColorIds] = useState<Set<string>>(() => {
+    try {
+      const storedManualProjectColorIds = localStorage.getItem(
+        "flapstack-sidebar-manual-project-colors",
+      )
+      return storedManualProjectColorIds
+        ? new Set<string>(JSON.parse(storedManualProjectColorIds) as string[])
+        : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+  const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useState(false)
+  const [draggingItem, setDraggingItem] = useState<{ kind: string; id: string } | null>(null)
+  // True while the mouse is pressed in the sidebar (but not on a header action
+  // button). Used to hide the section header "+"/"⋯" buttons the instant a drag
+  // gesture begins, before dragstart fires — otherwise the header's hover "+"
+  // flashes as the pointer crosses it at the start of a drag.
+  const [isSidebarPressed, setIsSidebarPressed] = useState(false)
+  const [dragOverItem, setDragOverItem] = useState<{
+    kind: string
+    id: string
+    position: DragInsertPosition
+  } | null>(null)
+  const draggingItemRef = useRef<{ kind: string; id: string } | null>(null)
+  const dragOverItemRef = useRef<{
+    kind: string
+    id: string
+    position: DragInsertPosition
+  } | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Agent name tooltip refs (for truncated names) - using DOM manipulation to avoid re-renders
@@ -1714,7 +3001,7 @@ export function AgentsSidebar({
   const showWorkspaceIcon = useAtomValue(showWorkspaceIconAtom)
 
   // Desktop: use selectedProject instead of teams
-  const [selectedProject] = useAtom(selectedProjectAtom)
+  const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
 
   // Keep chatSourceModeAtom for backwards compatibility (used in other places)
   const [chatSourceMode, setChatSourceMode] = useAtom(chatSourceModeAtom)
@@ -1756,6 +3043,10 @@ export function AgentsSidebar({
       updatedAt: Date | null
       archivedAt: Date | null
       projectId: string | null
+      taskId: string | null
+      scope?: "global" | "project" | "task" | null
+      harness?: string | null
+      model?: string | null
       worktreePath: string | null
       branch: string | null
       baseBranch: string | null
@@ -1765,6 +3056,7 @@ export function AgentsSidebar({
       meta?: { repository?: string; branch?: string | null } | null
       isRemote: boolean
       remoteStats?: { fileCount: number; additions: number; deletions: number } | null
+      pinnedAt?: Date | null
     }> = []
 
     // Add local chats
@@ -1777,11 +3069,16 @@ export function AgentsSidebar({
           updatedAt: chat.updatedAt,
           archivedAt: chat.archivedAt,
           projectId: chat.projectId,
+          taskId: chat.taskId,
+          scope: chat.scope as "global" | "project" | "task" | null,
+          harness: chat.harness,
+          model: chat.model,
           worktreePath: chat.worktreePath,
           branch: chat.branch,
           baseBranch: chat.baseBranch,
           prUrl: chat.prUrl,
           prNumber: chat.prNumber,
+          pinnedAt: chat.pinnedAt,
           isRemote: false,
         })
       }
@@ -1797,6 +3094,10 @@ export function AgentsSidebar({
           updatedAt: new Date(chat.updated_at),
           archivedAt: null,
           projectId: null,
+          taskId: null,
+          scope: null,
+          harness: null,
+          model: null,
           worktreePath: null,
           branch: chat.meta?.branch ?? null,
           baseBranch: null,
@@ -1806,6 +3107,7 @@ export function AgentsSidebar({
           meta: chat.meta,
           isRemote: true,
           remoteStats: chat.stats,
+          pinnedAt: null,
         })
       }
     }
@@ -1887,6 +3189,9 @@ export function AgentsSidebar({
 
   // Fetch all projects for git info
   const { data: projects } = trpc.projects.list.useQuery()
+  const { data: tasks } = trpc.tasks.list.useQuery({ includeArchived: false })
+  const { data: archivedProjects } = trpc.projects.listArchived.useQuery()
+  const { data: archivedTasks } = trpc.tasks.listArchived.useQuery()
 
   // Auto-import hook for "Open Locally" functionality
   const { getMatchingProjects, autoImport, isImporting } = useAutoImport()
@@ -1897,9 +3202,15 @@ export function AgentsSidebar({
     return new Map(projects.map((p) => [p.id, p]))
   }, [projects])
 
+  const taskDefaultWorktrees = useMemo(() => {
+    if (!tasks) return new Map<string, string | null>()
+    return new Map(tasks.map((task) => [task.id, task.primaryWorktreePath]))
+  }, [tasks])
+
   // Fetch all archived chats (to get count)
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
-  const archivedChatsCount = archivedChats?.length ?? 0
+  const archivedChatsCount =
+    (archivedChats?.length ?? 0) + (archivedProjects?.length ?? 0) + (archivedTasks?.length ?? 0)
 
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
@@ -1917,11 +3228,91 @@ export function AgentsSidebar({
     },
   })
 
+  const restoreProjectMutation = trpc.projects.restore.useMutation({
+    onSuccess: () => {
+      utils.projects.list.invalidate()
+      utils.projects.listArchived.invalidate()
+      utils.chats.list.invalidate()
+      utils.tasks.list.invalidate()
+      utils.tasks.listArchived.invalidate()
+    },
+    onError: () => toast.error("Failed to restore project"),
+  })
+
+  const restoreTaskMutation = trpc.tasks.restore.useMutation({
+    onSuccess: () => {
+      utils.tasks.list.invalidate()
+      utils.tasks.listArchived.invalidate()
+      utils.chats.list.invalidate()
+    },
+    onError: () => toast.error("Failed to restore task"),
+  })
+
+  const openProjectMutation = trpc.projects.openFolder.useMutation({
+    onSuccess: (project) => {
+      if (!project) return
+      utils.projects.list.invalidate()
+      setSelectedProject({
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        gitRemoteUrl: project.gitRemoteUrl,
+        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: project.gitOwner,
+        gitRepo: project.gitRepo,
+      })
+    },
+    onError: () => toast.error("Failed to add project"),
+  })
+
+  const cloneProjectMutation = trpc.projects.cloneFromGitHub.useMutation({
+    onSuccess: (project) => {
+      if (!project) return
+      utils.projects.list.invalidate()
+      setSelectedProject({
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        gitRemoteUrl: project.gitRemoteUrl,
+        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: project.gitOwner,
+        gitRepo: project.gitRepo,
+      })
+      toast.success("Project cloned")
+    },
+    onError: (error) => toast.error(error.message || "Failed to clone project"),
+  })
+
+  const createTaskMutation = trpc.tasks.create.useMutation({
+    onSuccess: () => {
+      utils.tasks.list.invalidate()
+      toast.success("Task created")
+    },
+    onError: () => toast.error("Failed to create task"),
+  })
+
   // Remove workspace item from stack by chatId
   const removeWorkspaceFromStack = useCallback(
     (chatId: string) => {
       setUndoStack((prev) => {
         const index = prev.findIndex((item) => item.type === "workspace" && item.chatId === chatId)
+        if (index !== -1) {
+          clearTimeout(prev[index].timeoutId)
+          return [...prev.slice(0, index), ...prev.slice(index + 1)]
+        }
+        return prev
+      })
+    },
+    [setUndoStack],
+  )
+
+  const removeLifecycleFromStack = useCallback(
+    (type: "project" | "task", id: string) => {
+      setUndoStack((prev) => {
+        const index = prev.findIndex((item) => {
+          if (type === "project") return item.type === "project" && item.projectId === id
+          return item.type === "task" && item.taskId === id
+        })
         if (index !== -1) {
           clearTimeout(prev[index].timeoutId)
           return [...prev.slice(0, index), ...prev.slice(index + 1)]
@@ -2024,8 +3415,8 @@ export function AgentsSidebar({
                 setChatSourceMode("sandbox")
               },
               onError: (error) => {
-                console.error("[handleUndo] Failed to restore remote workspace:", error)
-                toast.error("Failed to restore workspace")
+                console.error("[handleUndo] Failed to restore remote chat:", error)
+                toast.error("Failed to restore chat")
               },
             })
           } else {
@@ -2036,13 +3427,25 @@ export function AgentsSidebar({
           const store = useAgentSubChatStore.getState()
           store.addToOpenSubChats(lastItem.subChatId)
           store.setActiveSubChat(lastItem.subChatId)
+        } else if (lastItem.type === "project") {
+          restoreProjectMutation.mutate({ id: lastItem.projectId })
+        } else if (lastItem.type === "task") {
+          restoreTaskMutation.mutate({ id: lastItem.taskId })
         }
       }
     }
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [undoStack, setUndoStack, restoreChatMutation, restoreRemoteChatMutation, setSelectedChatId])
+  }, [
+    undoStack,
+    setUndoStack,
+    restoreChatMutation,
+    restoreRemoteChatMutation,
+    restoreProjectMutation,
+    restoreTaskMutation,
+    setSelectedChatId,
+  ])
 
   // Batch archive mutation
   const archiveChatsBatchMutation = trpc.chats.archiveBatch.useMutation({
@@ -2089,36 +3492,136 @@ export function AgentsSidebar({
     prevProjectIdRef.current = selectedProject?.id ?? null
   }, [selectedProject?.id]) // Don't include selectedChatId in deps to avoid loops
 
-  // Load pinned IDs from localStorage when project changes
+  // Load remote pinned IDs from localStorage. Local chat pins come from chats.pinnedAt.
   useEffect(() => {
-    if (!selectedProject?.id) {
-      setPinnedChatIds(new Set())
-      return
-    }
     try {
-      const stored = localStorage.getItem(`agent-pinned-chats-${selectedProject.id}`)
-      setPinnedChatIds(stored ? new Set(JSON.parse(stored)) : new Set())
-    } catch {
-      setPinnedChatIds(new Set())
-    }
-  }, [selectedProject?.id])
-
-  // Save pinned IDs to localStorage when they change
-  const prevPinnedRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    if (!selectedProject?.id) return
-    // Only save if pinnedChatIds actually changed (avoid saving on load)
-    if (
-      (pinnedChatIds !== prevPinnedRef.current && pinnedChatIds.size > 0) ||
-      prevPinnedRef.current.size > 0
-    ) {
-      localStorage.setItem(
-        `agent-pinned-chats-${selectedProject.id}`,
-        JSON.stringify([...pinnedChatIds]),
+      const stored = localStorage.getItem("agent-pinned-remote-chats")
+      setRemotePinnedChatIds(stored ? new Set(JSON.parse(stored)) : new Set())
+      const storedStars = localStorage.getItem("flapstack-starred-chats")
+      setStarredChatIds(storedStars ? new Set(JSON.parse(storedStars)) : new Set())
+      const storedProjectStars = localStorage.getItem("flapstack-starred-projects")
+      setStarredProjectIds(storedProjectStars ? new Set(JSON.parse(storedProjectStars)) : new Set())
+      const storedTaskStars = localStorage.getItem("flapstack-starred-tasks")
+      setStarredTaskIds(storedTaskStars ? new Set(JSON.parse(storedTaskStars)) : new Set())
+      const storedCollapsed = localStorage.getItem("flapstack-sidebar-collapsed-sections")
+      setCollapsedSectionIds(storedCollapsed ? new Set(JSON.parse(storedCollapsed)) : new Set())
+      const storedOrder = localStorage.getItem("flapstack-sidebar-manual-order")
+      setManualOrderByKey(storedOrder ? JSON.parse(storedOrder) : {})
+      const storedProjectColors = localStorage.getItem("flapstack-sidebar-project-colors")
+      setProjectColorsById(storedProjectColors ? JSON.parse(storedProjectColors) : {})
+      const storedManualProjectColorIds = localStorage.getItem(
+        "flapstack-sidebar-manual-project-colors",
       )
+      setManualProjectColorIds(
+        storedManualProjectColorIds
+          ? new Set<string>(JSON.parse(storedManualProjectColorIds) as string[])
+          : new Set(),
+      )
+      setCrossScopeMoveEnabled(localStorage.getItem("flapstack-sidebar-cross-scope-move") === "1")
+    } catch {
+      setRemotePinnedChatIds(new Set())
+      setStarredChatIds(new Set())
+      setStarredProjectIds(new Set())
+      setStarredTaskIds(new Set())
+      setCollapsedSectionIds(new Set())
+      setManualOrderByKey({})
+      setProjectColorsById({})
+      setManualProjectColorIds(new Set())
+      setCrossScopeMoveEnabled(false)
     }
-    prevPinnedRef.current = pinnedChatIds
-  }, [pinnedChatIds, selectedProject?.id])
+  }, [])
+
+  // Save remote pinned IDs to localStorage when they change
+  const prevRemotePinnedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    // Only save if remotePinnedChatIds actually changed (avoid saving on load)
+    if (
+      (remotePinnedChatIds !== prevRemotePinnedRef.current && remotePinnedChatIds.size > 0) ||
+      prevRemotePinnedRef.current.size > 0
+    ) {
+      localStorage.setItem("agent-pinned-remote-chats", JSON.stringify([...remotePinnedChatIds]))
+    }
+    prevRemotePinnedRef.current = remotePinnedChatIds
+  }, [remotePinnedChatIds])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-starred-chats", JSON.stringify([...starredChatIds]))
+  }, [starredChatIds])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-starred-projects", JSON.stringify([...starredProjectIds]))
+  }, [starredProjectIds])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-starred-tasks", JSON.stringify([...starredTaskIds]))
+  }, [starredTaskIds])
+
+  useEffect(() => {
+    localStorage.setItem(
+      "flapstack-sidebar-collapsed-sections",
+      JSON.stringify([...collapsedSectionIds]),
+    )
+  }, [collapsedSectionIds])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-sidebar-manual-order", JSON.stringify(manualOrderByKey))
+  }, [manualOrderByKey])
+
+  useEffect(() => {
+    if (!projects?.length) return
+    setProjectColorsById((prev) => {
+      let changed = false
+      const next = { ...prev }
+      const usedColors = new Set<string>()
+
+      projects.forEach((project, index) => {
+        const existingColor = next[project.id] ? normalizeHexColor(next[project.id]) : null
+        const isManualColor = manualProjectColorIds.has(project.id)
+
+        if (isManualColor && existingColor) {
+          if (next[project.id] !== existingColor) {
+            next[project.id] = existingColor
+            changed = true
+          }
+          usedColors.add(existingColor)
+          return
+        }
+
+        if (existingColor && !usedColors.has(existingColor)) {
+          if (next[project.id] !== existingColor) {
+            next[project.id] = existingColor
+            changed = true
+          }
+          usedColors.add(existingColor)
+          return
+        }
+
+        const availableColor = getNextAvailableProjectColor(usedColors, index)
+        if (next[project.id] !== availableColor) {
+          next[project.id] = availableColor
+          changed = true
+        }
+        usedColors.add(availableColor)
+      })
+
+      return changed ? next : prev
+    })
+  }, [manualProjectColorIds, projects])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-sidebar-project-colors", JSON.stringify(projectColorsById))
+  }, [projectColorsById])
+
+  useEffect(() => {
+    localStorage.setItem(
+      "flapstack-sidebar-manual-project-colors",
+      JSON.stringify([...manualProjectColorIds]),
+    )
+  }, [manualProjectColorIds])
+
+  useEffect(() => {
+    localStorage.setItem("flapstack-sidebar-cross-scope-move", crossScopeMoveEnabled ? "1" : "0")
+  }, [crossScopeMoveEnabled])
 
   // Rename mutation
   const renameChatMutation = trpc.chats.rename.useMutation({
@@ -2130,8 +3633,206 @@ export function AgentsSidebar({
     },
   })
 
-  const handleTogglePin = useCallback((chatId: string) => {
-    setPinnedChatIds((prev) => {
+  const pinChatMutation = trpc.chats.pin.useMutation({
+    onSuccess: () => {
+      utils.chats.list.invalidate()
+    },
+    onError: () => toast.error("Failed to pin chat"),
+  })
+
+  const unpinChatMutation = trpc.chats.unpin.useMutation({
+    onSuccess: () => {
+      utils.chats.list.invalidate()
+    },
+    onError: () => toast.error("Failed to unpin chat"),
+  })
+
+  const moveChatMutation = trpc.chats.move.useMutation({
+    onSuccess: () => {
+      utils.chats.list.invalidate()
+      toast.success("Chat moved")
+    },
+    onError: (error) => toast.error(error.message || "Failed to move chat"),
+  })
+
+  const pinProjectMutation = trpc.projects.pin.useMutation({
+    onSuccess: () => {
+      utils.projects.list.invalidate()
+    },
+    onError: () => toast.error("Failed to pin project"),
+  })
+
+  const unpinProjectMutation = trpc.projects.unpin.useMutation({
+    onSuccess: () => {
+      utils.projects.list.invalidate()
+    },
+    onError: () => toast.error("Failed to unpin project"),
+  })
+
+  const archiveProjectMutation = trpc.projects.archive.useMutation({
+    onSuccess: (_, variables) => {
+      utils.projects.list.invalidate()
+      utils.projects.listArchived.invalidate()
+      utils.tasks.list.invalidate()
+      utils.tasks.listArchived.invalidate()
+      utils.chats.list.invalidate()
+
+      const selectedChat = selectedChatId
+        ? agentChats.find((chat) => chat.id === selectedChatId && !chat.isRemote)
+        : null
+      if (selectedChat?.projectId === variables.id) {
+        setSelectedChatId(null)
+      }
+
+      const timeoutId = setTimeout(() => {
+        removeLifecycleFromStack("project", variables.id)
+      }, 10000)
+      setUndoStack((prev) => [...prev, { type: "project", projectId: variables.id, timeoutId }])
+
+      toast.success("Project archived", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            removeLifecycleFromStack("project", variables.id)
+            restoreProjectMutation.mutate({ id: variables.id })
+          },
+        },
+      })
+    },
+    onError: () => toast.error("Failed to archive project"),
+  })
+
+  const pinTaskMutation = trpc.tasks.pin.useMutation({
+    onSuccess: () => {
+      utils.tasks.list.invalidate()
+    },
+    onError: () => toast.error("Failed to pin task"),
+  })
+
+  const unpinTaskMutation = trpc.tasks.unpin.useMutation({
+    onSuccess: () => {
+      utils.tasks.list.invalidate()
+    },
+    onError: () => toast.error("Failed to unpin task"),
+  })
+
+  const archiveTaskMutation = trpc.tasks.archive.useMutation({
+    onSuccess: (_, variables) => {
+      utils.tasks.list.invalidate()
+      utils.tasks.listArchived.invalidate()
+      utils.chats.list.invalidate()
+
+      const selectedChat = selectedChatId
+        ? agentChats.find((chat) => chat.id === selectedChatId && !chat.isRemote)
+        : null
+      if (selectedChat?.taskId === variables.id) {
+        setSelectedChatId(null)
+      }
+
+      const timeoutId = setTimeout(() => {
+        removeLifecycleFromStack("task", variables.id)
+      }, 10000)
+      setUndoStack((prev) => [...prev, { type: "task", taskId: variables.id, timeoutId }])
+
+      toast.success("Task archived", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            removeLifecycleFromStack("task", variables.id)
+            restoreTaskMutation.mutate({ id: variables.id })
+          },
+        },
+      })
+    },
+    onError: () => toast.error("Failed to archive task"),
+  })
+
+  const handleToggleLifecyclePin = useCallback(
+    (type: "project" | "task", id: string, isPinned: boolean) => {
+      if (type === "project") {
+        if (isPinned) {
+          unpinProjectMutation.mutate({ id })
+        } else {
+          pinProjectMutation.mutate({ id })
+        }
+        return
+      }
+
+      if (isPinned) {
+        unpinTaskMutation.mutate({ id })
+      } else {
+        pinTaskMutation.mutate({ id })
+      }
+    },
+    [pinProjectMutation, unpinProjectMutation, pinTaskMutation, unpinTaskMutation],
+  )
+
+  const handleToggleLifecycleStar = useCallback((type: "project" | "task", id: string) => {
+    const setter = type === "project" ? setStarredProjectIds : setStarredTaskIds
+    setter((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  const handleArchiveLifecycle = useCallback(
+    (type: "project" | "task", id: string) => {
+      if (type === "project") {
+        archiveProjectMutation.mutate({ id })
+      } else {
+        archiveTaskMutation.mutate({ id })
+      }
+    },
+    [archiveProjectMutation, archiveTaskMutation],
+  )
+
+  const pinnedChatIds = useMemo(() => {
+    const ids = new Set(remotePinnedChatIds)
+    for (const chat of agentChats) {
+      if (!chat.isRemote && chat.pinnedAt) ids.add(chat.id)
+    }
+    return ids
+  }, [agentChats, remotePinnedChatIds])
+
+  const handleTogglePin = useCallback(
+    (chatId: string) => {
+      const chat = agentChats.find((candidate) => candidate.id === chatId)
+      if (chat?.isRemote) {
+        setRemotePinnedChatIds((prev) => {
+          const next = new Set(prev)
+          if (next.has(chatId)) {
+            next.delete(chatId)
+          } else {
+            next.add(chatId)
+          }
+          return next
+        })
+        return
+      }
+
+      if (pinnedChatIds.has(chatId)) {
+        utils.chats.list.setData({}, (old) =>
+          old?.map((item) => (item.id === chatId ? { ...item, pinnedAt: null } : item)),
+        )
+        unpinChatMutation.mutate({ id: chatId })
+      } else {
+        const pinnedAt = new Date()
+        utils.chats.list.setData({}, (old) =>
+          old?.map((item) => (item.id === chatId ? { ...item, pinnedAt } : item)),
+        )
+        pinChatMutation.mutate({ id: chatId })
+      }
+    },
+    [agentChats, pinnedChatIds, pinChatMutation, unpinChatMutation, utils.chats.list],
+  )
+
+  const handleToggleStar = useCallback((chatId: string) => {
+    setStarredChatIds((prev) => {
       const next = new Set(prev)
       if (next.has(chatId)) {
         next.delete(chatId)
@@ -2140,6 +3841,26 @@ export function AgentsSidebar({
       }
       return next
     })
+  }, [])
+
+  const handleToggleSection = useCallback((sectionId: string) => {
+    setCollapsedSectionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(sectionId)) {
+        next.delete(sectionId)
+      } else {
+        next.add(sectionId)
+      }
+      return next
+    })
+  }, [])
+
+  const handleChangeProjectColor = useCallback((projectId: string, color: string) => {
+    setProjectColorsById((prev) => ({
+      ...prev,
+      [projectId]: normalizeHexColor(color),
+    }))
+    setManualProjectColorIds((prev) => new Set(prev).add(projectId))
   }, [])
 
   const handleRenameClick = useCallback(
@@ -2184,13 +3905,13 @@ export function AgentsSidebar({
             if (!old) return old
             return old.map((c) => (c.id === chatId ? { ...c, name: oldName } : c))
           })
-          throw new Error("Failed to rename local workspace")
+          throw new Error("Failed to rename local chat")
         }
       }
       setRenameDialogOpen(false)
     } catch (error) {
       console.error("[handleRenameSave] Rename failed:", error)
-      toast.error(isRemote ? "Failed to rename remote workspace" : "Failed to rename workspace")
+      toast.error(isRemote ? "Failed to rename remote chat" : "Failed to rename chat")
     } finally {
       setRenameLoading(false)
       setRenamingChat(null)
@@ -2216,34 +3937,65 @@ export function AgentsSidebar({
   const handleBulkPin = useCallback(() => {
     const chatIdsToPin = Array.from(selectedChatIds)
     if (chatIdsToPin.length > 0) {
-      setPinnedChatIds((prev) => {
+      const localIds: string[] = []
+      const remoteIds: string[] = []
+      for (const chatId of chatIdsToPin) {
+        const chat = agentChats.find((candidate) => candidate.id === chatId)
+        if (chat?.isRemote) {
+          remoteIds.push(chatId)
+        } else if (!pinnedChatIds.has(chatId)) {
+          localIds.push(chatId)
+        }
+      }
+
+      setRemotePinnedChatIds((prev) => {
         const next = new Set(prev)
-        chatIdsToPin.forEach((id) => next.add(id))
+        remoteIds.forEach((id) => next.add(id))
         return next
       })
+      localIds.forEach((id) => pinChatMutation.mutate({ id }))
       clearChatSelection()
     }
-  }, [selectedChatIds, clearChatSelection])
+  }, [selectedChatIds, agentChats, pinnedChatIds, pinChatMutation, clearChatSelection])
 
   // Handle bulk unpin of selected chats
   const handleBulkUnpin = useCallback(() => {
     const chatIdsToUnpin = Array.from(selectedChatIds)
     if (chatIdsToUnpin.length > 0) {
-      setPinnedChatIds((prev) => {
+      const localIds: string[] = []
+      const remoteIds: string[] = []
+      for (const chatId of chatIdsToUnpin) {
+        const chat = agentChats.find((candidate) => candidate.id === chatId)
+        if (chat?.isRemote) {
+          remoteIds.push(chatId)
+        } else if (pinnedChatIds.has(chatId)) {
+          localIds.push(chatId)
+        }
+      }
+
+      setRemotePinnedChatIds((prev) => {
         const next = new Set(prev)
-        chatIdsToUnpin.forEach((id) => next.delete(id))
+        remoteIds.forEach((id) => next.delete(id))
         return next
       })
+      localIds.forEach((id) => unpinChatMutation.mutate({ id }))
       clearChatSelection()
     }
-  }, [selectedChatIds, clearChatSelection])
+  }, [selectedChatIds, agentChats, pinnedChatIds, unpinChatMutation, clearChatSelection])
 
   // Get clerk username
   const clerkUsername = clerkUser?.username
 
-  // Filter and separate pinned/unpinned agents
-  const { pinnedAgents, unpinnedAgents, filteredChats } = useMemo(() => {
-    if (!agentChats) return { pinnedAgents: [], unpinnedAgents: [], filteredChats: [] }
+  // Filter and group chats. Pinned chats stay in their parent, then appear again in the reference group.
+  const { pinnedAgents, starredAgents, chatSections, filteredChats } = useMemo(() => {
+    if (!agentChats) {
+      return {
+        pinnedAgents: [],
+        starredAgents: [],
+        chatSections: [],
+        filteredChats: [],
+      }
+    }
 
     const filtered = searchQuery.trim()
       ? agentChats.filter((chat) =>
@@ -2251,15 +4003,868 @@ export function AgentsSidebar({
         )
       : agentChats
 
-    const pinned = filtered.filter((chat) => pinnedChatIds.has(chat.id))
-    const unpinned = filtered.filter((chat) => !pinnedChatIds.has(chat.id))
+    const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
+    const activeTaskIds = new Set((tasks ?? []).map((task) => task.id))
+    const activeFiltered = filtered.filter((chat) => {
+      if (chat.isRemote) return true
+      if (projects && chat.projectId && !activeProjectIds.has(chat.projectId)) return false
+      if (tasks && chat.taskId && !activeTaskIds.has(chat.taskId)) return false
+      return true
+    })
+    const prioritySort = <T extends { id: string; updatedAt: Date | null }>(
+      items: T[],
+      orderKey: string,
+    ) =>
+      [...items].sort((a, b) => {
+        const pinDelta = Number(pinnedChatIds.has(b.id)) - Number(pinnedChatIds.has(a.id))
+        if (pinDelta !== 0) return pinDelta
+        const order = new Map((manualOrderByKey[orderKey] ?? []).map((id, index) => [id, index]))
+        const aOrder = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+        const bOrder = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+        if (aOrder !== bOrder) return aOrder - bOrder
+        const aTime = a.updatedAt?.getTime() ?? 0
+        const bTime = b.updatedAt?.getTime() ?? 0
+        return bTime - aTime
+      })
+
+    const pinned = activeFiltered.filter((chat) => pinnedChatIds.has(chat.id))
+    const starred = activeFiltered.filter((chat) => starredChatIds.has(chat.id))
+    const remote = activeFiltered.filter((chat) => chat.isRemote)
+    const local = activeFiltered.filter((chat) => !chat.isRemote)
+    const global = local.filter(
+      (chat) => chat.scope === "global" || (!chat.projectId && !chat.taskId),
+    )
+    const tasksList = tasks ?? []
+    const projectsList = projects ?? []
+    const tasksById = new Map(tasksList.map((task) => [task.id, task]))
+    const taskOrder = new Map(tasksList.map((task, index) => [task.id, index]))
+    const projectOrder = new Map(projectsList.map((project, index) => [project.id, index]))
+    const projectChats = local.filter((chat) => chat.projectId)
+    const chatsByProject = new Map<string, typeof projectChats>()
+
+    for (const chat of projectChats) {
+      const projectId = chat.projectId
+      if (!projectId) continue
+      const chats = chatsByProject.get(projectId) ?? []
+      chats.push(chat)
+      chatsByProject.set(projectId, chats)
+    }
+
+    const projectIds = new Set<string>([
+      ...projectsList.map((project) => project.id),
+      ...Array.from(chatsByProject.keys()),
+    ])
+
+    const groupedProjects = Array.from(projectIds)
+      .map((projectId) => {
+        const chats = chatsByProject.get(projectId) ?? []
+        const directChats = prioritySort(
+          chats.filter((chat) => !chat.taskId),
+          `project:${projectId}:chats`,
+        )
+        const groupedTaskChats = new Map<string, typeof chats>()
+
+        for (const chat of chats) {
+          if (!chat.taskId) continue
+          const taskChats = groupedTaskChats.get(chat.taskId) ?? []
+          taskChats.push(chat)
+          groupedTaskChats.set(chat.taskId, taskChats)
+        }
+
+        const taskIds = new Set<string>([
+          ...tasksList.filter((task) => task.projectId === projectId).map((task) => task.id),
+          ...Array.from(groupedTaskChats.keys()),
+        ])
+
+        const taskGroups = Array.from(taskIds)
+          .map((taskId) => ({
+            taskId,
+            title: tasksById.get(taskId)?.name ?? "Task",
+            isPinned: Boolean(tasksById.get(taskId)?.pinnedAt),
+            isStarred: starredTaskIds.has(taskId),
+            chats: prioritySort(groupedTaskChats.get(taskId) ?? [], `task:${taskId}:chats`),
+          }))
+          .sort((a, b) => {
+            const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+            if (pinDelta !== 0) return pinDelta
+            const aOrder = taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER
+            const bOrder = taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER
+            if (aOrder !== bOrder) return aOrder - bOrder
+            return a.title.localeCompare(b.title)
+          })
+
+        const project = projectsMap.get(projectId)
+        return {
+          projectId,
+          title: project?.gitRepo || project?.name || "Project",
+          isPinned: Boolean(project?.pinnedAt),
+          isStarred: starredProjectIds.has(projectId),
+          chats: directChats,
+          taskGroups,
+        }
+      })
+      .sort((a, b) => {
+        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+        if (pinDelta !== 0) return pinDelta
+        const manualProjectOrder = new Map(
+          (manualOrderByKey.projects ?? []).map((id, index) => [id, index]),
+        )
+        const aManual = manualProjectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+        const bManual = manualProjectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+        if (aManual !== bManual) return aManual - bManual
+        const aOrder = projectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+        const bOrder = projectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+        if (aOrder !== bOrder) return aOrder - bOrder
+        return a.title.localeCompare(b.title)
+      })
+
+    const sections: Array<{
+      id: string
+      title: string
+      chats: typeof activeFiltered
+      kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
+      lifecycleTarget?: {
+        type: "project" | "task"
+        id: string
+        isPinned: boolean
+        isStarred?: boolean
+      }
+      parentProjectId?: string
+      sectionDragId?: string
+      hideHeader?: boolean
+      projectColor?: string | null
+    }> = []
+    if (remote.length > 0)
+      sections.push({
+        id: "remote",
+        title: "Remote sandboxes",
+        chats: prioritySort(remote, "remote:chats"),
+        kind: "remote",
+      })
+    if (global.length > 0)
+      sections.push({
+        id: "global",
+        title: "Global chats",
+        chats: prioritySort(global, "global:chats"),
+        kind: "global",
+      })
+    for (const projectGroup of groupedProjects) {
+      sections.push({
+        id: `project-${projectGroup.projectId}`,
+        title: projectGroup.title,
+        chats: [],
+        kind: "project",
+        lifecycleTarget: {
+          type: "project",
+          id: projectGroup.projectId,
+          isPinned: projectGroup.isPinned,
+          isStarred: projectGroup.isStarred,
+        },
+        projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+      })
+      const childItems = [
+        ...projectGroup.chats.map((chat) => ({
+          id: `chat:${chat.id}`,
+          type: "chat" as const,
+          updatedAt: chat.updatedAt,
+          isPinned: pinnedChatIds.has(chat.id),
+          chat,
+        })),
+        ...projectGroup.taskGroups.map((taskGroup) => ({
+          id: `task:${taskGroup.taskId}`,
+          type: "task" as const,
+          updatedAt:
+            taskGroup.chats.reduce<Date | null>((latest, chat) => {
+              if (!chat.updatedAt) return latest
+              if (!latest || chat.updatedAt.getTime() > latest.getTime()) return chat.updatedAt
+              return latest
+            }, null) ?? null,
+          isPinned: taskGroup.isPinned,
+          taskGroup,
+        })),
+      ].sort((a, b) => {
+        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+        if (pinDelta !== 0) return pinDelta
+
+        const order = new Map(
+          (manualOrderByKey[`project:${projectGroup.projectId}:children`] ?? []).map(
+            (id, index) => [id, index],
+          ),
+        )
+        const aManual = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+        const bManual = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+        if (aManual !== bManual) return aManual - bManual
+        const aTime = a.updatedAt?.getTime() ?? 0
+        const bTime = b.updatedAt?.getTime() ?? 0
+        return bTime - aTime
+      })
+      for (const childItem of childItems) {
+        if (childItem.type === "chat") {
+          sections.push({
+            id: `project-chat-${childItem.chat.id}`,
+            title: "",
+            chats: [childItem.chat],
+            kind: "project",
+            parentProjectId: projectGroup.projectId,
+            sectionDragId: childItem.id,
+            hideHeader: true,
+            projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+          })
+          continue
+        }
+        const { taskGroup } = childItem
+        sections.push({
+          id: `task-${taskGroup.taskId}`,
+          title: taskGroup.title,
+          chats: taskGroup.chats,
+          kind: "task",
+          lifecycleTarget: {
+            type: "task",
+            id: taskGroup.taskId,
+            isPinned: taskGroup.isPinned,
+            isStarred: taskGroup.isStarred,
+          },
+          parentProjectId: projectGroup.projectId,
+          sectionDragId: childItem.id,
+          projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+        })
+      }
+    }
 
     return {
-      pinnedAgents: pinned,
-      unpinnedAgents: unpinned,
-      filteredChats: [...pinned, ...unpinned],
+      pinnedAgents: prioritySort(pinned, "pinned:chats"),
+      starredAgents: prioritySort(starred, "starred:chats"),
+      chatSections: sections,
+      filteredChats: sections.flatMap((section) => section.chats),
     }
-  }, [searchQuery, agentChats, pinnedChatIds])
+  }, [
+    searchQuery,
+    agentChats,
+    pinnedChatIds,
+    starredChatIds,
+    tasks,
+    projects,
+    projectsMap,
+    manualOrderByKey,
+    projectColorsById,
+    starredProjectIds,
+    starredTaskIds,
+  ])
+
+  const selectedLocalChat = useMemo(() => {
+    if (!selectedChatId) return null
+    return agentChats.find((chat) => chat.id === selectedChatId && !chat.isRemote) ?? null
+  }, [agentChats, selectedChatId])
+
+  const getDraggedLocalChat = useCallback(
+    (item: { kind: string; id: string } | null) => {
+      if (!item || !item.kind.endsWith("chat")) return null
+      const chatId = item.id.startsWith("chat:") ? item.id.slice("chat:".length) : item.id
+      const chat = agentChats.find((candidate) => candidate.id === chatId)
+      if (!chat || chat.isRemote) return null
+      return chat
+    },
+    [agentChats],
+  )
+
+  const getCrossScopeDropTarget = useCallback(
+    (targetKind: string, targetId: string) => {
+      if (targetKind === "project") {
+        const project = projects?.find((candidate) => candidate.id === targetId)
+        return project ? ({ scope: "project" as const, projectId: project.id } as const) : null
+      }
+
+      if (targetKind === "project-child" && targetId.startsWith("task:")) {
+        const taskId = targetId.slice("task:".length)
+        const task = tasks?.find((candidate) => candidate.id === taskId)
+        return task ? ({ scope: "task" as const, taskId: task.id } as const) : null
+      }
+
+      if (targetKind === "project-child" && targetId.startsWith("chat:")) {
+        const chatId = targetId.slice("chat:".length)
+        const chat = agentChats.find((candidate) => candidate.id === chatId)
+        return chat?.projectId && !chat.taskId
+          ? ({ scope: "project" as const, projectId: chat.projectId } as const)
+          : null
+      }
+
+      if (targetKind === "task") {
+        const task = tasks?.find((candidate) => candidate.id === targetId)
+        return task ? ({ scope: "task" as const, taskId: task.id } as const) : null
+      }
+
+      if (targetKind === "task-chat") {
+        const chat = agentChats.find((candidate) => candidate.id === targetId)
+        return chat?.taskId ? ({ scope: "task" as const, taskId: chat.taskId } as const) : null
+      }
+
+      if (targetKind === "project-chat") {
+        const chat = agentChats.find((candidate) => candidate.id === targetId)
+        return chat?.projectId && !chat.taskId
+          ? ({ scope: "project" as const, projectId: chat.projectId } as const)
+          : null
+      }
+
+      return null
+    },
+    [agentChats, projects, tasks],
+  )
+
+  const canMoveChatAcrossScope = useCallback(
+    (item: { kind: string; id: string } | null, targetKind: string, targetId: string) => {
+      if (!crossScopeMoveEnabled) return false
+      const chat = getDraggedLocalChat(item)
+      const target = getCrossScopeDropTarget(targetKind, targetId)
+      if (!chat || !target) return false
+
+      if (target.scope === "project") {
+        return (
+          chat.scope !== "project" || chat.projectId !== target.projectId || chat.taskId !== null
+        )
+      }
+
+      return chat.scope !== "task" || chat.taskId !== target.taskId
+    },
+    [crossScopeMoveEnabled, getCrossScopeDropTarget, getDraggedLocalChat],
+  )
+
+  const getReorderContext = useCallback(
+    (kind: string, fromId: string, toId: string): { key: string; activeIds: string[] } | null => {
+      const samePinGroup = (fromPinned: boolean, toPinned: boolean) => fromPinned === toPinned
+      const chatIsPinned = (chatId: string) => pinnedChatIds.has(chatId)
+
+      if (kind === "project") {
+        const fromProject = projects?.find((project) => project.id === fromId)
+        const toProject = projects?.find((project) => project.id === toId)
+        if (!fromProject || !toProject) return null
+        const fromPinned = Boolean(fromProject.pinnedAt)
+        const toPinned = Boolean(toProject.pinnedAt)
+        if (!samePinGroup(fromPinned, toPinned)) return null
+        const activeIds = chatSections
+          .filter((section) => section.kind === "project" && section.lifecycleTarget)
+          .filter((section) => Boolean(section.lifecycleTarget?.isPinned) === fromPinned)
+          .map((section) => section.lifecycleTarget!.id)
+        return { key: "projects", activeIds }
+      }
+
+      if (kind === "task") {
+        const fromTask = tasks?.find((task) => task.id === fromId)
+        const toTask = tasks?.find((task) => task.id === toId)
+        if (!fromTask || !toTask || fromTask.projectId !== toTask.projectId) return null
+        const fromPinned = Boolean(fromTask.pinnedAt)
+        const toPinned = Boolean(toTask.pinnedAt)
+        if (!samePinGroup(fromPinned, toPinned)) return null
+        const activeIds = tasks
+          ?.filter((task) => task.projectId === fromTask.projectId)
+          .filter((task) => Boolean(task.pinnedAt) === fromPinned)
+          .map((task) => task.id)
+        return activeIds ? { key: `project:${fromTask.projectId}:tasks`, activeIds } : null
+      }
+
+      if (kind === "project-child") {
+        const resolveProjectId = (id: string) => {
+          if (id.startsWith("task:")) {
+            return tasks?.find((task) => task.id === id.slice("task:".length))?.projectId ?? null
+          }
+          const chatId = id.startsWith("chat:") ? id.slice("chat:".length) : id
+          const chat = agentChats.find((candidate) => candidate.id === chatId)
+          return chat?.projectId && !chat.taskId ? chat.projectId : null
+        }
+        const resolvePinned = (id: string) => {
+          if (id.startsWith("task:")) {
+            return Boolean(tasks?.find((task) => task.id === id.slice("task:".length))?.pinnedAt)
+          }
+          const chatId = id.startsWith("chat:") ? id.slice("chat:".length) : id
+          return chatIsPinned(chatId)
+        }
+        const projectId = resolveProjectId(fromId)
+        if (!projectId || resolveProjectId(toId) !== projectId) return null
+        const fromPinned = resolvePinned(fromId)
+        if (!samePinGroup(fromPinned, resolvePinned(toId))) return null
+        const activeIds = chatSections
+          .filter((section) => section.parentProjectId === projectId && section.sectionDragId)
+          .filter((section) => resolvePinned(section.sectionDragId!) === fromPinned)
+          .map((section) => section.sectionDragId!)
+        return { key: `project:${projectId}:children`, activeIds }
+      }
+
+      if (kind === "pinned-chat") {
+        return { key: "pinned:chats", activeIds: pinnedAgents.map((chat) => chat.id) }
+      }
+
+      if (kind === "starred-chat") {
+        const fromPinned = chatIsPinned(fromId)
+        if (!samePinGroup(fromPinned, chatIsPinned(toId))) return null
+        return {
+          key: "starred:chats",
+          activeIds: starredAgents
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
+      const fromChat = agentChats.find((chat) => chat.id === fromId)
+      const toChat = agentChats.find((chat) => chat.id === toId)
+      if (!fromChat || !toChat) return null
+      const fromPinned = chatIsPinned(fromId)
+      if (!samePinGroup(fromPinned, chatIsPinned(toId))) return null
+
+      if (kind === "global-chat") {
+        const bothGlobal =
+          !fromChat.projectId && !fromChat.taskId && !toChat.projectId && !toChat.taskId
+        if (!bothGlobal) return null
+        return {
+          key: "global:chats",
+          activeIds: agentChats
+            .filter((chat) => !chat.isRemote && !chat.projectId && !chat.taskId)
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
+      if (kind === "remote-chat") {
+        if (!fromChat.isRemote || !toChat.isRemote) return null
+        return {
+          key: "remote:chats",
+          activeIds: agentChats
+            .filter((chat) => chat.isRemote)
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
+      if (kind === "project-chat") {
+        if (
+          !fromChat.projectId ||
+          fromChat.projectId !== toChat.projectId ||
+          fromChat.taskId ||
+          toChat.taskId
+        ) {
+          return null
+        }
+        return {
+          key: `project:${fromChat.projectId}:chats`,
+          activeIds: agentChats
+            .filter(
+              (chat) => !chat.isRemote && chat.projectId === fromChat.projectId && !chat.taskId,
+            )
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
+      if (kind === "task-chat") {
+        if (!fromChat.taskId || fromChat.taskId !== toChat.taskId) return null
+        return {
+          key: `task:${fromChat.taskId}:chats`,
+          activeIds: agentChats
+            .filter((chat) => !chat.isRemote && chat.taskId === fromChat.taskId)
+            .filter((chat) => chatIsPinned(chat.id) === fromPinned)
+            .map((chat) => chat.id),
+        }
+      }
+
+      return null
+    },
+    [agentChats, chatSections, pinnedAgents, pinnedChatIds, projects, starredAgents, tasks],
+  )
+
+  const getProjectChildHeaderDropTarget = useCallback(
+    (fromId: string, projectId: string) => {
+      const childIds = chatSections
+        .filter((section) => section.parentProjectId === projectId && section.sectionDragId)
+        .map((section) => section.sectionDragId!)
+      if (!childIds.includes(fromId)) return null
+
+      const isPinnedChild = (id: string) => {
+        if (id.startsWith("task:")) {
+          return Boolean(tasks?.find((task) => task.id === id.slice("task:".length))?.pinnedAt)
+        }
+        const chatId = id.startsWith("chat:") ? id.slice("chat:".length) : id
+        return pinnedChatIds.has(chatId)
+      }
+      const fromPinned = isPinnedChild(fromId)
+      const activeIds = childIds.filter((id) => isPinnedChild(id) === fromPinned)
+      const firstTarget = activeIds.find((id) => id !== fromId)
+      if (!firstTarget) return null
+
+      return {
+        kind: "project-child",
+        id: firstTarget,
+        position: "before" as const,
+      }
+    },
+    [chatSections, pinnedChatIds, tasks],
+  )
+
+  const resolveProjectIdFromDropTarget = useCallback(
+    (kind: string, id: string) => {
+      if (kind === "project") return projects?.some((project) => project.id === id) ? id : null
+
+      if (kind === "project-child") {
+        if (id.startsWith("task:")) {
+          return tasks?.find((task) => task.id === id.slice("task:".length))?.projectId ?? null
+        }
+        const chatId = id.startsWith("chat:") ? id.slice("chat:".length) : id
+        return agentChats.find((chat) => chat.id === chatId)?.projectId ?? null
+      }
+
+      if (kind === "project-chat") {
+        return agentChats.find((chat) => chat.id === id)?.projectId ?? null
+      }
+
+      if (kind === "task" || kind === "task-chat") {
+        const taskId =
+          kind === "task" ? id : (agentChats.find((chat) => chat.id === id)?.taskId ?? null)
+        return taskId ? (tasks?.find((task) => task.id === taskId)?.projectId ?? null) : null
+      }
+
+      return null
+    },
+    [agentChats, projects, tasks],
+  )
+
+  const getTaskDropTarget = useCallback(
+    (targetKind: string, targetId: string, position: DragInsertPosition) => {
+      const taskId =
+        targetKind === "task"
+          ? targetId
+          : targetKind === "project-child" && targetId.startsWith("task:")
+            ? targetId.slice("task:".length)
+            : targetKind === "task-chat"
+              ? agentChats.find((chat) => chat.id === targetId)?.taskId
+              : null
+      if (!taskId) return null
+      return { kind: "project-child", id: `task:${taskId}`, position }
+    },
+    [agentChats],
+  )
+
+  const normalizeDropTarget = useCallback(
+    (
+      dragged: { kind: string; id: string },
+      targetKind: string,
+      targetId: string,
+      position: DragInsertPosition,
+    ) => {
+      if (dragged.kind === "project-child" && targetKind === "project") {
+        return getProjectChildHeaderDropTarget(dragged.id, targetId)
+      }
+
+      if (dragged.kind === "project-child" && targetKind === "task-chat") {
+        return getTaskDropTarget(targetKind, targetId, position)
+      }
+
+      if (dragged.kind === "project" && targetKind !== "project") {
+        const projectId = resolveProjectIdFromDropTarget(targetKind, targetId)
+        return projectId ? { kind: "project", id: projectId, position } : null
+      }
+
+      return { kind: targetKind, id: targetId, position }
+    },
+    [getProjectChildHeaderDropTarget, getTaskDropTarget, resolveProjectIdFromDropTarget],
+  )
+
+  const setDragOverItemState = useCallback(
+    (item: { kind: string; id: string; position: DragInsertPosition } | null) => {
+      dragOverItemRef.current = item
+      setDragOverItem(item)
+    },
+    [],
+  )
+
+  const clearDragState = useCallback(() => {
+    draggingItemRef.current = null
+    dragOverItemRef.current = null
+    setDraggingItem(null)
+    setDragOverItem(null)
+  }, [])
+
+  const clearPressedState = useCallback(() => {
+    setIsSidebarPressed(false)
+  }, [])
+
+  const handleDragStartItem = useCallback((kind: string, id: string) => {
+    draggingItemRef.current = { kind, id }
+    dragOverItemRef.current = null
+    setDraggingItem({ kind, id })
+    setDragOverItem(null)
+  }, [])
+
+  const handleDragOverItem = useCallback(
+    (kind: string, id: string, position: DragInsertPosition) => {
+      const activeDraggingItem = draggingItemRef.current ?? draggingItem
+      if (!activeDraggingItem || activeDraggingItem.id === id) return
+      const normalizedTarget = normalizeDropTarget(activeDraggingItem, kind, id, position)
+      if (!normalizedTarget || activeDraggingItem.id === normalizedTarget.id) {
+        setDragOverItemState(null)
+        return
+      }
+      if (canMoveChatAcrossScope(activeDraggingItem, normalizedTarget.kind, normalizedTarget.id)) {
+        setDragOverItemState(normalizedTarget)
+        return
+      }
+      if (activeDraggingItem.kind !== normalizedTarget.kind) return
+      const context = getReorderContext(
+        normalizedTarget.kind,
+        activeDraggingItem.id,
+        normalizedTarget.id,
+      )
+      if (!context) {
+        setDragOverItemState(null)
+        return
+      }
+
+      if (
+        !context.activeIds.includes(activeDraggingItem.id) ||
+        !context.activeIds.includes(normalizedTarget.id)
+      ) {
+        setDragOverItemState(null)
+        return
+      }
+
+      setDragOverItemState(normalizedTarget)
+    },
+    [
+      canMoveChatAcrossScope,
+      draggingItem,
+      getReorderContext,
+      normalizeDropTarget,
+      setDragOverItemState,
+    ],
+  )
+
+  const commitDropTarget = useCallback(
+    (
+      draggedItem: { kind: string; id: string },
+      dropTarget: {
+        kind: string
+        id: string
+        position: DragInsertPosition
+      },
+    ) => {
+      if (draggedItem.id === dropTarget.id) return
+
+      const crossScopeTarget = getCrossScopeDropTarget(dropTarget.kind, dropTarget.id)
+      const draggedChat = getDraggedLocalChat(draggedItem)
+      if (
+        crossScopeMoveEnabled &&
+        draggedChat &&
+        crossScopeTarget &&
+        canMoveChatAcrossScope(draggedItem, dropTarget.kind, dropTarget.id)
+      ) {
+        if (crossScopeTarget.scope === "project") {
+          moveChatMutation.mutate({
+            id: draggedChat.id,
+            scope: "project",
+            projectId: crossScopeTarget.projectId,
+          })
+        } else {
+          moveChatMutation.mutate({
+            id: draggedChat.id,
+            scope: "task",
+            taskId: crossScopeTarget.taskId,
+          })
+        }
+        return
+      }
+
+      if (draggedItem.kind !== dropTarget.kind) return
+
+      const context = getReorderContext(dropTarget.kind, draggedItem.id, dropTarget.id)
+      if (!context) return
+
+      flushSync(() => {
+        setManualOrderByKey((prev) => ({
+          ...prev,
+          [context.key]: moveIdInOrder(
+            prev[context.key] ?? [],
+            context.activeIds,
+            draggedItem.id,
+            dropTarget.id,
+            dropTarget.position,
+          ),
+        }))
+      })
+    },
+    [
+      canMoveChatAcrossScope,
+      crossScopeMoveEnabled,
+      getCrossScopeDropTarget,
+      getDraggedLocalChat,
+      getReorderContext,
+      moveChatMutation,
+    ],
+  )
+
+  const handleDropItem = useCallback(
+    (kind: string, id: string, position: DragInsertPosition) => {
+      const activeDraggingItem = draggingItemRef.current ?? draggingItem
+      if (!activeDraggingItem) {
+        clearDragState()
+        return
+      }
+      const displayedDropTarget =
+        dragOverItemRef.current ??
+        dragOverItem ??
+        normalizeDropTarget(activeDraggingItem, kind, id, position)
+      if (!displayedDropTarget) {
+        clearDragState()
+        return
+      }
+      let dropTargetId = displayedDropTarget?.id ?? id
+      let dropPosition = displayedDropTarget?.position ?? position
+      const dropTargetKind = displayedDropTarget?.kind ?? kind
+
+      if (activeDraggingItem.id === dropTargetId) {
+        clearDragState()
+        return
+      }
+
+      commitDropTarget(activeDraggingItem, {
+        kind: dropTargetKind,
+        id: dropTargetId,
+        position: dropPosition,
+      })
+
+      clearDragState()
+    },
+    [clearDragState, commitDropTarget, dragOverItem, draggingItem, normalizeDropTarget],
+  )
+
+  const handleDragEndItem = useCallback(() => {
+    const activeDraggingItem = draggingItemRef.current ?? draggingItem
+    const activeDragOverItem = dragOverItemRef.current ?? dragOverItem
+    if (activeDraggingItem && activeDragOverItem) {
+      commitDropTarget(activeDraggingItem, activeDragOverItem)
+    }
+    clearDragState()
+  }, [clearDragState, commitDropTarget, dragOverItem, draggingItem])
+
+  // Clear sidebar drag/press state on releases and app focus changes. Native
+  // drag events can miss the source node when a drag ends over another window.
+  useEffect(() => {
+    if (!isSidebarPressed) return
+    document.addEventListener("mouseup", clearPressedState, true)
+    document.addEventListener("pointerup", clearPressedState, true)
+    document.addEventListener("pointercancel", clearPressedState, true)
+    document.addEventListener("dragend", clearPressedState)
+    document.addEventListener("drop", clearPressedState)
+    window.addEventListener("blur", clearPressedState)
+    return () => {
+      document.removeEventListener("mouseup", clearPressedState, true)
+      document.removeEventListener("pointerup", clearPressedState, true)
+      document.removeEventListener("pointercancel", clearPressedState, true)
+      document.removeEventListener("dragend", clearPressedState)
+      document.removeEventListener("drop", clearPressedState)
+      window.removeEventListener("blur", clearPressedState)
+    }
+  }, [clearPressedState, isSidebarPressed])
+
+  useEffect(() => {
+    const clearActiveDrag = () => {
+      if (!draggingItemRef.current && !dragOverItemRef.current) return
+      clearDragState()
+      clearPressedState()
+    }
+
+    const clearOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearActiveDrag()
+    }
+
+    const clearOnVisibilityChange = () => {
+      if (document.visibilityState !== "visible") clearActiveDrag()
+    }
+
+    document.addEventListener("dragend", clearActiveDrag)
+    document.addEventListener("drop", clearActiveDrag)
+    document.addEventListener("keydown", clearOnEscape, true)
+    document.addEventListener("visibilitychange", clearOnVisibilityChange)
+    window.addEventListener("blur", clearActiveDrag)
+
+    return () => {
+      document.removeEventListener("dragend", clearActiveDrag)
+      document.removeEventListener("drop", clearActiveDrag)
+      document.removeEventListener("keydown", clearOnEscape, true)
+      document.removeEventListener("visibilitychange", clearOnVisibilityChange)
+      window.removeEventListener("blur", clearActiveDrag)
+    }
+  }, [clearDragState, clearPressedState])
+
+  const handleSidebarMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    // Don't hide when the press is on an action button itself — that would break
+    // clicking "+" / "⋯".
+    if ((e.target as HTMLElement).closest("[data-section-action]")) return
+    setIsSidebarPressed(true)
+  }, [])
+
+  const archivedLifecycleItems = useMemo(() => {
+    const projectItems =
+      archivedProjects?.map((project) => ({
+        id: project.id,
+        type: "project" as const,
+        title: project.gitRepo || project.name,
+        subtitle: "Project",
+        archivedAt: project.archivedAt,
+      })) ?? []
+    const activeAndArchivedProjects = new Map(
+      [...(projects ?? []), ...(archivedProjects ?? [])].map((project) => [project.id, project]),
+    )
+    const activeAndArchivedTasks = new Map(
+      [...(tasks ?? []), ...(archivedTasks ?? [])].map((task) => [task.id, task]),
+    )
+    const taskItems =
+      archivedTasks?.map((task) => {
+        const project = activeAndArchivedProjects.get(task.projectId)
+        return {
+          id: task.id,
+          type: "task" as const,
+          title: task.name,
+          subtitle: project ? `Task / ${project.gitRepo || project.name}` : "Task",
+          archivedAt: task.archivedAt,
+        }
+      }) ?? []
+    const chatItems =
+      archivedChats?.map((chat) => {
+        const project = chat.projectId ? activeAndArchivedProjects.get(chat.projectId) : null
+        const task = chat.taskId ? activeAndArchivedTasks.get(chat.taskId) : null
+        const scopeLabel =
+          chat.scope === "global" || (!chat.projectId && !chat.taskId)
+            ? "Global chat"
+            : task
+              ? `Chat / ${task.name}`
+              : project
+                ? `Chat / ${project.gitRepo || project.name}`
+                : "Chat"
+        return {
+          id: chat.id,
+          type: "chat" as const,
+          title: chat.name || "New chat",
+          subtitle: scopeLabel,
+          archivedAt: chat.archivedAt,
+        }
+      }) ?? []
+
+    return [...projectItems, ...taskItems, ...chatItems].sort((a, b) => {
+      const aTime = a.archivedAt ? new Date(a.archivedAt).getTime() : 0
+      const bTime = b.archivedAt ? new Date(b.archivedAt).getTime() : 0
+      return bTime - aTime
+    })
+  }, [archivedChats, archivedProjects, archivedTasks, projects, tasks])
+
+  const handleRestoreLifecycleItem = useCallback(
+    (item: (typeof archivedLifecycleItems)[number]) => {
+      if (item.type === "project") {
+        restoreProjectMutation.mutate({ id: item.id })
+      } else if (item.type === "task") {
+        restoreTaskMutation.mutate({ id: item.id })
+      } else {
+        restoreChatMutation.mutate({ id: item.id })
+      }
+    },
+    [restoreChatMutation, restoreProjectMutation, restoreTaskMutation],
+  )
 
   // Handle bulk archive of selected chats
   const handleBulkArchive = useCallback(() => {
@@ -2533,17 +5138,128 @@ export function AgentsSidebar({
     return chatIds
   }, [pendingQuestions])
 
-  const handleNewAgent = () => {
+  const handleAddExistingProject = () => {
     triggerHaptic("light")
-    setSelectedChatId(null)
-    setSelectedDraftId(null) // Clear selected draft so form starts empty
-    setShowNewChatForm(true) // Explicitly show new chat form
-    setDesktopView(null) // Clear automations/inbox view
-    // On mobile, switch to chat mode to show NewChatForm
-    if (isMobileFullscreen && onChatSelect) {
-      onChatSelect()
-    }
+    openProjectMutation.mutate()
   }
+
+  const handleCloneProject = () => {
+    const repoUrl = window.prompt("GitHub repository URL or owner/repo")
+    if (!repoUrl?.trim()) return
+    triggerHaptic("light")
+    cloneProjectMutation.mutate({ repoUrl: repoUrl.trim() })
+  }
+
+  const openNewProjectChat = useCallback(
+    (projectId: string) => {
+      const project = projects?.find((candidate) => candidate.id === projectId)
+      if (!project) return
+
+      triggerHaptic("light")
+      localStorage.setItem("flapstack:new-chat-scope", "project")
+      localStorage.removeItem("flapstack:new-chat-task-id")
+      setSelectedProject({
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        gitRemoteUrl: project.gitRemoteUrl,
+        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: project.gitOwner,
+        gitRepo: project.gitRepo,
+      })
+      setSelectedChatId(null)
+      setSelectedChatIsRemote(false)
+      setSelectedDraftId(null)
+      setShowNewChatForm(true)
+      setDesktopView(null)
+      setSearchQuery("")
+      if (isMobileFullscreen && onChatSelect) {
+        onChatSelect()
+      }
+    },
+    [
+      projects,
+      triggerHaptic,
+      setSelectedProject,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      setDesktopView,
+      isMobileFullscreen,
+      onChatSelect,
+    ],
+  )
+
+  const createProjectTask = useCallback(
+    (projectId: string) => {
+      const project = projects?.find((candidate) => candidate.id === projectId)
+      if (!project) return
+
+      setNewTaskProject({
+        id: project.id,
+        name: project.gitRepo || project.name,
+      })
+    },
+    [projects],
+  )
+
+  const openNewTaskChat = useCallback(
+    (taskId: string) => {
+      const task = tasks?.find((candidate) => candidate.id === taskId)
+      if (!task) return
+      const project = projects?.find((candidate) => candidate.id === task.projectId)
+      if (!project) return
+
+      triggerHaptic("light")
+      localStorage.setItem("flapstack:new-chat-scope", "task")
+      localStorage.setItem("flapstack:new-chat-task-id", task.id)
+      setSelectedProject({
+        id: project.id,
+        name: project.name,
+        path: project.path,
+        gitRemoteUrl: project.gitRemoteUrl,
+        gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: project.gitOwner,
+        gitRepo: project.gitRepo,
+      })
+      setSelectedChatId(null)
+      setSelectedChatIsRemote(false)
+      setSelectedDraftId(null)
+      setShowNewChatForm(true)
+      setDesktopView(null)
+      setSearchQuery("")
+      if (isMobileFullscreen && onChatSelect) {
+        onChatSelect()
+      }
+    },
+    [
+      tasks,
+      projects,
+      triggerHaptic,
+      setSelectedProject,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      setDesktopView,
+      isMobileFullscreen,
+      onChatSelect,
+    ],
+  )
+
+  const handleCreateTaskSave = useCallback(
+    async (name: string) => {
+      if (!newTaskProject) return
+
+      await createTaskMutation.mutateAsync({
+        projectId: newTaskProject.id,
+        name,
+      })
+      setNewTaskProject(null)
+    },
+    [createTaskMutation, newTaskProject],
+  )
 
   const handleChatClick = useCallback(
     async (chatId: string, e?: React.MouseEvent, globalIndex?: number) => {
@@ -2611,7 +5327,7 @@ export function AgentsSidebar({
       if (window.desktopApi?.claimChat) {
         const result = await window.desktopApi.claimChat(originalId)
         if (!result.ok) {
-          toast.info("This workspace is already open in another window", {
+          toast.info("This chat is already open in another window", {
             description: "Switching to the existing window.",
             duration: 3000,
           })
@@ -2723,8 +5439,8 @@ export function AgentsSidebar({
             ])
           },
           onError: (error) => {
-            console.error("[handleArchiveSingle] Failed to archive remote workspace:", error)
-            toast.error("Failed to archive workspace")
+            console.error("[handleArchiveSingle] Failed to archive remote chat:", error)
+            toast.error("Failed to archive chat")
           },
         })
         return
@@ -2789,7 +5505,8 @@ export function AgentsSidebar({
   // Handle open locally for sandbox chats
   const handleOpenLocally = useCallback(
     (chatId: string) => {
-      const remoteChat = remoteChats?.find((c) => c.id === chatId)
+      const originalId = chatId.replace(/^remote_/, "")
+      const remoteChat = remoteChats?.find((c) => c.id === originalId)
       if (!remoteChat) return
 
       const matchingProjects = getMatchingProjects(projects ?? [], remoteChat)
@@ -2799,7 +5516,7 @@ export function AgentsSidebar({
         autoImport(remoteChat, matchingProjects[0]!)
       } else {
         // Show dialog: 0 or 2+ matches
-        setImportingChatId(chatId)
+        setImportingChatId(originalId)
         setImportDialogOpen(true)
       }
     },
@@ -3094,6 +5811,67 @@ export function AgentsSidebar({
     }
   }, [])
 
+  const visibleChatSections = useMemo(
+    () =>
+      chatSections.filter(
+        (section) =>
+          !section.parentProjectId ||
+          !collapsedSectionIds.has(`project-${section.parentProjectId}`),
+      ),
+    [chatSections, collapsedSectionIds],
+  )
+
+  const projectAfterDropSectionIndex = useMemo(() => {
+    if (dragOverItem?.kind !== "project" || dragOverItem.position !== "after") return -1
+    return visibleChatSections.reduce((lastIndex, section, index) => {
+      const isTargetProjectHeader =
+        section.lifecycleTarget?.type === "project" &&
+        section.lifecycleTarget.id === dragOverItem.id
+      const isTargetProjectChild = section.parentProjectId === dragOverItem.id
+      return isTargetProjectHeader || isTargetProjectChild ? index : lastIndex
+    }, -1)
+  }, [dragOverItem, visibleChatSections])
+
+  const forceSidebarMoveCursor = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!draggingItemRef.current) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "move"
+  }, [])
+
+  const handleSidebarDropCapture = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      const activeDraggingItem = draggingItemRef.current
+      const activeDragOverItem = dragOverItemRef.current
+      if (!activeDraggingItem || !activeDragOverItem) return
+
+      event.preventDefault()
+      event.dataTransfer.dropEffect = "move"
+      commitDropTarget(activeDraggingItem, activeDragOverItem)
+      clearDragState()
+    },
+    [clearDragState, commitDropTarget],
+  )
+
+  // While one of our own sidebar items is being dragged, force the "move" cursor
+  // across the WHOLE document — not just inside the sidebar element. Otherwise the
+  // moment the pointer crosses a gap, a Radix portal, the scroll edge, or leaves
+  // the sidebar, Chromium/Electron on macOS reverts to the green "copy" (+) badge
+  // stuck to the cursor. The ref guard means external drags (files into chat, etc.)
+  // are untouched.
+  useEffect(() => {
+    const forceMove = (event: DragEvent) => {
+      if (!draggingItemRef.current) return
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+    }
+    document.addEventListener("dragenter", forceMove, true)
+    document.addEventListener("dragover", forceMove, true)
+    return () => {
+      document.removeEventListener("dragenter", forceMove, true)
+      document.removeEventListener("dragover", forceMove, true)
+    }
+  }, [])
+
   // Mobile fullscreen mode - render without ResizableSidebar wrapper
   const sidebarContent = (
     <div
@@ -3101,8 +5879,13 @@ export function AgentsSidebar({
         "group/sidebar flex flex-col gap-0 overflow-hidden select-none",
         isMobileFullscreen ? "h-full w-full bg-background" : "h-full bg-tl-background",
       )}
+      onDragEnterCapture={forceSidebarMoveCursor}
+      onDragOverCapture={forceSidebarMoveCursor}
+      onDropCapture={handleSidebarDropCapture}
+      onMouseDownCapture={handleSidebarMouseDownCapture}
       onMouseEnter={handleSidebarMouseEnter}
       onMouseLeave={handleSidebarMouseLeave}
+      data-pressing={isSidebarPressed || undefined}
       data-mobile-fullscreen={isMobileFullscreen || undefined}
       data-sidebar-content
     >
@@ -3123,20 +5906,23 @@ export function AgentsSidebar({
         closeButtonRef={closeButtonRef}
       />
 
-      {/* Search and New Workspace */}
+      {/* Search and project actions */}
       <div className="px-2 pb-3 flex-shrink-0">
         <div className="space-y-2">
           {/* Search Input */}
           <div className="relative">
             <Input
               ref={searchInputRef}
-              placeholder="Search workspaces..."
+              placeholder="Search projects and chats..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault()
                   searchInputRef.current?.blur()
+                  setIsSearchFocused(false)
                   setFocusedChatIndex(-1) // Reset focus
                   return
                 }
@@ -3183,43 +5969,82 @@ export function AgentsSidebar({
               )}
             />
           </div>
-          {/* New Workspace Button */}
-          <Tooltip delayDuration={500}>
-            <TooltipTrigger asChild>
-              <ButtonCustom
-                onClick={handleNewAgent}
-                variant="outline"
-                size="sm"
-                className={cn(
-                  "px-2 w-full hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground rounded-lg gap-1.5",
-                  isMobileFullscreen ? "h-10" : "h-7",
+          {(isSearchFocused || searchQuery.trim().length > 0) && (
+            <div onMouseDown={(event) => event.preventDefault()}>
+              <ScopedSearchPanel
+                selectedChatId={selectedLocalChat?.id ?? null}
+                selectedProjectId={selectedLocalChat?.projectId ?? null}
+                selectedTaskId={selectedLocalChat?.taskId ?? null}
+                onNavigateChat={(chatId) => {
+                  handleChatClick(chatId)
+                  searchInputRef.current?.blur()
+                }}
+              />
+            </div>
+          )}
+          <DropdownMenu>
+            <Tooltip delayDuration={500}>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <ButtonCustom
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "px-2 w-full hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground rounded-lg gap-1.5",
+                      isMobileFullscreen ? "h-10" : "h-7",
+                    )}
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                    <span className="text-sm font-medium">
+                      {openProjectMutation.isPending || cloneProjectMutation.isPending
+                        ? "Adding Project..."
+                        : "Add Project"}
+                    </span>
+                  </ButtonCustom>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="flex flex-col items-start gap-1">
+                <span>Add or clone a project</span>
+                {newWorkspaceHotkey && (
+                  <span className="flex items-center gap-1.5">
+                    <Kbd>{newWorkspaceHotkey}</Kbd>
+                    {newWorkspaceAltHotkey && (
+                      <>
+                        <span className="text-[10px] opacity-50">or</span>
+                        <Kbd>{newWorkspaceAltHotkey}</Kbd>
+                      </>
+                    )}
+                  </span>
                 )}
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="start" className="w-56" sideOffset={6}>
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={() => toast.info("Create new folder is not wired yet")}
               >
-                <span className="text-sm font-medium">New Workspace</span>
-              </ButtonCustom>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="flex flex-col items-start gap-1">
-              <span>Start a new workspace</span>
-              {newWorkspaceHotkey && (
-                <span className="flex items-center gap-1.5">
-                  <Kbd>{newWorkspaceHotkey}</Kbd>
-                  {newWorkspaceAltHotkey && (
-                    <>
-                      <span className="text-[10px] opacity-50">or</span>
-                      <Kbd>{newWorkspaceAltHotkey}</Kbd>
-                    </>
-                  )}
-                </span>
-              )}
-            </TooltipContent>
-          </Tooltip>
+                <FolderPlus className="h-3.5 w-3.5 text-muted-foreground" />
+                Create new folder
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={handleCloneProject}
+                disabled={cloneProjectMutation.isPending}
+              >
+                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                Clone a repo
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={handleAddExistingProject}
+                disabled={openProjectMutation.isPending}
+              >
+                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                Add existing folder
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </div>
-
-      {/* Navigation Links - Inbox & Automations */}
-      <div className="px-2 pb-3 flex-shrink-0 space-y-0.5 -mx-1">
-        <InboxButton />
-        <AutomationsButton />
       </div>
 
       {/* Scrollable Agents List */}
@@ -3269,101 +6094,314 @@ export function AgentsSidebar({
           {/* Chats Section */}
           {filteredChats.length > 0 ? (
             <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
-              {/* Pinned section */}
-              <ChatListSection
-                title="Pinned workspaces"
-                chats={pinnedAgents}
-                selectedChatId={selectedChatId}
-                selectedChatIsRemote={selectedChatIsRemote}
-                focusedChatIndex={focusedChatIndex}
-                loadingChatIds={loadingChatIds}
-                unseenChanges={unseenChanges}
-                workspacePendingPlans={workspacePendingPlans}
-                workspacePendingQuestions={workspacePendingQuestions}
-                isMultiSelectMode={isMultiSelectMode}
-                selectedChatIds={selectedChatIds}
-                isMobileFullscreen={isMobileFullscreen}
-                isDesktop={isDesktop}
-                pinnedChatIds={pinnedChatIds}
-                projectsMap={projectsMap}
-                workspaceFileStats={workspaceFileStats}
-                filteredChats={filteredChats}
-                canShowPinOption={canShowPinOption}
-                areAllSelectedPinned={areAllSelectedPinned}
-                showIcon={showWorkspaceIcon}
-                onChatClick={handleChatClick}
-                onCheckboxClick={handleCheckboxClick}
-                onMouseEnter={handleAgentMouseEnter}
-                onMouseLeave={handleAgentMouseLeave}
-                onArchive={handleArchiveSingle}
-                onTogglePin={handleTogglePin}
-                onRenameClick={handleRenameClick}
-                onCopyBranch={handleCopyBranch}
-                onArchiveAllBelow={handleArchiveAllBelow}
-                onArchiveOthers={handleArchiveOthers}
-                onOpenLocally={handleOpenLocally}
-                onBulkPin={handleBulkPin}
-                onBulkUnpin={handleBulkUnpin}
-                onBulkArchive={handleBulkArchive}
-                archivePending={
-                  archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                }
-                archiveBatchPending={
-                  archiveChatsBatchMutation.isPending || archiveRemoteChatsBatchMutation.isPending
-                }
-                nameRefCallback={nameRefCallback}
-                formatTime={formatTime}
-                justCreatedIds={justCreatedIds}
-              />
+              {visibleChatSections.map((section, sectionIndex) => {
+                const suppressProjectHeaderAfterDrop =
+                  section.lifecycleTarget?.type === "project" &&
+                  dragOverItem?.kind === "project" &&
+                  dragOverItem.id === section.lifecycleTarget.id &&
+                  dragOverItem.position === "after"
 
-              {/* Unpinned section */}
-              <ChatListSection
-                title={pinnedAgents.length > 0 ? "Recent workspaces" : "Workspaces"}
-                chats={unpinnedAgents}
-                selectedChatId={selectedChatId}
-                selectedChatIsRemote={selectedChatIsRemote}
-                focusedChatIndex={focusedChatIndex}
-                loadingChatIds={loadingChatIds}
-                unseenChanges={unseenChanges}
-                workspacePendingPlans={workspacePendingPlans}
-                workspacePendingQuestions={workspacePendingQuestions}
-                isMultiSelectMode={isMultiSelectMode}
-                selectedChatIds={selectedChatIds}
-                isMobileFullscreen={isMobileFullscreen}
-                isDesktop={isDesktop}
-                pinnedChatIds={pinnedChatIds}
-                projectsMap={projectsMap}
-                workspaceFileStats={workspaceFileStats}
-                filteredChats={filteredChats}
-                canShowPinOption={canShowPinOption}
-                areAllSelectedPinned={areAllSelectedPinned}
-                showIcon={showWorkspaceIcon}
-                onChatClick={handleChatClick}
-                onCheckboxClick={handleCheckboxClick}
-                onMouseEnter={handleAgentMouseEnter}
-                onMouseLeave={handleAgentMouseLeave}
-                onArchive={handleArchiveSingle}
-                onTogglePin={handleTogglePin}
-                onRenameClick={handleRenameClick}
-                onCopyBranch={handleCopyBranch}
-                onArchiveAllBelow={handleArchiveAllBelow}
-                onArchiveOthers={handleArchiveOthers}
-                onOpenLocally={handleOpenLocally}
-                onBulkPin={handleBulkPin}
-                onBulkUnpin={handleBulkUnpin}
-                onBulkArchive={handleBulkArchive}
-                archivePending={
-                  archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                }
-                archiveBatchPending={
-                  archiveChatsBatchMutation.isPending || archiveRemoteChatsBatchMutation.isPending
-                }
-                nameRefCallback={nameRefCallback}
-                formatTime={formatTime}
-                justCreatedIds={justCreatedIds}
-              />
+                return (
+                  <React.Fragment key={section.id}>
+                    <ChatListSection
+                      title={section.title}
+                      sectionId={section.id}
+                      sectionDragId={section.sectionDragId}
+                      hideHeader={section.hideHeader}
+                      parentProjectId={section.parentProjectId}
+                      kind={section.kind}
+                      projectColor={section.projectColor}
+                      isCollapsed={collapsedSectionIds.has(section.id)}
+                      isDraggingSection={
+                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
+                        Boolean(draggingItem) &&
+                        draggingItem!.kind ===
+                          (section.sectionDragId
+                            ? "project-child"
+                            : section.lifecycleTarget?.type) &&
+                        draggingItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+                      }
+                      isDragOverSection={
+                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
+                        Boolean(dragOverItem) &&
+                        dragOverItem!.kind ===
+                          (section.sectionDragId
+                            ? "project-child"
+                            : section.lifecycleTarget?.type) &&
+                        dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+                      }
+                      dragOverSectionPosition={
+                        !suppressProjectHeaderAfterDrop &&
+                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
+                        Boolean(dragOverItem) &&
+                        dragOverItem!.kind ===
+                          (section.sectionDragId
+                            ? "project-child"
+                            : section.lifecycleTarget?.type) &&
+                        dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+                          ? dragOverItem!.position
+                          : null
+                      }
+                      draggingKind={draggingItem?.kind}
+                      draggingId={draggingItem?.id}
+                      dragOverKind={dragOverItem?.kind}
+                      dragOverId={dragOverItem?.id}
+                      dragOverPosition={dragOverItem?.position}
+                      lifecycleTarget={section.lifecycleTarget}
+                      chats={section.chats}
+                      selectedChatId={selectedChatId}
+                      selectedChatIsRemote={selectedChatIsRemote}
+                      focusedChatIndex={focusedChatIndex}
+                      loadingChatIds={loadingChatIds}
+                      unseenChanges={unseenChanges}
+                      workspacePendingPlans={workspacePendingPlans}
+                      workspacePendingQuestions={workspacePendingQuestions}
+                      isMultiSelectMode={isMultiSelectMode}
+                      selectedChatIds={selectedChatIds}
+                      isMobileFullscreen={isMobileFullscreen}
+                      isDesktop={isDesktop}
+                      pinnedChatIds={pinnedChatIds}
+                      projectsMap={projectsMap}
+                      taskDefaultWorktrees={taskDefaultWorktrees}
+                      workspaceFileStats={workspaceFileStats}
+                      filteredChats={filteredChats}
+                      canShowPinOption={canShowPinOption}
+                      areAllSelectedPinned={areAllSelectedPinned}
+                      showIcon={showWorkspaceIcon}
+                      onChatClick={handleChatClick}
+                      onCheckboxClick={handleCheckboxClick}
+                      onMouseEnter={handleAgentMouseEnter}
+                      onMouseLeave={handleAgentMouseLeave}
+                      onArchive={handleArchiveSingle}
+                      onTogglePin={handleTogglePin}
+                      onToggleStar={handleToggleStar}
+                      onRenameClick={handleRenameClick}
+                      onCopyBranch={handleCopyBranch}
+                      onArchiveAllBelow={handleArchiveAllBelow}
+                      onArchiveOthers={handleArchiveOthers}
+                      onOpenLocally={handleOpenLocally}
+                      onBulkPin={handleBulkPin}
+                      onBulkUnpin={handleBulkUnpin}
+                      onBulkArchive={handleBulkArchive}
+                      onCreateProjectChat={openNewProjectChat}
+                      onCreateProjectTask={createProjectTask}
+                      onCreateTaskChat={openNewTaskChat}
+                      onChangeProjectColor={handleChangeProjectColor}
+                      onToggleSection={handleToggleSection}
+                      onDragStartItem={handleDragStartItem}
+                      onDragOverItem={handleDragOverItem}
+                      onDropItem={handleDropItem}
+                      onDragEndItem={handleDragEndItem}
+                      onToggleLifecyclePin={handleToggleLifecyclePin}
+                      onToggleLifecycleStar={handleToggleLifecycleStar}
+                      onArchiveLifecycle={handleArchiveLifecycle}
+                      archivePending={
+                        archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
+                      }
+                      archiveBatchPending={
+                        archiveChatsBatchMutation.isPending ||
+                        archiveRemoteChatsBatchMutation.isPending
+                      }
+                      lifecyclePending={
+                        pinProjectMutation.isPending ||
+                        unpinProjectMutation.isPending ||
+                        archiveProjectMutation.isPending ||
+                        pinTaskMutation.isPending ||
+                        unpinTaskMutation.isPending ||
+                        archiveTaskMutation.isPending
+                      }
+                      nameRefCallback={nameRefCallback}
+                      formatTime={formatTime}
+                      justCreatedIds={justCreatedIds}
+                      starredChatIds={starredChatIds}
+                    />
+                    {sectionIndex === projectAfterDropSectionIndex && dragOverItem && (
+                      <DropSeparator
+                        onDragEnter={(event) => {
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = "move"
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = "move"
+                          handleDragOverItem(
+                            dragOverItem.kind,
+                            dragOverItem.id,
+                            dragOverItem.position,
+                          )
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = "move"
+                          handleDropItem(dragOverItem.kind, dragOverItem.id, dragOverItem.position)
+                        }}
+                      />
+                    )}
+                  </React.Fragment>
+                )
+              })}
             </div>
           ) : null}
+
+          {!searchQuery &&
+            [
+              { title: "Pinned", kind: "pinned" as const, chats: pinnedAgents },
+              { title: "Starred", kind: "starred" as const, chats: starredAgents },
+            ]
+              .filter((section) => section.chats.length > 0)
+              .map((section) => (
+                <div
+                  key={section.kind}
+                  className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}
+                >
+                  <ChatListSection
+                    title={section.title}
+                    kind={section.kind}
+                    projectColor={null}
+                    draggingKind={draggingItem?.kind}
+                    draggingId={draggingItem?.id}
+                    dragOverKind={dragOverItem?.kind}
+                    dragOverId={dragOverItem?.id}
+                    dragOverPosition={dragOverItem?.position}
+                    chats={section.chats}
+                    selectedChatId={selectedChatId}
+                    selectedChatIsRemote={selectedChatIsRemote}
+                    focusedChatIndex={focusedChatIndex}
+                    loadingChatIds={loadingChatIds}
+                    unseenChanges={unseenChanges}
+                    workspacePendingPlans={workspacePendingPlans}
+                    workspacePendingQuestions={workspacePendingQuestions}
+                    isMultiSelectMode={isMultiSelectMode}
+                    selectedChatIds={selectedChatIds}
+                    isMobileFullscreen={isMobileFullscreen}
+                    isDesktop={isDesktop}
+                    pinnedChatIds={pinnedChatIds}
+                    projectsMap={projectsMap}
+                    taskDefaultWorktrees={taskDefaultWorktrees}
+                    workspaceFileStats={workspaceFileStats}
+                    filteredChats={filteredChats}
+                    canShowPinOption={canShowPinOption}
+                    areAllSelectedPinned={areAllSelectedPinned}
+                    showIcon={showWorkspaceIcon}
+                    onChatClick={handleChatClick}
+                    onCheckboxClick={handleCheckboxClick}
+                    onMouseEnter={handleAgentMouseEnter}
+                    onMouseLeave={handleAgentMouseLeave}
+                    onArchive={handleArchiveSingle}
+                    onTogglePin={handleTogglePin}
+                    onToggleStar={handleToggleStar}
+                    onRenameClick={handleRenameClick}
+                    onCopyBranch={handleCopyBranch}
+                    onArchiveAllBelow={handleArchiveAllBelow}
+                    onArchiveOthers={handleArchiveOthers}
+                    onOpenLocally={handleOpenLocally}
+                    onBulkPin={handleBulkPin}
+                    onBulkUnpin={handleBulkUnpin}
+                    onBulkArchive={handleBulkArchive}
+                    onCreateProjectChat={openNewProjectChat}
+                    onCreateProjectTask={createProjectTask}
+                    onCreateTaskChat={openNewTaskChat}
+                    onChangeProjectColor={handleChangeProjectColor}
+                    onToggleSection={handleToggleSection}
+                    onDragStartItem={handleDragStartItem}
+                    onDragOverItem={handleDragOverItem}
+                    onDropItem={handleDropItem}
+                    onDragEndItem={handleDragEndItem}
+                    onToggleLifecyclePin={handleToggleLifecyclePin}
+                    onToggleLifecycleStar={handleToggleLifecycleStar}
+                    onArchiveLifecycle={handleArchiveLifecycle}
+                    archivePending={
+                      archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
+                    }
+                    archiveBatchPending={
+                      archiveChatsBatchMutation.isPending ||
+                      archiveRemoteChatsBatchMutation.isPending
+                    }
+                    lifecyclePending={
+                      pinProjectMutation.isPending ||
+                      unpinProjectMutation.isPending ||
+                      archiveProjectMutation.isPending ||
+                      pinTaskMutation.isPending ||
+                      unpinTaskMutation.isPending ||
+                      archiveTaskMutation.isPending
+                    }
+                    nameRefCallback={nameRefCallback}
+                    formatTime={formatTime}
+                    justCreatedIds={justCreatedIds}
+                    starredChatIds={starredChatIds}
+                  />
+                </div>
+              ))}
+
+          {archivedLifecycleItems.length > 0 && !searchQuery && (
+            <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
+              <button
+                type="button"
+                onClick={() => setIsArchiveOpen((open) => !open)}
+                className={cn(
+                  "flex w-full items-center h-6 mb-1 text-muted-foreground hover:text-foreground transition-colors",
+                  isMultiSelectMode ? "pl-3 pr-3" : "pl-2 pr-2",
+                )}
+              >
+                <ChevronDown
+                  className={cn(
+                    "mr-1.5 h-3.5 w-3.5 transition-transform",
+                    isArchiveOpen ? "rotate-0" : "-rotate-90",
+                  )}
+                />
+                <ArchiveIcon className="mr-1.5 h-3.5 w-3.5" />
+                <span className="text-xs font-medium whitespace-nowrap">Archive</span>
+                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground/60">
+                  {archivedLifecycleItems.length}
+                </span>
+              </button>
+              {isArchiveOpen && (
+                <div className="list-none p-0 m-0">
+                  {archivedLifecycleItems.map((item) => (
+                    <div
+                      key={`${item.type}-${item.id}`}
+                      className={cn(
+                        "w-full text-left py-1.5 group relative transition-colors duration-75",
+                        isMultiSelectMode ? "px-3" : "pl-2 pr-2 rounded-md",
+                        "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+                      )}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="pt-0.5">
+                          <ArchiveIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <span className="truncate block text-sm leading-tight flex-1">
+                              {item.title}
+                            </span>
+                            <button
+                              onClick={() => handleRestoreLifecycleItem(item)}
+                              tabIndex={-1}
+                              className="flex-shrink-0 text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
+                              aria-label={`Restore archived ${item.type}`}
+                            >
+                              <UnarchiveIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] text-muted-foreground/60 truncate">
+                              {item.subtitle}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">
+                              {formatTime(
+                                item.archivedAt?.toISOString() ?? new Date().toISOString(),
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Top gradient fade (appears when scrolled down) */}
@@ -3461,9 +6499,6 @@ export function AgentsSidebar({
                 {/* Help Button - isolated component to prevent sidebar re-renders */}
                 <HelpSection isMobile={isMobileFullscreen} />
 
-                {/* Kanban View Button - isolated component */}
-                <KanbanButton />
-
                 {/* Archive Button - isolated component to prevent sidebar re-renders */}
                 <ArchiveSection archivedChatsCount={archivedChatsCount} />
               </div>
@@ -3471,18 +6506,19 @@ export function AgentsSidebar({
               <div className="flex-1" />
             </div>
 
-            {/* Feedback Button */}
-            <ButtonCustom
-              onClick={() => window.open(FEEDBACK_URL, "_blank")}
-              variant="outline"
-              size="sm"
+            <label
               className={cn(
-                "px-2 w-full hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground rounded-lg gap-1.5",
-                isMobileFullscreen ? "h-10" : "h-7",
+                "flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border/60 bg-background/35 px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground",
+                crossScopeMoveEnabled && "border-primary/40 bg-primary/10 text-foreground",
               )}
             >
-              <span className="text-sm font-medium">Feedback</span>
-            </ButtonCustom>
+              <span className="min-w-0 truncate">Move across scopes</span>
+              <Checkbox
+                checked={crossScopeMoveEnabled}
+                onCheckedChange={(checked) => setCrossScopeMoveEnabled(checked === true)}
+                aria-label="Move chats across projects and tasks"
+              />
+            </label>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3520,6 +6556,16 @@ export function AgentsSidebar({
         onSave={handleRenameSave}
         currentName={renamingChat?.name || ""}
         isLoading={renameLoading}
+      />
+
+      <RenameDialog
+        isOpen={Boolean(newTaskProject)}
+        onClose={() => setNewTaskProject(null)}
+        onSave={handleCreateTaskSave}
+        currentName=""
+        isLoading={createTaskMutation.isPending}
+        title={newTaskProject ? `New task for ${newTaskProject.name}` : "New task"}
+        placeholder="Task name"
       />
 
       {/* Confirm Archive Dialog */}

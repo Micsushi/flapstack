@@ -116,13 +116,23 @@ const listSkillsProcedure = publicProcedure
       .optional(),
   )
   .query(async ({ input }) => {
-    const userSkillsDir = path.join(os.homedir(), ".claude", "skills")
-    const userSkillsPromise = scanSkillsDirectory(userSkillsDir, "user")
+    const userSkillsDirs = [
+      path.join(os.homedir(), ".claude", "skills"),
+      path.join(os.homedir(), ".codex", "skills"),
+    ]
+    const userSkillsPromise = Promise.all(
+      userSkillsDirs.map((dir) => scanSkillsDirectory(dir, "user")),
+    ).then((groups) => dedupeSkills(groups.flat()))
 
     let projectSkillsPromise = Promise.resolve<FileSkill[]>([])
     if (input?.cwd) {
-      const projectSkillsDir = path.join(input.cwd, ".claude", "skills")
-      projectSkillsPromise = scanSkillsDirectory(projectSkillsDir, "project", input.cwd)
+      const projectSkillsDirs = [
+        path.join(input.cwd, ".claude", "skills"),
+        path.join(input.cwd, ".codex", "skills"),
+      ]
+      projectSkillsPromise = Promise.all(
+        projectSkillsDirs.map((dir) => scanSkillsDirectory(dir, "project", input.cwd)),
+      ).then((groups) => dedupeSkills(groups.flat()))
     }
 
     // Discover plugin skills
@@ -152,6 +162,16 @@ const listSkillsProcedure = publicProcedure
     return [...projectSkills, ...userSkills, ...pluginSkills]
   })
 
+function dedupeSkills(skills: FileSkill[]): FileSkill[] {
+  const seen = new Set<string>()
+  return skills.filter((skill) => {
+    const key = `${skill.source}:${skill.pluginName || ""}:${skill.name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /**
  * Generate SKILL.md content from name, description, and body
  */
@@ -177,8 +197,8 @@ function resolveSkillPath(displayPath: string): string {
 export const skillsRouter = router({
   /**
    * List all skills from filesystem
-   * - User skills: ~/.claude/skills/
-   * - Project skills: .claude/skills/ (relative to cwd)
+   * - User skills: ~/.claude/skills/ and ~/.codex/skills/
+   * - Project skills: .claude/skills/ and .codex/skills/ (relative to cwd)
    */
   list: listSkillsProcedure,
 

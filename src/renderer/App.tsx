@@ -11,7 +11,6 @@ import { AgentsLayout } from "./features/layout/agents-layout"
 import {
   AnthropicOnboardingPage,
   ApiKeyOnboardingPage,
-  BillingMethodPage,
   CodexOnboardingPage,
   SelectRepoPage,
 } from "./features/onboarding"
@@ -125,17 +124,10 @@ function AppContent() {
     return exists ? selectedProject : null
   }, [selectedProject, projects, isLoadingProjects])
 
-  // Determine which page to show:
-  // 1. No billing method selected -> BillingMethodPage
-  // 2. Claude subscription selected but not completed -> AnthropicOnboardingPage
-  // 3. Codex selected but not completed -> CodexOnboardingPage
-  // 4. API key or custom model selected but not completed -> ApiKeyOnboardingPage
-  // 5. No valid project selected -> SelectRepoPage
-  // 6. Otherwise -> AgentsLayout
-  if (!billingMethod) {
-    return <BillingMethodPage />
-  }
-
+  // Local-first startup enters the workspace/project picker without requiring
+  // hosted account, sign-in, or billing selection. Provider-specific
+  // onboarding still runs when a local billing/auth mode has already been
+  // selected and needs credentials.
   if (billingMethod === "claude-subscription" && !anthropicOnboardingCompleted) {
     return <AnthropicOnboardingPage />
   }

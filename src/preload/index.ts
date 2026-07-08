@@ -86,8 +86,18 @@ contextBridge.exposeInMainWorld("desktopApi", {
   // Native features
   setBadge: (count: number | null) => ipcRenderer.invoke("app:set-badge", count),
   setBadgeIcon: (imageData: string | null) => ipcRenderer.invoke("app:set-badge-icon", imageData),
-  showNotification: (options: { title: string; body: string }) =>
-    ipcRenderer.invoke("app:show-notification", options),
+  showNotification: (options: {
+    title: string
+    body: string
+    chatId?: string
+    subChatId?: string
+  }) => ipcRenderer.invoke("app:show-notification", options),
+  onNotificationClicked: (callback: (payload: { chatId?: string; subChatId?: string }) => void) => {
+    const handler = (_event: unknown, payload: { chatId?: string; subChatId?: string }) =>
+      callback(payload)
+    ipcRenderer.on("app:notification-clicked", handler)
+    return () => ipcRenderer.removeListener("app:notification-clicked", handler)
+  },
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
   // API base URL (for fetch requests to server)
@@ -257,7 +267,15 @@ export interface DesktopApi {
   setAnalyticsOptOut: (optedOut: boolean) => Promise<void>
   setBadge: (count: number | null) => Promise<void>
   setBadgeIcon: (imageData: string | null) => Promise<void>
-  showNotification: (options: { title: string; body: string }) => Promise<void>
+  showNotification: (options: {
+    title: string
+    body: string
+    chatId?: string
+    subChatId?: string
+  }) => Promise<void>
+  onNotificationClicked: (
+    callback: (payload: { chatId?: string; subChatId?: string }) => void,
+  ) => () => void
   openExternal: (url: string) => Promise<void>
   getApiBaseUrl: () => Promise<string>
   clipboardWrite: (text: string) => Promise<void>

@@ -2,14 +2,14 @@ import { atom } from "jotai"
 import { atomFamily, atomWithStorage } from "jotai/utils"
 import { atomWithWindowStorage } from "../../../lib/window-storage"
 import type { LucideIcon } from "lucide-react"
-import { Box, FileText, Terminal, FileDiff, ListTodo } from "lucide-react"
+import { Box, FileText, Terminal, FileDiff, ListTodo, History } from "lucide-react"
 import { OriginalMCPIcon } from "../../../components/ui/icons"
 
 // ============================================================================
 // Widget System Types & Registry
 // ============================================================================
 
-export type WidgetId = "info" | "todo" | "plan" | "terminal" | "diff" | "mcp"
+export type WidgetId = "info" | "todo" | "runs" | "plan" | "terminal" | "diff" | "mcp"
 
 export interface WidgetConfig {
   id: WidgetId
@@ -22,6 +22,7 @@ export interface WidgetConfig {
 export const WIDGET_REGISTRY: WidgetConfig[] = [
   { id: "info", label: "Workspace", icon: Box, canExpand: false, defaultVisible: true },
   { id: "todo", label: "To-dos", icon: ListTodo, canExpand: false, defaultVisible: true },
+  { id: "runs", label: "Runs", icon: History, canExpand: false, defaultVisible: true },
   { id: "plan", label: "Plan", icon: FileText, canExpand: true, defaultVisible: true },
   { id: "terminal", label: "Terminal", icon: Terminal, canExpand: true, defaultVisible: false },
   { id: "diff", label: "Changes", icon: FileDiff, canExpand: true, defaultVisible: true },
@@ -42,6 +43,22 @@ const DEFAULT_VISIBLE_WIDGETS: WidgetId[] = WIDGET_REGISTRY.filter((w) => w.defa
 // Default widget order (all widgets)
 const DEFAULT_WIDGET_ORDER: WidgetId[] = WIDGET_REGISTRY.map((w) => w.id)
 
+function normalizeVisibleWidgets(widgets: WidgetId[] | undefined): WidgetId[] {
+  if (!widgets) return DEFAULT_VISIBLE_WIDGETS
+  return widgets.filter((widget): widget is WidgetId =>
+    WIDGET_REGISTRY.some((registered) => registered.id === widget),
+  )
+}
+
+function normalizeWidgetOrder(widgets: WidgetId[] | undefined): WidgetId[] {
+  if (!widgets) return DEFAULT_WIDGET_ORDER
+  const known = widgets.filter((widget): widget is WidgetId =>
+    WIDGET_REGISTRY.some((registered) => registered.id === widget),
+  )
+  const missing = DEFAULT_WIDGET_ORDER.filter((widget) => !known.includes(widget))
+  return [...known, ...missing]
+}
+
 // ============================================================================
 // Widget Visibility (per workspace)
 // ============================================================================
@@ -55,7 +72,7 @@ const widgetVisibilityStorageAtom = atomWithStorage<Record<string, WidgetId[]>>(
 
 export const widgetVisibilityAtomFamily = atomFamily((workspaceId: string) =>
   atom(
-    (get) => get(widgetVisibilityStorageAtom)[workspaceId] ?? DEFAULT_VISIBLE_WIDGETS,
+    (get) => normalizeVisibleWidgets(get(widgetVisibilityStorageAtom)[workspaceId]),
     (get, set, visibleWidgets: WidgetId[]) => {
       const current = get(widgetVisibilityStorageAtom)
       set(widgetVisibilityStorageAtom, {
@@ -79,7 +96,7 @@ const widgetOrderStorageAtom = atomWithStorage<Record<string, WidgetId[]>>(
 
 export const widgetOrderAtomFamily = atomFamily((workspaceId: string) =>
   atom(
-    (get) => get(widgetOrderStorageAtom)[workspaceId] ?? DEFAULT_WIDGET_ORDER,
+    (get) => normalizeWidgetOrder(get(widgetOrderStorageAtom)[workspaceId]),
     (get, set, widgetOrder: WidgetId[]) => {
       const current = get(widgetOrderStorageAtom)
       set(widgetOrderStorageAtom, {

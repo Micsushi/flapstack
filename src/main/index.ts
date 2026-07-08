@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/electron/main"
 import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron"
 import { existsSync, readFileSync, readlinkSync, unlinkSync } from "fs"
 import { createServer } from "http"
@@ -43,6 +42,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
 const PROTOCOL = IS_DEV ? "flapstack-dev" : "flapstack"
+const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : "Flapstack"
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
 // This ensures dev and prod have separate instance locks
@@ -50,6 +50,7 @@ if (IS_DEV) {
   const { join } = require("path")
   const devUserData = join(app.getPath("userData"), "..", "Flapstack Dev")
   app.setPath("userData", devUserData)
+  app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
 }
 
@@ -61,14 +62,16 @@ app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192")
 if (app.isPackaged && !IS_DEV) {
   const sentryDsn = import.meta.env.MAIN_VITE_SENTRY_DSN
   if (sentryDsn) {
-    try {
-      Sentry.init({
-        dsn: sentryDsn,
+    import("@sentry/electron/main")
+      .then((Sentry) => {
+        Sentry.init({
+          dsn: sentryDsn,
+        })
+        console.log("[App] Sentry initialized")
       })
-      console.log("[App] Sentry initialized")
-    } catch (error) {
-      console.warn("[App] Failed to initialize Sentry:", error)
-    }
+      .catch((error) => {
+        console.warn("[App] Failed to initialize Sentry:", error)
+      })
   } else {
     console.log("[App] Skipping Sentry initialization (no DSN configured)")
   }
@@ -358,6 +361,17 @@ const server = createServer((req, res) => {
   }
 })
 
+server.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EADDRINUSE") {
+    console.warn(
+      `[Auth Server] Port ${AUTH_SERVER_PORT} is already in use; auth callback server is disabled for this process.`,
+    )
+    return
+  }
+
+  console.error("[Auth Server] Failed:", error)
+})
+
 server.listen(AUTH_SERVER_PORT, () => {
   console.log(`[Auth Server] Listening on http://localhost:${AUTH_SERVER_PORT}`)
 })
@@ -442,10 +456,9 @@ if (gotTheLock) {
 
   // App ready
   app.whenReady().then(async () => {
-    // Set dev mode app name (userData path was already set before requestSingleInstanceLock)
-    // if (IS_DEV) {
-    //   app.name = "Agents Dev"
-    // }
+    if (IS_DEV) {
+      app.setName(APP_DISPLAY_NAME)
+    }
 
     // Register protocol handler (must be after app is ready)
     initialRegistration = registerProtocol()
@@ -462,7 +475,7 @@ if (gotTheLock) {
       app.setAppUserModelId(IS_DEV ? "dev.flapstack.app.dev" : "dev.flapstack.app")
     }
 
-    console.log(`[App] Starting Flapstack${IS_DEV ? " (DEV)" : ""}...`)
+    console.log(`[App] Starting ${APP_DISPLAY_NAME}...`)
 
     // Verify protocol registration after app is ready
     // This helps diagnose first-install issues where the protocol isn't recognized yet
@@ -486,7 +499,7 @@ if (gotTheLock) {
 
     // Set About panel options with Claude Code version
     app.setAboutPanelOptions({
-      applicationName: "Flapstack",
+      applicationName: APP_DISPLAY_NAME,
       applicationVersion: app.getVersion(),
       version: `Claude Code ${claudeCodeVersion}`,
       copyright: "Copyright © 2026 Flapstack contributors",
@@ -511,10 +524,10 @@ if (gotTheLock) {
       const showDevTools = !app.isPackaged || devToolsUnlocked
       const template: Electron.MenuItemConstructorOptions[] = [
         {
-          label: app.name,
+          label: APP_DISPLAY_NAME,
           submenu: [
             {
-              label: "About Flapstack",
+              label: `About ${APP_DISPLAY_NAME}`,
               click: () => app.showAboutPanel(),
             },
             { type: "separator" },

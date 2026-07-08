@@ -99,6 +99,15 @@
   color: hsl(0 0% 5%) !important;
 }
 
+[data-sidebar-drag-source] * {
+  -webkit-user-drag: none;
+}
+
+body[data-sidebar-pointer-dragging="true"],
+body[data-sidebar-pointer-dragging="true"] * {
+  cursor: grabbing !important;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

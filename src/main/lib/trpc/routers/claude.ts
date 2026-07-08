@@ -15,6 +15,7 @@ import {
   logRawClaudeMessage,
   type UIMessageChunk,
 } from "../../claude"
+import { getExistingClaudeToken } from "../../claude-token"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -30,6 +31,7 @@ import {
   type McpServerConfig,
 } from "../../claude-config"
 import {
+  agentRuns,
   anthropicAccounts,
   anthropicSettings,
   chats,
@@ -37,8 +39,11 @@ import {
   getDatabase,
   projects as projectsTable,
   subChats,
+  tasks as tasksTable,
 } from "../../db"
+import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
+import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import {
   ensureMcpTokensFresh,
   fetchMcpTools,
@@ -52,6 +57,22 @@ import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
+import {
+  buildClaudePermissionApplication,
+  getGlobalDefault,
+  isClaudeMutatingTool,
+  mapClaudeSdkPermissionMode,
+  parsePermissionMode,
+  resolveForRun,
+  type PermissionMode,
+} from "../../permissions"
+import {
+  findMissingClaudeSessionMessage,
+  isMissingClaudeSessionError,
+} from "../../claude/session-recovery"
+
+type RunCompletionStatus = "success" | "failure" | "cancelled"
+const HARNESS = "claude-code" as const
 
 /**
  * Parse @[agent:name], @[skill:name], and @[tool:servername] mentions from prompt text
@@ -159,6 +180,113 @@ function decryptToken(encrypted: string): string {
   return safeStorage.decryptString(buffer)
 }
 
+function resolveClaudeRunPermission(chatId: string): PermissionMode {
+  const db = getDatabase()
+  const chat = db.select().from(chats).where(eq(chats.id, chatId)).get()
+  if (!chat) return getGlobalDefault()
+
+  const task = chat.taskId
+    ? db.select().from(tasksTable).where(eq(tasksTable.id, chat.taskId)).get()
+    : null
+  const project = chat.projectId
+    ? db.select().from(projectsTable).where(eq(projectsTable.id, chat.projectId)).get()
+    : null
+
+  return resolveForRun({
+    chatMode: parsePermissionMode(chat.permissionMode),
+    taskMode: parsePermissionMode(task?.defaultPermissionMode),
+    projectMode: parsePermissionMode(project?.defaultPermissionMode),
+    globalMode: getGlobalDefault(),
+  }).mode
+}
+
+async function createClaudeAgentRun(input: {
+  chatId: string
+  subChatId: string
+  model?: string | null
+  permissionMode: PermissionMode
+  worktreePath?: string | null
+  promptMessageId?: string
+}) {
+  const db = getDatabase()
+  const run = db
+    .insert(agentRuns)
+    .values({
+      chatId: input.chatId,
+      subChatId: input.subChatId,
+      harness: HARNESS,
+      model: input.model ?? undefined,
+      permissionMode: input.permissionMode,
+      worktreePath: input.worktreePath ?? null,
+      promptMessageId: input.promptMessageId,
+      status: "running",
+    })
+    .returning()
+    .get()
+
+  db.update(subChats)
+    .set({
+      harness: HARNESS,
+      model: input.model ?? null,
+      permissionMode: input.permissionMode,
+      worktreePath: input.worktreePath ?? null,
+      runStatus: "running",
+    })
+    .where(eq(subChats.id, input.subChatId))
+    .run()
+
+  // Keep the chat-level identity chip in sync with the latest run
+  db.update(chats)
+    .set({ harness: HARNESS, model: input.model ?? null })
+    .where(eq(chats.id, input.chatId))
+    .run()
+
+  try {
+    const before = await captureCheckpoint(run.id, input.worktreePath ?? null, "before")
+    return db
+      .update(agentRuns)
+      .set({ beforeCheckpointId: before.id })
+      .where(eq(agentRuns.id, run.id))
+      .returning()
+      .get()
+  } catch (error) {
+    console.warn("[claude] Failed to capture before checkpoint:", error)
+    return run
+  }
+}
+
+async function completeClaudeAgentRun(
+  runId: string | null,
+  subChatId: string,
+  status: RunCompletionStatus,
+) {
+  if (!runId) return
+
+  const db = getDatabase()
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()
+  if (!run || run.status !== "running") return
+
+  let afterCheckpointId: string | undefined
+  try {
+    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
+    afterCheckpointId = after.id
+    await captureNoChangeManifest(run.id)
+  } catch (error) {
+    console.warn("[claude] Failed to capture after checkpoint/manifest:", error)
+  }
+
+  db.update(agentRuns)
+    .set({
+      status,
+      completedAt: new Date(),
+      ...(afterCheckpointId && { afterCheckpointId }),
+    })
+    .where(eq(agentRuns.id, runId))
+    .run()
+
+  db.update(subChats).set({ runStatus: status }).where(eq(subChats.id, subChatId)).run()
+}
+
 /**
  * Get Claude Code OAuth token from local SQLite
  * Uses multi-account system first (active account), falls back to legacy table
@@ -224,6 +352,14 @@ function getClaudeCodeToken(): string | null {
     )
 
     if (!cred?.oauthToken) {
+      const systemToken = getExistingClaudeToken()?.trim()
+      if (systemToken) {
+        console.log("[claude-auth] Using Claude Code token from system credentials")
+        console.log("[claude-auth] System token total length:", systemToken.length)
+        console.log("[claude-auth] ============================================")
+        return systemToken
+      }
+
       console.log("[claude-auth] No Claude Code credentials found")
       console.log("[claude-auth] ============================================")
       return null
@@ -782,6 +918,7 @@ export const claudeRouter = router({
             baseUrl: z.string().min(1),
           })
           .optional(),
+        effort: z.enum(["low", "medium", "high", "max"]).optional(),
         maxThinkingTokens: z.number().optional(), // Enable extended thinking
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),
@@ -809,6 +946,7 @@ export const claudeRouter = router({
         let lastChunkType = ""
         // Shared sessionId for cleanup to save on abort
         let currentSessionId: string | null = null
+        let agentRunId: string | null = null
         console.log(`[SD] M:START sub=${subId} stream=${streamId.slice(-8)} mode=${input.mode}`)
 
         // Track if observable is still active (not unsubscribed)
@@ -857,6 +995,10 @@ export const claudeRouter = router({
               },
             }),
           } as UIMessageChunk)
+        }
+
+        const completeRun = async (status: RunCompletionStatus) => {
+          await completeClaudeAgentRun(agentRunId, input.subChatId, status)
         }
 
         ;(async () => {
@@ -1036,9 +1178,16 @@ export const claudeRouter = router({
               finalPrompt = `${finalPrompt}\n\nUse the "${skillMentions.join('", "')}" skill(s) for this task.`
             }
 
+            const startupContext = await buildHarnessStartupContext({
+              cwd: input.cwd,
+              projectPath: input.projectPath,
+              harness: HARNESS,
+            })
+            const contextualPrompt = prependStartupContext(finalPrompt, startupContext)
+
             // Build prompt: if there are images, create an AsyncIterable<SDKUserMessage>
             // Otherwise use simple string prompt
-            let prompt: string | AsyncIterable<any> = finalPrompt
+            let prompt: string | AsyncIterable<any> = contextualPrompt
 
             if (input.images && input.images.length > 0) {
               // Create message content array with images first, then text
@@ -1054,10 +1203,10 @@ export const claudeRouter = router({
               ]
 
               // Add text if present
-              if (finalPrompt.trim()) {
+              if (contextualPrompt.trim()) {
                 messageContent.push({
                   type: "text" as const,
-                  text: finalPrompt,
+                  text: contextualPrompt,
                 })
               }
 
@@ -1343,7 +1492,31 @@ export const claudeRouter = router({
             // Get bundled Claude binary path
             const claudeBinaryPath = getBundledClaudeBinaryPath()
 
-            const resumeSessionId = input.sessionId || existingSessionId || undefined
+            let resumeSessionId = input.sessionId || existingSessionId || undefined
+
+            const clearMissingSessionAndRetry = (reason: string) => {
+              if (!resumeSessionId) return false
+
+              console.log(
+                `[claude] ${reason} - clearing missing sessionId ${resumeSessionId} and retrying once without resume`,
+              )
+              db.update(subChats)
+                .set({ sessionId: null })
+                .where(eq(subChats.id, input.subChatId))
+                .run()
+
+              resumeSessionId = undefined
+              currentSessionId = null
+              delete metadata.sessionId
+              stderrLines.length = 0
+
+              delete (queryOptions.options as any).resume
+              delete (queryOptions.options as any).resumeSessionAt
+              delete (queryOptions.options as any).forkSession
+              ;(queryOptions.options as any).continue = true
+
+              return true
+            }
 
             // DEBUG: Session resume path tracing
             const expectedSanitizedCwd = input.cwd.replace(/[/.]/g, "-")
@@ -1383,6 +1556,31 @@ export const claudeRouter = router({
             }
 
             const resolvedModel = finalCustomConfig?.model || input.model
+            const resolvedPermissionMode = resolveClaudeRunPermission(input.chatId)
+            const sdkPermission = mapClaudeSdkPermissionMode(resolvedPermissionMode, input.mode)
+            const permissionApplication = buildClaudePermissionApplication({
+              permissionMode: resolvedPermissionMode,
+              cwd: input.cwd,
+              sdkPermissionMode: sdkPermission.sdkPermissionMode,
+              canUseToolReadOnlyGuard: resolvedPermissionMode === "read-only",
+            })
+            const run = await createClaudeAgentRun({
+              chatId: input.chatId,
+              subChatId: input.subChatId,
+              model: resolvedModel,
+              permissionMode: resolvedPermissionMode,
+              worktreePath: input.cwd,
+              promptMessageId: userMessage.id,
+            })
+            agentRunId = run.id
+            metadata = {
+              ...metadata,
+              harness: HARNESS,
+              model: resolvedModel,
+              permissionMode: resolvedPermissionMode,
+              permissionApplication,
+              runId: agentRunId,
+            }
 
             // DEBUG: If using Ollama, test if it's actually responding
             if (isUsingOllama && finalCustomConfig) {
@@ -1614,10 +1812,9 @@ ${prompt}
                     mcpServers: mcpServersFiltered,
                   }),
                 env: finalEnv,
-                permissionMode:
-                  input.mode === "plan" ? ("plan" as const) : ("bypassPermissions" as const),
-                ...(input.mode !== "plan" && {
-                  allowDangerouslySkipPermissions: true,
+                permissionMode: sdkPermission.sdkPermissionMode,
+                ...(sdkPermission.allowDangerouslySkipPermissions && {
+                  allowDangerouslySkipPermissions: sdkPermission.allowDangerouslySkipPermissions,
                 }),
                 includePartialMessages: true,
                 // Load skills from project and user directories (skip for Ollama - not supported)
@@ -1681,6 +1878,13 @@ ${prompt}
                       toolInput.command = toolInput.cmd
                       delete toolInput.cmd
                       console.log("[Ollama] Fixed Bash tool: cmd -> command")
+                    }
+                  }
+
+                  if (resolvedPermissionMode === "read-only" && isClaudeMutatingTool(toolName)) {
+                    return {
+                      behavior: "deny",
+                      message: `Tool "${toolName}" blocked by read-only permission mode.`,
                     }
                   }
 
@@ -1816,6 +2020,7 @@ ${prompt}
                 // For first message in chat (no session ID yet), use continue mode
                 ...(!resumeSessionId && { continue: true }),
                 ...(resolvedModel && { model: resolvedModel }),
+                ...(input.effort && { effort: input.effort }),
                 // fallbackModel: "claude-opus-4-5-20251101",
                 ...(input.maxThinkingTokens && {
                   maxThinkingTokens: input.maxThinkingTokens,
@@ -1827,12 +2032,15 @@ ${prompt}
             const MAX_POLICY_RETRIES = 2
             let policyRetryCount = 0
             let policyRetryNeeded = false
+            let sessionRecoveryRetryUsed = false
+            let sessionRecoveryRetryNeeded = false
             let messageCount = 0
             let pendingFinishChunk: UIMessageChunk | null = null
 
             // eslint-disable-next-line no-constant-condition
             while (true) {
               policyRetryNeeded = false
+              sessionRecoveryRetryNeeded = false
               messageCount = 0
               pendingFinishChunk = null
 
@@ -1844,6 +2052,7 @@ ${prompt}
                 console.error("[CLAUDE] ✗ Failed to create SDK query:", queryError)
                 emitError(queryError, "Failed to start Claude query")
                 console.log(`[SD] M:END sub=${subId} reason=query_error n=${chunkCount}`)
+                await completeRun("failure")
                 safeEmit({ type: "finish" } as UIMessageChunk)
                 safeComplete()
                 return
@@ -1922,6 +2131,39 @@ ${prompt}
 
                   // Check for error messages from SDK (error can be embedded in message payload!)
                   const msgAny = msg as any
+                  const missingSessionMessage = findMissingClaudeSessionMessage(
+                    msgAny.errors,
+                    msgAny,
+                  )
+                  if (
+                    missingSessionMessage &&
+                    !sessionRecoveryRetryUsed &&
+                    clearMissingSessionAndRetry("Claude session missing")
+                  ) {
+                    sessionRecoveryRetryUsed = true
+                    sessionRecoveryRetryNeeded = true
+                    break
+                  }
+
+                  if (missingSessionMessage) {
+                    const errorContext =
+                      "Previous Claude session expired. Starting a new run should work."
+                    safeEmit({
+                      type: "error",
+                      errorText: `${errorContext}\n\n${missingSessionMessage}`,
+                      debugInfo: {
+                        category: "SESSION_EXPIRED",
+                        sessionId: resumeSessionId,
+                        messageId: msgAny.message?.id,
+                      },
+                    } as UIMessageChunk)
+                    console.log(`[SD] M:END sub=${subId} reason=session_missing n=${chunkCount}`)
+                    await completeRun("failure")
+                    safeEmit({ type: "finish" } as UIMessageChunk)
+                    safeComplete()
+                    return
+                  }
+
                   if (msgAny.type === "error" || msgAny.error) {
                     // Extract detailed error text from message content if available
                     // This is where the actual error description lives (e.g., "API Error: Claude Code is unable to respond...")
@@ -2043,6 +2285,7 @@ ${prompt}
                       messageId: msgAny.message?.id,
                       fullMessage: JSON.stringify(msgAny, null, 2),
                     })
+                    await completeRun("failure")
                     safeEmit({ type: "finish" } as UIMessageChunk)
                     safeComplete()
                     return
@@ -2057,6 +2300,34 @@ ${prompt}
                   // Track UUID from assistant messages for resumeSessionAt
                   if (msgAny.type === "assistant" && msgAny.uuid) {
                     lastAssistantUuid = msgAny.uuid
+                  }
+
+                  // Capture the resolved (versioned) model id the SDK actually
+                  // runs with, so aliases like "opus" persist as e.g.
+                  // "claude-opus-4-8" for display in model chips.
+                  {
+                    const observedModel =
+                      msgAny.type === "system" && msgAny.subtype === "init"
+                        ? msgAny.model
+                        : msgAny.type === "assistant"
+                          ? msgAny.message?.model
+                          : undefined
+                    if (
+                      typeof observedModel === "string" &&
+                      observedModel.trim() &&
+                      !observedModel.startsWith("<") && // skip "<synthetic>"
+                      observedModel !== metadata.model
+                    ) {
+                      metadata.model = observedModel
+                      db.update(subChats)
+                        .set({ model: observedModel })
+                        .where(eq(subChats.id, input.subChatId))
+                        .run()
+                      db.update(chats)
+                        .set({ model: observedModel })
+                        .where(eq(chats.id, input.chatId))
+                        .run()
+                    }
                   }
 
                   // When result arrives, assign the last assistant UUID to metadata
@@ -2248,22 +2519,22 @@ ${prompt}
                 let errorContext = "Claude streaming error"
                 let errorCategory = "UNKNOWN"
 
-                // Check for session-not-found error in stderr
-                const isSessionNotFound = stderrOutput?.includes(
-                  "No conversation found with session ID",
+                const isSessionNotFound = isMissingClaudeSessionError(
+                  stderrOutput,
+                  err.message,
+                  lastError?.message,
                 )
 
                 if (isSessionNotFound) {
-                  // Clear the invalid session ID from database so next attempt starts fresh
-                  console.log(
-                    `[claude] Session not found - clearing invalid sessionId from database`,
-                  )
-                  db.update(subChats)
-                    .set({ sessionId: null })
-                    .where(eq(subChats.id, input.subChatId))
-                    .run()
+                  if (
+                    !sessionRecoveryRetryUsed &&
+                    clearMissingSessionAndRetry("Claude session missing after process exit")
+                  ) {
+                    sessionRecoveryRetryUsed = true
+                    continue
+                  }
 
-                  errorContext = "Previous session expired. Please try again."
+                  errorContext = "Previous Claude session expired. Starting a new run should work."
                   errorCategory = "SESSION_EXPIRED"
                 } else if (err.message?.includes("exited with code")) {
                   errorContext = "Claude Code process crashed"
@@ -2373,9 +2644,15 @@ ${prompt}
                 console.log(
                   `[SD] M:END sub=${subId} reason=stream_error cat=${errorCategory} n=${chunkCount} last=${lastChunkType}`,
                 )
+                await completeRun(abortController.signal.aborted ? "cancelled" : "failure")
                 safeEmit({ type: "finish" } as UIMessageChunk)
                 safeComplete()
                 return
+              }
+
+              if (sessionRecoveryRetryNeeded) {
+                console.log("[claude] Retrying Claude query after stale session recovery")
+                continue
               }
 
               // Retry if policy violation detected (transient false positive)
@@ -2395,6 +2672,7 @@ ${prompt}
             if (messageCount === 0 && !abortController.signal.aborted) {
               emitError(new Error("No response received from Claude"), "Empty response")
               console.log(`[SD] M:END sub=${subId} reason=no_response n=${chunkCount}`)
+              await completeRun("failure")
               safeEmit({ type: "finish" } as UIMessageChunk)
               safeComplete()
               return
@@ -2456,6 +2734,7 @@ ${prompt}
             console.log(
               `[SD] M:END sub=${subId} reason=ok n=${chunkCount} last=${lastChunkType} t=${duration}s`,
             )
+            await completeRun(abortController.signal.aborted ? "cancelled" : "success")
             if (pendingFinishChunk) {
               safeEmit(pendingFinishChunk)
             } else {
@@ -2469,6 +2748,7 @@ ${prompt}
               `[SD] M:END sub=${subId} reason=unexpected_error n=${chunkCount} t=${duration}s`,
             )
             emitError(error, "Unexpected error")
+            await completeRun("failure")
             safeEmit({ type: "finish" } as UIMessageChunk)
             safeComplete()
           } finally {

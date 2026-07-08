@@ -138,8 +138,8 @@ function AgentDetail({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="inherit">Inherit from parent</SelectItem>
-              <SelectItem value="sonnet">Sonnet 4.6</SelectItem>
-              <SelectItem value="opus">Opus 4.6</SelectItem>
+              <SelectItem value="sonnet">Sonnet auto</SelectItem>
+              <SelectItem value="opus">Opus auto</SelectItem>
               <SelectItem value="haiku">Haiku 4.5</SelectItem>
             </SelectContent>
           </Select>
@@ -271,8 +271,8 @@ function CreateAgentForm({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="inherit">Inherit from parent</SelectItem>
-              <SelectItem value="sonnet">Sonnet 4.6</SelectItem>
-              <SelectItem value="opus">Opus 4.6</SelectItem>
+              <SelectItem value="sonnet">Sonnet auto</SelectItem>
+              <SelectItem value="opus">Opus auto</SelectItem>
               <SelectItem value="haiku">Haiku 4.5</SelectItem>
             </SelectContent>
           </Select>
@@ -446,6 +446,10 @@ export function AgentsCustomAgentsTab() {
           className="flex flex-col h-full bg-background border-r overflow-hidden"
           style={{ borderRightWidth: "0.5px" }}
         >
+          <div className="mx-2 mt-2 rounded-md border border-dashed border-border bg-muted/40 px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+            Scaffold: Custom agents are future-stage code and are not part of MVP1 manual
+            acceptance.
+          </div>
           {/* Search + Add */}
           <div className="px-2 pt-2 flex-shrink-0 flex items-center gap-1.5">
             <input

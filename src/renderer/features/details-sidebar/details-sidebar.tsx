@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ArrowUpRight, TerminalSquare, Box, ListTodo } from "lucide-react"
+import { ArrowUpRight, TerminalSquare, Box, ListTodo, History } from "lucide-react"
 import { ResizableSidebar } from "@/components/ui/resizable-sidebar"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -36,6 +36,7 @@ import { TerminalWidget } from "./sections/terminal-widget"
 import { ChangesWidget } from "./sections/changes-widget"
 import { McpWidget } from "./sections/mcp-widget"
 import { FilesTab, type FilesTabHandle } from "./sections/files-tab"
+import { RunHistoryWidget } from "./sections/run-history-widget"
 import type { ParsedDiffFile } from "./types"
 import { fileViewerOpenAtomFamily, type AgentMode } from "../agents/atoms"
 import { agentsSettingsDialogOpenAtom, agentsSettingsDialogActiveTabAtom } from "@/lib/atoms"
@@ -50,6 +51,8 @@ function getWidgetIcon(widgetId: WidgetId) {
       return Box
     case "todo":
       return ListTodo
+    case "runs":
+      return History
     case "plan":
       return PlanIcon
     case "terminal":
@@ -412,6 +415,13 @@ export function DetailsSidebar({
 
               case "todo":
                 return <TodoWidget key="todo" subChatId={activeSubChatId || null} />
+
+              case "runs":
+                return (
+                  <WidgetCard key="runs" widgetId="runs" title="Runs">
+                    <RunHistoryWidget chatId={chatId} />
+                  </WidgetCard>
+                )
 
               case "plan":
                 // Hidden when Plan sidebar is open

@@ -1,6 +1,10 @@
 import { router } from "../index"
 import { projectsRouter } from "./projects"
+import { tasksRouter } from "./tasks"
 import { chatsRouter } from "./chats"
+import { runsRouter } from "./runs"
+import { searchRouter } from "./search"
+import { attachmentsRouter } from "./attachments"
 import { claudeRouter } from "./claude"
 import { claudeCodeRouter } from "./claude-code"
 import { claudeSettingsRouter } from "./claude-settings"
@@ -18,17 +22,36 @@ import { sandboxImportRouter } from "./sandbox-import"
 import { commandsRouter } from "./commands"
 import { voiceRouter } from "./voice"
 import { pluginsRouter } from "./plugins"
+import { permissionsRouter } from "./permissions"
+import { futureStagesRouter } from "./future-stages"
+import { speechRouter } from "./speech"
+import { appControlRouter } from "./app-control"
+import { automationsRouter } from "./automations"
+import { modelProvidersRouter } from "./model-providers"
+import { projectVaultsRouter } from "./project-vaults"
+import { usageRouter } from "./usage"
+import { importExportRouter } from "./import-export"
+import { hooksManagementRouter } from "./hooks-management"
+import { spawnedAgentsRouter } from "./spawned-agents"
+import { devMcpTestControlRouter } from "./dev-mcp-test-control"
 import { createGitRouter } from "../../git"
-import { BrowserWindow } from "electron"
+import { app, BrowserWindow } from "electron"
 
 /**
  * Create the main app router
  * Uses getter pattern to avoid stale window references
  */
 export function createAppRouter(getWindow: () => BrowserWindow | null) {
+  const devTestControlEnabled =
+    !app.isPackaged || process.env.FLAPSTACK_ENABLE_DEV_TEST_CONTROL === "1"
+
   return router({
     projects: projectsRouter,
+    tasks: tasksRouter,
     chats: chatsRouter,
+    runs: runsRouter,
+    search: searchRouter,
+    attachments: attachmentsRouter,
     claude: claudeRouter,
     claudeCode: claudeCodeRouter,
     claudeSettings: claudeSettingsRouter,
@@ -46,6 +69,18 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     commands: commandsRouter,
     voice: voiceRouter,
     plugins: pluginsRouter,
+    permissions: permissionsRouter,
+    futureStages: futureStagesRouter,
+    speech: speechRouter,
+    appControl: appControlRouter,
+    automations: automationsRouter,
+    modelProviders: modelProvidersRouter,
+    projectVaults: projectVaultsRouter,
+    usage: usageRouter,
+    importExport: importExportRouter,
+    hooksManagement: hooksManagementRouter,
+    spawnedAgents: spawnedAgentsRouter,
+    ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),
   })

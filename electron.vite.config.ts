@@ -50,6 +50,13 @@ export default defineConfig({
     },
   },
   renderer: {
+    // Pin the dev server to a fixed port and fail loudly if it is taken, instead
+    // of silently falling back to :5174 and leaving two dev servers running (which
+    // is how you end up testing stale code). Paired with scripts/dev.mjs.
+    server: {
+      port: 5173,
+      strictPort: true,
+    },
     plugins: [
       react({
         // In dev mode, use WDYR as JSX import source to track ALL component re-renders

@@ -27,6 +27,8 @@ import {
   agentsDebugModeAtom,
   justCreatedIdsAtom,
   lastSelectedAgentIdAtom,
+  lastSelectedClaudeEffortAtom,
+  lastSelectedCodexFastModeAtom,
   lastSelectedCodexModelIdAtom,
   lastSelectedCodexThinkingAtom,
   lastSelectedBranchesAtom,
@@ -114,9 +116,16 @@ import {
   markDraftVisible,
   type DraftProject,
 } from "../lib/drafts"
-import { CLAUDE_MODELS, CODEX_MODELS, type CodexThinkingLevel } from "../lib/models"
+import {
+  CLAUDE_MODELS,
+  CODEX_MODELS,
+  DEFAULT_CLAUDE_MODEL_ID,
+  type ClaudeEffortLevel,
+  type CodexThinkingLevel,
+} from "../lib/models"
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
+type ChatScope = "global" | "project" | "task"
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
@@ -189,6 +198,16 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   // Fetch projects to validate selectedProject exists
   const { data: projectsList, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
+  const [chatScope, setChatScope] = useState<ChatScope>(() => {
+    const requestedScope = localStorage.getItem("flapstack:new-chat-scope")
+    if (requestedScope === "task" || requestedScope === "project" || requestedScope === "global") {
+      return requestedScope
+    }
+    return selectedProject ? "project" : "global"
+  })
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() =>
+    localStorage.getItem("flapstack:new-chat-task-id"),
+  )
 
   // Validate selected project exists in DB
   // While loading, trust the stored value to prevent flicker
@@ -208,6 +227,40 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       setSelectedProject(null)
     }
   }, [selectedProject, projectsList, validatedProject, setSelectedProject])
+  const { data: projectTasks } = trpc.tasks.list.useQuery(
+    { projectId: validatedProject?.id, includeArchived: false },
+    { enabled: !!validatedProject?.id },
+  )
+  const selectedTask = useMemo(
+    () => projectTasks?.find((task) => task.id === selectedTaskId) ?? null,
+    [projectTasks, selectedTaskId],
+  )
+
+  useEffect(() => {
+    if (!validatedProject && chatScope !== "global") {
+      setChatScope("global")
+      setSelectedTaskId(null)
+      return
+    }
+  }, [validatedProject, chatScope])
+
+  useEffect(() => {
+    if (chatScope !== "task") return
+    if (!projectTasks?.length) {
+      setSelectedTaskId(null)
+      return
+    }
+    const requestedTaskId = localStorage.getItem("flapstack:new-chat-task-id")
+    if (requestedTaskId && projectTasks.some((task) => task.id === requestedTaskId)) {
+      setSelectedTaskId(requestedTaskId)
+      localStorage.removeItem("flapstack:new-chat-task-id")
+      localStorage.removeItem("flapstack:new-chat-scope")
+      return
+    }
+    if (!selectedTaskId || !projectTasks.some((task) => task.id === selectedTaskId)) {
+      setSelectedTaskId(projectTasks[0]?.id ?? null)
+    }
+  }, [chatScope, projectTasks, selectedTaskId])
   const [lastSelectedAgentId, setLastSelectedAgentId] = useAtom(lastSelectedAgentIdAtom)
   const [lastSelectedModelId, setLastSelectedModelId] = useAtom(lastSelectedModelIdAtom)
   // Mode for new chat - uses user's default preference directly
@@ -281,18 +334,19 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }
   const enabledAgents = useMemo(() => agents.filter((agent) => !agent.disabled), [])
   const fallbackAgent = enabledAgents[0] ?? agents[0]!
+  const preferredAgentId =
+    lastSelectedAgentId === "claude-code" && !isClaudeConnected ? "codex" : lastSelectedAgentId
   const [selectedAgent, setSelectedAgent] = useState(
-    () => enabledAgents.find((agent) => agent.id === lastSelectedAgentId) || fallbackAgent,
+    () => enabledAgents.find((agent) => agent.id === preferredAgentId) || fallbackAgent,
   )
 
   useEffect(() => {
-    const nextAgent =
-      enabledAgents.find((agent) => agent.id === lastSelectedAgentId) || fallbackAgent
+    const nextAgent = enabledAgents.find((agent) => agent.id === preferredAgentId) || fallbackAgent
 
     if (nextAgent && nextAgent.id !== selectedAgent.id) {
       setSelectedAgent(nextAgent)
     }
-  }, [enabledAgents, fallbackAgent, lastSelectedAgentId, selectedAgent.id])
+  }, [enabledAgents, fallbackAgent, preferredAgentId, selectedAgent.id])
 
   // Get available models (with offline support)
   const availableModels = useAvailableModels()
@@ -302,6 +356,12 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   )
   const [lastSelectedCodexThinking, setLastSelectedCodexThinking] = useAtom(
     lastSelectedCodexThinkingAtom,
+  )
+  const [lastSelectedClaudeEffort, setLastSelectedClaudeEffort] = useAtom(
+    lastSelectedClaudeEffortAtom,
+  )
+  const [lastSelectedCodexFastMode, setLastSelectedCodexFastMode] = useAtom(
+    lastSelectedCodexFastModeAtom,
   )
   const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom)
 
@@ -318,13 +378,27 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     }
   }, [lastSelectedModelId])
 
+  const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
+    const efforts = selectedModel?.efforts
+    if (!efforts || efforts.length === 0) return "high"
+    if (efforts.includes(lastSelectedClaudeEffort as ClaudeEffortLevel)) {
+      return lastSelectedClaudeEffort as ClaudeEffortLevel
+    }
+    if (efforts.includes("high")) return "high"
+    return efforts[0]!
+  }, [lastSelectedClaudeEffort, selectedModel?.efforts])
+
+  useEffect(() => {
+    if (lastSelectedClaudeEffort === selectedClaudeEffort) return
+    setLastSelectedClaudeEffort(selectedClaudeEffort)
+  }, [lastSelectedClaudeEffort, selectedClaudeEffort, setLastSelectedClaudeEffort])
+
   const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
   const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const codexUiModels = useMemo(() => {
-    let models = hasAppCodexApiKey
-      ? CODEX_MODELS.filter((model) => model.id !== "gpt-5.3-codex")
-      : CODEX_MODELS
+    const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
+    const models = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
     return models.filter((model) => !hiddenModels.includes(model.id))
   }, [hasAppCodexApiKey, hiddenModels])
   const selectedCodexModel = useMemo(
@@ -334,6 +408,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       CODEX_MODELS[0]!,
     [codexUiModels, lastSelectedCodexModelId],
   )
+
+  const codexFastModeEnabled =
+    selectedCodexModel.supportsFastMode === true && lastSelectedCodexFastMode
 
   const selectedCodexThinking = useMemo<CodexThinkingLevel>(() => {
     if (selectedCodexModel.thinkings.includes(lastSelectedCodexThinking as CodexThinkingLevel)) {
@@ -360,11 +437,16 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     setLastSelectedCodexThinking,
   ])
 
+  useEffect(() => {
+    if (selectedCodexModel.supportsFastMode || !lastSelectedCodexFastMode) return
+    setLastSelectedCodexFastMode(false)
+  }, [lastSelectedCodexFastMode, selectedCodexModel.supportsFastMode, setLastSelectedCodexFastMode])
+
   const selectedChatModel = useMemo(() => {
     if (selectedAgent.id === "codex") {
       return `${selectedCodexModel.id}/${selectedCodexThinking}`
     }
-    return selectedModel?.id ?? "opus"
+    return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
   }, [selectedAgent.id, selectedCodexModel.id, selectedCodexThinking, selectedModel?.id])
 
   // Determine current Ollama model (selected or recommended)
@@ -1047,7 +1129,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     const hasFiles = files.filter((f) => !f.isLoading).length > 0
     const hasPastedTexts = pastedTexts.length > 0
 
-    if ((!hasText && !hasImages && !hasFiles && !hasPastedTexts) || !selectedProject) {
+    const requiresProject = chatScope === "project" || chatScope === "task"
+    const requiresTask = chatScope === "task"
+
+    if (
+      (!hasText && !hasImages && !hasFiles && !hasPastedTexts) ||
+      (requiresProject && !validatedProject) ||
+      (requiresTask && !selectedTask)
+    ) {
       return
     }
 
@@ -1145,21 +1234,29 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       }
     }
 
-    // Create chat with selected project, branch, and initial message
+    // Create chat with selected scope, branch, and initial message
     createChatMutation.mutate({
-      projectId: selectedProject.id,
+      projectId: chatScope === "global" ? undefined : validatedProject?.id,
+      taskId: chatScope === "task" ? selectedTask?.id : undefined,
+      scope: chatScope,
       name: message.trim().slice(0, 50), // Use first 50 chars as chat name
       model: selectedChatModel,
       initialMessageParts: parts.length > 0 ? parts : undefined,
-      baseBranch: workMode === "worktree" ? selectedBranch || undefined : undefined,
-      branchType: workMode === "worktree" ? selectedBranchType : undefined,
-      useWorktree: workMode === "worktree",
+      baseBranch:
+        chatScope === "project" && workMode === "worktree"
+          ? selectedBranch || undefined
+          : undefined,
+      branchType:
+        chatScope === "project" && workMode === "worktree" ? selectedBranchType : undefined,
+      useWorktree: chatScope === "task" || (chatScope === "project" && workMode === "worktree"),
       mode: agentMode,
     })
     // Editor, images, files, and pasted texts are cleared in onSuccess callback
   }, [
-    selectedProject,
+    chatScope,
+    validatedProject?.id,
     validatedProject?.path,
+    selectedTask,
     createChatMutation,
     hasContent,
     selectedBranch,
@@ -1634,551 +1731,615 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
       <div className="flex flex-1 items-center justify-center overflow-y-auto relative">
         <div className="w-full max-w-2xl space-y-4 md:space-y-6 relative z-10 px-4">
-          {/* Title - only show when project is selected */}
-          {validatedProject && (
-            <div className="text-center">
-              <h1 className="text-2xl md:text-4xl font-medium tracking-tight">
-                What do you want to get done?
-              </h1>
-            </div>
-          )}
+          <div className="text-center">
+            <h1 className="text-2xl md:text-4xl font-medium tracking-tight">
+              {chatScope === "global"
+                ? "Start a global chat"
+                : chatScope === "task"
+                  ? "Start a task chat"
+                  : "Start a project chat"}
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {chatScope === "global"
+                ? "No repo is attached until you choose one."
+                : chatScope === "task"
+                  ? selectedTask
+                    ? `${validatedProject?.name ?? "Project"} / ${selectedTask.name}`
+                    : "Choose a task before sending."
+                  : validatedProject?.name
+                    ? `Using ${validatedProject.name}`
+                    : "Choose a repo before sending."}
+            </p>
+          </div>
 
-          {/* Input Area or Select Repo State */}
-          {!validatedProject ? (
-            // No project selected - show select repo button (like Sign in button)
-            <div className="flex justify-center">
-              <button
-                onClick={handleOpenFolder}
-                disabled={openFolder.isPending}
-                className="h-8 px-3 bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] disabled:opacity-50 disabled:cursor-not-allowed"
+          {/* Input Area */}
+          <div
+            className="relative w-full"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className="relative w-full cursor-text" onClick={handleContainerClick}>
+              <PromptInput
+                className={cn(
+                  "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
+                  isDragOver && "ring-2 ring-primary/50 border-primary/50",
+                  isFocused && !isDragOver && "ring-2 ring-primary/50",
+                )}
+                maxHeight={240}
+                onSubmit={handleSend}
+                contextItems={contextItems}
               >
-                {openFolder.isPending ? "Opening..." : "Select repo"}
-              </button>
-            </div>
-          ) : (
-            // Project selected - show input form
-            <div
-              className="relative w-full"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <div className="relative w-full cursor-text" onClick={handleContainerClick}>
-                <PromptInput
-                  className={cn(
-                    "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
-                    isDragOver && "ring-2 ring-primary/50 border-primary/50",
-                    isFocused && !isDragOver && "ring-2 ring-primary/50",
-                  )}
-                  maxHeight={240}
-                  onSubmit={handleSend}
-                  contextItems={contextItems}
-                >
-                  <PromptInputContextItems />
-                  <div className="relative">
-                    <AgentsMentionsEditor
-                      ref={editorRef}
-                      onTrigger={handleMentionTrigger}
-                      onCloseTrigger={handleCloseTrigger}
-                      onSlashTrigger={handleSlashTrigger}
-                      onCloseSlashTrigger={handleCloseSlashTrigger}
-                      onContentChange={handleContentChange}
-                      onSubmit={handleSend}
-                      onShiftTab={toggleMode}
-                      placeholder="Plan, @ for context, / for commands"
-                      className={cn(
-                        "bg-transparent max-h-[240px] overflow-y-auto p-1",
-                        isMobileFullscreen ? "min-h-[56px]" : "min-h-[44px]",
-                      )}
-                      onPaste={handlePaste}
-                      disabled={createChatMutation.isPending}
-                      onFocus={() => setIsFocused(true)}
-                      onBlur={() => setIsFocused(false)}
-                    />
-                  </div>
-                  <PromptInputActions className="w-full">
-                    <div className="flex items-center gap-0.5 flex-1 min-w-0">
-                      {/* Mode toggle (Agent/Plan) */}
-                      <DropdownMenu
-                        open={modeDropdownOpen}
-                        onOpenChange={(open) => {
-                          setModeDropdownOpen(open)
-                          if (!open) {
+                <PromptInputContextItems />
+                <div className="relative">
+                  <AgentsMentionsEditor
+                    ref={editorRef}
+                    onTrigger={handleMentionTrigger}
+                    onCloseTrigger={handleCloseTrigger}
+                    onSlashTrigger={handleSlashTrigger}
+                    onCloseSlashTrigger={handleCloseSlashTrigger}
+                    onContentChange={handleContentChange}
+                    onSubmit={handleSend}
+                    onShiftTab={toggleMode}
+                    placeholder="Plan, @ for context, / for commands"
+                    className={cn(
+                      "bg-transparent max-h-[240px] overflow-y-auto p-1",
+                      isMobileFullscreen ? "min-h-[56px]" : "min-h-[44px]",
+                    )}
+                    onPaste={handlePaste}
+                    disabled={createChatMutation.isPending}
+                    onFocus={() => setIsFocused(true)}
+                    onBlur={() => setIsFocused(false)}
+                  />
+                </div>
+                <PromptInputActions className="w-full">
+                  <div className="flex items-center gap-0.5 flex-1 min-w-0">
+                    {/* Mode toggle (Agent/Plan) */}
+                    <DropdownMenu
+                      open={modeDropdownOpen}
+                      onOpenChange={(open) => {
+                        setModeDropdownOpen(open)
+                        if (!open) {
+                          if (tooltipTimeoutRef.current) {
+                            clearTimeout(tooltipTimeoutRef.current)
+                            tooltipTimeoutRef.current = null
+                          }
+                          setModeTooltip(null)
+                          hasShownTooltipRef.current = false
+                        }
+                      }}
+                    >
+                      <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
+                        {agentMode === "plan" ? (
+                          <PlanIcon className="h-3.5 w-3.5" />
+                        ) : (
+                          <AgentIcon className="h-3.5 w-3.5" />
+                        )}
+                        <span>{agentMode === "plan" ? "Plan" : "Agent"}</span>
+                        <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        sideOffset={6}
+                        className="!min-w-[116px] !w-[116px]"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <DropdownMenuItem
+                          onClick={() => {
+                            // Clear tooltip before closing dropdown (onMouseLeave won't fire)
                             if (tooltipTimeoutRef.current) {
                               clearTimeout(tooltipTimeoutRef.current)
                               tooltipTimeoutRef.current = null
                             }
                             setModeTooltip(null)
-                            hasShownTooltipRef.current = false
-                          }
-                        }}
-                      >
-                        <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
-                          {agentMode === "plan" ? (
-                            <PlanIcon className="h-3.5 w-3.5" />
-                          ) : (
-                            <AgentIcon className="h-3.5 w-3.5" />
-                          )}
-                          <span>{agentMode === "plan" ? "Plan" : "Agent"}</span>
-                          <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="start"
-                          sideOffset={6}
-                          className="!min-w-[116px] !w-[116px]"
-                          onCloseAutoFocus={(e) => e.preventDefault()}
-                        >
-                          <DropdownMenuItem
-                            onClick={() => {
-                              // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              setModeTooltip(null)
-                              setAgentMode("agent")
-                              setModeDropdownOpen(false)
-                            }}
-                            className="justify-between gap-2"
-                            onMouseEnter={(e) => {
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              const rect = e.currentTarget.getBoundingClientRect()
-                              const showTooltip = () => {
-                                setModeTooltip({
-                                  visible: true,
-                                  position: {
-                                    top: rect.top,
-                                    left: rect.right + 8,
-                                  },
-                                  mode: "agent",
-                                })
-                                hasShownTooltipRef.current = true
-                                tooltipTimeoutRef.current = null
-                              }
-                              if (hasShownTooltipRef.current) {
-                                showTooltip()
-                              } else {
-                                tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                              }
-                            }}
-                            onMouseLeave={() => {
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              setModeTooltip(null)
-                            }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <AgentIcon className="w-4 h-4 text-muted-foreground" />
-                              <span>Agent</span>
-                            </div>
-                            {agentMode !== "plan" && (
-                              <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                            )}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              setModeTooltip(null)
-                              setAgentMode("plan")
-                              setModeDropdownOpen(false)
-                            }}
-                            className="justify-between gap-2"
-                            onMouseEnter={(e) => {
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              const rect = e.currentTarget.getBoundingClientRect()
-                              const showTooltip = () => {
-                                setModeTooltip({
-                                  visible: true,
-                                  position: {
-                                    top: rect.top,
-                                    left: rect.right + 8,
-                                  },
-                                  mode: "plan",
-                                })
-                                hasShownTooltipRef.current = true
-                                tooltipTimeoutRef.current = null
-                              }
-                              if (hasShownTooltipRef.current) {
-                                showTooltip()
-                              } else {
-                                tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                              }
-                            }}
-                            onMouseLeave={() => {
-                              if (tooltipTimeoutRef.current) {
-                                clearTimeout(tooltipTimeoutRef.current)
-                                tooltipTimeoutRef.current = null
-                              }
-                              setModeTooltip(null)
-                            }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <PlanIcon className="w-4 h-4 text-muted-foreground" />
-                              <span>Plan</span>
-                            </div>
-                            {agentMode === "plan" && (
-                              <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                            )}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                        {modeTooltip?.visible &&
-                          createPortal(
-                            <div
-                              className="fixed z-[100000]"
-                              style={{
-                                top: modeTooltip.position.top + 14,
-                                left: modeTooltip.position.left,
-                                transform: "translateY(-50%)",
-                              }}
-                            >
-                              <div
-                                data-tooltip="true"
-                                className="relative rounded-[12px] bg-popover px-2.5 py-1.5 text-xs text-popover-foreground dark max-w-[150px]"
-                              >
-                                <span>
-                                  {modeTooltip.mode === "agent"
-                                    ? "Apply changes directly without a plan"
-                                    : "Create a plan before making changes"}
-                                </span>
-                              </div>
-                            </div>,
-                            document.body,
-                          )}
-                      </DropdownMenu>
-
-                      <div className="group/model-controls flex items-center gap-0.5">
-                        <AgentModelSelector
-                          open={isModelDropdownOpen}
-                          onOpenChange={setIsModelDropdownOpen}
-                          selectedAgentId={selectedAgent.id as "claude-code" | "codex"}
-                          onSelectedAgentIdChange={(provider) => {
-                            if (provider === "claude-code") {
-                              setSelectedAgent(claudeAgent)
-                            } else {
-                              setSelectedAgent(
-                                enabledAgents.find((agent) => agent.id === "codex") ||
-                                  fallbackAgent,
-                              )
+                            setAgentMode("agent")
+                            setModeDropdownOpen(false)
+                          }}
+                          className="justify-between gap-2"
+                          onMouseEnter={(e) => {
+                            if (tooltipTimeoutRef.current) {
+                              clearTimeout(tooltipTimeoutRef.current)
+                              tooltipTimeoutRef.current = null
                             }
-                            setLastSelectedAgentId(provider)
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            const showTooltip = () => {
+                              setModeTooltip({
+                                visible: true,
+                                position: {
+                                  top: rect.top,
+                                  left: rect.right + 8,
+                                },
+                                mode: "agent",
+                              })
+                              hasShownTooltipRef.current = true
+                              tooltipTimeoutRef.current = null
+                            }
+                            if (hasShownTooltipRef.current) {
+                              showTooltip()
+                            } else {
+                              tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
+                            }
                           }}
-                          selectedModelLabel={selectedModelLabel}
-                          onOpenModelsSettings={() => {
-                            setSettingsActiveTab("models")
-                            setSettingsDialogOpen(true)
+                          onMouseLeave={() => {
+                            if (tooltipTimeoutRef.current) {
+                              clearTimeout(tooltipTimeoutRef.current)
+                              tooltipTimeoutRef.current = null
+                            }
+                            setModeTooltip(null)
                           }}
-                          claude={{
-                            models: availableModels.models.filter(
-                              (m) => !hiddenModels.includes(m.id),
+                        >
+                          <div className="flex items-center gap-2">
+                            <AgentIcon className="w-4 h-4 text-muted-foreground" />
+                            <span>Agent</span>
+                          </div>
+                          {agentMode !== "plan" && (
+                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            // Clear tooltip before closing dropdown (onMouseLeave won't fire)
+                            if (tooltipTimeoutRef.current) {
+                              clearTimeout(tooltipTimeoutRef.current)
+                              tooltipTimeoutRef.current = null
+                            }
+                            setModeTooltip(null)
+                            setAgentMode("plan")
+                            setModeDropdownOpen(false)
+                          }}
+                          className="justify-between gap-2"
+                          onMouseEnter={(e) => {
+                            if (tooltipTimeoutRef.current) {
+                              clearTimeout(tooltipTimeoutRef.current)
+                              tooltipTimeoutRef.current = null
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            const showTooltip = () => {
+                              setModeTooltip({
+                                visible: true,
+                                position: {
+                                  top: rect.top,
+                                  left: rect.right + 8,
+                                },
+                                mode: "plan",
+                              })
+                              hasShownTooltipRef.current = true
+                              tooltipTimeoutRef.current = null
+                            }
+                            if (hasShownTooltipRef.current) {
+                              showTooltip()
+                            } else {
+                              tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            if (tooltipTimeoutRef.current) {
+                              clearTimeout(tooltipTimeoutRef.current)
+                              tooltipTimeoutRef.current = null
+                            }
+                            setModeTooltip(null)
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <PlanIcon className="w-4 h-4 text-muted-foreground" />
+                            <span>Plan</span>
+                          </div>
+                          {agentMode === "plan" && (
+                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                      {modeTooltip?.visible &&
+                        createPortal(
+                          <div
+                            className="fixed z-[100000]"
+                            style={{
+                              top: modeTooltip.position.top + 14,
+                              left: modeTooltip.position.left,
+                              transform: "translateY(-50%)",
+                            }}
+                          >
+                            <div
+                              data-tooltip="true"
+                              className="relative rounded-[12px] bg-popover px-2.5 py-1.5 text-xs text-popover-foreground dark max-w-[150px]"
+                            >
+                              <span>
+                                {modeTooltip.mode === "agent"
+                                  ? "Apply changes directly without a plan"
+                                  : "Create a plan before making changes"}
+                              </span>
+                            </div>
+                          </div>,
+                          document.body,
+                        )}
+                    </DropdownMenu>
+
+                    <div className="group/model-controls flex items-center gap-0.5">
+                      <AgentModelSelector
+                        open={isModelDropdownOpen}
+                        onOpenChange={setIsModelDropdownOpen}
+                        selectedAgentId={selectedAgent.id as "claude-code" | "codex"}
+                        onSelectedAgentIdChange={(provider) => {
+                          if (provider === "claude-code") {
+                            setSelectedAgent(claudeAgent)
+                          } else {
+                            setSelectedAgent(
+                              enabledAgents.find((agent) => agent.id === "codex") || fallbackAgent,
+                            )
+                          }
+                          setLastSelectedAgentId(provider)
+                        }}
+                        selectedModelLabel={selectedModelLabel}
+                        onOpenModelsSettings={() => {
+                          setSettingsActiveTab("models")
+                          setSettingsDialogOpen(true)
+                        }}
+                        claude={{
+                          models: availableModels.models.filter(
+                            (m) => !hiddenModels.includes(m.id),
+                          ),
+                          selectedModelId: selectedModel?.id,
+                          onSelectModel: (modelId) => {
+                            const model =
+                              availableModels.models.find((m) => m.id === modelId) ||
+                              availableModels.models[0]
+                            if (!model) return
+                            setSelectedModel(model)
+                            setLastSelectedModelId(model.id)
+                          },
+                          hasCustomModelConfig: hasCustomClaudeConfig,
+                          isOffline: availableModels.isOffline && availableModels.hasOllama,
+                          ollamaModels: availableModels.ollamaModels,
+                          selectedOllamaModel: currentOllamaModel,
+                          recommendedOllamaModel: availableModels.recommendedModel,
+                          onSelectOllamaModel: setSelectedOllamaModel,
+                          isConnected: isClaudeConnected,
+                          thinkingEnabled,
+                          onThinkingChange: setThinkingEnabled,
+                          selectedEffort: selectedClaudeEffort,
+                          onSelectEffort: setLastSelectedClaudeEffort,
+                        }}
+                        codex={{
+                          models: codexUiModels,
+                          selectedModelId: selectedCodexModel.id,
+                          onSelectModel: (modelId) => {
+                            const model = codexUiModels.find((item) => item.id === modelId)
+                            if (!model) return
+                            const nextThinking = model.thinkings.includes(
+                              lastSelectedCodexThinking as CodexThinkingLevel,
+                            )
+                              ? (lastSelectedCodexThinking as CodexThinkingLevel)
+                              : model.thinkings.includes("high")
+                                ? "high"
+                                : model.thinkings[0]!
+
+                            setLastSelectedCodexModelId(model.id)
+                            setLastSelectedCodexThinking(nextThinking)
+                            if (!model.supportsFastMode) {
+                              setLastSelectedCodexFastMode(false)
+                            }
+                          },
+                          selectedThinking: selectedCodexThinking,
+                          onSelectThinking: setLastSelectedCodexThinking,
+                          fastModeEnabled: codexFastModeEnabled,
+                          onFastModeChange: (enabled) =>
+                            setLastSelectedCodexFastMode(
+                              selectedCodexModel.supportsFastMode ? enabled : false,
                             ),
-                            selectedModelId: selectedModel?.id,
-                            onSelectModel: (modelId) => {
-                              const model =
-                                availableModels.models.find((m) => m.id === modelId) ||
-                                availableModels.models[0]
-                              if (!model) return
-                              setSelectedModel(model)
-                              setLastSelectedModelId(model.id)
-                            },
-                            hasCustomModelConfig: hasCustomClaudeConfig,
-                            isOffline: availableModels.isOffline && availableModels.hasOllama,
-                            ollamaModels: availableModels.ollamaModels,
-                            selectedOllamaModel: currentOllamaModel,
-                            recommendedOllamaModel: availableModels.recommendedModel,
-                            onSelectOllamaModel: setSelectedOllamaModel,
-                            isConnected: isClaudeConnected,
-                            thinkingEnabled,
-                            onThinkingChange: setThinkingEnabled,
-                          }}
-                          codex={{
-                            models: codexUiModels,
-                            selectedModelId: selectedCodexModel.id,
-                            onSelectModel: (modelId) => {
-                              const model = codexUiModels.find((item) => item.id === modelId)
-                              if (!model) return
-                              const nextThinking = model.thinkings.includes(
-                                lastSelectedCodexThinking as CodexThinkingLevel,
-                              )
-                                ? (lastSelectedCodexThinking as CodexThinkingLevel)
-                                : model.thinkings.includes("high")
-                                  ? "high"
-                                  : model.thinkings[0]!
-
-                              setLastSelectedCodexModelId(model.id)
-                              setLastSelectedCodexThinking(nextThinking)
-                            },
-                            selectedThinking: selectedCodexThinking,
-                            onSelectThinking: setLastSelectedCodexThinking,
-                            isConnected: codexOnboardingCompleted,
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
-                      {/* Hidden file input */}
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        hidden
-                        multiple
-                        onChange={(e) => {
-                          const inputFiles = Array.from(e.target.files || [])
-                          handleAddAttachments(inputFiles)
-                          e.target.value = "" // Reset to allow same file selection
+                          isConnected: codexOnboardingCompleted,
                         }}
                       />
-                      {/* Voice wave indicator or Attachment button */}
-                      {isVoiceRecording ? (
-                        <VoiceWaveIndicator
-                          isRecording={isVoiceRecording}
-                          audioLevel={voiceAudioLevel}
-                        />
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={images.length >= 5 && files.length >= 10}
-                        >
-                          <AttachIcon className="h-4 w-4" />
-                        </Button>
-                      )}
-                      <div className="ml-1">
-                        <AgentSendButton
-                          isStreaming={false}
-                          isSubmitting={createChatMutation.isPending || isUploading}
-                          disabled={Boolean(!hasContent || !selectedProject || isUploading)}
-                          onClick={handleSend}
-                          mode={agentMode}
-                          hasContent={hasContent}
-                          showVoiceInput={isVoiceAvailable}
-                          isRecording={isVoiceRecording}
-                          isTranscribing={isTranscribing}
-                          onVoiceMouseDown={handleVoiceMouseDown}
-                          onVoiceMouseUp={handleVoiceMouseUp}
-                          onVoiceMouseLeave={handleVoiceMouseLeave}
-                        />
-                      </div>
                     </div>
-                  </PromptInputActions>
-                </PromptInput>
+                  </div>
 
-                {/* Project, Work Mode, and Branch selectors - directly under input */}
-                <div className="mt-1.5 md:mt-2 ml-[5px] flex items-center gap-2">
-                  <ProjectSelector />
-
-                  {/* Work mode selector - between project and branch */}
-                  {validatedProject && (
-                    <WorkModeSelector
-                      value={workMode}
-                      onChange={setWorkMode}
-                      disabled={createChatMutation.isPending}
-                    />
-                  )}
-
-                  {/* Branch selector - only visible when worktree mode is selected */}
-                  {validatedProject && workMode === "worktree" && (
-                    <Popover
-                      open={branchPopoverOpen}
-                      onOpenChange={(open) => {
-                        if (!open) {
-                          setBranchSearch("") // Clear search on close
-                        }
-                        setBranchPopoverOpen(open)
+                  <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+                    {/* Hidden file input */}
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      hidden
+                      multiple
+                      onChange={(e) => {
+                        const inputFiles = Array.from(e.target.files || [])
+                        handleAddAttachments(inputFiles)
+                        e.target.value = "" // Reset to allow same file selection
                       }}
-                    >
-                      <PopoverTrigger asChild>
-                        <button
-                          className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                          disabled={branchesQuery.isLoading}
-                        >
-                          <BranchIcon className="w-4 h-4" />
-                          <span className="truncate max-w-[100px]">
-                            {selectedBranch || branchesQuery.data?.defaultBranch || "main"}
-                          </span>
-                          <IconChevronDown className="w-3 h-3 opacity-50" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-80 p-0" align="start">
-                        {/* Search input with Create button */}
-                        <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 my-1 rounded-md bg-muted/50">
-                          <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <input
-                            type="text"
-                            placeholder="Search branches..."
-                            value={branchSearch}
-                            onChange={(e) => setBranchSearch(e.target.value)}
-                            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                            autoFocus
-                          />
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 px-1.5 flex items-center gap-1 text-xs shrink-0"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              setCreateBranchDialogOpen(true)
-                              setBranchPopoverOpen(false)
-                            }}
-                          >
-                            <Plus className="h-3 w-3" />
-                            Create
-                          </Button>
-                        </div>
-
-                        {/* Virtualized branch list */}
-                        {filteredBranches.length === 0 ? (
-                          <div className="py-6 text-center text-sm text-muted-foreground">
-                            No branches found.
-                          </div>
-                        ) : (
-                          <div
-                            ref={branchListRef}
-                            className="overflow-auto py-1 scrollbar-hide"
-                            style={{
-                              height: Math.min(filteredBranches.length * 32 + 8, 300),
-                            }}
-                          >
-                            <div
-                              style={{
-                                height: `${branchVirtualizer.getTotalSize()}px`,
-                                width: "100%",
-                                position: "relative",
-                              }}
-                            >
-                              {branchVirtualizer.getVirtualItems().map((virtualItem) => {
-                                const branch = filteredBranches[virtualItem.index]
-                                const isSelected =
-                                  (selectedBranch === branch.name &&
-                                    selectedBranchType === branch.type) ||
-                                  (!selectedBranch && branch.isDefault && branch.type === "local")
-                                return (
-                                  <button
-                                    key={`${branch.type}-${branch.name}`}
-                                    onClick={() => {
-                                      setSelectedBranch(branch.name, branch.type)
-                                      setBranchPopoverOpen(false)
-                                      setBranchSearch("")
-                                    }}
-                                    className={cn(
-                                      "flex items-center gap-1.5 w-[calc(100%-8px)] mx-1 px-1.5 text-sm text-left absolute left-0 top-0 rounded-md cursor-default select-none outline-none transition-colors",
-                                      isSelected
-                                        ? "dark:bg-neutral-800 text-foreground"
-                                        : "dark:hover:bg-neutral-800 hover:text-foreground",
-                                    )}
-                                    style={{
-                                      height: `${virtualItem.size}px`,
-                                      transform: `translateY(${virtualItem.start}px)`,
-                                    }}
-                                  >
-                                    <BranchIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                                    <span className="truncate flex-1">{branch.name}</span>
-                                    <span
-                                      className={cn(
-                                        "text-[10px] px-1.5 py-0.5 rounded shrink-0",
-                                        branch.type === "local"
-                                          ? "bg-blue-500/10 text-blue-500"
-                                          : "bg-orange-500/10 text-orange-500",
-                                      )}
-                                    >
-                                      {branch.type}
-                                    </span>
-                                    {branch.committedAt && (
-                                      <span className="text-xs text-muted-foreground/70 shrink-0">
-                                        {formatRelativeTime(branch.committedAt)}
-                                      </span>
-                                    )}
-                                    {branch.isDefault && (
-                                      <span className="text-[10px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded shrink-0">
-                                        default
-                                      </span>
-                                    )}
-                                    {isSelected && (
-                                      <CheckIcon className="h-4 w-4 shrink-0 ml-auto" />
-                                    )}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          </div>
+                    />
+                    {/* Voice wave indicator or Attachment button */}
+                    {isVoiceRecording ? (
+                      <VoiceWaveIndicator
+                        isRecording={isVoiceRecording}
+                        audioLevel={voiceAudioLevel}
+                      />
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-sm outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={images.length >= 5 && files.length >= 10}
+                      >
+                        <AttachIcon className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <div className="ml-1">
+                      <AgentSendButton
+                        isStreaming={false}
+                        isSubmitting={createChatMutation.isPending || isUploading}
+                        disabled={Boolean(
+                          !hasContent ||
+                          isUploading ||
+                          ((chatScope === "project" || chatScope === "task") &&
+                            !validatedProject) ||
+                          (chatScope === "task" && !selectedTask),
                         )}
-                      </PopoverContent>
-                    </Popover>
-                  )}
+                        onClick={handleSend}
+                        mode={agentMode}
+                        hasContent={hasContent}
+                        showVoiceInput={isVoiceAvailable}
+                        isRecording={isVoiceRecording}
+                        isTranscribing={isTranscribing}
+                        onVoiceMouseDown={handleVoiceMouseDown}
+                        onVoiceMouseUp={handleVoiceMouseUp}
+                        onVoiceMouseLeave={handleVoiceMouseLeave}
+                      />
+                    </div>
+                  </div>
+                </PromptInputActions>
+              </PromptInput>
 
-                  {/* Create Branch Dialog */}
-                  {validatedProject && (
-                    <CreateBranchDialog
-                      open={createBranchDialogOpen}
-                      onOpenChange={setCreateBranchDialogOpen}
-                      projectPath={validatedProject.path}
-                      branches={branches}
-                      defaultBranch={branchesQuery.data?.defaultBranch || "main"}
-                      onBranchCreated={(branchName) => {
-                        setSelectedBranch(branchName, "local")
-                      }}
-                    />
-                  )}
+              {/* Scope, project, work mode, and branch selectors - directly under input */}
+              <div className="mt-1.5 md:mt-2 ml-[5px] flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
+                  {(["global", "project", "task"] as const).map((scope) => {
+                    const disabled =
+                      (scope === "project" && !validatedProject) ||
+                      (scope === "task" && (!validatedProject || !projectTasks?.length))
+                    return (
+                      <button
+                        key={scope}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setChatScope(scope)}
+                        className={cn(
+                          "rounded px-2 py-1 text-xs font-medium transition-colors",
+                          chatScope === scope
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                          disabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
+                        )}
+                      >
+                        {scope === "global" ? "Global" : scope === "project" ? "Project" : "Task"}
+                      </button>
+                    )
+                  })}
                 </div>
 
-                {/* Worktree config banner - moved to corner banner below */}
+                <ProjectSelector />
 
-                {/* File mention dropdown */}
-                {/* Desktop: use projectPath for local file search */}
-                <AgentsFileMention
-                  isOpen={showMentionDropdown && !!validatedProject}
-                  onClose={() => {
-                    setShowMentionDropdown(false)
-                    // Reset subpage state when dropdown closes
-                    setShowingFilesList(false)
-                    setShowingSkillsList(false)
-                    setShowingAgentsList(false)
-                    setShowingToolsList(false)
-                  }}
-                  onSelect={handleMentionSelect}
-                  searchText={mentionSearchText}
-                  position={mentionPosition}
-                  projectPath={validatedProject?.path}
-                  showingFilesList={showingFilesList}
-                  showingSkillsList={showingSkillsList}
-                  showingAgentsList={showingAgentsList}
-                  showingToolsList={showingToolsList}
-                />
+                {chatScope === "task" && validatedProject && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={!projectTasks?.length}
+                      className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="truncate max-w-[140px]">
+                        {selectedTask?.name ?? "No tasks"}
+                      </span>
+                      <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" sideOffset={6} className="min-w-[220px]">
+                      {projectTasks?.map((task) => (
+                        <DropdownMenuItem
+                          key={task.id}
+                          onClick={() => setSelectedTaskId(task.id)}
+                          className="justify-between gap-2"
+                        >
+                          <span className="truncate">{task.name}</span>
+                          {selectedTaskId === task.id && (
+                            <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
 
-                {/* Slash command dropdown */}
-                <AgentsSlashCommand
-                  isOpen={showSlashDropdown}
-                  onClose={handleCloseSlashTrigger}
-                  onSelect={handleSlashSelect}
-                  searchText={slashSearchText}
-                  position={slashPosition}
-                  projectPath={validatedProject?.path}
-                  mode={agentMode}
-                  disabledCommands={["clear"]}
-                />
+                {/* Work mode selector - between project and branch */}
+                {validatedProject && chatScope === "project" && (
+                  <WorkModeSelector
+                    value={workMode}
+                    onChange={setWorkMode}
+                    disabled={createChatMutation.isPending}
+                  />
+                )}
+
+                {/* Branch selector - only visible when worktree mode is selected */}
+                {validatedProject && chatScope === "project" && workMode === "worktree" && (
+                  <Popover
+                    open={branchPopoverOpen}
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        setBranchSearch("") // Clear search on close
+                      }
+                      setBranchPopoverOpen(open)
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <button
+                        className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                        disabled={branchesQuery.isLoading}
+                      >
+                        <BranchIcon className="w-4 h-4" />
+                        <span className="truncate max-w-[100px]">
+                          {selectedBranch || branchesQuery.data?.defaultBranch || "main"}
+                        </span>
+                        <IconChevronDown className="w-3 h-3 opacity-50" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      {/* Search input with Create button */}
+                      <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 my-1 rounded-md bg-muted/50">
+                        <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search branches..."
+                          value={branchSearch}
+                          onChange={(e) => setBranchSearch(e.target.value)}
+                          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 flex items-center gap-1 text-xs shrink-0"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setCreateBranchDialogOpen(true)
+                            setBranchPopoverOpen(false)
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                          Create
+                        </Button>
+                      </div>
+
+                      {/* Virtualized branch list */}
+                      {filteredBranches.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-muted-foreground">
+                          No branches found.
+                        </div>
+                      ) : (
+                        <div
+                          ref={branchListRef}
+                          className="overflow-auto py-1 scrollbar-hide"
+                          style={{
+                            height: Math.min(filteredBranches.length * 32 + 8, 300),
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: `${branchVirtualizer.getTotalSize()}px`,
+                              width: "100%",
+                              position: "relative",
+                            }}
+                          >
+                            {branchVirtualizer.getVirtualItems().map((virtualItem) => {
+                              const branch = filteredBranches[virtualItem.index]
+                              const isSelected =
+                                (selectedBranch === branch.name &&
+                                  selectedBranchType === branch.type) ||
+                                (!selectedBranch && branch.isDefault && branch.type === "local")
+                              return (
+                                <button
+                                  key={`${branch.type}-${branch.name}`}
+                                  onClick={() => {
+                                    setSelectedBranch(branch.name, branch.type)
+                                    setBranchPopoverOpen(false)
+                                    setBranchSearch("")
+                                  }}
+                                  className={cn(
+                                    "flex items-center gap-1.5 w-[calc(100%-8px)] mx-1 px-1.5 text-sm text-left absolute left-0 top-0 rounded-md cursor-default select-none outline-none transition-colors",
+                                    isSelected
+                                      ? "dark:bg-neutral-800 text-foreground"
+                                      : "dark:hover:bg-neutral-800 hover:text-foreground",
+                                  )}
+                                  style={{
+                                    height: `${virtualItem.size}px`,
+                                    transform: `translateY(${virtualItem.start}px)`,
+                                  }}
+                                >
+                                  <BranchIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                                  <span className="truncate flex-1">{branch.name}</span>
+                                  <span
+                                    className={cn(
+                                      "text-[10px] px-1.5 py-0.5 rounded shrink-0",
+                                      branch.type === "local"
+                                        ? "bg-blue-500/10 text-blue-500"
+                                        : "bg-orange-500/10 text-orange-500",
+                                    )}
+                                  >
+                                    {branch.type}
+                                  </span>
+                                  {branch.committedAt && (
+                                    <span className="text-xs text-muted-foreground/70 shrink-0">
+                                      {formatRelativeTime(branch.committedAt)}
+                                    </span>
+                                  )}
+                                  {branch.isDefault && (
+                                    <span className="text-[10px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded shrink-0">
+                                      default
+                                    </span>
+                                  )}
+                                  {isSelected && <CheckIcon className="h-4 w-4 shrink-0 ml-auto" />}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                )}
+
+                {/* Create Branch Dialog */}
+                {validatedProject && (
+                  <CreateBranchDialog
+                    open={createBranchDialogOpen}
+                    onOpenChange={setCreateBranchDialogOpen}
+                    projectPath={validatedProject.path}
+                    branches={branches}
+                    defaultBranch={branchesQuery.data?.defaultBranch || "main"}
+                    onBranchCreated={(branchName) => {
+                      setSelectedBranch(branchName, "local")
+                    }}
+                  />
+                )}
               </div>
+
+              {/* Worktree config banner - moved to corner banner below */}
+
+              {/* File mention dropdown */}
+              {/* Desktop: use projectPath for local file search */}
+              <AgentsFileMention
+                isOpen={showMentionDropdown && !!validatedProject}
+                onClose={() => {
+                  setShowMentionDropdown(false)
+                  // Reset subpage state when dropdown closes
+                  setShowingFilesList(false)
+                  setShowingSkillsList(false)
+                  setShowingAgentsList(false)
+                  setShowingToolsList(false)
+                }}
+                onSelect={handleMentionSelect}
+                searchText={mentionSearchText}
+                position={mentionPosition}
+                projectPath={validatedProject?.path}
+                showingFilesList={showingFilesList}
+                showingSkillsList={showingSkillsList}
+                showingAgentsList={showingAgentsList}
+                showingToolsList={showingToolsList}
+              />
+
+              {/* Slash command dropdown */}
+              <AgentsSlashCommand
+                isOpen={showSlashDropdown}
+                onClose={handleCloseSlashTrigger}
+                onSelect={handleSlashSelect}
+                searchText={slashSearchText}
+                position={slashPosition}
+                projectPath={validatedProject?.path}
+                mode={agentMode}
+                disabledCommands={["clear"]}
+              />
             </div>
-          )}
+          </div>
         </div>
       </div>
 
       {/* Worktree config banner - fixed bottom-right corner */}
-      {showWorktreeBanner && (
+      {showWorktreeBanner && chatScope === "project" && (
         <div className="absolute bottom-4 right-4 max-w-sm p-3 pb-4 bg-muted/50 backdrop-blur-sm rounded-lg border border-border space-y-3 shadow-lg z-50">
           <p className="text-sm text-muted-foreground">
             Configure a worktree setup script to install dependencies or copy environment variables.
@@ -2194,6 +2355,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                 if (prompt && validatedProject) {
                   createChatMutation.mutate({
                     projectId: validatedProject.id,
+                    scope: "project",
                     name: "Worktree Setup",
                     model: selectedChatModel,
                     initialMessageParts: [{ type: "text", text: prompt }],

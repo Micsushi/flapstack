@@ -1,35 +1,28 @@
-export const CLAUDE_MODELS = [
-  { id: "opus", name: "Opus", version: "4.6" },
-  { id: "sonnet", name: "Sonnet", version: "4.6" },
-  { id: "haiku", name: "Haiku", version: "4.5" },
-]
+export {
+  CLAUDE_MODELS,
+  CODEX_MODELS,
+  DEFAULT_CLAUDE_EFFORT,
+  DEFAULT_CHATGPT_CODEX_MODEL_ID,
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CODEX_MODEL_ID,
+  DEFAULT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CODEX_THINKING,
+  DEFAULT_CLAUDE_MODEL_ID,
+  type ClaudeEffortLevel,
+  type CodexAuthSurface,
+  type CodexThinkingLevel,
+} from "../../../../shared/model-catalog"
 
-export type CodexThinkingLevel = "low" | "medium" | "high" | "xhigh"
+import type { ClaudeEffortLevel, CodexThinkingLevel } from "../../../../shared/model-catalog"
 
-export const CODEX_MODELS = [
-  {
-    id: "gpt-5.3-codex",
-    name: "Codex 5.3",
-    thinkings: ["low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
-  },
-  {
-    id: "gpt-5.2-codex",
-    name: "Codex 5.2",
-    thinkings: ["low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
-  },
-  {
-    id: "gpt-5.1-codex-max",
-    name: "Codex 5.1 Max",
-    thinkings: ["low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
-  },
-  {
-    id: "gpt-5.1-codex-mini",
-    name: "Codex 5.1 Mini",
-    thinkings: ["medium", "high"] as CodexThinkingLevel[],
-  },
-]
+export function formatClaudeEffortLabel(effort: ClaudeEffortLevel): string {
+  if (effort === "max") return "Max"
+  if (effort === "xhigh") return "Extra High"
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
 
 export function formatCodexThinkingLabel(thinking: CodexThinkingLevel): string {
+  if (thinking === "none") return "None"
   if (thinking === "xhigh") return "Extra High"
   return thinking.charAt(0).toUpperCase() + thinking.slice(1)
 }

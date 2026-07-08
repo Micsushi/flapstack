@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft } from "lucide-react"
+import { ChevronLeft, Route } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { EyeOpenFilledIcon, ProfileIconFilled, SlidersFilledIcon } from "../../icons"
 import {
@@ -52,7 +52,7 @@ const MAIN_TABS = [
   },
   {
     id: "beta" as SettingsTab,
-    label: "Beta",
+    label: "Legacy Beta (Scaffold)",
     icon: FlaskFilledIcon,
   },
 ]
@@ -76,7 +76,7 @@ const ADVANCED_TABS_BASE = [
   },
   {
     id: "agents" as SettingsTab,
-    label: "Custom Agents",
+    label: "Custom Agents (Scaffold)",
     icon: CustomAgentIconFilled,
   },
   {
@@ -88,6 +88,11 @@ const ADVANCED_TABS_BASE = [
     id: "plugins" as SettingsTab,
     label: "Plugins",
     icon: PluginFilledIcon,
+  },
+  {
+    id: "future" as SettingsTab,
+    label: "Future Scaffolds",
+    icon: Route,
   },
 ]
 

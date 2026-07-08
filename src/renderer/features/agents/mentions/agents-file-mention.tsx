@@ -556,14 +556,21 @@ function renderFolderTree(path: string) {
 
 /**
  * Check if a string matches all search words (multi-word search)
- * Splits search by whitespace, all words must be present in target
+ * Splits search by whitespace, all words must match a segment.
  */
 function matchesMultiWordSearch(target: string, searchLower: string): boolean {
   if (!searchLower) return true
   const searchWords = searchLower.split(/\s+/).filter(Boolean)
   if (searchWords.length === 0) return true
   const targetLower = target.toLowerCase()
-  return searchWords.every((word) => targetLower.includes(word))
+  const tokens = tokenizeSearchTarget(targetLower)
+
+  return searchWords.every((word) => {
+    if (tokens.some((token) => token.startsWith(word))) return true
+    if (word.length > 1 && tokens.some((token) => token.includes(word))) return true
+    if (word.length > 2 && fuzzyMatch(targetLower, word)) return true
+    return false
+  })
 }
 
 /**
@@ -639,15 +646,37 @@ function sortFilesByRelevance<T extends { label: string; path?: string }>(
       }
     }
 
-    // Priority 4: filename CONTAINS first word (but doesn't start with it)
-    const aFilenameMatch = aLabelLower.includes(firstWord)
-    const bFilenameMatch = bLabelLower.includes(firstWord)
+    // Priority 4: filename/path segment contains first word (but doesn't start with it)
+    const aFilenameMatch =
+      firstWord.length > 1 &&
+      tokenizeSearchTarget(aLabelLower).some((token) => token.includes(firstWord))
+    const bFilenameMatch =
+      firstWord.length > 1 &&
+      tokenizeSearchTarget(bLabelLower).some((token) => token.includes(firstWord))
     if (aFilenameMatch && !bFilenameMatch) return -1
     if (!aFilenameMatch && bFilenameMatch) return 1
 
     // Finally: alphabetically by label
     return a.label.localeCompare(b.label)
   })
+}
+
+function tokenizeSearchTarget(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean)
+}
+
+function fuzzyMatch(value: string, query: string): boolean {
+  let queryIndex = 0
+  for (const char of value) {
+    if (char === query[queryIndex]) {
+      queryIndex += 1
+      if (queryIndex === query.length) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -711,7 +740,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const placementRef = useRef<"above" | "below" | null>(null)
-  const [debouncedSearchText, setDebouncedSearchText] = useState(searchText)
+  const [debouncedApiSearchText, setDebouncedApiSearchText] = useState(searchText)
 
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
 
@@ -734,10 +763,10 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       staleTime: 5 * 60 * 1000, // 5 minutes - agents don't change frequently
     })
 
-  // Debounce search text (300ms to match canvas implementation)
+  // Debounce only the file API query. Local filtering updates immediately.
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearchText(searchText)
+      setDebouncedApiSearchText(searchText)
     }, 300)
     return () => clearTimeout(timer)
   }, [searchText])
@@ -745,10 +774,10 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // For multi-word search, send only first word to API (server filters by that),
   // then filter results on client by all words
   const apiSearchQuery = useMemo(() => {
-    if (!debouncedSearchText) return ""
-    const words = debouncedSearchText.split(/\s+/).filter(Boolean)
+    if (!debouncedApiSearchText) return ""
+    const words = debouncedApiSearchText.split(/\s+/).filter(Boolean)
     return words[0] || ""
-  }, [debouncedSearchText])
+  }, [debouncedApiSearchText])
 
   // Fetch files from API
   // Priority: sandboxId (includes uncommitted) > branch (GitHub API) > cached file_tree
@@ -780,7 +809,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const changedFileOptions: FileMentionOption[] = useMemo(() => {
     if (!changedFiles.length) return []
 
-    const searchLower = debouncedSearchText.toLowerCase()
+    const searchLower = searchText.toLowerCase()
 
     const mapped = changedFiles
       .filter((file) =>
@@ -806,8 +835,8 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       })
 
     // Sort by relevance using shared function
-    return sortFilesByRelevance(mapped, debouncedSearchText)
-  }, [changedFiles, debouncedSearchText, repository])
+    return sortFilesByRelevance(mapped, searchText)
+  }, [changedFiles, searchText, repository])
 
   // Convert API results to options with truncated path
   // Exclude files that are already in changedFileOptions
@@ -817,7 +846,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   )
 
   const repoFileOptions: FileMentionOption[] = useMemo(() => {
-    const searchLower = debouncedSearchText.toLowerCase()
+    const searchLower = searchText.toLowerCase()
 
     const mapped = fileResults
       .filter((file) => !changedFilePaths.has(file.path))
@@ -839,12 +868,12 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       })
 
     // Sort by relevance using shared function
-    return sortFilesByRelevance(mapped, debouncedSearchText)
-  }, [fileResults, changedFilePaths, debouncedSearchText])
+    return sortFilesByRelevance(mapped, searchText)
+  }, [fileResults, changedFilePaths, searchText])
 
   // Convert skills to mention options
   const skillOptions: FileMentionOption[] = useMemo(() => {
-    const searchLower = debouncedSearchText.toLowerCase()
+    const searchLower = searchText.toLowerCase()
 
     return skills
       .filter(
@@ -864,11 +893,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         description: skill.description,
         source: skill.source,
       }))
-  }, [skills, debouncedSearchText])
+  }, [skills, searchText])
 
   // Convert custom agents to mention options
   const agentOptions: FileMentionOption[] = useMemo(() => {
-    const searchLower = debouncedSearchText.toLowerCase()
+    const searchLower = searchText.toLowerCase()
 
     return customAgents
       .filter(
@@ -890,7 +919,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         model: agent.model,
         source: agent.source,
       }))
-  }, [customAgents, debouncedSearchText])
+  }, [customAgents, searchText])
 
   // Convert MCP servers to mention options (show servers, not individual tools)
   const allToolOptions: FileMentionOption[] = useMemo(() => {
@@ -911,13 +940,13 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
   // Filtered tool options based on search (searches by server name)
   const toolOptions: FileMentionOption[] = useMemo(() => {
-    if (!debouncedSearchText) return allToolOptions
+    if (!searchText) return allToolOptions
 
-    const searchLower = debouncedSearchText.toLowerCase()
+    const searchLower = searchText.toLowerCase()
     return allToolOptions.filter((tool) => {
       return matchesMultiWordSearch(tool.label, searchLower)
     })
-  }, [allToolOptions, debouncedSearchText])
+  }, [allToolOptions, searchText])
 
   // Check if we have skills, agents, or tools
   // Use base data (not search-filtered) for stable category display
@@ -950,8 +979,8 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     // SUBPAGE: Files (or if no skills/agents/tools, show files directly)
     if (showingFilesList || hasOnlyFiles) {
       const allFiles = [...changedFileOptions, ...repoFileOptions]
-      if (debouncedSearchText) {
-        return sortFilesByRelevance(allFiles, debouncedSearchText)
+      if (searchText) {
+        return sortFilesByRelevance(allFiles, searchText)
       }
       return allFiles
     }
@@ -972,11 +1001,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     }
 
     // ROOT VIEW
-    if (debouncedSearchText) {
+    if (searchText) {
       // Global search: search across changed files + categories + skills + agents + tools + repo files
-      const searchLower = debouncedSearchText.toLowerCase()
+      const searchLower = searchText.toLowerCase()
       const filteredCategories = availableCategoryOptions.filter((c) =>
-        c.label.toLowerCase().includes(searchLower),
+        matchesMultiWordSearch(c.label, searchLower),
       )
       const allItems = [
         ...changedFileOptions,
@@ -986,7 +1015,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         ...toolOptions,
         ...repoFileOptions,
       ]
-      return sortFilesByRelevance(allItems, debouncedSearchText)
+      return sortFilesByRelevance(allItems, searchText)
     }
 
     // No search: Changed files FIRST (quick access), then category navigation
@@ -996,7 +1025,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     showingSkillsList,
     showingAgentsList,
     showingToolsList,
-    debouncedSearchText,
+    searchText,
     changedFileOptions,
     repoFileOptions,
     skillOptions,
@@ -1008,7 +1037,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
   // Track previous values for smarter selection reset
   const prevIsOpenRef = useRef(isOpen)
-  const prevSearchRef = useRef(debouncedSearchText)
+  const prevSearchRef = useRef(searchText)
   const prevShowingFilesListRef = useRef(showingFilesList)
   const prevShowingSkillsListRef = useRef(showingSkillsList)
   const prevShowingAgentsListRef = useRef(showingAgentsList)
@@ -1017,7 +1046,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // CONSOLIDATED: Single useLayoutEffect for selection management (was 3 separate)
   useLayoutEffect(() => {
     const didJustOpen = isOpen && !prevIsOpenRef.current
-    const didSearchChange = debouncedSearchText !== prevSearchRef.current
+    const didSearchChange = searchText !== prevSearchRef.current
     const didSubpageChange =
       showingFilesList !== prevShowingFilesListRef.current ||
       showingSkillsList !== prevShowingSkillsListRef.current ||
@@ -1035,14 +1064,14 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
     // Update refs
     prevIsOpenRef.current = isOpen
-    prevSearchRef.current = debouncedSearchText
+    prevSearchRef.current = searchText
     prevShowingFilesListRef.current = showingFilesList
     prevShowingSkillsListRef.current = showingSkillsList
     prevShowingAgentsListRef.current = showingAgentsList
     prevShowingToolsListRef.current = showingToolsList
   }, [
     isOpen,
-    debouncedSearchText,
+    searchText,
     options.length,
     selectedIndex,
     showingFilesList,
@@ -1068,13 +1097,17 @@ export const AgentsFileMention = memo(function AgentsFileMention({
           e.preventDefault()
           e.stopPropagation()
           e.stopImmediatePropagation()
-          setSelectedIndex((prev) => (prev + 1) % options.length)
+          if (options.length > 0) {
+            setSelectedIndex((prev) => (prev + 1) % options.length)
+          }
           break
         case "ArrowUp":
           e.preventDefault()
           e.stopPropagation()
           e.stopImmediatePropagation()
-          setSelectedIndex((prev) => (prev - 1 + options.length) % options.length)
+          if (options.length > 0) {
+            setSelectedIndex((prev) => (prev - 1 + options.length) % options.length)
+          }
           break
         case "Enter":
           if (e.shiftKey) return
@@ -1144,7 +1177,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Narrow dropdown for root view (categories only) and skills/agents/tools subpages
   // Wide dropdown for files (showingFilesList or hasOnlyFiles)
   const useNarrowWidth =
-    (isRootView && !hasChangedFiles && !debouncedSearchText) ||
+    (isRootView && !hasChangedFiles && !searchText) ||
     showingSkillsList ||
     showingAgentsList ||
     showingToolsList
@@ -1152,7 +1185,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const itemHeight = 28
   const headerHeight = 28 // header with py-1.5 and text-xs
   // Only add header height when header is actually shown (in subpages or when searching)
-  const showsHeader = !isRootView || !!debouncedSearchText
+  const showsHeader = !isRootView || !!searchText
   const paddingHeight = 8 // py-1 on container = 4px top + 4px bottom
   const requestedHeight = Math.min(
     options.length * itemHeight + (showsHeader ? headerHeight : 0) + paddingHeight,
@@ -1233,7 +1266,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         {/* Empty state (only show when not fetching) */}
         {!isLoading && !isFetching && !error && options.length === 0 && (
           <div className="h-7 px-1.5 mx-1 flex items-center text-xs text-muted-foreground">
-            {debouncedSearchText ? `No files matching "${debouncedSearchText}"` : "No files found"}
+            {searchText ? `No files matching "${searchText}"` : "No files found"}
           </div>
         )}
 
@@ -1243,7 +1276,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
             {/* Flat list sorted by relevance */}
             <>
               {/* Header - only show in subpages or when searching, not in root view */}
-              {(isInSubpage || debouncedSearchText) && (
+              {(isInSubpage || searchText) && (
                 <div className="px-2.5 py-1.5 mx-1 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                   <span>
                     {showingFilesList || hasOnlyFiles

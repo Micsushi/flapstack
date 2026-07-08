@@ -24,6 +24,16 @@ export interface WorktreeSetupFailurePayload {
   projectId: string
 }
 
+export interface NotificationNavigationPayload {
+  chatId?: string
+  subChatId?: string
+}
+
+export interface DesktopNotificationOptions extends NotificationNavigationPayload {
+  title: string
+  body: string
+}
+
 export interface DesktopApi {
   // Platform info
   platform: NodeJS.Platform
@@ -55,7 +65,8 @@ export interface DesktopApi {
 
   // Native features
   setBadge: (count: number | null) => Promise<void>
-  showNotification: (options: { title: string; body: string }) => Promise<void>
+  showNotification: (options: DesktopNotificationOptions) => Promise<void>
+  onNotificationClicked: (callback: (payload: NotificationNavigationPayload) => void) => () => void
   openExternal: (url: string) => Promise<void>
   getApiBaseUrl: () => Promise<string>
 

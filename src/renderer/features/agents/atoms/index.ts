@@ -1,6 +1,15 @@
 import { atom } from "jotai"
 import { atomFamily, atomWithStorage } from "jotai/utils"
 import { atomWithWindowStorage } from "../../../lib/window-storage"
+import {
+  CLAUDE_MODEL_ID_MAP,
+  DEFAULT_CLAUDE_EFFORT,
+  DEFAULT_CLAUDE_MODEL_ID,
+  DEFAULT_CODEX_MODEL_ID,
+  DEFAULT_CODEX_THINKING,
+  type ClaudeEffortLevel,
+  type CodexThinkingLevel,
+} from "../../../../shared/model-catalog"
 import type { FileMentionOption } from "../mentions/agents-mentions-editor"
 
 // Agent mode type - extensible for future modes like "debug"
@@ -39,6 +48,10 @@ export const previousAgentChatIdAtom = atom<string | null>(null)
 // NewChatForm uses this to restore the draft text
 // Reset to null when "New Workspace" is clicked or chat is created
 export const selectedDraftIdAtom = atom<string | null>(null)
+
+export const selectedTargetWorktreePathAtomFamily = atomFamily((subChatId: string) =>
+  atom<string | null>(null),
+)
 
 // Show new chat form explicitly - true by default so new users see the form, not kanban
 // Set to false when kanban is explicitly opened (via hotkey or button)
@@ -212,30 +225,46 @@ export const selectedProjectAtom = atomWithWindowStorage<SelectedProject>(
 
 export const lastSelectedAgentIdAtom = atomWithStorage<string>(
   "agents:lastSelectedAgentId",
-  "claude-code",
+  "codex",
   undefined,
   { getOnInit: true },
 )
 
 export const lastSelectedModelIdAtom = atomWithStorage<string>(
   "agents:lastSelectedModelId",
-  "opus",
+  DEFAULT_CLAUDE_MODEL_ID,
+  undefined,
+  { getOnInit: true },
+)
+
+export type ClaudeEffortPreference = ClaudeEffortLevel
+
+export const lastSelectedClaudeEffortAtom = atomWithStorage<ClaudeEffortPreference>(
+  "agents:lastSelectedClaudeEffort",
+  DEFAULT_CLAUDE_EFFORT,
   undefined,
   { getOnInit: true },
 )
 
 export const lastSelectedCodexModelIdAtom = atomWithStorage<string>(
   "agents:lastSelectedCodexModelId",
-  "gpt-5.3-codex",
+  DEFAULT_CODEX_MODEL_ID,
   undefined,
   { getOnInit: true },
 )
 
-export type CodexThinkingPreference = "low" | "medium" | "high" | "xhigh"
+export type CodexThinkingPreference = CodexThinkingLevel
 
 export const lastSelectedCodexThinkingAtom = atomWithStorage<CodexThinkingPreference>(
   "agents:lastSelectedCodexThinking",
-  "high",
+  DEFAULT_CODEX_THINKING,
+  undefined,
+  { getOnInit: true },
+)
+
+export const lastSelectedCodexFastModeAtom = atomWithStorage<boolean>(
+  "agents:lastSelectedCodexFastMode",
+  false,
   undefined,
   { getOnInit: true },
 )
@@ -247,6 +276,30 @@ const subChatModelIdsStorageAtom = atomWithStorage<Record<string, string>>(
   {},
   undefined,
   { getOnInit: true },
+)
+
+const subChatClaudeEffortStorageAtom = atomWithStorage<Record<string, ClaudeEffortPreference>>(
+  "agents:subChatClaudeEffort",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+export const subChatClaudeEffortAtomFamily = atomFamily((subChatId: string) =>
+  atom(
+    (get) => {
+      if (!subChatId) return get(lastSelectedClaudeEffortAtom)
+      return get(subChatClaudeEffortStorageAtom)[subChatId] ?? get(lastSelectedClaudeEffortAtom)
+    },
+    (get, set, newEffort: ClaudeEffortPreference) => {
+      if (!subChatId) {
+        set(lastSelectedClaudeEffortAtom, newEffort)
+        return
+      }
+      const current = get(subChatClaudeEffortStorageAtom)
+      set(subChatClaudeEffortStorageAtom, { ...current, [subChatId]: newEffort })
+    },
+  ),
 )
 
 export const subChatModelIdAtomFamily = atomFamily((subChatId: string) =>
@@ -321,6 +374,31 @@ export const subChatCodexThinkingAtomFamily = atomFamily((subChatId: string) =>
   ),
 )
 
+const subChatCodexFastModeStorageAtom = atomWithStorage<Record<string, boolean>>(
+  "agents:subChatCodexFastMode",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+export const subChatCodexFastModeAtomFamily = atomFamily((subChatId: string) =>
+  atom(
+    (get) => {
+      if (!subChatId) return get(lastSelectedCodexFastModeAtom)
+      return get(subChatCodexFastModeStorageAtom)[subChatId] ?? get(lastSelectedCodexFastModeAtom)
+    },
+    (get, set, enabled: boolean) => {
+      if (!subChatId) {
+        set(lastSelectedCodexFastModeAtom, enabled)
+        return
+      }
+      const current = get(subChatCodexFastModeStorageAtom)
+      if (current[subChatId] === enabled) return
+      set(subChatCodexFastModeStorageAtom, { ...current, [subChatId]: enabled })
+    },
+  ),
+)
+
 // Storage for all sub-chat modes (persisted per subChatId)
 const subChatModesStorageAtom = atomWithStorage<Record<string, AgentMode>>(
   "agents:subChatModes",
@@ -341,11 +419,7 @@ export const subChatModeAtomFamily = atomFamily((subChatId: string) =>
 )
 
 // Model ID to full Claude model string mapping
-export const MODEL_ID_MAP: Record<string, string> = {
-  opus: "opus",
-  sonnet: "sonnet",
-  haiku: "haiku",
-}
+export const MODEL_ID_MAP = CLAUDE_MODEL_ID_MAP
 
 // Sidebar state - window-scoped so each window has independent sidebar visibility
 export const agentsSidebarOpenAtom = atomWithWindowStorage<boolean>("agents-sidebar-open", true, {
@@ -726,8 +800,8 @@ export const pendingChatHistoryAtom = atom<PendingChatHistory | null>(null)
 // Work mode preference (local = work in project dir, worktree = create isolated worktree)
 export type WorkMode = "local" | "worktree"
 export const lastSelectedWorkModeAtom = atomWithStorage<WorkMode>(
-  "agents:lastSelectedWorkMode",
-  "worktree", // default to worktree for current behavior
+  "agents:lastSelectedWorkMode:v2",
+  "local",
   undefined,
   { getOnInit: true },
 )
@@ -837,6 +911,8 @@ export type UndoItem =
       isRemote?: boolean
     }
   | { type: "subchat"; subChatId: string; chatId: string; timeoutId: ReturnType<typeof setTimeout> }
+  | { type: "project"; projectId: string; timeoutId: ReturnType<typeof setTimeout> }
+  | { type: "task"; taskId: string; timeoutId: ReturnType<typeof setTimeout> }
 
 export const undoStackAtom = atom<UndoItem[]>([])
 

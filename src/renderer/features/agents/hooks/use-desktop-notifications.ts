@@ -26,6 +26,14 @@ export interface NotificationOptions {
   body: string
   silent?: boolean
   priority?: NotificationPriority
+  chatId?: string
+  subChatId?: string
+}
+
+interface AgentNotificationTarget {
+  chatId?: string
+  subChatId?: string
+  parentChatName?: string
 }
 
 export function useDesktopNotifications() {
@@ -51,7 +59,12 @@ export function useDesktopNotifications() {
     (
       title: string,
       body: string,
-      options?: { silent?: boolean; priority?: NotificationPriority },
+      options?: {
+        silent?: boolean
+        priority?: NotificationPriority
+        chatId?: string
+        subChatId?: string
+      },
     ) => {
       // Check if notifications are enabled
       if (!notificationsEnabled) {
@@ -83,6 +96,8 @@ export function useDesktopNotifications() {
             body,
             silent: options?.silent,
             priority: options?.priority,
+            chatId: options?.chatId,
+            subChatId: options?.subChatId,
           }
         }
 
@@ -95,7 +110,12 @@ export function useDesktopNotifications() {
               pendingNotification.current = null
               // Directly send notification without recursive call to avoid re-throttling
               lastNotificationTime.current = Date.now()
-              window.desktopApi?.showNotification({ title: pending.title, body: pending.body })
+              window.desktopApi?.showNotification({
+                title: pending.title,
+                body: pending.body,
+                chatId: pending.chatId,
+                subChatId: pending.subChatId,
+              })
             }
           }, NOTIFICATION_THROTTLE_MS - timeSinceLastNotification)
         }
@@ -105,46 +125,73 @@ export function useDesktopNotifications() {
       lastNotificationTime.current = now
 
       // use the IPC bridge to show native notification
-      window.desktopApi?.showNotification({ title, body })
+      window.desktopApi?.showNotification({
+        title,
+        body,
+        chatId: options?.chatId,
+        subChatId: options?.subChatId,
+      })
     },
     [notificationsEnabled],
   )
 
   const notifyAgentComplete = useCallback(
-    (chatName: string) => {
+    (chatName: string, target?: AgentNotificationTarget) => {
       // Skip if window is focused and user hasn't opted into focused notifications
       if (!notifyWhenFocused && document.hasFocus()) {
         return
       }
 
       const title = "Agent Complete"
-      const body = chatName ? `Finished working on "${chatName}"` : "Agent has completed its task"
-      showNotification(title, body, { priority: "complete" })
+      const parentChatName = target?.parentChatName
+      const body =
+        chatName && parentChatName && chatName !== parentChatName
+          ? `Finished "${chatName}" in "${parentChatName}"`
+          : chatName
+            ? `Finished working on "${chatName}"`
+            : "Agent has completed its task"
+      showNotification(title, body, {
+        priority: "complete",
+        chatId: target?.chatId,
+        subChatId: target?.subChatId,
+      })
     },
     [showNotification, notifyWhenFocused],
   )
 
   const notifyAgentError = useCallback(
-    (errorMessage: string) => {
+    (errorMessage: string, target?: AgentNotificationTarget) => {
       // always notify on errors, even if window is focused
       const title = "Agent Error"
       const body = errorMessage.length > 100 ? errorMessage.slice(0, 100) + "..." : errorMessage
-      showNotification(title, body, { priority: "error" })
+      showNotification(title, body, {
+        priority: "error",
+        chatId: target?.chatId,
+        subChatId: target?.subChatId,
+      })
     },
     [showNotification],
   )
 
   const notifyAgentNeedsInput = useCallback(
-    (chatName: string) => {
+    (chatName: string, target?: AgentNotificationTarget) => {
       if (!notifyWhenFocused && document.hasFocus()) {
         return
       }
 
       const title = "Input Required"
-      const body = chatName
-        ? `"${chatName}" is waiting for your input`
-        : "Agent is waiting for your input"
-      showNotification(title, body, { priority: "input" })
+      const parentChatName = target?.parentChatName
+      const body =
+        chatName && parentChatName && chatName !== parentChatName
+          ? `"${chatName}" in "${parentChatName}" is waiting for your input`
+          : chatName
+            ? `"${chatName}" is waiting for your input`
+            : "Agent is waiting for your input"
+      showNotification(title, body, {
+        priority: "input",
+        chatId: target?.chatId,
+        subChatId: target?.subChatId,
+      })
     },
     [showNotification, notifyWhenFocused],
   )

@@ -30,6 +30,7 @@ import {
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
 import { Switch } from "../../ui/switch"
+import { RenameDialog } from "../../rename-dialog"
 
 // Hook to detect narrow screen
 function useIsNarrowScreen(): boolean {
@@ -126,6 +127,10 @@ function AccountRow({
 
 // Anthropic accounts section component
 function AnthropicAccountsSection() {
+  const [renamingAccount, setRenamingAccount] = useState<{
+    id: string
+    name: string
+  } | null>(null)
   const {
     data: accounts,
     isLoading: isAccountsLoading,
@@ -201,13 +206,13 @@ function AnthropicAccountsSection() {
   })
 
   const handleRename = (accountId: string, currentName: string | null) => {
-    const newName = window.prompt(
-      "Enter new name for this account:",
-      currentName || "Anthropic Account",
-    )
-    if (newName && newName.trim()) {
-      renameMutation.mutate({ accountId, displayName: newName.trim() })
-    }
+    setRenamingAccount({ id: accountId, name: currentName || "Anthropic Account" })
+  }
+
+  const handleRenameSave = async (displayName: string) => {
+    if (!renamingAccount) return
+    await renameMutation.mutateAsync({ accountId: renamingAccount.id, displayName })
+    setRenamingAccount(null)
   }
 
   const handleRemove = (accountId: string, displayName: string | null) => {
@@ -228,23 +233,35 @@ function AnthropicAccountsSection() {
   }
 
   return (
-    <div className="bg-background rounded-lg border border-border overflow-hidden divide-y divide-border">
-      {isAccountsLoading ? (
-        <div className="p-4 text-center text-sm text-muted-foreground">Loading accounts...</div>
-      ) : (
-        accounts?.map((account) => (
-          <AccountRow
-            key={account.id}
-            account={account}
-            isActive={activeAccount?.id === account.id}
-            onSetActive={() => setActiveMutation.mutate({ accountId: account.id })}
-            onRename={() => handleRename(account.id, account.displayName)}
-            onRemove={() => handleRemove(account.id, account.displayName)}
-            isLoading={isLoading}
-          />
-        ))
-      )}
-    </div>
+    <>
+      <div className="bg-background rounded-lg border border-border overflow-hidden divide-y divide-border">
+        {isAccountsLoading ? (
+          <div className="p-4 text-center text-sm text-muted-foreground">Loading accounts...</div>
+        ) : (
+          accounts?.map((account) => (
+            <AccountRow
+              key={account.id}
+              account={account}
+              isActive={activeAccount?.id === account.id}
+              onSetActive={() => setActiveMutation.mutate({ accountId: account.id })}
+              onRename={() => handleRename(account.id, account.displayName)}
+              onRemove={() => handleRemove(account.id, account.displayName)}
+              isLoading={isLoading}
+            />
+          ))
+        )}
+      </div>
+
+      <RenameDialog
+        isOpen={Boolean(renamingAccount)}
+        onClose={() => setRenamingAccount(null)}
+        onSave={handleRenameSave}
+        currentName={renamingAccount?.name ?? ""}
+        isLoading={renameMutation.isPending}
+        title="Rename account"
+        placeholder="Account name"
+      />
+    </>
   )
 }
 

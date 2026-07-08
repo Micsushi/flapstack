@@ -58,9 +58,10 @@ export function AgentsBetaTab() {
       {/* Header - hidden on narrow screens since it's in the navigation bar */}
       {!isNarrowScreen && (
         <div className="flex flex-col space-y-1.5 text-center sm:text-left">
-          <h3 className="text-sm font-semibold text-foreground">Beta Features</h3>
+          <h3 className="text-sm font-semibold text-foreground">Legacy Beta Scaffolds</h3>
           <p className="text-xs text-muted-foreground">
-            Enable experimental features. These may be unstable or change without notice.
+            These controls expose future-stage code. They are not part of MVP1 manual acceptance
+            unless a feature is explicitly promoted.
           </p>
         </div>
       )}
