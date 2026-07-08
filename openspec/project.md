@@ -49,6 +49,7 @@ change tracking.
   (permissions, scope resolution, worktree defaults, search filters, manifests)
   gets focused unit coverage
 - `npm run ts:check` is separate until inherited type debt is cleaned up
+  (scheduled as Stage 2 carryover, then promoted into the commit gate)
 - Manual test matrices per stage live in the vault stage plans
 
 ### Git Workflow

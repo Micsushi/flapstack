@@ -45,5 +45,5 @@ which carries per-task files, scope, done criteria, and dependencies.
 ## 5. Verification (Block E)
 
 - [x] 5.1 E1 Unit tests (permissions, scopes, worktrees, search, manifests)
-- [ ] 5.2 E2 Manual test matrix pass
-- [ ] 5.3 E3 Docs, handoff, and OpenSpec archive
+- [x] 5.2 E2 Manual test matrix pass
+- [x] 5.3 E3 Docs, handoff, and OpenSpec archive

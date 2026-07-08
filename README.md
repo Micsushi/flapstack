@@ -8,14 +8,16 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-This repo is in the initial adoption phase.
+Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 (voice) is
+next.
 
-- Base code: 1Code
+- Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
-- Source has been copied into this repo and rebranded from 1Code to Flapstack
-- Initial target harnesses: Codex and Claude Code
-- First product slice: project/task/chat workflow with worktree defaults,
-  permissions, attachments, scoped search, pin/archive, and run checkpoints
+- Target harnesses: Codex and Claude Code
+- Stage 1 shipped: global/project/task chats, unified Codex + Claude Code agent
+  runs, permission modes with copy-on-create inheritance, worktree defaults,
+  file/pasted-text attachments, scoped search, pin/archive, and before/after
+  checkpoints with per-run file-change manifests
 
 ## Product Direction
 
@@ -58,12 +60,29 @@ harnesses, permissions, and worktrees.
 - Scoped search with include-archived support.
 - Before/after checkpoints and prompt/run file-change manifests.
 
-### Stage 2: Voice
+### Stage 2: Voice, Usage, and Fixes
 
-- Speech-to-text input.
-- Read-aloud output.
+Three tracks.
+
+Voice (reuses Agent Hotline):
+
+- Speech-to-text input, cloud plus a local/offline engine.
+- Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
-- Per-OS speech adapters with an offline/local path kept open.
+- Per-OS speech adapters with an offline/local path kept as a supported default.
+
+Usage tracking (reuses onWatch):
+
+- Provider quota/spend polling, Anthropic and Codex first.
+- Historical usage in SQLite with threshold alerts before throttling or budget.
+- Usage dashboard reimplemented in the app UI.
+
+Smaller fixes (Stage 1 carryover plus backlog):
+
+- Resolve inherited strict-TypeScript debt and promote `npm run ts:check` into
+  the CI/commit gate.
+- Harden native-module setup (better-sqlite3 / node-pty) so Node and Electron
+  ABI targets no longer need a manual rebuild toggle.
 
 ### Stage 3: MCP Control
 
