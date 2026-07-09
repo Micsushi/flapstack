@@ -436,6 +436,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     selectedTargetWorktreePathAtom,
   )
   const currentTargetWorktreePath = targetWorktreePath ?? storedTargetWorktreePath
+  const [customWorktreeInput, setCustomWorktreeInput] = useState("")
   const trpcUtils = trpc.useUtils()
   const updateTargetWorktreePath = useCallback(
     (path: string | null) => {
@@ -536,14 +537,14 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [provider, selectedModel?.id, setSelectedSubChatModelId])
 
   const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
-    const efforts = selectedModel?.efforts
+    const efforts = selectedModel && "efforts" in selectedModel ? selectedModel.efforts : undefined
     if (!efforts || efforts.length === 0) return "high"
     if (efforts.includes(selectedSubChatClaudeEffort as ClaudeEffortLevel)) {
       return selectedSubChatClaudeEffort as ClaudeEffortLevel
     }
     if (efforts.includes("high")) return "high"
     return efforts[0]!
-  }, [selectedModel?.efforts, selectedSubChatClaudeEffort])
+  }, [selectedModel, selectedSubChatClaudeEffort])
 
   useEffect(() => {
     if (provider !== "claude-code") return
@@ -740,7 +741,10 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const hasWorktreeChoices = worktreeOptions.length > 0
   const selectedWorktreeLabel =
-    selectedWorktreeOption?.label ?? (selectedWorktreePath ? "Selected worktree" : "No worktree")
+    selectedWorktreeOption?.label ?? (selectedWorktreePath ? "Custom path" : "No worktree")
+  const trimmedCustomWorktree = customWorktreeInput.trim()
+  const isValidCustomWorktree =
+    trimmedCustomWorktree.startsWith("/") || /^[A-Za-z]:[\\/]/.test(trimmedCustomWorktree)
   const isNonDefaultWorktree =
     Boolean(selectedWorktreePath) &&
     Boolean(defaultWorktreeOption?.path) &&
@@ -2065,6 +2069,42 @@ export const ChatInputArea = memo(function ChatInputArea({
                             </div>
                           </div>
                         </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        {/* Custom worktree path: for a checkout not in the list. */}
+                        <div
+                          className="px-2 py-1.5"
+                          onKeyDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="mb-1 text-[11px] text-muted-foreground">
+                            Custom worktree path
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              value={customWorktreeInput}
+                              onChange={(e) => setCustomWorktreeInput(e.target.value)}
+                              placeholder="/absolute/path/to/checkout"
+                              spellCheck={false}
+                              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                            />
+                            <button
+                              type="button"
+                              disabled={!isValidCustomWorktree}
+                              onClick={() => {
+                                updateTargetWorktreePath(trimmedCustomWorktree)
+                                setCustomWorktreeInput("")
+                              }}
+                              className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
+                            >
+                              Use
+                            </button>
+                          </div>
+                          {trimmedCustomWorktree && !isValidCustomWorktree && (
+                            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                              Enter an absolute path.
+                            </div>
+                          )}
+                        </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   )}

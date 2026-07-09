@@ -1573,7 +1573,6 @@ interface ChatListSectionProps {
     model?: string | null
     worktreePath?: string | null
     meta?: { repository?: string; branch?: string | null } | null
-    remoteStats?: { fileCount: number; additions: number; deletions: number } | null
   }>
   selectedChatId: string | null
   selectedChatIsRemote: boolean
@@ -2246,8 +2245,9 @@ const ChatListSection = React.memo(function ChatListSection({
             const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
 
             const isChecked = selectedChatIds.has(chat.id)
-            // TODO: remote stats disabled — backend no longer computes them (was causing 50s+ loads)
-            // Will re-enable once stats are precomputed at write time
+            // Local-first: only cheap local workspace stats are shown. Remote
+            // chats intentionally have no stats (remote stat computation was
+            // removed — it caused 50s+ sidebar loads).
             const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
             const hasPendingPlan = workspacePendingPlans.has(chat.id)
             const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
@@ -3041,7 +3041,6 @@ export function AgentsSidebar({
       sandboxId?: string | null
       meta?: { repository?: string; branch?: string | null } | null
       isRemote: boolean
-      remoteStats?: { fileCount: number; additions: number; deletions: number } | null
       pinnedAt?: Date | null
     }> = []
 
@@ -3092,7 +3091,6 @@ export function AgentsSidebar({
           sandboxId: chat.sandbox_id,
           meta: chat.meta,
           isRemote: true,
-          remoteStats: chat.stats,
           pinnedAt: null,
         })
       }
@@ -5085,8 +5083,8 @@ export function AgentsSidebar({
   // Derive which chats have loading sub-chats
   const loadingChatIds = useMemo(() => new Set([...loadingSubChats.values()]), [loadingSubChats])
 
-  // Convert file stats to a Map for easy lookup (only for local chats)
-  // Remote chat stats are provided directly via chat.remoteStats
+  // Convert file stats to a Map for easy lookup (local chats only; remote chats
+  // have no sidebar stats in local-first mode).
   const workspaceFileStats = useMemo(() => {
     const statsMap = new Map<string, { fileCount: number; additions: number; deletions: number }>()
 
@@ -5950,8 +5948,14 @@ export function AgentsSidebar({
                 selectedChatId={selectedLocalChat?.id ?? null}
                 selectedProjectId={selectedLocalChat?.projectId ?? null}
                 selectedTaskId={selectedLocalChat?.taskId ?? null}
-                onNavigateChat={(chatId) => {
+                onNavigateChat={(chatId, subChatId) => {
                   handleChatClick(chatId)
+                  // Focus the matched sub-chat once the chat has switched.
+                  if (subChatId) {
+                    setTimeout(() => {
+                      useAgentSubChatStore.getState().setActiveSubChat(subChatId)
+                    }, 0)
+                  }
                   searchInputRef.current?.blur()
                 }}
               />

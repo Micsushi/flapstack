@@ -1,7 +1,7 @@
 "use client"
 
 import { Search, CornerDownRight } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { Button } from "../../components/ui/button"
 import { Checkbox } from "../../components/ui/checkbox"
@@ -22,8 +22,10 @@ type ScopedSearchPanelProps = {
   selectedChatId?: string | null
   selectedProjectId?: string | null
   selectedTaskId?: string | null
-  onNavigateChat?: (chatId: string) => void
+  onNavigateChat?: (chatId: string, subChatId?: string | null) => void
 }
+
+const RESULT_PAGE_SIZE = 20
 
 function resultLabel(type: string) {
   return type.charAt(0).toUpperCase() + type.slice(1)
@@ -38,6 +40,7 @@ export function ScopedSearchPanel({
   const [query, setQuery] = useState("")
   const [scope, setScope] = useState<Scope>("all")
   const [includeArchived, setIncludeArchived] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE)
 
   const scopeId = useMemo(() => {
     if (scope === "project") return selectedProjectId ?? undefined
@@ -48,6 +51,11 @@ export function ScopedSearchPanel({
 
   const trimmedQuery = query.trim()
   const canSearch = trimmedQuery.length > 0 && (scope === "all" || !!scopeId)
+
+  // Reset paging when the search inputs change.
+  useEffect(() => {
+    setVisibleCount(RESULT_PAGE_SIZE)
+  }, [trimmedQuery, scope, scopeId, includeArchived])
   const { data: results = [], isFetching } = trpc.search.query.useQuery(
     { query: trimmedQuery, scope, scopeId, includeArchived },
     { enabled: canSearch },
@@ -102,7 +110,7 @@ export function ScopedSearchPanel({
           ) : results.length === 0 ? (
             <div className="px-1 py-2 text-xs text-muted-foreground">No results</div>
           ) : (
-            results.slice(0, 20).map((result, index) => (
+            results.slice(0, visibleCount).map((result, index) => (
               <button
                 key={`${result.type}-${result.chatId ?? result.projectId ?? result.taskId}-${index}`}
                 type="button"
@@ -111,7 +119,7 @@ export function ScopedSearchPanel({
                   "hover:border-border hover:bg-muted/50",
                 )}
                 onClick={() => {
-                  if (result.chatId) onNavigateChat?.(result.chatId)
+                  if (result.chatId) onNavigateChat?.(result.chatId, result.subChatId)
                 }}
               >
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -135,9 +143,14 @@ export function ScopedSearchPanel({
           )}
         </div>
       )}
-      {results.length > 20 && (
-        <Button variant="ghost" size="sm" className="mt-1 h-7 w-full text-xs" disabled>
-          Showing first 20 results
+      {canSearch && results.length > visibleCount && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-1 h-7 w-full text-xs"
+          onClick={() => setVisibleCount((count) => count + RESULT_PAGE_SIZE)}
+        >
+          Show more ({results.length - visibleCount} more)
         </Button>
       )}
     </div>

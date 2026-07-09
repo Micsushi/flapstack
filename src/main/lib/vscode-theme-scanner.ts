@@ -130,7 +130,7 @@ async function scanExtensionsDir(
 
     // Create Dirent-like objects from ls output
     const entries_final = await Promise.all(
-      lsEntries.map(async (name) => {
+      lsEntries.map(async (name: string) => {
         const fullPath = path.join(extensionsDir, name)
         try {
           const stat = await fs.stat(fullPath)

@@ -480,12 +480,27 @@ function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefine
         model?: string
         permissionMode?: string
         worktreePath?: string | null
+        permissionApplication?: {
+          degraded?: boolean
+          limitations?: Array<{ reason?: string }>
+          warnings?: string[]
+        } | null
       })
     | null
   const harness = rawMetadata?.harness
   const model = rawMetadata?.model
   const permissionMode = rawMetadata?.permissionMode
   const worktreePath = rawMetadata?.worktreePath
+  const permissionApplication = rawMetadata?.permissionApplication
+  // Honest limitation surface: when the harness cannot fully enforce the
+  // requested mode, show why instead of implying full enforcement.
+  const permissionLimitations = permissionApplication?.degraded
+    ? (permissionApplication.warnings ?? []).concat(
+        (permissionApplication.limitations ?? [])
+          .map((l) => l.reason)
+          .filter((r): r is string => !!r),
+      )
+    : []
 
   if (!harness && !model && !permissionMode && !worktreePath) {
     return null
@@ -519,6 +534,14 @@ function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefine
       {permissionMode && (
         <span className="inline-flex max-w-[180px] items-center rounded border border-border bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">
           <span className="truncate">{formatPermissionMode(permissionMode)}</span>
+        </span>
+      )}
+      {permissionLimitations.length > 0 && (
+        <span
+          title={`This harness could not fully enforce the requested permission mode:\n\n- ${permissionLimitations.join("\n- ")}`}
+          className="inline-flex items-center rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+        >
+          limited
         </span>
       )}
       {worktreeName && (

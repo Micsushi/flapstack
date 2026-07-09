@@ -27,7 +27,8 @@ import {
   ExternalLinkIcon,
 } from "../../../../components/ui/icons"
 import { DiffViewModeSwitcher } from "./diff-view-mode-switcher"
-import { memo, useCallback, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { CreateBranchDialog } from "../../../agents/components/create-branch-dialog"
 import { HiArrowPath, HiChevronDown } from "react-icons/hi2"
 import { LuGitBranch } from "react-icons/lu"
 import {
@@ -167,6 +168,7 @@ export const DiffSidebarHeader = memo(function DiffSidebarHeader({
   const showReviewButton = sidebarWidth >= 550 // Show Review button
 
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null)
+  const [createBranchOpen, setCreateBranchOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [displayTime, setDisplayTime] = useState<string>("")
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -178,6 +180,24 @@ export const DiffSidebarHeader = memo(function DiffSidebarHeader({
 
   // Check if current branch is the default branch (main/master)
   const isDefaultBranch = currentBranch === branchData?.defaultBranch
+
+  const checkoutMutation = trpc.changes.checkout.useMutation({
+    onSuccess: () => {
+      refetchBranches()
+      onRefresh?.()
+    },
+    onError: (error: { message: string }) => toast.error(`Checkout failed: ${error.message}`),
+  })
+
+  const dialogBranches = useMemo(
+    () =>
+      (branchData?.local ?? []).map((b) => ({
+        name: b.branch,
+        isDefault: b.branch === branchData?.defaultBranch,
+        committedAt: b.lastCommitDate ? new Date(b.lastCommitDate).toISOString() : null,
+      })),
+    [branchData?.local, branchData?.defaultBranch],
+  )
 
   const fetchMutation = trpc.changes.fetch.useMutation({
     onSuccess: () => {
@@ -475,13 +495,53 @@ export const DiffSidebarHeader = memo(function DiffSidebarHeader({
           <DiffViewModeSwitcher mode={displayMode} onModeChange={onDisplayModeChange} />
         )}
 
-        {/* Branch name display (branch switching will be added later) */}
-        <div className="h-6 px-2 gap-1 text-xs font-medium min-w-0 flex items-center">
-          <LuGitBranch className="size-3.5 shrink-0 opacity-70" />
-          <span className="truncate max-w-[120px] text-foreground">
-            {currentBranch || "No branch"}
-          </span>
-        </div>
+        {/* Branch selector: switch branches or create a new one */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="h-6 px-2 gap-1 text-xs font-medium min-w-0 flex items-center rounded-md hover:bg-foreground/10 transition-colors">
+              <LuGitBranch className="size-3.5 shrink-0 opacity-70" />
+              <span className="truncate max-w-[120px] text-foreground">
+                {currentBranch || "No branch"}
+              </span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {(branchData?.local ?? []).map((b) => (
+              <DropdownMenuItem
+                key={b.branch}
+                onClick={() => {
+                  if (b.branch !== currentBranch) {
+                    checkoutMutation.mutate({ worktreePath, branch: b.branch })
+                  }
+                }}
+                className={cn("text-xs", b.branch === currentBranch && "bg-accent")}
+              >
+                <LuGitBranch className="mr-2 size-3.5" />
+                <span className="truncate">{b.branch}</span>
+                {b.branch === branchData?.defaultBranch && (
+                  <span className="ml-auto text-[10px] text-muted-foreground">default</span>
+                )}
+              </DropdownMenuItem>
+            ))}
+            {(branchData?.local?.length ?? 0) > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem onClick={() => setCreateBranchOpen(true)} className="text-xs">
+              <LuGitBranch className="mr-2 size-3.5" />
+              Create new branch...
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <CreateBranchDialog
+          open={createBranchOpen}
+          onOpenChange={setCreateBranchOpen}
+          projectPath={worktreePath}
+          branches={dialogBranches}
+          defaultBranch={branchData?.defaultBranch ?? currentBranch}
+          onBranchCreated={(branchName) => {
+            setCreateBranchOpen(false)
+            checkoutMutation.mutate({ worktreePath, branch: branchName })
+          }}
+        />
 
         {/* PR Status badge */}
         {pr && (

@@ -8,7 +8,6 @@ export interface SidebarChat {
   projectId: string | null
   isRemote: boolean
   meta?: { repository?: string; branch?: string | null } | null
-  remoteStats?: SidebarFileStats | null
 }
 
 export interface SidebarProjectSummary {

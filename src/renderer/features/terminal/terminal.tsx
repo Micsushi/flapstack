@@ -7,7 +7,7 @@ import { useTheme } from "next-themes"
 import { useSetAtom, useAtomValue } from "jotai"
 import { toast } from "sonner"
 import { trpc } from "@/lib/trpc"
-import { terminalCwdAtom } from "./atoms"
+import { terminalCwdAtom, terminalsAtom, activeTerminalIdAtom } from "./atoms"
 import { fullThemeDataAtom } from "@/lib/atoms"
 import {
   createTerminalInstance,
@@ -82,6 +82,46 @@ export function Terminal({
   detachRef.current = detachMutation.mutate
   clearScrollbackRef.current = clearScrollbackMutation.mutate
 
+  // Open clicked terminal file links in the configured editor.
+  const openFileInEditorMutation = trpc.external.openFileInEditor.useMutation()
+  const openFileRef = useRef(openFileInEditorMutation.mutate)
+  openFileRef.current = openFileInEditorMutation.mutate
+
+  // Shared terminal tab state (keyed by scopeKey), used to update this pane's
+  // tab title from the entered command and to mark it the focused pane. Done
+  // centrally here so every surface (sidebar/bottom/details) stays consistent.
+  const setAllTerminals = useSetAtom(terminalsAtom)
+  const setAllActiveIds = useSetAtom(activeTerminalIdAtom)
+  const scopeKeyRef = useRef(scopeKey)
+  scopeKeyRef.current = scopeKey
+  // paneId is `${chatId}:term:${instanceId}`; the atoms key instances by id.
+  const instanceId = useMemo(() => paneId.split(":term:").pop() ?? paneId, [paneId])
+  const instanceIdRef = useRef(instanceId)
+  instanceIdRef.current = instanceId
+
+  const setTerminalTitleRef = useRef<(title: string) => void>(() => {})
+  setTerminalTitleRef.current = (title: string) => {
+    const key = scopeKeyRef.current
+    if (!key) return
+    setAllTerminals((prev) => {
+      const list = prev[key]
+      if (!list) return prev
+      return {
+        ...prev,
+        [key]: list.map((t) => (t.id === instanceIdRef.current ? { ...t, name: title } : t)),
+      }
+    })
+  }
+
+  const focusPaneRef = useRef<() => void>(() => {})
+  focusPaneRef.current = () => {
+    const key = scopeKeyRef.current
+    if (!key) return
+    setAllActiveIds((prev) =>
+      prev[key] === instanceIdRef.current ? prev : { ...prev, [key]: instanceIdRef.current },
+    )
+  }
+
   // Parse terminal data for cwd (OSC 7 sequences)
   const updateCwdFromData = useCallback(
     (data: string) => {
@@ -145,7 +185,7 @@ export function Terminal({
       isDark,
       onFileLinkClick: (path, line, column) => {
         console.log("[Terminal] File link clicked:", path, line, column)
-        // TODO: Open file in editor
+        openFileRef.current({ path, cwd: terminalCwdRef.current || cwd })
       },
       onUrlClick: (url) => {
         console.log("[Terminal] URL clicked:", url)
@@ -210,7 +250,7 @@ export function Terminal({
       if (domEvent.key === "Enter") {
         const title = sanitizeForTitle(commandBufferRef.current)
         if (title) {
-          // TODO: Set tab title
+          setTerminalTitleRef.current(title)
         }
         commandBufferRef.current = ""
       } else if (domEvent.key === "Backspace") {
@@ -270,7 +310,7 @@ export function Terminal({
     })
 
     const cleanupFocus = setupFocusListener(xterm, () => {
-      // TODO: Set focused pane
+      focusPaneRef.current()
     })
 
     const cleanupResize = setupResizeHandlers(container, xterm, fitAddon, (cols, rows) => {
@@ -367,7 +407,6 @@ export function Terminal({
 
       // Get file paths (Electron exposes webUtils)
       const paths = files.map((file) => {
-        // @ts-expect-error - Electron's webUtils API
         return window.webUtils?.getPathForFile?.(file) || file.name
       })
       const text = shellEscapePaths(paths)

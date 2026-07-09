@@ -7,13 +7,14 @@ import {
   DropdownMenuTrigger,
 } from "../../../../components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../../components/ui/tooltip"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { HiArrowPath, HiChevronDown } from "react-icons/hi2"
 import { LuGitBranch, LuGitPullRequest } from "react-icons/lu"
 import { trpc } from "../../../../lib/trpc"
 import { cn } from "../../../../lib/utils"
 import { usePRStatus } from "../../../../hooks/usePRStatus"
 import { PRIcon } from "../pr-icon"
+import { CreateBranchDialog } from "../../../agents/components/create-branch-dialog"
 
 type LayoutMode = "compact" | "standard" | "wide" | "full"
 
@@ -42,6 +43,7 @@ export function ChangesPanelHeader({
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [displayTime, setDisplayTime] = useState<string>("")
+  const [createBranchOpen, setCreateBranchOpen] = useState(false)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const { data: branchData, refetch: refetchBranches } = trpc.changes.getBranches.useQuery(
@@ -107,6 +109,18 @@ export function ChangesPanelHeader({
   const branches = branchData?.local ?? []
   const isCompact = layoutMode === "compact"
 
+  // Shape local branches for the shared CreateBranchDialog (reused from the
+  // new-chat branch selector) so there is no second branch-creation UX.
+  const dialogBranches = useMemo(
+    () =>
+      branches.map((b) => ({
+        name: b.branch,
+        isDefault: b.branch === branchData?.defaultBranch,
+        committedAt: b.lastCommitDate ? new Date(b.lastCommitDate).toISOString() : null,
+      })),
+    [branches, branchData?.defaultBranch],
+  )
+
   return (
     <div
       className={cn(
@@ -152,17 +166,24 @@ export function ChangesPanelHeader({
             </DropdownMenuItem>
           ))}
           {branches.length > 0 && <DropdownMenuSeparator />}
-          <DropdownMenuItem
-            onClick={() => {
-              // TODO: Implement create branch dialog
-            }}
-            className="text-xs"
-          >
+          <DropdownMenuItem onClick={() => setCreateBranchOpen(true)} className="text-xs">
             <LuGitBranch className="mr-2 size-3.5" />
             Create new branch...
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <CreateBranchDialog
+        open={createBranchOpen}
+        onOpenChange={setCreateBranchOpen}
+        projectPath={worktreePath}
+        branches={dialogBranches}
+        defaultBranch={branchData?.defaultBranch ?? currentBranch}
+        onBranchCreated={(branchName) => {
+          setCreateBranchOpen(false)
+          checkoutMutation.mutate({ worktreePath, branch: branchName })
+        }}
+      />
 
       {/* Right side: PR status + Fetch */}
       <div className="flex items-center gap-1">

@@ -22,12 +22,21 @@ function formatKind(kind: string) {
   return kind
 }
 
+const ATTACHMENT_PREVIEW_COUNT = 6
+
 export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayProps) {
   const utils = trpc.useUtils()
   const [targetPaths, setTargetPaths] = useState<Record<string, string>>({})
+  const [showAll, setShowAll] = useState(false)
   const { data: attachments = [] } = trpc.attachments.listByChat.useQuery(
     { chatId },
     { enabled: !!chatId },
+  )
+  // Task artifacts promoted from any chat in this task, so they stay findable
+  // later regardless of which chat is open.
+  const { data: taskArtifacts = [] } = trpc.attachments.listByTask.useQuery(
+    { taskId: taskId ?? "" },
+    { enabled: !!taskId },
   )
 
   const promoteMutation = trpc.attachments.promoteToTask.useMutation({
@@ -44,17 +53,22 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
     onError: (error) => toast.error(error.message || "Failed to write attachment"),
   })
 
-  const visibleAttachments = useMemo(() => attachments.slice(0, 6), [attachments])
+  const visibleAttachments = useMemo(
+    () => (showAll ? attachments : attachments.slice(0, ATTACHMENT_PREVIEW_COUNT)),
+    [attachments, showAll],
+  )
 
-  if (visibleAttachments.length === 0) return null
+  if (attachments.length === 0 && taskArtifacts.length === 0) return null
 
   return (
     <div className="px-2 pb-2">
       <div className="w-full max-w-2xl mx-auto rounded-lg border border-border/70 bg-background/95 p-2 shadow-sm">
-        <div className="flex items-center gap-2 px-1 pb-2 text-xs font-medium text-muted-foreground">
-          <FileText className="h-3.5 w-3.5" />
-          <span>Attachments</span>
-        </div>
+        {attachments.length > 0 && (
+          <div className="flex items-center gap-2 px-1 pb-2 text-xs font-medium text-muted-foreground">
+            <FileText className="h-3.5 w-3.5" />
+            <span>Attachments</span>
+          </div>
+        )}
         <div className="space-y-1.5">
           {visibleAttachments.map((attachment) => {
             const targetPath = targetPaths[attachment.id] ?? attachment.name
@@ -151,6 +165,37 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
             )
           })}
         </div>
+        {attachments.length > ATTACHMENT_PREVIEW_COUNT && (
+          <button
+            type="button"
+            onClick={() => setShowAll((prev) => !prev)}
+            className="mt-1.5 w-full rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          >
+            {showAll ? "Show fewer attachments" : `Show all ${attachments.length} attachments`}
+          </button>
+        )}
+        {taskId && taskArtifacts.length > 0 && (
+          <div className="mt-2 border-t border-border/60 pt-2">
+            <div className="flex items-center gap-2 px-1 pb-1.5 text-xs font-medium text-muted-foreground">
+              <FolderInput className="h-3.5 w-3.5" />
+              <span>Task artifacts</span>
+            </div>
+            <div className="space-y-1">
+              {taskArtifacts.map((artifact) => (
+                <div
+                  key={artifact.id}
+                  className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-2 py-1"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-xs text-foreground">{artifact.name}</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                    {formatKind(artifact.kind)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

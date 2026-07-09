@@ -64,6 +64,10 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
   )
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [showRestorePreview, setShowRestorePreview] = useState(false)
+  const [showAllRuns, setShowAllRuns] = useState(false)
+
+  const RUN_PREVIEW_COUNT = 5
+  const visibleRuns = showAllRuns ? runs : runs.slice(0, RUN_PREVIEW_COUNT)
 
   useEffect(() => {
     if (!runs.length) {
@@ -105,7 +109,7 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
   return (
     <div className="px-2 py-2 space-y-2">
       <div className="space-y-1">
-        {runs.slice(0, 5).map((run) => {
+        {visibleRuns.map((run) => {
           const Icon = statusIcon(run.status)
           const harnessMeta = getHarnessChipMeta(run.harness)
           const isSelected = run.id === selectedRun?.id
@@ -146,6 +150,15 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
             </button>
           )
         })}
+        {runs.length > RUN_PREVIEW_COUNT && (
+          <button
+            type="button"
+            onClick={() => setShowAllRuns((prev) => !prev)}
+            className="w-full rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          >
+            {showAllRuns ? "Show fewer runs" : `Show all ${runs.length} runs`}
+          </button>
+        )}
       </div>
 
       {selectedRun && (
