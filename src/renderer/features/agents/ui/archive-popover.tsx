@@ -18,9 +18,11 @@ import {
   UnarchiveIcon,
   GitHubLogo,
   CloudIcon,
+  TrashIcon,
 } from "../../../components/ui/icons"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { cn } from "../../../lib/utils"
+import { toast } from "sonner"
 
 // GitHub avatar with loading placeholder
 function GitHubAvatar({
@@ -309,6 +311,22 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
   // Remote restore mutation
   const remoteRestoreMutation = useRestoreRemoteChat()
 
+  const deleteArchivedMutation = trpc.chats.deleteArchived.useMutation({
+    onSuccess: ({ deletedCount }) => {
+      utils.chats.list.invalidate()
+      utils.chats.listArchived.invalidate()
+      utils.chats.getFileStats.invalidate()
+      toast.success(
+        deletedCount === 1
+          ? "Deleted 1 archived local chat"
+          : `Deleted ${deletedCount} archived local chats`,
+      )
+    },
+    onError: () => {
+      toast.error("Failed to delete archived chats")
+    },
+  })
+
   // Normalize and merge archived chats from both sources
   const normalizedChats = useMemo((): NormalizedArchivedChat[] => {
     const merged: NormalizedArchivedChat[] = []
@@ -521,6 +539,25 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
     [setSearchQuery],
   )
 
+  const localArchivedCount = localArchivedChats?.length ?? 0
+  const remoteArchivedCount = remoteArchivedChats?.length ?? 0
+
+  const handleDeleteArchived = useCallback(() => {
+    if (localArchivedCount === 0) {
+      toast.info("No archived local chats to delete")
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Permanently delete ${localArchivedCount} archived local ${
+        localArchivedCount === 1 ? "chat" : "chats"
+      } and any related worktrees?`,
+    )
+    if (!confirmed) return
+
+    deleteArchivedMutation.mutate()
+  }, [deleteArchivedMutation, localArchivedCount])
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
@@ -583,6 +620,19 @@ export const ArchivePopover = memo(function ArchivePopover({ trigger }: ArchiveP
             })
           )}
         </div>
+        {(localArchivedCount > 0 || remoteArchivedCount > 0) && (
+          <div className="border-t p-1">
+            <button
+              type="button"
+              onClick={handleDeleteArchived}
+              disabled={localArchivedCount === 0 || deleteArchivedMutation.isPending}
+              className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              {deleteArchivedMutation.isPending ? "Deleting..." : "Delete archived local chats"}
+            </button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )

@@ -691,14 +691,13 @@ export const chatsRouter = router({
     }),
 
   /**
-   * Archive a chat (also kills any terminal processes in the workspace)
-   * Optionally deletes the worktree to free disk space
+   * Archive a chat (also kills any terminal processes in the workspace).
+   * Worktrees are kept until archived chats are explicitly deleted.
    */
   archive: publicProcedure
     .input(
       z.object({
         id: z.string(),
-        deleteWorktree: z.boolean().default(false),
       }),
     )
     .mutation(async ({ input }) => {
@@ -735,29 +734,6 @@ export const chatsRouter = router({
           .catch((error) => {
             console.error(`[chats.archive] Error killing processes:`, error)
           })
-      }
-
-      // Optionally delete worktree in background (don't await)
-      if (input.deleteWorktree && chat?.worktreePath && chat?.branch) {
-        const project = chat.projectId
-          ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
-          : null
-
-        if (project) {
-          removeWorktree(project.path, chat.worktreePath)
-            .then((worktreeResult) => {
-              if (worktreeResult.success) {
-                console.log(`[chats.archive] Deleted worktree for workspace ${input.id}`)
-                // Clear worktreePath since it's deleted (keep branch for reference)
-                db.update(chats).set({ worktreePath: null }).where(eq(chats.id, input.id)).run()
-              } else {
-                console.warn(`[chats.archive] Failed to delete worktree: ${worktreeResult.error}`)
-              }
-            })
-            .catch((error) => {
-              console.error(`[chats.archive] Error removing worktree:`, error)
-            })
-        }
       }
 
       // Invalidate git cache for this worktree
@@ -868,6 +844,48 @@ export const chatsRouter = router({
     }
 
     return db.delete(chats).where(eq(chats.id, input.id)).returning().get()
+  }),
+
+  /**
+   * Delete all archived chats permanently (with worktree cleanup).
+   * Active chats are never touched.
+   */
+  deleteArchived: publicProcedure.mutation(async () => {
+    const db = getDatabase()
+    const archivedChats = db.select().from(chats).where(isNotNull(chats.archivedAt)).all()
+
+    for (const chat of archivedChats) {
+      if (chat.worktreePath && chat.branch) {
+        const project = chat.projectId
+          ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+          : null
+        if (project) {
+          const result = await removeWorktree(project.path, chat.worktreePath)
+          if (!result.success) {
+            console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+          }
+        }
+      }
+
+      if (chat.branch) {
+        terminalManager.killByWorkspaceId(chat.id).catch((error) => {
+          console.error(`[chats.deleteArchived] Error killing processes:`, error)
+        })
+      }
+
+      trackWorkspaceDeleted(chat.id)
+
+      if (chat.worktreePath) {
+        gitCache.invalidateStatus(chat.worktreePath)
+        gitCache.invalidateParsedDiff(chat.worktreePath)
+      }
+    }
+
+    if (archivedChats.length > 0) {
+      db.delete(chats).where(isNotNull(chats.archivedAt)).run()
+    }
+
+    return { deletedCount: archivedChats.length }
   }),
 
   // ============ Sub-chat procedures ============

@@ -810,8 +810,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   selectedChatIdsSize,
   canShowPinOption,
   areAllSelectedPinned,
-  filteredChatsLength,
-  isLastInFilteredChats,
   isRemote,
   showIcon,
   onChatClick,
@@ -823,8 +821,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onToggleStar,
   onRenameClick,
   onCopyBranch,
-  onArchiveAllBelow,
-  onArchiveOthers,
   onOpenLocally,
   onBulkPin,
   onBulkUnpin,
@@ -919,8 +915,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
   onDragEndItem: () => void
 }) {
-  // Resolved hotkey for context menu
-  const archiveWorkspaceHotkey = useResolvedHotkeyDisplay("archive-workspace")
   const modelLabel = model?.trim()
   const harnessChip = getModelChipMeta(modelLabel, harness)
   const identityChipLabel =
@@ -1089,13 +1083,13 @@ const AgentChatItem = React.memo(function AgentChatItem({
                     showPlaceholder={true}
                   />
                 </span>
-                {/* Archive button or inline loader/status when icon is hidden */}
+                {/* Hover actions or inline loader/status when icon is hidden */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
-                  <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center relative">
+                  <div className="flex-shrink-0 w-[4.25rem] h-5 flex items-center justify-end relative">
                     {/* Inline loader/status when icon is hidden - always visible, hides on hover */}
                     {!showIcon &&
                       (hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) && (
-                        <div className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
+                        <div className="absolute right-0 top-0 bottom-0 w-5 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
                           <AnimatePresence mode="wait">
                             {hasPendingQuestion ? (
                               <motion.div
@@ -1146,12 +1140,47 @@ const AgentChatItem = React.memo(function AgentChatItem({
                           </AnimatePresence>
                         </div>
                       )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onTogglePin(chatId)
+                          }}
+                          tabIndex={-1}
+                          className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
+                          aria-label={isPinned ? "Unpin chat" : "Pin chat"}
+                        >
+                          <Pin className={cn("h-3.5 w-3.5", isPinned && "text-sky-400")} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{isPinned ? "Unpin chat" : "Pin chat"}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onArchive(chatId)
+                          }}
+                          tabIndex={-1}
+                          disabled={archivePending}
+                          className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50"
+                          aria-label="Archive chat"
+                        >
+                          <ArchiveIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>Archive chat</TooltipContent>
+                    </Tooltip>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           onClick={(e) => e.stopPropagation()}
                           tabIndex={-1}
-                          className="absolute inset-0 flex items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:pointer-events-auto"
+                          className="flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:pointer-events-auto"
                           aria-label="Chat actions"
                         >
                           <MoreHorizontal className="h-3.5 w-3.5" />
@@ -1166,10 +1195,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             <DropdownMenuSeparator />
                           </>
                         )}
-                        <DropdownMenuItem onSelect={() => onTogglePin(chatId)} className="gap-2">
-                          <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-                          {isPinned ? "Unpin chat" : "Pin chat"}
-                        </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => onToggleStar(chatId)} className="gap-2">
                           <Star className="h-3.5 w-3.5 text-muted-foreground" />
                           {isStarred ? "Unstar chat" : "Star chat"}
@@ -1271,23 +1296,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             Open in new window
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onSelect={() => onArchive(chatId)} className="gap-2">
-                          <ArchiveIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                          Archive chat
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => onArchiveAllBelow(chatId)}
-                          disabled={isLastInFilteredChats}
-                        >
-                          Archive all below
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => onArchiveOthers(chatId)}
-                          disabled={filteredChatsLength === 1}
-                        >
-                          Archive others
-                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -1357,9 +1365,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 <ContextMenuSeparator />
               </>
             )}
-            <ContextMenuItem onClick={() => onTogglePin(chatId)}>
-              {isPinned ? "Unpin chat" : "Pin chat"}
-            </ContextMenuItem>
             <ContextMenuItem onClick={() => onToggleStar(chatId)}>
               {isStarred ? "Unstar chat" : "Star chat"}
             </ContextMenuItem>
@@ -1460,23 +1465,6 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 Open in new window
               </ContextMenuItem>
             )}
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => onArchive(chatId)} className="justify-between">
-              Archive chat
-              {archiveWorkspaceHotkey && <Kbd>{archiveWorkspaceHotkey}</Kbd>}
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => onArchiveAllBelow(chatId)}
-              disabled={isLastInFilteredChats}
-            >
-              Archive all below
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => onArchiveOthers(chatId)}
-              disabled={filteredChatsLength === 1}
-            >
-              Archive others
-            </ContextMenuItem>
           </>
         )}
       </ContextMenuContent>
@@ -2913,8 +2901,6 @@ export function AgentsSidebar({
   const [confirmArchiveDialogOpen, setConfirmArchiveDialogOpen] = useState(false)
   const [archivingChatId, setArchivingChatId] = useState<string | null>(null)
   const [activeProcessCount, setActiveProcessCount] = useState(0)
-  const [hasWorktree, setHasWorktree] = useState(false)
-  const [uncommittedCount, setUncommittedCount] = useState(0)
 
   // Import sandbox dialog state
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -5446,24 +5432,17 @@ export function AgentsSidebar({
         return
       }
 
-      // Fetch both session count and worktree status in parallel
       const isLocalMode = !chat?.branch
-      const [sessionCount, worktreeStatus] = await Promise.all([
-        // Local mode: terminals are shared and won't be killed on archive, so skip count
-        isLocalMode
-          ? Promise.resolve(0)
-          : utils.terminal.getActiveSessionCount.fetch({ workspaceId: chatId }),
-        utils.chats.getWorktreeStatus.fetch({ chatId }),
-      ])
+      const sessionCount = isLocalMode
+        ? 0
+        : await utils.terminal.getActiveSessionCount.fetch({ workspaceId: chatId })
 
-      const needsConfirmation = sessionCount > 0 || worktreeStatus.hasWorktree
+      const needsConfirmation = sessionCount > 0
 
       if (needsConfirmation) {
         // Show confirmation dialog
         setArchivingChatId(chatId)
         setActiveProcessCount(sessionCount)
-        setHasWorktree(worktreeStatus.hasWorktree)
-        setUncommittedCount(worktreeStatus.uncommittedCount)
         setConfirmArchiveDialogOpen(true)
       } else {
         // No active processes and no worktree, archive directly
@@ -5475,7 +5454,6 @@ export function AgentsSidebar({
       archiveRemoteChatMutation,
       archiveChatMutation,
       utils.terminal.getActiveSessionCount,
-      utils.chats.getWorktreeStatus,
       selectedChatId,
       autoAdvanceTarget,
       previousChatId,
@@ -5486,15 +5464,12 @@ export function AgentsSidebar({
   )
 
   // Confirm archive after user accepts dialog (optimistic - closes immediately)
-  const handleConfirmArchive = useCallback(
-    (deleteWorktree: boolean) => {
-      if (archivingChatId) {
-        archiveChatMutation.mutate({ id: archivingChatId, deleteWorktree })
-        setArchivingChatId(null)
-      }
-    },
-    [archiveChatMutation, archivingChatId],
-  )
+  const handleConfirmArchive = useCallback(() => {
+    if (archivingChatId) {
+      archiveChatMutation.mutate({ id: archivingChatId })
+      setArchivingChatId(null)
+    }
+  }, [archiveChatMutation, archivingChatId])
 
   // Close archive confirmation dialog
   const handleCloseArchiveDialog = useCallback(() => {
@@ -6574,8 +6549,6 @@ export function AgentsSidebar({
         onClose={handleCloseArchiveDialog}
         onConfirm={handleConfirmArchive}
         activeProcessCount={activeProcessCount}
-        hasWorktree={hasWorktree}
-        uncommittedCount={uncommittedCount}
       />
 
       {/* Open Locally Dialog */}

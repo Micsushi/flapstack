@@ -8,8 +8,10 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 (voice) is
-next.
+Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 (voice,
+usage, smaller fixes, and Cursor harness planning) is next. Some Stage 1
+carryover polish remains tracked in Stage 2 so the MVP is honest to manually
+test instead of hiding thin or capped surfaces.
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
@@ -83,6 +85,19 @@ Smaller fixes (Stage 1 carryover plus backlog):
   the CI/commit gate.
 - Harden native-module setup (better-sqlite3 / node-pty) so Node and Electron
   ABI targets no longer need a manual rebuild toggle.
+- Harden Codex/Claude permission enforcement and surface any harness limitation
+  before launch and on each run.
+- Finish worktree UX gaps: custom path entry and honest unknown/needs-refresh
+  status when the app cannot infer state.
+- Finish scoped search navigation so a result opens the chat at the matched
+  message, and remove hidden first-page-only result behavior.
+- Finish attachment/artifact UX so task artifacts are visible and attachment
+  trays can show more than the first few items.
+- Finish run history UX so users can page or expand beyond the first few runs.
+- Make cross-scope chat moves discoverable from menus, not only hidden
+  drag/toggle paths.
+- Keep repo docs and vault docs in sync with shipped status and remaining
+  carryover work.
 
 ### Stage 3: MCP Control
 

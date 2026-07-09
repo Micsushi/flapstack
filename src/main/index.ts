@@ -735,6 +735,14 @@ if (gotTheLock) {
 
     // macOS: Set dock menu (right-click on dock icon)
     if (process.platform === "darwin") {
+      const dockIconPath = join(__dirname, "../../build/icon.png")
+      if (existsSync(dockIconPath)) {
+        const dockIcon = nativeImage.createFromBuffer(readFileSync(dockIconPath))
+        if (!dockIcon.isEmpty()) {
+          app.dock?.setIcon(dockIcon)
+        }
+      }
+
       const dockMenu = Menu.buildFromTemplate([
         {
           label: "New Window",
