@@ -1,0 +1,273 @@
+import { execFile as execFileCallback } from "node:child_process"
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { getVoiceSettings } from "./settings"
+import { cleanTranscribedText } from "./stt-cloud"
+import type { SpeechAdapterAvailability, SttAdapter, SttInput, SttResult } from "./types"
+
+// whisper.cpp `base` multilingual model (S2.0 decision: download-on-first-use).
+// Kept out of the installer so the download stays small; the model lands in the
+// app data dir on first dictation with visible progress + an honest failure state.
+const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+const MODEL_FILE = "ggml-base.bin"
+// Sanity floor so a truncated/HTML error response is never mistaken for a model.
+const MIN_MODEL_BYTES = 100 * 1024 * 1024
+
+export type SttModelDownloadState =
+  | { status: "absent" }
+  | { status: "downloading"; receivedBytes: number; totalBytes: number | null; percent: number }
+  | { status: "present"; sizeBytes: number }
+  | { status: "error"; message: string }
+
+let downloadState: SttModelDownloadState = { status: "absent" }
+let activeDownload: Promise<string> | null = null
+
+export const whisperCppAdapter: SttAdapter = {
+  id: "local-whisper",
+  label: "Local Whisper",
+  kind: "local",
+  supportsStreaming: false,
+  offline: true,
+
+  async isAvailable(): Promise<SpeechAdapterAvailability> {
+    const binary = findWhisperBinary()
+    if (!binary) {
+      return {
+        available: false,
+        status: "not-configured",
+        reason:
+          "whisper.cpp binary not found. Set WHISPER_CPP_BIN or add whisper-cli to resources/bin.",
+      }
+    }
+    if (!existsSync(getModelPath())) {
+      const detail =
+        downloadState.status === "downloading"
+          ? ` Downloading (${downloadState.percent}%).`
+          : downloadState.status === "error"
+            ? ` Last attempt failed: ${downloadState.message}`
+            : ""
+      return {
+        available: false,
+        status: "not-configured",
+        reason: `Local Whisper base model is not downloaded yet.${detail}`,
+      }
+    }
+    return { available: true, status: "available" }
+  },
+
+  async canAutoProvision() {
+    // The binary must already be installed or bundled; the model itself is
+    // downloaded atomically by transcribe() on first use.
+    return Boolean(findWhisperBinary())
+  },
+
+  async transcribe(input: SttInput): Promise<SttResult> {
+    const binary = findWhisperBinary()
+    if (!binary) throw new Error("whisper.cpp binary not found. Set WHISPER_CPP_BIN.")
+    const modelPath = await ensureModel()
+    const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-stt-"))
+    const audioPath = path.join(dir, `audio.${input.format}`)
+    const wavPath = path.join(dir, "audio.wav")
+    const outputBase = path.join(dir, "transcript")
+    try {
+      const fs = await import("node:fs")
+      fs.writeFileSync(audioPath, input.audioBuffer)
+      const inputPath = await convertToWhisperAudio(audioPath, wavPath, input.format)
+      const args = ["-m", modelPath, "-f", inputPath, "-otxt", "-of", outputBase]
+      if (input.language) args.push("-l", input.language)
+      await execFileAsync(binary, args, { timeout: 180000 })
+      const textPath = `${outputBase}.txt`
+      const text = existsSync(textPath) ? fs.readFileSync(textPath, "utf8") : ""
+      return { text: cleanTranscribedText(text), adapterId: whisperCppAdapter.id }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+}
+
+export function getModelPath() {
+  return path.join(getSpeechDataDir(), "models", MODEL_FILE)
+}
+
+/**
+ * Current status of the local Whisper model, used by the settings UI to render
+ * an honest download/absent/present/error state (V2/V9).
+ */
+export function getSttModelStatus(): SttModelDownloadState {
+  const modelPath = getModelPath()
+  if (existsSync(modelPath)) {
+    // A completed download supersedes a stale in-memory error/absent value.
+    if (downloadState.status !== "present") {
+      downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
+    }
+    return downloadState
+  }
+  if (downloadState.status === "present") downloadState = { status: "absent" }
+  return downloadState
+}
+
+/**
+ * Ensure the model exists locally, downloading on first use. Multiple callers
+ * share one in-flight download. Throws an actionable error on failure.
+ */
+export async function ensureModel(
+  onProgress?: (state: SttModelDownloadState) => void,
+): Promise<string> {
+  const modelPath = getModelPath()
+  if (existsSync(modelPath)) {
+    downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
+    return modelPath
+  }
+  if (activeDownload) return activeDownload
+  activeDownload = downloadModel(modelPath, onProgress).finally(() => {
+    activeDownload = null
+  })
+  return activeDownload
+}
+
+async function downloadModel(
+  modelPath: string,
+  onProgress?: (state: SttModelDownloadState) => void,
+): Promise<string> {
+  mkdirSync(path.dirname(modelPath), { recursive: true })
+  const tmpPath = `${modelPath}.download`
+  const setState = (state: SttModelDownloadState) => {
+    downloadState = state
+    onProgress?.(state)
+  }
+  setState({ status: "downloading", receivedBytes: 0, totalBytes: null, percent: 0 })
+
+  try {
+    const response = await fetch(MODEL_URL)
+    if (!response.ok || !response.body) {
+      throw new Error(`Model download failed (HTTP ${response.status}).`)
+    }
+    const totalBytes = Number(response.headers.get("content-length")) || null
+    let receivedBytes = 0
+
+    await new Promise<void>((resolve, reject) => {
+      const fileStream = createWriteStream(tmpPath)
+      const reader = response.body!.getReader()
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (!value) continue
+            receivedBytes += value.byteLength
+            if (!fileStream.write(Buffer.from(value))) {
+              await new Promise((r) => fileStream.once("drain", r))
+            }
+            const percent = totalBytes ? Math.floor((receivedBytes / totalBytes) * 100) : 0
+            setState({ status: "downloading", receivedBytes, totalBytes, percent })
+          }
+          fileStream.end(() => resolve())
+        } catch (error) {
+          fileStream.destroy()
+          reject(error)
+        }
+      }
+      fileStream.on("error", reject)
+      void pump()
+    })
+
+    const size = statSync(tmpPath).size
+    if (size < MIN_MODEL_BYTES) {
+      throw new Error(`Downloaded model looks truncated (${size} bytes). Try again.`)
+    }
+    renameSync(tmpPath, modelPath)
+    setState({ status: "present", sizeBytes: size })
+    return modelPath
+  } catch (error) {
+    rmSync(tmpPath, { force: true })
+    const message = error instanceof Error ? error.message : String(error)
+    setState({ status: "error", message })
+    throw new Error(
+      `Local Whisper model download failed: ${message}. Check your connection and retry, or add ${MODEL_FILE} to ${path.dirname(modelPath)} manually.`,
+    )
+  }
+}
+
+function findWhisperBinary() {
+  const configuredPath = getVoiceSettings().whisperCppBinPath
+  if (configuredPath && existsSync(configuredPath)) return configuredPath
+  const fromEnv = process.env.WHISPER_CPP_BIN
+  if (fromEnv && existsSync(fromEnv)) return fromEnv
+  const names =
+    process.platform === "win32" ? ["whisper-cli.exe", "main.exe"] : ["whisper-cli", "main"]
+  for (const name of names) {
+    const candidates = [
+      path.join(process.resourcesPath || "", "bin", name),
+      path.join(process.cwd(), "resources", "bin", `${process.platform}-${process.arch}`, name),
+      path.join(process.cwd(), "resources", "bin", name),
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+    ]
+    const found = candidates.find((candidate) => candidate && existsSync(candidate))
+    if (found) return found
+  }
+  return null
+}
+
+async function convertToWhisperAudio(
+  audioPath: string,
+  wavPath: string,
+  format: SttInput["format"],
+) {
+  // whisper.cpp accepts WAV/MP3/FLAC/OGG directly. Chromium records WebM and
+  // Safari records M4A, so normalize those two formats before invoking it.
+  if (!requiresAudioConversion(format)) return audioPath
+  const ffmpeg = findFfmpegBinary()
+  if (!ffmpeg) {
+    throw new Error(
+      "ffmpeg is required to transcribe browser-recorded audio. Install ffmpeg or add it to resources/bin.",
+    )
+  }
+  await execFileAsync(ffmpeg, ["-y", "-i", audioPath, "-ar", "16000", "-ac", "1", wavPath], {
+    timeout: 30000,
+  })
+  return wavPath
+}
+
+export function requiresAudioConversion(format: SttInput["format"]) {
+  return format === "webm" || format === "m4a"
+}
+
+function findFfmpegBinary() {
+  const names = process.platform === "win32" ? ["ffmpeg.exe"] : ["ffmpeg"]
+  for (const name of names) {
+    const candidates = [
+      path.join(process.resourcesPath || "", "bin", name),
+      path.join(process.cwd(), "resources", "bin", `${process.platform}-${process.arch}`, name),
+      path.join(process.cwd(), "resources", "bin", name),
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+    ]
+    const found = candidates.find((candidate) => candidate && existsSync(candidate))
+    if (found) return found
+  }
+  return null
+}
+
+function getSpeechDataDir() {
+  return process.env.FLAPSTACK_SPEECH_DIR || path.join(os.homedir(), ".flapstack", "speech")
+}
+
+function execFileAsync(command: string, args: string[], options: { timeout?: number } = {}) {
+  return new Promise<void>((resolve, reject) => {
+    execFileCallback(command, args, options, (error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+}
