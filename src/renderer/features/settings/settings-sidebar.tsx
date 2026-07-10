@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, Route } from "lucide-react"
+import { ChevronLeft, Mic, Route } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { EyeOpenFilledIcon, ProfileIconFilled, SlidersFilledIcon } from "../../icons"
 import {
@@ -73,6 +73,11 @@ const ADVANCED_TABS_BASE = [
     id: "api-providers" as SettingsTab,
     label: "API Providers",
     icon: BrainFilledIcon,
+  },
+  {
+    id: "voice" as SettingsTab,
+    label: "Voice",
+    icon: Mic,
   },
   {
     id: "skills" as SettingsTab,

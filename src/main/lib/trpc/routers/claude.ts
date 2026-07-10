@@ -16,6 +16,7 @@ import {
   type UIMessageChunk,
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
+import { getReadAloudSystemAppend } from "../../speech/read-aloud-instruction"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -1783,12 +1784,18 @@ ${prompt}
             }
 
             // System prompt config - use preset for both Claude and Ollama
-            // If AGENTS.md exists, append its content to the system prompt
-            const systemPromptConfig = agentsMdContent
+            // If AGENTS.md exists, append its content to the system prompt.
+            // When read-aloud is enabled, also append the Spoken:/Displayed:
+            // instruction so the harness authors the spoken text upstream (V6).
+            const systemPromptAppend =
+              (agentsMdContent
+                ? `\n\n# AGENTS.md\nThe following are the project's AGENTS.md instructions:\n\n${agentsMdContent}`
+                : "") + getReadAloudSystemAppend(input.subChatId)
+            const systemPromptConfig = systemPromptAppend
               ? {
                   type: "preset" as const,
                   preset: "claude_code" as const,
-                  append: `\n\n# AGENTS.md\nThe following are the project's AGENTS.md instructions:\n\n${agentsMdContent}`,
+                  append: systemPromptAppend,
                 }
               : {
                   type: "preset" as const,

@@ -264,6 +264,41 @@ export const attachmentsRelations = relations(attachments, ({ one }) => ({
   }),
 }))
 
+// ============ VOICE HISTORY ============
+// Speech metadata remains queryable in SQLite while generated TTS audio stays
+// in local files under userData/voice-history.
+export const voiceArtifacts = sqliteTable(
+  "voice_artifacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    subChatId: text("sub_chat_id").references(() => subChats.id, { onDelete: "set null" }),
+    messageId: text("message_id"),
+    kind: text("kind").notNull(), // transcription | speech
+    text: text("text").notNull(),
+    adapterId: text("adapter_id").notNull(),
+    audioPath: text("audio_path"),
+    mimeType: text("mime_type"),
+    byteLength: integer("byte_length").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    lastPlayedAt: integer("last_played_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("voice_artifacts_chat_created_idx").on(table.chatId, table.createdAt),
+    index("voice_artifacts_message_idx").on(table.messageId),
+    index("voice_artifacts_kind_created_idx").on(table.kind, table.createdAt),
+  ],
+)
+
+export const voiceArtifactsRelations = relations(voiceArtifacts, ({ one }) => ({
+  chat: one(chats, { fields: [voiceArtifacts.chatId], references: [chats.id] }),
+  subChat: one(subChats, { fields: [voiceArtifacts.subChatId], references: [subChats.id] }),
+}))
+
 // ============ CLAUDE CODE CREDENTIALS ============
 // Stores encrypted OAuth token for Claude Code integration
 // DEPRECATED: Use anthropicAccounts for multi-account support
@@ -494,6 +529,8 @@ export type FileChangeManifest = typeof fileChangeManifests.$inferSelect
 export type NewFileChangeManifest = typeof fileChangeManifests.$inferInsert
 export type Attachment = typeof attachments.$inferSelect
 export type NewAttachment = typeof attachments.$inferInsert
+export type VoiceArtifact = typeof voiceArtifacts.$inferSelect
+export type NewVoiceArtifact = typeof voiceArtifacts.$inferInsert
 export type ClaudeCodeCredential = typeof claudeCodeCredentials.$inferSelect
 export type NewClaudeCodeCredential = typeof claudeCodeCredentials.$inferInsert
 export type AnthropicAccount = typeof anthropicAccounts.$inferSelect

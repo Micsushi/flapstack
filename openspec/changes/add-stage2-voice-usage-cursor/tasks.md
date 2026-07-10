@@ -11,15 +11,15 @@ it for OpenSpec tracking.
 
 ## 1. Voice (Track A)
 
-- [ ] 1.1 V1 Speech adapter interfaces + settings (fill scaffold)
-- [ ] 1.2 V2 STT: whisper.cpp `base` local + cloud hardening
-- [ ] 1.3 V3 TTS: system voice (macOS)
-- [ ] 1.4 V4 TTS: system voice (Windows)
-- [ ] 1.5 V5 TTS: offline Kokoro engine
-- [ ] 1.6 V6 Spoken/Displayed pipeline (harness skill + extract + non-LLM fallback)
-- [ ] 1.7 V7 Voice UX: mic capture + read-aloud controls
-- [ ] 1.8 V8 Voice settings tab
-- [ ] 1.9 V9 OS mic permissions + honest failure states
+- [x] 1.1 V1 Speech adapter interfaces + settings (fill scaffold)
+- [x] 1.2 V2 STT: whisper.cpp `base` local + cloud hardening
+- [x] 1.3 V3 TTS: system voice (macOS)
+- [x] 1.4 V4 TTS: system voice (Windows)
+- [x] 1.5 V5 TTS: offline Kokoro engine
+- [x] 1.6 V6 Spoken/Displayed pipeline (harness skill + extract + non-LLM fallback)
+- [x] 1.7 V7 Voice UX: mic capture + read-aloud controls
+- [x] 1.8 V8 Voice settings tab
+- [x] 1.9 V9 OS mic permissions + honest failure states
 - [ ] 1.10 V-exit voice tests + manual matrix
 
 ## 2. Usage (Track B)

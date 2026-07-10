@@ -25,8 +25,8 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
 
 ## Decisions
 
-- **STT**: whisper.cpp `base` multilingual, downloaded on first use into app data;
-  cloud Whisper secondary. Small installer, honest download state.
+- **STT**: whisper.cpp `base` multilingual, downloaded on first use into app data.
+  Cloud STT is deferred; dictation remains local-only. Small installer, honest download state.
 - **TTS**: offline Kokoro default, OS system voice fallback.
 - **Spoken source**: harness-authored `Spoken:`/`Displayed:` via a Flapstack
   read-aloud skill, extracted by the ported filter; non-LLM fallback only when no

@@ -71,6 +71,13 @@
       "when": 1783665327842,
       "tag": "0009_exotic_red_wolf",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1783389600000,
+      "tag": "0010_voice_artifacts",
+      "breakpoints": true
     }
   ]
 }

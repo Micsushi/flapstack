@@ -175,6 +175,7 @@ export type SettingsTab =
   | "preferences"
   | "models"
   | "api-providers"
+  | "voice"
   | "skills"
   | "agents"
   | "mcp"
