@@ -66,8 +66,8 @@ describe("cursor harness contract (D1)", () => {
 })
 
 describe("cursor stream translator (D2)", () => {
-  it("renders thinking + streamed assistant text and captures usage", () => {
-    const { chunks, parts, metadata } = runFixture("thinking-run.jsonl")
+  it("renders reasoning output + streamed assistant text and captures usage", () => {
+    const { chunks, parts, metadata } = runFixture("reasoning-output-run.jsonl")
 
     const reasoningDeltas = chunks.filter((c) => c.type === "reasoning-delta")
     expect(reasoningDeltas.length).toBeGreaterThan(0)
@@ -87,8 +87,23 @@ describe("cursor stream translator (D2)", () => {
     expect(metadata.resultSubtype).toBe("success")
   })
 
-  it("produces a complete reply when thinking is suppressed (docs fallback)", () => {
-    const { chunks, parts } = runFixture("no-thinking-run.jsonl")
+  it("uses the shared Cursor normalizer for partial reasoning-output envelopes", () => {
+    const translator = new CursorStreamTranslator()
+    const chunks = translator.push({
+      type: "thinking",
+      delta: { text: "Checking the partial-output shape." },
+    })
+
+    expect(chunks).toContainEqual(
+      expect.objectContaining({
+        type: "reasoning-delta",
+        delta: "Checking the partial-output shape.",
+      }),
+    )
+  })
+
+  it("produces a complete reply when reasoning output is suppressed", () => {
+    const { chunks, parts } = runFixture("no-reasoning-output-run.jsonl")
     expect(chunks.some((c) => c.type === "reasoning-delta")).toBe(false)
     const textPart = parts.find((p) => p.type === "text") as { text: string } | undefined
     expect(textPart?.text).toBe("Hello! How can I help you today?")

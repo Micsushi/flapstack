@@ -21,8 +21,8 @@ export type { DiffStats, AgentDiffViewRef, DiffViewMode } from "./agent-diff-vie
 // Exploring group component
 export { AgentExploringGroup } from "./agent-exploring-group"
 
-// Thinking component (Extended Thinking)
-export { AgentThinkingTool } from "./agent-thinking-tool"
+// Reasoning-output component
+export { AgentReasoningOutput } from "./agent-reasoning-output"
 
 // Main components
 export { ChatView } from "../main/active-chat"

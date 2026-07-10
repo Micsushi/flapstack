@@ -1,5 +1,5 @@
 /**
- * OpenCode SSE event bridge + thinking normalization (Track E — E4).
+ * OpenCode SSE event bridge + reasoning-output normalization (Track E — E4).
  *
  * Two pure pieces, both unit-testable without a running server:
  *  1. `parseSseChunk` — incremental SSE framing (id/event/data lines).
@@ -7,7 +7,7 @@
  *
  * Reasoning handling maps OpenRouter (`reasoning`, `reasoning_details`) and
  * NanoGPT (`reasoning`, legacy `reasoning_content`) visible reasoning into the
- * shared Thinking contract. Encrypted / provider-private reasoning is preserved
+ * shared reasoning-output contract. Encrypted / provider-private reasoning is preserved
  * only as opaque metadata upstream — never fabricated here.
  */
 

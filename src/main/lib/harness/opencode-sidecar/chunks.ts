@@ -3,7 +3,7 @@
  *
  * This is the single place the OpenCode sidecar joins the existing renderer
  * stream vocabulary, so OpenRouter/NanoGPT reasoning + text render through the
- * same Thinking panel and message parts as Claude/Codex. Stateful: it tracks
+ * same Reasoning output panel and message parts as Claude/Codex. Stateful: it tracks
  * open text/reasoning part ids so it can emit start/end boundaries correctly.
  */
 

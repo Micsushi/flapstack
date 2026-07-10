@@ -10,6 +10,7 @@ export interface AgentMessageMetadata {
   totalCostUsd?: number
   inputTokens?: number
   outputTokens?: number
+  reasoningTokens?: number
   totalTokens?: number
   finalTextId?: string
   durationMs?: number
@@ -53,6 +54,7 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
     model,
     inputTokens = 0,
     outputTokens = 0,
+    reasoningTokens,
     totalTokens = 0,
     durationMs,
     resultSubtype,
@@ -115,6 +117,14 @@ export const AgentMessageUsage = memo(function AgentMessageUsage({
               <span className="text-muted-foreground">Tokens:</span>
               <span className="font-mono font-medium text-foreground">
                 {displayTokens.toLocaleString()}
+              </span>
+            </div>
+          )}
+          {typeof reasoningTokens === "number" && (
+            <div className="flex justify-between text-xs gap-4">
+              <span className="text-muted-foreground">Reasoning tokens:</span>
+              <span className="font-mono font-medium text-foreground">
+                {reasoningTokens.toLocaleString()}
               </span>
             </div>
           )}

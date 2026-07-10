@@ -17,7 +17,7 @@ No native loop for Stage 2. The sidecar gives Flapstack, for free:
 - a tool/continuation loop with real tool schemas,
 - per-tool permission rules + an approval protocol Flapstack bridges,
 - MCP support,
-- an event stream Flapstack normalizes into its existing message/thinking model.
+- an event stream Flapstack normalizes into its existing reasoning-output model.
 
 Building a native loop now would duplicate all of that plus tool-schema
 maintenance and provider-quirk handling, for no Stage 2 product gain.

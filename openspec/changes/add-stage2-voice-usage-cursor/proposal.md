@@ -70,5 +70,5 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
   Cursor usage client). External docs checked 2026-07-09/10: OpenAI usage/cost
   APIs; Anthropic Admin usage/cost APIs; OpenRouter OpenAI-compatible chat API,
   usage accounting, generation stats, key credits/limits, and reasoning docs;
-  NanoGPT OpenAI-compatible chat API, models/pricing, and extended-thinking docs;
+  NanoGPT OpenAI-compatible chat API, models/pricing, and reasoning-output docs;
   Discord webhook docs.

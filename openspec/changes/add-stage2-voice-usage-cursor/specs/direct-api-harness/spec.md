@@ -107,7 +107,7 @@ enforce them.
 ### Requirement: Direct API Reasoning Streams
 
 The system SHALL normalize provider-visible OpenRouter and NanoGPT reasoning
-fields surfaced through OpenCode events into the shared Thinking UI while keeping
+fields surfaced through OpenCode events into the shared Reasoning output UI while keeping
 provider-private or absent reasoning undisplayed.
 
 The system SHALL use provider/model default reasoning request parameters in
@@ -118,7 +118,7 @@ supported.
 
 - **WHEN** OpenRouter streaming or final response data includes visible
   `reasoning` or `reasoning_details` text/summary
-- **THEN** those fields render through the shared Thinking panel
+- **THEN** those fields render through the shared Reasoning output panel
 - **AND** encrypted or provider-private reasoning details are stored only as
   opaque metadata when needed
 - **AND** unsupported reasoning request fields are not sent
@@ -127,6 +127,6 @@ supported.
 
 - **WHEN** NanoGPT streaming or final response data includes visible `reasoning`
   or legacy `reasoning_content`
-- **THEN** those fields render through the shared Thinking panel
+- **THEN** those fields render through the shared Reasoning output panel
 - **AND** a response without those fields still renders normally
 - **AND** unsupported reasoning request fields are not sent

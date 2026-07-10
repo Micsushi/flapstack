@@ -8,9 +8,11 @@ import { TextShimmer } from "../../../components/ui/text-shimmer"
 import { AgentToolInterrupted } from "./agent-tool-interrupted"
 import { areToolPropsEqual } from "./agent-tool-utils"
 
-interface ThinkingToolPart {
+interface ReasoningOutputPart {
   type: string
   state: string
+  label?: "Reasoning output" | "Reasoning summary" | "Reasoning tokens" | null
+  tokens?: number
   input?: {
     text?: string
   }
@@ -20,8 +22,8 @@ interface ThinkingToolPart {
   startedAt?: number
 }
 
-interface AgentThinkingToolProps {
-  part: ThinkingToolPart
+interface AgentReasoningOutputProps {
+  part: ReasoningOutputPart
   chatStatus?: string
 }
 
@@ -37,10 +39,10 @@ function formatElapsedTime(ms: number): string {
   return `${minutes}m ${remainingSeconds}s`
 }
 
-export const AgentThinkingTool = memo(function AgentThinkingTool({
+export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   part,
   chatStatus,
-}: AgentThinkingToolProps) {
+}: AgentReasoningOutputProps) {
   const isPending = part.state !== "output-available" && part.state !== "output-error"
   const isActivelyStreaming = chatStatus === "streaming" || chatStatus === "submitted"
   const isStreaming = isPending && isActivelyStreaming
@@ -83,14 +85,16 @@ export const AgentThinkingTool = memo(function AgentThinkingTool({
     }
   }, [part.input?.text, isStreaming, isExpanded])
 
-  const thinkingText = part.input?.text || ""
+  const reasoningOutputText = part.input?.text || ""
+  const reasoningOutputLabel = part.label || "Reasoning output"
+  const tokenLabel = typeof part.tokens === "number" ? `${part.tokens.toLocaleString()} tokens` : ""
 
-  const previewText = thinkingText.slice(0, PREVIEW_LENGTH).replace(/\n/g, " ")
+  const previewText = reasoningOutputText.slice(0, PREVIEW_LENGTH).replace(/\n/g, " ")
 
   const elapsedDisplay = isStreaming ? formatElapsedTime(elapsedMs) : ""
 
-  if (isInterrupted && !thinkingText) {
-    return <AgentToolInterrupted toolName="Thinking" />
+  if (isInterrupted && !reasoningOutputText) {
+    return <AgentToolInterrupted toolName="Reasoning output" />
   }
 
   return (
@@ -103,18 +107,23 @@ export const AgentThinkingTool = memo(function AgentThinkingTool({
         <div className="flex-1 min-w-0 flex items-center gap-1">
           <div className="text-xs flex items-center gap-1.5 min-w-0">
             <span className="font-medium whitespace-nowrap flex-shrink-0">
-              {isStreaming ? (
+              {isStreaming && reasoningOutputLabel === "Reasoning output" ? (
                 <TextShimmer
                   as="span"
                   duration={1.2}
                   className="inline-flex items-center text-xs leading-none h-4 m-0"
                 >
-                  Thinking
+                  Reasoning output
                 </TextShimmer>
               ) : (
-                <span className="text-muted-foreground">Thought</span>
+                <span className="text-muted-foreground">{reasoningOutputLabel}</span>
               )}
             </span>
+            {tokenLabel && (
+              <span className="text-muted-foreground/60 tabular-nums flex-shrink-0">
+                {tokenLabel}
+              </span>
+            )}
             {/* Preview when collapsed */}
             {!isExpanded && previewText && (
               <span className="text-muted-foreground/60 truncate">{previewText}</span>
@@ -138,7 +147,7 @@ export const AgentThinkingTool = memo(function AgentThinkingTool({
       </div>
 
       {/* Content - expanded while streaming, collapsible after */}
-      {isExpanded && thinkingText && (
+      {isExpanded && reasoningOutputText && (
         <div className="relative mt-1">
           {/* Top gradient fade when streaming */}
           <div
@@ -151,7 +160,11 @@ export const AgentThinkingTool = memo(function AgentThinkingTool({
             ref={scrollRef}
             className={cn("px-2", isStreaming && "overflow-y-auto scrollbar-hide max-h-36")}
           >
-            <ChatMarkdownRenderer content={thinkingText} size="sm" isStreaming={isStreaming} />
+            <ChatMarkdownRenderer
+              content={reasoningOutputText}
+              size="sm"
+              isStreaming={isStreaming}
+            />
           </div>
         </div>
       )}

@@ -167,12 +167,12 @@ describe("event normalization", () => {
 
     const reasoning = normalizeOpencodeEvent({
       type: "message.part.delta",
-      properties: { part: { id: "p2", reasoning: "thinking...", sessionID: "s" } },
+      properties: { part: { id: "p2", reasoning: "reasoning output...", sessionID: "s" } },
     })
     expect(reasoning).toContainEqual({
       kind: "reasoning-delta",
       partId: "p2",
-      delta: "thinking...",
+      delta: "reasoning output...",
     })
   })
 

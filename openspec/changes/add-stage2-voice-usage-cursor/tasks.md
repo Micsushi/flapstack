@@ -7,7 +7,7 @@ it for OpenSpec tracking.
 ## 0. Prerequisite
 
 - [ ] 0.1 F2: native-module ABI toggle removal so `npm run check` runs cleanly
-- [x] 0.2 D0: verify `cursor-agent` CLI flags, stream-json schema, and thinking fixture
+- [x] 0.2 D0: verify `cursor-agent` CLI flags, stream-json schema, and reasoning-output fixture
 
 ## 1. Voice (Track A)
 
@@ -44,7 +44,7 @@ it for OpenSpec tracking.
 - [x] 3.0 D0 Verify `cursor-agent` CLI surface + reasoning fixture
 - [x] 3.1 D1 Harness contract extension (`cursor-agent`, teal chip)
 - [x] 3.2 D2 `cursor-agent` stream-json child-process adapter, including
-      `type:"thinking"` event normalization into the shared Thinking UI when
+      provider `type:"thinking"` event normalization into the shared Reasoning output UI when
       present
 - [x] 3.3 D3 Onboarding + login/token detect
 - [x] 3.4 D4 Permission mapping + honest limitations
@@ -59,23 +59,23 @@ it for OpenSpec tracking.
       `opencode-sidecar`, limitation states)
 - [x] 4.2 E2 OpenCode sidecar launcher + authenticated HTTP/event client
 - [x] 4.3 E3 Generated isolated OpenCode config for OpenRouter and NanoGPT
-- [x] 4.4 E4 Session/event bridge + Thinking normalization
+- [x] 4.4 E4 Session/event bridge + Reasoning-output normalization
 - [x] 4.5 E5 Permission mapping + approval bridge
 - [x] 4.6 E6 Run persistence, checkpoints, manifests, and usage hooks
 - [x] 4.7 E7 Provider onboarding, model catalog, chips, and settings
 - [x] 4.8 E8 Native harness spike + defer/continue decision
 - [ ] 4.9 E-exit OpenCode-backed harness tests + manual matrix
 
-## 5. Thinking Display Parity (Cross-track)
+## 5. Reasoning Output Parity (Cross-track)
 
-- [ ] 5.1 T0 Provider behavior matrix + fixture capture
-- [ ] 5.2 T1 Shared thinking stream contract + persistence rules
-- [ ] 5.3 T2 Incremental Thinking UI stream behavior
-- [ ] 5.4 T3 Claude thinking stream/backfill verification
-- [ ] 5.5 T4 Codex/OpenAI/ACP reasoning handling
-- [ ] 5.6 T5 Cursor thinking stream integration
-- [ ] 5.7 T6 OpenRouter/NanoGPT/local-model reasoning adapter contract
-- [ ] 5.8 T7 Thinking fixtures, tests, and manual matrix
+- [x] 5.1 T0 Provider behavior matrix + fixture capture
+- [x] 5.2 T1 Shared reasoning-output stream contract + persistence rules
+- [x] 5.3 T2 Incremental Reasoning output UI stream behavior
+- [x] 5.4 T3 Claude reasoning-output stream/backfill verification
+- [x] 5.5 T4 Codex/OpenAI/ACP reasoning handling
+- [x] 5.6 T5 Cursor reasoning-output stream integration
+- [x] 5.7 T6 OpenRouter/NanoGPT/local-model reasoning adapter contract
+- [ ] 5.8 T7 Reasoning-output fixtures, tests, and manual matrix
 
 ## 6. Fixes (Track C)
 

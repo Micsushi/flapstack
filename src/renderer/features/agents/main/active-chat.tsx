@@ -133,7 +133,7 @@ import {
   subChatFilesAtom,
   agentsSidebarOpenAtom,
   subChatCodexModelIdAtomFamily,
-  subChatCodexThinkingAtomFamily,
+  subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatOpencodeModelsAtomFamily,
   subChatModelIdAtomFamily,
@@ -3686,8 +3686,8 @@ const ChatViewInner = memo(function ChatViewInner({
           appStore.get(subChatCodexModelIdAtomFamily(subChatId)),
         )
         appStore.set(
-          subChatCodexThinkingAtomFamily(newSubChat.id),
-          appStore.get(subChatCodexThinkingAtomFamily(subChatId)),
+          subChatCodexReasoningAtomFamily(newSubChat.id),
+          appStore.get(subChatCodexReasoningAtomFamily(subChatId)),
         )
 
         // Open the forked sub-chat tab and switch to it
@@ -4741,8 +4741,8 @@ const ChatViewInner = memo(function ChatViewInner({
           appStore.get(subChatCodexModelIdAtomFamily(subChatId)),
         )
         appStore.set(
-          subChatCodexThinkingAtomFamily(newId),
-          appStore.get(subChatCodexThinkingAtomFamily(subChatId)),
+          subChatCodexReasoningAtomFamily(newId),
+          appStore.get(subChatCodexReasoningAtomFamily(subChatId)),
         )
         appStore.set(
           subChatCursorModelIdAtomFamily(newId),
@@ -6775,7 +6775,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       }
 
       // Create transport based on chat type (local worktree vs remote sandbox)
-      // Note: Extended thinking setting is read dynamically inside the transport
+      // Reasoning-output setting is read dynamically inside the transport.
       // projectPath: original project path for MCP config lookup (worktreePath is the cwd)
       const projectPath = (agentChat as any)?.project?.path as string | undefined
       const chatSandboxId = (agentChat as any)?.sandboxId || (agentChat as any)?.sandbox_id
@@ -7163,8 +7163,8 @@ Make sure to preserve all functionality from both branches when resolving confli
       appStore.get(subChatCodexModelIdAtomFamily(sourceSubChatId)),
     )
     appStore.set(
-      subChatCodexThinkingAtomFamily(newId),
-      appStore.get(subChatCodexThinkingAtomFamily(sourceSubChatId)),
+      subChatCodexReasoningAtomFamily(newId),
+      appStore.get(subChatCodexReasoningAtomFamily(sourceSubChatId)),
     )
     appStore.set(
       subChatCursorModelIdAtomFamily(newId),

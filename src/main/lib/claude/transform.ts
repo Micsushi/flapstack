@@ -1,4 +1,5 @@
 import type { MCPServer, MCPServerStatus, MessageMetadata, UIMessageChunk } from "./types"
+import { normalizeClaudeReasoningOutput } from "../../../shared/reasoning-output"
 
 export function createTransformer(options?: { isUsingOllama?: boolean }) {
   const isUsingOllama = options?.isUsingOllama === true
@@ -30,11 +31,11 @@ export function createTransformer(options?: { isUsingOllama?: boolean }) {
   let lastCompactId: string | null = null
   let compactCounter = 0
 
-  // Track streaming thinking for Extended Thinking
-  let currentThinkingId: string | null = null
-  let accumulatedThinking = ""
-  let inThinkingBlock = false // Track if we're currently in a thinking block
-  let thinkingJsonStarted = false // Track if we've sent the JSON prefix for thinking deltas
+  // Track streaming provider reasoning output.
+  let currentReasoningOutputId: string | null = null
+  let accumulatedReasoningOutput = ""
+  let inReasoningOutputBlock = false
+  let reasoningOutputJsonStarted = false
 
   // Track usage from the last main assistant message (exclude sidechain/subagents).
   // This is used for accurate context window display in final metadata.
@@ -116,11 +117,11 @@ export function createTransformer(options?: { isUsingOllama?: boolean }) {
       yield { type: "start-step" }
     }
 
-    // Reset thinking state on new message start to prevent memory leaks
+    // Reset reasoning-output state on new message start.
     if (msg.type === "stream_event" && msg.event?.type === "message_start") {
-      currentThinkingId = null
-      accumulatedThinking = ""
-      inThinkingBlock = false
+      currentReasoningOutputId = null
+      accumulatedReasoningOutput = ""
+      inReasoningOutputBlock = false
     }
 
     // ===== STREAMING EVENTS (token-by-token) =====
@@ -192,57 +193,73 @@ export function createTransformer(options?: { isUsingOllama?: boolean }) {
         }
       }
 
-      // Thinking content block start (Extended Thinking)
+      // Claude reasoning-output content block start.
       if (event.type === "content_block_start" && event.content_block?.type === "thinking") {
-        currentThinkingId = `thinking-${Date.now()}`
-        accumulatedThinking = ""
-        inThinkingBlock = true
-        thinkingJsonStarted = false
+        const [reasoningOutputStart] = normalizeClaudeReasoningOutput(event)
+        if (!reasoningOutputStart) return
+
+        currentReasoningOutputId = reasoningOutputStart.id
+        accumulatedReasoningOutput = ""
+        inReasoningOutputBlock = true
+        reasoningOutputJsonStarted = false
         yield {
           type: "tool-input-start",
-          toolCallId: currentThinkingId,
-          toolName: "Thinking",
+          toolCallId: currentReasoningOutputId,
+          toolName: "ReasoningOutput",
         }
       }
 
-      // Thinking/reasoning streaming - emit as tool-like chunks for UI
-      if (event.delta?.type === "thinking_delta" && currentThinkingId && inThinkingBlock) {
-        const thinkingText = String(event.delta.thinking || "")
-        accumulatedThinking += thinkingText
+      // Stream provider reasoning output as tool-like chunks for the UI.
+      if (
+        event.delta?.type === "thinking_delta" &&
+        currentReasoningOutputId &&
+        inReasoningOutputBlock
+      ) {
+        const [reasoningOutputDelta] = normalizeClaudeReasoningOutput(event)
+        if (!reasoningOutputDelta?.text) return
+
+        accumulatedReasoningOutput += reasoningOutputDelta.text
 
         // Emit as JSON fragment so AI SDK's parsePartialJson can parse it incrementally.
         // AI SDK accumulates all deltas and runs fixJson() to repair incomplete JSON,
         // so we start with '{"text":"' and send JSON-escaped text chunks.
-        const escaped = JSON.stringify(thinkingText).slice(1, -1)
-        const prefix = !thinkingJsonStarted ? '{"text":"' : ""
-        thinkingJsonStarted = true
+        const escaped = JSON.stringify(reasoningOutputDelta.text).slice(1, -1)
+        const prefix = !reasoningOutputJsonStarted ? '{"text":"' : ""
+        reasoningOutputJsonStarted = true
 
         yield {
           type: "tool-input-delta",
-          toolCallId: currentThinkingId,
+          toolCallId: currentReasoningOutputId,
           inputTextDelta: prefix + escaped,
         }
       }
 
-      // Thinking complete (content_block_stop while in thinking block)
-      if (event.type === "content_block_stop" && inThinkingBlock && currentThinkingId) {
+      // Reasoning output complete.
+      if (
+        event.type === "content_block_stop" &&
+        inReasoningOutputBlock &&
+        currentReasoningOutputId
+      ) {
+        const [reasoningOutputFinal] = normalizeClaudeReasoningOutput({
+          type: "thinking",
+          thinking: accumulatedReasoningOutput,
+        })
         yield {
           type: "tool-input-available",
-          toolCallId: currentThinkingId,
-          toolName: "Thinking",
-          input: { text: accumulatedThinking },
+          toolCallId: currentReasoningOutputId,
+          toolName: "ReasoningOutput",
+          input: { text: reasoningOutputFinal?.text || accumulatedReasoningOutput },
         }
         yield {
           type: "tool-output-available",
-          toolCallId: currentThinkingId,
+          toolCallId: currentReasoningOutputId,
           output: { completed: true },
         }
         // Track as emitted to skip duplicate from assistant message
-        emittedToolIds.add(currentThinkingId)
-        emittedToolIds.add("thinking-streamed")
-        currentThinkingId = null
-        accumulatedThinking = ""
-        inThinkingBlock = false
+        emittedToolIds.add(currentReasoningOutputId)
+        currentReasoningOutputId = null
+        accumulatedReasoningOutput = ""
+        inReasoningOutputBlock = false
       }
     }
 
@@ -261,29 +278,31 @@ export function createTransformer(options?: { isUsingOllama?: boolean }) {
     // When streaming is enabled, text arrives via stream_event, not here
     if (msg.type === "assistant" && msg.message?.content) {
       for (const block of msg.message.content) {
-        // Handle thinking blocks from Extended Thinking
-        // Skip if already emitted via streaming (thinking_delta)
+        // Handle final Claude reasoning-output blocks.
+        // Skip if the provider `thinking_delta` stream already emitted them.
         if (block.type === "thinking" && block.thinking) {
-          // Check if we already streamed OR are currently streaming this thinking block
-          // The assistant message can arrive BEFORE content_block_stop, so we also check inThinkingBlock
-          const wasStreamed = emittedToolIds.has("thinking-streamed")
-          const isCurrentlyStreaming = inThinkingBlock
+          // Check if this provider block already streamed or is still streaming.
+          // The assistant message can arrive BEFORE content_block_stop, so we also check inReasoningOutputBlock
+          const [reasoningOutputFinal] = normalizeClaudeReasoningOutput(block)
+          const reasoningOutputId = reasoningOutputFinal?.id
+          const wasStreamed = reasoningOutputId ? emittedToolIds.has(reasoningOutputId) : false
+          const isCurrentlyStreaming = inReasoningOutputBlock
 
           if (wasStreamed || isCurrentlyStreaming) {
             continue
           }
 
-          const thinkingId = genId()
+          const fallbackReasoningOutputId = reasoningOutputId || genId()
           yield {
             type: "tool-input-available",
-            toolCallId: thinkingId,
-            toolName: "Thinking",
-            input: { text: block.thinking },
+            toolCallId: fallbackReasoningOutputId,
+            toolName: "ReasoningOutput",
+            input: { text: reasoningOutputFinal?.text || block.thinking },
           }
           // Immediately mark as complete
           yield {
             type: "tool-output-available",
-            toolCallId: thinkingId,
+            toolCallId: fallbackReasoningOutputId,
             output: { completed: true },
           }
         }

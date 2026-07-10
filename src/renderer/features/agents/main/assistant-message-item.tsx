@@ -26,7 +26,7 @@ import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentMessageUsage, type AgentMessageMetadata } from "../ui/agent-message-usage"
 import { AgentPlanTool } from "../ui/agent-plan-tool"
 import { AgentTaskTool } from "../ui/agent-task-tool"
-import { AgentThinkingTool } from "../ui/agent-thinking-tool"
+import { AgentReasoningOutput } from "../ui/agent-reasoning-output"
 import { AgentTodoTool } from "../ui/agent-todo-tool"
 import { AgentMcpToolCall } from "../ui/agent-mcp-tool-call"
 import { AgentToolCall } from "../ui/agent-tool-call"
@@ -54,7 +54,7 @@ const ACP_VERB_TO_TOOL_TYPE: Record<string, string> = {
   Glob: "Glob",
   Edit: "Edit",
   Write: "Write",
-  Thought: "Thinking",
+  Thought: "ReasoningOutput",
   Fetch: "WebFetch",
 }
 
@@ -181,7 +181,7 @@ const STREAMING_REASONING_STATES = new Set(["streaming", "in_progress", "input-s
 const DONE_REASONING_STATES = new Set(["done", "completed", "result", "output-available"])
 const ERROR_REASONING_STATES = new Set(["error", "output-error"])
 
-function mapReasoningStateToThinkingState(state: unknown): string {
+function mapReasoningStateToOutputState(state: unknown): string {
   if (typeof state !== "string") {
     return "output-available"
   }
@@ -193,29 +193,41 @@ function mapReasoningStateToThinkingState(state: unknown): string {
   return "output-available"
 }
 
-function getThinkingText(part: any): string {
+function getReasoningOutputText(part: any): string {
   if (typeof part?.input?.text === "string") return part.input.text
   if (typeof part?.text === "string") return part.text
   return ""
 }
 
-function toThinkingToolPart(part: any, messageId: string | undefined, index: number): any {
-  const normalizedState = mapReasoningStateToThinkingState(part.state)
-  const text = getThinkingText(part)
+function toReasoningOutputPart(part: any, messageId: string | undefined, index: number): any {
+  const normalizedState = mapReasoningStateToOutputState(part.state)
+  const text = getReasoningOutputText(part)
   const normalizedPart = {
     ...part,
-    type: "tool-Thinking",
+    type: "tool-ReasoningOutput",
     toolCallId:
       typeof part.toolCallId === "string" && part.toolCallId.length > 0
         ? part.toolCallId
         : typeof part.id === "string" && part.id.length > 0
           ? part.id
           : `reasoning-${messageId || "message"}-${index}`,
-    toolName: typeof part.toolName === "string" ? part.toolName : "Thinking",
+    toolName: typeof part.toolName === "string" ? part.toolName : "ReasoningOutput",
     input: {
       ...(part.input && typeof part.input === "object" ? part.input : {}),
       text,
     },
+    label:
+      typeof part.label === "string"
+        ? part.label
+        : typeof part.input?.label === "string"
+          ? part.input.label
+          : undefined,
+    tokens:
+      typeof part.tokens === "number"
+        ? part.tokens
+        : typeof part.input?.tokens === "number"
+          ? part.input.tokens
+          : undefined,
     state: normalizedState,
   }
 
@@ -380,7 +392,7 @@ function getTrackedPartTextLength(part: any): number {
     return typeof part.text === "string" ? part.text.length : 0
   }
 
-  if (part?.type === "tool-Thinking") {
+  if (part?.type === "tool-ReasoningOutput" || part?.type === "tool-Thinking") {
     if (typeof part?.input?.text === "string") return part.input.text.length
     if (typeof part?.text === "string") return part.text.length
     return 0
@@ -818,11 +830,15 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             chatStatus={status}
           />
         )
-      if (part.type === "reasoning" || part.type === "tool-Thinking") {
+      if (
+        part.type === "reasoning" ||
+        part.type === "tool-ReasoningOutput" ||
+        part.type === "tool-Thinking"
+      ) {
         return (
-          <AgentThinkingTool
+          <AgentReasoningOutput
             key={idx}
-            part={toThinkingToolPart(part, message?.id, idx)}
+            part={toReasoningOutputPart(part, message?.id, idx)}
             chatStatus={status}
           />
         )

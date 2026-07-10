@@ -14,14 +14,14 @@ import { trpcClient } from "../../../lib/trpc"
 import {
   pendingAuthRetryMessageAtom,
   subChatCodexModelIdAtomFamily,
-  subChatCodexThinkingAtomFamily,
+  subChatCodexReasoningAtomFamily,
 } from "../atoms"
 import {
   CODEX_MODELS,
-  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
-  DEFAULT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING,
+  DEFAULT_CODEX_MODEL_WITH_REASONING,
   type CodexAuthSurface,
-  type CodexThinkingLevel,
+  type CodexReasoningLevel,
 } from "./models"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
@@ -45,7 +45,7 @@ type ImageAttachment = {
 
 // When a sub-chat hits auth-error, force one fresh Codex ACP session on next send.
 const forceFreshSessionSubChats = new Set<string>()
-const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_THINKING
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_REASONING
 function getStoredCodexCredentials(): {
   hasApiKey: boolean
   hasSubscription: boolean
@@ -87,13 +87,13 @@ async function resolveCodexCredentialsForAuthError(): Promise<{
 
 function getSelectedCodexModel(subChatId: string): string {
   const selectedModelId = appStore.get(subChatCodexModelIdAtomFamily(subChatId))
-  const selectedThinking = appStore.get(subChatCodexThinkingAtomFamily(subChatId))
+  const selectedReasoning = appStore.get(subChatCodexReasoningAtomFamily(subChatId))
   const authSurface: CodexAuthSurface = getStoredCodexCredentials().hasApiKey
     ? "api-key"
     : "chatgpt"
   const eligibleModels = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
   const defaultModel =
-    authSurface === "chatgpt" ? DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING : DEFAULT_CODEX_MODEL
+    authSurface === "chatgpt" ? DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING : DEFAULT_CODEX_MODEL
   const selectedModel =
     eligibleModels.find((model) => model.id === selectedModelId) ||
     eligibleModels.find((model) => model.id === defaultModel.split("/")[0]) ||
@@ -103,19 +103,19 @@ function getSelectedCodexModel(subChatId: string): string {
     return defaultModel
   }
 
-  const normalizedThinking = selectedModel.thinkings.includes(
-    selectedThinking as CodexThinkingLevel,
+  const normalizedReasoning = selectedModel.reasoningLevels.includes(
+    selectedReasoning as CodexReasoningLevel,
   )
-    ? (selectedThinking as CodexThinkingLevel)
-    : selectedModel.thinkings.includes("high")
+    ? (selectedReasoning as CodexReasoningLevel)
+    : selectedModel.reasoningLevels.includes("high")
       ? "high"
-      : selectedModel.thinkings[0]
+      : selectedModel.reasoningLevels[0]
 
-  if (!normalizedThinking) {
+  if (!normalizedReasoning) {
     return defaultModel
   }
 
-  return `${selectedModel.id}/${normalizedThinking}`
+  return `${selectedModel.id}/${normalizedReasoning}`
 }
 
 export class ACPChatTransport implements ChatTransport<UIMessage> {

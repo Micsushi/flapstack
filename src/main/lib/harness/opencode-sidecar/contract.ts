@@ -85,7 +85,7 @@ export type SidecarPhase =
 
 /**
  * Normalized sidecar event. OpenCode's raw SSE events are mapped into this
- * shape before they touch the run/persistence layer or the Thinking UI. Keeping
+ * shape before they touch the run/persistence layer or the reasoning-output UI. Keeping
  * this provider-agnostic is what lets OpenRouter, NanoGPT, and any future
  * OpenCode-backed provider share one renderer path.
  */

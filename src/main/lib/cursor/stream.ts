@@ -1,4 +1,5 @@
 import type { UIMessageChunk } from "../claude/types"
+import { normalizeCursorReasoningOutput } from "../../../shared/reasoning-output"
 
 /**
  * cursor-agent stream-json translation (Stage 2 Track D / D2).
@@ -143,7 +144,7 @@ export class CursorStreamTranslator {
         return this.handleAssistant(event)
       case "thinking":
       case "reasoning":
-        return this.handleThinking(event)
+        return this.handleReasoningOutput(event)
       case "tool_call":
       case "tool":
         return this.handleToolCall(event)
@@ -208,13 +209,19 @@ export class CursorStreamTranslator {
     return chunks
   }
 
-  private handleThinking(event: CursorRawEvent): UIMessageChunk[] {
-    const subtype = asString(event.subtype)
-    if (subtype === "completed") {
+  private handleReasoningOutput(event: CursorRawEvent): UIMessageChunk[] {
+    // Keep Cursor's live stream on Track T's provider contract. The emitted AI
+    // SDK chunks remain `reasoning-*` so the existing incremental renderer and
+    // persisted message shape keep working, but an unknown/malformed provider
+    // event can no longer invent display content outside the shared contract.
+    const [reasoningOutput] = normalizeCursorReasoningOutput(event)
+    if (!reasoningOutput) return []
+
+    if (reasoningOutput.phase === "final") {
       return this.closeReasoning()
     }
 
-    const text = asString(event.text) ?? asString((event.delta as any)?.text)
+    const text = reasoningOutput.text
     if (!text) return []
 
     const chunks: UIMessageChunk[] = []
@@ -223,7 +230,7 @@ export class CursorStreamTranslator {
       chunks.push({ type: "reasoning-start", id: this.reasoningId })
     }
     this.reasoningText += text
-    // Track T5 finalizes Thinking rendering; emit the documented reasoning delta.
+    // Track T5 finalizes reasoning-output rendering; emit the documented reasoning delta.
     chunks.push({ type: "reasoning-delta", id: this.reasoningId, delta: text })
     return chunks
   }

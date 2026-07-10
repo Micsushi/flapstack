@@ -86,17 +86,17 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   agent permission rules and approval replies. If OpenCode cannot enforce a
   Flapstack toggle exactly, surface a `HarnessPermissionLimitation` instead of
   pretending it was enforced.
-- **Thinking display**: stream provider-visible reasoning/thinking when Flapstack
+- **Reasoning output**: stream provider-visible reasoning output when Flapstack
   owns the run; use saved JSONL/session files only for import/backfill/debug.
-  Claude visible thinking maps from `thinking_delta`/`thinking` blocks; Codex
+  Claude visible reasoning output maps from `thinking_delta`/`thinking` blocks; Codex
   renders ACP thought chunks or OpenAI reasoning summaries when exposed, but
   encrypted reasoning content is opaque and not displayable; Cursor currently
   emits `type:"thinking"` stream-json deltas in the installed CLI despite docs
-  saying thinking is suppressed in print mode, so the adapter must render those
+  saying reasoning output is suppressed in print mode, so the adapter must render those
   events when present and tolerate their absence; OpenRouter normalizes
   `reasoning`, visible `reasoning_details` text/summary, and usage reasoning-
   token counts; NanoGPT normalizes `delta.reasoning` plus legacy
-  `delta.reasoning_content`. If a provider streams thinking deltas, Flapstack
+  `delta.reasoning_content`. If a provider streams reasoning-output deltas, Flapstack
   shows them incrementally as they arrive instead of waiting to append one final
   block at turn end.
 - **Direct API reasoning controls**: Stage 2 uses provider/model defaults for
@@ -114,9 +114,9 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   returned and estimate from model pricing metadata otherwise. Verify current
   NanoGPT account-wide history/balance API coverage during implementation; if
   absent, label NanoGPT as run-usage only plus estimates.
-- **Saved thinking history**: Stage 2 may use saved JSONL/session files for
+- **Saved reasoning-output history**: Stage 2 may use saved JSONL/session files for
   import, debug, or backfill plumbing. Do not add a primary user-facing saved
-  history viewer as part of the thinking-display work.
+  history viewer as part of the reasoning-output work.
 - **Sequencing**: fix native-module ABI (F2) first; Track D past D1 waits on D0
   (install + verify `cursor-agent`).
 
@@ -134,10 +134,10 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   source, degrade through the chain on drift.
 - `cursor-agent` CLI surface may differ from assumptions → D0 verifies the live
   flags + event schema before the adapter is built. Current live output includes
-  `type:"thinking"` events while Cursor docs say thinking is suppressed in print
-  mode, so fixtures must cover both present and absent thinking streams.
+  `type:"thinking"` events while Cursor docs say reasoning output is suppressed in print
+  mode, so fixtures must cover both present and absent reasoning-output streams.
 - Reasoning visibility differs by provider → render only provider-visible
-  thinking, summaries, thought chunks, and token counts; preserve encrypted or
+  reasoning output, summaries, thought chunks, and token counts; preserve encrypted or
   provider-private reasoning only as opaque metadata for continuity/debug.
 - OpenCode sidecar adds process/config/version management risk → pin or resolve
   a reproducible OpenCode package, isolate generated config, kill process groups

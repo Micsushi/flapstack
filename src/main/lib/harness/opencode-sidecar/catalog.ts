@@ -55,7 +55,7 @@ export type OpencodeModelInfo = {
   /** Provider-native model id, e.g. `anthropic/claude-opus-4-8`. */
   id: string
   label: string
-  /** Whether the model is known to expose visible reasoning/thinking. */
+  /** Whether the model is known to expose visible reasoning output. */
   supportsReasoning?: boolean
   contextWindow?: number
 }

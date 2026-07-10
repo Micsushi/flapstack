@@ -108,7 +108,7 @@ export const api = {
                           Glob: "Glob",
                           Edit: "Edit",
                           Write: "Write",
-                          Thought: "Thinking",
+                          Thought: "ReasoningOutput",
                           Fetch: "WebFetch",
                         }
                         let parsedInput: AnyObj = {}

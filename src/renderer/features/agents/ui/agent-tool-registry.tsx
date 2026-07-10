@@ -559,16 +559,26 @@ export const AgentToolRegistry: Record<string, ToolMeta> = {
     variant: "simple",
   },
 
-  // Extended Thinking
-  "tool-Thinking": {
+  // Reasoning output
+  "tool-ReasoningOutput": {
     icon: SparklesIcon,
     title: (part) => {
       const isPending = part.state !== "output-available" && part.state !== "output-error"
-      return isPending ? "Thinking..." : "Thought"
+      return isPending ? "Reasoning output..." : "Reasoning output"
     },
     subtitle: (part) => {
       const text = part.input?.text || ""
       // Show first 50 chars as preview
+      return text.length > 50 ? text.slice(0, 47) + "..." : text
+    },
+    variant: "collapsible",
+  },
+  // Legacy persisted part name. New output uses tool-ReasoningOutput.
+  "tool-Thinking": {
+    icon: SparklesIcon,
+    title: () => "Reasoning output",
+    subtitle: (part) => {
+      const text = part.input?.text || ""
       return text.length > 50 ? text.slice(0, 47) + "..." : text
     },
     variant: "collapsible",
