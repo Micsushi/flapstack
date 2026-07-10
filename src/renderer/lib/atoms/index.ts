@@ -174,6 +174,7 @@ export type SettingsTab =
   | "appearance"
   | "preferences"
   | "models"
+  | "voice"
   | "skills"
   | "agents"
   | "mcp"

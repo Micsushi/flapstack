@@ -180,23 +180,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
       isStartingRef.current = false
       cleanup()
 
-      // Provide user-friendly error messages
-      let error: Error
-      if (err instanceof Error) {
-        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-          error = new Error(
-            "Microphone access denied. Please allow microphone access in System Preferences.",
-          )
-        } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-          error = new Error("No microphone found. Please connect a microphone.")
-        } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
-          error = new Error("Microphone is in use by another application.")
-        } else {
-          error = err
-        }
-      } else {
-        error = new Error("Failed to start recording")
-      }
+      const error = toMicrophoneError(err, navigator.platform)
 
       setError(error)
       console.error("[VoiceRecording] Start error:", error)
@@ -247,6 +231,23 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     stopRecording,
     cancelRecording,
   }
+}
+
+export function toMicrophoneError(error: unknown, platform: string): Error {
+  if (!(error instanceof Error)) return new Error("Failed to start recording")
+  if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+    const recovery = platform.toLowerCase().includes("win")
+      ? "Windows Settings > Privacy & security > Microphone"
+      : "System Settings > Privacy & Security > Microphone"
+    return new Error(`Microphone access denied. Allow Flapstack in ${recovery}.`)
+  }
+  if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+    return new Error("No microphone found. Please connect a microphone.")
+  }
+  if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+    return new Error("Microphone is in use by another application.")
+  }
+  return error
 }
 
 /**

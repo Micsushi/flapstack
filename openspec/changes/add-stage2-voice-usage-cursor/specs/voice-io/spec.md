@@ -2,13 +2,13 @@
 
 ### Requirement: Local Speech-to-Text
 
-The system SHALL provide local dictation via a whisper.cpp `SttAdapter` using the
-`base` multilingual model downloaded on first use, with cloud Whisper as a
-secondary adapter, and SHALL surface which adapter transcribed each utterance.
+The system SHALL provide local-only dictation via a whisper.cpp `SttAdapter`
+using the `base` multilingual model downloaded on first use, and SHALL surface
+that Local Whisper transcribed each utterance.
 
-#### Scenario: Offline dictation with no cloud key
+#### Scenario: Offline dictation
 
-- **WHEN** the user dictates and no cloud STT key is configured
+- **WHEN** the user dictates
 - **THEN** the whisper.cpp adapter transcribes the audio locally
 - **AND** the resulting transcript is placed in the chat input for review
 

@@ -26,6 +26,8 @@ import {
   parseCursorStreamLine,
 } from "../../cursor/stream"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
+import { getReadAloudEnabled } from "../../speech/settings"
 import {
   buildCursorPermissionApplication,
   getGlobalDefault,
@@ -399,7 +401,10 @@ export const cursorRouter = router({
               projectPath: input.projectPath,
               harness: HARNESS,
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const promptForModel = appendReadAloudInstruction(
+              prependStartupContext(input.prompt, startupContext),
+              getReadAloudEnabled(input.subChatId),
+            )
 
             // Persist the user message (dedupe a resent prompt like Codex).
             const lastMessage = existingMessages[existingMessages.length - 1]

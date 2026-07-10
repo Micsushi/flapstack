@@ -12,7 +12,7 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
 ## What Changes
 
 - **Voice I/O (`voice-io`)**: local whisper.cpp STT (`base` multilingual,
-  download-on-first-use; cloud Whisper secondary), offline Kokoro TTS with system
+  download-on-first-use; no cloud STT in this stage), offline Kokoro TTS with system
   voice fallback, and harness-authored `Spoken:`/`Displayed:` read-aloud with a
   non-LLM fallback. No per-reply summarization LLM call.
 - **Usage tracking (`usage-tracking`)**: replace `onWatch` with a shared

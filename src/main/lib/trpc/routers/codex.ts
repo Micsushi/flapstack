@@ -8,7 +8,7 @@ import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, dirname, join, sep } from "node:path"
+import { basename, delimiter, dirname, join, sep } from "node:path"
 import { z } from "zod"
 import {
   normalizeCodexAssistantMessage,
@@ -25,6 +25,8 @@ import { resolveProjectPathFromWorktree } from "../../claude-config"
 import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
+import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
+import { getReadAloudEnabled } from "../../speech/settings"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
@@ -219,9 +221,19 @@ function resolveBundledCodexCliPath(): string {
     return binaryPath
   }
 
+  // Local dev may use the user's installed, macOS-approved Codex binary. This
+  // avoids downloading stale pinned binaries solely for development. Packaged
+  // releases still fail closed unless their verified bundled binary exists.
+  if (!app.isPackaged) {
+    for (const directory of (process.env.PATH || "").split(delimiter).filter(Boolean)) {
+      const installedPath = join(directory, binaryName)
+      if (existsSync(installedPath)) return installedPath
+    }
+  }
+
   const hint = app.isPackaged
     ? "Binary is missing from bundled resources."
-    : "Run `bun run codex:download` to download it for local dev."
+    : "Install Codex on PATH for local dev."
 
   throw new Error(`[codex] Bundled Codex CLI not found at ${binaryPath}. ${hint}`)
 }
@@ -1725,7 +1737,10 @@ export const codexRouter = router({
               projectPath: input.projectPath,
               harness: "codex",
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const promptForModel = appendReadAloudInstruction(
+              prependStartupContext(input.prompt, startupContext),
+              getReadAloudEnabled(input.subChatId),
+            )
             const fallbackModel = input.authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING

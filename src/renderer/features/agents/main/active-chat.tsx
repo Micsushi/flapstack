@@ -46,7 +46,6 @@ import { useShallow } from "zustand/react/shallow"
 import type { FileStatus } from "../../../../shared/changes-types"
 import { getQueryClient } from "../../../contexts/TRPCProvider"
 import { trackMessageSent } from "../../../lib/analytics"
-import { apiFetch } from "../../../lib/api-fetch"
 import {
   chatSourceModeAtom,
   customClaudeConfigAtom,
@@ -64,6 +63,7 @@ import { useResolvedHotkeyDisplay } from "../../../lib/hotkeys"
 import { appStore } from "../../../lib/jotai-store"
 import { api } from "../../../lib/mock-api"
 import { trpc, trpcClient } from "../../../lib/trpc"
+import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
@@ -485,6 +485,7 @@ function PlayButton({
     // If playing, stop the audio
     if (state === "playing") {
       cleanup()
+      void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
     }
@@ -492,6 +493,7 @@ function PlayButton({
     // If loading, cancel and reset
     if (state === "loading") {
       cleanup()
+      void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
     }
@@ -501,17 +503,7 @@ function PlayButton({
     chunkCountRef.current = 0
 
     try {
-      // Check if MediaSource is supported for streaming
-      const supportsMediaSource =
-        typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")
-
-      if (supportsMediaSource) {
-        // Use streaming approach with MediaSource API
-        await playWithStreaming()
-      } else {
-        // Fallback: wait for full response (Safari, older browsers)
-        await playWithFallback()
-      }
+      await playWithFallback()
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         console.error("[PlayButton] TTS error:", error)
@@ -573,13 +565,11 @@ function PlayButton({
     // Create abort controller for this request
     abortControllerRef.current = new AbortController()
 
-    const fetchStartTime = Date.now()
-    const response = await apiFetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: abortControllerRef.current.signal,
-    })
+    const result = await trpcClient.speech.speak.mutate(
+      { text, rate: playbackRate },
+      { signal: abortControllerRef.current.signal },
+    )
+    const response = new Response(base64ToBlob(result.audioBase64, result.mimeType))
 
     if (!response.ok) {
       throw new Error("TTS request failed")
@@ -658,36 +648,16 @@ function PlayButton({
   const playWithFallback = async () => {
     abortControllerRef.current = new AbortController()
 
-    const response = await apiFetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: abortControllerRef.current.signal,
+    const result = await trpcClient.speech.speak.mutate(
+      { text, rate: playbackRate },
+      { signal: abortControllerRef.current.signal },
+    )
+    const audio = await playManagedSpeech(result, {
+      rate: playbackRate,
+      onEnded: () => setState("idle"),
+      onError: () => setState("idle"),
     })
-
-    if (!response.ok) {
-      throw new Error("TTS request failed")
-    }
-
-    const audioBlob = await response.blob()
-    const audioUrl = URL.createObjectURL(audioBlob)
-
-    const audio = new Audio(audioUrl)
     audioRef.current = audio
-
-    audio.onended = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    audio.onerror = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    await audio.play()
-    // Set playback rate AFTER play() - browser resets it when setting src
-    audio.playbackRate = playbackRate
     setState("playing")
   }
 
@@ -748,6 +718,15 @@ function PlayButton({
       )}
     </div>
   )
+}
+
+function base64ToBlob(base64: string, mimeType: string) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return new Blob([bytes], { type: mimeType })
 }
 
 // Isolated scroll-to-bottom button - uses own scroll listener to avoid re-renders of parent
@@ -2878,6 +2857,61 @@ const ChatViewInner = memo(function ChatViewInner({
     () => messages.findLast((m) => m.role === "assistant"),
     [messages],
   )
+  const { data: readAloudPreference } = trpc.speech.getReadAloudForChat.useQuery({
+    chatId: subChatId,
+  })
+  const previousAutoReadStreamingRef = useRef(isStreaming)
+  const autoReadAudioRef = useRef<HTMLAudioElement | null>(null)
+
+  const stopAutoRead = useCallback(() => {
+    stopManagedSpeech(autoReadAudioRef.current)
+    autoReadAudioRef.current = null
+  }, [])
+
+  // Read only the reply that just completed in this live chat. Existing history
+  // is never replayed when navigating back to a chat.
+  useEffect(() => {
+    const wasStreaming = previousAutoReadStreamingRef.current
+    previousAutoReadStreamingRef.current = isStreaming
+    if (isStreaming) {
+      if (!wasStreaming) stopAutoRead()
+      return
+    }
+    if (!wasStreaming || !readAloudPreference?.enabled || !lastAssistantMessage) return
+
+    const text =
+      lastAssistantMessage.parts
+        ?.filter((part: any) => part.type === "text")
+        .map((part: any) => part.text || "")
+        .join("\n") || ""
+    if (!text.trim()) return
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await trpcClient.speech.speak.mutate({
+          text,
+          chatId: parentChatId ?? undefined,
+          subChatId,
+          messageId: lastAssistantMessage.id,
+        })
+        if (cancelled) return
+        const audio = await playManagedSpeech(result, {
+          onEnded: stopAutoRead,
+          onError: stopAutoRead,
+        })
+        autoReadAudioRef.current = audio
+      } catch (error) {
+        if (!cancelled) console.error("[AutoRead] TTS error:", error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isStreaming, lastAssistantMessage, readAloudPreference?.enabled, stopAutoRead])
+
+  useEffect(() => stopAutoRead, [stopAutoRead])
 
   // Pre-compute token data for ChatInputArea to avoid passing unstable messages array.
   // Prefer the latest assistant metadata that actually includes token/context fields.
