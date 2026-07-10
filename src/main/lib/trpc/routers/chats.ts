@@ -635,7 +635,7 @@ export const chatsRouter = router({
     .input(
       z.object({
         id: z.string(),
-        scope: z.enum(["project", "task"]),
+        scope: z.enum(["global", "project", "task"]),
         projectId: z.string().optional(),
         taskId: z.string().optional(),
       }),
@@ -644,6 +644,26 @@ export const chatsRouter = router({
       const db = getDatabase()
       const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
       if (!chat) throw new Error("Chat not found")
+
+      if (input.scope === "global") {
+        return db
+          .update(chats)
+          .set({
+            scope: "global",
+            projectId: null,
+            taskId: null,
+            // A global chat must not keep a project-owned default checkout.
+            // Preserve only an explicit custom worktree so history and user
+            // intent survive detaching from a project or task.
+            worktreePath: null,
+            branch: null,
+            baseBranch: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(chats.id, input.id))
+          .returning()
+          .get()
+      }
 
       if (input.scope === "project") {
         if (!input.projectId) throw new Error("Project move requires projectId")
