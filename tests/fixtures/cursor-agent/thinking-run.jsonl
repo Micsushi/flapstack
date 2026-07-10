@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","session_id":"c0ffee00-cafe-4bad-babe-cursor000001","model":"auto","cwd":"/Users/michaelshi/Documents/GitHub/flapstack"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Say hello and think briefly first."}]}}
+{"type":"thinking","subtype":"delta","text":"The user wants a short greeting. "}
+{"type":"thinking","subtype":"delta","text":"I'll keep it to one sentence."}
+{"type":"thinking","subtype":"completed"}
+{"type":"assistant","delta":{"text":"Hello"}}
+{"type":"assistant","delta":{"text":"! How can I help"}}
+{"type":"assistant","delta":{"text":" you today?"}}
+{"type":"result","subtype":"success","result":"Hello! How can I help you today?","session_id":"c0ffee00-cafe-4bad-babe-cursor000001","duration_ms":1840,"usage":{"input_tokens":42,"output_tokens":9,"total_tokens":51}}

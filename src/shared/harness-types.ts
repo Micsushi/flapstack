@@ -1,4 +1,4 @@
-export const AGENT_HARNESSES = ["codex", "claude-code"] as const
+export const AGENT_HARNESSES = ["codex", "claude-code", "cursor-agent"] as const
 
 export type AgentHarness = (typeof AGENT_HARNESSES)[number]
 
@@ -14,6 +14,9 @@ export type HarnessPermissionControl =
   | "acp-session-cwd"
   | "codex-sandbox"
   | "codex-approval-policy"
+  | "cursor-mode"
+  | "cursor-sandbox"
+  | "cursor-approval"
   | "filesystem-write-scope"
   | "shell"
   | "network"

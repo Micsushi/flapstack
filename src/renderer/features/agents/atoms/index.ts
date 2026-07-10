@@ -7,6 +7,7 @@ import {
   DEFAULT_CLAUDE_MODEL_ID,
   DEFAULT_CODEX_MODEL_ID,
   DEFAULT_CODEX_THINKING,
+  DEFAULT_CURSOR_MODEL_ID,
   type ClaudeEffortLevel,
   type CodexThinkingLevel,
 } from "../../../../shared/model-catalog"
@@ -361,6 +362,40 @@ export const subChatCodexModelIdAtomFamily = atomFamily((subChatId: string) =>
       const current = get(subChatCodexModelIdsStorageAtom)
       if (current[subChatId] === newModelId) return
       set(subChatCodexModelIdsStorageAtom, { ...current, [subChatId]: newModelId })
+    },
+  ),
+)
+
+// --- Cursor (`cursor-agent`) model selection — Stage 2 Track D (D5) ---
+// Falls back to lastSelectedCursorModelIdAtom, then "auto".
+export const lastSelectedCursorModelIdAtom = atomWithStorage<string>(
+  "agents:lastSelectedCursorModelId",
+  DEFAULT_CURSOR_MODEL_ID,
+  undefined,
+  { getOnInit: true },
+)
+
+const subChatCursorModelIdsStorageAtom = atomWithStorage<Record<string, string>>(
+  "agents:subChatCursorModelIds",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+export const subChatCursorModelIdAtomFamily = atomFamily((subChatId: string) =>
+  atom(
+    (get) => {
+      if (!subChatId) return get(lastSelectedCursorModelIdAtom)
+      return get(subChatCursorModelIdsStorageAtom)[subChatId] ?? get(lastSelectedCursorModelIdAtom)
+    },
+    (get, set, newModelId: string) => {
+      if (!subChatId) {
+        set(lastSelectedCursorModelIdAtom, newModelId)
+        return
+      }
+      const current = get(subChatCursorModelIdsStorageAtom)
+      if (current[subChatId] === newModelId) return
+      set(subChatCursorModelIdsStorageAtom, { ...current, [subChatId]: newModelId })
     },
   ),
 )

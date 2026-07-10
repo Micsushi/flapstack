@@ -31,6 +31,7 @@ import {
   lastSelectedCodexFastModeAtom,
   lastSelectedCodexModelIdAtom,
   lastSelectedCodexThinkingAtom,
+  lastSelectedCursorModelIdAtom,
   lastSelectedBranchesAtom,
   lastSelectedModelIdAtom,
   lastSelectedRepoAtom,
@@ -119,6 +120,7 @@ import {
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
+  CURSOR_MODELS,
   DEFAULT_CLAUDE_MODEL_ID,
   type ClaudeEffortLevel,
   type CodexThinkingLevel,
@@ -168,7 +170,7 @@ function useAvailableModels() {
 // Agent providers
 const agents = [
   { id: "claude-code", name: "Claude Code", hasModels: true },
-  { id: "cursor", name: "Cursor CLI", disabled: true },
+  { id: "cursor-agent", name: "Cursor", hasModels: true },
   { id: "codex", name: "OpenAI Codex" },
 ]
 
@@ -281,6 +283,12 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
+  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
+  const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
+  const cursorLoginMutation = trpc.cursor.startLogin.useMutation({
+    onSuccess: () => toast.info("Complete Cursor login in the browser, then retry."),
+    onError: (error) => toast.error(`Could not start Cursor login: ${error.message}`),
+  })
   const isClaudeConnected =
     Boolean(claudeCodeIntegration?.isConnected) ||
     anthropicOnboardingCompleted ||
@@ -363,6 +371,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [lastSelectedCodexFastMode, setLastSelectedCodexFastMode] = useAtom(
     lastSelectedCodexFastModeAtom,
   )
+  const [lastSelectedCursorModelId, setLastSelectedCursorModelId] = useAtom(
+    lastSelectedCursorModelIdAtom,
+  )
   const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom)
 
   const [selectedModel, setSelectedModel] = useState(
@@ -408,6 +419,21 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       CODEX_MODELS[0]!,
     [codexUiModels, lastSelectedCodexModelId],
   )
+  const cursorUiModels = useMemo(() => {
+    const ids = cursorModelData?.models?.length
+      ? cursorModelData.models
+      : CURSOR_MODELS.map((model) => model.id)
+    return ids.map((id) => ({
+      id,
+      name: CURSOR_MODELS.find((model) => model.id === id)?.name ?? id,
+    }))
+  }, [cursorModelData?.models])
+  const selectedCursorModel = useMemo(
+    () =>
+      cursorUiModels.find((model) => model.id === lastSelectedCursorModelId) ||
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
+    [cursorUiModels, lastSelectedCursorModelId],
+  )
 
   const codexFastModeEnabled =
     selectedCodexModel.supportsFastMode === true && lastSelectedCodexFastMode
@@ -446,8 +472,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     if (selectedAgent.id === "codex") {
       return `${selectedCodexModel.id}/${selectedCodexThinking}`
     }
+    if (selectedAgent.id === "cursor-agent") {
+      return selectedCursorModel.id
+    }
     return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
-  }, [selectedAgent.id, selectedCodexModel.id, selectedCodexThinking, selectedModel?.id])
+  }, [
+    selectedAgent.id,
+    selectedCodexModel.id,
+    selectedCodexThinking,
+    selectedCursorModel.id,
+    selectedModel?.id,
+  ])
 
   // Determine current Ollama model (selected or recommended)
   const currentOllamaModel =
@@ -456,6 +491,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const selectedModelLabel = useMemo(() => {
     if (selectedAgent.id === "codex") {
       return selectedCodexModel.name
+    }
+    if (selectedAgent.id === "cursor-agent") {
+      return selectedCursorModel.name
     }
 
     if (availableModels.isOffline && availableModels.hasOllama) {
@@ -474,6 +512,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [
     selectedAgent.id,
     selectedCodexModel.name,
+    selectedCursorModel.name,
     availableModels.isOffline,
     availableModels.hasOllama,
     currentOllamaModel,
@@ -1240,6 +1279,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
       scope: chatScope,
       name: message.trim().slice(0, 50), // Use first 50 chars as chat name
+      harness: selectedAgent.id,
       model: selectedChatModel,
       initialMessageParts: parts.length > 0 ? parts : undefined,
       baseBranch:
@@ -1958,13 +1998,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                       <AgentModelSelector
                         open={isModelDropdownOpen}
                         onOpenChange={setIsModelDropdownOpen}
-                        selectedAgentId={selectedAgent.id as "claude-code" | "codex"}
+                        selectedAgentId={
+                          selectedAgent.id as "claude-code" | "codex" | "cursor-agent"
+                        }
                         onSelectedAgentIdChange={(provider) => {
                           if (provider === "claude-code") {
                             setSelectedAgent(claudeAgent)
                           } else {
                             setSelectedAgent(
-                              enabledAgents.find((agent) => agent.id === "codex") || fallbackAgent,
+                              enabledAgents.find((agent) => agent.id === provider) || fallbackAgent,
                             )
                           }
                           setLastSelectedAgentId(provider)
@@ -2027,6 +2069,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                               selectedCodexModel.supportsFastMode ? enabled : false,
                             ),
                           isConnected: codexOnboardingCompleted,
+                        }}
+                        cursor={{
+                          models: cursorUiModels,
+                          selectedModelId: selectedCursorModel.id,
+                          onSelectModel: (modelId) => {
+                            const model = cursorUiModels.find((item) => item.id === modelId)
+                            if (model) setLastSelectedCursorModelId(model.id)
+                          },
+                          isConnected: cursorIntegration?.isConnected === true,
+                          isLoginPending: cursorLoginMutation.isPending,
+                          onLogin: () => cursorLoginMutation.mutate(),
                         }}
                       />
                     </div>
@@ -2357,6 +2410,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                     projectId: validatedProject.id,
                     scope: "project",
                     name: "Worktree Setup",
+                    harness: selectedAgent.id,
                     model: selectedChatModel,
                     initialMessageParts: [{ type: "text", text: prompt }],
                     useWorktree: false,

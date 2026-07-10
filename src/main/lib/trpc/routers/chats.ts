@@ -446,7 +446,13 @@ export const chatsRouter = router({
       // Create initial sub-chat with user message (AI SDK format)
       // If initialMessageParts is provided, use it; otherwise fallback to text-only message
       let initialMessages = "[]"
-      const initialMetadata = input.model ? { model: input.model } : undefined
+      const initialMetadata =
+        input.model || input.harness
+          ? {
+              ...(input.model ? { model: input.model } : {}),
+              ...(input.harness ? { harness: input.harness } : {}),
+            }
+          : undefined
 
       if (input.initialMessageParts && input.initialMessageParts.length > 0) {
         initialMessages = JSON.stringify([
@@ -472,6 +478,8 @@ export const chatsRouter = router({
         .insert(subChats)
         .values({
           chatId: chat.id,
+          harness: input.harness,
+          model: input.model,
           mode: input.mode,
           messages: initialMessages,
         })

@@ -151,6 +151,164 @@ export function buildCodexPermissionApplication(params: {
   }
 }
 
+/**
+ * Cursor (`cursor-agent`) permission flags, resolved from a Flapstack mode.
+ * Verified CLI surface (Stage 2 D0):
+ *   --mode plan | ask   (read-only / planning / Q&A)
+ *   --sandbox enabled | disabled
+ *   --auto-review       (approve safe edits, prompt on the rest)
+ *   -f / --force / --yolo (auto-approve everything)
+ * Cursor maps more cleanly than Codex, but the app still records honest
+ * limitations for controls the CLI does not enforce (network, git, secrets…).
+ */
+export type CursorPermissionFlags = {
+  mode?: "plan" | "ask"
+  sandbox?: "enabled" | "disabled"
+  autoReview: boolean
+  force: boolean
+}
+
+export function mapCursorPermissionFlags(mode: PermissionMode): CursorPermissionFlags {
+  switch (mode) {
+    case "read-only":
+      return { mode: "plan", sandbox: "enabled", autoReview: false, force: false }
+    case "ask-before-edits":
+      return { sandbox: "enabled", autoReview: true, force: false }
+    case "auto-edit-project-only":
+      // No Cursor flag scopes writes to the project dir; cwd placement + sandbox
+      // is the closest honest approximation. Limitation recorded below.
+      return { sandbox: "enabled", autoReview: true, force: false }
+    case "full-access":
+      return { sandbox: "disabled", autoReview: false, force: true }
+    case "custom":
+    default:
+      return { sandbox: "enabled", autoReview: true, force: false }
+  }
+}
+
+export function buildCursorPermissionApplication(params: {
+  permissionMode: PermissionMode
+  cwd?: string | null
+}): HarnessPermissionApplication {
+  const cwd = params.cwd?.trim() || null
+  const flags = mapCursorPermissionFlags(params.permissionMode)
+
+  const enforced: HarnessPermissionApplication["enforced"] = [
+    {
+      control: "process-cwd" as const,
+      applied: Boolean(cwd),
+      ...(cwd ? { value: cwd } : {}),
+      reason: cwd
+        ? "The cursor-agent child process is spawned with this cwd / --workspace."
+        : "No cwd was provided for this launch.",
+    },
+    {
+      control: "cursor-mode" as const,
+      applied: Boolean(flags.mode),
+      ...(flags.mode ? { value: flags.mode } : {}),
+      reason: flags.mode
+        ? `cursor-agent is launched with --mode ${flags.mode}.`
+        : "No read-only/plan mode flag is set for this permission mode.",
+    },
+    {
+      control: "cursor-sandbox" as const,
+      applied: Boolean(flags.sandbox),
+      ...(flags.sandbox ? { value: flags.sandbox } : {}),
+      reason: flags.sandbox
+        ? `cursor-agent is launched with --sandbox ${flags.sandbox}.`
+        : "No sandbox flag is set for this permission mode.",
+    },
+    {
+      control: "cursor-approval" as const,
+      applied: flags.autoReview || flags.force,
+      value: flags.force ? "force" : flags.autoReview ? "auto-review" : "prompt",
+      reason: flags.force
+        ? "cursor-agent runs with --force (auto-approve all tool calls)."
+        : flags.autoReview
+          ? "cursor-agent runs with --auto-review (approve safe edits, prompt on the rest)."
+          : "Approval is left to cursor-agent defaults for this mode.",
+    },
+  ]
+
+  const limitations = getCursorPermissionLimitations(params.permissionMode)
+  const warnings = [
+    `cursor-agent permission flags applied: ${describeCursorFlags(flags)}.`,
+    ...limitations.map((limitation) => limitation.reason),
+  ]
+
+  const applied = params.permissionMode === "read-only" || params.permissionMode === "full-access"
+
+  return {
+    requested: params.permissionMode,
+    applied,
+    degraded: limitations.length > 0,
+    enforced,
+    limitations,
+    warnings: Array.from(new Set(warnings)),
+    reason:
+      limitations.length > 0
+        ? "Flapstack records the requested permission mode and applies the cursor-agent mode/sandbox/approval flags it exposes, but some controls (network, git, secrets, project-only write scope) are not enforceable through the CLI."
+        : "Flapstack applies the available cursor-agent mode/sandbox/approval flags for this permission mode.",
+  }
+}
+
+function describeCursorFlags(flags: CursorPermissionFlags): string {
+  const parts: string[] = []
+  if (flags.mode) parts.push(`--mode ${flags.mode}`)
+  if (flags.sandbox) parts.push(`--sandbox ${flags.sandbox}`)
+  if (flags.autoReview) parts.push("--auto-review")
+  if (flags.force) parts.push("--force")
+  return parts.length > 0 ? parts.join(" ") : "(defaults)"
+}
+
+function getCursorPermissionLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
+  switch (mode) {
+    case "read-only":
+      return [
+        limitation(
+          "cursor-approval",
+          "deny all mutating tools",
+          "Plan mode strongly discourages edits, but Flapstack cannot prove cursor-agent will refuse every mutating tool for every model/version.",
+        ),
+      ]
+    case "ask-before-edits":
+      return [
+        limitation(
+          "filesystem-write-scope",
+          "ask before edits",
+          "Ask-before-edits maps to cursor-agent --auto-review; the approval prompt is cursor-agent's, not a Flapstack-owned edit gate.",
+        ),
+      ]
+    case "auto-edit-project-only":
+      return [
+        limitation(
+          "filesystem-write-scope",
+          "writes limited to the selected project/worktree",
+          "cwd/--workspace is set, but cursor-agent is not sandboxed to that directory by Flapstack.",
+        ),
+      ]
+    case "full-access":
+      return []
+    case "custom":
+      return [
+        limitation(
+          "shell",
+          "custom shell toggle",
+          "Shell access cannot be individually controlled through cursor-agent flags.",
+        ),
+        limitation("network", "custom network toggle", "Network access cannot be controlled here."),
+        limitation("git", "custom git toggle", "Git access cannot be controlled here."),
+        limitation("browser", "custom browser toggle", "Browser access cannot be controlled here."),
+        limitation(
+          "mcp",
+          "custom MCP toggle",
+          "MCP servers are managed via `cursor-agent mcp`, not custom mode.",
+        ),
+        limitation("secrets", "custom secrets toggle", "Secret access cannot be controlled here."),
+      ]
+  }
+}
+
 export function mapClaudeSdkPermissionMode(
   appPermissionMode: PermissionMode,
   chatMode: "plan" | "agent",

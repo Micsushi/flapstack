@@ -42,13 +42,13 @@ it for OpenSpec tracking.
 ## 3. Cursor harness (Track D)
 
 - [x] 3.0 D0 Verify `cursor-agent` CLI surface + reasoning fixture
-- [ ] 3.1 D1 Harness contract extension (`cursor-agent`, teal chip)
-- [ ] 3.2 D2 `cursor-agent` stream-json child-process adapter, including
+- [x] 3.1 D1 Harness contract extension (`cursor-agent`, teal chip)
+- [x] 3.2 D2 `cursor-agent` stream-json child-process adapter, including
       `type:"thinking"` event normalization into the shared Thinking UI when
       present
-- [ ] 3.3 D3 Onboarding + login/token detect
-- [ ] 3.4 D4 Permission mapping + honest limitations
-- [ ] 3.5 D5 Chips, model catalog, UI wiring
+- [x] 3.3 D3 Onboarding + login/token detect
+- [x] 3.4 D4 Permission mapping + honest limitations
+- [x] 3.5 D5 Chips, model catalog, UI wiring
 - [ ] 3.6 D-exit cursor harness tests + manual matrix
 
 ## 4. OpenRouter and NanoGPT OpenCode-backed Harnesses (Track E)

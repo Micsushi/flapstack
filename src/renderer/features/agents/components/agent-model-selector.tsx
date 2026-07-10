@@ -16,6 +16,7 @@ import {
 import {
   CheckIcon,
   ClaudeCodeIcon,
+  CursorIcon,
   IconChevronDown,
   ThinkingIcon,
 } from "../../../components/ui/icons"
@@ -35,7 +36,7 @@ const CodexIcon = ({ className }: { className?: string }) => (
   </svg>
 )
 
-export type AgentProviderId = "claude-code" | "codex"
+export type AgentProviderId = "claude-code" | "codex" | "cursor-agent"
 
 type ClaudeModelOption = {
   id: string
@@ -49,6 +50,11 @@ type CodexModelOption = {
   name: string
   thinkings: CodexThinkingLevel[]
   supportsFastMode?: boolean
+}
+
+type CursorModelOption = {
+  id: string
+  name: string
 }
 
 interface AgentModelSelectorProps {
@@ -88,16 +94,25 @@ interface AgentModelSelectorProps {
     onFastModeChange: (enabled: boolean) => void
     isConnected: boolean
   }
+  cursor: {
+    models: CursorModelOption[]
+    selectedModelId: string
+    onSelectModel: (modelId: string) => void
+    isConnected: boolean
+    isLoginPending: boolean
+    onLogin: () => void
+  }
 }
 
 type FlatModelItem =
   | { type: "claude"; model: ClaudeModelOption }
   | { type: "codex"; model: CodexModelOption }
+  | { type: "cursor"; model: CursorModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
   | { type: "custom" }
 
 type ModelGroup = {
-  id: "claude-code" | "codex"
+  id: AgentProviderId
   label: string
   items: FlatModelItem[]
 }
@@ -450,6 +465,7 @@ export function AgentModelSelector({
   onContinueWithProvider,
   claude,
   codex,
+  cursor,
 }: AgentModelSelectorProps) {
   const [search, setSearch] = useState("")
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
@@ -457,6 +473,7 @@ export function AgentModelSelector({
   const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>({
     "claude-code": true,
     codex: true,
+    "cursor-agent": true,
   })
 
   const canSelectProvider = (provider: AgentProviderId) =>
@@ -486,11 +503,17 @@ export function AgentModelSelector({
       codexItems.push({ type: "codex", model: m })
     }
 
+    const cursorItems: FlatModelItem[] = cursor.models.map((model) => ({
+      type: "cursor",
+      model,
+    }))
+
     return [
       { id: "claude-code", label: "Claude Code", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
+      { id: "cursor-agent", label: "Cursor", items: cursorItems },
     ]
-  }, [claude, codex])
+  }, [claude, codex, cursor])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
@@ -509,6 +532,8 @@ export function AgentModelSelector({
                 `${item.model.name} ${item.model.version}`.toLowerCase().includes(q)
               )
             case "codex":
+              return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
+            case "cursor":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "ollama":
               return item.modelName.toLowerCase().includes(q)
@@ -542,6 +567,8 @@ export function AgentModelSelector({
       <Zap className="h-4 w-4 text-amber-500" />
     ) : selectedAgentId === "codex" ? (
       <CodexIcon className="h-3.5 w-3.5" />
+    ) : selectedAgentId === "cursor-agent" ? (
+      <CursorIcon className="h-3.5 w-3.5" />
     ) : (
       <ClaudeCodeIcon className="h-3.5 w-3.5" />
     )
@@ -552,6 +579,8 @@ export function AgentModelSelector({
         return selectedAgentId === "claude-code" && claude.selectedModelId === item.model.id
       case "codex":
         return selectedAgentId === "codex" && codex.selectedModelId === item.model.id
+      case "cursor":
+        return selectedAgentId === "cursor-agent" && cursor.selectedModelId === item.model.id
       case "ollama":
         return selectedAgentId === "claude-code" && claude.selectedOllamaModel === item.modelName
       case "custom":
@@ -560,7 +589,9 @@ export function AgentModelSelector({
   }
 
   const getItemProvider = (item: FlatModelItem): AgentProviderId => {
-    return item.type === "codex" ? "codex" : "claude-code"
+    if (item.type === "codex") return "codex"
+    if (item.type === "cursor") return "cursor-agent"
+    return "claude-code"
   }
 
   const isItemDisabled = (item: FlatModelItem): boolean => {
@@ -629,6 +660,11 @@ export function AgentModelSelector({
         onSelectedAgentIdChange("codex")
         codex.onSelectModel(item.model.id)
         break
+      case "cursor":
+        if (!canSelectProvider("cursor-agent")) return
+        onSelectedAgentIdChange("cursor-agent")
+        cursor.onSelectModel(item.model.id)
+        break
       case "ollama":
         if (!canSelectProvider("claude-code")) return
         onSelectedAgentIdChange("claude-code")
@@ -648,6 +684,8 @@ export function AgentModelSelector({
         return `${item.model.name} ${item.model.version}`
       case "codex":
         return item.model.name
+      case "cursor":
+        return item.model.name
       case "ollama":
         return item.modelName + (item.isRecommended ? " (recommended)" : "")
       case "custom":
@@ -661,6 +699,8 @@ export function AgentModelSelector({
         return `claude-${item.model.id}`
       case "codex":
         return `codex-${item.model.id}`
+      case "cursor":
+        return `cursor-${item.model.id}`
       case "ollama":
         return `ollama-${item.modelName}`
       case "custom":
@@ -793,6 +833,8 @@ export function AgentModelSelector({
                       <span className="flex items-center gap-1.5">
                         {group.id === "codex" ? (
                           <CodexIcon className="h-3 w-3 shrink-0" />
+                        ) : group.id === "cursor-agent" ? (
+                          <CursorIcon className="h-3 w-3 shrink-0" />
                         ) : (
                           <ClaudeCodeIcon className="h-3 w-3 shrink-0" />
                         )}
@@ -833,6 +875,23 @@ export function AgentModelSelector({
                           </CommandItem>
                         )
                       })}
+
+                    {selectedAgentId === "cursor-agent" && !cursor.isConnected && (
+                      <>
+                        <div className="flex items-center justify-between gap-3 px-2 py-2 text-xs text-muted-foreground">
+                          <span>Cursor CLI is not connected.</span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={cursor.isLoginPending}
+                            onClick={cursor.onLogin}
+                          >
+                            {cursor.isLoginPending ? "Opening…" : "Connect"}
+                          </Button>
+                        </div>
+                        <CommandSeparator />
+                      </>
+                    )}
                   </CommandGroup>
                 )
               })
@@ -860,7 +919,13 @@ export function AgentModelSelector({
 
       <CrossProviderConfirmDialog
         isOpen={confirmDialogOpen}
-        providerName={pendingProvider === "codex" ? "Codex" : "Claude Code"}
+        providerName={
+          pendingProvider === "codex"
+            ? "Codex"
+            : pendingProvider === "cursor-agent"
+              ? "Cursor"
+              : "Claude Code"
+        }
         onConfirm={handleConfirmCrossProvider}
         onClose={handleCloseConfirmDialog}
       />

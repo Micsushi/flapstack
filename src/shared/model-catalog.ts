@@ -92,6 +92,41 @@ export const CODEX_MODELS = [
   },
 ] as const
 
+// ---------------------------------------------------------------------------
+// Cursor (`cursor-agent` CLI) — Stage 2 Track D
+//
+// `cursor-agent --model <id>` accepts a bare model id, `auto`, or an id with
+// parameterized overrides, e.g. `claude-opus-4-8[context=1m,effort=high,fast=false]`.
+// Cursor iterates quickly and gates many named models behind paid plans, so this
+// catalog stays intentionally small and honest. `auto` is always available and
+// is the default; named ids are best-effort and validated at launch, not assumed.
+// Live ids can be enumerated with `cursor-agent models` / `--list-models`.
+// ---------------------------------------------------------------------------
+
+export type CursorEffortLevel = "low" | "medium" | "high"
+
+export const CURSOR_MODELS = [
+  { id: "auto", name: "Auto", efforts: [] as readonly CursorEffortLevel[] },
+] as const
+
+const CURSOR_MODEL_LABELS: Record<string, string> = Object.fromEntries(
+  CURSOR_MODELS.map((model) => [model.id, model.name]),
+)
+
+/**
+ * Format a Cursor model id (+ optional effort) into the `cursor-agent --model`
+ * argument. `auto` and ids without an effort pass through unchanged; an effort
+ * is emitted with Cursor's bracket-override syntax: `claude-opus-4-8[effort=high]`.
+ * If the id already carries a bracket override it is left untouched.
+ */
+export function formatCursorModelForCli(modelId: string, effort?: CursorEffortLevel): string {
+  const normalized = modelId.trim()
+  if (!normalized || normalized === "auto") return normalized || "auto"
+  if (normalized.includes("[")) return normalized
+  if (!effort) return normalized
+  return `${normalized}[effort=${effort}]`
+}
+
 const CLAUDE_ALIAS_LABELS: Record<string, string> = {
   best: "Best",
   fable: "Fable 5",
@@ -123,6 +158,9 @@ export function formatModelDisplayName(model?: string | null): string | null {
 
   const alias = CLAUDE_ALIAS_LABELS[base]
   if (alias) return alias + suffix
+
+  const cursorLabel = CURSOR_MODEL_LABELS[base]
+  if (cursorLabel) return cursorLabel + suffix
 
   const codexModel = CODEX_MODELS.find((m) => m.id === base)
   if (codexModel) return codexModel.name + suffix
@@ -159,3 +197,4 @@ export const DEFAULT_CODEX_THINKING: CodexThinkingLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_THINKING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_THINKING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
 export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_THINKING}`
+export const DEFAULT_CURSOR_MODEL_ID = "auto"
