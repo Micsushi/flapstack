@@ -9,6 +9,8 @@ import {
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, initDatabase } from "./lib/db"
+import { runStartupCatchUp } from "./lib/usage/catch-up"
+import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
   isCliInstalled,
@@ -784,6 +786,10 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      void runStartupCatchUp({
+        db: initDatabase(),
+        getSecret: async (key) => getUsageSecret(key),
+      }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
     } catch (error) {
       console.error("[App] Failed to initialize database:", error)
     }

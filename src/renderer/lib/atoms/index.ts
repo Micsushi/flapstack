@@ -180,6 +180,7 @@ export type SettingsTab =
   | "plugins"
   | "worktrees"
   | "projects"
+  | "usage"
   | "debug"
   | "beta"
   | "future"

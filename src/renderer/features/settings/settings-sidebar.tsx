@@ -90,6 +90,11 @@ const ADVANCED_TABS_BASE = [
     icon: PluginFilledIcon,
   },
   {
+    id: "usage" as SettingsTab,
+    label: "Usage",
+    icon: SlidersFilledIcon,
+  },
+  {
     id: "future" as SettingsTab,
     label: "Future Scaffolds",
     icon: Route,

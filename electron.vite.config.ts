@@ -16,7 +16,10 @@ export default defineConfig({
     ],
     build: {
       lib: {
-        entry: resolve(__dirname, "src/main/index.ts"),
+        entry: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          "usage-daemon": resolve(__dirname, "src/main/usage-daemon.ts"),
+        },
       },
       rollupOptions: {
         external: [
