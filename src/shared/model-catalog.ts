@@ -28,65 +28,73 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
 }
 
 export type CodexAuthSurface = "chatgpt" | "api-key"
-export type CodexThinkingLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+export type CodexReasoningLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 
-const CODEX_STANDARD_THINKINGS: readonly CodexThinkingLevel[] = ["low", "medium", "high", "xhigh"]
-const CODEX_DEEP_THINKINGS: readonly CodexThinkingLevel[] = [
+const CODEX_STANDARD_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]
+const CODEX_DEEP_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
   "low",
   "medium",
   "high",
   "xhigh",
   "max",
 ]
-const CODEX_ULTRA_THINKINGS: readonly CodexThinkingLevel[] = [...CODEX_DEEP_THINKINGS, "ultra"]
+const CODEX_ULTRA_REASONING_LEVELS: readonly CodexReasoningLevel[] = [
+  ...CODEX_DEEP_REASONING_LEVELS,
+  "ultra",
+]
 
 export const CODEX_MODELS = [
   {
     id: "gpt-5.5",
     name: "GPT-5.5",
-    thinkings: CODEX_STANDARD_THINKINGS,
+    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
-    thinkings: CODEX_ULTRA_THINKINGS,
+    reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.6-terra",
     name: "GPT-5.6 Terra",
-    thinkings: CODEX_ULTRA_THINKINGS,
+    reasoningLevels: CODEX_ULTRA_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.6-luna",
     name: "GPT-5.6 Luna",
-    thinkings: CODEX_DEEP_THINKINGS,
+    reasoningLevels: CODEX_DEEP_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.4",
     name: "GPT-5.4",
-    thinkings: CODEX_STANDARD_THINKINGS,
+    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.4-mini",
     name: "GPT-5.4 Mini",
-    thinkings: CODEX_STANDARD_THINKINGS,
+    reasoningLevels: CODEX_STANDARD_REASONING_LEVELS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: false,
   },
   {
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
-    thinkings: ["low", "medium", "high", "xhigh"] as const,
+    reasoningLevels: ["low", "medium", "high", "xhigh"] as const,
     authSurfaces: ["chatgpt"] as CodexAuthSurface[],
     supportsFastMode: false,
   },
@@ -193,8 +201,8 @@ export function formatCodexModelForAcp(modelId: string): string {
 export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-8"
 export const DEFAULT_CLAUDE_EFFORT: ClaudeEffortLevel = "high"
 export const DEFAULT_CODEX_MODEL_ID = "gpt-5.5"
-export const DEFAULT_CODEX_THINKING: CodexThinkingLevel = "high"
-export const DEFAULT_CODEX_MODEL_WITH_THINKING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_THINKING}`
+export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
+export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
-export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_THINKING}`
+export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CURSOR_MODEL_ID = "auto"

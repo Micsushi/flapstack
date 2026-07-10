@@ -1,0 +1,57 @@
+{
+  "provider": "nanogpt",
+  "source": "docs",
+  "note": "OpenAI-compatible SSE. delta.reasoning (current) and delta.reasoning_content (legacy) map to the same path; final message.reasoning / message.reasoning_content are backfill.",
+  "cases": [
+    {
+      "name": "nanogpt-reasoning-delta",
+      "description": "Current delta.reasoning field.",
+      "raw": { "choices": [{ "delta": { "reasoning": "Weighing two approaches." } }] },
+      "expected": [
+        { "kind": "reasoning-output", "phase": "delta", "text": "Weighing two approaches." }
+      ]
+    },
+    {
+      "name": "nanogpt-reasoning-content-delta",
+      "description": "Legacy delta.reasoning_content normalizes into the same path.",
+      "raw": { "choices": [{ "delta": { "reasoning_content": "Legacy reasoning chunk." } }] },
+      "expected": [
+        { "kind": "reasoning-output", "phase": "delta", "text": "Legacy reasoning chunk." }
+      ]
+    },
+    {
+      "name": "nanogpt-reasoning-final",
+      "description": "Final message.reasoning as backfill.",
+      "raw": { "choices": [{ "message": { "reasoning": "Chose the second approach." } }] },
+      "expected": [
+        { "kind": "reasoning-output", "phase": "final", "text": "Chose the second approach." }
+      ]
+    },
+    {
+      "name": "nanogpt-encrypted-reasoning-detail",
+      "description": "Provider-private reasoning detail remains opaque.",
+      "raw": {
+        "choices": [
+          {
+            "delta": {
+              "reasoning_details": [{ "type": "reasoning.encrypted", "data": "PRIVATE_BLOB" }]
+            }
+          }
+        ]
+      },
+      "expected": [{ "kind": "opaque", "phase": "delta", "opaque": true }]
+    },
+    {
+      "name": "nanogpt-reasoning-tokens",
+      "description": "OpenAI-compatible reasoning token usage stays labeled metadata.",
+      "raw": { "usage": { "completion_tokens_details": { "reasoning_tokens": 48 } } },
+      "expected": [{ "kind": "reasoning-tokens", "phase": "final", "tokens": 48 }]
+    },
+    {
+      "name": "nanogpt-no-reasoning",
+      "description": "Model without visible reasoning is not a failure.",
+      "raw": { "choices": [{ "delta": { "content": "Done." } }] },
+      "expected": []
+    }
+  ]
+}

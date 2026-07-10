@@ -7,7 +7,7 @@ import {
   type CustomClaudeConfig,
   customClaudeConfigAtom,
   enableTasksAtom,
-  extendedThinkingEnabledAtom,
+  reasoningOutputEnabledAtom,
   historyEnabledAtom,
   normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
@@ -166,12 +166,12 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const metadata = lastAssistant?.metadata as AgentMessageMetadata | undefined
     const sessionId = metadata?.sessionId
 
-    // Read extended thinking setting dynamically (so toggle applies to existing chats)
-    const thinkingEnabled = appStore.get(extendedThinkingEnabledAtom)
-    // Max thinking tokens for extended thinking mode
+    // Read reasoning-output setting dynamically (so toggle applies to existing chats)
+    const reasoningOutputEnabled = appStore.get(reasoningOutputEnabledAtom)
+    // Max provider reasoning tokens for reasoning-output mode
     // SDK adds +1 internally, so 64000 becomes 64001 which exceeds Opus 4.5 limit
     // Using 32000 to stay safely under the 64000 max output tokens limit
-    const maxThinkingTokens = thinkingEnabled ? 32_000 : undefined
+    const maxReasoningOutputTokens = reasoningOutputEnabled ? 32_000 : undefined
     const historyEnabled = appStore.get(historyEnabledAtom)
     const enableTasks = appStore.get(enableTasksAtom)
 
@@ -215,7 +215,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             projectPath: this.config.projectPath, // Original project path for MCP config lookup
             mode: currentMode,
             sessionId,
-            ...(maxThinkingTokens && { maxThinkingTokens }),
+            ...(maxReasoningOutputTokens && { maxReasoningOutputTokens }),
             effort: claudeEffort,
             ...(modelString && { model: modelString }),
             ...(customConfig && { customConfig }),

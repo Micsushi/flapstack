@@ -30,7 +30,7 @@ import {
   lastSelectedClaudeEffortAtom,
   lastSelectedCodexFastModeAtom,
   lastSelectedCodexModelIdAtom,
-  lastSelectedCodexThinkingAtom,
+  lastSelectedCodexReasoningAtom,
   lastSelectedCursorModelIdAtom,
   lastSelectedBranchesAtom,
   lastSelectedModelIdAtom,
@@ -57,7 +57,7 @@ import {
   codexApiKeyAtom,
   codexOnboardingCompletedAtom,
   customClaudeConfigAtom,
-  extendedThinkingEnabledAtom,
+  reasoningOutputEnabledAtom,
   hiddenModelsAtom,
   normalizeCodexApiKey,
   normalizeCustomClaudeConfig,
@@ -123,7 +123,7 @@ import {
   CURSOR_MODELS,
   DEFAULT_CLAUDE_MODEL_ID,
   type ClaudeEffortLevel,
-  type CodexThinkingLevel,
+  type CodexReasoningLevel,
 } from "../lib/models"
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
@@ -362,8 +362,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [lastSelectedCodexModelId, setLastSelectedCodexModelId] = useAtom(
     lastSelectedCodexModelIdAtom,
   )
-  const [lastSelectedCodexThinking, setLastSelectedCodexThinking] = useAtom(
-    lastSelectedCodexThinkingAtom,
+  const [lastSelectedCodexReasoning, setLastSelectedCodexReasoning] = useAtom(
+    lastSelectedCodexReasoningAtom,
   )
   const [lastSelectedClaudeEffort, setLastSelectedClaudeEffort] = useAtom(
     lastSelectedClaudeEffortAtom,
@@ -374,7 +374,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [lastSelectedCursorModelId, setLastSelectedCursorModelId] = useAtom(
     lastSelectedCursorModelIdAtom,
   )
-  const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom)
+  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
 
   const [selectedModel, setSelectedModel] = useState(
     () =>
@@ -438,29 +438,33 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const codexFastModeEnabled =
     selectedCodexModel.supportsFastMode === true && lastSelectedCodexFastMode
 
-  const selectedCodexThinking = useMemo<CodexThinkingLevel>(() => {
-    if (selectedCodexModel.thinkings.includes(lastSelectedCodexThinking as CodexThinkingLevel)) {
-      return lastSelectedCodexThinking as CodexThinkingLevel
+  const selectedCodexReasoning = useMemo<CodexReasoningLevel>(() => {
+    if (
+      selectedCodexModel.reasoningLevels.includes(lastSelectedCodexReasoning as CodexReasoningLevel)
+    ) {
+      return lastSelectedCodexReasoning as CodexReasoningLevel
     }
 
-    if (selectedCodexModel.thinkings.includes("high")) {
+    if (selectedCodexModel.reasoningLevels.includes("high")) {
       return "high"
     }
 
-    return selectedCodexModel.thinkings[0]!
-  }, [selectedCodexModel, lastSelectedCodexThinking])
+    return selectedCodexModel.reasoningLevels[0]!
+  }, [selectedCodexModel, lastSelectedCodexReasoning])
 
   useEffect(() => {
-    if (selectedCodexModel.thinkings.includes(lastSelectedCodexThinking as CodexThinkingLevel)) {
+    if (
+      selectedCodexModel.reasoningLevels.includes(lastSelectedCodexReasoning as CodexReasoningLevel)
+    ) {
       return
     }
 
-    setLastSelectedCodexThinking(selectedCodexThinking)
+    setLastSelectedCodexReasoning(selectedCodexReasoning)
   }, [
     selectedCodexModel,
-    lastSelectedCodexThinking,
-    selectedCodexThinking,
-    setLastSelectedCodexThinking,
+    lastSelectedCodexReasoning,
+    selectedCodexReasoning,
+    setLastSelectedCodexReasoning,
   ])
 
   useEffect(() => {
@@ -470,7 +474,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   const selectedChatModel = useMemo(() => {
     if (selectedAgent.id === "codex") {
-      return `${selectedCodexModel.id}/${selectedCodexThinking}`
+      return `${selectedCodexModel.id}/${selectedCodexReasoning}`
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.id
@@ -479,7 +483,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [
     selectedAgent.id,
     selectedCodexModel.id,
-    selectedCodexThinking,
+    selectedCodexReasoning,
     selectedCursorModel.id,
     selectedModel?.id,
   ])
@@ -2036,8 +2040,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           recommendedOllamaModel: availableModels.recommendedModel,
                           onSelectOllamaModel: setSelectedOllamaModel,
                           isConnected: isClaudeConnected,
-                          thinkingEnabled,
-                          onThinkingChange: setThinkingEnabled,
+                          reasoningOutputEnabled,
+                          onReasoningOutputChange: setReasoningOutputEnabled,
                           selectedEffort: selectedClaudeEffort,
                           onSelectEffort: setLastSelectedClaudeEffort,
                         }}
@@ -2047,22 +2051,22 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           onSelectModel: (modelId) => {
                             const model = codexUiModels.find((item) => item.id === modelId)
                             if (!model) return
-                            const nextThinking = model.thinkings.includes(
-                              lastSelectedCodexThinking as CodexThinkingLevel,
+                            const nextReasoning = model.reasoningLevels.includes(
+                              lastSelectedCodexReasoning as CodexReasoningLevel,
                             )
-                              ? (lastSelectedCodexThinking as CodexThinkingLevel)
-                              : model.thinkings.includes("high")
+                              ? (lastSelectedCodexReasoning as CodexReasoningLevel)
+                              : model.reasoningLevels.includes("high")
                                 ? "high"
-                                : model.thinkings[0]!
+                                : model.reasoningLevels[0]!
 
                             setLastSelectedCodexModelId(model.id)
-                            setLastSelectedCodexThinking(nextThinking)
+                            setLastSelectedCodexReasoning(nextReasoning)
                             if (!model.supportsFastMode) {
                               setLastSelectedCodexFastMode(false)
                             }
                           },
-                          selectedThinking: selectedCodexThinking,
-                          onSelectThinking: setLastSelectedCodexThinking,
+                          selectedReasoning: selectedCodexReasoning,
+                          onSelectReasoning: setLastSelectedCodexReasoning,
                           fastModeEnabled: codexFastModeEnabled,
                           onFastModeChange: (enabled) =>
                             setLastSelectedCodexFastMode(

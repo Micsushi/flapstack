@@ -67,7 +67,7 @@ function normalizeLiveModel(model) {
 function normalizeStaticModel(model) {
   return {
     id: model.id,
-    efforts: [...(model.thinkings ?? [])],
+    efforts: [...(model.reasoningLevels ?? [])],
     supportsFastMode: Boolean(model.supportsFastMode),
     supportsApiKey: Boolean(model.authSurfaces?.includes("api-key")),
   }

@@ -5264,7 +5264,7 @@ export function AIPenIcon(props: IconProps) {
   )
 }
 
-export function ThinkingIcon(props: IconProps) {
+export function ReasoningOutputIcon(props: IconProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

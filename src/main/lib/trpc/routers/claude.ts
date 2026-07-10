@@ -919,7 +919,7 @@ export const claudeRouter = router({
           })
           .optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
-        maxThinkingTokens: z.number().optional(), // Enable extended thinking
+        maxReasoningOutputTokens: z.number().optional(), // Enable reasoning output
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
@@ -2022,8 +2022,9 @@ ${prompt}
                 ...(resolvedModel && { model: resolvedModel }),
                 ...(input.effort && { effort: input.effort }),
                 // fallbackModel: "claude-opus-4-5-20251101",
-                ...(input.maxThinkingTokens && {
-                  maxThinkingTokens: input.maxThinkingTokens,
+                ...(input.maxReasoningOutputTokens && {
+                  // Claude SDK provider option; keep the external field name.
+                  maxThinkingTokens: input.maxReasoningOutputTokens,
                 }),
               },
             }

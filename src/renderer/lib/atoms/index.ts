@@ -345,10 +345,9 @@ export const activeConfigAtom = atom((get) => {
   return undefined
 })
 
-// Preferences - Extended Thinking
-// When enabled, Claude will use extended thinking for deeper reasoning (128K tokens)
-// Note: Extended thinking disables response streaming
-export const extendedThinkingEnabledAtom = atomWithStorage<boolean>(
+// Preferences - Reasoning output
+// Keep the existing storage key so current user preferences survive the rename.
+export const reasoningOutputEnabledAtom = atomWithStorage<boolean>(
   "preferences:extended-thinking-enabled",
   true,
   undefined,

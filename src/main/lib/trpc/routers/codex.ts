@@ -15,13 +15,18 @@ import {
   normalizeCodexStreamChunk,
 } from "../../../../shared/codex-tool-normalizer"
 import {
-  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
-  DEFAULT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING,
+  DEFAULT_CODEX_MODEL_WITH_REASONING,
   formatCodexModelForAcp,
 } from "../../../../shared/model-catalog"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { getClaudeShellEnvironment } from "../../claude/env"
 import { resolveProjectPathFromWorktree } from "../../claude-config"
+import {
+  appendUniqueReasoningOutputParts,
+  codexReasoningEventsToParts,
+  extractLatestCodexReasoningEvents,
+} from "../../codex/reasoning"
 import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
@@ -137,7 +142,7 @@ const AUTH_HINTS = [
   "401",
   "403",
 ]
-const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_THINKING
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_REASONING
 const CODEX_MCP_TOOLS_FETCH_TIMEOUT_MS = 40_000
 const CODEX_USAGE_POLL_ATTEMPTS = 3
 const CODEX_USAGE_POLL_INTERVAL_MS = 200
@@ -146,6 +151,7 @@ type CodexTokenUsage = {
   input_tokens?: number
   cached_input_tokens?: number
   output_tokens?: number
+  reasoning_output_tokens?: number
   total_tokens?: number
 }
 
@@ -157,6 +163,7 @@ type CodexTokenCountInfo = {
 type CodexUsageMetadata = {
   inputTokens?: number
   outputTokens?: number
+  reasoningTokens?: number
   totalTokens?: number
   modelContextWindow?: number
 }
@@ -500,6 +507,7 @@ async function readLatestTokenCountInfo(
         input_tokens: toNonNegativeInt(tokenUsage.input_tokens),
         cached_input_tokens: toNonNegativeInt(tokenUsage.cached_input_tokens),
         output_tokens: toNonNegativeInt(tokenUsage.output_tokens),
+        reasoning_output_tokens: toNonNegativeInt(tokenUsage.reasoning_output_tokens),
         total_tokens: toNonNegativeInt(tokenUsage.total_tokens),
       }
       if (Object.values(parsedTokenUsage).some((tokenCount) => tokenCount !== undefined)) {
@@ -533,6 +541,7 @@ function mapToUsageMetadata(info: CodexTokenCountInfo): CodexUsageMetadata | nul
       ? Math.max(0, perMessageUsage.input_tokens - (perMessageUsage.cached_input_tokens ?? 0))
       : undefined
   const outputTokens = perMessageUsage?.output_tokens
+  const reasoningTokens = perMessageUsage?.reasoning_output_tokens
   const totalTokens =
     perMessageUsage?.total_tokens ??
     (perMessageUsage?.input_tokens !== undefined || perMessageUsage?.output_tokens !== undefined
@@ -542,6 +551,7 @@ function mapToUsageMetadata(info: CodexTokenCountInfo): CodexUsageMetadata | nul
   const usageMetadata: CodexUsageMetadata = {}
   if (inputTokens !== undefined) usageMetadata.inputTokens = inputTokens
   if (outputTokens !== undefined) usageMetadata.outputTokens = outputTokens
+  if (reasoningTokens !== undefined) usageMetadata.reasoningTokens = reasoningTokens
   if (totalTokens !== undefined) usageMetadata.totalTokens = totalTokens
   if (info.model_context_window !== undefined) {
     usageMetadata.modelContextWindow = info.model_context_window
@@ -577,6 +587,34 @@ async function pollUsage(
   }
 
   return null
+}
+
+async function pollCodexReasoning(sessionId: string, options?: { notBeforeTimestampMs?: number }) {
+  let sessionFilePath: string | null = null
+
+  for (let attempt = 0; attempt < CODEX_USAGE_POLL_ATTEMPTS; attempt += 1) {
+    if (!sessionFilePath) {
+      sessionFilePath = await findSessionFileById(sessionId)
+    }
+
+    if (sessionFilePath) {
+      try {
+        const rawContent = await readFile(sessionFilePath, "utf8")
+        const parts = codexReasoningEventsToParts(
+          extractLatestCodexReasoningEvents(rawContent, options),
+        )
+        if (parts.length > 0) return parts
+      } catch {
+        // Session files are written asynchronously. Retry below.
+      }
+    }
+
+    if (attempt < CODEX_USAGE_POLL_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, CODEX_USAGE_POLL_INTERVAL_MS))
+    }
+  }
+
+  return []
 }
 
 function getCodexMcpAuthState(authStatus: string | null | undefined): {
@@ -1728,7 +1766,7 @@ export const codexRouter = router({
             const promptForModel = prependStartupContext(input.prompt, startupContext)
             const fallbackModel = input.authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
-              : DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING
+              : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
             const requestedModelId = extractCodexModelId(input.model) || fallbackModel
             const selectedModelId = preprocessCodexModelName({
               modelId: requestedModelId,
@@ -1865,6 +1903,7 @@ export const codexRouter = router({
             let latestSessionId =
               provider.getSessionId() || input.sessionId || getLastSessionId(existingMessages)
             let usagePromise: Promise<CodexUsageMetadata | null> | null = null
+            let reasoningPromise: ReturnType<typeof pollCodexReasoning> | null = null
 
             const resolveUsageOnce = (): Promise<CodexUsageMetadata | null> => {
               if (usagePromise) return usagePromise
@@ -1878,6 +1917,20 @@ export const codexRouter = router({
                 notBeforeTimestampMs: startedAt,
               }).catch(() => null)
               return usagePromise
+            }
+
+            const resolveReasoningOnce = (): ReturnType<typeof pollCodexReasoning> => {
+              if (reasoningPromise) return reasoningPromise
+
+              const sessionId = latestSessionId || provider.getSessionId()
+              if (!sessionId) {
+                return Promise.resolve([])
+              }
+
+              reasoningPromise = pollCodexReasoning(sessionId, {
+                notBeforeTimestampMs: startedAt,
+              }).catch(() => [])
+              return reasoningPromise
             }
 
             const result = streamText({
@@ -1935,12 +1988,19 @@ export const codexRouter = router({
               },
               onFinish: async ({ responseMessage, isContinuation }) => {
                 try {
-                  const usageMetadata = await resolveUsageOnce()
+                  const [usageMetadata, reasoningParts] = await Promise.all([
+                    resolveUsageOnce(),
+                    resolveReasoningOnce(),
+                  ])
+                  const responseWithReasoning = appendUniqueReasoningOutputParts(
+                    responseMessage as any,
+                    reasoningParts,
+                  )
                   const responseWithUsage = usageMetadata
                     ? {
-                        ...responseMessage,
+                        ...responseWithReasoning,
                         metadata: {
-                          ...((responseMessage as any)?.metadata || {}),
+                          ...((responseWithReasoning as any)?.metadata || {}),
                           harness: "codex",
                           model: metadataModel,
                           permissionMode,
@@ -1950,9 +2010,9 @@ export const codexRouter = router({
                         },
                       }
                     : {
-                        ...responseMessage,
+                        ...responseWithReasoning,
                         metadata: {
-                          ...((responseMessage as any)?.metadata || {}),
+                          ...((responseWithReasoning as any)?.metadata || {}),
                           harness: "codex",
                           model: metadataModel,
                           permissionMode,
@@ -2014,6 +2074,7 @@ export const codexRouter = router({
 
             const reader = uiStream.getReader()
             let pendingFinishChunk: any | null = null
+            const streamedReasoningOutputTexts = new Set<string>()
             while (true) {
               const { done, value } = await reader.read()
               if (done) break
@@ -2034,11 +2095,36 @@ export const codexRouter = router({
                 continue
               }
 
+              const normalizedForTracking = normalizeCodexStreamChunk(value) as any
+              if (
+                normalizedForTracking?.toolName === "ReasoningOutput" &&
+                typeof normalizedForTracking?.input?.text === "string"
+              ) {
+                streamedReasoningOutputTexts.add(normalizedForTracking.input.text)
+              }
+
               safeEmit(value)
             }
 
             if (pendingFinishChunk) {
-              const usageMetadata = await resolveUsageOnce()
+              const [usageMetadata, reasoningParts] = await Promise.all([
+                resolveUsageOnce(),
+                resolveReasoningOnce(),
+              ])
+              for (const part of reasoningParts) {
+                if (streamedReasoningOutputTexts.has(part.input.text)) continue
+                safeEmit({
+                  type: "tool-input-available",
+                  toolCallId: part.toolCallId,
+                  toolName: part.toolName,
+                  input: { ...part.input, label: part.label },
+                })
+                safeEmit({
+                  type: "tool-output-available",
+                  toolCallId: part.toolCallId,
+                  output: part.output,
+                })
+              }
               if (usageMetadata) {
                 safeEmit({
                   type: "message-metadata",

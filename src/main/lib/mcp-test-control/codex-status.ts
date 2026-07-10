@@ -1,9 +1,9 @@
 import {
-  DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
-  DEFAULT_CODEX_MODEL_WITH_THINKING,
+  DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING,
+  DEFAULT_CODEX_MODEL_WITH_REASONING,
 } from "../../../shared/model-catalog"
 
-export const SAFE_CHATGPT_CODEX_MODEL = DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING
+export const SAFE_CHATGPT_CODEX_MODEL = DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
 
 export function normalizeCodexStatus(output: string): {
   state: "connected_chatgpt" | "connected_api_key" | "not_logged_in" | "unknown"
@@ -16,7 +16,7 @@ export function normalizeCodexStatus(output: string): {
   }
 
   if (normalized.includes("api key") && normalized.includes("logged in")) {
-    return { state: "connected_api_key", recommendedModel: DEFAULT_CODEX_MODEL_WITH_THINKING }
+    return { state: "connected_api_key", recommendedModel: DEFAULT_CODEX_MODEL_WITH_REASONING }
   }
 
   if (normalized.includes("not logged in") || normalized.includes("login")) {

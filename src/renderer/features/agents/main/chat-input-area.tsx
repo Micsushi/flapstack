@@ -38,7 +38,7 @@ import {
   codexApiKeyAtom,
   codexOnboardingCompletedAtom,
   customClaudeConfigAtom,
-  extendedThinkingEnabledAtom,
+  reasoningOutputEnabledAtom,
   hiddenModelsAtom,
   normalizeCodexApiKey,
   normalizeCustomClaudeConfig,
@@ -51,13 +51,13 @@ import {
   lastSelectedCodexModelIdAtom,
   lastSelectedClaudeEffortAtom,
   lastSelectedCodexFastModeAtom,
-  lastSelectedCodexThinkingAtom,
+  lastSelectedCodexReasoningAtom,
   lastSelectedCursorModelIdAtom,
   lastSelectedModelIdAtom,
   subChatClaudeEffortAtomFamily,
   subChatCodexFastModeAtomFamily,
   subChatCodexModelIdAtomFamily,
-  subChatCodexThinkingAtomFamily,
+  subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
@@ -78,7 +78,7 @@ import {
   CODEX_MODELS,
   CURSOR_MODELS,
   type ClaudeEffortLevel,
-  type CodexThinkingLevel,
+  type CodexReasoningLevel,
 } from "../lib/models"
 import type { DiffTextContext, SelectedTextContext } from "../lib/queue-utils"
 import {
@@ -492,12 +492,12 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const [selectedSubChatCodexModelId, setSelectedSubChatCodexModelId] =
     useAtom(subChatCodexModelIdAtom)
-  const subChatCodexThinkingAtom = useMemo(
-    () => subChatCodexThinkingAtomFamily(subChatId),
+  const subChatCodexReasoningAtom = useMemo(
+    () => subChatCodexReasoningAtomFamily(subChatId),
     [subChatId],
   )
-  const [selectedSubChatCodexThinking, setSelectedSubChatCodexThinking] =
-    useAtom(subChatCodexThinkingAtom)
+  const [selectedSubChatCodexReasoning, setSelectedSubChatCodexReasoning] =
+    useAtom(subChatCodexReasoningAtom)
   const subChatClaudeEffortAtom = useMemo(
     () => subChatClaudeEffortAtomFamily(subChatId),
     [subChatId],
@@ -519,7 +519,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const setLastSelectedModelId = useSetAtom(lastSelectedModelIdAtom)
   const setLastSelectedClaudeEffort = useSetAtom(lastSelectedClaudeEffortAtom)
   const setLastSelectedCodexModelId = useSetAtom(lastSelectedCodexModelIdAtom)
-  const setLastSelectedCodexThinking = useSetAtom(lastSelectedCodexThinkingAtom)
+  const setLastSelectedCodexReasoning = useSetAtom(lastSelectedCodexReasoningAtom)
   const setLastSelectedCodexFastMode = useSetAtom(lastSelectedCodexFastModeAtom)
   const setLastSelectedCursorModelId = useSetAtom(lastSelectedCursorModelIdAtom)
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
@@ -611,29 +611,37 @@ export const ChatInputArea = memo(function ChatInputArea({
   const codexFastModeEnabled =
     selectedCodexModel.supportsFastMode === true && selectedSubChatCodexFastMode
 
-  const selectedCodexThinking = useMemo<CodexThinkingLevel>(() => {
-    if (selectedCodexModel.thinkings.includes(selectedSubChatCodexThinking as CodexThinkingLevel)) {
-      return selectedSubChatCodexThinking as CodexThinkingLevel
+  const selectedCodexReasoning = useMemo<CodexReasoningLevel>(() => {
+    if (
+      selectedCodexModel.reasoningLevels.includes(
+        selectedSubChatCodexReasoning as CodexReasoningLevel,
+      )
+    ) {
+      return selectedSubChatCodexReasoning as CodexReasoningLevel
     }
 
-    if (selectedCodexModel.thinkings.includes("high")) {
+    if (selectedCodexModel.reasoningLevels.includes("high")) {
       return "high"
     }
 
-    return selectedCodexModel.thinkings[0]!
-  }, [selectedCodexModel, selectedSubChatCodexThinking])
+    return selectedCodexModel.reasoningLevels[0]!
+  }, [selectedCodexModel, selectedSubChatCodexReasoning])
 
   useEffect(() => {
-    if (selectedCodexModel.thinkings.includes(selectedSubChatCodexThinking as CodexThinkingLevel)) {
+    if (
+      selectedCodexModel.reasoningLevels.includes(
+        selectedSubChatCodexReasoning as CodexReasoningLevel,
+      )
+    ) {
       return
     }
 
-    setSelectedSubChatCodexThinking(selectedCodexThinking)
+    setSelectedSubChatCodexReasoning(selectedCodexReasoning)
   }, [
     selectedCodexModel,
-    selectedSubChatCodexThinking,
-    selectedCodexThinking,
-    setSelectedSubChatCodexThinking,
+    selectedSubChatCodexReasoning,
+    selectedCodexReasoning,
+    setSelectedSubChatCodexReasoning,
   ])
 
   useEffect(() => {
@@ -645,20 +653,20 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatCodexFastMode,
   ])
 
-  // Materialize resolved Codex model/thinking into per-subChat storage once mounted.
+  // Materialize resolved Codex model/reasoning into per-subChat storage once mounted.
   // This prevents later global default changes from affecting existing sub-chats.
   useEffect(() => {
     if (provider !== "codex") return
     if (selectedCodexModel?.id) {
       setSelectedSubChatCodexModelId(selectedCodexModel.id)
     }
-    setSelectedSubChatCodexThinking(selectedCodexThinking)
+    setSelectedSubChatCodexReasoning(selectedCodexReasoning)
   }, [
     provider,
     selectedCodexModel?.id,
-    selectedCodexThinking,
+    selectedCodexReasoning,
     setSelectedSubChatCodexModelId,
-    setSelectedSubChatCodexThinking,
+    setSelectedSubChatCodexReasoning,
   ])
 
   useEffect(() => {
@@ -688,8 +696,8 @@ export const ChatInputArea = memo(function ChatInputArea({
     }
   }, [selectedOllamaModel, currentOllamaModel, availableModels.isOffline])
 
-  // Extended thinking (reasoning) toggle
-  const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom)
+  // Claude reasoning-output toggle.
+  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
 
   const selectedModelLabel = useMemo(() => {
     if (provider === "codex") {
@@ -1938,8 +1946,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                         recommendedOllamaModel: availableModels.recommendedModel,
                         onSelectOllamaModel: setSelectedOllamaModel,
                         isConnected: isClaudeConnected,
-                        thinkingEnabled,
-                        onThinkingChange: setThinkingEnabled,
+                        reasoningOutputEnabled,
+                        onReasoningOutputChange: setReasoningOutputEnabled,
                         selectedEffort: selectedClaudeEffort,
                         onSelectEffort: (effort) => {
                           setSelectedSubChatClaudeEffort(effort)
@@ -1952,27 +1960,27 @@ export const ChatInputArea = memo(function ChatInputArea({
                         onSelectModel: (modelId) => {
                           const model = codexUiModels.find((item) => item.id === modelId)
                           if (!model) return
-                          const nextThinking = model.thinkings.includes(
-                            selectedSubChatCodexThinking as CodexThinkingLevel,
+                          const nextReasoning = model.reasoningLevels.includes(
+                            selectedSubChatCodexReasoning as CodexReasoningLevel,
                           )
-                            ? (selectedSubChatCodexThinking as CodexThinkingLevel)
-                            : model.thinkings.includes("high")
+                            ? (selectedSubChatCodexReasoning as CodexReasoningLevel)
+                            : model.reasoningLevels.includes("high")
                               ? "high"
-                              : model.thinkings[0]!
+                              : model.reasoningLevels[0]!
 
                           setSelectedSubChatCodexModelId(model.id)
-                          setSelectedSubChatCodexThinking(nextThinking)
+                          setSelectedSubChatCodexReasoning(nextReasoning)
                           if (!model.supportsFastMode) {
                             setSelectedSubChatCodexFastMode(false)
                             setLastSelectedCodexFastMode(false)
                           }
                           setLastSelectedCodexModelId(model.id)
-                          setLastSelectedCodexThinking(nextThinking)
+                          setLastSelectedCodexReasoning(nextReasoning)
                         },
-                        selectedThinking: selectedCodexThinking,
-                        onSelectThinking: (thinking) => {
-                          setSelectedSubChatCodexThinking(thinking)
-                          setLastSelectedCodexThinking(thinking)
+                        selectedReasoning: selectedCodexReasoning,
+                        onSelectReasoning: (reasoning) => {
+                          setSelectedSubChatCodexReasoning(reasoning)
+                          setLastSelectedCodexReasoning(reasoning)
                         },
                         fastModeEnabled: codexFastModeEnabled,
                         onFastModeChange: (enabled) => {

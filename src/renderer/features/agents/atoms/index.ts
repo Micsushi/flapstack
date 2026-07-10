@@ -6,10 +6,10 @@ import {
   DEFAULT_CLAUDE_EFFORT,
   DEFAULT_CLAUDE_MODEL_ID,
   DEFAULT_CODEX_MODEL_ID,
-  DEFAULT_CODEX_THINKING,
+  DEFAULT_CODEX_REASONING,
   DEFAULT_CURSOR_MODEL_ID,
   type ClaudeEffortLevel,
-  type CodexThinkingLevel,
+  type CodexReasoningLevel,
 } from "../../../../shared/model-catalog"
 import type { FileMentionOption } from "../mentions/agents-mentions-editor"
 
@@ -272,11 +272,11 @@ export const lastSelectedCodexModelIdAtom = atomWithStorage<string>(
   { getOnInit: true },
 )
 
-export type CodexThinkingPreference = CodexThinkingLevel
+export type CodexReasoningPreference = CodexReasoningLevel
 
-export const lastSelectedCodexThinkingAtom = atomWithStorage<CodexThinkingPreference>(
+export const lastSelectedCodexReasoningAtom = atomWithStorage<CodexReasoningPreference>(
   "agents:lastSelectedCodexThinking",
-  DEFAULT_CODEX_THINKING,
+  DEFAULT_CODEX_REASONING,
   undefined,
   { getOnInit: true },
 )
@@ -400,29 +400,29 @@ export const subChatCursorModelIdAtomFamily = atomFamily((subChatId: string) =>
   ),
 )
 
-// Storage for per-subChat Codex thinking level.
-// Falls back to lastSelectedCodexThinkingAtom when sub-chat has no explicit selection yet.
-const subChatCodexThinkingStorageAtom = atomWithStorage<Record<string, CodexThinkingPreference>>(
+// Storage for per-subChat Codex reasoning level.
+// Falls back to lastSelectedCodexReasoningAtom when sub-chat has no explicit selection yet.
+const subChatCodexReasoningStorageAtom = atomWithStorage<Record<string, CodexReasoningPreference>>(
   "agents:subChatCodexThinking",
   {},
   undefined,
   { getOnInit: true },
 )
 
-export const subChatCodexThinkingAtomFamily = atomFamily((subChatId: string) =>
+export const subChatCodexReasoningAtomFamily = atomFamily((subChatId: string) =>
   atom(
     (get) => {
-      if (!subChatId) return get(lastSelectedCodexThinkingAtom)
-      return get(subChatCodexThinkingStorageAtom)[subChatId] ?? get(lastSelectedCodexThinkingAtom)
+      if (!subChatId) return get(lastSelectedCodexReasoningAtom)
+      return get(subChatCodexReasoningStorageAtom)[subChatId] ?? get(lastSelectedCodexReasoningAtom)
     },
-    (get, set, newThinking: CodexThinkingPreference) => {
+    (get, set, newReasoning: CodexReasoningPreference) => {
       if (!subChatId) {
-        set(lastSelectedCodexThinkingAtom, newThinking)
+        set(lastSelectedCodexReasoningAtom, newReasoning)
         return
       }
-      const current = get(subChatCodexThinkingStorageAtom)
-      if (current[subChatId] === newThinking) return
-      set(subChatCodexThinkingStorageAtom, { ...current, [subChatId]: newThinking })
+      const current = get(subChatCodexReasoningStorageAtom)
+      if (current[subChatId] === newReasoning) return
+      set(subChatCodexReasoningStorageAtom, { ...current, [subChatId]: newReasoning })
     },
   ),
 )

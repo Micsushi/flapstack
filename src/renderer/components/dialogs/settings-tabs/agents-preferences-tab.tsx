@@ -6,7 +6,7 @@ import {
   ctrlTabTargetAtom,
   defaultAgentModeAtom,
   desktopNotificationsEnabledAtom,
-  extendedThinkingEnabledAtom,
+  reasoningOutputEnabledAtom,
   notifyWhenFocusedAtom,
   soundNotificationsEnabledAtom,
   preferredEditorAtom,
@@ -142,7 +142,7 @@ function useIsNarrowScreen(): boolean {
 }
 
 export function AgentsPreferencesTab() {
-  const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom)
+  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
   const [soundEnabled, setSoundEnabled] = useAtom(soundNotificationsEnabledAtom)
   const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useAtom(
     desktopNotificationsEnabledAtom,
@@ -205,13 +205,13 @@ export function AgentsPreferencesTab() {
       <div className="bg-background rounded-lg border border-border overflow-hidden">
         <div className="flex items-center justify-between p-4">
           <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Extended Thinking</span>
+            <span className="text-sm font-medium text-foreground">Reasoning output</span>
             <span className="text-xs text-muted-foreground">
-              Enable deeper reasoning with more thinking tokens (uses more credits).{" "}
+              Show deeper model reasoning output (uses more credits).{" "}
               <span className="text-foreground/70">Disables response streaming.</span>
             </span>
           </div>
-          <Switch checked={thinkingEnabled} onCheckedChange={setThinkingEnabled} />
+          <Switch checked={reasoningOutputEnabled} onCheckedChange={setReasoningOutputEnabled} />
         </div>
         <div className="flex items-center justify-between p-4 border-t border-border">
           <div className="flex flex-col space-y-1">

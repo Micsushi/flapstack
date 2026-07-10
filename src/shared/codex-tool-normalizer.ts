@@ -9,7 +9,7 @@ const CODEX_VERB_TO_TOOL_TYPE: Record<string, string> = {
   Glob: "Glob",
   Edit: "Edit",
   Write: "Write",
-  Thought: "Thinking",
+  Thought: "ReasoningOutput",
   Fetch: "WebFetch",
 }
 
@@ -264,6 +264,23 @@ function normalizeCodexToolInput(rawInput: unknown, descriptor: CodexToolDescrip
   if (descriptor.canonicalToolName === "WebFetch") {
     if (!normalizedInput.url && descriptor.detail.startsWith("http")) {
       normalizedInput.url = descriptor.detail
+    }
+  }
+
+  // ACP Codex thought chunks commonly place their visible text in `content`
+  // or `thought`. The shared Reasoning output renderer consumes `input.text`, so keep
+  // the original payload and expose the visible value in its canonical field.
+  if (descriptor.canonicalToolName === "ReasoningOutput" && !normalizedInput.text) {
+    const visibleThought =
+      typeof normalizedInput.thought === "string"
+        ? normalizedInput.thought
+        : typeof normalizedInput.content === "string"
+          ? normalizedInput.content
+          : typeof normalizedInput.summary === "string"
+            ? normalizedInput.summary
+            : ""
+    if (visibleThought) {
+      normalizedInput.text = visibleThought
     }
   }
 

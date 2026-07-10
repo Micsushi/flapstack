@@ -1,0 +1,37 @@
+{
+  "provider": "local",
+  "source": "docs",
+  "note": "AI SDK / opencode-style reasoning parts. Model-private internal state is never emitted.",
+  "cases": [
+    {
+      "name": "local-reasoning-delta",
+      "description": "AI SDK reasoning-delta part.",
+      "raw": { "type": "reasoning-delta", "text": "Planning the edit." },
+      "expected": [{ "kind": "reasoning-output", "phase": "delta", "text": "Planning the edit." }]
+    },
+    {
+      "name": "local-reasoning-final",
+      "description": "Completed reasoning part.",
+      "raw": { "type": "reasoning", "text": "Edit planned." },
+      "expected": [{ "kind": "reasoning-output", "phase": "final", "text": "Edit planned." }]
+    },
+    {
+      "name": "opencode-reasoning-part-delta",
+      "description": "OpenCode message.part.updated wrapper streams only its delta suffix.",
+      "raw": {
+        "type": "message.part.updated",
+        "properties": {
+          "part": { "id": "part-1", "type": "reasoning", "text": "Planning the edit." },
+          "delta": " the edit."
+        }
+      },
+      "expected": [{ "kind": "reasoning-output", "phase": "delta", "text": " the edit." }]
+    },
+    {
+      "name": "local-no-reasoning",
+      "description": "A text-delta part is not reasoning.",
+      "raw": { "type": "text-delta", "text": "Here goes." },
+      "expected": []
+    }
+  ]
+}

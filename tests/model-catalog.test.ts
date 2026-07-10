@@ -64,20 +64,30 @@ describe("Claude model catalog", () => {
   })
 
   it("tracks Codex reasoning levels per model", () => {
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.thinkings).toContain("ultra")
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-terra")?.thinkings).toContain("ultra")
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.thinkings).toContain("max")
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.thinkings).not.toContain(
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.reasoningLevels).toContain(
       "ultra",
     )
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.thinkings).not.toContain("none")
-    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.thinkings).not.toContain("max")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-terra")?.reasoningLevels).toContain(
+      "ultra",
+    )
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.reasoningLevels).toContain(
+      "max",
+    )
+    expect(
+      CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.reasoningLevels,
+    ).not.toContain("ultra")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.reasoningLevels).not.toContain(
+      "none",
+    )
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.reasoningLevels).not.toContain(
+      "max",
+    )
   })
 
   it("formats stored Codex model ids for ACP", () => {
     for (const model of CODEX_MODELS) {
-      for (const thinking of model.thinkings) {
-        expect(formatCodexModelForAcp(`${model.id}/${thinking}`)).toBe(`${model.id}[${thinking}]`)
+      for (const reasoning of model.reasoningLevels) {
+        expect(formatCodexModelForAcp(`${model.id}/${reasoning}`)).toBe(`${model.id}[${reasoning}]`)
       }
     }
 

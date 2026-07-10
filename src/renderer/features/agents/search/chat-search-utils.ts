@@ -24,9 +24,17 @@ function extractTextFromPart(
 ): ExtractedText[] {
   const results: ExtractedText[] = []
 
-  // Only search text parts - tool content search is disabled for now
+  // Search assistant text plus user-visible reasoning output. Other tool content stays
+  // excluded so search remains focused and cheap.
   if (part.type === "text" && part.text && typeof part.text === "string" && part.text.trim()) {
     results.push({ messageId, partIndex, partType: "text", text: part.text })
+  }
+  if (
+    (part.type === "tool-ReasoningOutput" || part.type === "tool-Thinking") &&
+    typeof part.input?.text === "string" &&
+    part.input.text.trim()
+  ) {
+    results.push({ messageId, partIndex, partType: part.type, text: part.input.text })
   }
 
   return results
@@ -146,8 +154,9 @@ function extractTextFromPartFull(
       }
       break
 
+    case "tool-ReasoningOutput":
     case "tool-Thinking":
-      addText("tool-Thinking:content", part.thinking || part.text)
+      addText("tool-ReasoningOutput:content", part.reasoningOutput || part.thinking || part.text)
       break
 
     default:

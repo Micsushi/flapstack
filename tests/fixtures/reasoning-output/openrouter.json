@@ -1,0 +1,75 @@
+{
+  "provider": "openrouter",
+  "source": "docs",
+  "note": "OpenAI-compatible chat stream. delta.reasoning + delta.reasoning_details (text/summary/encrypted) + usage reasoning_tokens.",
+  "cases": [
+    {
+      "name": "openrouter-reasoning-delta",
+      "description": "Plain delta.reasoning text streams as reasoning output.",
+      "raw": { "choices": [{ "delta": { "reasoning": "First I list the files." } }] },
+      "expected": [
+        { "kind": "reasoning-output", "phase": "delta", "text": "First I list the files." }
+      ]
+    },
+    {
+      "name": "openrouter-reasoning-details-text",
+      "description": "reasoning_details text chunk streams as reasoning output.",
+      "raw": {
+        "choices": [
+          {
+            "delta": {
+              "reasoning_details": [{ "type": "reasoning.text", "text": "Then I run the tests." }]
+            }
+          }
+        ]
+      },
+      "expected": [
+        { "kind": "reasoning-output", "phase": "delta", "text": "Then I run the tests." }
+      ]
+    },
+    {
+      "name": "openrouter-reasoning-details-summary",
+      "description": "reasoning_details summary chunk renders as a reasoning summary.",
+      "raw": {
+        "choices": [
+          {
+            "message": {
+              "reasoning_details": [
+                { "type": "reasoning.summary", "summary": "Listed files, ran tests." }
+              ]
+            }
+          }
+        ]
+      },
+      "expected": [
+        { "kind": "reasoning-summary", "phase": "final", "text": "Listed files, ran tests." }
+      ]
+    },
+    {
+      "name": "openrouter-reasoning-details-encrypted",
+      "description": "Encrypted reasoning_details stay opaque.",
+      "raw": {
+        "choices": [
+          {
+            "delta": {
+              "reasoning_details": [{ "type": "reasoning.encrypted", "data": "ENCRYPTED_BLOB" }]
+            }
+          }
+        ]
+      },
+      "expected": [{ "kind": "opaque", "phase": "delta", "opaque": true }]
+    },
+    {
+      "name": "openrouter-reasoning-tokens",
+      "description": "Reasoning token usage count.",
+      "raw": { "usage": { "completion_tokens_details": { "reasoning_tokens": 64 } } },
+      "expected": [{ "kind": "reasoning-tokens", "phase": "final", "tokens": 64 }]
+    },
+    {
+      "name": "openrouter-no-reasoning",
+      "description": "Content-only delta has no reasoning.",
+      "raw": { "choices": [{ "delta": { "content": "Done." } }] },
+      "expected": []
+    }
+  ]
+}

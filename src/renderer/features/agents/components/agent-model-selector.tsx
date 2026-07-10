@@ -18,15 +18,15 @@ import {
   ClaudeCodeIcon,
   CursorIcon,
   IconChevronDown,
-  ThinkingIcon,
+  ReasoningOutputIcon,
 } from "../../../components/ui/icons"
 import { Switch } from "../../../components/ui/switch"
 import { Checkbox } from "../../../components/ui/checkbox"
 import { Button } from "../../../components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
 import { cn } from "../../../lib/utils"
-import type { ClaudeEffortLevel, CodexThinkingLevel } from "../lib/models"
-import { formatClaudeEffortLabel, formatCodexThinkingLabel } from "../lib/models"
+import type { ClaudeEffortLevel, CodexReasoningLevel } from "../lib/models"
+import { formatClaudeEffortLabel, formatCodexReasoningLevelLabel } from "../lib/models"
 
 const CROSS_PROVIDER_DIALOG_DISMISSED_KEY = "agent-model-selector:skip-cross-provider-dialog"
 
@@ -48,7 +48,7 @@ type ClaudeModelOption = {
 type CodexModelOption = {
   id: string
   name: string
-  thinkings: CodexThinkingLevel[]
+  reasoningLevels: CodexReasoningLevel[]
   supportsFastMode?: boolean
 }
 
@@ -79,8 +79,8 @@ interface AgentModelSelectorProps {
     recommendedOllamaModel?: string
     onSelectOllamaModel: (modelId: string) => void
     isConnected: boolean
-    thinkingEnabled: boolean
-    onThinkingChange: (enabled: boolean) => void
+    reasoningOutputEnabled: boolean
+    onReasoningOutputChange: (enabled: boolean) => void
     selectedEffort: ClaudeEffortLevel
     onSelectEffort: (effort: ClaudeEffortLevel) => void
   }
@@ -88,8 +88,8 @@ interface AgentModelSelectorProps {
     models: CodexModelOption[]
     selectedModelId: string
     onSelectModel: (modelId: string) => void
-    selectedThinking: CodexThinkingLevel
-    onSelectThinking: (thinking: CodexThinkingLevel) => void
+    selectedReasoning: CodexReasoningLevel
+    onSelectReasoning: (reasoning: CodexReasoningLevel) => void
     fastModeEnabled: boolean
     onFastModeChange: (enabled: boolean) => void
     isConnected: boolean
@@ -117,14 +117,14 @@ type ModelGroup = {
   items: FlatModelItem[]
 }
 
-function CodexThinkingSubMenu({
-  thinkings,
-  selectedThinking,
-  onSelectThinking,
+function CodexReasoningSubMenu({
+  reasoningLevels,
+  selectedReasoning,
+  onSelectReasoning,
 }: {
-  thinkings: CodexThinkingLevel[]
-  selectedThinking: CodexThinkingLevel
-  onSelectThinking: (thinking: CodexThinkingLevel) => void
+  reasoningLevels: CodexReasoningLevel[]
+  selectedReasoning: CodexReasoningLevel
+  onSelectReasoning: (reasoning: CodexReasoningLevel) => void
 }) {
   const triggerRef = useRef<HTMLDivElement>(null)
   const subMenuRef = useRef<HTMLDivElement>(null)
@@ -192,10 +192,10 @@ function CodexThinkingSubMenu({
       >
         <div className="flex items-center gap-1.5">
           <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span>Thinking</span>
+          <span>Reasoning</span>
         </div>
         <div className="flex items-center gap-1 text-muted-foreground">
-          <span className="text-xs">{formatCodexThinkingLabel(selectedThinking)}</span>
+          <span className="text-xs">{formatCodexReasoningLevelLabel(selectedReasoning)}</span>
           <ChevronRight className="h-3.5 w-3.5 shrink-0" />
         </div>
       </div>
@@ -209,15 +209,15 @@ function CodexThinkingSubMenu({
             className="fixed z-50 min-w-[180px] overflow-auto rounded-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-lg py-1 animate-in fade-in-0 zoom-in-95 slide-in-from-left-2"
             style={{ top: subPos.top, left: subPos.left }}
           >
-            {thinkings.map((thinking) => {
-              const isSelected = selectedThinking === thinking
+            {reasoningLevels.map((reasoning) => {
+              const isSelected = selectedReasoning === reasoning
               return (
                 <button
-                  key={thinking}
-                  onClick={() => onSelectThinking(thinking)}
+                  key={reasoning}
+                  onClick={() => onSelectReasoning(reasoning)}
                   className="flex items-center justify-between gap-4 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
                 >
-                  <span>{formatCodexThinkingLabel(thinking)}</span>
+                  <span>{formatCodexReasoningLevelLabel(reasoning)}</span>
                   {isSelected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
                 </button>
               )
@@ -727,7 +727,7 @@ export function AgentModelSelector({
         <Command shouldFilter={false}>
           <CommandInput placeholder="Search models..." value={search} onValueChange={setSearch} />
 
-          {/* Claude thinking toggle */}
+          {/* Claude reasoning-output toggle */}
           {selectedAgentId === "claude-code" &&
             !claude.isOffline &&
             !claude.hasCustomModelConfig && (
@@ -755,12 +755,12 @@ export function AgentModelSelector({
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="flex items-center gap-1.5">
-                    <ThinkingIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-sm">Thinking</span>
+                    <ReasoningOutputIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-sm">Reasoning output</span>
                   </div>
                   <Switch
-                    checked={claude.thinkingEnabled}
-                    onCheckedChange={claude.onThinkingChange}
+                    checked={claude.reasoningOutputEnabled}
+                    onCheckedChange={claude.onReasoningOutputChange}
                     className="scale-75"
                   />
                 </div>
@@ -768,7 +768,7 @@ export function AgentModelSelector({
               </>
             )}
 
-          {/* Codex thinking level selector with hover sub-menu */}
+          {/* Codex reasoning level selector with hover sub-menu */}
           {selectedAgentId === "codex" &&
             (() => {
               if (!selectedCodexModel) return null
@@ -790,10 +790,10 @@ export function AgentModelSelector({
                       />
                     </div>
                   )}
-                  <CodexThinkingSubMenu
-                    thinkings={selectedCodexModel.thinkings}
-                    selectedThinking={codex.selectedThinking}
-                    onSelectThinking={codex.onSelectThinking}
+                  <CodexReasoningSubMenu
+                    reasoningLevels={selectedCodexModel.reasoningLevels}
+                    selectedReasoning={codex.selectedReasoning}
+                    onSelectReasoning={codex.onSelectReasoning}
                   />
                   <CommandSeparator />
                 </>
