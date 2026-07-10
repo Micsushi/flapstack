@@ -36,7 +36,7 @@ const CodexIcon = ({ className }: { className?: string }) => (
   </svg>
 )
 
-export type AgentProviderId = "claude-code" | "codex" | "cursor-agent"
+export type AgentProviderId = "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
 
 type ClaudeModelOption = {
   id: string
@@ -56,6 +56,8 @@ type CursorModelOption = {
   id: string
   name: string
 }
+
+type OpencodeModelOption = { id: string; name: string }
 
 interface AgentModelSelectorProps {
   open: boolean
@@ -102,12 +104,27 @@ interface AgentModelSelectorProps {
     isLoginPending: boolean
     onLogin: () => void
   }
+  opencode?: Record<
+    "openrouter" | "nanogpt",
+    {
+      label: string
+      models: OpencodeModelOption[]
+      selectedModelId: string
+      onSelectModel: (modelId: string) => void
+    }
+  >
+}
+
+const EMPTY_OPENCODE_PROVIDERS: NonNullable<AgentModelSelectorProps["opencode"]> = {
+  openrouter: { label: "OpenRouter", models: [], selectedModelId: "", onSelectModel: () => {} },
+  nanogpt: { label: "NanoGPT", models: [], selectedModelId: "", onSelectModel: () => {} },
 }
 
 type FlatModelItem =
   | { type: "claude"; model: ClaudeModelOption }
   | { type: "codex"; model: CodexModelOption }
   | { type: "cursor"; model: CursorModelOption }
+  | { type: "opencode"; provider: "openrouter" | "nanogpt"; model: OpencodeModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
   | { type: "custom" }
 
@@ -466,6 +483,7 @@ export function AgentModelSelector({
   claude,
   codex,
   cursor,
+  opencode = EMPTY_OPENCODE_PROVIDERS,
 }: AgentModelSelectorProps) {
   const [search, setSearch] = useState("")
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
@@ -474,6 +492,8 @@ export function AgentModelSelector({
     "claude-code": true,
     codex: true,
     "cursor-agent": true,
+    openrouter: true,
+    nanogpt: true,
   })
 
   const canSelectProvider = (provider: AgentProviderId) =>
@@ -508,12 +528,20 @@ export function AgentModelSelector({
       model,
     }))
 
-    return [
+    const groups: ModelGroup[] = [
       { id: "claude-code", label: "Claude Code", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
       { id: "cursor-agent", label: "Cursor", items: cursorItems },
     ]
-  }, [claude, codex, cursor])
+    for (const provider of ["openrouter", "nanogpt"] as const) {
+      groups.push({
+        id: provider,
+        label: opencode[provider].label,
+        items: opencode[provider].models.map((model) => ({ type: "opencode", provider, model })),
+      })
+    }
+    return groups
+  }, [claude, codex, cursor, opencode])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
@@ -534,6 +562,8 @@ export function AgentModelSelector({
             case "codex":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "cursor":
+              return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
+            case "opencode":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "ollama":
               return item.modelName.toLowerCase().includes(q)
@@ -569,6 +599,8 @@ export function AgentModelSelector({
       <CodexIcon className="h-3.5 w-3.5" />
     ) : selectedAgentId === "cursor-agent" ? (
       <CursorIcon className="h-3.5 w-3.5" />
+    ) : selectedAgentId === "openrouter" || selectedAgentId === "nanogpt" ? (
+      <Brain className="h-3.5 w-3.5" />
     ) : (
       <ClaudeCodeIcon className="h-3.5 w-3.5" />
     )
@@ -581,6 +613,11 @@ export function AgentModelSelector({
         return selectedAgentId === "codex" && codex.selectedModelId === item.model.id
       case "cursor":
         return selectedAgentId === "cursor-agent" && cursor.selectedModelId === item.model.id
+      case "opencode":
+        return (
+          selectedAgentId === item.provider &&
+          opencode[item.provider].selectedModelId === item.model.id
+        )
       case "ollama":
         return selectedAgentId === "claude-code" && claude.selectedOllamaModel === item.modelName
       case "custom":
@@ -591,6 +628,7 @@ export function AgentModelSelector({
   const getItemProvider = (item: FlatModelItem): AgentProviderId => {
     if (item.type === "codex") return "codex"
     if (item.type === "cursor") return "cursor-agent"
+    if (item.type === "opencode") return item.provider
     return "claude-code"
   }
 
@@ -665,6 +703,11 @@ export function AgentModelSelector({
         onSelectedAgentIdChange("cursor-agent")
         cursor.onSelectModel(item.model.id)
         break
+      case "opencode":
+        if (!canSelectProvider(item.provider)) return
+        onSelectedAgentIdChange(item.provider)
+        opencode[item.provider].onSelectModel(item.model.id)
+        break
       case "ollama":
         if (!canSelectProvider("claude-code")) return
         onSelectedAgentIdChange("claude-code")
@@ -686,6 +729,8 @@ export function AgentModelSelector({
         return item.model.name
       case "cursor":
         return item.model.name
+      case "opencode":
+        return item.model.name
       case "ollama":
         return item.modelName + (item.isRecommended ? " (recommended)" : "")
       case "custom":
@@ -701,6 +746,8 @@ export function AgentModelSelector({
         return `codex-${item.model.id}`
       case "cursor":
         return `cursor-${item.model.id}`
+      case "opencode":
+        return `${item.provider}-${item.model.id}`
       case "ollama":
         return `ollama-${item.modelName}`
       case "custom":

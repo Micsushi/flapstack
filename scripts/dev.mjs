@@ -18,11 +18,20 @@
 // test instance impossible.
 
 import { spawn, spawnSync } from "node:child_process"
+import { existsSync } from "node:fs"
 import net from "node:net"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
+const LOCAL_ENV_FILE = resolve(ROOT, ".env.local")
+
+// Local secrets are ignored by git. Load them only for the dev launcher, so
+// the Electron main process and its OpenCode sidecar inherit the same values.
+if (existsSync(LOCAL_ENV_FILE) && typeof process.loadEnvFile === "function") {
+  process.loadEnvFile(LOCAL_ENV_FILE)
+}
+
 const DEV_PORT = Number(process.env.FLAPSTACK_DEV_PORT ?? 5173)
 const IS_WIN = process.platform === "win32"
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

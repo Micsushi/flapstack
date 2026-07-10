@@ -12,7 +12,7 @@ let sqlite: Database.Database | null = null
 /**
  * Get the database path in the app's user data directory
  */
-function getDatabasePath(): string {
+export function getDatabasePath(): string {
   const userDataPath = app.getPath("userData")
   const dataDir = join(userDataPath, "data")
 
@@ -52,6 +52,8 @@ export function initDatabase() {
   sqlite = new Database(dbPath)
   sqlite.pragma("journal_mode = WAL")
   sqlite.pragma("foreign_keys = ON")
+  // The background usage daemon can write this same DB while the app is open.
+  sqlite.pragma("busy_timeout = 5000")
 
   // Create Drizzle instance
   db = drizzle(sqlite, { schema })

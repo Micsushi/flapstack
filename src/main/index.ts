@@ -9,6 +9,8 @@ import {
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, initDatabase } from "./lib/db"
+import { runStartupCatchUp } from "./lib/usage/catch-up"
+import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
   isCliInstalled,
@@ -48,7 +50,11 @@ const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : "Flapstack"
 // This ensures dev and prod have separate instance locks
 if (IS_DEV) {
   const { join } = require("path")
-  const devUserData = join(app.getPath("userData"), "..", "Flapstack Dev")
+  const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
+  const suffix = instance
+    ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+    : "Flapstack Dev"
+  const devUserData = join(app.getPath("userData"), "..", suffix)
   app.setPath("userData", devUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
@@ -784,6 +790,10 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      void runStartupCatchUp({
+        db: initDatabase(),
+        getSecret: async (key) => getUsageSecret(key),
+      }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
     } catch (error) {
       console.error("[App] Failed to initialize database:", error)
     }

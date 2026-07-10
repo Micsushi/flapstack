@@ -55,15 +55,15 @@ it for OpenSpec tracking.
 
 - [x] 4.0 E0 Harness-engine source decision + local repo inventory
       (OpenCode sidecar first; Vibe Kanban adapter blueprint; Aider reference-only)
-- [ ] 4.1 E1 OpenCode sidecar harness contract (`openrouter`, `nanogpt`,
+- [x] 4.1 E1 OpenCode sidecar harness contract (`openrouter`, `nanogpt`,
       `opencode-sidecar`, limitation states)
-- [ ] 4.2 E2 OpenCode sidecar launcher + authenticated HTTP/event client
-- [ ] 4.3 E3 Generated isolated OpenCode config for OpenRouter and NanoGPT
-- [ ] 4.4 E4 Session/event bridge + Thinking normalization
-- [ ] 4.5 E5 Permission mapping + approval bridge
-- [ ] 4.6 E6 Run persistence, checkpoints, manifests, and usage hooks
-- [ ] 4.7 E7 Provider onboarding, model catalog, chips, and settings
-- [ ] 4.8 E8 Native harness spike + defer/continue decision
+- [x] 4.2 E2 OpenCode sidecar launcher + authenticated HTTP/event client
+- [x] 4.3 E3 Generated isolated OpenCode config for OpenRouter and NanoGPT
+- [x] 4.4 E4 Session/event bridge + Thinking normalization
+- [x] 4.5 E5 Permission mapping + approval bridge
+- [x] 4.6 E6 Run persistence, checkpoints, manifests, and usage hooks
+- [x] 4.7 E7 Provider onboarding, model catalog, chips, and settings
+- [x] 4.8 E8 Native harness spike + defer/continue decision
 - [ ] 4.9 E-exit OpenCode-backed harness tests + manual matrix
 
 ## 5. Thinking Display Parity (Cross-track)
