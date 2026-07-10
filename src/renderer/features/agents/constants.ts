@@ -44,7 +44,7 @@ export type AgentsPreviewConstants = typeof AGENTS_PREVIEW_CONSTANTS
 
 export type HarnessChipMeta = {
   name: string
-  color: "blue" | "orange" | "green" | "purple" | "gray"
+  color: "blue" | "orange" | "green" | "purple" | "teal" | "gray"
   className: string
 }
 
@@ -58,6 +58,11 @@ export const HARNESS_CHIP_META: Record<HarnessChipKind, HarnessChipMeta> = {
     name: "Claude Code",
     color: "orange",
     className: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
+  },
+  "cursor-agent": {
+    name: "Cursor",
+    color: "teal",
+    className: "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
   },
   local: {
     name: "Local",
@@ -99,6 +104,11 @@ export function inferHarnessFromModel(model?: string | null): HarnessChipKind | 
     normalized.includes("haiku")
   ) {
     return "claude-code"
+  }
+  // `auto` is a generic model id. Use the persisted harness for Cursor runs
+  // instead of mislabelling any legacy/unknown `auto` model as Cursor.
+  if (normalized.includes("cursor")) {
+    return "cursor-agent"
   }
   if (normalized.includes("codex") || normalized.startsWith("gpt-")) {
     return "codex"

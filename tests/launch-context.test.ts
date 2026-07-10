@@ -49,4 +49,15 @@ describe("harness launch context", () => {
     expect(prompt).toContain("[FLAPSTACK STARTUP CONTEXT]")
     expect(prompt).toContain("[USER REQUEST]\nWhat is loaded?\n[/USER REQUEST]")
   })
+
+  it("labels Cursor startup context as Cursor", async () => {
+    writeFileSync(join(rootPath, "AGENTS.md"), "# Repo agents")
+
+    const context = await buildHarnessStartupContext({
+      cwd: rootPath,
+      harness: "cursor-agent",
+    })
+
+    expect(context).toContain("Harness: cursor-agent")
+  })
 })

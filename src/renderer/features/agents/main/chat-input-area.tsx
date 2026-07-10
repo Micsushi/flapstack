@@ -52,11 +52,13 @@ import {
   lastSelectedClaudeEffortAtom,
   lastSelectedCodexFastModeAtom,
   lastSelectedCodexThinkingAtom,
+  lastSelectedCursorModelIdAtom,
   lastSelectedModelIdAtom,
   subChatClaudeEffortAtomFamily,
   subChatCodexFastModeAtomFamily,
   subChatCodexModelIdAtomFamily,
   subChatCodexThinkingAtomFamily,
+  subChatCursorModelIdAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
@@ -74,6 +76,7 @@ import { clearSubChatDraft, saveSubChatDraftWithAttachments } from "../lib/draft
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
+  CURSOR_MODELS,
   type ClaudeEffortLevel,
   type CodexThinkingLevel,
 } from "../lib/models"
@@ -187,7 +190,7 @@ export interface ChatInputAreaProps {
   // Context
   subChatId: string
   parentChatId: string
-  provider?: "claude-code" | "codex"
+  provider?: "claude-code" | "codex" | "cursor-agent"
   targetWorktreePath?: string | null
   onTargetWorktreePathChange?: (path: string | null) => void
   teamId?: string
@@ -206,9 +209,9 @@ export interface ChatInputAreaProps {
   // Callback to send message with question answer (Enter sends immediately, not to queue)
   onSubmitWithQuestionAnswer?: () => void
   // Callback to switch provider for brand new (empty) sub-chats
-  onProviderChange?: (provider: "claude-code" | "codex") => void
+  onProviderChange?: (provider: "claude-code" | "codex" | "cursor-agent") => void
   // Callback to continue chat with a different provider (creates new sub-chat with history)
-  onContinueWithProvider?: (provider: "claude-code" | "codex") => void
+  onContinueWithProvider?: (provider: "claude-code" | "codex" | "cursor-agent") => void
   // Whether this sub-chat tab is the active/visible one (prevents window-level hotkeys in background tabs)
   isActive?: boolean
 }
@@ -507,11 +510,18 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const [selectedSubChatCodexFastMode, setSelectedSubChatCodexFastMode] =
     useAtom(subChatCodexFastModeAtom)
+  const subChatCursorModelIdAtom = useMemo(
+    () => subChatCursorModelIdAtomFamily(subChatId),
+    [subChatId],
+  )
+  const [selectedSubChatCursorModelId, setSelectedSubChatCursorModelId] =
+    useAtom(subChatCursorModelIdAtom)
   const setLastSelectedModelId = useSetAtom(lastSelectedModelIdAtom)
   const setLastSelectedClaudeEffort = useSetAtom(lastSelectedClaudeEffortAtom)
   const setLastSelectedCodexModelId = useSetAtom(lastSelectedCodexModelIdAtom)
   const setLastSelectedCodexThinking = useSetAtom(lastSelectedCodexThinkingAtom)
   const setLastSelectedCodexFastMode = useSetAtom(lastSelectedCodexFastModeAtom)
+  const setLastSelectedCursorModelId = useSetAtom(lastSelectedCursorModelIdAtom)
   const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
   const availableModels = useAvailableModels()
   const [selectedModel, setSelectedModel] = useState(
@@ -561,6 +571,15 @@ export const ChatInputArea = memo(function ChatInputArea({
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
+  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
+  const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
+  const cursorLoginMutation = trpc.cursor.startLogin.useMutation({
+    onSuccess: () => {
+      toast.info("Complete Cursor login in the browser, then reopen this menu.")
+      void trpcUtils.cursor.getIntegration.invalidate()
+    },
+    onError: (error) => toast.error(`Could not start Cursor login: ${error.message}`),
+  })
   const codexUiModels = useMemo(() => {
     const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
     const models = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
@@ -572,6 +591,21 @@ export const ChatInputArea = memo(function ChatInputArea({
       codexUiModels[0] ||
       CODEX_MODELS[0]!,
     [codexUiModels, selectedSubChatCodexModelId],
+  )
+  const cursorUiModels = useMemo(() => {
+    const ids = cursorModelData?.models?.length
+      ? cursorModelData.models
+      : CURSOR_MODELS.map((model) => model.id)
+    return ids.map((id) => ({
+      id,
+      name: CURSOR_MODELS.find((model) => model.id === id)?.name ?? id,
+    }))
+  }, [cursorModelData?.models])
+  const selectedCursorModel = useMemo(
+    () =>
+      cursorUiModels.find((model) => model.id === selectedSubChatCursorModelId) ||
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
+    [cursorUiModels, selectedSubChatCursorModelId],
   )
 
   const codexFastModeEnabled =
@@ -627,6 +661,11 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatCodexThinking,
   ])
 
+  useEffect(() => {
+    if (provider !== "cursor-agent") return
+    if (selectedCursorModel.id) setSelectedSubChatCursorModelId(selectedCursorModel.id)
+  }, [provider, selectedCursorModel.id, setSelectedSubChatCursorModelId])
+
   const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
   const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
   const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
@@ -657,6 +696,10 @@ export const ChatInputArea = memo(function ChatInputArea({
       return selectedCodexModel.name
     }
 
+    if (provider === "cursor-agent") {
+      return selectedCursorModel.name
+    }
+
     if (availableModels.isOffline && availableModels.hasOllama) {
       return currentOllamaModel || "Ollama"
     }
@@ -673,6 +716,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [
     provider,
     selectedCodexModel.name,
+    selectedCursorModel.name,
     availableModels.isOffline,
     availableModels.hasOllama,
     currentOllamaModel,
@@ -1937,6 +1981,19 @@ export const ChatInputArea = memo(function ChatInputArea({
                           setLastSelectedCodexFastMode(nextEnabled)
                         },
                         isConnected: codexOnboardingCompleted,
+                      }}
+                      cursor={{
+                        models: cursorUiModels,
+                        selectedModelId: selectedCursorModel.id,
+                        onSelectModel: (modelId) => {
+                          const model = cursorUiModels.find((item) => item.id === modelId)
+                          if (!model) return
+                          setSelectedSubChatCursorModelId(model.id)
+                          setLastSelectedCursorModelId(model.id)
+                        },
+                        isConnected: cursorIntegration?.isConnected === true,
+                        isLoginPending: cursorLoginMutation.isPending,
+                        onLogin: () => cursorLoginMutation.mutate(),
                       }}
                     />
                   </div>

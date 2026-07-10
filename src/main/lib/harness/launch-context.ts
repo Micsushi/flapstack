@@ -86,7 +86,7 @@ async function collectLaunchContextFiles(
 export async function buildHarnessStartupContext(params: {
   cwd: string
   projectPath?: string
-  harness: "codex" | "claude-code"
+  harness: "codex" | "claude-code" | "cursor-agent"
 }): Promise<string> {
   const files = await collectLaunchContextFiles(params.cwd, params.projectPath)
   if (files.length === 0) {
