@@ -24,5 +24,7 @@ export function formatClaudeEffortLabel(effort: ClaudeEffortLevel): string {
 export function formatCodexThinkingLabel(thinking: CodexThinkingLevel): string {
   if (thinking === "none") return "None"
   if (thinking === "xhigh") return "Extra High"
+  if (thinking === "max") return "Max"
+  if (thinking === "ultra") return "Ultra"
   return thinking.charAt(0).toUpperCase() + thinking.slice(1)
 }

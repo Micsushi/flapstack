@@ -9,9 +9,9 @@ and agent runs across tools like Codex and Claude Code.
 ## Current Status
 
 Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 (voice,
-usage, smaller fixes, and Cursor harness planning) is next. Some Stage 1
-carryover polish remains tracked in Stage 2 so the MVP is honest to manually
-test instead of hiding thin or capped surfaces.
+usage, smaller fixes, Cursor, OpenRouter, and NanoGPT provider work) is next.
+Some Stage 1 carryover polish remains tracked in Stage 2 so the MVP is honest to
+manually test instead of hiding thin or capped surfaces.
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
@@ -20,6 +20,10 @@ test instead of hiding thin or capped surfaces.
   runs, permission modes with copy-on-create inheritance, worktree defaults,
   file/pasted-text attachments, scoped search, pin/archive, and before/after
   checkpoints with per-run file-change manifests
+- Current UI note: the inherited vertical middle sub-chats **Chats** pane is
+  hidden behind `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`. Sub-chat tabs, quick
+  switch, split view, and routing remain active. Revisit the pane later only if
+  multiple parallel sub-chats inside one chat become a normal workflow.
 
 ## Product Direction
 
@@ -55,6 +59,8 @@ harnesses, permissions, and worktrees.
 - Global, project, and task chats.
 - Codex and Claude Code agent runs.
 - Harness/model chips in chat tabs and messages.
+- Sub-chat tabs remain active; the old vertical sub-chats **Chats** pane is
+  parked/hidden for now.
 - Project checkout defaults, task worktree defaults, and a worktree dropdown.
 - Simple permission modes plus copy-on-create inheritance.
 - Basic file and pasted-text attachments.
@@ -62,9 +68,9 @@ harnesses, permissions, and worktrees.
 - Scoped search with include-archived support.
 - Before/after checkpoints and prompt/run file-change manifests.
 
-### Stage 2: Voice, Usage, and Fixes
+### Stage 2: Voice, Usage, Cursor, OpenRouter, NanoGPT, and Fixes
 
-Three tracks.
+Five tracks plus fixes.
 
 Voice (reuses Agent Hotline):
 
@@ -75,9 +81,28 @@ Voice (reuses Agent Hotline):
 
 Usage tracking (reuses onWatch):
 
-- Provider quota/spend polling, Anthropic and Codex first.
+- Provider quota/spend polling for Anthropic, Codex, Cursor, OpenRouter, and
+  NanoGPT.
 - Historical usage in SQLite with threshold alerts before throttling or budget.
 - Usage dashboard reimplemented in the app UI.
+- Exact usage/cost where providers return it; marked estimates from token counts
+  and model pricing when exact billing data is absent.
+
+Cursor harness:
+
+- `cursor-agent` CLI adapter with stream-json parsing.
+- Cursor login/status detection.
+- Cursor permission mapping and honest limitation surfacing.
+- Cursor chips and model selector wiring.
+
+OpenRouter + NanoGPT direct API harnesses:
+
+- OpenAI-compatible streaming chat adapters owned by Flapstack.
+- Provider keys, model catalogs, chips, usage capture, and visible reasoning
+  normalization.
+- App-owned permission-gated tool loop so these providers can get the same local
+  computer access surface as Codex and Claude: file read/write, shell, git,
+  browser, and MCP where the selected permission mode allows it.
 
 Smaller fixes (Stage 1 carryover plus backlog):
 
@@ -109,7 +134,7 @@ Smaller fixes (Stage 1 carryover plus backlog):
 ### Later
 
 - Automation and scheduler.
-- Local models and OpenRouter.
+- Local models.
 - Full skill manager.
 - Usage and limits tracking.
 - Project Obsidian vault integration.

@@ -36,6 +36,9 @@ change tracking.
 - **State Management**:
   - Jotai: UI state (selected chat, sidebar open, preview settings)
   - Zustand: Sub-chat tabs and pinned state (persisted to localStorage)
+  - The vertical sub-chats **Chats** pane is parked behind
+    `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`; top tabs and quick switch are the
+    active sub-chat navigation surfaces.
   - React Query: Server state via tRPC (auto-caching, refetch)
 - **Database**: Drizzle ORM with SQLite, auto-migration on app startup
 - **Agent Integration**: Claude Code and Codex are the initial target harnesses;

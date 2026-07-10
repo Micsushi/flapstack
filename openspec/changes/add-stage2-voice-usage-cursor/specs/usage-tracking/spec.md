@@ -1,28 +1,76 @@
 ## ADDED Requirements
 
-### Requirement: Usage Sampling
+### Requirement: Shared Usage Engine
 
-The system SHALL poll configured usage providers on a main-process interval
-scheduler with a default 5-minute, user-configurable cadence, persist samples and
-billing cycles to SQLite, and SHALL show an honest not-configured or auth-failed
-state rather than a silent zero.
+The system SHALL provide a shared TypeScript usage engine that can run in both
+the Flapstack main process and a background usage daemon, with a default
+5-minute user-configurable polling cadence.
 
-#### Scenario: Configured provider is polled
+#### Scenario: Engine runs in daemon mode
 
-- **WHEN** a provider is configured with a valid key and the poll interval elapses
-- **THEN** a usage sample is persisted to SQLite tagged with its provider
+- **WHEN** the background daemon is enabled and Flapstack UI is closed
+- **THEN** configured usage providers are polled on the configured cadence
+- **AND** samples are persisted to the shared SQLite usage store
 
-#### Scenario: Provider not configured
+#### Scenario: Engine runs in app mode
 
-- **WHEN** a provider has no credentials
-- **THEN** the system reports a clear not-configured state
-- **AND** records no fabricated zero sample
+- **WHEN** the Flapstack app requests manual refresh or startup reconciliation
+- **THEN** the same provider engine is used
+- **AND** duplicate samples from daemon/app overlap are not double-counted
+
+### Requirement: Shared Usage Store
+
+The system SHALL persist usage samples, cycles, provider states, alert events,
+raw provider payloads, cost-quality labels, and daemon heartbeat/status data in
+a shared SQLite store that supports daemon writes and app reads.
+
+#### Scenario: Daemon writes while app is closed
+
+- **WHEN** the daemon records samples while the app is closed
+- **THEN** opening Flapstack shows those samples in the Usage dashboard
+
+#### Scenario: Provider data is incomplete
+
+- **WHEN** a provider exposes only current aggregate or run-level data
+- **THEN** the stored sample is labeled with the correct source and cost quality
+- **AND** missing historical detail is not fabricated as zero usage
+
+### Requirement: Startup Catch-up
+
+The system SHALL reconcile latest provider usage when Flapstack starts and when
+the user manually refreshes usage data.
+
+#### Scenario: Provider supports historical reconciliation
+
+- **WHEN** Flapstack starts after usage changed while app and daemon were off
+- **THEN** the app fetches provider data since the latest known sample
+- **AND** persists recovered samples or cycles with source `startup-reconcile`
+
+#### Scenario: Provider lacks historical reconciliation
+
+- **WHEN** Flapstack starts and a provider only exposes current aggregate or
+  run-level data
+- **THEN** the app records the latest available data
+- **AND** shows an honest gap or limited-history state
 
 ### Requirement: Provider Coverage
 
-The system SHALL support usage tracking for Anthropic, Codex, and Cursor, and
-SHALL store each source's raw payload alongside the normalized quota/spend shape
-with a tag identifying which source answered.
+The system SHALL support usage tracking for Codex/OpenAI, Claude/Anthropic,
+Cursor, OpenRouter, and NanoGPT, including general account usage where provider
+APIs and credentials allow it, not only usage from Flapstack-launched runs.
+
+#### Scenario: Codex/OpenAI usage is recorded
+
+- **WHEN** OpenAI/Codex credentials allow usage or cost API access
+- **THEN** usage and cost data are stored with provider/account tags
+- **AND** raw payloads are preserved for drift debugging
+
+#### Scenario: Claude/Anthropic usage is recorded
+
+- **WHEN** Anthropic credentials allow Admin Usage and Cost API access
+- **THEN** workspace/account usage and cost data are stored
+- **AND** limited local-credential paths are labeled honestly when admin API
+  access is unavailable
 
 #### Scenario: Cursor usage via local token
 
@@ -33,33 +81,73 @@ with a tag identifying which source answered.
 
 #### Scenario: Lower Cursor sources are stubbed
 
-- **WHEN** source 1 is unavailable
+- **WHEN** Cursor source 1 is unavailable
 - **THEN** the fallback chain exposes admin-API and CLI slots
 - **AND** those slots report a clearly-marked unimplemented state this stage
 
-### Requirement: Threshold Alerts
+#### Scenario: OpenRouter usage is recorded
 
-The system SHALL fire a desktop notification when a configured usage threshold is
-crossed, debounced so that a single crossing produces exactly one alert.
+- **WHEN** OpenRouter is configured and a direct API run returns usage, cost, or
+  generation metadata
+- **THEN** the sample is stored tagged with provider `openrouter`
+- **AND** generation IDs are preserved for later generation-stat reconciliation
+- **AND** if exact cost is absent, the sample is marked as an estimate derived
+  from normalized token counts and model pricing metadata
 
-#### Scenario: Threshold crossed once
+#### Scenario: NanoGPT usage is recorded
 
-- **WHEN** usage crosses a configured threshold
-- **THEN** exactly one desktop notification is fired
-- **AND** the alert re-arms only after usage resets below the threshold
+- **WHEN** NanoGPT is configured and a direct API run returns usage or cost
+  metadata
+- **THEN** the sample is stored tagged with provider `nanogpt`
+- **AND** raw provider payloads are preserved for drift debugging
+- **AND** if exact cost is absent, the sample is marked as an estimate derived
+  from normalized token counts and model pricing metadata
 
-### Requirement: Usage Dashboard
+### Requirement: Background Alerts
+
+The system SHALL evaluate usage thresholds in the background daemon and send
+Discord webhook alerts while the Flapstack UI is closed.
+
+#### Scenario: Quota threshold is crossed
+
+- **WHEN** a subscription/quota provider crosses a configured percent-used or
+  reset-window threshold
+- **THEN** the daemon sends exactly one configured alert
+- **AND** the alert re-arms only after usage resets below the threshold band
+
+#### Scenario: API spend threshold is crossed
+
+- **WHEN** an API-spend provider crosses a configured dollar, spend-rate, or
+  spike threshold
+- **THEN** the daemon sends a Discord webhook alert
+- **AND** exact and estimated spend are labeled distinctly in the alert body
+
+#### Scenario: Discord webhook fails
+
+- **WHEN** Discord delivery fails
+- **THEN** the failure is persisted as a usage alert event
+- **AND** the webhook URL is not logged or exposed in raw error text
+
+### Requirement: Usage Dashboard And Settings
 
 The system SHALL present usage in a top-level Usage tab showing per-provider
-current and historical usage with distinct empty, loading, and error states in
-both light and dark themes.
+current and historical usage, costs, token counts, exact/estimated labels,
+daemon health, and distinct empty, loading, limited, and error states in both
+light and dark themes.
 
 #### Scenario: Dashboard before any samples exist
 
 - **WHEN** the Usage tab is opened before any samples are collected
 - **THEN** an empty/loading state renders without error
 
-#### Scenario: Dashboard with live data
+#### Scenario: Dashboard with daemon data
 
-- **WHEN** samples exist for configured providers
+- **WHEN** daemon-written samples exist
 - **THEN** the dashboard shows current usage and historical cycles per provider
+- **AND** daemon heartbeat, last poll, last alert, and error state are visible
+
+#### Scenario: Settings configure daemon and alerts
+
+- **WHEN** the user opens usage settings
+- **THEN** they can enable/disable providers, configure credentials, daemon
+  state, cadence, thresholds, and Discord webhook delivery without editing files

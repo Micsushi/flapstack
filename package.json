@@ -31,11 +31,14 @@
     "format": "prettier --write .",
     "style:check": "node scripts/with-heavy-job-lock.mjs style:check -- prettier --check .",
     "test": "node scripts/ensure-native-abi.mjs node && node scripts/with-heavy-job-lock.mjs test -- vitest run",
+    "test:model-catalog": "vitest run tests/model-catalog.test.ts",
+    "test:codex-model-catalog": "node scripts/check-codex-model-catalog.mjs",
     "check": "node scripts/with-heavy-job-lock.mjs check -- sh -c \"npm run lint && npm run style:check && npm run test && npm run build\"",
     "ts:check": "tsc --noEmit",
     "postinstall": "node -e \"if(!process.env.VERCEL){require('child_process').execSync('node scripts/ensure-native-abi.mjs electron',{stdio:'inherit'})}\" && node scripts/patch-electron-dev.mjs"
   },
   "dependencies": {
+    "@agentclientprotocol/codex-acp": "1.1.2",
     "@ai-sdk/react": "^3.0.14",
     "@anthropic-ai/claude-agent-sdk": "0.2.45",
     "@git-diff-view/react": "^0.0.35",
@@ -74,7 +77,6 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
-    "@zed-industries/codex-acp": "0.9.3",
     "ai": "^6.0.14",
     "async-mutex": "^0.5.0",
     "better-sqlite3": "^12.6.2",
@@ -196,8 +198,9 @@
       "node_modules/better-sqlite3/**/*",
       "node_modules/node-pty/**/*",
       "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
-      "node_modules/@zed-industries/codex-acp/**/*",
-      "node_modules/@zed-industries/codex-acp-*/**/*"
+      "node_modules/@agentclientprotocol/codex-acp/**/*",
+      "node_modules/@openai/codex/**/*",
+      "node_modules/@openai/codex-*/**/*"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

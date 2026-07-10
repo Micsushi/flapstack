@@ -30,3 +30,16 @@ electron.vite.config.*.mjs
 
 # Claude binary (downloaded at build time)
 resources/bin/
+
+# AI assistant docs / config — keep local, do not commit
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+.aider*
+.cursorrules
+.cursor/
+.claude/
+.windsurfrules
+.github/copilot-instructions.md
+**/copilot-instructions.md

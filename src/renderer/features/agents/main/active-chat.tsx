@@ -124,6 +124,7 @@ import {
   planEditRefetchTriggerAtomFamily,
   planSidebarOpenAtomFamily,
   QUESTIONS_SKIPPED_MESSAGE,
+  SUBCHATS_SIDEBAR_PANEL_ENABLED,
   selectedAgentChatIdAtom,
   lastSelectedAgentIdAtom,
   selectedCommitAtom,
@@ -3982,6 +3983,7 @@ const ChatViewInner = memo(function ChatViewInner({
   imagesRef.current = images
   const filesRef = useRef(files)
   filesRef.current = files
+  const sendInFlightRef = useRef(false)
 
   const handleSend = useCallback(async () => {
     // Block sending while sandbox is still being set up
@@ -4015,220 +4017,235 @@ const ChatViewInner = memo(function ChatViewInner({
     if (!hasText && !hasImages && !hasTextContexts && !hasDiffTextContexts && !hasPastedTexts)
       return
 
-    // If streaming, add to queue instead of sending directly
-    if (isStreamingRef.current) {
-      const queuedImages = currentImages
-        .filter((img) => !img.isLoading && img.url)
-        .map(toQueuedImage)
-      const queuedFiles = currentFiles.filter((f) => !f.isLoading && f.url).map(toQueuedFile)
-      const queuedTextContexts = currentTextContexts.map(toQueuedTextContext)
-      const queuedDiffTextContexts = currentDiffTextContexts.map(toQueuedDiffTextContext)
-      const queuedPastedTexts = currentPastedTexts.map(toQueuedPastedText)
+    const isStreamingNow = isStreamingRef.current
 
-      const item = createQueueItem(
-        generateQueueId(),
-        inputValue.trim(),
-        queuedImages.length > 0 ? queuedImages : undefined,
-        queuedFiles.length > 0 ? queuedFiles : undefined,
-        queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
-        queuedDiffTextContexts.length > 0 ? queuedDiffTextContexts : undefined,
-        queuedPastedTexts.length > 0 ? queuedPastedTexts : undefined,
-      )
-      addToQueue(subChatId, item)
+    if (!isStreamingNow) {
+      if (sendInFlightRef.current) return
+      sendInFlightRef.current = true
+    }
 
-      // Clear input and attachments
+    try {
+      // If streaming, add to queue instead of sending directly
+      if (isStreamingNow) {
+        const queuedImages = currentImages
+          .filter((img) => !img.isLoading && img.url)
+          .map(toQueuedImage)
+        const queuedFiles = currentFiles.filter((f) => !f.isLoading && f.url).map(toQueuedFile)
+        const queuedTextContexts = currentTextContexts.map(toQueuedTextContext)
+        const queuedDiffTextContexts = currentDiffTextContexts.map(toQueuedDiffTextContext)
+        const queuedPastedTexts = currentPastedTexts.map(toQueuedPastedText)
+
+        const item = createQueueItem(
+          generateQueueId(),
+          inputValue.trim(),
+          queuedImages.length > 0 ? queuedImages : undefined,
+          queuedFiles.length > 0 ? queuedFiles : undefined,
+          queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
+          queuedDiffTextContexts.length > 0 ? queuedDiffTextContexts : undefined,
+          queuedPastedTexts.length > 0 ? queuedPastedTexts : undefined,
+        )
+        addToQueue(subChatId, item)
+
+        // Clear input and attachments
+        editorRef.current?.clear()
+        if (parentChatId) {
+          clearSubChatDraft(parentChatId, subChatId)
+        }
+        clearAll()
+        clearTextContexts()
+        clearDiffTextContexts()
+        clearPastedTexts()
+        return
+      }
+
+      // Auto-restore archived workspace when sending a message
+      if (isArchived && onRestoreWorkspace) {
+        onRestoreWorkspace()
+      }
+
+      const text = inputValue.trim()
+
+      // Expand custom slash commands with arguments (e.g. "/Apex my argument")
+      // This mirrors the logic in new-chat-form.tsx
+      let finalText = text
+      const slashMatch = text.match(/^\/(\S+)\s*(.*)$/s)
+      if (slashMatch) {
+        const [, commandName, args] = slashMatch
+        const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name))
+        if (!builtinNames.has(commandName)) {
+          try {
+            const commands = await trpcClient.commands.list.query({
+              projectPath,
+            })
+            const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
+            if (cmd) {
+              const { content } = await trpcClient.commands.getContent.query({
+                path: cmd.path,
+              })
+              finalText = content.replace(/\$ARGUMENTS/g, args.trim())
+            }
+          } catch (error) {
+            console.error("Failed to expand custom slash command:", error)
+          }
+        }
+      }
+
+      // Clear editor and draft from localStorage
       editorRef.current?.clear()
       if (parentChatId) {
         clearSubChatDraft(parentChatId, subChatId)
       }
+
+      // Track message sent
+      trackMessageSent({
+        workspaceId: subChatId,
+        messageLength: finalText.length,
+        mode: subChatModeRef.current,
+      })
+
+      // Trigger auto-rename on first message in a new sub-chat
+      if (messagesLengthRef.current === 0 && !hasTriggeredRenameRef.current) {
+        hasTriggeredRenameRef.current = true
+        onAutoRename(finalText || "Image message", subChatId)
+      }
+
+      // Build message parts: images first, then files, then text
+      // Include base64Data for API transmission
+      const parts: any[] = [
+        ...currentImages
+          .filter((img) => !img.isLoading && img.url)
+          .map((img) => ({
+            type: "data-image" as const,
+            data: {
+              url: img.url,
+              mediaType: img.mediaType,
+              filename: img.filename,
+              base64Data: img.base64Data, // Include base64 data for Claude API
+            },
+          })),
+        ...currentFiles
+          .filter((f) => !f.isLoading && f.url)
+          .map((f) => ({
+            type: "data-file" as const,
+            data: {
+              url: f.url,
+              mediaType: (f as any).mediaType,
+              filename: f.filename,
+              size: f.size,
+            },
+          })),
+      ]
+
+      // Add text contexts as mention tokens
+      let mentionPrefix = ""
+
+      if (
+        currentTextContexts.length > 0 ||
+        currentDiffTextContexts.length > 0 ||
+        currentPastedTexts.length > 0
+      ) {
+        const quoteMentions = currentTextContexts.map((tc) => {
+          const preview = tc.preview.replace(/[:\[\]]/g, "") // Sanitize preview
+          const encodedText = utf8ToBase64(tc.text) // Base64 encode full text
+          return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`
+        })
+
+        const diffMentions = currentDiffTextContexts.map((dtc) => {
+          const preview = dtc.preview.replace(/[:\[\]]/g, "") // Sanitize preview
+          const encodedText = utf8ToBase64(dtc.text) // Base64 encode full text
+          const lineNum = dtc.lineNumber || 0
+          return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`
+        })
+
+        // Add pasted text / chat history as mentions (format: prefix:size:preview|filepath)
+        // Using | as separator since filepath can contain colons
+        const pastedTextMentions = currentPastedTexts.map((pt) => {
+          const sanitizedPreview = pt.preview.replace(/[:\[\]|]/g, "")
+          const prefix =
+            pt.kind === "chatHistory" ? MENTION_PREFIXES.CHAT_HISTORY : MENTION_PREFIXES.PASTED
+          return `@[${prefix}${pt.size}:${sanitizedPreview}|${pt.filePath}]`
+        })
+
+        mentionPrefix = [...quoteMentions, ...diffMentions, ...pastedTextMentions].join(" ") + " "
+      }
+
+      if (finalText || mentionPrefix) {
+        parts.push({ type: "text", text: mentionPrefix + (finalText || "") })
+      }
+
+      // Add cached file contents as hidden parts (sent to agent but not displayed in UI)
+      // These are from dropped text files - content is embedded so agent sees it immediately
+      if (fileContentsRef.current.size > 0) {
+        for (const [mentionId, content] of fileContentsRef.current.entries()) {
+          // Extract file path from mentionId (file:local:path or file:external:path)
+          const filePath = mentionId.replace(/^file:(local|external):/, "")
+          parts.push({
+            type: "file-content",
+            filePath,
+            content,
+          })
+        }
+      }
+
       clearAll()
       clearTextContexts()
       clearDiffTextContexts()
       clearPastedTexts()
-      return
-    }
+      clearFileContents()
 
-    // Auto-restore archived workspace when sending a message
-    if (isArchived && onRestoreWorkspace) {
-      onRestoreWorkspace()
-    }
-
-    const text = inputValue.trim()
-
-    // Expand custom slash commands with arguments (e.g. "/Apex my argument")
-    // This mirrors the logic in new-chat-form.tsx
-    let finalText = text
-    const slashMatch = text.match(/^\/(\S+)\s*(.*)$/s)
-    if (slashMatch) {
-      const [, commandName, args] = slashMatch
-      const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name))
-      if (!builtinNames.has(commandName)) {
-        try {
-          const commands = await trpcClient.commands.list.query({
-            projectPath,
-          })
-          const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
-          if (cmd) {
-            const { content } = await trpcClient.commands.getContent.query({
-              path: cmd.path,
-            })
-            finalText = content.replace(/\$ARGUMENTS/g, args.trim())
-          }
-        } catch (error) {
-          console.error("Failed to expand custom slash command:", error)
-        }
-      }
-    }
-
-    // Clear editor and draft from localStorage
-    editorRef.current?.clear()
-    if (parentChatId) {
-      clearSubChatDraft(parentChatId, subChatId)
-    }
-
-    // Track message sent
-    trackMessageSent({
-      workspaceId: subChatId,
-      messageLength: finalText.length,
-      mode: subChatModeRef.current,
-    })
-
-    // Trigger auto-rename on first message in a new sub-chat
-    if (messagesLengthRef.current === 0 && !hasTriggeredRenameRef.current) {
-      hasTriggeredRenameRef.current = true
-      onAutoRename(finalText || "Image message", subChatId)
-    }
-
-    // Build message parts: images first, then files, then text
-    // Include base64Data for API transmission
-    const parts: any[] = [
-      ...currentImages
-        .filter((img) => !img.isLoading && img.url)
-        .map((img) => ({
-          type: "data-image" as const,
-          data: {
-            url: img.url,
-            mediaType: img.mediaType,
-            filename: img.filename,
-            base64Data: img.base64Data, // Include base64 data for Claude API
-          },
-        })),
-      ...currentFiles
-        .filter((f) => !f.isLoading && f.url)
-        .map((f) => ({
-          type: "data-file" as const,
-          data: {
-            url: f.url,
-            mediaType: (f as any).mediaType,
-            filename: f.filename,
-            size: f.size,
-          },
-        })),
-    ]
-
-    // Add text contexts as mention tokens
-    let mentionPrefix = ""
-
-    if (
-      currentTextContexts.length > 0 ||
-      currentDiffTextContexts.length > 0 ||
-      currentPastedTexts.length > 0
-    ) {
-      const quoteMentions = currentTextContexts.map((tc) => {
-        const preview = tc.preview.replace(/[:\[\]]/g, "") // Sanitize preview
-        const encodedText = utf8ToBase64(tc.text) // Base64 encode full text
-        return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`
-      })
-
-      const diffMentions = currentDiffTextContexts.map((dtc) => {
-        const preview = dtc.preview.replace(/[:\[\]]/g, "") // Sanitize preview
-        const encodedText = utf8ToBase64(dtc.text) // Base64 encode full text
-        const lineNum = dtc.lineNumber || 0
-        return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`
-      })
-
-      // Add pasted text / chat history as mentions (format: prefix:size:preview|filepath)
-      // Using | as separator since filepath can contain colons
-      const pastedTextMentions = currentPastedTexts.map((pt) => {
-        const sanitizedPreview = pt.preview.replace(/[:\[\]|]/g, "")
-        const prefix =
-          pt.kind === "chatHistory" ? MENTION_PREFIXES.CHAT_HISTORY : MENTION_PREFIXES.PASTED
-        return `@[${prefix}${pt.size}:${sanitizedPreview}|${pt.filePath}]`
-      })
-
-      mentionPrefix = [...quoteMentions, ...diffMentions, ...pastedTextMentions].join(" ") + " "
-    }
-
-    if (finalText || mentionPrefix) {
-      parts.push({ type: "text", text: mentionPrefix + (finalText || "") })
-    }
-
-    // Add cached file contents as hidden parts (sent to agent but not displayed in UI)
-    // These are from dropped text files - content is embedded so agent sees it immediately
-    if (fileContentsRef.current.size > 0) {
-      for (const [mentionId, content] of fileContentsRef.current.entries()) {
-        // Extract file path from mentionId (file:local:path or file:external:path)
-        const filePath = mentionId.replace(/^file:(local|external):/, "")
-        parts.push({
-          type: "file-content",
-          filePath,
-          content,
-        })
-      }
-    }
-
-    clearAll()
-    clearTextContexts()
-    clearDiffTextContexts()
-    clearPastedTexts()
-    clearFileContents()
-
-    // Optimistic update: immediately update chat's updated_at and resort array for instant sidebar resorting
-    if (teamId) {
-      const now = new Date()
-      utils.agents.getAgentChats.setData({ teamId }, (old: any) => {
-        if (!old) return old
-        // Update the timestamp and sort by updated_at descending
-        const updated = old.map((c: any) => (c.id === parentChatId ? { ...c, updated_at: now } : c))
-        return updated.sort(
-          (a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        )
-      })
-    }
-
-    // Desktop app: Optimistic update for chats.list to update sidebar immediately
-    const queryClient = getQueryClient()
-    if (queryClient) {
-      const now = new Date()
-      const queries = queryClient.getQueryCache().getAll()
-      const chatsListQuery = queries.find(
-        (q) =>
-          Array.isArray(q.queryKey) &&
-          Array.isArray(q.queryKey[0]) &&
-          q.queryKey[0][0] === "chats" &&
-          q.queryKey[0][1] === "list",
-      )
-      if (chatsListQuery) {
-        queryClient.setQueryData(chatsListQuery.queryKey, (old: any[] | undefined) => {
+      // Optimistic update: immediately update chat's updated_at and resort array for instant sidebar resorting
+      if (teamId) {
+        const now = new Date()
+        utils.agents.getAgentChats.setData({ teamId }, (old: any) => {
           if (!old) return old
-          // Update the timestamp and sort by updatedAt descending
+          // Update the timestamp and sort by updated_at descending
           const updated = old.map((c: any) =>
-            c.id === parentChatId ? { ...c, updatedAt: now } : c,
+            c.id === parentChatId ? { ...c, updated_at: now } : c,
           )
           return updated.sort(
-            (a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+            (a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
           )
         })
       }
+
+      // Desktop app: Optimistic update for chats.list to update sidebar immediately
+      const queryClient = getQueryClient()
+      if (queryClient) {
+        const now = new Date()
+        const queries = queryClient.getQueryCache().getAll()
+        const chatsListQuery = queries.find(
+          (q) =>
+            Array.isArray(q.queryKey) &&
+            Array.isArray(q.queryKey[0]) &&
+            q.queryKey[0][0] === "chats" &&
+            q.queryKey[0][1] === "list",
+        )
+        if (chatsListQuery) {
+          queryClient.setQueryData(chatsListQuery.queryKey, (old: any[] | undefined) => {
+            if (!old) return old
+            // Update the timestamp and sort by updatedAt descending
+            const updated = old.map((c: any) =>
+              c.id === parentChatId ? { ...c, updatedAt: now } : c,
+            )
+            return updated.sort(
+              (a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+            )
+          })
+        }
+      }
+
+      // Optimistically update sub-chat timestamp to move it to top
+      useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
+
+      // Keep following the live response without yanking the transcript before the message renders.
+      shouldAutoScrollRef.current = true
+
+      await sendMessageRef.current({ role: "user", parts })
+    } finally {
+      if (!isStreamingNow) {
+        sendInFlightRef.current = false
+      }
     }
-
-    // Optimistically update sub-chat timestamp to move it to top
-    useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
-
-    // Keep following the live response without yanking the transcript before the message renders.
-    shouldAutoScrollRef.current = true
-
-    await sendMessageRef.current({ role: "user", parts })
   }, [
     sandboxSetupStatus,
     isArchived,
@@ -4364,103 +4381,110 @@ const ChatViewInner = memo(function ChatViewInner({
 
     if (!hasText && !hasImages) return
 
-    // Stop current stream if streaming and wait for status to become ready.
-    // The server-side save block sets sessionId=null on abort, so the next
-    // message starts fresh without needing an explicit cancel mutation.
-    if (isStreamingRef.current) {
-      await handleStop()
-      await waitForStreamingReady(subChatId)
-    }
-
-    // Auto-restore archived workspace when sending a message
-    if (isArchived && onRestoreWorkspace) {
-      onRestoreWorkspace()
-    }
-
-    const text = inputValue.trim()
-
-    // Expand custom slash commands with arguments (e.g. "/Apex my argument")
-    let finalText = text
-    const slashMatch = text.match(/^\/(\S+)\s*(.*)$/s)
-    if (slashMatch) {
-      const [, commandName, args] = slashMatch
-      const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name))
-      if (!builtinNames.has(commandName)) {
-        try {
-          const commands = await trpcClient.commands.list.query({
-            projectPath,
-          })
-          const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
-          if (cmd) {
-            const { content } = await trpcClient.commands.getContent.query({
-              path: cmd.path,
-            })
-            finalText = content.replace(/\$ARGUMENTS/g, args.trim())
-          }
-        } catch (error) {
-          console.error("Failed to expand custom slash command:", error)
-        }
-      }
-    }
-
-    // Clear editor and draft from localStorage
-    editorRef.current?.clear()
-    if (parentChatId) {
-      clearSubChatDraft(parentChatId, subChatId)
-    }
-
-    // Track message sent
-    trackMessageSent({
-      workspaceId: subChatId,
-      messageLength: finalText.length,
-      mode: subChatModeRef.current,
-    })
-
-    // Build message parts
-    const parts: any[] = [
-      ...currentImages
-        .filter((img) => !img.isLoading && img.url)
-        .map((img) => ({
-          type: "data-image" as const,
-          data: {
-            url: img.url,
-            mediaType: img.mediaType,
-            filename: img.filename,
-            base64Data: img.base64Data,
-          },
-        })),
-      ...currentFiles
-        .filter((f) => !f.isLoading && f.url)
-        .map((f) => ({
-          type: "data-file" as const,
-          data: {
-            url: f.url,
-            mediaType: f.mediaType,
-            filename: f.filename,
-            size: f.size,
-          },
-        })),
-    ]
-
-    if (finalText) {
-      parts.push({ type: "text", text: finalText })
-    }
-
-    // Clear attachments
-    clearAll()
-
-    // Update timestamps
-    useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
-
-    // Keep following the live response without yanking the transcript before the message renders.
-    shouldAutoScrollRef.current = true
+    if (sendInFlightRef.current) return
+    sendInFlightRef.current = true
+    let finalTextForRetry = inputValue.trim()
 
     try {
+      // Stop current stream if streaming and wait for status to become ready.
+      // The server-side save block sets sessionId=null on abort, so the next
+      // message starts fresh without needing an explicit cancel mutation.
+      if (isStreamingRef.current) {
+        await handleStop()
+        await waitForStreamingReady(subChatId)
+      }
+
+      // Auto-restore archived workspace when sending a message
+      if (isArchived && onRestoreWorkspace) {
+        onRestoreWorkspace()
+      }
+
+      const text = inputValue.trim()
+
+      // Expand custom slash commands with arguments (e.g. "/Apex my argument")
+      let finalText = text
+      const slashMatch = text.match(/^\/(\S+)\s*(.*)$/s)
+      if (slashMatch) {
+        const [, commandName, args] = slashMatch
+        const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name))
+        if (!builtinNames.has(commandName)) {
+          try {
+            const commands = await trpcClient.commands.list.query({
+              projectPath,
+            })
+            const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
+            if (cmd) {
+              const { content } = await trpcClient.commands.getContent.query({
+                path: cmd.path,
+              })
+              finalText = content.replace(/\$ARGUMENTS/g, args.trim())
+            }
+          } catch (error) {
+            console.error("Failed to expand custom slash command:", error)
+          }
+        }
+      }
+      finalTextForRetry = finalText
+
+      // Clear editor and draft from localStorage
+      editorRef.current?.clear()
+      if (parentChatId) {
+        clearSubChatDraft(parentChatId, subChatId)
+      }
+
+      // Track message sent
+      trackMessageSent({
+        workspaceId: subChatId,
+        messageLength: finalText.length,
+        mode: subChatModeRef.current,
+      })
+
+      // Build message parts
+      const parts: any[] = [
+        ...currentImages
+          .filter((img) => !img.isLoading && img.url)
+          .map((img) => ({
+            type: "data-image" as const,
+            data: {
+              url: img.url,
+              mediaType: img.mediaType,
+              filename: img.filename,
+              base64Data: img.base64Data,
+            },
+          })),
+        ...currentFiles
+          .filter((f) => !f.isLoading && f.url)
+          .map((f) => ({
+            type: "data-file" as const,
+            data: {
+              url: f.url,
+              mediaType: f.mediaType,
+              filename: f.filename,
+              size: f.size,
+            },
+          })),
+      ]
+
+      if (finalText) {
+        parts.push({ type: "text", text: finalText })
+      }
+
+      // Clear attachments
+      clearAll()
+
+      // Update timestamps
+      useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
+
+      // Keep following the live response without yanking the transcript before the message renders.
+      shouldAutoScrollRef.current = true
+
       await sendMessageRef.current({ role: "user", parts })
     } catch (error) {
       console.error("[handleForceSend] Error sending message:", error)
       // Restore editor content so the user can retry
-      editorRef.current?.setValue(finalText)
+      editorRef.current?.setValue(finalTextForRetry)
+    } finally {
+      sendInFlightRef.current = false
     }
   }, [
     sandboxSetupStatus,
@@ -5277,7 +5301,8 @@ export function ChatView({
   )
   const [diffMode, setDiffMode] = useAtom(diffViewModeAtom)
   const [diffDisplayMode, setDiffDisplayMode] = useAtom(diffViewDisplayModeAtom)
-  const subChatsSidebarMode = useAtomValue(agentsSubChatsSidebarModeAtom)
+  const persistedSubChatsSidebarMode = useAtomValue(agentsSubChatsSidebarModeAtom)
+  const subChatsSidebarMode = SUBCHATS_SIDEBAR_PANEL_ENABLED ? persistedSubChatsSidebarMode : "tabs"
 
   // Force narrow width when switching to side-peek mode (from dialog/fullscreen)
   useEffect(() => {

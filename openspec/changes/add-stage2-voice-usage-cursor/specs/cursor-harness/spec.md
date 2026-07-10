@@ -43,3 +43,25 @@ enforce, showing the resolved mode and any degradation before launch.
 - **WHEN** a selected permission mode exceeds what `cursor-agent` can enforce
 - **THEN** the resolved mode and a limitation warning are shown before the run
 - **AND** the run records the applied permission metadata
+
+### Requirement: Cursor Thinking Events
+
+The system SHALL parse Cursor `stream-json` thinking events when they are present
+and render them through the same Thinking UI used for other harness reasoning
+surfaces, while continuing normally when a Cursor version, model, or account tier
+omits those events.
+
+#### Scenario: Cursor emits thinking deltas
+
+- **WHEN** `cursor-agent --output-format stream-json` emits
+  `type:"thinking"` delta or completed events during a run
+- **THEN** those events are normalized into the shared thinking message part
+- **AND** the chat renders them in the Thinking panel before or alongside the
+  assistant response
+
+#### Scenario: Cursor omits thinking deltas
+
+- **WHEN** a Cursor run emits assistant text and tool events but no
+  `type:"thinking"` events
+- **THEN** the chat still renders the assistant response normally
+- **AND** the system does not fabricate thinking content

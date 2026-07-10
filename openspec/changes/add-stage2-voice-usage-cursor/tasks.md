@@ -7,7 +7,7 @@ it for OpenSpec tracking.
 ## 0. Prerequisite
 
 - [ ] 0.1 F2: native-module ABI toggle removal so `npm run check` runs cleanly
-- [ ] 0.2 D0: install `cursor-agent` + verify its CLI flags and stream-json schema
+- [x] 0.2 D0: verify `cursor-agent` CLI flags, stream-json schema, and thinking fixture
 
 ## 1. Voice (Track A)
 
@@ -24,42 +24,78 @@ it for OpenSpec tracking.
 
 ## 2. Usage (Track B)
 
-- [ ] 2.1 U1 Usage schema + provider adapter interface (TS)
-- [ ] 2.2 U2 Provider pollers ported (Anthropic, Codex); main-process 5-min scheduler
-- [ ] 2.3 U3 Threshold alerts + notifications
-- [ ] 2.4 U4 Usage dashboard (top-level tab)
-- [ ] 2.5 U5 Usage settings + key management
-- [ ] 2.6 U6 Cursor usage provider (source 1 full; sources 2/3 stubbed chain)
-- [ ] 2.7 U-exit usage tests + manual matrix
+- [ ] 2.1 U1 Shared usage schema + provider adapter interface
+- [ ] 2.2 U2 Shared usage engine + scheduler
+- [ ] 2.3 U3 Background usage daemon lifecycle
+- [ ] 2.4 U4 Shared SQLite store + app/daemon locking
+- [ ] 2.5 U5 App startup catch-up + manual refresh
+- [ ] 2.6 U6 Codex + Anthropic/Claude general usage providers
+- [ ] 2.7 U7 Cursor usage provider (source 1 full; sources 2/3 stubbed chain)
+- [ ] 2.8 U8 OpenRouter usage provider (run usage, generation/cost reconcile,
+      key credits/limits where available, estimate fallback)
+- [ ] 2.9 U9 NanoGPT usage provider (run usage/cost where available; pricing
+      estimate fallback; account-wide history only if current API exposes it)
+- [ ] 2.10 U10 Threshold alerts + Discord webhook notifications from daemon
+- [ ] 2.11 U11 Usage dashboard + settings + daemon status
+- [ ] 2.12 U-exit usage tests + manual matrix
 
 ## 3. Cursor harness (Track D)
 
+- [x] 3.0 D0 Verify `cursor-agent` CLI surface + reasoning fixture
 - [ ] 3.1 D1 Harness contract extension (`cursor-agent`, teal chip)
-- [ ] 3.2 D2 `cursor-agent` stream-json child-process adapter
+- [ ] 3.2 D2 `cursor-agent` stream-json child-process adapter, including
+      `type:"thinking"` event normalization into the shared Thinking UI when
+      present
 - [ ] 3.3 D3 Onboarding + login/token detect
 - [ ] 3.4 D4 Permission mapping + honest limitations
 - [ ] 3.5 D5 Chips, model catalog, UI wiring
 - [ ] 3.6 D-exit cursor harness tests + manual matrix
 
-## 4. Fixes (Track C)
+## 4. OpenRouter and NanoGPT OpenCode-backed Harnesses (Track E)
 
-- [ ] 4.1 F1 Strict-TS debt cleanup → promote `ts:check` to gate
-- [ ] 4.2 F3 Create-branch dialog
-- [ ] 4.3 F4 Terminal actions (open file / tab title / focused pane)
-- [ ] 4.4 F5 Sidebar remote-stats decision
-- [ ] 4.5 F6 Codex/Claude permission enforcement hardening
-- [ ] 4.6 F7 Worktree UX completion: custom path + unknown state
-- [ ] 4.7 F8 Scoped-search result navigation + no hidden first-20 cap
-- [ ] 4.8 F9 Attachments/artifacts UX completion + no hidden first-six cap
-- [ ] 4.9 F10 Run history show-all/pagination
-- [ ] 4.10 F11 Cross-scope move discoverability
-- [ ] 4.11 F12 Docs consistency pass
-- [ ] 4.12 F-exit fixes verified in `npm run check`
+- [x] 4.0 E0 Harness-engine source decision + local repo inventory
+      (OpenCode sidecar first; Vibe Kanban adapter blueprint; Aider reference-only)
+- [ ] 4.1 E1 OpenCode sidecar harness contract (`openrouter`, `nanogpt`,
+      `opencode-sidecar`, limitation states)
+- [ ] 4.2 E2 OpenCode sidecar launcher + authenticated HTTP/event client
+- [ ] 4.3 E3 Generated isolated OpenCode config for OpenRouter and NanoGPT
+- [ ] 4.4 E4 Session/event bridge + Thinking normalization
+- [ ] 4.5 E5 Permission mapping + approval bridge
+- [ ] 4.6 E6 Run persistence, checkpoints, manifests, and usage hooks
+- [ ] 4.7 E7 Provider onboarding, model catalog, chips, and settings
+- [ ] 4.8 E8 Native harness spike + defer/continue decision
+- [ ] 4.9 E-exit OpenCode-backed harness tests + manual matrix
+
+## 5. Thinking Display Parity (Cross-track)
+
+- [ ] 5.1 T0 Provider behavior matrix + fixture capture
+- [ ] 5.2 T1 Shared thinking stream contract + persistence rules
+- [ ] 5.3 T2 Incremental Thinking UI stream behavior
+- [ ] 5.4 T3 Claude thinking stream/backfill verification
+- [ ] 5.5 T4 Codex/OpenAI/ACP reasoning handling
+- [ ] 5.6 T5 Cursor thinking stream integration
+- [ ] 5.7 T6 OpenRouter/NanoGPT/local-model reasoning adapter contract
+- [ ] 5.8 T7 Thinking fixtures, tests, and manual matrix
+
+## 6. Fixes (Track C)
+
+- [ ] 6.1 F1 Strict-TS debt cleanup → promote `ts:check` to gate
+- [ ] 6.2 F3 Create-branch dialog
+- [ ] 6.3 F4 Terminal actions (open file / tab title / focused pane)
+- [ ] 6.4 F5 Sidebar remote-stats decision
+- [ ] 6.5 F6 Codex/Claude permission enforcement hardening
+- [ ] 6.6 F7 Worktree UX completion: custom path + unknown state
+- [ ] 6.7 F8 Scoped-search result navigation + no hidden first-20 cap
+- [ ] 6.8 F9 Attachments/artifacts UX completion + no hidden first-six cap
+- [ ] 6.9 F10 Run history show-all/pagination
+- [ ] 6.10 F11 Cross-scope move discoverability
+- [ ] 6.11 F12 Docs consistency pass
+- [ ] 6.12 F-exit fixes verified in `npm run check`
 
 (F2 native-module ABI toggle is task 0.1 — the prerequisite done first.)
 
-## 5. Stage exit
+## 7. Stage exit
 
-- [ ] 5.1 `npm run check` green (lint, style, tests, build)
-- [ ] 5.2 OpenSpec change validated and archived
-- [ ] 5.3 Handoff + `feature-todo.md` Stage 2 boxes updated with known limitations
+- [ ] 7.1 `npm run check` green (lint, style, tests, build)
+- [ ] 7.2 OpenSpec change validated and archived
+- [ ] 7.3 Handoff + `feature-todo.md` Stage 2 boxes updated with known limitations

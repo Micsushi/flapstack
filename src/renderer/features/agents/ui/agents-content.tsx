@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 // import { useSearchParams, useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: mock Next.js navigation hooks
@@ -10,6 +10,7 @@ const useRouter = () => ({ push: () => {}, replace: () => {} })
 const useUser = () => ({ user: null })
 const useClerk = () => ({ signOut: () => {} })
 import {
+  openAgentChatIdsAtom,
   selectedAgentChatIdAtom,
   selectedChatIsRemoteAtom,
   previousAgentChatIdAtom,
@@ -18,9 +19,11 @@ import {
   agentsMobileViewModeAtom,
   agentsPreviewSidebarOpenAtom,
   agentsSidebarOpenAtom,
+  selectedChatScopeAtom,
   agentsSubChatsSidebarModeAtom,
   agentsSubChatsSidebarWidthAtom,
   desktopViewAtom,
+  SUBCHATS_SIDEBAR_PANEL_ENABLED,
 } from "../atoms"
 import {
   selectedTeamIdAtom,
@@ -55,7 +58,7 @@ import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 // import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
 const useCombinedAuth = () => ({ userId: null }) // Desktop mock
 import { Button } from "../../../components/ui/button"
-import { AlignJustify } from "lucide-react"
+import { AlignJustify, MessageSquare, Plus, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
 import { isDesktopApp } from "../../../lib/utils/platform"
@@ -66,8 +69,10 @@ const useIsAdmin = () => false
 // Main Component
 export function AgentsContent() {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
-  const desktopView = useAtomValue(desktopViewAtom)
-  const setSelectedChatIsRemote = useSetAtom(selectedChatIsRemoteAtom)
+  const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
+  const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
+  const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
+  const selectedChatScope = useAtomValue(selectedChatScopeAtom)
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
   const selectedDraftId = useAtomValue(selectedDraftIdAtom)
@@ -81,6 +86,14 @@ export function AgentsContent() {
   const [previewSidebarOpen, setPreviewSidebarOpen] = useAtom(agentsPreviewSidebarOpenAtom)
   const [mobileViewMode, setMobileViewMode] = useAtom(agentsMobileViewModeAtom)
   const [subChatsSidebarMode, setSubChatsSidebarMode] = useAtom(agentsSubChatsSidebarModeAtom)
+  const effectiveSubChatsSidebarMode = SUBCHATS_SIDEBAR_PANEL_ENABLED ? subChatsSidebarMode : "tabs"
+  // Chats pane is hidden for now: coerce any persisted "sidebar" preference back
+  // to tabs so sub-chat switching keeps working via the top tabs.
+  useEffect(() => {
+    if (!SUBCHATS_SIDEBAR_PANEL_ENABLED && subChatsSidebarMode === "sidebar") {
+      setSubChatsSidebarMode("tabs")
+    }
+  }, [subChatsSidebarMode, setSubChatsSidebarMode])
   // Per-chat terminal sidebar state
   const terminalSidebarAtom = useMemo(
     () => terminalSidebarOpenAtomFamily(selectedChatId || ""),
@@ -91,7 +104,7 @@ export function AgentsContent() {
   const hasOpenedSubChatsSidebar = useRef(false)
   const wasSubChatsSidebarOpen = useRef(false)
   const [shouldAnimateSubChatsSidebar, setShouldAnimateSubChatsSidebar] = useState(
-    subChatsSidebarMode !== "sidebar",
+    effectiveSubChatsSidebarMode !== "sidebar",
   )
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -211,6 +224,103 @@ export function AgentsContent() {
   const { data: chatData } = api.agents.getAgentChat.useQuery(
     { chatId: selectedChatId! },
     { enabled: !!selectedChatId },
+  )
+
+  useEffect(() => {
+    if (!selectedChatId || selectedChatIsRemote) return
+    setOpenChatIds((current) =>
+      current.includes(selectedChatId) ? current : [...current, selectedChatId],
+    )
+  }, [selectedChatId, selectedChatIsRemote, setOpenChatIds])
+
+  const openChatTabs = useMemo(() => {
+    if (!agentChats || openChatIds.length === 0) return []
+    const chatsById = new Map(agentChats.map((chat) => [chat.id, chat]))
+    return openChatIds
+      .map((id) => chatsById.get(id))
+      .filter((chat): chat is NonNullable<typeof agentChats>[number] => Boolean(chat))
+  }, [agentChats, openChatIds])
+
+  const scopeChats = useMemo(() => {
+    if (!agentChats || !selectedChatScope) return []
+    const getChatUpdatedAt = (chat: NonNullable<typeof agentChats>[number]) => {
+      const value = (chat as typeof chat & { updated_at?: Date | string | number | null })
+        .updated_at
+      return chat.updatedAt ?? value ?? 0
+    }
+    return agentChats
+      .filter((chat) => {
+        if (selectedChatScope.type === "global") {
+          return !chat.projectId && !chat.taskId
+        }
+        if (selectedChatScope.type === "project") {
+          return chat.projectId === selectedChatScope.id
+        }
+        return chat.taskId === selectedChatScope.id
+      })
+      .sort((a, b) => {
+        const aUpdated = new Date(getChatUpdatedAt(a)).getTime()
+        const bUpdated = new Date(getChatUpdatedAt(b)).getTime()
+        return bUpdated - aUpdated
+      })
+  }, [agentChats, selectedChatScope])
+
+  useEffect(() => {
+    if (!agentChats || openChatIds.length === 0) return
+    const validIds = new Set(agentChats.map((chat) => chat.id))
+    const filtered = openChatIds.filter((id) => validIds.has(id))
+    if (filtered.length !== openChatIds.length) {
+      setOpenChatIds(filtered)
+    }
+  }, [agentChats, openChatIds, setOpenChatIds])
+
+  const handleSelectOpenChatTab = useCallback(
+    async (chatId: string) => {
+      if (window.desktopApi?.claimChat) {
+        const result = await window.desktopApi.claimChat(chatId)
+        if (!result.ok) {
+          await window.desktopApi.focusChatOwner(chatId)
+          setOpenChatIds((current) => current.filter((id) => id !== chatId))
+          return
+        }
+      }
+      setSelectedChatId(chatId)
+      setSelectedChatIsRemote(false)
+      setChatSourceMode("local")
+      setDesktopView(null)
+    },
+    [setChatSourceMode, setDesktopView, setOpenChatIds, setSelectedChatId, setSelectedChatIsRemote],
+  )
+
+  const handleCloseOpenChatTab = useCallback(
+    (chatId: string) => {
+      window.desktopApi?.releaseChat?.(chatId)
+      const isClosingSelected = selectedChatId === chatId
+      const closedIndex = openChatIds.indexOf(chatId)
+      const next = openChatIds.filter((id) => id !== chatId)
+      setOpenChatIds(next)
+
+      if (!isClosingSelected) return
+
+      const nextSelectedId = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null
+      if (nextSelectedId) {
+        // Route through the claim path, not a bare setSelectedChatId.
+        void handleSelectOpenChatTab(nextSelectedId)
+      } else {
+        setSelectedChatId(null)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      }
+    },
+    [
+      openChatIds,
+      selectedChatId,
+      handleSelectOpenChatTab,
+      setChatSourceMode,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+    ],
   )
 
   // Track previous chat ID for navigation after archive
@@ -756,7 +866,7 @@ export function AgentsContent() {
   // Track sub-chats sidebar open state for animation control
   // Now renders even while loading to show spinner (mobile always uses tabs)
   const isSubChatsSidebarOpen =
-    selectedChatId && subChatsSidebarMode === "sidebar" && !isMobile && !desktopView
+    selectedChatId && effectiveSubChatsSidebarMode === "sidebar" && !isMobile && !desktopView
 
   useEffect(() => {
     // When sidebar closes, reset for animation on next open
@@ -902,33 +1012,35 @@ export function AgentsContent() {
     <>
       <div className="flex h-full">
         {/* Sub-chats sidebar - only show in sidebar mode when viewing a chat */}
-        <ResizableSidebar
-          isOpen={!!isSubChatsSidebarOpen}
-          onClose={() => {
-            setShouldAnimateSubChatsSidebar(true)
-            setSubChatsSidebarMode("tabs")
-          }}
-          widthAtom={agentsSubChatsSidebarWidthAtom}
-          minWidth={160}
-          maxWidth={300}
-          side="left"
-          animationDuration={0}
-          initialWidth={0}
-          exitWidth={0}
-          disableClickToClose={true}
-        >
-          <AgentsSubChatsSidebar
+        {SUBCHATS_SIDEBAR_PANEL_ENABLED && (
+          <ResizableSidebar
+            isOpen={!!isSubChatsSidebarOpen}
             onClose={() => {
               setShouldAnimateSubChatsSidebar(true)
               setSubChatsSidebarMode("tabs")
             }}
-            isMobile={isMobile}
-            isSidebarOpen={sidebarOpen}
-            onBackToChats={() => setSidebarOpen((prev) => !prev)}
-            isLoading={isLoadingSubChats}
-            agentName={chatData?.name}
-          />
-        </ResizableSidebar>
+            widthAtom={agentsSubChatsSidebarWidthAtom}
+            minWidth={160}
+            maxWidth={300}
+            side="left"
+            animationDuration={0}
+            initialWidth={0}
+            exitWidth={0}
+            disableClickToClose={true}
+          >
+            <AgentsSubChatsSidebar
+              onClose={() => {
+                setShouldAnimateSubChatsSidebar(true)
+                setSubChatsSidebarMode("tabs")
+              }}
+              isMobile={isMobile}
+              isSidebarOpen={sidebarOpen}
+              onBackToChats={() => setSidebarOpen((prev) => !prev)}
+              isLoading={isLoadingSubChats}
+              agentName={chatData?.name}
+            />
+          </ResizableSidebar>
+        )}
 
         {/* Main content */}
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
@@ -936,6 +1048,43 @@ export function AgentsContent() {
             <SettingsContent />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
+              {!selectedChatIsRemote && openChatTabs.length > 0 && (
+                <div className="h-9 shrink-0 flex items-end gap-0 overflow-x-auto border-b border-border/70 bg-background/95 px-1">
+                  {openChatTabs.map((chat) => {
+                    const isActive = chat.id === selectedChatId
+                    return (
+                      <div
+                        key={chat.id}
+                        className={[
+                          "group flex h-8 max-w-56 min-w-28 items-center gap-1.5 border border-b-0 px-2 text-left text-xs transition-colors",
+                          isActive
+                            ? "bg-background text-foreground border-border"
+                            : "bg-muted/35 text-muted-foreground border-transparent hover:bg-muted/70 hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 truncate text-left"
+                          onClick={() => handleSelectOpenChatTab(chat.id)}
+                        >
+                          {chat.name || "New Chat"}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Close ${chat.name || "chat"}`}
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-60 hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleCloseOpenChatTab(chat.id)
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               <ChatView
                 key={`${chatSourceMode}-${selectedChatId}`}
                 chatId={selectedChatId}
@@ -949,9 +1098,72 @@ export function AgentsContent() {
             <div className="h-full flex flex-col relative overflow-hidden">
               <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
             </div>
+          ) : selectedChatScope ? (
+            <div className="h-full flex flex-col overflow-hidden bg-background">
+              <div className="shrink-0 border-b border-border/70 px-6 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {selectedChatScope.type === "global"
+                        ? "Global"
+                        : selectedChatScope.type === "project"
+                          ? "Project"
+                          : "Task"}
+                    </div>
+                    <h2 className="truncate text-lg font-semibold text-foreground">
+                      {selectedChatScope.name}
+                    </h2>
+                  </div>
+                  <Button size="sm" className="gap-1.5" onClick={() => setShowNewChatForm(true)}>
+                    <Plus className="h-4 w-4" />
+                    New Chat
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto px-6 py-4">
+                {scopeChats.length > 0 ? (
+                  <div className="grid gap-2">
+                    {scopeChats.map((chat) => (
+                      <button
+                        key={chat.id}
+                        type="button"
+                        className="flex items-center gap-3 rounded-md border border-border/70 bg-card px-3 py-2 text-left transition-colors hover:bg-muted/60"
+                        onClick={() => {
+                          setSelectedChatId(chat.id)
+                          setSelectedChatIsRemote(false)
+                          setChatSourceMode("local")
+                        }}
+                      >
+                        <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-foreground">
+                            {chat.name || "New Chat"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(
+                              chat.updatedAt ??
+                                (
+                                  chat as typeof chat & {
+                                    updated_at?: Date | string | number | null
+                                  }
+                                ).updated_at ??
+                                Date.now(),
+                            ).toLocaleString()}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground">
+                    No chats in this {selectedChatScope.type} yet.
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
-            <div className="h-full flex flex-col relative overflow-hidden">
-              <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
+            <div className="flex h-full items-center justify-center bg-background px-6 text-sm text-muted-foreground">
+              Select a chat, project, or task.
             </div>
           )}
         </div>

@@ -12,7 +12,7 @@
 // Recovery if the native modules ever get corrupted:
 //   rm node_modules/.native-abi && npm run <dev|test>   (forces a clean rebuild)
 
-import { execSync } from "node:child_process"
+import { execFileSync, execSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
@@ -31,11 +31,21 @@ if (target !== "node" && target !== "electron") {
 // Node versions also triggers a rebuild. Electron always rebuilds for the
 // installed Electron, so a plain tag is enough (postinstall reruns on upgrade).
 const desired = target === "node" ? `node-${process.versions.modules}` : "electron"
+const nodeMajor = Number(process.versions.node.split(".")[0])
 
 const current = existsSync(markerPath) ? readFileSync(markerPath, "utf8").trim() : ""
 if (current === desired) {
   console.log(`[native-abi] already built for ${target} (${desired}) — skipping rebuild`)
   process.exit(0)
+}
+
+if (target === "node" && nodeMajor > 24) {
+  console.error(
+    `[native-abi] Node ${process.versions.node} is not supported for native test rebuilds in this repo.`,
+  )
+  console.error("[native-abi] Use Node 22 from CI, or Node 24 for local testing.")
+  console.error("[native-abi] Refusing to rebuild so Electron-native modules are not corrupted.")
+  process.exit(1)
 }
 
 console.log(
@@ -60,7 +70,7 @@ try {
     // CXXFLAGS keeps better-sqlite3's C++20 build happy on these toolchains.
     const env = { ...process.env, CXXFLAGS: "-std=c++20" }
     execSync("npm rebuild better-sqlite3", { cwd: root, stdio: "inherit", env })
-    execSync("npx node-gyp rebuild", {
+    execFileSync(join(root, "node_modules", ".bin", "node-gyp"), ["rebuild"], {
       cwd: join(root, "node_modules", "node-pty"),
       stdio: "inherit",
       env,

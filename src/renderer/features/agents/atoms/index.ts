@@ -32,6 +32,12 @@ export const selectedAgentChatIdAtom = atomWithWindowStorage<string | null>(
   { getOnInit: true },
 )
 
+// Parent chats open in the main workspace tab strip.
+// Local-only for now; remote chats still use the single selected chat path.
+export const openAgentChatIdsAtom = atomWithWindowStorage<string[]>("agents:openChatIds", [], {
+  getOnInit: true,
+})
+
 // Whether the selected chat is a remote (sandbox) chat
 // This is needed because remote and local chats may have the same ID
 export const selectedChatIsRemoteAtom = atomWithWindowStorage<boolean>(
@@ -220,6 +226,18 @@ export type SelectedProject = {
 export const selectedProjectAtom = atomWithWindowStorage<SelectedProject>(
   "agents:selectedProject",
   null,
+  { getOnInit: true },
+)
+
+export type SelectedChatScope =
+  | { type: "global"; id: "global"; name: string }
+  | { type: "project"; id: string; name: string }
+  | { type: "task"; id: string; name: string; projectId: string; projectName?: string | null }
+  | null
+
+export const selectedChatScopeAtom = atomWithWindowStorage<SelectedChatScope>(
+  "agents:selectedChatScope",
+  { type: "global", id: "global", name: "Global chats" },
   { getOnInit: true },
 )
 
@@ -577,6 +595,12 @@ export function removePaneRatio(ratios: number[], removeIdx: number): number[] {
   const total = result.reduce((a, b) => a + b, 0)
   return total > 0 ? result.map((r) => r / total) : getDefaultRatios(rest.length)
 }
+
+// Feature flag: the vertical sub-chats "chats pane" is hidden for now.
+// It only switches sub-chats within a single chat, which is dead weight until
+// a chat routinely holds multiple concurrent threads. Flip back to true to
+// restore the pane and its toggle button. See agents-subchats-sidebar.tsx.
+export const SUBCHATS_SIDEBAR_PANEL_ENABLED = false
 
 // Sub-chats display mode - tabs (horizontal) or sidebar (vertical list)
 // Window-scoped so each window can have its own layout preference

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { CLAUDE_MODEL_ID_MAP, CLAUDE_MODELS, CODEX_MODELS } from "../src/shared/model-catalog"
+import {
+  CLAUDE_MODEL_ID_MAP,
+  CLAUDE_MODELS,
+  CODEX_MODELS,
+  formatCodexModelForAcp,
+  formatModelDisplayName,
+} from "../src/shared/model-catalog"
 
 describe("Claude model catalog", () => {
   it("exposes only concrete model versions in the picker", () => {
@@ -36,6 +42,9 @@ describe("Claude model catalog", () => {
   it("exposes only current Codex model choices", () => {
     expect(CODEX_MODELS.map((model) => model.id)).toEqual([
       "gpt-5.5",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.4",
       "gpt-5.4-mini",
       "gpt-5.3-codex-spark",
@@ -44,10 +53,51 @@ describe("Claude model catalog", () => {
 
   it("marks Codex fast mode only on supported full models", () => {
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.supportsFastMode).toBe(true)
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.supportsFastMode).toBe(true)
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-terra")?.supportsFastMode).toBe(true)
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.supportsFastMode).toBe(true)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.4")?.supportsFastMode).toBe(true)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.4-mini")?.supportsFastMode).toBe(false)
     expect(CODEX_MODELS.find((model) => model.id === "gpt-5.3-codex-spark")?.supportsFastMode).toBe(
       false,
     )
+  })
+
+  it("tracks Codex reasoning levels per model", () => {
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-sol")?.thinkings).toContain("ultra")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-terra")?.thinkings).toContain("ultra")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.thinkings).toContain("max")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.6-luna")?.thinkings).not.toContain(
+      "ultra",
+    )
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.thinkings).not.toContain("none")
+    expect(CODEX_MODELS.find((model) => model.id === "gpt-5.5")?.thinkings).not.toContain("max")
+  })
+
+  it("formats stored Codex model ids for ACP", () => {
+    for (const model of CODEX_MODELS) {
+      for (const thinking of model.thinkings) {
+        expect(formatCodexModelForAcp(`${model.id}/${thinking}`)).toBe(`${model.id}[${thinking}]`)
+      }
+    }
+
+    expect(formatCodexModelForAcp("gpt-5.5/high")).toBe("gpt-5.5[high]")
+    expect(formatCodexModelForAcp("gpt-5.6-sol/ultra")).toBe("gpt-5.6-sol[ultra]")
+    expect(formatCodexModelForAcp("gpt-5.6-terra/max")).toBe("gpt-5.6-terra[max]")
+    expect(formatCodexModelForAcp("gpt-5.5[high]")).toBe("gpt-5.5[high]")
+  })
+
+  it("displays Codex model ids from stored and provider formats", () => {
+    expect(formatModelDisplayName("gpt-5.6-sol/ultra")).toBe("GPT-5.6 Sol")
+    expect(formatModelDisplayName("gpt-5.6-terra[max]")).toBe("GPT-5.6 Terra")
+  })
+
+  it("preserves the 1M context marker while stripping effort brackets", () => {
+    expect(formatModelDisplayName("opus[1m]")).toBe("Opus 1M")
+    expect(formatModelDisplayName("sonnet[1m]")).toBe("Sonnet 1M")
+    expect(formatModelDisplayName("opus[1m]/high")).toBe("Opus 1M")
+    expect(formatModelDisplayName("claude-opus-4-8[1m]")).toBe("Opus 4.8 1M")
+    // Plain effort brackets are still stripped.
+    expect(formatModelDisplayName("opus[high]")).toBe("Opus")
   })
 })

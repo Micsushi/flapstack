@@ -17,6 +17,7 @@ import {
 import {
   DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING,
   DEFAULT_CODEX_MODEL_WITH_THINKING,
+  formatCodexModelForAcp,
 } from "../../../../shared/model-catalog"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { getClaudeShellEnvironment } from "../../claude/env"
@@ -187,28 +188,6 @@ const codexMcpListEntrySchema = z
 
 type CodexMcpListEntry = z.infer<typeof codexMcpListEntrySchema>
 
-function getCodexPackageName(): string {
-  const platform = process.platform
-  const arch = process.arch
-
-  if (platform === "darwin") {
-    if (arch === "arm64") return "@zed-industries/codex-acp-darwin-arm64"
-    if (arch === "x64") return "@zed-industries/codex-acp-darwin-x64"
-  }
-
-  if (platform === "linux") {
-    if (arch === "arm64") return "@zed-industries/codex-acp-linux-arm64"
-    if (arch === "x64") return "@zed-industries/codex-acp-linux-x64"
-  }
-
-  if (platform === "win32") {
-    if (arch === "arm64") return "@zed-industries/codex-acp-win32-arm64"
-    if (arch === "x64") return "@zed-industries/codex-acp-win32-x64"
-  }
-
-  throw new Error(`Unsupported platform/arch for codex-acp: ${platform}/${arch}`)
-}
-
 function toUnpackedAsarPath(filePath: string): string {
   const unpackedPath = filePath.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`)
 
@@ -220,10 +199,8 @@ function toUnpackedAsarPath(filePath: string): string {
 }
 
 function resolveCodexAcpBinaryPath(): string {
-  const packageName = getCodexPackageName()
-  const binaryName = process.platform === "win32" ? "codex-acp.exe" : "codex-acp"
-  const codexPackageRoot = dirname(require.resolve("@zed-industries/codex-acp/package.json"))
-  const resolvedPath = require.resolve(`${packageName}/bin/${binaryName}`, {
+  const codexPackageRoot = dirname(require.resolve("@agentclientprotocol/codex-acp/package.json"))
+  const resolvedPath = require.resolve("@agentclientprotocol/codex-acp/dist/index.js", {
     // Resolve relative to the wrapper package so nested optional deps work in packaged apps.
     paths: [codexPackageRoot],
   })
@@ -1649,6 +1626,30 @@ export const codexRouter = router({
       return observable<any>((emit) => {
         const existingStream = activeStreams.get(input.subChatId)
         if (existingStream) {
+          const existingSubChat = getDatabase()
+            .select()
+            .from(subChats)
+            .where(eq(subChats.id, input.subChatId))
+            .get()
+          const existingMessages = parseStoredMessages(existingSubChat?.messages)
+          const lastMessage = existingMessages[existingMessages.length - 1]
+          const isDuplicateActivePrompt =
+            lastMessage?.role === "user" &&
+            extractPromptFromStoredMessage(lastMessage) === input.prompt
+
+          if (isDuplicateActivePrompt) {
+            console.warn("[codex] Ignoring duplicate active stream request", {
+              subChatId: input.subChatId,
+              runId: input.runId,
+              activeRunId: existingStream.runId,
+            })
+            queueMicrotask(() => {
+              emit.next({ type: "finish" })
+              emit.complete()
+            })
+            return () => {}
+          }
+
           existingStream.cancelRequested = true
           existingStream.controller.abort()
           // Ensure old run cannot continue emitting after supersede.
@@ -1733,6 +1734,7 @@ export const codexRouter = router({
               modelId: requestedModelId,
               authConfig: input.authConfig,
             })
+            const acpModelId = formatCodexModelForAcp(selectedModelId)
             const metadataModel = selectedModelId
             const permissionMode = resolveCodexPermissionMode({
               subChatPermissionMode: existingSubChat.permissionMode,
@@ -1879,7 +1881,7 @@ export const codexRouter = router({
             }
 
             const result = streamText({
-              model: provider.languageModel(selectedModelId),
+              model: provider.languageModel(acpModelId),
               messages: [
                 {
                   role: "user",
@@ -1962,7 +1964,38 @@ export const codexRouter = router({
                     cleanAssistantMessageForPersistence(responseWithUsage)
 
                   if (!cleanedResponseMessage) {
-                    persistSubChatMessages(messagesForStream)
+                    const fallbackResponseMessage = {
+                      id: crypto.randomUUID(),
+                      role: "assistant",
+                      parts: [
+                        {
+                          type: "text",
+                          text: "Codex finished without returning a visible response. Retry the message; if it repeats, switch models or check Codex logs.",
+                          state: "done",
+                        },
+                      ],
+                      metadata: {
+                        ...((responseMessage as any)?.metadata || {}),
+                        harness: "codex",
+                        model: metadataModel,
+                        permissionMode,
+                        permissionApplication,
+                        runId: input.runId,
+                        resultSubtype: "empty-response",
+                        ...usageMetadata,
+                      },
+                    }
+
+                    console.warn("[codex] Empty assistant response persisted as fallback", {
+                      subChatId: input.subChatId,
+                      runId: input.runId,
+                      promptMessageId,
+                    })
+
+                    persistSubChatMessages([
+                      ...(isContinuation ? messagesForStream.slice(0, -1) : messagesForStream),
+                      fallbackResponseMessage,
+                    ])
                     return
                   }
 

@@ -121,11 +121,13 @@ import {
   agentsUnseenChangesAtom,
   archivePopoverOpenAtom,
   agentsDebugModeAtom,
+  selectedChatScopeAtom,
   selectedProjectAtom,
   justCreatedIdsAtom,
   undoStackAtom,
   pendingUserQuestionsAtom,
   desktopViewAtom,
+  type SelectedChatScope,
   type UndoItem,
 } from "../agents/atoms"
 import { NetworkStatus } from "../../components/ui/network-status"
@@ -1627,6 +1629,7 @@ interface ChatListSectionProps {
   onCreateTaskChat?: (taskId: string) => void
   onChangeProjectColor?: (projectId: string, color: string) => void
   onToggleSection?: (sectionId: string) => void
+  onSelectScope?: (scope: SelectedChatScope) => void
   onDragStartItem: (kind: string, id: string) => void
   onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
   onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
@@ -1702,6 +1705,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onCreateTaskChat,
   onChangeProjectColor,
   onToggleSection,
+  onSelectScope,
   onDragStartItem,
   onDragOverItem,
   onDropItem,
@@ -1816,6 +1820,38 @@ const ChatListSection = React.memo(function ChatListSection({
   const sectionDropSeparatorClass =
     isTaskSection && isTaskScopedDrag ? (isMultiSelectMode ? "ml-6 mr-3" : "ml-6") : ""
   const usesSectionDropSeparator = hideHeader && Boolean(sectionDragId)
+  const getHeaderScope = useCallback((): NonNullable<SelectedChatScope> | null => {
+    if (lifecycleTarget?.type === "project") {
+      return { type: "project", id: lifecycleTarget.id, name: title }
+    }
+    if (lifecycleTarget?.type === "task" && parentProjectId) {
+      return {
+        type: "task",
+        id: lifecycleTarget.id,
+        name: title,
+        projectId: parentProjectId,
+      }
+    }
+    if (kind === "global") {
+      return { type: "global", id: "global", name: title }
+    }
+    return null
+  }, [kind, lifecycleTarget, parentProjectId, title])
+  const handleHeaderClick = useCallback(() => {
+    if (suppressSectionClickRef.current) {
+      suppressSectionClickRef.current = false
+      return
+    }
+
+    if (canCollapse && sectionId) {
+      const willExpand = isCollapsed
+      onToggleSection?.(sectionId)
+      onSelectScope?.(willExpand ? getHeaderScope() : null)
+      return
+    }
+
+    onSelectScope?.(getHeaderScope())
+  }, [canCollapse, getHeaderScope, isCollapsed, onSelectScope, onToggleSection, sectionId])
   const handleSeparatorDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = "move"
@@ -2072,6 +2108,14 @@ const ChatListSection = React.memo(function ChatListSection({
               data-sidebar-drag-target-kind={sectionDragKind}
               data-sidebar-drag-target-id={effectiveSectionDragId}
               onPointerDown={handleSectionPointerDragStart}
+              onClick={handleHeaderClick}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return
+                event.preventDefault()
+                handleHeaderClick()
+              }}
+              role={canCollapse || getHeaderScope() ? "button" : undefined}
+              tabIndex={canCollapse || getHeaderScope() ? 0 : undefined}
               className={cn(
                 "relative flex items-center gap-1 group/section",
                 "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
@@ -2090,26 +2134,17 @@ const ChatListSection = React.memo(function ChatListSection({
                 Boolean(lifecycleTarget) &&
                   !isMultiSelectMode &&
                   "cursor-grab active:cursor-grabbing",
+                (canCollapse || getHeaderScope()) && "cursor-pointer",
                 isDragOverSection && "brightness-110 ring-1 ring-primary/30 shadow-sm",
                 isDraggingSection && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
               )}
               style={sectionStyle}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  if (suppressSectionClickRef.current) {
-                    suppressSectionClickRef.current = false
-                    return
-                  }
-                  if (canCollapse && sectionId) onToggleSection?.(sectionId)
-                }}
-                className={cn(
-                  "flex min-w-0 flex-1 items-center gap-1.5 text-left",
-                  canCollapse ? "cursor-pointer" : "cursor-default",
-                )}
-              >
-                {canCollapse ? (
+              {canCollapse && (
+                <span
+                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
+                  aria-hidden="true"
+                >
                   <ChevronDown
                     className={cn(
                       "h-3.5 w-3.5 flex-shrink-0 transition-transform",
@@ -2119,10 +2154,15 @@ const ChatListSection = React.memo(function ChatListSection({
                       isCollapsed && "-rotate-90",
                     )}
                   />
-                ) : (
-                  headerIcon
+                </span>
+              )}
+              <div
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none",
+                  canCollapse ? "cursor-pointer" : "cursor-default",
                 )}
-                {canCollapse && headerIcon}
+              >
+                {headerIcon}
                 {lifecycleTarget?.isPinned && (
                   <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />
                 )}
@@ -2139,12 +2179,13 @@ const ChatListSection = React.memo(function ChatListSection({
                 >
                   {title}
                 </h3>
-              </button>
+              </div>
               {lifecycleTarget && !isMultiSelectMode && (
                 <button
                   type="button"
                   data-section-action
                   onClick={(event) => {
+                    event.stopPropagation()
                     if (lifecycleTarget.type === "project") {
                       // Ctrl/Cmd+click creates a task instead of a chat
                       if (event.ctrlKey || event.metaKey) {
@@ -2193,6 +2234,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     <button
                       type="button"
                       data-section-action
+                      onClick={(event) => event.stopPropagation()}
                       className={cn(
                         "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
                         isTopLevelScopedSection || isTaskSection
@@ -2988,6 +3030,7 @@ export function AgentsSidebar({
 
   // Desktop: use selectedProject instead of teams
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
+  const setSelectedChatScope = useSetAtom(selectedChatScopeAtom)
 
   // Keep chatSourceModeAtom for backwards compatibility (used in other places)
   const [chatSourceMode, setChatSourceMode] = useAtom(chatSourceModeAtom)
@@ -5142,6 +5185,7 @@ export function AgentsSidebar({
       triggerHaptic("light")
       localStorage.setItem("flapstack:new-chat-scope", "project")
       localStorage.removeItem("flapstack:new-chat-task-id")
+      setSelectedChatScope({ type: "project", id: project.id, name: project.name })
       setSelectedProject({
         id: project.id,
         name: project.name,
@@ -5164,6 +5208,7 @@ export function AgentsSidebar({
     [
       projects,
       triggerHaptic,
+      setSelectedChatScope,
       setSelectedProject,
       setSelectedChatId,
       setSelectedChatIsRemote,
@@ -5198,6 +5243,13 @@ export function AgentsSidebar({
       triggerHaptic("light")
       localStorage.setItem("flapstack:new-chat-scope", "task")
       localStorage.setItem("flapstack:new-chat-task-id", task.id)
+      setSelectedChatScope({
+        type: "task",
+        id: task.id,
+        name: task.name,
+        projectId: project.id,
+        projectName: project.name,
+      })
       setSelectedProject({
         id: project.id,
         name: project.name,
@@ -5221,6 +5273,7 @@ export function AgentsSidebar({
       tasks,
       projects,
       triggerHaptic,
+      setSelectedChatScope,
       setSelectedProject,
       setSelectedChatId,
       setSelectedChatIsRemote,
@@ -5318,14 +5371,33 @@ export function AgentsSidebar({
           await window.desktopApi.focusChatOwner(originalId)
           return
         }
-        // Release old chat only after new one is successfully claimed
-        if (selectedChatId && selectedChatId !== originalId) {
-          await window.desktopApi.releaseChat(selectedChatId)
-        }
       }
 
       setSelectedChatId(originalId)
       setSelectedChatIsRemote(isRemote)
+      if (!isRemote) {
+        const chat = agentChats.find((candidate) => candidate.id === originalId)
+        if (chat?.taskId && chat.projectId) {
+          const task = tasks?.find((candidate) => candidate.id === chat.taskId)
+          const project = projects?.find((candidate) => candidate.id === chat.projectId)
+          setSelectedChatScope({
+            type: "task",
+            id: chat.taskId,
+            name: task?.name ?? "Task",
+            projectId: chat.projectId,
+            projectName: project?.name ?? null,
+          })
+        } else if (chat?.projectId) {
+          const project = projects?.find((candidate) => candidate.id === chat.projectId)
+          setSelectedChatScope({
+            type: "project",
+            id: chat.projectId,
+            name: project?.name ?? "Project",
+          })
+        } else {
+          setSelectedChatScope({ type: "global", id: "global", name: "Global chats" })
+        }
+      }
       // Sync chatSourceMode for ChatView to load data from correct source
       setChatSourceMode(isRemote ? "sandbox" : "local")
       setShowNewChatForm(false) // Clear new chat form state when selecting a workspace
@@ -5344,8 +5416,71 @@ export function AgentsSidebar({
       setSelectedChatId,
       setSelectedChatIsRemote,
       setChatSourceMode,
+      setSelectedChatScope,
       setShowNewChatForm,
       setDesktopView,
+      isMobileFullscreen,
+      onChatSelect,
+      agentChats,
+      projects,
+      tasks,
+    ],
+  )
+
+  const handleSelectScope = useCallback(
+    (scope: SelectedChatScope) => {
+      triggerHaptic("light")
+      setSelectedChatScope(scope)
+      if (!scope) {
+        localStorage.removeItem("flapstack:new-chat-scope")
+        localStorage.removeItem("flapstack:new-chat-task-id")
+        setShowNewChatForm(false)
+        setDesktopView(null)
+        setSearchQuery("")
+        return
+      }
+      localStorage.setItem("flapstack:new-chat-scope", scope.type)
+      if (scope.type === "task") {
+        localStorage.setItem("flapstack:new-chat-task-id", scope.id)
+      } else {
+        localStorage.removeItem("flapstack:new-chat-task-id")
+      }
+      setSelectedChatId(null)
+      setSelectedChatIsRemote(false)
+      setSelectedDraftId(null)
+      setShowNewChatForm(false)
+      setDesktopView(null)
+      setSearchQuery("")
+
+      const projectId =
+        scope.type === "project" ? scope.id : scope.type === "task" ? scope.projectId : null
+      const project = projectId ? projects?.find((candidate) => candidate.id === projectId) : null
+      if (project) {
+        setSelectedProject({
+          id: project.id,
+          name: project.name,
+          path: project.path,
+          gitRemoteUrl: project.gitRemoteUrl,
+          gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+          gitOwner: project.gitOwner,
+          gitRepo: project.gitRepo,
+        })
+      }
+
+      if (isMobileFullscreen && onChatSelect) {
+        onChatSelect()
+      }
+    },
+    [
+      triggerHaptic,
+      setSelectedChatScope,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      setDesktopView,
+      projects,
+      setSelectedProject,
       isMobileFullscreen,
       onChatSelect,
     ],
@@ -6167,6 +6302,7 @@ export function AgentsSidebar({
                       onCreateTaskChat={openNewTaskChat}
                       onChangeProjectColor={handleChangeProjectColor}
                       onToggleSection={handleToggleSection}
+                      onSelectScope={handleSelectScope}
                       onDragStartItem={handleDragStartItem}
                       onDragOverItem={handleDragOverItem}
                       onDropItem={handleDropItem}
@@ -6282,6 +6418,7 @@ export function AgentsSidebar({
                     onCreateTaskChat={openNewTaskChat}
                     onChangeProjectColor={handleChangeProjectColor}
                     onToggleSection={handleToggleSection}
+                    onSelectScope={handleSelectScope}
                     onDragStartItem={handleDragStartItem}
                     onDragOverItem={handleDragOverItem}
                     onDropItem={handleDropItem}

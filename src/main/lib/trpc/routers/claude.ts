@@ -918,7 +918,7 @@ export const claudeRouter = router({
             baseUrl: z.string().min(1),
           })
           .optional(),
-        effort: z.enum(["low", "medium", "high", "max"]).optional(),
+        effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
         maxThinkingTokens: z.number().optional(), // Enable extended thinking
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
         historyEnabled: z.boolean().optional(),

@@ -16,6 +16,7 @@ import {
   agentsSubChatUnseenChangesAtom,
   agentsSubChatsSidebarModeAtom,
   pendingUserQuestionsAtom,
+  SUBCHATS_SIDEBAR_PANEL_ENABLED,
 } from "../atoms"
 import { widgetVisibilityAtomFamily, unifiedSidebarEnabledAtom } from "../../details-sidebar/atoms"
 import { chatSourceModeAtom } from "../../../lib/atoms"
@@ -231,6 +232,7 @@ export function SubChatSelector({
   const subChatUnseenChanges = useAtomValue(agentsSubChatUnseenChangesAtom)
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
   const [subChatsSidebarMode, setSubChatsSidebarMode] = useAtom(agentsSubChatsSidebarModeAtom)
+  const effectiveSubChatsSidebarMode = SUBCHATS_SIDEBAR_PANEL_ENABLED ? subChatsSidebarMode : "tabs"
   const pendingQuestionsMap = useAtomValue(pendingUserQuestionsAtom)
 
   // Overview sidebar state - to check if widgets are visible
@@ -467,7 +469,7 @@ export function SubChatSelector({
   useEffect(() => {
     const handleHistoryHotkey = (e: KeyboardEvent) => {
       // Only in tabs mode (sidebar closed)
-      if (subChatsSidebarMode !== "tabs") return
+      if (effectiveSubChatsSidebarMode !== "tabs") return
 
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         // Don't trigger if already focused on an input/textarea
@@ -488,7 +490,7 @@ export function SubChatSelector({
 
     window.addEventListener("keydown", handleHistoryHotkey, true)
     return () => window.removeEventListener("keydown", handleHistoryHotkey, true)
-  }, [subChatsSidebarMode])
+  }, [effectiveSubChatsSidebarMode])
 
   // Keyboard shortcut: Cmd+Shift+T / Ctrl+Shift+T for new sub-chat
   // Scroll to active tab when it changes
@@ -628,7 +630,7 @@ export function SubChatSelector({
       }}
     >
       {/* Burger button - hidden when sub-chats sidebar is open (it moves into sidebar) */}
-      {onBackToChats && subChatsSidebarMode === "tabs" && (
+      {onBackToChats && effectiveSubChatsSidebarMode === "tabs" && (
         <Button
           variant="ghost"
           size="icon"
@@ -646,7 +648,7 @@ export function SubChatSelector({
       )}
 
       {/* Open sidebar button - only on desktop when in tabs mode */}
-      {!isMobile && subChatsSidebarMode === "tabs" && (
+      {SUBCHATS_SIDEBAR_PANEL_ENABLED && !isMobile && effectiveSubChatsSidebarMode === "tabs" && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -686,7 +688,7 @@ export function SubChatSelector({
           className={cn(
             "flex items-center px-1 py-1 -my-1 gap-1 flex-1 min-w-0 overflow-x-auto scrollbar-hide pr-12",
             // Hide tabs when sidebar is open (desktop) or when only one chat exists
-            subChatsSidebarMode === "sidebar" && !isMobile && "hidden",
+            effectiveSubChatsSidebarMode === "sidebar" && !isMobile && "hidden",
             hasSingleChat && "invisible",
           )}
         >
@@ -904,7 +906,7 @@ export function SubChatSelector({
         </div>
 
         {/* Plus button - absolute positioned on right with gradient cover */}
-        {(isMobile || (!isMobile && subChatsSidebarMode === "tabs")) && (
+        {(isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
           <div className="absolute right-0 top-0 bottom-0 flex items-center z-20">
             {/* Gradient to cover content peeking from the left */}
             <div className="w-6 h-full bg-gradient-to-r from-transparent to-background" />
@@ -931,7 +933,7 @@ export function SubChatSelector({
       </div>
 
       {/* Action buttons - always visible on mobile, on desktop only in tabs mode */}
-      {(isMobile || (!isMobile && subChatsSidebarMode === "tabs")) && (
+      {(isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
         <div
           className="flex items-center gap-1"
           style={{

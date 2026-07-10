@@ -28,34 +28,65 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
 }
 
 export type CodexAuthSurface = "chatgpt" | "api-key"
-export type CodexThinkingLevel = "none" | "low" | "medium" | "high" | "xhigh"
+export type CodexThinkingLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+
+const CODEX_STANDARD_THINKINGS: readonly CodexThinkingLevel[] = ["low", "medium", "high", "xhigh"]
+const CODEX_DEEP_THINKINGS: readonly CodexThinkingLevel[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]
+const CODEX_ULTRA_THINKINGS: readonly CodexThinkingLevel[] = [...CODEX_DEEP_THINKINGS, "ultra"]
 
 export const CODEX_MODELS = [
   {
     id: "gpt-5.5",
     name: "GPT-5.5",
-    thinkings: ["none", "low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
+    thinkings: CODEX_STANDARD_THINKINGS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+  },
+  {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    thinkings: CODEX_ULTRA_THINKINGS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    thinkings: CODEX_ULTRA_THINKINGS,
+    authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
+    supportsFastMode: true,
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    thinkings: CODEX_DEEP_THINKINGS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.4",
     name: "GPT-5.4",
-    thinkings: ["none", "low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
+    thinkings: CODEX_STANDARD_THINKINGS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: true,
   },
   {
     id: "gpt-5.4-mini",
     name: "GPT-5.4 Mini",
-    thinkings: ["none", "low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
+    thinkings: CODEX_STANDARD_THINKINGS,
     authSurfaces: ["chatgpt", "api-key"] as CodexAuthSurface[],
     supportsFastMode: false,
   },
   {
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
-    thinkings: ["low", "medium", "high", "xhigh"] as CodexThinkingLevel[],
+    thinkings: ["low", "medium", "high", "xhigh"] as const,
     authSurfaces: ["chatgpt"] as CodexAuthSurface[],
     supportsFastMode: false,
   },
@@ -79,13 +110,15 @@ export function formatModelDisplayName(model?: string | null): string | null {
   const raw = model?.trim()
   if (!raw) return null
 
-  // Strip thinking/effort suffix like "gpt-5.5/high"
+  // Strip the effort suffix ("gpt-5.5/high", "gpt-5.5[high]") but keep [1m].
   let base = raw.split("/")[0].toLowerCase()
 
   let suffix = ""
   if (base.endsWith("[1m]")) {
     base = base.slice(0, -4)
     suffix = " 1M"
+  } else {
+    base = base.replace(/\[[^\]]+\]$/, "")
   }
 
   const alias = CLAUDE_ALIAS_LABELS[base]
@@ -109,6 +142,14 @@ export function formatModelDisplayName(model?: string | null): string | null {
   }
 
   return raw
+}
+
+export function formatCodexModelForAcp(modelId: string): string {
+  const normalizedModel = modelId.trim()
+  const slashMatch = normalizedModel.match(/^(.+)\/([^/]+)$/)
+  if (!slashMatch) return normalizedModel
+
+  return `${slashMatch[1]}[${slashMatch[2]}]`
 }
 
 export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-8"
