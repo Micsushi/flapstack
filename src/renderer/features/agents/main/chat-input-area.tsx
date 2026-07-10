@@ -1,7 +1,7 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronDown, RefreshCw } from "lucide-react"
+import { ChevronDown, RefreshCw, Volume2 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
@@ -856,6 +856,14 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Check if voice input is available (authenticated OR has OPENAI_API_KEY)
   const { data: voiceAvailability } = trpc.voice.isAvailable.useQuery()
   const isVoiceAvailable = voiceAvailability?.available ?? false
+  const { data: readAloudPreference } = trpc.speech.getReadAloudForChat.useQuery({
+    chatId: subChatId,
+  })
+  const setReadAloudForChat = trpc.speech.setReadAloudForChat.useMutation({
+    onSuccess: async () => {
+      await trpcUtils.speech.getReadAloudForChat.invalidate({ chatId: subChatId })
+    },
+  })
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)
@@ -922,6 +930,8 @@ export const ChatInputArea = memo(function ChatInputArea({
       const result = await transcribeMutation.mutateAsync({
         audio: base64,
         format,
+        chatId: parentChatId ?? undefined,
+        subChatId,
       })
 
       if (!voiceMountedRef.current) return
@@ -933,6 +943,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         const newValue = current + (needsSpace ? " " : "") + transcribed
         editorRef.current?.setValue(newValue)
         editorRef.current?.focus()
+        toast.success("Dictated with Local Whisper")
       } else {
         toast.info("No speech detected")
       }
@@ -2159,6 +2170,38 @@ export const ChatInputArea = memo(function ChatInputArea({
 
                   {/* Send/Stop/Voice button */}
                   <div className="ml-1">
+                    <Tooltip delayDuration={500}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "mr-1 h-7 w-7 rounded-sm",
+                            readAloudPreference?.enabled &&
+                              "text-emerald-600 hover:text-emerald-700",
+                          )}
+                          disabled={setReadAloudForChat.isPending}
+                          onClick={() =>
+                            setReadAloudForChat.mutate({
+                              chatId: subChatId,
+                              enabled: !readAloudPreference?.enabled,
+                            })
+                          }
+                          aria-label={
+                            readAloudPreference?.enabled
+                              ? "Turn read-aloud off for this chat"
+                              : "Turn read-aloud on for this chat"
+                          }
+                        >
+                          <Volume2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {readAloudPreference?.enabled
+                          ? "Read-aloud on for this chat"
+                          : "Read-aloud off for this chat"}
+                      </TooltipContent>
+                    </Tooltip>
                     <AgentSendButton
                       isStreaming={isStreaming}
                       isSubmitting={false}

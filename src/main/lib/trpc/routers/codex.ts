@@ -25,6 +25,8 @@ import { resolveProjectPathFromWorktree } from "../../claude-config"
 import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
+import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
+import { getReadAloudEnabled } from "../../speech/settings"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
@@ -1725,7 +1727,10 @@ export const codexRouter = router({
               projectPath: input.projectPath,
               harness: "codex",
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const promptForModel = appendReadAloudInstruction(
+              prependStartupContext(input.prompt, startupContext),
+              getReadAloudEnabled(input.subChatId),
+            )
             const fallbackModel = input.authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_THINKING

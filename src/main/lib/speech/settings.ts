@@ -27,10 +27,38 @@ export function setVoiceSettings(settings: Partial<VoiceSettings>): VoiceSetting
   return next
 }
 
+export function getReadAloudEnabled(chatId?: string): boolean {
+  return resolveReadAloudEnabled(getVoiceSettings(), chatId)
+}
+
+export function setReadAloudForChat(chatId: string, enabled: boolean | null): VoiceSettings {
+  const settings = getVoiceSettings()
+  const readAloudByChatId = { ...settings.readAloudByChatId }
+  if (enabled === null) delete readAloudByChatId[chatId]
+  else readAloudByChatId[chatId] = enabled
+  return setVoiceSettings({ readAloudByChatId })
+}
+
+export function resolveReadAloudEnabled(settings: VoiceSettings, chatId?: string): boolean {
+  if (chatId && typeof settings.readAloudByChatId[chatId] === "boolean") {
+    return settings.readAloudByChatId[chatId]
+  }
+  return settings.autoReadAloud
+}
+
 export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettings {
+  const readAloudByChatId = Object.fromEntries(
+    Object.entries(raw.readAloudByChatId ?? {}).filter(
+      ([chatId, enabled]) => Boolean(chatId) && typeof enabled === "boolean",
+    ),
+  ) as Record<string, boolean>
   return {
     sttAdapterId:
       typeof raw.sttAdapterId === "string" ? raw.sttAdapterId : defaultVoiceSettings.sttAdapterId,
+    whisperCppBinPath:
+      typeof raw.whisperCppBinPath === "string" && raw.whisperCppBinPath.trim()
+        ? raw.whisperCppBinPath.trim()
+        : null,
     ttsAdapterId:
       typeof raw.ttsAdapterId === "string" ? raw.ttsAdapterId : defaultVoiceSettings.ttsAdapterId,
     voiceId: typeof raw.voiceId === "string" ? raw.voiceId : null,
@@ -39,6 +67,7 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
         ? clamp(raw.rate, 0.5, 2)
         : defaultVoiceSettings.rate,
     autoReadAloud: raw.autoReadAloud ?? defaultVoiceSettings.autoReadAloud,
+    readAloudByChatId,
     preferOffline: raw.preferOffline ?? defaultVoiceSettings.preferOffline,
   }
 }

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest"
 import { listFutureStageCapabilities } from "../src/main/lib/future-stage/capabilities"
 import { evaluateMcpGate } from "../src/main/lib/mcp-control/gate"
 import { mcpControlTools } from "../src/main/lib/mcp-control/registry"
-import { resolveSttAdapter } from "../src/main/lib/speech/registry"
+import { resolveSttAdapter, ttsAdapters } from "../src/main/lib/speech/registry"
+import { extractSpokenSection, filterSpeakableText } from "../src/main/lib/speech/speakable-filter"
 import { createFallbackSpokenSummary } from "../src/main/lib/speech/spoken-summary"
 
 describe("future stage scaffolds", () => {
@@ -47,6 +48,20 @@ describe("future stage scaffolds", () => {
   it("resolves offline STT when configured", () => {
     expect(resolveSttAdapter({ sttAdapterId: "missing", preferOffline: true })).toMatchObject({
       id: "local-whisper",
+    })
+  })
+
+  it("registers native and Kokoro TTS adapters", () => {
+    expect(ttsAdapters.map((adapter) => adapter.id)).toEqual(["kokoro", "native-os"])
+  })
+
+  it("extracts spoken sections before display details", () => {
+    const markdown = "Spoken:\nShip is ready.\n\nDisplayed:\n```ts\nconst hidden = true\n```"
+    expect(extractSpokenSection(markdown)).toBe("Ship is ready.")
+    expect(filterSpeakableText(markdown)).toMatchObject({
+      shouldSpeak: true,
+      text: "Ship is ready.",
+      source: "spoken",
     })
   })
 

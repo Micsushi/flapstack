@@ -10,7 +10,7 @@ import {
   VolumeIcon,
 } from "../../../components/ui/icons"
 import { cn } from "../../../lib/utils"
-import { apiFetch } from "../../../lib/api-fetch"
+import { trpcClient } from "../../../lib/trpc"
 import { useHaptic } from "../hooks/use-haptic"
 import {
   ttsPlaybackRateAtom,
@@ -116,151 +116,14 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
     chunkCountRef.current = 0
   }, [])
 
-  const playWithStreaming = useCallback(async () => {
-    const mediaSource = new MediaSource()
-    mediaSourceRef.current = mediaSource
-
-    const audio = new Audio()
-    audioRef.current = audio
-
-    audio.src = URL.createObjectURL(mediaSource)
-
-    audio.onended = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    audio.onerror = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    // Track if we've already started playing
-    let hasStartedPlaying = false
-
-    // Start playback when browser has enough data (canplay event)
-    audio.oncanplay = async () => {
-      if (hasStartedPlaying) return
-      hasStartedPlaying = true
-      try {
-        await audio.play()
-        audio.playbackRate = playbackRate
-        setState("playing")
-      } catch {
-        cleanup()
-        setState("idle")
-      }
-    }
-
-    // Wait for MediaSource to open
-    await new Promise<void>((resolve, reject) => {
-      mediaSource.addEventListener("sourceopen", () => resolve(), {
-        once: true,
-      })
-      mediaSource.addEventListener("error", () => reject(new Error("MediaSource error")), {
-        once: true,
-      })
-    })
-
-    const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg")
-    sourceBufferRef.current = sourceBuffer
-
-    // Create abort controller for this request
-    abortControllerRef.current = new AbortController()
-
-    const response = await apiFetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: abortControllerRef.current.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error("TTS request failed")
-    }
-
-    if (!response.body) {
-      throw new Error("No response body")
-    }
-
-    const reader = response.body.getReader()
-    const pendingChunks: Uint8Array[] = []
-    let isAppending = false
-
-    const appendNextChunk = () => {
-      if (
-        isAppending ||
-        pendingChunks.length === 0 ||
-        !sourceBufferRef.current ||
-        sourceBufferRef.current.updating
-      ) {
-        return
-      }
-
-      isAppending = true
-      const chunk = pendingChunks.shift()!
-      try {
-        // Use ArrayBuffer.isView to ensure TypeScript knows this is a valid BufferSource
-        const buffer = new Uint8Array(chunk.buffer.slice(0)) as BufferSource
-        sourceBufferRef.current.appendBuffer(buffer)
-      } catch {
-        // Buffer might be full or source closed
-        isAppending = false
-      }
-    }
-
-    sourceBuffer.addEventListener("updateend", () => {
-      isAppending = false
-      appendNextChunk()
-    })
-
-    // Read stream chunks
-    const processStream = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          // Wait for all pending chunks to be appended
-          while (pendingChunks.length > 0 || sourceBuffer.updating) {
-            await new Promise((r) => setTimeout(r, 50))
-          }
-          if (mediaSource.readyState === "open") {
-            try {
-              mediaSource.endOfStream()
-            } catch {
-              // Ignore
-            }
-          }
-          break
-        }
-
-        if (value) {
-          chunkCountRef.current++
-          pendingChunks.push(value)
-          appendNextChunk()
-        }
-      }
-    }
-
-    // Start processing stream - playback will start via canplay event
-    processStream()
-  }, [text, playbackRate, cleanup])
-
   const playWithFallback = useCallback(async () => {
     abortControllerRef.current = new AbortController()
 
-    const response = await apiFetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: abortControllerRef.current.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error("TTS request failed")
-    }
-
-    const audioBlob = await response.blob()
+    const result = await trpcClient.speech.speak.mutate(
+      { text, rate: playbackRate },
+      { signal: abortControllerRef.current.signal },
+    )
+    const audioBlob = base64ToBlob(result.audioBase64, result.mimeType)
     const audioUrl = URL.createObjectURL(audioBlob)
 
     const audio = new Audio(audioUrl)
@@ -283,16 +146,18 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
   }, [text, playbackRate, cleanup])
 
   const handlePlay = useCallback(async () => {
-    // If playing, stop the audio
+    // If playing, stop the audio (and halt any server-side synthesis).
     if (state === "playing") {
       cleanup()
+      void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
     }
 
-    // If loading, cancel and reset
+    // If loading, cancel and reset (abort the request + stop synthesis).
     if (state === "loading") {
       cleanup()
+      void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
     }
@@ -302,17 +167,7 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
     chunkCountRef.current = 0
 
     try {
-      // Check if MediaSource is supported for streaming
-      const supportsMediaSource =
-        typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")
-
-      if (supportsMediaSource) {
-        // Use streaming approach with MediaSource API
-        await playWithStreaming()
-      } else {
-        // Fallback: wait for full response (Safari, older browsers)
-        await playWithFallback()
-      }
+      await playWithFallback()
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         console.error("[PlayButton] TTS error:", error)
@@ -320,7 +175,7 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
       cleanup()
       setState("idle")
     }
-  }, [state, cleanup, playWithStreaming, playWithFallback])
+  }, [state, cleanup, playWithFallback])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -382,6 +237,15 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
     </div>
   )
 })
+
+function base64ToBlob(base64: string, mimeType: string) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return new Blob([bytes], { type: mimeType })
+}
 
 // ============================================================================
 // HELPER - Get text content from message

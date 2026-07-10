@@ -64,6 +64,13 @@
       "when": 1783326223163,
       "tag": "0008_certain_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1783389600000,
+      "tag": "0009_voice_artifacts",
+      "breakpoints": true
     }
   ]
 }
