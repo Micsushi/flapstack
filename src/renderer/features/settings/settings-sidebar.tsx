@@ -70,6 +70,11 @@ const ADVANCED_TABS_BASE = [
     icon: BrainFilledIcon,
   },
   {
+    id: "api-providers" as SettingsTab,
+    label: "API Providers",
+    icon: BrainFilledIcon,
+  },
+  {
     id: "skills" as SettingsTab,
     label: "Skills",
     icon: SkillIconFilled,

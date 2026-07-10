@@ -1,8 +1,21 @@
-export const AGENT_HARNESSES = ["codex", "claude-code"] as const
+export const AGENT_HARNESSES = ["codex", "claude-code", "openrouter", "nanogpt"] as const
 
 export type AgentHarness = (typeof AGENT_HARNESSES)[number]
 
-export type FutureHarnessProvider = "local" | "openrouter" | "custom"
+/**
+ * Harnesses whose runtime engine is the OpenCode sidecar (Track E). These are
+ * Flapstack-facing provider identities; the underlying model/tool loop is run
+ * by a locally launched OpenCode server, not a native Flapstack loop.
+ */
+export const OPENCODE_HARNESSES = ["openrouter", "nanogpt"] as const
+
+export type OpencodeHarness = (typeof OPENCODE_HARNESSES)[number]
+
+export function isOpencodeHarness(harness: string | null | undefined): harness is OpencodeHarness {
+  return harness === "openrouter" || harness === "nanogpt"
+}
+
+export type FutureHarnessProvider = "local" | "custom"
 export type HarnessProvider = AgentHarness | FutureHarnessProvider
 export type HarnessChipKind = HarnessProvider | "unknown"
 

@@ -44,7 +44,7 @@ export type AgentsPreviewConstants = typeof AGENTS_PREVIEW_CONSTANTS
 
 export type HarnessChipMeta = {
   name: string
-  color: "blue" | "orange" | "green" | "purple" | "gray"
+  color: "blue" | "orange" | "green" | "purple" | "rose" | "gray"
   className: string
 }
 
@@ -68,6 +68,11 @@ export const HARNESS_CHIP_META: Record<HarnessChipKind, HarnessChipMeta> = {
     name: "OpenRouter",
     color: "purple",
     className: "border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300",
+  },
+  nanogpt: {
+    name: "NanoGPT",
+    color: "rose",
+    className: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   },
   custom: {
     name: "Custom",
@@ -105,6 +110,9 @@ export function inferHarnessFromModel(model?: string | null): HarnessChipKind | 
   }
   if (normalized.includes("openrouter")) {
     return "openrouter"
+  }
+  if (normalized.includes("nanogpt") || normalized.includes("nano-gpt")) {
+    return "nanogpt"
   }
   if (normalized.includes("local") || normalized.includes("ollama")) {
     return "local"

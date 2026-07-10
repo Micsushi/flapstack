@@ -170,6 +170,8 @@ const agents = [
   { id: "claude-code", name: "Claude Code", hasModels: true },
   { id: "cursor", name: "Cursor CLI", disabled: true },
   { id: "codex", name: "OpenAI Codex" },
+  { id: "openrouter", name: "OpenRouter" },
+  { id: "nanogpt", name: "NanoGPT" },
 ]
 
 interface NewChatFormProps {
@@ -446,6 +448,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     if (selectedAgent.id === "codex") {
       return `${selectedCodexModel.id}/${selectedCodexThinking}`
     }
+    if (selectedAgent.id === "openrouter") return "openrouter/anthropic/claude-sonnet-5"
+    if (selectedAgent.id === "nanogpt") return "nanogpt/claude-opus-4-8"
     return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
   }, [selectedAgent.id, selectedCodexModel.id, selectedCodexThinking, selectedModel?.id])
 
@@ -1239,6 +1243,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       projectId: chatScope === "global" ? undefined : validatedProject?.id,
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
       scope: chatScope,
+      harness: selectedAgent.id,
       name: message.trim().slice(0, 50), // Use first 50 chars as chat name
       model: selectedChatModel,
       initialMessageParts: parts.length > 0 ? parts : undefined,

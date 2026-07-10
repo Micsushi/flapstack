@@ -134,6 +134,7 @@ import {
   agentsSidebarOpenAtom,
   subChatCodexModelIdAtomFamily,
   subChatCodexThinkingAtomFamily,
+  subChatOpencodeModelsAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
@@ -162,6 +163,8 @@ import { ACPChatTransport } from "../lib/acp-chat-transport"
 import { formatHistoryForContext } from "../lib/export-chat"
 import { clearSubChatDraft, getSubChatDraftFull } from "../lib/drafts"
 import { IPCChatTransport } from "../lib/ipc-chat-transport"
+import { OpencodeChatTransport } from "../lib/opencode-chat-transport"
+import type { AgentProviderId } from "../components/agent-model-selector"
 import {
   createQueueItem,
   createTextPreview,
@@ -2024,11 +2027,11 @@ const ChatViewInner = memo(function ChatViewInner({
   chat: Chat<any>
   subChatId: string
   parentChatId: string
-  provider?: "claude-code" | "codex"
+  provider?: AgentProviderId
   isFirstSubChat: boolean
   onAutoRename: (userMessage: string, subChatId: string) => void
   onCreateNewSubChat?: () => void
-  onProviderChange?: (subChatId: string, provider: "claude-code" | "codex") => void
+  onProviderChange?: (subChatId: string, provider: AgentProviderId) => void
   refreshDiff?: () => void
   teamId?: string
   repository?: string
@@ -4691,7 +4694,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const shouldShowStatusCard = isStreaming || isCompacting || changedFilesForSubChat.length > 0
   const shouldShowStackedCards = !displayQuestions && (queue.length > 0 || shouldShowStatusCard)
   const handleInputProviderChange = useCallback(
-    (nextProvider: "claude-code" | "codex") => {
+    (nextProvider: AgentProviderId) => {
       onProviderChange?.(subChatId, nextProvider)
     },
     [onProviderChange, subChatId],
@@ -4700,7 +4703,7 @@ const ChatViewInner = memo(function ChatViewInner({
   // Continue conversation with a different provider - creates new sub-chat with history attachment
   const isContinuingRef = useRef(false)
   const handleContinueWithProvider = useCallback(
-    async (targetProvider: "claude-code" | "codex") => {
+    async (targetProvider: AgentProviderId) => {
       if (isStreaming || isContinuingRef.current) return
       if (!messages || messages.length === 0) return
       isContinuingRef.current = true
@@ -5481,7 +5484,7 @@ export function ChatView({
       })),
     )
   const [subChatProviderOverrides, setSubChatProviderOverrides] = useState<
-    Record<string, "claude-code" | "codex">
+    Record<string, AgentProviderId>
   >({})
 
   useEffect(() => {
@@ -6560,9 +6563,15 @@ Make sure to preserve all functionality from both branches when resolving confli
   }, [agentSubChats, activeSubChatIdForPlan, setCurrentPlanPath])
 
   const inferProviderFromMessages = useCallback(
-    (subChatId?: string): "claude-code" | "codex" => {
-      const defaultProvider =
-        appStore.get(lastSelectedAgentIdAtom) === "claude-code" ? "claude-code" : "codex"
+    (subChatId?: string): "claude-code" | "codex" | "openrouter" | "nanogpt" => {
+      const selectedProvider = appStore.get(lastSelectedAgentIdAtom)
+      const defaultProvider: AgentProviderId =
+        selectedProvider === "claude-code" ||
+        selectedProvider === "codex" ||
+        selectedProvider === "openrouter" ||
+        selectedProvider === "nanogpt"
+          ? selectedProvider
+          : "codex"
       if (!subChatId) return defaultProvider
 
       const override = subChatProviderOverrides[subChatId]
@@ -6575,7 +6584,12 @@ Make sure to preserve all functionality from both branches when resolving confli
       const chatModel = (agentChat as any)?.model
 
       const persistedHarness = subChat?.harness || chatHarness
-      if (persistedHarness === "codex" || persistedHarness === "claude-code") {
+      if (
+        persistedHarness === "codex" ||
+        persistedHarness === "claude-code" ||
+        persistedHarness === "openrouter" ||
+        persistedHarness === "nanogpt"
+      ) {
         return persistedHarness
       }
 
@@ -6824,7 +6838,9 @@ Make sure to preserve all functionality from both branches when resolving confli
         worktreePath: runWorktreePath ? "exists" : "none",
       })
 
-      let transport: IPCChatTransport | RemoteChatTransport | ACPChatTransport | null = null
+      let transport:
+        IPCChatTransport | RemoteChatTransport | ACPChatTransport | OpencodeChatTransport | null =
+        null
 
       if (isRemoteChat && chatSandboxUrl) {
         // Remote sandbox chat: use HTTP SSE transport
@@ -6844,7 +6860,20 @@ Make sure to preserve all functionality from both branches when resolving confli
           model: modelString,
         })
       } else if (runWorktreePath) {
-        if (chatProvider === "codex") {
+        if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
+          const fallbackModel =
+            chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"
+          const selectedModel = appStore.get(subChatOpencodeModelsAtomFamily(subChatId))[
+            chatProvider
+          ]
+          transport = new OpencodeChatTransport({
+            chatId,
+            subChatId,
+            cwd: runWorktreePath,
+            provider: chatProvider,
+            model: (subChat as any)?.model || selectedModel || fallbackModel,
+          })
+        } else if (chatProvider === "codex") {
           console.log("[getOrCreateChat] Using ACPChatTransport", { provider: chatProvider })
           transport = new ACPChatTransport({
             chatId,
@@ -6994,7 +7023,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   )
 
   const handleProviderChange = useCallback(
-    (subChatId: string, nextProvider: "claude-code" | "codex") => {
+    (subChatId: string, nextProvider: AgentProviderId) => {
       // Provider switch is only allowed for brand new sub-chats.
       const activeChat = agentChatStore.get(subChatId) as any
       let messageCount = Array.isArray(activeChat?.messages) ? activeChat.messages.length : 0
@@ -7020,6 +7049,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         ...prev,
         [subChatId]: nextProvider,
       }))
+      appStore.set(lastSelectedAgentIdAtom, nextProvider)
 
       // Force transport recreation with the newly selected provider.
       agentChatStore.delete(subChatId)

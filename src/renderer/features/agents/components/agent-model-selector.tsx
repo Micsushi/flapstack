@@ -35,7 +35,7 @@ const CodexIcon = ({ className }: { className?: string }) => (
   </svg>
 )
 
-export type AgentProviderId = "claude-code" | "codex"
+export type AgentProviderId = "claude-code" | "codex" | "openrouter" | "nanogpt"
 
 type ClaudeModelOption = {
   id: string
@@ -50,6 +50,8 @@ type CodexModelOption = {
   thinkings: CodexThinkingLevel[]
   supportsFastMode?: boolean
 }
+
+type OpencodeModelOption = { id: string; name: string }
 
 interface AgentModelSelectorProps {
   open: boolean
@@ -88,6 +90,30 @@ interface AgentModelSelectorProps {
     onFastModeChange: (enabled: boolean) => void
     isConnected: boolean
   }
+  opencode?: Record<
+    "openrouter" | "nanogpt",
+    {
+      label: string
+      models: OpencodeModelOption[]
+      selectedModelId: string
+      onSelectModel: (modelId: string) => void
+    }
+  >
+}
+
+const EMPTY_OPENCODE_PROVIDERS: NonNullable<AgentModelSelectorProps["opencode"]> = {
+  openrouter: {
+    label: "OpenRouter",
+    models: [],
+    selectedModelId: "",
+    onSelectModel: () => {},
+  },
+  nanogpt: {
+    label: "NanoGPT",
+    models: [],
+    selectedModelId: "",
+    onSelectModel: () => {},
+  },
 }
 
 type FlatModelItem =
@@ -95,9 +121,10 @@ type FlatModelItem =
   | { type: "codex"; model: CodexModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
   | { type: "custom" }
+  | { type: "opencode"; provider: "openrouter" | "nanogpt"; model: OpencodeModelOption }
 
 type ModelGroup = {
-  id: "claude-code" | "codex"
+  id: AgentProviderId
   label: string
   items: FlatModelItem[]
 }
@@ -450,6 +477,7 @@ export function AgentModelSelector({
   onContinueWithProvider,
   claude,
   codex,
+  opencode = EMPTY_OPENCODE_PROVIDERS,
 }: AgentModelSelectorProps) {
   const [search, setSearch] = useState("")
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
@@ -457,6 +485,8 @@ export function AgentModelSelector({
   const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>({
     "claude-code": true,
     codex: true,
+    openrouter: true,
+    nanogpt: true,
   })
 
   const canSelectProvider = (provider: AgentProviderId) =>
@@ -486,11 +516,19 @@ export function AgentModelSelector({
       codexItems.push({ type: "codex", model: m })
     }
 
-    return [
+    const providerGroups: ModelGroup[] = [
       { id: "claude-code", label: "Claude Code", items: claudeItems },
       { id: "codex", label: "Codex", items: codexItems },
     ]
-  }, [claude, codex])
+    for (const provider of ["openrouter", "nanogpt"] as const) {
+      providerGroups.push({
+        id: provider,
+        label: opencode[provider].label,
+        items: opencode[provider].models.map((model) => ({ type: "opencode", provider, model })),
+      })
+    }
+    return providerGroups
+  }, [claude, codex, opencode])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
@@ -514,6 +552,10 @@ export function AgentModelSelector({
               return item.modelName.toLowerCase().includes(q)
             case "custom":
               return "custom model".includes(q)
+            case "opencode":
+              return (
+                item.model.name.toLowerCase().includes(q) || item.model.id.toLowerCase().includes(q)
+              )
           }
         }),
       }))
@@ -542,6 +584,8 @@ export function AgentModelSelector({
       <Zap className="h-4 w-4 text-amber-500" />
     ) : selectedAgentId === "codex" ? (
       <CodexIcon className="h-3.5 w-3.5" />
+    ) : selectedAgentId === "openrouter" || selectedAgentId === "nanogpt" ? (
+      <Brain className="h-3.5 w-3.5" />
     ) : (
       <ClaudeCodeIcon className="h-3.5 w-3.5" />
     )
@@ -556,11 +600,18 @@ export function AgentModelSelector({
         return selectedAgentId === "claude-code" && claude.selectedOllamaModel === item.modelName
       case "custom":
         return selectedAgentId === "claude-code"
+      case "opencode":
+        return (
+          selectedAgentId === item.provider &&
+          opencode[item.provider].selectedModelId === item.model.id
+        )
     }
   }
 
   const getItemProvider = (item: FlatModelItem): AgentProviderId => {
-    return item.type === "codex" ? "codex" : "claude-code"
+    if (item.type === "codex") return "codex"
+    if (item.type === "opencode") return item.provider
+    return "claude-code"
   }
 
   const isItemDisabled = (item: FlatModelItem): boolean => {
@@ -638,6 +689,11 @@ export function AgentModelSelector({
         if (!canSelectProvider("claude-code")) return
         onSelectedAgentIdChange("claude-code")
         break
+      case "opencode":
+        if (!canSelectProvider(item.provider)) return
+        onSelectedAgentIdChange(item.provider)
+        opencode[item.provider].onSelectModel(item.model.id)
+        break
     }
     handleOpenChange(false)
   }
@@ -652,6 +708,8 @@ export function AgentModelSelector({
         return item.modelName + (item.isRecommended ? " (recommended)" : "")
       case "custom":
         return "Custom Model"
+      case "opencode":
+        return item.model.name
     }
   }
 
@@ -665,6 +723,8 @@ export function AgentModelSelector({
         return `ollama-${item.modelName}`
       case "custom":
         return "custom"
+      case "opencode":
+        return `${item.provider}-${item.model.id}`
     }
   }
 
@@ -793,6 +853,8 @@ export function AgentModelSelector({
                       <span className="flex items-center gap-1.5">
                         {group.id === "codex" ? (
                           <CodexIcon className="h-3 w-3 shrink-0" />
+                        ) : group.id === "openrouter" || group.id === "nanogpt" ? (
+                          <Brain className="h-3 w-3 shrink-0" />
                         ) : (
                           <ClaudeCodeIcon className="h-3 w-3 shrink-0" />
                         )}
@@ -860,7 +922,15 @@ export function AgentModelSelector({
 
       <CrossProviderConfirmDialog
         isOpen={confirmDialogOpen}
-        providerName={pendingProvider === "codex" ? "Codex" : "Claude Code"}
+        providerName={
+          pendingProvider === "codex"
+            ? "Codex"
+            : pendingProvider === "openrouter"
+              ? "OpenRouter"
+              : pendingProvider === "nanogpt"
+                ? "NanoGPT"
+                : "Claude Code"
+        }
         onConfirm={handleConfirmCrossProvider}
         onClose={handleCloseConfirmDialog}
       />
