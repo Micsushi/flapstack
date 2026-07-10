@@ -48,8 +48,11 @@ export function AgentsUsageTab() {
   const { data: capabilities } = trpc.usage.getCapabilities.useQuery()
   const { data: states = [] } = trpc.usage.listProviderStates.useQuery()
   const { data: settings } = trpc.usage.getSettings.useQuery()
-  const { data: daemon } = trpc.usage.getDaemonStatus.useQuery()
+  const { data: daemon } = trpc.usage.getDaemonStatus.useQuery(undefined, {
+    refetchInterval: 5_000,
+  })
   const { data: samples = [] } = trpc.usage.listSamples.useQuery({ limit: 25 })
+  const { data: cycles = [] } = trpc.usage.listCycles.useQuery({ limit: 25 })
   const { data: alertEvents = [] } = trpc.usage.listAlertEvents.useQuery({ limit: 25 })
   const { data: secretPresence } = trpc.usage.getSecretPresence.useQuery()
   const [secrets, setSecrets] = useState<Record<string, string>>({})
@@ -58,6 +61,7 @@ export function AgentsUsageTab() {
     onSettled: () => {
       void utils.usage.listProviderStates.invalidate()
       void utils.usage.listSamples.invalidate()
+      void utils.usage.listCycles.invalidate()
       void utils.usage.listAlertEvents.invalidate()
     },
   })
@@ -92,7 +96,7 @@ export function AgentsUsageTab() {
     { key: "openrouter.api_key", label: "OpenRouter API key" },
     { key: "nanogpt.api_key", label: "NanoGPT API key" },
     { key: "discord.webhook_url", label: "Discord webhook URL" },
-  ]
+  ] as const
 
   const stateByProvider = new Map(states.map((s) => [s.providerId, s]))
 
@@ -139,6 +143,18 @@ export function AgentsUsageTab() {
             >
               {settings.daemonEnabled ? "Stop daemon" : "Install & start daemon"}
             </button>
+          </div>
+          <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+            <span>
+              Last poll: {daemon?.lastPollAt ? new Date(daemon.lastPollAt).toLocaleString() : "—"}
+            </span>
+            <span>
+              Last alert:{" "}
+              {daemon?.lastAlertAt ? new Date(daemon.lastAlertAt).toLocaleString() : "—"}
+            </span>
+            <span className={daemon?.lastError ? "text-destructive" : ""}>
+              Error: {daemon?.lastError ?? "none"}
+            </span>
           </div>
           {(installDaemon.error || uninstallDaemon.error) && (
             <p className="text-xs text-destructive">
@@ -255,7 +271,7 @@ export function AgentsUsageTab() {
                   </div>
                 </div>
                 {providerSettings && (
-                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
                     <label className="text-xs text-muted-foreground">
                       Poll seconds (blank = global)
                       <input
@@ -295,6 +311,42 @@ export function AgentsUsageTab() {
                             thresholds: { spendUsd: parseThresholdList(event.target.value) },
                           })
                         }
+                        className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Spend rate USD/hour
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        defaultValue={providerSettings.thresholds.spendRateUsdPerHour ?? ""}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim()
+                          setProviderSettings.mutate({
+                            providerId: provider.id,
+                            thresholds: {
+                              spendRateUsdPerHour: value ? Number(value) : null,
+                            },
+                          })
+                        }}
+                        className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
+                      />
+                    </label>
+                    <label className="text-xs text-muted-foreground">
+                      Spend spike multiplier
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        defaultValue={providerSettings.thresholds.spikeMultiplier ?? ""}
+                        onBlur={(event) => {
+                          const value = event.target.value.trim()
+                          setProviderSettings.mutate({
+                            providerId: provider.id,
+                            thresholds: { spikeMultiplier: value ? Number(value) : null },
+                          })
+                        }}
                         className="mt-1 w-full bg-transparent border border-border rounded px-2 py-1"
                       />
                     </label>
@@ -343,6 +395,8 @@ export function AgentsUsageTab() {
                   <th className="text-left p-2">Source</th>
                   <th className="text-left p-2">Cost</th>
                   <th className="text-left p-2">Quality</th>
+                  <th className="text-left p-2">Tokens</th>
+                  <th className="text-left p-2">Quota</th>
                   <th className="text-left p-2">Captured</th>
                 </tr>
               </thead>
@@ -359,9 +413,59 @@ export function AgentsUsageTab() {
                           : "—"}
                     </td>
                     <td className="p-2">{s.costQuality}</td>
+                    <td className="p-2">{s.totalTokens?.toLocaleString() ?? "—"}</td>
+                    <td className="p-2">
+                      {s.percentUsed != null
+                        ? `${s.percentUsed}%`
+                        : s.quotaUsed != null && s.quotaLimit != null
+                          ? `${s.quotaUsed.toLocaleString()} / ${s.quotaLimit.toLocaleString()}`
+                          : "—"}
+                    </td>
                     <td className="p-2">
                       {s.capturedAt ? new Date(s.capturedAt).toLocaleString() : "—"}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium text-foreground">Historical cycles</h4>
+        {cycles.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No historical billing cycles yet.</p>
+        ) : (
+          <div className="bg-background rounded-lg border border-border overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="text-left p-2">Provider</th>
+                  <th className="text-left p-2">Window</th>
+                  <th className="text-left p-2">Cost</th>
+                  <th className="text-left p-2">Tokens</th>
+                  <th className="text-left p-2">Quality</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cycles.map((cycle) => (
+                  <tr key={cycle.id} className="border-b border-border/50">
+                    <td className="p-2">{PROVIDER_LABELS[cycle.providerId] ?? cycle.providerId}</td>
+                    <td className="p-2">
+                      {cycle.cycleStart ? new Date(cycle.cycleStart).toLocaleDateString() : "—"}
+                      {" → "}
+                      {cycle.cycleEnd ? new Date(cycle.cycleEnd).toLocaleDateString() : "current"}
+                    </td>
+                    <td className="p-2">
+                      {cycle.totalCostUsd != null
+                        ? `$${cycle.totalCostUsd.toFixed(4)}`
+                        : cycle.totalCostUsdEstimated != null
+                          ? `~$${cycle.totalCostUsdEstimated.toFixed(4)}`
+                          : "—"}
+                    </td>
+                    <td className="p-2">{cycle.totalTokens?.toLocaleString() ?? "—"}</td>
+                    <td className="p-2">{cycle.costQuality}</td>
                   </tr>
                 ))}
               </tbody>

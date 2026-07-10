@@ -37,6 +37,10 @@ export interface AlertInputSample {
   percentUsed?: number | null
   /** Spend in USD for the current window (micros converted by caller). */
   spendUsd?: number | null
+  /** Spend normalized by the sample window duration. */
+  spendRateUsdPerHour?: number | null
+  /** Current spend divided by the trailing historical average. */
+  spikeMultiplierObserved?: number | null
 }
 
 export interface AlertIntent {
@@ -151,7 +155,86 @@ export function evaluateSample(
     }
   }
 
+  if (
+    sample.billingKind === "api-spend" &&
+    sample.spendRateUsdPerHour != null &&
+    thresholds.spendRateUsdPerHour != null
+  ) {
+    evaluateSingleThreshold({
+      sample,
+      arm,
+      intents,
+      armUpdates,
+      alertType: "api-spend-rate",
+      threshold: thresholds.spendRateUsdPerHour,
+      observed: sample.spendRateUsdPerHour,
+      message: `${sample.providerId} spend rate $${sample.spendRateUsdPerHour.toFixed(2)}/hour (>= $${thresholds.spendRateUsdPerHour}/hour).`,
+    })
+  }
+
+  if (
+    sample.billingKind === "api-spend" &&
+    sample.spikeMultiplierObserved != null &&
+    thresholds.spikeMultiplier != null
+  ) {
+    evaluateSingleThreshold({
+      sample,
+      arm,
+      intents,
+      armUpdates,
+      alertType: "api-spend-spike",
+      threshold: thresholds.spikeMultiplier,
+      observed: sample.spikeMultiplierObserved,
+      message: `${sample.providerId} spend spike ${sample.spikeMultiplierObserved.toFixed(1)}x trailing average (>= ${thresholds.spikeMultiplier}x).`,
+    })
+  }
+
   return { intents, armUpdates }
+}
+
+function evaluateSingleThreshold(params: {
+  sample: AlertInputSample
+  arm: AlertArmState[]
+  intents: AlertIntent[]
+  armUpdates: AlertArmState[]
+  alertType: Extract<AlertType, "api-spend-rate" | "api-spend-spike">
+  threshold: number
+  observed: number
+  message: string
+}): void {
+  const armed = isArmed(
+    params.arm,
+    params.sample.providerId,
+    params.sample.accountTag,
+    params.alertType,
+    params.threshold,
+  )
+  if (params.observed >= params.threshold && armed) {
+    params.intents.push({
+      providerId: params.sample.providerId,
+      accountTag: params.sample.accountTag,
+      alertType: params.alertType,
+      thresholdValue: params.threshold,
+      observedValue: params.observed,
+      costQuality: params.sample.costQuality,
+      message: params.message,
+    })
+    params.armUpdates.push({
+      providerId: params.sample.providerId,
+      accountTag: params.sample.accountTag,
+      alertType: params.alertType,
+      thresholdValue: params.threshold,
+      armed: false,
+    })
+  } else if (params.observed < params.threshold * 0.9 && !armed) {
+    params.armUpdates.push({
+      providerId: params.sample.providerId,
+      accountTag: params.sample.accountTag,
+      alertType: params.alertType,
+      thresholdValue: params.threshold,
+      armed: true,
+    })
+  }
 }
 
 /** Convert a stored micro-dollar spend to USD for the evaluator. */

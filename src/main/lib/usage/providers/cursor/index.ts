@@ -15,8 +15,8 @@ import { probeAdminSource, pollAdminSource } from "./source-admin"
 import { probeCliSource, pollCliSource } from "./source-cli"
 import { probeInternalSource, pollInternalSource, type CursorSourceResult } from "./source-internal"
 
-export { detectCursorToken, cursorStateDbCandidates } from "./token"
-export type { CursorTokenResult } from "./token"
+export { detectCursorCredentials, detectCursorToken, cursorStateDbCandidates } from "./token"
+export type { CursorCredentialsResult, CursorTokenResult } from "./token"
 
 interface CursorSource {
   tag: "internal" | "admin" | "cli"

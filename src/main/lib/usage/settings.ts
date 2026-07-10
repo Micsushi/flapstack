@@ -135,12 +135,21 @@ export function resolveCadenceSeconds(
   return settings.providers[providerId]?.cadenceSecondsOverride ?? settings.cadenceSeconds
 }
 
+/** Fastest enabled provider cadence drives the daemon wake-up. The engine then
+ * skips providers whose individual cadence has not elapsed. */
+export function resolveSchedulerCadenceSeconds(settings: UsageSettings): number {
+  const enabledCadences = USAGE_PROVIDER_IDS.filter((id) => settings.providers[id].enabled).map(
+    (id) => resolveCadenceSeconds(settings, id),
+  )
+  return enabledCadences.length > 0 ? Math.min(...enabledCadences) : settings.cadenceSeconds
+}
+
 function sanitizeNumberList(value: unknown, fallback: number[]): number[] {
   if (!Array.isArray(value)) return [...fallback]
   const out = value.filter(
     (v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0,
   )
-  return out.length > 0 ? out : [...fallback]
+  return out
 }
 
 function sanitizePositive(value: unknown): number | null {

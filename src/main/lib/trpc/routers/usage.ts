@@ -19,7 +19,12 @@ import { readDaemonStatus } from "../../usage-daemon/lifecycle"
 import { installMacLaunchAgent, uninstallMacLaunchAgent } from "../../usage-daemon/platform"
 import { app } from "electron"
 import { join } from "node:path"
-import { listProviderStates, listRecentAlertEvents, listRecentSamples } from "../../usage/store"
+import {
+  listProviderStates,
+  listRecentAlertEvents,
+  listRecentCycles,
+  listRecentSamples,
+} from "../../usage/store"
 import { USAGE_PROVIDER_IDS } from "../../usage/types"
 
 const providerIdSchema = z.enum(USAGE_PROVIDER_IDS)
@@ -29,6 +34,13 @@ const thresholdSchema = z.object({
   spendRateUsdPerHour: z.number().positive().nullable().optional(),
   spikeMultiplier: z.number().positive().nullable().optional(),
 })
+const secretKeySchema = z.enum([
+  "openai.api_key",
+  "anthropic.admin_key",
+  "openrouter.api_key",
+  "nanogpt.api_key",
+  "discord.webhook_url",
+])
 
 function engineDeps() {
   return { db: getDatabase(), getSecret: async (key: string) => getUsageSecret(key) }
@@ -106,10 +118,28 @@ export const usageRouter = router({
   })),
 
   setSecret: publicProcedure
-    .input(z.object({ key: z.string().min(1), value: z.string().nullable() }))
+    .input(z.object({ key: secretKeySchema, value: z.string().nullable() }))
     .mutation(({ input }) => {
       setUsageSecret(input.key, input.value)
       return { ok: true, present: hasUsageSecret(input.key) }
+    }),
+
+  listCycles: publicProcedure
+    .input(
+      z
+        .object({
+          providerId: providerIdSchema.optional(),
+          limit: z.number().min(1).max(500).optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => {
+      const rows = await listRecentCycles(getDatabase(), input)
+      return rows.map((row) => ({
+        ...row,
+        totalCostUsd: microsToUsd(row.totalCostUsd),
+        totalCostUsdEstimated: microsToUsd(row.totalCostUsdEstimated),
+      }))
     }),
 
   // ---- Provider states + samples (DB-first reads) ----
@@ -160,14 +190,23 @@ export const usageRouter = router({
   getDaemonStatus: publicProcedure.query(async () => readDaemonStatus(getDatabase())),
 
   installDaemon: publicProcedure.mutation(async () => {
+    const previous = getUsageSettings()
     const settings = setUsageSettings({ daemonEnabled: true, daemonStartAtLogin: true })
-    installMacLaunchAgent({
-      nodePath: process.execPath,
-      daemonEntryPath: join(__dirname, "../../../usage-daemon.js"),
-      dbPath: getDatabasePath(),
-      configDir: app.getPath("userData"),
-      cadenceSeconds: settings.cadenceSeconds,
-    })
+    try {
+      installMacLaunchAgent({
+        nodePath: process.execPath,
+        daemonEntryPath: join(__dirname, "usage-daemon.js"),
+        dbPath: getDatabasePath(),
+        configDir: join(app.getPath("userData"), "data"),
+        cadenceSeconds: settings.cadenceSeconds,
+      })
+    } catch (error) {
+      setUsageSettings({
+        daemonEnabled: previous.daemonEnabled,
+        daemonStartAtLogin: previous.daemonStartAtLogin,
+      })
+      throw error
+    }
     return readDaemonStatus(getDatabase())
   }),
 

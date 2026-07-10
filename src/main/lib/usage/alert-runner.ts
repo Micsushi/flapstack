@@ -1,7 +1,15 @@
 import { evaluateSample, type AlertArmState } from "./alerts"
 import { sendDiscordAlert } from "./discord"
 import type { UsageSettings } from "./settings"
-import { listAlertArmStates, recordAlertEvent, upsertAlertArmStates, type UsageDb } from "./store"
+import { deriveDedupeKey, microsToUsd } from "./source-tags"
+import {
+  listAlertArmStates,
+  listRecentSamples,
+  recordAlertEvent,
+  updateDaemonStatus,
+  upsertAlertArmStates,
+  type UsageDb,
+} from "./store"
 import type { UsageProvider, UsageSampleInput } from "./types"
 
 export async function runAlerts(params: {
@@ -25,6 +33,27 @@ export async function runAlerts(params: {
   }))
   let sent = 0
   for (const sample of params.samples) {
+    const spendUsd = sample.costUsd ?? sample.costUsdEstimated ?? null
+    const history =
+      spendUsd != null
+        ? await listRecentSamples(params.db, { providerId: sample.providerId, limit: 20 })
+        : []
+    const priorSpend = history
+      .filter(
+        (row) =>
+          row.accountTag === (sample.accountTag ?? "") && row.dedupeKey !== deriveDedupeKey(sample),
+      )
+      .map((row) => microsToUsd(row.costUsd ?? row.costUsdEstimated))
+      .filter((value): value is number => value != null && value > 0)
+      .slice(0, 5)
+    const trailingAverage =
+      priorSpend.length >= 3
+        ? priorSpend.reduce((total, value) => total + value, 0) / priorSpend.length
+        : null
+    const windowHours =
+      sample.windowStart && sample.windowEnd
+        ? (sample.windowEnd.getTime() - sample.windowStart.getTime()) / 3_600_000
+        : null
     const { intents, armUpdates } = evaluateSample(
       {
         providerId: sample.providerId,
@@ -32,7 +61,15 @@ export async function runAlerts(params: {
         billingKind: params.provider.billingKind,
         costQuality: sample.costQuality,
         percentUsed: sample.percentUsed,
-        spendUsd: sample.costUsd ?? sample.costUsdEstimated ?? null,
+        spendUsd,
+        spendRateUsdPerHour:
+          spendUsd != null && windowHours != null && windowHours > 0
+            ? spendUsd / windowHours
+            : null,
+        spikeMultiplierObserved:
+          spendUsd != null && trailingAverage != null && trailingAverage > 0
+            ? spendUsd / trailingAverage
+            : null,
       },
       thresholds,
       arm,
@@ -61,6 +98,7 @@ export async function runAlerts(params: {
         message: intent.message,
       })
       if (delivery.ok) sent++
+      if (delivery.ok) await updateDaemonStatus(params.db, { lastAlertAt: new Date() })
     }
   }
   return sent

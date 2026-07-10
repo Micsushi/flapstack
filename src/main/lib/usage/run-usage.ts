@@ -21,6 +21,8 @@ export type OpenCodeUsageCapture = {
   costUsd?: number
   costQuality?: Extract<CostQuality, "provider-reported" | "estimated" | "unknown">
   generationId?: string
+  /** Sanitized provider/sidecar payload for drift debugging. */
+  rawPayload?: unknown
 }
 
 /** Persist one completed OpenCode-backed run. Returns zero when neither exact
@@ -73,5 +75,13 @@ export async function captureOpenCodeRunUsage(
   }
 
   if (!sample) return 0
-  return insertSamples(db, [{ ...sample, runId: usage.runId, model: usage.model }])
+  return insertSamples(db, [
+    {
+      ...sample,
+      runId: usage.runId,
+      model: usage.model,
+      sourceTag: "opencode-sidecar",
+      rawPayload: usage.rawPayload,
+    },
+  ])
 }

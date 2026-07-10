@@ -64,7 +64,7 @@ export function createNanoGptProvider(): UsageProvider {
         providerId: "nanogpt",
         status: configured ? "run-usage-only" : "not-configured",
         detail: configured
-          ? "NanoGPT run usage/estimate scaffolded (U9, blocked on E4); account-wide history pending API research."
+          ? "NanoGPT run usage and estimates are available after Track E run capture; NanoGPT exposes no documented account-wide history."
           : "Add a NanoGPT API key.",
         configured,
         supportsDaemon: true,
@@ -78,7 +78,7 @@ export function createNanoGptProvider(): UsageProvider {
       if (!apiKey) return []
       const payload = await getProviderJson<NanoGptModelsResponse>({
         providerId: "nanogpt",
-        url: "https://nano-gpt.com/api/v1/models",
+        url: "https://nano-gpt.com/api/v1/models?detailed=true",
         apiKey,
       })
       for (const model of payload.data ?? []) {
@@ -120,7 +120,7 @@ interface NanoGptModelsResponse {
   }>
 }
 function pricePerMillion(value: unknown): number | null {
-  const perToken =
+  const perMillion =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
-  return Number.isFinite(perToken) ? perToken * 1_000_000 : null
+  return Number.isFinite(perMillion) ? perMillion : null
 }

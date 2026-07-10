@@ -12,8 +12,14 @@
 
 import { getUsageProviders } from "./registry"
 import { runAlerts } from "./alert-runner"
-import { getUsageSettings, type UsageSettings } from "./settings"
-import { getLatestSampleAt, insertSamples, upsertProviderState, type UsageDb } from "./store"
+import { getUsageSettings, resolveCadenceSeconds, type UsageSettings } from "./settings"
+import {
+  getLatestSampleAt,
+  getProviderLastPollAt,
+  insertSamples,
+  upsertProviderState,
+  type UsageDb,
+} from "./store"
 import {
   UsageNotImplementedError,
   UsageProviderError,
@@ -71,6 +77,11 @@ export class UsageEngine {
     for (const provider of getUsageProviders()) {
       if (!settings.providers[provider.id]?.enabled) continue
       if (this.mode === "daemon" && !provider.supportsDaemon()) continue
+      if (this.mode === "daemon" && intent === "poll") {
+        const lastPollAt = await getProviderLastPollAt(this.deps.db, provider.id)
+        const cadenceMs = resolveCadenceSeconds(settings, provider.id) * 1_000
+        if (lastPollAt && Date.now() - lastPollAt.getTime() < cadenceMs) continue
+      }
       results.push(await this.runProvider(provider, intent, settings))
     }
     return results

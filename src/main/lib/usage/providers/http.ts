@@ -4,10 +4,14 @@ export async function getProviderJson<T>(params: {
   providerId: UsageProviderId
   url: string
   apiKey: string
+  auth?: "bearer" | "x-api-key"
   headers?: Record<string, string>
 }): Promise<T> {
+  const headers: Record<string, string> = { ...params.headers }
+  if (params.auth === "x-api-key") headers["x-api-key"] = params.apiKey
+  else headers.authorization = `Bearer ${params.apiKey}`
   const response = await fetch(params.url, {
-    headers: { authorization: `Bearer ${params.apiKey}`, ...params.headers },
+    headers,
   })
   if (response.status === 401 || response.status === 403) {
     throw new UsageProviderError(

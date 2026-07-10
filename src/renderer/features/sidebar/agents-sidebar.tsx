@@ -51,6 +51,7 @@ import {
   GitBranch,
   MessageSquare,
   ClipboardList,
+  Activity,
   Star,
   Plus,
 } from "lucide-react"
@@ -2882,6 +2883,7 @@ export function AgentsSidebar({
   const autoAdvanceTarget = useAtomValue(autoAdvanceTargetAtom)
   const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
+  const desktopView = useAtomValue(desktopViewAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
@@ -6013,6 +6015,18 @@ export function AgentsSidebar({
         handleSidebarMouseLeave={handleSidebarMouseLeave}
         closeButtonRef={closeButtonRef}
       />
+
+      <div className="px-2 pb-2 flex-shrink-0">
+        <ButtonCustom
+          variant={desktopView === "usage" ? "secondary" : "ghost"}
+          size="sm"
+          className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          onClick={() => setDesktopView("usage")}
+        >
+          <Activity className="h-4 w-4" />
+          <span>Usage</span>
+        </ButtonCustom>
+      </div>
 
       {/* Search and project actions */}
       <div className="px-2 pb-3 flex-shrink-0">

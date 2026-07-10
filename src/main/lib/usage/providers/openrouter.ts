@@ -94,7 +94,7 @@ export function createOpenRouterProvider(): UsageProvider {
           "OpenRouter key response omitted data",
         )
       const limit = numberOrNull(key.limit)
-      const used = numberOrNull(key.usage_monthly ?? key.usage)
+      const used = usageForResetWindow(key)
       const remaining = numberOrNull(key.limit_remaining)
       const totalLimit = limit ?? (used != null && remaining != null ? used + remaining : null)
       return [
@@ -134,7 +134,16 @@ interface OpenRouterKeyResponse {
     limit_remaining?: number | string | null
     usage?: number | string | null
     usage_monthly?: number | string | null
+    usage_daily?: number | string | null
+    usage_weekly?: number | string | null
+    limit_reset?: "daily" | "weekly" | "monthly" | null
   }
+}
+function usageForResetWindow(key: NonNullable<OpenRouterKeyResponse["data"]>): number | null {
+  if (key.limit_reset === "daily") return numberOrNull(key.usage_daily ?? key.usage)
+  if (key.limit_reset === "weekly") return numberOrNull(key.usage_weekly ?? key.usage)
+  if (key.limit_reset === "monthly") return numberOrNull(key.usage_monthly ?? key.usage)
+  return numberOrNull(key.usage ?? key.usage_monthly)
 }
 function numberOrNull(value: unknown): number | null {
   const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN

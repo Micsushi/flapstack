@@ -11,12 +11,15 @@
 // Uses the undocumented endpoint best-effort. Endpoint drift and local-token
 // failures remain explicit provider states.
 
-import { detectCursorToken } from "./token"
+import { detectCursorCredentials, detectCursorToken, persistCursorCredentials } from "./token"
 import { UsageProviderError, type UsageProviderContext, type UsageSampleInput } from "../../types"
 
 export const CURSOR_USAGE_URL = "https://cursor.com/api/usage"
 export const CURSOR_STRIPE_URL = "https://cursor.com/api/auth/stripe"
 const CURSOR_API_BASE_URL = "https://api2.cursor.sh"
+const CURSOR_OAUTH_URL = "https://api2.cursor.sh/oauth/token"
+const CURSOR_CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB"
+const REFRESH_BUFFER_MS = 5 * 60_000
 
 interface CursorPlanUsage {
   totalSpend?: number
@@ -83,7 +86,7 @@ export async function pollInternalSource(
   ctx: UsageProviderContext,
   accessToken?: string,
 ): Promise<UsageSampleInput[]> {
-  const token = accessToken ?? detectCursorToken().token
+  const token = accessToken ?? (await resolveCursorAccessToken())
   if (!token) {
     throw new UsageProviderError("cursor", "auth-failed", "Cursor access token is unavailable")
   }
@@ -157,6 +160,37 @@ export async function pollInternalSource(
       rawPayload: payload,
     },
   ]
+}
+
+async function resolveCursorAccessToken(): Promise<string | null> {
+  const credentials = detectCursorCredentials()
+  if (!credentials.token) return null
+  if (!credentials.expiresAt || credentials.expiresAt.getTime() > Date.now() + REFRESH_BUFFER_MS) {
+    return credentials.token
+  }
+  if (!credentials.refreshToken) return credentials.token
+  const response = await fetch(CURSOR_OAUTH_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: CURSOR_CLIENT_ID,
+      refresh_token: credentials.refreshToken,
+    }),
+  })
+  if (!response.ok) {
+    throw new UsageProviderError("cursor", "auth-failed", "Cursor token refresh failed")
+  }
+  const payload = (await response.json()) as {
+    access_token?: string
+    refresh_token?: string
+    shouldLogout?: boolean
+  }
+  if (payload.shouldLogout || !payload.access_token) {
+    throw new UsageProviderError("cursor", "auth-failed", "Cursor session expired")
+  }
+  persistCursorCredentials(payload.access_token, payload.refresh_token ?? credentials.refreshToken)
+  return payload.access_token
 }
 
 function normalizePercent(

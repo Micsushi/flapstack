@@ -44,7 +44,9 @@ export async function withWriteRetry<T>(fn: () => T, attempts = 5): Promise<T> {
   throw lastErr
 }
 
-/** Insert samples, skipping duplicates by dedupe key. Returns inserted count. */
+/** Insert or refresh samples by dedupe key. Current provider buckets can change
+ * during a billing window, so conflicts update the observation instead of
+ * freezing the first value seen. Returns changed row count. */
 export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): Promise<number> {
   if (samples.length === 0) return 0
   let inserted = 0
@@ -77,12 +79,71 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       rawPayload: serializeRawPayload(sample.rawPayload),
       dedupeKey,
     }
+    const { id: _id, createdAt: _createdAt, ...updateValues } = row
     const result = await withWriteRetry(() =>
-      db.insert(schema.usageSamples).values(row).onConflictDoNothing().run(),
+      db
+        .insert(schema.usageSamples)
+        .values(row)
+        .onConflictDoUpdate({ target: schema.usageSamples.dedupeKey, set: updateValues })
+        .run(),
     )
     inserted += result.changes
+    await upsertUsageCycle(db, sample)
   }
   return inserted
+}
+
+/** Roll windowed samples into the historical cycle table. Cost and token
+ * observations often arrive from separate provider endpoints, so only fields
+ * present on the new sample are updated. */
+async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<void> {
+  if (!sample.windowStart && !sample.windowEnd && !sample.resetAt) return
+  const accountTag = sample.accountTag ?? ""
+  const cycleStart = sample.windowStart ?? null
+  const cycleEnd = sample.windowEnd ?? null
+  const dedupeKey = [
+    sample.providerId,
+    accountTag || "default",
+    cycleStart?.toISOString() ?? "open",
+    cycleEnd?.toISOString() ?? sample.resetAt?.toISOString() ?? "current",
+  ].join("|")
+  const values: schema.NewUsageCycle = {
+    providerId: sample.providerId,
+    accountTag,
+    cycleStart,
+    cycleEnd,
+    resetAt: sample.resetAt ?? null,
+    totalCostUsd: usdToMicros(sample.costUsd),
+    totalCostUsdEstimated: usdToMicros(sample.costUsdEstimated),
+    totalTokens: sample.totalTokens ?? null,
+    costQuality: sample.costQuality,
+    rawPayload: serializeRawPayload(sample.rawPayload),
+    dedupeKey,
+    updatedAt: new Date(),
+  }
+  const set: Partial<schema.NewUsageCycle> = {
+    cycleStart,
+    cycleEnd,
+    resetAt: sample.resetAt ?? null,
+    rawPayload: serializeRawPayload(sample.rawPayload),
+    updatedAt: new Date(),
+  }
+  if (sample.costUsd != null) {
+    set.totalCostUsd = usdToMicros(sample.costUsd)
+    set.costQuality = sample.costQuality
+  }
+  if (sample.costUsdEstimated != null) {
+    set.totalCostUsdEstimated = usdToMicros(sample.costUsdEstimated)
+    set.costQuality = sample.costQuality
+  }
+  if (sample.totalTokens != null) set.totalTokens = sample.totalTokens
+  await withWriteRetry(() =>
+    db
+      .insert(schema.usageCycles)
+      .values(values)
+      .onConflictDoUpdate({ target: schema.usageCycles.dedupeKey, set })
+      .run(),
+  )
 }
 
 /** Latest captured-at timestamp for a provider — the reconcile watermark. */
@@ -113,6 +174,19 @@ export async function listRecentSamples(
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(schema.usageSamples.capturedAt))
     .limit(opts.limit ?? 200)
+}
+
+/** Historical billing/reset cycles, newest first. */
+export async function listRecentCycles(
+  db: UsageDb,
+  opts: { providerId?: UsageProviderId; limit?: number } = {},
+): Promise<schema.UsageCycle[]> {
+  return db
+    .select()
+    .from(schema.usageCycles)
+    .where(opts.providerId ? eq(schema.usageCycles.providerId, opts.providerId) : undefined)
+    .orderBy(desc(schema.usageCycles.cycleStart), desc(schema.usageCycles.updatedAt))
+    .limit(opts.limit ?? 100)
 }
 
 /** Upsert the current status row for a provider/account. */
@@ -156,6 +230,19 @@ function serializeRawPayload(payload: unknown): string | null {
 
 export async function listProviderStates(db: UsageDb): Promise<schema.UsageProviderState[]> {
   return db.select().from(schema.usageProviderStates)
+}
+
+export async function getProviderLastPollAt(
+  db: UsageDb,
+  providerId: UsageProviderId,
+): Promise<Date | null> {
+  const rows = await db
+    .select({ lastPollAt: schema.usageProviderStates.lastPollAt })
+    .from(schema.usageProviderStates)
+    .where(eq(schema.usageProviderStates.providerId, providerId))
+    .orderBy(desc(schema.usageProviderStates.lastPollAt))
+    .limit(1)
+  return rows[0]?.lastPollAt ?? null
 }
 
 /** Record an alert event + its delivery outcome. */

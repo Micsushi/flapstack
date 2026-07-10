@@ -63,6 +63,7 @@ import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialo
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { SettingsContent } from "../../settings/settings-content"
+import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
 // Desktop mock
 const useIsAdmin = () => false
 
@@ -922,6 +923,10 @@ export function AgentsContent() {
         {/* Mobile: Settings fullscreen view */}
         {desktopView === "settings" ? (
           <SettingsContent />
+        ) : desktopView === "usage" ? (
+          <div className="h-full overflow-y-auto select-text">
+            <AgentsUsageTab />
+          </div>
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1046,6 +1051,10 @@ export function AgentsContent() {
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
           {desktopView === "settings" ? (
             <SettingsContent />
+          ) : desktopView === "usage" ? (
+            <div className="h-full overflow-y-auto select-text">
+              <AgentsUsageTab />
+            </div>
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (

@@ -11,7 +11,7 @@
 
 import { UsageEngine } from "../usage/engine"
 import { UsageScheduler } from "../usage/scheduler"
-import { getUsageSettings } from "../usage/settings"
+import { getUsageSettings, resolveSchedulerCadenceSeconds } from "../usage/settings"
 import { getUsageSecret } from "../usage/secrets"
 import { updateDaemonStatus } from "../usage/store"
 import { openDaemonDb } from "./db"
@@ -55,7 +55,7 @@ export async function runDaemon(): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS)
 
   const scheduler = new UsageScheduler(engine, {
-    getCadenceSeconds: () => getUsageSettings().cadenceSeconds,
+    getCadenceSeconds: () => resolveSchedulerCadenceSeconds(getUsageSettings()),
     onTickComplete: () => {
       void updateDaemonStatus(db, { lastPollAt: new Date() }).catch(() => {})
     },

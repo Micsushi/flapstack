@@ -101,7 +101,7 @@ const ADVANCED_TABS_BASE = [
   },
   {
     id: "usage" as SettingsTab,
-    label: "Usage (Scaffold)",
+    label: "Usage",
     icon: SlidersFilledIcon,
   },
   {

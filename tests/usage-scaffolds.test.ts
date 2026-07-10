@@ -42,17 +42,31 @@ describe("usage Track B scaffolds", () => {
   it("normalizes OpenAI organization cost buckets", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            data: [
-              {
-                start_time: 1_783_000_000,
-                end_time: 1_783_086_400,
-                results: [{ amount: { value: 1.25 } }],
-              },
-            ],
-          }),
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.includes("/costs")
+                ? {
+                    data: [
+                      {
+                        start_time: 1_783_000_000,
+                        end_time: 1_783_086_400,
+                        results: [{ amount: { value: 1.25 } }],
+                      },
+                    ],
+                  }
+                : {
+                    data: [
+                      {
+                        start_time: 1_783_000_000,
+                        end_time: 1_783_086_400,
+                        results: [{ input_tokens: 10, output_tokens: 5, num_model_requests: 2 }],
+                      },
+                    ],
+                  },
+            ),
+          ),
         ),
       ),
     )
@@ -62,8 +76,69 @@ describe("usage Track B scaffolds", () => {
       getSecret: async () => "sk-admin-test",
       log: () => {},
     })
-    expect(samples[0]?.costUsd).toBe(1.25)
-    expect(samples[0]?.costQuality).toBe("provider-reported")
+    expect(samples.find((sample) => sample.sourceTag === "organization-cost")?.costUsd).toBe(1.25)
+    expect(samples.find((sample) => sample.sourceTag === "organization-usage")?.totalTokens).toBe(
+      15,
+    )
+  })
+
+  it("uses Anthropic x-api-key auth, pagination, cents, and token usage", async () => {
+    const fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const parsed = new URL(url)
+      const secondPage = parsed.searchParams.get("page") === "next"
+      const isCost = parsed.pathname.endsWith("cost_report")
+      const body = isCost
+        ? {
+            data: secondPage
+              ? []
+              : [
+                  {
+                    starting_at: "2026-07-10T00:00:00Z",
+                    ending_at: "2026-07-11T00:00:00Z",
+                    results: [{ amount: "123.45" }],
+                  },
+                ],
+            has_more: !secondPage,
+            next_page: secondPage ? null : "next",
+          }
+        : {
+            data: secondPage
+              ? []
+              : [
+                  {
+                    starting_at: "2026-07-10T00:00:00Z",
+                    ending_at: "2026-07-11T00:00:00Z",
+                    results: [
+                      {
+                        uncached_input_tokens: 10,
+                        cache_read_input_tokens: 5,
+                        cache_creation: { ephemeral_1h_input_tokens: 2 },
+                        output_tokens: 3,
+                      },
+                    ],
+                  },
+                ],
+            has_more: !secondPage,
+            next_page: secondPage ? null : "next",
+          }
+      expect(new Headers(init?.headers).get("x-api-key")).toBe("sk-ant-admin-test")
+      expect(new Headers(init?.headers).get("authorization")).toBeNull()
+      return Promise.resolve(new Response(JSON.stringify(body)))
+    })
+    vi.stubGlobal("fetch", fetch)
+    const samples = await getUsageProvider("anthropic")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "app-poll",
+      getSecret: async () => "sk-ant-admin-test",
+      log: () => {},
+    })
+    expect(samples.find((sample) => sample.sourceTag === "organization-cost")?.costUsd).toBeCloseTo(
+      1.2345,
+    )
+    expect(samples.find((sample) => sample.sourceTag === "organization-usage")?.totalTokens).toBe(
+      20,
+    )
+    expect(fetch).toHaveBeenCalledTimes(4)
   })
 
   it("normalizes OpenRouter key credit usage", async () => {
@@ -160,6 +235,31 @@ describe("usage Track B scaffolds", () => {
       reasoningTokens: 1_000_000,
     })
     expect(cost).toBeCloseTo(1 + 2 + 4)
+  })
+
+  it("uses NanoGPT detailed model prices as per-million values", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: "nano-test", pricing: { prompt: 1, completion: 2 } }],
+          }),
+        ),
+      ),
+    )
+    await getUsageProvider("nanogpt")!.pollLatest({
+      now: new Date(),
+      source: "app-poll",
+      getSecret: async () => "nano-key",
+      log: () => {},
+    })
+    expect(
+      estimateCostUsd("nanogpt", "nano-test", {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+      }),
+    ).toBe(3)
   })
 
   it("fires a quota alert once, then re-arms only after a reset below band", () => {
@@ -261,6 +361,29 @@ describe("usage Track B scaffolds", () => {
     expect(result.intents[0]?.alertType).toBe("estimated-spend")
   })
 
+  it("evaluates spend-rate and spike alerts", () => {
+    const result = evaluateSample(
+      {
+        providerId: "anthropic",
+        billingKind: "api-spend",
+        costQuality: "provider-reported",
+        spendRateUsdPerHour: 5,
+        spikeMultiplierObserved: 4,
+      },
+      {
+        quotaPercent: [],
+        spendUsd: [],
+        spendRateUsdPerHour: 3,
+        spikeMultiplier: 2,
+      },
+      [],
+    )
+    expect(result.intents.map((intent) => intent.alertType)).toEqual([
+      "api-spend-rate",
+      "api-spend-spike",
+    ])
+  })
+
   it("rejects an invalid Discord webhook URL without leaking it", async () => {
     const result = await sendDiscordAlert("not-a-webhook", { title: "t", body: "b" })
     expect(result.ok).toBe(false)
@@ -284,6 +407,24 @@ describe("usage Track B scaffolds", () => {
     first.providers.codex.enabled = true
     const second = normalizeUsageSettings({})
     expect(second.providers.codex.enabled).toBe(false)
+  })
+
+  it("allows users to clear all quota thresholds", () => {
+    const settings = normalizeUsageSettings({
+      providers: {
+        cursor: {
+          enabled: true,
+          cadenceSecondsOverride: null,
+          thresholds: {
+            quotaPercent: [],
+            spendUsd: [],
+            spendRateUsdPerHour: null,
+            spikeMultiplier: null,
+          },
+        },
+      } as never,
+    })
+    expect(settings.providers.cursor.thresholds.quotaPercent).toEqual([])
   })
 
   it("builds a safe daemon LaunchAgent that can actually enter daemon mode", () => {
