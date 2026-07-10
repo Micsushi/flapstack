@@ -59,6 +59,7 @@ import {
   subChatCodexModelIdAtomFamily,
   subChatCodexThinkingAtomFamily,
   subChatCursorModelIdAtomFamily,
+  subChatOpencodeModelsAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
@@ -69,7 +70,7 @@ import {
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
-import { AgentModelSelector } from "../components/agent-model-selector"
+import { AgentModelSelector, type AgentProviderId } from "../components/agent-model-selector"
 import { AgentSendButton } from "../components/agent-send-button"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
 import { clearSubChatDraft, saveSubChatDraftWithAttachments } from "../lib/drafts"
@@ -190,7 +191,7 @@ export interface ChatInputAreaProps {
   // Context
   subChatId: string
   parentChatId: string
-  provider?: "claude-code" | "codex" | "cursor-agent"
+  provider?: AgentProviderId
   targetWorktreePath?: string | null
   onTargetWorktreePathChange?: (path: string | null) => void
   teamId?: string
@@ -209,9 +210,9 @@ export interface ChatInputAreaProps {
   // Callback to send message with question answer (Enter sends immediately, not to queue)
   onSubmitWithQuestionAnswer?: () => void
   // Callback to switch provider for brand new (empty) sub-chats
-  onProviderChange?: (provider: "claude-code" | "codex" | "cursor-agent") => void
+  onProviderChange?: (provider: AgentProviderId) => void
   // Callback to continue chat with a different provider (creates new sub-chat with history)
-  onContinueWithProvider?: (provider: "claude-code" | "codex" | "cursor-agent") => void
+  onContinueWithProvider?: (provider: AgentProviderId) => void
   // Whether this sub-chat tab is the active/visible one (prevents window-level hotkeys in background tabs)
   isActive?: boolean
 }
@@ -516,6 +517,11 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const [selectedSubChatCursorModelId, setSelectedSubChatCursorModelId] =
     useAtom(subChatCursorModelIdAtom)
+  const subChatOpencodeModelsAtom = useMemo(
+    () => subChatOpencodeModelsAtomFamily(subChatId),
+    [subChatId],
+  )
+  const [selectedOpencodeModels, setSelectedOpencodeModels] = useAtom(subChatOpencodeModelsAtom)
   const setLastSelectedModelId = useSetAtom(lastSelectedModelIdAtom)
   const setLastSelectedClaudeEffort = useSetAtom(lastSelectedClaudeEffortAtom)
   const setLastSelectedCodexModelId = useSetAtom(lastSelectedCodexModelIdAtom)
@@ -573,6 +579,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
   const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
   const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
+  const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery({ provider: "openrouter" })
+  const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery({ provider: "nanogpt" })
   const cursorLoginMutation = trpc.cursor.startLogin.useMutation({
     onSuccess: () => {
       toast.info("Complete Cursor login in the browser, then reopen this menu.")
@@ -700,6 +708,14 @@ export const ChatInputArea = memo(function ChatInputArea({
       return selectedCursorModel.name
     }
 
+    if (provider === "openrouter" || provider === "nanogpt") {
+      const modelId = selectedOpencodeModels[provider]
+      const catalog = provider === "openrouter" ? openrouterCatalog : nanogptCatalog
+      return (
+        catalog?.models.find((model) => `${provider}/${model.id}` === modelId)?.label || modelId
+      )
+    }
+
     if (availableModels.isOffline && availableModels.hasOllama) {
       return currentOllamaModel || "Ollama"
     }
@@ -717,6 +733,9 @@ export const ChatInputArea = memo(function ChatInputArea({
     provider,
     selectedCodexModel.name,
     selectedCursorModel.name,
+    selectedOpencodeModels,
+    openrouterCatalog,
+    nanogptCatalog,
     availableModels.isOffline,
     availableModels.hasOllama,
     currentOllamaModel,
@@ -1994,6 +2013,28 @@ export const ChatInputArea = memo(function ChatInputArea({
                         isConnected: cursorIntegration?.isConnected === true,
                         isLoginPending: cursorLoginMutation.isPending,
                         onLogin: () => cursorLoginMutation.mutate(),
+                      }}
+                      opencode={{
+                        openrouter: {
+                          label: "OpenRouter",
+                          models: (openrouterCatalog?.models || []).map((model) => ({
+                            id: `openrouter/${model.id}`,
+                            name: model.label,
+                          })),
+                          selectedModelId: selectedOpencodeModels.openrouter,
+                          onSelectModel: (modelId) =>
+                            setSelectedOpencodeModels({ openrouter: modelId }),
+                        },
+                        nanogpt: {
+                          label: "NanoGPT",
+                          models: (nanogptCatalog?.models || []).map((model) => ({
+                            id: `nanogpt/${model.id}`,
+                            name: model.label,
+                          })),
+                          selectedModelId: selectedOpencodeModels.nanogpt,
+                          onSelectModel: (modelId) =>
+                            setSelectedOpencodeModels({ nanogpt: modelId }),
+                        },
                       }}
                     />
                   </div>

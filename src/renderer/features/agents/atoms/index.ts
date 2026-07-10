@@ -288,6 +288,43 @@ export const lastSelectedCodexFastModeAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
+export type OpencodeProviderPreference = "openrouter" | "nanogpt"
+
+export const lastSelectedOpencodeModelsAtom = atomWithStorage<
+  Record<OpencodeProviderPreference, string>
+>(
+  "agents:lastSelectedOpencodeModels",
+  {
+    openrouter: "openrouter/tencent/hy3:free",
+    nanogpt: "nanogpt/deepseek-chat",
+  },
+  undefined,
+  { getOnInit: true },
+)
+
+const subChatOpencodeModelsStorageAtom = atomWithStorage<
+  Record<string, Partial<Record<OpencodeProviderPreference, string>>>
+>("agents:subChatOpencodeModels", {}, undefined, { getOnInit: true })
+
+export const subChatOpencodeModelsAtomFamily = atomFamily((subChatId: string) =>
+  atom(
+    (get) => ({
+      ...get(lastSelectedOpencodeModelsAtom),
+      ...(subChatId ? get(subChatOpencodeModelsStorageAtom)[subChatId] : {}),
+    }),
+    (get, set, models: Partial<Record<OpencodeProviderPreference, string>>) => {
+      if (!subChatId) {
+        set(lastSelectedOpencodeModelsAtom, { ...get(lastSelectedOpencodeModelsAtom), ...models })
+        return
+      }
+      set(subChatOpencodeModelsStorageAtom, {
+        ...get(subChatOpencodeModelsStorageAtom),
+        [subChatId]: { ...get(subChatOpencodeModelsStorageAtom)[subChatId], ...models },
+      })
+    },
+  ),
+)
+
 // Storage for per-subChat Claude model selection.
 // Falls back to lastSelectedModelIdAtom when sub-chat has no explicit selection yet.
 const subChatModelIdsStorageAtom = atomWithStorage<Record<string, string>>(

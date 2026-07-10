@@ -29,6 +29,7 @@ import { speechRouter } from "./speech"
 import { appControlRouter } from "./app-control"
 import { automationsRouter } from "./automations"
 import { modelProvidersRouter } from "./model-providers"
+import { opencodeRouter } from "./opencode"
 import { projectVaultsRouter } from "./project-vaults"
 import { usageRouter } from "./usage"
 import { importExportRouter } from "./import-export"
@@ -77,6 +78,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     appControl: appControlRouter,
     automations: automationsRouter,
     modelProviders: modelProvidersRouter,
+    opencode: opencodeRouter,
     projectVaults: projectVaultsRouter,
     usage: usageRouter,
     importExport: importExportRouter,

@@ -1,4 +1,4 @@
-import { index, sqliteTable, text, integer } from "drizzle-orm/sqlite-core"
+import { index, sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { relations } from "drizzle-orm"
 import { createId } from "../utils"
 
@@ -295,6 +295,188 @@ export const anthropicSettings = sqliteTable("anthropic_settings", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 })
 
+// ============ USAGE TRACKING (Stage 2 Track B — replaces onWatch) ============
+// Shared usage store written by the background daemon and read by the app.
+// See src/main/lib/usage/* for the engine, providers, and store helpers.
+
+// Normalized per-poll usage samples. One row = one observation of a provider's
+// usage/cost at a point in time. Raw provider payloads are preserved for drift
+// debugging; credentials must never be written into rawPayload.
+export const usageSamples = sqliteTable(
+  "usage_samples",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    providerId: text("provider_id").notNull(), // "codex" | "anthropic" | "cursor" | "openrouter" | "nanogpt"
+    accountTag: text("account_tag").notNull().default(""), // account/profile/key identifier for multi-account debugging
+    // Sample origin: "daemon-poll" | "app-poll" | "startup-reconcile" | "flapstack-run" | "external-provider"
+    source: text("source").notNull(),
+    // Cost quality: "exact" | "provider-reported" | "estimated" | "unknown"
+    costQuality: text("cost_quality").notNull().default("unknown"),
+    // Provider sub-source tag, e.g. Cursor "internal" | "admin" | "cli"
+    sourceTag: text("source_tag"),
+    capturedAt: integer("captured_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    windowStart: integer("window_start", { mode: "timestamp" }),
+    windowEnd: integer("window_end", { mode: "timestamp" }),
+    // Token + request counts (nullable — providers may only expose some)
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    totalTokens: integer("total_tokens"),
+    requestCount: integer("request_count"),
+    // Cost. costUsd = exact/provider-reported; costUsdEstimated = derived estimate.
+    costUsd: integer("cost_usd_micros"), // stored as integer micro-dollars to avoid float drift
+    costUsdEstimated: integer("cost_usd_estimated_micros"),
+    currency: text("currency").notNull().default("USD"),
+    // Subscription/quota providers
+    percentUsed: integer("percent_used"), // 0-100 integer
+    quotaUsed: integer("quota_used"),
+    quotaLimit: integer("quota_limit"),
+    resetAt: integer("reset_at", { mode: "timestamp" }),
+    // Provider-specific correlation ids
+    model: text("model"),
+    generationId: text("generation_id"), // OpenRouter generation id for later reconciliation
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    rawPayload: text("raw_payload"), // JSON string of the normalized-from provider payload
+    // Deterministic dedup key (providerId/accountTag/window/source) to prevent double-counting.
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("usage_samples_provider_idx").on(table.providerId),
+    index("usage_samples_captured_at_idx").on(table.capturedAt),
+    uniqueIndex("usage_samples_dedupe_key_idx").on(table.dedupeKey),
+  ],
+)
+
+// Aggregated billing/reset cycles per provider (rolled up from samples or
+// provider cost APIs). Kept separate so historical cycles survive sample pruning.
+export const usageCycles = sqliteTable(
+  "usage_cycles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    providerId: text("provider_id").notNull(),
+    accountTag: text("account_tag").notNull().default(""),
+    cycleStart: integer("cycle_start", { mode: "timestamp" }),
+    cycleEnd: integer("cycle_end", { mode: "timestamp" }),
+    resetAt: integer("reset_at", { mode: "timestamp" }),
+    totalCostUsd: integer("total_cost_usd_micros"),
+    totalCostUsdEstimated: integer("total_cost_usd_estimated_micros"),
+    totalTokens: integer("total_tokens"),
+    costQuality: text("cost_quality").notNull().default("unknown"),
+    rawPayload: text("raw_payload"),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("usage_cycles_provider_idx").on(table.providerId),
+    uniqueIndex("usage_cycles_dedupe_key_idx").on(table.dedupeKey),
+  ],
+)
+
+// Current health/status of each provider (+ account). One row per provider/account.
+export const usageProviderStates = sqliteTable(
+  "usage_provider_states",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    providerId: text("provider_id").notNull(),
+    accountTag: text("account_tag").notNull().default(""),
+    // "not-configured" | "ok" | "auth-failed" | "rate-limited" | "source-unavailable"
+    // | "run-usage-only" | "estimate-only" | "not-installed" | "not-logged-in"
+    status: text("status").notNull().default("not-configured"),
+    statusDetail: text("status_detail"),
+    configured: integer("configured", { mode: "boolean" }).notNull().default(false),
+    supportsDaemon: integer("supports_daemon", { mode: "boolean" }).notNull().default(false),
+    supportsHistorical: integer("supports_historical", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    lastPollAt: integer("last_poll_at", { mode: "timestamp" }),
+    lastSuccessAt: integer("last_success_at", { mode: "timestamp" }),
+    lastErrorAt: integer("last_error_at", { mode: "timestamp" }),
+    lastError: text("last_error"),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [uniqueIndex("usage_provider_states_key_idx").on(table.providerId, table.accountTag)],
+)
+
+// Alert events raised by the threshold evaluator + Discord webhook delivery log.
+export const usageAlertEvents = sqliteTable(
+  "usage_alert_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    providerId: text("provider_id").notNull(),
+    accountTag: text("account_tag").notNull().default(""),
+    // "quota-percent" | "quota-reset" | "throttle-risk" | "api-dollar-budget"
+    // | "api-spend-rate" | "api-spend-spike" | "estimated-spend"
+    alertType: text("alert_type").notNull(),
+    thresholdValue: integer("threshold_value"),
+    observedValue: integer("observed_value"),
+    costQuality: text("cost_quality").notNull().default("unknown"),
+    channel: text("channel").notNull().default("discord"),
+    // "pending" | "sent" | "failed"
+    deliveryStatus: text("delivery_status").notNull().default("pending"),
+    deliveryError: text("delivery_error"), // never contains the webhook URL
+    message: text("message"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("usage_alert_events_provider_idx").on(table.providerId),
+    index("usage_alert_events_created_at_idx").on(table.createdAt),
+  ],
+)
+
+// Debounce/re-arm state for alerts so an alert fires once until usage resets.
+export const usageAlertArmStates = sqliteTable(
+  "usage_alert_arm_states",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    providerId: text("provider_id").notNull(),
+    // Empty string is the canonical default account tag. SQLite unique indexes
+    // treat NULL values as distinct, which would otherwise allow duplicate
+    // provider/account/threshold arm rows for the default account.
+    accountTag: text("account_tag").notNull().default(""),
+    alertType: text("alert_type").notNull(),
+    thresholdValue: integer("threshold_value"),
+    armed: integer("armed", { mode: "boolean" }).notNull().default(true),
+    lastFiredAt: integer("last_fired_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("usage_alert_arm_states_key_idx").on(
+      table.providerId,
+      table.accountTag,
+      table.alertType,
+      table.thresholdValue,
+    ),
+  ],
+)
+
+// Background daemon heartbeat/status. Singleton row keyed by host.
+export const usageDaemonStatus = sqliteTable("usage_daemon_status", {
+  id: text("id").primaryKey().default("singleton"),
+  host: text("host"),
+  pid: integer("pid"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  running: integer("running", { mode: "boolean" }).notNull().default(false),
+  cadenceSeconds: integer("cadence_seconds").notNull().default(300),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  lastHeartbeatAt: integer("last_heartbeat_at", { mode: "timestamp" }),
+  lastPollAt: integer("last_poll_at", { mode: "timestamp" }),
+  lastAlertAt: integer("last_alert_at", { mode: "timestamp" }),
+  lastError: text("last_error"),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+})
+
 // ============ TYPE EXPORTS ============
 export type Project = typeof projects.$inferSelect
 export type NewProject = typeof projects.$inferInsert
@@ -317,3 +499,15 @@ export type NewClaudeCodeCredential = typeof claudeCodeCredentials.$inferInsert
 export type AnthropicAccount = typeof anthropicAccounts.$inferSelect
 export type NewAnthropicAccount = typeof anthropicAccounts.$inferInsert
 export type AnthropicSettings = typeof anthropicSettings.$inferSelect
+export type UsageSample = typeof usageSamples.$inferSelect
+export type NewUsageSample = typeof usageSamples.$inferInsert
+export type UsageCycle = typeof usageCycles.$inferSelect
+export type NewUsageCycle = typeof usageCycles.$inferInsert
+export type UsageProviderState = typeof usageProviderStates.$inferSelect
+export type NewUsageProviderState = typeof usageProviderStates.$inferInsert
+export type UsageAlertEvent = typeof usageAlertEvents.$inferSelect
+export type NewUsageAlertEvent = typeof usageAlertEvents.$inferInsert
+export type UsageAlertArmState = typeof usageAlertArmStates.$inferSelect
+export type NewUsageAlertArmState = typeof usageAlertArmStates.$inferInsert
+export type UsageDaemonStatus = typeof usageDaemonStatus.$inferSelect
+export type NewUsageDaemonStatus = typeof usageDaemonStatus.$inferInsert

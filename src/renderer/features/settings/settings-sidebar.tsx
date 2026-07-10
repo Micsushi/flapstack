@@ -70,6 +70,11 @@ const ADVANCED_TABS_BASE = [
     icon: BrainFilledIcon,
   },
   {
+    id: "api-providers" as SettingsTab,
+    label: "API Providers",
+    icon: BrainFilledIcon,
+  },
+  {
     id: "skills" as SettingsTab,
     label: "Skills",
     icon: SkillIconFilled,
@@ -88,6 +93,11 @@ const ADVANCED_TABS_BASE = [
     id: "plugins" as SettingsTab,
     label: "Plugins",
     icon: PluginFilledIcon,
+  },
+  {
+    id: "usage" as SettingsTab,
+    label: "Usage (Scaffold)",
+    icon: SlidersFilledIcon,
   },
   {
     id: "future" as SettingsTab,

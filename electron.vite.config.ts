@@ -16,7 +16,10 @@ export default defineConfig({
     ],
     build: {
       lib: {
-        entry: resolve(__dirname, "src/main/index.ts"),
+        entry: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          "usage-daemon": resolve(__dirname, "src/main/usage-daemon.ts"),
+        },
       },
       rollupOptions: {
         external: [
@@ -50,11 +53,10 @@ export default defineConfig({
     },
   },
   renderer: {
-    // Pin the dev server to a fixed port and fail loudly if it is taken, instead
-    // of silently falling back to :5174 and leaving two dev servers running (which
-    // is how you end up testing stale code). Paired with scripts/dev.mjs.
+    // One fixed port per checkout. Override with FLAPSTACK_DEV_PORT when another
+    // Flapstack worktree is already running; never silently fall back.
     server: {
-      port: 5173,
+      port: Number(process.env.FLAPSTACK_DEV_PORT ?? 5173),
       strictPort: true,
     },
     plugins: [
