@@ -9,9 +9,9 @@ export const appControlRouter = router({
   describe: publicProcedure.query(() => {
     return {
       enabled: false,
-      transport: "not-started" as const,
+      transport: "stdio-available" as const,
       reason:
-        "Stage 3 app-control MCP transport is scaffolded but disabled until the risk-tier gate is complete.",
+        "Stage 3 stdio transport is implemented but exposure stays disabled until the trusted risk gate is integrated.",
       tools: mcpControlTools,
     }
   }),
