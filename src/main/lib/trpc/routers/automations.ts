@@ -9,7 +9,7 @@ export const automationsRouter = router({
       enabled: false,
       scheduler: "disabled" as const,
       triggers: ["schedule", "file-change", "run-complete", "manual"] as const,
-      requires: ["Stage 3 audit gate", "automation grill-me decisions"],
+      requires: ["Stage 3 audit gate", "automation planning decisions"],
     }
   }),
 

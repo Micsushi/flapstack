@@ -6,7 +6,7 @@ Stage 1 (workspace core) is complete and archived. Stage 2 adds the next
 local-first product slice: talk-to-your-agent voice I/O, usage/limits tracking,
 Cursor integration on both surfaces (usage monitoring + a `cursor-agent` coding
 harness), and direct API harness support for OpenRouter and NanoGPT. Architecture
-decisions were closed in the S2.0 grill-me gate (2026-07-09), then Stage 2 was
+decisions were closed in the S2.0 planning gate (2026-07-09), then Stage 2 was
 extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## What Changes
@@ -63,8 +63,8 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## Reference
 
-- Vault board: `Wiki/Projects/flapstack/stage2-implementation-tasks.md`
-  (tracks V/U/D/F, per-task files + done-when, S2.0 resolved decisions).
+- Repo-local planning: `design.md` records the resolved decisions and
+  `tasks.md` tracks the implementation work.
 - Reuse repos: `agent-hotline` (filter + TTS engines), `onWatch` (usage math,
   storage, notification model, Discord sender, dashboard references, and full
   Cursor usage client). External docs checked 2026-07-09/10: OpenAI usage/cost

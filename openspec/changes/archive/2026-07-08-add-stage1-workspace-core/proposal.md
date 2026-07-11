@@ -39,6 +39,5 @@ permissions hardcoded to bypass.
   `src/main/lib/harness/`, `worktree-resolver.ts`, `checkpoints.ts`; renderer
   sidebar, chat input area, chips, details sidebar, attachments UI, archives
   view, scoped search UI.
-- Execution detail: vault task board
-  `agentsvault/Wiki/Projects/flapstack/stage1-implementation-tasks.md`
-  (27 tasks, A1–E3, with dependencies).
+- Execution detail: the archived `tasks.md` and specs in this change directory
+  preserve the implementation history and dependencies.
