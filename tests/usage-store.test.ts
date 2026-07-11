@@ -9,7 +9,10 @@ import * as schema from "../src/main/lib/db/schema"
 import { runAlerts } from "../src/main/lib/usage/alert-runner"
 import { UsageEngine } from "../src/main/lib/usage/engine"
 import { getUsageProvider } from "../src/main/lib/usage/registry"
-import { captureOpenCodeRunUsage } from "../src/main/lib/usage/run-usage"
+import {
+  captureOpenCodeRunUsage,
+  captureOpenCodeRunUsageBatch,
+} from "../src/main/lib/usage/run-usage"
 import { mergeSidecarUsage } from "../src/main/lib/harness/opencode-sidecar/usage"
 import { normalizeUsageSettings } from "../src/main/lib/usage/settings"
 import {
@@ -57,6 +60,12 @@ describe("usage SQLite integration", () => {
         resolve(process.cwd(), "drizzle/0013_cursor_usage_account_cleanup.sql"),
         "utf8",
       ).replaceAll("--> statement-breakpoint", ""),
+    )
+    sqlite.exec(
+      readFileSync(resolve(process.cwd(), "drizzle/0015_dear_toad_men.sql"), "utf8").replaceAll(
+        "--> statement-breakpoint",
+        "",
+      ),
     )
     db = drizzle(sqlite, { schema })
   })
@@ -279,6 +288,31 @@ describe("usage SQLite integration", () => {
       costUsd: 4_200,
     })
     expect(await listPendingGenerationIds(db, "openrouter")).toEqual([])
+  })
+
+  it("persists every OpenRouter generation in a multi-step run", async () => {
+    sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?)").run("run-multi")
+    await captureOpenCodeRunUsageBatch(db, [
+      {
+        providerId: "openrouter",
+        runId: "run-multi",
+        model: "openai/gpt-4.1-mini",
+        generationId: "gen-first",
+        totalTokens: 10,
+      },
+      {
+        providerId: "openrouter",
+        runId: "run-multi",
+        model: "openai/gpt-4.1-mini",
+        generationId: "gen-second",
+        totalTokens: 20,
+      },
+    ])
+    const rows = await listRecentSamples(db, { providerId: "openrouter" })
+    expect(rows.map((row) => row.generationId).sort()).toEqual(["gen-first", "gen-second"])
+    expect(rows.map((row) => row.totalTokens).sort((a, b) => Number(a) - Number(b))).toEqual([
+      10, 20,
+    ])
   })
 
   it("persists an all-provider-reported sidecar total as reported cost", async () => {

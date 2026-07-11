@@ -14,19 +14,47 @@ import os from "node:os"
 import path from "node:path"
 import { getVoiceSettings } from "./settings"
 import { cleanTranscribedText } from "./stt-cloud"
-import type { SpeechAdapterAvailability, SttAdapter, SttInput, SttResult } from "./types"
+import type {
+  SpeechAdapterAvailability,
+  SttAdapter,
+  SttInput,
+  SttResult,
+  WhisperModelId,
+} from "./types"
 
-// whisper.cpp `base` multilingual model (S2.0 decision: download-on-first-use).
-// Kept out of the installer so the download stays small; the model lands in the
-// app data dir on first dictation with visible progress + an honest failure state.
+// Multilingual whisper.cpp models. Models stay out of the installer and are
+// downloaded on demand into app data with checksum validation.
 const MODEL_REVISION = "80da2d8bfee42b0e836fc3a9890373e5defc00a6"
-const MODEL_URL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-base.bin`
-const MODEL_FILE = "ggml-base.bin"
-const MODEL_SHA256 = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+export const WHISPER_MODELS: Record<
+  WhisperModelId,
+  { id: WhisperModelId; label: string; file: string; sha256: string; sizeBytes: number }
+> = {
+  tiny: {
+    id: "tiny",
+    label: "Tiny multilingual (fastest)",
+    file: "ggml-tiny.bin",
+    sha256: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+    sizeBytes: 77_691_713,
+  },
+  base: {
+    id: "base",
+    label: "Base multilingual (recommended)",
+    file: "ggml-base.bin",
+    sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+    sizeBytes: 147_951_465,
+  },
+  small: {
+    id: "small",
+    label: "Small multilingual (more accurate)",
+    file: "ggml-small.bin",
+    sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+    sizeBytes: 487_601_967,
+  },
+}
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
 // Sanity floor so a truncated/HTML error response is never mistaken for a model.
-const MIN_MODEL_BYTES = 100 * 1024 * 1024
+const MIN_MODEL_SIZE_RATIO = 0.95
 
 export type SttModelDownloadState =
   | { status: "absent" }
@@ -34,16 +62,22 @@ export type SttModelDownloadState =
   | { status: "present"; sizeBytes: number }
   | { status: "error"; message: string }
 
-let downloadState: SttModelDownloadState = { status: "absent" }
-let activeDownload: Promise<string> | null = null
-let verifiedModel: { path: string; size: number; mtimeMs: number; digest: string } | null = null
-let verifyingModel: {
-  path: string
-  size: number
-  mtimeMs: number
-  promise: Promise<string>
-} | null = null
-const downloadProgressListeners = new Set<(state: SttModelDownloadState) => void>()
+const downloadStates = new Map<WhisperModelId, SttModelDownloadState>()
+const activeDownloads = new Map<WhisperModelId, Promise<string>>()
+const verifiedModels = new Map<string, { size: number; mtimeMs: number; digest: string }>()
+const verifyingModels = new Map<
+  string,
+  {
+    path: string
+    size: number
+    mtimeMs: number
+    promise: Promise<string>
+  }
+>()
+const downloadProgressListeners = new Map<
+  WhisperModelId,
+  Set<(state: SttModelDownloadState) => void>
+>()
 const verifiedBinaries = new Map<string, { mtimeMs: number; valid: boolean }>()
 
 export const whisperCppAdapter: SttAdapter = {
@@ -64,16 +98,10 @@ export const whisperCppAdapter: SttAdapter = {
           "whisper.cpp binary not found. Set WHISPER_CPP_BIN or add whisper-cli to resources/bin.",
       }
     }
-    if (!findFfmpegBinary()) {
-      return {
-        available: false,
-        status: "not-configured",
-        missingDependency: "audio-converter",
-        reason:
-          "ffmpeg is required for browser-recorded audio. Install ffmpeg or add it to resources/bin.",
-      }
-    }
-    const modelValidation = await validateModelFile(getModelPath())
+    const modelId = getVoiceSettings().whisperModelId
+    const model = WHISPER_MODELS[modelId]
+    const downloadState = getDownloadState(modelId)
+    const modelValidation = await validateModelFile(getModelPath(modelId), model)
     if (!modelValidation.valid) {
       const detail =
         downloadState.status === "downloading"
@@ -85,7 +113,7 @@ export const whisperCppAdapter: SttAdapter = {
         available: false,
         status: "not-configured",
         missingDependency: "model",
-        reason: `${modelValidation.reason || "Local Whisper base model is not downloaded yet."}${detail}`,
+        reason: `${modelValidation.reason || `Local Whisper ${model.label} model is not downloaded yet.`}${detail}`,
       }
     }
     return { available: true, status: "available" }
@@ -94,7 +122,7 @@ export const whisperCppAdapter: SttAdapter = {
   async canAutoProvision() {
     // Runtime tools must already be installed. Only the model can be downloaded
     // atomically by transcribe() on first use.
-    return Boolean((await findWorkingWhisperBinary()) && findFfmpegBinary())
+    return Boolean(await findWorkingWhisperBinary())
   },
 
   async transcribe(input: SttInput): Promise<SttResult> {
@@ -121,29 +149,56 @@ export const whisperCppAdapter: SttAdapter = {
   },
 }
 
-export function getModelPath() {
-  return path.join(getSpeechDataDir(), "models", MODEL_FILE)
+export function getModelPath(modelId: WhisperModelId = getVoiceSettings().whisperModelId) {
+  return path.join(getSpeechDataDir(), "models", WHISPER_MODELS[modelId].file)
 }
 
-export function getWhisperModelDescriptor() {
-  return { url: MODEL_URL, revision: MODEL_REVISION, sha256: MODEL_SHA256 }
+export function getWhisperModelDescriptor(
+  modelId: WhisperModelId = getVoiceSettings().whisperModelId,
+) {
+  const model = WHISPER_MODELS[modelId]
+  return {
+    ...model,
+    url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/${model.file}`,
+    revision: MODEL_REVISION,
+  }
+}
+
+export function listWhisperModels() {
+  return Object.values(WHISPER_MODELS)
+}
+
+function getDownloadState(modelId: WhisperModelId) {
+  return downloadStates.get(modelId) ?? ({ status: "absent" } as const)
+}
+
+function setDownloadState(modelId: WhisperModelId, state: SttModelDownloadState) {
+  downloadStates.set(modelId, state)
+  for (const listener of downloadProgressListeners.get(modelId) ?? []) listener(state)
 }
 
 /**
  * Current status of the local Whisper model, used by the settings UI to render
  * an honest download/absent/present/error state (V2/V9).
  */
-export async function getSttModelStatus(): Promise<SttModelDownloadState> {
-  const modelPath = getModelPath()
-  const validation = await validateModelFile(modelPath)
+export async function getSttModelStatus(
+  modelId: WhisperModelId = getVoiceSettings().whisperModelId,
+): Promise<SttModelDownloadState> {
+  const modelPath = getModelPath(modelId)
+  const validation = await validateModelFile(modelPath, WHISPER_MODELS[modelId])
+  let downloadState = getDownloadState(modelId)
   if (validation.valid) {
     // A completed download supersedes a stale in-memory error/absent value.
     if (downloadState.status !== "present") {
-      downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
+      setDownloadState(modelId, { status: "present", sizeBytes: statSync(modelPath).size })
+      downloadState = getDownloadState(modelId)
     }
     return downloadState
   }
-  if (downloadState.status === "present") downloadState = { status: "absent" }
+  if (downloadState.status === "present") {
+    setDownloadState(modelId, { status: "absent" })
+    downloadState = getDownloadState(modelId)
+  }
   return downloadState
 }
 
@@ -153,34 +208,43 @@ export async function getSttModelStatus(): Promise<SttModelDownloadState> {
  */
 export async function ensureModel(
   onProgress?: (state: SttModelDownloadState) => void,
+  modelId: WhisperModelId = getVoiceSettings().whisperModelId,
 ): Promise<string> {
-  const modelPath = getModelPath()
-  const validation = await validateModelFile(modelPath)
+  const modelPath = getModelPath(modelId)
+  const validation = await validateModelFile(modelPath, WHISPER_MODELS[modelId])
   if (validation.valid) {
-    downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
+    setDownloadState(modelId, { status: "present", sizeBytes: statSync(modelPath).size })
     return modelPath
   }
   if (existsSync(modelPath)) rmSync(modelPath, { force: true })
   if (onProgress) {
-    downloadProgressListeners.add(onProgress)
-    onProgress(downloadState)
+    const listeners = downloadProgressListeners.get(modelId) ?? new Set()
+    listeners.add(onProgress)
+    downloadProgressListeners.set(modelId, listeners)
+    onProgress(getDownloadState(modelId))
   }
-  if (!activeDownload)
-    activeDownload = downloadModel(modelPath).finally(() => {
-      activeDownload = null
-    })
-  return activeDownload.finally(() => {
-    if (onProgress) downloadProgressListeners.delete(onProgress)
+  if (!activeDownloads.has(modelId)) {
+    activeDownloads.set(
+      modelId,
+      downloadModel(modelId, modelPath).finally(() => {
+        activeDownloads.delete(modelId)
+      }),
+    )
+  }
+  return activeDownloads.get(modelId)!.finally(() => {
+    if (onProgress) {
+      const listeners = downloadProgressListeners.get(modelId)
+      listeners?.delete(onProgress)
+      if (!listeners?.size) downloadProgressListeners.delete(modelId)
+    }
   })
 }
 
-async function downloadModel(modelPath: string): Promise<string> {
+async function downloadModel(modelId: WhisperModelId, modelPath: string): Promise<string> {
+  const descriptor = getWhisperModelDescriptor(modelId)
   mkdirSync(path.dirname(modelPath), { recursive: true })
   const tmpPath = `${modelPath}.download`
-  const setState = (state: SttModelDownloadState) => {
-    downloadState = state
-    for (const listener of downloadProgressListeners) listener(state)
-  }
+  const setState = (state: SttModelDownloadState) => setDownloadState(modelId, state)
   setState({ status: "downloading", receivedBytes: 0, totalBytes: null, percent: 0 })
 
   let totalTimer: ReturnType<typeof setTimeout> | undefined
@@ -189,7 +253,7 @@ async function downloadModel(modelPath: string): Promise<string> {
     const controller = new AbortController()
     totalTimer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
     totalTimer.unref?.()
-    const response = await fetch(MODEL_URL, { signal: controller.signal })
+    const response = await fetch(descriptor.url, { signal: controller.signal })
     if (!response.ok || !response.body) {
       throw new Error(`Model download failed (HTTP ${response.status}).`)
     }
@@ -232,11 +296,11 @@ async function downloadModel(modelPath: string): Promise<string> {
     if (idleTimer) clearTimeout(idleTimer)
 
     const size = statSync(tmpPath).size
-    if (size < MIN_MODEL_BYTES) {
+    if (size < descriptor.sizeBytes * MIN_MODEL_SIZE_RATIO) {
       throw new Error(`Downloaded model looks truncated (${size} bytes). Try again.`)
     }
     const digest = await sha256File(tmpPath)
-    if (digest !== MODEL_SHA256) {
+    if (digest !== descriptor.sha256) {
       throw new Error(`Downloaded model checksum mismatch (${digest}).`)
     }
     renameSync(tmpPath, modelPath)
@@ -247,7 +311,7 @@ async function downloadModel(modelPath: string): Promise<string> {
     const message = error instanceof Error ? error.message : String(error)
     setState({ status: "error", message })
     throw new Error(
-      `Local Whisper model download failed: ${message}. Check your connection and retry, or add ${MODEL_FILE} to ${path.dirname(modelPath)} manually.`,
+      `Local Whisper model download failed: ${message}. Check your connection and retry, or add ${descriptor.file} to ${path.dirname(modelPath)} manually.`,
     )
   } finally {
     if (totalTimer) clearTimeout(totalTimer)
@@ -264,31 +328,27 @@ export function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<
   })
 }
 
-async function validateModelFile(modelPath: string): Promise<{ valid: boolean; reason?: string }> {
+async function validateModelFile(
+  modelPath: string,
+  descriptor: (typeof WHISPER_MODELS)[WhisperModelId],
+): Promise<{ valid: boolean; reason?: string }> {
   if (!existsSync(modelPath)) return { valid: false }
   const size = statSync(modelPath).size
-  if (size < MIN_MODEL_BYTES) return { valid: false, reason: "Local Whisper model is truncated." }
-  return (await sha256File(modelPath)) === MODEL_SHA256
+  if (size < descriptor.sizeBytes * MIN_MODEL_SIZE_RATIO)
+    return { valid: false, reason: "Local Whisper model is truncated." }
+  return (await sha256File(modelPath)) === descriptor.sha256
     ? { valid: true }
     : { valid: false, reason: "Local Whisper model failed its integrity check." }
 }
 
 async function sha256File(filePath: string): Promise<string> {
   const stat = statSync(filePath)
-  if (
-    verifiedModel?.path === filePath &&
-    verifiedModel.size === stat.size &&
-    verifiedModel.mtimeMs === stat.mtimeMs
-  ) {
+  const verifiedModel = verifiedModels.get(filePath)
+  if (verifiedModel?.size === stat.size && verifiedModel.mtimeMs === stat.mtimeMs)
     return verifiedModel.digest
-  }
-  if (
-    verifyingModel?.path === filePath &&
-    verifyingModel.size === stat.size &&
-    verifyingModel.mtimeMs === stat.mtimeMs
-  ) {
+  const verifyingModel = verifyingModels.get(filePath)
+  if (verifyingModel?.size === stat.size && verifyingModel.mtimeMs === stat.mtimeMs)
     return verifyingModel.promise
-  }
   const promise = new Promise<string>((resolve, reject) => {
     const hash = createHash("sha256")
     const stream = createReadStream(filePath)
@@ -296,10 +356,10 @@ async function sha256File(filePath: string): Promise<string> {
     stream.on("error", reject)
     stream.on("end", () => resolve(hash.digest("hex")))
   })
-  verifyingModel = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, promise }
+  verifyingModels.set(filePath, { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, promise })
   const digest = await promise
-  verifyingModel = null
-  verifiedModel = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, digest }
+  verifyingModels.delete(filePath)
+  verifiedModels.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, digest })
   return digest
 }
 

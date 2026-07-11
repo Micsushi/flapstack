@@ -44,10 +44,16 @@ export type ProviderBillingKind = "subscription-quota" | "api-spend"
  * plain numbers/Dates; the store maps cost to integer micro-dollars. */
 export interface UsageSampleInput {
   providerId: UsageProviderId
+  /** Optional per-sample override for providers that expose both API spend and
+   * personal subscription quotas under one provider identity. */
+  billingKind?: ProviderBillingKind
   accountTag?: string | null
   source: SampleSource
   costQuality: CostQuality
   sourceTag?: string | null
+  /** Stable provider metric/quota identity, e.g. `five_hour` or `credits`.
+   * Keeps multiple quota windows for one account distinct in storage and UI. */
+  metricKey?: string | null
   capturedAt?: Date
   windowStart?: Date | null
   windowEnd?: Date | null

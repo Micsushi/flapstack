@@ -2,9 +2,12 @@
 
 ### Requirement: Local Speech-to-Text
 
-The system SHALL provide local-only dictation via a whisper.cpp `SttAdapter`
-using the `base` multilingual model downloaded on first use, and SHALL surface
-that Local Whisper transcribed each utterance.
+The system SHALL provide local-only batch dictation via a bundled whisper.cpp
+`SttAdapter` using a user-selectable pinned `tiny`, `base`, or `small`
+multilingual model downloaded on first use, and SHALL surface that Local Whisper
+transcribed each utterance. Browser microphone audio SHALL be converted to 16
+kHz mono PCM WAV before entering the main process so packaged dictation does not
+depend on a system FFmpeg install.
 
 #### Scenario: Offline dictation
 
@@ -17,6 +20,19 @@ that Local Whisper transcribed each utterance.
 - **WHEN** the user starts dictation before the whisper.cpp model is present
 - **THEN** the system downloads the model with visible progress
 - **AND** shows an actionable state on download failure rather than a silent no-op
+
+#### Scenario: Pristine packaged dictation
+
+- **WHEN** a user installs a packaged build on a supported target without Homebrew,
+  FFmpeg, or whisper.cpp already installed
+- **THEN** Flapstack uses its bundled checksum-pinned whisper.cpp engine
+- **AND** downloads only the selected model with visible lifecycle state
+
+#### Scenario: User changes model
+
+- **WHEN** the user selects tiny, base, or small in Voice settings
+- **THEN** status and download progress apply to that model independently
+- **AND** existing downloads for other model sizes remain available
 
 ### Requirement: Offline Text-to-Speech
 

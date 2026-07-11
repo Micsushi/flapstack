@@ -1,4 +1,4 @@
-# Stage 2 readiness review — 2026-07-10
+# Stage 2 readiness review — 2026-07-10 (implementation update 2026-07-11)
 
 Status: **the integrated automated baseline is green and the implemented feature rows are ready for manual testing; Stage 2 exit is not yet proven.**
 
@@ -13,7 +13,8 @@ The repair pass removed several blockers that would have made meaningful manual 
 The remaining exit risk is concentrated in three areas:
 
 1. Required live and packaged matrices remain incomplete, especially Windows voice, packaged speech prerequisites, provider credentials, daemon behavior with the app closed, and reasoning persistence through the real UI.
-2. Some approved scope remains incomplete: personal Codex/Claude usage, full Cursor usage, historical usage graphs, cross-platform daemon service lifecycle, local-token-only Cursor login fallback, and verified upstream OpenRouter generation provenance.
+2. The previously blocked implementation rows now have testable paths. Their
+   packaged, cross-platform, and credentialed behavior is not yet proven.
 3. Dependency audit findings need remediation or explicit risk acceptance after
    direct/runtime exposure triage.
 
@@ -54,13 +55,14 @@ No live credential, email address, local absolute path, or secret is recorded he
 
 ### 3.2 Matrix size
 
-After this evidence reconciliation, the matrix contains 116 test rows:
+After the 2026-07-11 implementation and evidence reconciliation, the matrix
+contains 122 test rows:
 
 | Classification | Rows | Meaning                                                          |
 | -------------- | ---: | ---------------------------------------------------------------- |
-| READY          |   77 | Implemented enough for the stated human test                     |
-| CONDITIONAL    |   27 | Requires an OS, package, account, key, CLI, or provider behavior |
-| BLOCKED        |   12 | Missing implementation or unresolved scope                       |
+| READY          |   86 | Implemented enough for the stated human test                     |
+| CONDITIONAL    |   36 | Requires an OS, package, account, key, CLI, or provider behavior |
+| BLOCKED        |    0 | No current matrix row lacks an implementation or scope decision  |
 
 V6-02 and E7-03 are now READY because OpenCode prompts receive the read-aloud
 instruction. F6-03 and P-10 were added for the Codex MCP cwd regression and
@@ -79,21 +81,22 @@ dependency-audit review. No checkbox is marked passed without human evidence.
 
 - Clean install with `npm ci --legacy-peer-deps` passed.
 - Final `npm run check` passed on CI-equivalent Node 22: lint, formatting, strict
-  TypeScript, 303 tests passed, 3 skipped, across 32 files, plus the production build.
+  TypeScript, 342 tests passed, 3 skipped, across 37 files, plus the production build.
 - A Node 24.14 attempt failed before tests while compiling `better-sqlite3`
   against the local V8/toolchain headers. Node 26 was correctly refused by the
   ABI guard. Use Node 22 for this test matrix until the Node 24 toolchain/prebuild
   path is repaired and revalidated.
 - Strict OpenSpec validation passed for 3 changes.
 - The usage-daemon smoke passed.
-- The credential-free OpenCode live suite passed 38 tests; 2 paid-provider tests
+- The credential-free OpenCode live suite passed 52 tests; 2 paid-provider tests
   remained skipped.
 - `npm run ts:check` passes and is now enforced by `npm run check` and CI.
 - `npm audit` reported 1 low, 5 moderate, 9 high, and 0 critical findings. The
   production-only view reports 1 low and 1 moderate finding, both through
   Monaco's DOMPurify dependency. The 9 high findings are in Electron and
-  build/packaging chains. Electron 39.4.0 has a non-major 39.8.10 fix available;
-  the electron-builder/tar chain currently points to a major builder upgrade.
+  build/packaging chains. Electron 39.4.0 is current within the pinned major;
+  the electron-builder/tar chain points to a major builder upgrade that needs
+  artifact validation.
 - Paid provider matrices and packaged macOS/Windows matrices remain incomplete.
 
 ### 3.5 Live development-app evidence
@@ -134,10 +137,10 @@ All five were repaired in this pass.
 
 ### P1 — correctness, safety, or exit blockers
 
-- OpenCode-derived cost remains labeled estimated, assistant message IDs remain
-  observation IDs rather than provider generation IDs, and multi-message usage
-  aggregates by observation with the weakest cost quality preserved. Repaired;
-  verified upstream generation provenance remains open.
+- OpenCode-derived cost remains labeled estimated until reconciliation. A
+  localhost pass-through now captures official OpenRouter `X-Generation-Id`
+  headers before OpenCode discards them, and multi-step rows persist separately.
+  Provider-live proof remains open.
 - OpenCode tool inputs, outputs, errors, permission scope, decisions, and permission limitations were not durable. Repaired with bounded/redacted assistant run metadata and persisted tool parts.
 - Usage persistence failure could skip run/sub-chat finalization. Repaired by isolating required status writes from optional usage enrichment.
 - Cursor completed-only reasoning was discarded. Repaired.
@@ -146,15 +149,20 @@ All five were repaired in this pass.
 - Voice fallback could pass a Kokoro-only voice to native TTS, speed could be applied twice, replay lacked message identity, and stale synthesis could resume after Stop. Repaired.
 - Usage query/provider failures could look like empty data, history was silently capped, secret fallback behavior was too permissive, and OpenRouter generations were not reconciled. Repaired in the Usage slice.
 - Strict TypeScript passes repository-wide and is enforced by the real gate.
-- Clean packaged dictation still lacks bundled `whisper-cli` and FFmpeg. The UI is now honest, but the pristine packaged capability remains conditional on system installs or future bundling.
-- Personal Codex/Claude subscription quota coverage, full Cursor usage, historical dashboard graphs, and Windows/Linux daemon service installation remain incomplete.
+- Packaged dictation now has a pinned whisper.cpp build/download recipe and
+  renderer-side PCM WAV conversion, removing the runtime FFmpeg dependency.
+  Real macOS/Windows artifacts still need pristine-machine tests.
+- Personal Codex/Claude quotas, full Cursor source 1, historical charts, and
+  Windows/Linux daemon lifecycle now have implementations and automated coverage.
+  Credentialed/platform evidence remains conditional.
 
 ### P2 — usability, documentation, and completeness gaps
 
 - Cursor permission degradation is primarily visible after a response; pre-launch presentation still needs human verification and may need more wiring.
-- Cursor local-token-only onboarding fallback remains deferred.
+- Cursor API-key fallback is wired through `CURSOR_API_KEY`; live CLI proof remains.
 - The model selector can repeat Cursor disconnected UI across provider groups, and some cross-provider confirmation copy/model handoff paths need manual inspection.
-- OpenCode model catalog pricing and tool-capability hints are incomplete.
+- OpenCode catalog pricing, supported parameters/tools, modalities, context, and
+  reasoning hints are preserved when providers expose them; live NanoGPT proof remains.
 - OpenCode packaging still needs Finder/PATH, first-download timeout, process-tree teardown, and Windows packaged tests.
 - OpenCode image evidence is sent to the provider but attachment persistence/reload needs manual verification.
 - Opaque/private reasoning persistence is specified but not fully proven through a durable metadata sink for every provider.
@@ -237,54 +245,54 @@ All five were repaired in this pass.
 
 ### Track C — carryover and test-surface completion
 
-| Feature                             | Status      | Remaining evidence or work                                                                                |
-| ----------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
-| F1 strict TypeScript                | READY       | Zero errors; `ts:check` is enforced by `npm run check` and CI                                             |
-| F2 native ABI prerequisite          | CONDITIONAL | Node 22 rebuild/gate passed; current Node 24.14 toolchain failed; Node 26 is intentionally unsupported    |
-| F3 branch creation                  | READY       | Manual success, invalid-name, and forced-failure rows                                                     |
-| F4 terminal actions                 | PARTIAL     | File goto repaired; manually verify all panes, title updates, and secret-shaped title input               |
-| F5 remote stats                     | UNVERIFIED  | Reconcile product decision and UI behavior                                                                |
-| F6 Claude/Codex permissions/MCP cwd | CONDITIONAL | Automated cwd regression/full gate pass; manually verify each mode and a real relative-path plugin launch |
-| F7 worktree UX                      | READY       | Manual valid/invalid/custom/removed-checkout matrix                                                       |
-| F8 search                           | READY       | Deep-count, archived/scope, exact scroll/highlight matrix                                                 |
-| F9 attachments/artifacts            | READY       | More-than-six, promotion, view, missing-content, traversal, overwrite matrix                              |
-| F10 run history                     | READY       | More-than-five and old checkpoint/manifest navigation                                                     |
-| F11 scope movement                  | READY       | Full global/project/task/cross-project matrix                                                             |
-| F12 docs consistency                | READY       | README, OpenSpec follow-ups/tasks, matrices, track notes, and vault handoff now share the review verdict  |
+| Feature                             | Status      | Remaining evidence or work                                                                               |
+| ----------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| F1 strict TypeScript                | READY       | Zero errors; `ts:check` is enforced by `npm run check` and CI                                            |
+| F2 native ABI prerequisite          | CONDITIONAL | Node 22 rebuild/gate passed; current Node 24.14 toolchain failed; Node 26 is intentionally unsupported   |
+| F3 branch creation                  | READY       | Manual success, invalid-name, and forced-failure rows                                                    |
+| F4 terminal actions                 | PARTIAL     | File goto repaired; manually verify all panes, title updates, and secret-shaped title input              |
+| F5 remote stats                     | READY       | Aggregate summary only until remote chat is opened locally; no fake diff/commit actions                  |
+| F6 Claude/Codex permissions/MCP cwd | CONDITIONAL | Pre-run limitation preview and cwd regression pass; manually verify each mode and real plugin launch     |
+| F7 worktree UX                      | READY       | Manual valid/invalid/custom/removed-checkout matrix                                                      |
+| F8 search                           | READY       | Deep-count, archived/scope, exact scroll/highlight matrix                                                |
+| F9 attachments/artifacts            | READY       | More-than-six, promotion, view, missing-content, traversal, overwrite matrix                             |
+| F10 run history                     | READY       | More-than-five and old checkpoint/manifest navigation                                                    |
+| F11 scope movement                  | READY       | Full global/project/task/cross-project matrix                                                            |
+| F12 docs consistency                | READY       | README, OpenSpec follow-ups/tasks, matrices, track notes, and vault handoff now share the review verdict |
 
 ### Track A — voice
 
-| Feature                     | Status      | Remaining evidence or work                                                              |
-| --------------------------- | ----------- | --------------------------------------------------------------------------------------- |
-| V1 adapters/settings        | READY       | Clean settings persistence and adapter listing                                          |
-| V2 local STT                | CONDITIONAL | Dev path testable; packaged app needs system `whisper-cli` + FFmpeg or future bundling  |
-| V3 macOS native TTS         | CONDITIONAL | Audible packaged/dev preview and immediate Stop                                         |
-| V4 Windows native TTS       | CONDITIONAL | SAPI packaged test                                                                      |
-| V5 Kokoro                   | CONDITIONAL | Dependency/model download, offline synthesis, voice, fallback, package test             |
-| V6 Spoken/Displayed         | READY       | OpenCode prompt injection repaired; verify all five harnesses in UI                     |
-| V7 voice UX                 | READY       | Replay/history/preemption/visible Stop manual matrix                                    |
-| V8 settings/model lifecycle | PARTIAL     | Base model lifecycle exists; broader model picker remains outside current complete path |
-| V9 OS failures              | CONDITIONAL | Denied mic, no device, missing binaries/model/FFmpeg, packaged usage strings            |
-| V-exit                      | BLOCKED     | macOS and Windows manual matrix unchecked                                               |
+| Feature                     | Status      | Remaining evidence or work                                                          |
+| --------------------------- | ----------- | ----------------------------------------------------------------------------------- |
+| V1 adapters/settings        | READY       | Clean settings persistence and adapter listing                                      |
+| V2 local STT                | CONDITIONAL | Bundling/WAV path implemented; pristine packaged macOS/Windows proof remains        |
+| V3 macOS native TTS         | CONDITIONAL | Audible packaged/dev preview and immediate Stop                                     |
+| V4 Windows native TTS       | CONDITIONAL | SAPI packaged test                                                                  |
+| V5 Kokoro                   | CONDITIONAL | Dependency/model download, offline synthesis, voice, fallback, package test         |
+| V6 Spoken/Displayed         | READY       | OpenCode prompt injection repaired; verify all five harnesses in UI                 |
+| V7 voice UX                 | READY       | Replay/history/preemption/visible Stop manual matrix                                |
+| V8 settings/model lifecycle | READY       | Tiny/base/small picker plus independent verified lifecycle; manual UI proof remains |
+| V9 OS failures              | CONDITIONAL | Denied mic, no device, missing binaries/model/FFmpeg, packaged usage strings        |
+| V-exit                      | BLOCKED     | macOS and Windows manual matrix unchecked                                           |
 
 The batch-versus-live dictation scope must remain explicit: the implemented Stage 2 path is batch Local Whisper. Do not silently convert tentative/live dictation into an exit requirement without a scope decision.
 
 ### Track B — usage and limits
 
-| Feature              | Status      | Remaining evidence or work                                                                       |
-| -------------------- | ----------- | ------------------------------------------------------------------------------------------------ |
-| U1 schema/store      | READY       | Seeded pre-Stage-2 migration and duplicate-quality manual checks                                 |
-| U2 engine/scheduler  | READY       | Fake-provider timeout and continuation tests                                                     |
-| U3 daemon            | CONDITIONAL | macOS close/reopen/install/stop; Windows/Linux service lifecycle blocked                         |
-| U4 SQLite safety     | CONDITIONAL | Concurrent app/daemon lock and corruption manual tests                                           |
-| U5 reconcile/refresh | READY       | Historical versus current-only gap labeling                                                      |
-| U6 OpenAI/Anthropic  | PARTIAL     | Admin APIs conditional; personal subscription quota/profile coverage blocked                     |
-| U7 Cursor            | PARTIAL     | Internal source conditional; full onWatch plan/credits/Stripe/request/manual-token chain missing |
-| U8 OpenRouter        | PARTIAL     | Key balance/reconcile ready; real generation provenance from OpenCode remains suspect            |
-| U9 NanoGPT           | PARTIAL     | Run-only honesty exists; pricing and account-history coverage incomplete                         |
-| U10 alerts           | PARTIAL     | Retry/re-arm repaired; per-run OpenRouter/NanoGPT alerts not yet daemon-routed                   |
-| U11 dashboard        | PARTIAL     | Current cards/filter/error/paging ready; approved historical graph depth missing                 |
-| U-exit               | BLOCKED     | Live provider, daemon-closed, alert, and UI manual matrix unchecked                              |
+| Feature              | Status      | Remaining evidence or work                                                                    |
+| -------------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| U1 schema/store      | READY       | Seeded pre-Stage-2 migration and duplicate-quality manual checks                              |
+| U2 engine/scheduler  | READY       | Fake-provider timeout and continuation tests                                                  |
+| U3 daemon            | CONDITIONAL | LaunchAgent/Scheduled Task/systemd implemented; each platform needs closed-app proof          |
+| U4 SQLite safety     | CONDITIONAL | Concurrent app/daemon lock and corruption manual tests                                        |
+| U5 reconcile/refresh | READY       | Historical versus current-only gap labeling                                                   |
+| U6 OpenAI/Anthropic  | CONDITIONAL | Admin and personal local-OAuth paths implemented; live credentials required                   |
+| U7 Cursor            | CONDITIONAL | Full source 1 and manual-token fallback implemented; live account required                    |
+| U8 OpenRouter        | CONDITIONAL | Official generation-header capture implemented; live reconciliation required                  |
+| U9 NanoGPT           | PARTIAL     | Run-only honesty exists; pricing and account-history coverage incomplete                      |
+| U10 alerts           | PARTIAL     | Retry/re-arm repaired; per-run OpenRouter/NanoGPT alerts not yet daemon-routed                |
+| U11 dashboard        | READY       | Current cards plus historical quota/cost/token charts; manual light/dark/filter proof remains |
+| U-exit               | BLOCKED     | Live provider, daemon-closed, alert, and UI manual matrix unchecked                           |
 
 ### Track D — Cursor harness
 
@@ -293,7 +301,7 @@ The batch-versus-live dictation scope must remain explicit: the implemented Stag
 | D0 CLI verification       | READY       | Installed CLI version observed as `2026.07.08-0c04a8a`; rerun on exit machine                  |
 | D1 identity/contract      | READY       | Verify teal chip on every producer surface                                                     |
 | D2 process/stream/session | CONDITIONAL | Logged-in live run, Stop, resume, checkpoints, manifest                                        |
-| D3 onboarding             | PARTIAL     | Login/status/models work; local-token-only fallback deferred                                   |
+| D3 onboarding             | CONDITIONAL | Login/status/models plus API-key fallback implemented; live fallback proof remains             |
 | D4 permissions            | PARTIAL     | Mapping exists; prove pre-launch limitations and real edit behavior                            |
 | D5 model/UI               | PARTIAL     | Exact new-chat model works; inspect cross-provider model handoff and duplicate disconnected UI |
 | D-exit                    | BLOCKED     | Dedicated live/manual exit record absent                                                       |
@@ -302,17 +310,17 @@ Cursor images remain explicitly unsupported and must fail before run rather than
 
 ### Track E — OpenRouter/NanoGPT through OpenCode
 
-| Feature                | Status      | Remaining evidence or work                                                                                                           |
-| ---------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| E0/E8 engine decision  | READY       | Sidecar remains Stage 2 path; revisit on permission, latency, capability, or packaging failure                                       |
-| E1 contract            | READY       | Reconcile task status with actual limitations                                                                                        |
-| E2 launcher/client     | CONDITIONAL | Dev lifecycle ready; packaged PATH/download/process-tree/Windows teardown tests                                                      |
-| E3 config/credentials  | READY       | Missing key preflight and password redaction repaired; verify packaged credential path                                               |
-| E4 streaming/reasoning | CONDITIONAL | Protocol repaired; live OpenRouter and NanoGPT UI runs required                                                                      |
-| E5 tools/approvals     | CONDITIONAL | Persisted sanitized audit repaired; real allow/always/deny tool-loop matrix required                                                 |
-| E6 persistence/usage   | PARTIAL     | Status/checkpoints/manifest/audit and cost-quality aggregation ready; generation ID and provider-live multi-step evidence unresolved |
-| E7 onboarding/catalog  | PARTIAL     | New chat/read-aloud fixed; pricing/tool hints and cross-provider exact-model flow need completion                                    |
-| E-exit                 | BLOCKED     | Credentialed app matrix and packaged lifecycle not recorded                                                                          |
+| Feature                | Status      | Remaining evidence or work                                                                      |
+| ---------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| E0/E8 engine decision  | READY       | Sidecar remains Stage 2 path; revisit on permission, latency, capability, or packaging failure  |
+| E1 contract            | READY       | Reconcile task status with actual limitations                                                   |
+| E2 launcher/client     | CONDITIONAL | Dev lifecycle ready; packaged PATH/download/process-tree/Windows teardown tests                 |
+| E3 config/credentials  | READY       | Missing key preflight and password redaction repaired; verify packaged credential path          |
+| E4 streaming/reasoning | CONDITIONAL | Protocol repaired; live OpenRouter and NanoGPT UI runs required                                 |
+| E5 tools/approvals     | CONDITIONAL | Persisted sanitized audit repaired; real allow/always/deny tool-loop matrix required            |
+| E6 persistence/usage   | CONDITIONAL | Multi-generation persistence and official header capture automated; provider-live proof remains |
+| E7 onboarding/catalog  | CONDITIONAL | Pricing/tool/modality/reasoning metadata implemented; provider-live cache proof remains         |
+| E-exit                 | BLOCKED     | Credentialed app matrix and packaged lifecycle not recorded                                     |
 
 The durable approval/tool audit currently lives in assistant message metadata keyed by run ID and in persisted tool parts. If independent run-history queries must expose it without loading messages, add a dedicated `agent_runs` metadata column in a separately reviewed migration.
 
@@ -342,10 +350,10 @@ Only provider-visible reasoning or provider-authored summaries may render. Encry
 | D/E/T current focused suite         | 8 files, 116 passed, 3 live/credential-conditional skipped                                            |
 | D/E/T initial baseline              | 8 files, 107 passed; credential-free lifecycle passed when enabled                                    |
 | Clean install                       | `npm ci --legacy-peer-deps` passed                                                                    |
-| Final integrated check              | Node 22; 32 files, 303 passed, 3 skipped; lint, formatting, strict types, and production build passed |
+| Final integrated check              | Node 22; 37 files, 342 passed, 3 skipped; lint, formatting, strict types, and production build passed |
 | Strict OpenSpec                     | 3 changes validated successfully                                                                      |
 | Usage daemon smoke                  | Passed                                                                                                |
-| OpenCode credential-free live suite | 38 passed; 2 paid-provider tests skipped                                                              |
+| OpenCode credential-free live suite | 52 passed; 2 paid-provider tests skipped                                                              |
 | Dependency audit                    | All: 1 low/5 moderate/9 high; production-only: 1 low/1 moderate/0 high; remediation pending           |
 | Strict TypeScript                   | Passed; promoted into `npm run check` and CI                                                          |
 | Formatting/lint                     | Track-targeted Prettier, ESLint, and `git diff --check` passed during repairs                         |
@@ -358,9 +366,12 @@ slice rows show focused coverage and live-smoke depth.
 
 Highest-value manual sequences after the full automated gate:
 
-1. Voice on prepared macOS: local dictation, WebM/M4A conversion, model download progress/retry, native voice, Kokoro, fallback, replay identity, new-run interruption, and visible Stop.
-2. Voice on packaged Windows: mic denial/no-device, SAPI, Kokoro, missing binary/model/FFmpeg states, and Stop.
-3. Usage daemon on macOS: install, close app, wait one cadence, verify heartbeat/sample/Discord, reopen, retry a failed webhook, disable/uninstall, verify no duplicate process.
+1. Voice on dev macOS: local dictation, PCM WAV conversion, all model download states, native voice, Kokoro, fallback, replay identity, new-run interruption, and visible Stop.
+2. Voice on pristine packaged macOS and Windows: bundled engine, model download,
+   mic denial/no-device, native TTS, Kokoro, and Stop without system FFmpeg.
+3. Usage daemon on macOS, Windows, and Linux: install, close app, wait one cadence,
+   verify native-secret access/heartbeat/sample/Discord, reopen, disable/uninstall,
+   and verify no duplicate process.
 4. Usage providers: low-value admin/provider credentials, exact/estimated/unknown labels, 404 generation gap, filters, paging, refresh failure, and no zero fabrication.
 5. Cursor: plan/read-only/ask/full access, text/reasoning/tool/error, cancel, resume, model persistence, checkpoints, manifest, and unsupported image rejection.
 6. OpenRouter and NanoGPT: missing-key preflight, text stream timing, visible/no-visible reasoning, tool allow/always/deny, cancel during pending approval, reload tool/approval metadata, usage failure finalization, and provider error.
@@ -402,21 +413,21 @@ Use the repository-supported Windows packaging command on Windows for Windows-on
 
 ## 10. Final verification record
 
-| Gate                               | Required result                                         | Result                           | Evidence                                                   |
-| ---------------------------------- | ------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------- |
-| Clean `npm ci --legacy-peer-deps`  | Pass                                                    | **PASS**                         | Clean-install command completed                            |
-| `npm run check`                    | Lint, style, strict types, tests, production build pass | **PASS**                         | Node 22; 303 passed, 3 skipped, 32 files                   |
-| `npm run ts:check`                 | Pass and promoted into gate/CI                          | **PASS**                         | Zero errors                                                |
-| Strict OpenSpec validation         | Pass after final docs/spec edits                        | **PASS**                         | 3 changes valid                                            |
-| Usage daemon smoke                 | Pass on supported macOS                                 | **PASS**                         | Smoke completed                                            |
-| Credential-free OpenCode lifecycle | Pass and teardown within five seconds                   | **PASS**                         | 38 passed, 2 paid-provider skips                           |
-| Dependency audit                   | High findings triaged/remediated or risk-accepted       | **TRIAGED; REMEDIATION PENDING** | Electron patch available; builder upgrades need validation |
-| Packaged macOS matrix              | Required rows pass                                      | **PENDING**                      |                                                            |
-| Packaged Windows matrix            | Required rows pass                                      | **PENDING**                      |                                                            |
-| Credentialed provider matrix       | Cursor/OpenRouter/NanoGPT required rows pass            | **PENDING**                      |                                                            |
-| Reasoning manual matrix            | Required providers pass through saved UI                | **PENDING**                      |                                                            |
-| Track C deep-count matrix          | Required rows pass                                      | **PENDING**                      |                                                            |
-| Final docs/task reconciliation     | Matrix, OpenSpec, README, handoff agree                 | **PASS FOR REVIEW STATE**        | All point to this verdict/matrix                           |
+| Gate                               | Required result                                         | Result                           | Evidence                                                            |
+| ---------------------------------- | ------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- |
+| Clean `npm ci --legacy-peer-deps`  | Pass                                                    | **PASS**                         | Clean-install command completed                                     |
+| `npm run check`                    | Lint, style, strict types, tests, production build pass | **PASS**                         | Node 22; 342 passed, 3 skipped, 37 files                            |
+| `npm run ts:check`                 | Pass and promoted into gate/CI                          | **PASS**                         | Zero errors                                                         |
+| Strict OpenSpec validation         | Pass after final docs/spec edits                        | **PASS**                         | 3 changes valid                                                     |
+| Usage daemon smoke                 | Pass on supported macOS                                 | **PASS**                         | Smoke completed                                                     |
+| Credential-free OpenCode lifecycle | Pass and teardown within five seconds                   | **PASS**                         | 52 passed, 2 paid-provider skips                                    |
+| Dependency audit                   | High findings triaged/remediated or risk-accepted       | **TRIAGED; REMEDIATION PENDING** | Electron current in major; builder upgrade needs package validation |
+| Packaged macOS matrix              | Required rows pass                                      | **PENDING**                      |                                                                     |
+| Packaged Windows matrix            | Required rows pass                                      | **PENDING**                      |                                                                     |
+| Credentialed provider matrix       | Cursor/OpenRouter/NanoGPT required rows pass            | **PENDING**                      |                                                                     |
+| Reasoning manual matrix            | Required providers pass through saved UI                | **PENDING**                      |                                                                     |
+| Track C deep-count matrix          | Required rows pass                                      | **PENDING**                      |                                                                     |
+| Final docs/task reconciliation     | Matrix, OpenSpec, README, handoff agree                 | **PASS FOR REVIEW STATE**        | All point to this verdict/matrix                                    |
 
 Record commit, OS/architecture, Node/Electron version, packaged/dev mode, row IDs, provider/CLI versions, failures, and evidence links for every run.
 

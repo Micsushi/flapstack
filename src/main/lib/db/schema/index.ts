@@ -355,6 +355,8 @@ export const usageSamples = sqliteTable(
     costQuality: text("cost_quality").notNull().default("unknown"),
     // Provider sub-source tag, e.g. Cursor "internal" | "admin" | "cli"
     sourceTag: text("source_tag"),
+    // Stable provider metric/quota key, e.g. "five_hour" | "credits".
+    metricKey: text("metric_key"),
     capturedAt: integer("captured_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     windowStart: integer("window_start", { mode: "timestamp" }),
     windowEnd: integer("window_end", { mode: "timestamp" }),

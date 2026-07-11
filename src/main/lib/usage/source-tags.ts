@@ -58,6 +58,7 @@ export function deriveDedupeKey(sample: UsageSampleInput): string {
     sample.providerId,
     sample.accountTag ?? "default",
     sample.sourceTag ?? "-",
+    sample.metricKey ?? "-",
     sample.generationId ?? "-",
     bucket,
     window,

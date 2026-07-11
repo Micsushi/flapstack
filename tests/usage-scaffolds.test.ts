@@ -13,7 +13,12 @@ import { estimateCostUsd, upsertModelPricing } from "../src/main/lib/usage/prici
 import { evaluateSample, type AlertArmState } from "../src/main/lib/usage/alerts"
 import { sendDiscordAlert } from "../src/main/lib/usage/discord"
 import { normalizeUsageSettings, resolveCadenceSeconds } from "../src/main/lib/usage/settings"
-import { buildLaunchAgentPlist, uninstallLaunchAgent } from "../src/main/lib/usage-daemon/platform"
+import {
+  buildLaunchAgentPlist,
+  buildSystemdUserUnit,
+  buildWindowsDaemonScript,
+  uninstallLaunchAgent,
+} from "../src/main/lib/usage-daemon/platform"
 import {
   parseCursorTimestamp,
   pollInternalSource,
@@ -22,8 +27,13 @@ import { selectNewestCredentials } from "../src/main/lib/usage/providers/cursor/
 import { getProviderJson } from "../src/main/lib/usage/providers/http"
 import { credentialAccountTag } from "../src/main/lib/usage/provider-identity"
 import { elapsedWindowHours } from "../src/main/lib/usage/alert-runner"
+import { pollCodexPersonal } from "../src/main/lib/usage/providers/codex-personal"
+import { pollAnthropicPersonal } from "../src/main/lib/usage/providers/anthropic-personal"
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
 
 describe("usage Track B scaffolds", () => {
   it("registers an adapter for every declared provider id", () => {
@@ -35,6 +45,7 @@ describe("usage Track B scaffolds", () => {
   })
 
   it("reports honest not-configured status without fabricating usage", async () => {
+    vi.stubEnv("CODEX_HOME", "/tmp/flapstack-no-codex-credentials")
     const ctx = {
       now: new Date(),
       source: "app-poll" as const,
@@ -137,6 +148,7 @@ describe("usage Track B scaffolds", () => {
   })
 
   it("uses Anthropic x-api-key auth, pagination, cents, and token usage", async () => {
+    vi.stubEnv("FLAPSTACK_DISABLE_LOCAL_USAGE_CREDENTIALS", "1")
     const fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const parsed = new URL(url)
       const secondPage = parsed.searchParams.get("page") === "next"
@@ -693,6 +705,29 @@ describe("usage Track B scaffolds", () => {
     expect(plist).toContain("<key>KeepAlive</key><false/>")
   })
 
+  it("builds Windows and Linux per-user daemon launch definitions", () => {
+    const params = {
+      nodePath: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
+      daemonEntryPath: "/tmp/out/usage-daemon.js",
+      dbPath: "/tmp/data/agents.db",
+      configDir: "/tmp/data",
+      cadenceSeconds: 300,
+    }
+    const windows = buildWindowsDaemonScript({
+      ...params,
+      nodePath: "C:\\Program Files\\Flapstack\\Flapstack.exe",
+      daemonEntryPath: "C:\\Program Files\\Flapstack\\resources\\usage-daemon.js",
+      dbPath: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack\\agents.db",
+      configDir: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack",
+    })
+    expect(windows).toContain('set "ELECTRON_RUN_AS_NODE=1"')
+    expect(windows).toContain('"C:\\Program Files\\Flapstack\\Flapstack.exe"')
+    const systemd = buildSystemdUserUnit(params)
+    expect(systemd).toContain('Environment="FLAPSTACK_DB_PATH=/tmp/data/agents.db"')
+    expect(systemd).toContain("WantedBy=default.target")
+    expect(systemd).toContain('ExecStart="/Applications/Flapstack.app/Contents/MacOS/Flapstack"')
+  })
+
   it("does not remove a daemon plist while launchctl still reports the job loaded", () => {
     const remove = vi.fn()
     const run = vi.fn((args: string[]) => {
@@ -771,12 +806,127 @@ describe("usage Track B scaffolds", () => {
       {
         providerId: "cursor",
         sourceTag: "internal",
-        quotaUsed: 30,
-        quotaLimit: 100,
+        quotaUsed: 300_000,
+        quotaLimit: 1_000_000,
         percentUsed: 30,
       },
     ])
     expect(fetch.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer local-token")
     expect(JSON.stringify(samples)).not.toContain("local-token")
+  })
+
+  it("collects full Cursor source-1 plan, credits, and request quotas", async () => {
+    const jwt = `x.${Buffer.from(JSON.stringify({ sub: "auth0|user-123" })).toString("base64url")}.sig`
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("GetCurrentPeriodUsage")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                billingCycleStart: "1752000000000",
+                billingCycleEnd: "1754600000000",
+                planUsage: { totalSpend: 2500, limit: 5000, totalPercentUsed: 50 },
+              }),
+            ),
+          )
+        }
+        if (url.includes("GetPlanInfo")) {
+          return Promise.resolve(new Response(JSON.stringify({ planInfo: { planName: "Pro" } })))
+        }
+        if (url.includes("GetCreditGrantsBalance")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ hasCreditGrants: true, totalCents: "3000", usedCents: "1500" }),
+            ),
+          )
+        }
+        if (url.includes("/api/auth/stripe")) {
+          return Promise.resolve(new Response(JSON.stringify({ customerBalance: -2000 })))
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              startOfMonth: "1752000000000",
+              "claude-sonnet": { numRequests: 12, maxRequestUsage: 100 },
+            }),
+          ),
+        )
+      }),
+    )
+    const samples = await pollInternalSource(
+      {
+        now: new Date("2026-07-10T00:00:00Z"),
+        source: "daemon-poll",
+        getSecret: async () => null,
+        log: () => {},
+      },
+      jwt,
+    )
+    expect(samples.map((sample) => sample.metricKey)).toEqual([
+      "total_usage",
+      "credits",
+      "requests:claude-sonnet",
+    ])
+    expect(samples.find((sample) => sample.metricKey === "total_usage")).toMatchObject({
+      quotaUsed: 25_000_000,
+      quotaLimit: 50_000_000,
+      quotaUnit: "usd-micros",
+    })
+    expect(samples.find((sample) => sample.metricKey === "credits")).toMatchObject({
+      quotaUsed: 15_000_000,
+      quotaLimit: 50_000_000,
+    })
+  })
+
+  it("normalizes personal Codex and Claude subscription quota windows", async () => {
+    const fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("chatgpt.com")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              plan_type: "plus",
+              rate_limit: {
+                primary_window: {
+                  used_percent: 42.4,
+                  reset_at: 1_784_000_000,
+                  limit_window_seconds: 18_000,
+                },
+                secondary_window: { used_percent: 12, reset_at: 1_784_500_000 },
+              },
+            }),
+          ),
+        )
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            five_hour: {
+              utilization: 21.2,
+              resets_at: "2026-07-11T00:00:00Z",
+              is_enabled: true,
+            },
+            limits: [],
+          }),
+        ),
+      )
+    })
+    vi.stubGlobal("fetch", fetch)
+    const ctx = {
+      now: new Date("2026-07-10T00:00:00Z"),
+      source: "daemon-poll" as const,
+      getSecret: async () => null,
+      log: () => {},
+    }
+    const codex = await pollCodexPersonal(ctx, {
+      accessToken: "codex-token",
+      accountId: "account-1",
+    })
+    const claude = await pollAnthropicPersonal(ctx, "claude-token")
+    expect(codex.map((sample) => sample.metricKey)).toEqual(["five_hour", "seven_day"])
+    expect(codex[0]).toMatchObject({ billingKind: "subscription-quota", percentUsed: 42 })
+    expect(claude).toMatchObject([
+      { metricKey: "five_hour", billingKind: "subscription-quota", percentUsed: 21 },
+    ])
   })
 })

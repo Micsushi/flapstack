@@ -8,12 +8,14 @@ export function AgentsVoiceTab() {
   const { data: settings } = trpc.speech.getSettings.useQuery()
   const { data: adapters } = trpc.speech.listAdapters.useQuery()
   const { data: voices } = trpc.speech.listVoices.useQuery()
+  const { data: sttModels } = trpc.speech.listSttModels.useQuery()
   const updateSettings = trpc.speech.updateSettings.useMutation({
     onSuccess: async () => {
       await utils.speech.getSettings.invalidate()
       await utils.speech.listAdapters.invalidate()
       await utils.speech.listVoices.invalidate()
       await utils.speech.getReadAloudForChat.invalidate()
+      await utils.speech.getSttModelStatus.invalidate()
     },
   })
   const speak = trpc.speech.speak.useMutation()
@@ -66,6 +68,28 @@ export function AgentsVoiceTab() {
         {settings.sttAdapterId === "local-whisper" && (
           <>
             <label className="space-y-1.5 block">
+              <span className="text-sm text-foreground">Whisper model</span>
+              <select
+                value={settings.whisperModelId}
+                onChange={(event) =>
+                  update({
+                    whisperModelId: event.target.value as typeof settings.whisperModelId,
+                  })
+                }
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+              >
+                {sttModels?.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label} ({Math.round(model.sizeBytes / 1024 / 1024)} MB)
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-muted-foreground">
+                Models download once and stay on this device. Changing models keeps earlier
+                downloads.
+              </span>
+            </label>
+            <label className="space-y-1.5 block">
               <span className="text-sm text-foreground">whisper.cpp binary path</span>
               <input
                 value={settings.whisperCppBinPath || ""}
@@ -74,11 +98,11 @@ export function AgentsVoiceTab() {
                 className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
               />
               <span className="text-xs text-muted-foreground">
-                Flapstack does not bundle whisper.cpp. Install it separately; set this path only
-                when whisper-cli is not detected automatically.
+                Packaged builds use the bundled engine. Set this only to override it in development.
               </span>
             </label>
             <WhisperModelStatus
+              model={sttModels?.find((model) => model.id === settings.whisperModelId)}
               binaryReady={Boolean(
                 selectedSttAvailability && selectedSttAvailability.missingDependency !== "engine",
               )}
@@ -227,7 +251,13 @@ export function AgentsVoiceTab() {
   )
 }
 
-function WhisperModelStatus({ binaryReady }: { binaryReady: boolean }) {
+function WhisperModelStatus({
+  binaryReady,
+  model,
+}: {
+  binaryReady: boolean
+  model?: { label: string; sizeBytes: number }
+}) {
   const utils = trpc.useUtils()
   const { data: status } = trpc.speech.getSttModelStatus.useQuery(undefined, {
     refetchInterval: (query) => (query.state.data?.status === "downloading" ? 500 : false),
@@ -241,15 +271,17 @@ function WhisperModelStatus({ binaryReady }: { binaryReady: boolean }) {
   })
 
   const isDownloading = status?.status === "downloading" || download.isPending
+  const modelLabel = model?.label ?? "Selected multilingual"
+  const modelSize = model ? Math.round(model.sizeBytes / 1024 / 1024) : null
   const label = !binaryReady
     ? "whisper.cpp binary is not ready. Set its path above or install it, then download the model."
     : status?.status === "present"
-      ? `Base model installed (${Math.round(status.sizeBytes / 1024 / 1024)} MB).`
+      ? `${modelLabel} installed (${Math.round(status.sizeBytes / 1024 / 1024)} MB).`
       : status?.status === "downloading"
-        ? `Downloading base model… ${status.percent}%`
+        ? `Downloading ${modelLabel}… ${status.percent}%`
         : status?.status === "error"
           ? `Download failed: ${status.message}`
-          : "Base multilingual model not downloaded yet (~150 MB, downloads once)."
+          : `${modelLabel} not downloaded yet${modelSize ? ` (~${modelSize} MB)` : ""}.`
 
   return (
     <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">

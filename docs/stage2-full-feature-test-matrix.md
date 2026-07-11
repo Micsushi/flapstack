@@ -1,6 +1,6 @@
 # Stage 2 full-feature test matrix
 
-Snapshot: 2026-07-10. This is the user-facing exit matrix for Stage 2. It is
+Snapshot: 2026-07-11. This is the user-facing exit matrix for Stage 2. It is
 intentionally stricter than the automated suite: a fixture or mocked provider
 does not count as a live UI pass.
 
@@ -50,18 +50,19 @@ selected checkout.
 Latest automated evidence, recorded without checking the human boxes below:
 
 - `npm ci --legacy-peer-deps` passed from the clean-install sequence.
-- Final `npm run check` passed on Node 22 with 303 tests passed and 3 skipped
-  across 32 files, plus lint, formatting, strict TypeScript, and the production build.
+- Final `npm run check` passed on Node 22 with 342 tests passed and 3 skipped
+  across 37 files, plus lint, formatting, strict TypeScript, and the production build.
 - Strict OpenSpec validation passed for 3 changes.
 - The macOS usage-daemon smoke passed.
-- The credential-free OpenCode live suite passed 38 tests; 2 paid-provider tests
+- The credential-free OpenCode live suite passed 52 tests; 2 paid-provider tests
   remained skipped.
 - `npm run ts:check` passes and is enforced by `npm run check` and CI.
 - `npm audit` reported 1 low, 5 moderate, 9 high, and 0 critical findings. The
-  production-only tree has no high finding, but Electron 39.4.0 is the packaged
-  runtime and has a non-major 39.8.10 fix available. The electron-builder/tar
-  findings require a larger builder upgrade. Remediate or explicitly risk-accept
-  them before release; counts alone do not prove exploitability.
+  production-only tree has no high finding and contains 1 low plus 1 moderate.
+  Electron 39.4.0 is current within the pinned major; electron-builder 26 is a
+  major-chain upgrade that still requires package validation. Remediate or
+  explicitly risk-accept remaining findings before release; counts alone do not
+  prove exploitability.
 - The final development app launched from the reviewed source. Agent-assisted UI
   smoke observed Voice/Usage settings, OpenRouter new-chat discovery, Move to
   destinations, and successful MCP tool probing. Paid, audible, daemon-install,
@@ -106,6 +107,13 @@ Latest automated evidence, recorded without checking the human boxes below:
       terminal-tab title; secrets/control sequences do not become the title.
 - [ ] **F4-03 READY** Focus terminals in sidebar, bottom panel, and details panel.
       Expected: the active pane/tab state follows focus in every surface.
+
+### Remote changes
+
+- [ ] **F5-01 READY** Open a remote sandbox chat in the desktop app. Expected:
+      Details shows server-reported file/addition/deletion totals as a summary,
+      does not offer file diff or commit actions without local file contents, and
+      **Open locally** restores the normal inspect/commit surface after import.
 
 ### Permissions and worktrees
 
@@ -175,21 +183,21 @@ the setup and cross-harness checks needed for full Stage 2 exit.
 
 ### Dictation
 
-- [ ] **V2-01 BLOCKED (clean install)** With no speech cache and no Homebrew
-      helpers, click the microphone. Required result: the mic remains discoverable,
-      Flapstack explains the missing tools, starts the approved `base` model download
-      once tools exist, and shows progress/retry. Current packaged resources still do
-      not bundle `whisper-cli` or FFmpeg, so pristine packaged dictation remains blocked.
-- [ ] **V2-02 READY (prepared macOS)** With `whisper-cli`, FFmpeg, and the base
-      model available, record WebM/M4A speech. Expected: local transcript is inserted
-      for review, never auto-sent, and identifies Local Whisper.
+- [ ] **V2-01 CONDITIONAL (packaged clean install)** With no speech cache and no
+      Homebrew helpers, click the microphone. Expected: the bundled checksum-pinned
+      `whisper-cli` is used, the selected model downloads with progress/retry, and
+      dictation succeeds without system FFmpeg. Build preparation requires CMake on
+      macOS/Linux; verify both packaged macOS architectures and Windows x64.
+- [ ] **V2-02 READY (dev macOS)** With `whisper-cli` and the selected model
+      available, record speech. Expected: renderer capture reaches Whisper as 16 kHz
+      mono PCM WAV, local transcript is inserted for review, never auto-sent, and
+      identifies Local Whisper.
 - [ ] **V2-03 READY** Select local STT, make the local engine unavailable, and
       dictate. Expected: no cloud upload/fallback; actionable local prerequisite.
 - [ ] **V2-04 CONDITIONAL (macOS/Windows)** Deny microphone permission. Expected:
       explicit OS recovery instructions. Repeat with no microphone device.
-- [ ] **V2-05 BLOCKED (scope decision)** Resolve approved batch whisper.cpp versus
-      the newer cross-platform/live sidecar proposal before treating live/tentative
-      dictation as a Stage 2 requirement.
+- [ ] **V2-05 READY (scope closed)** Stage 2 uses batch whisper.cpp. Live/tentative
+      sidecar STT is explicitly deferred and is not an exit requirement for this change.
 - [ ] **V2-06 READY** Hold the voice hotkey, release it while microphone permission
       or device startup is still pending, then allow startup to finish. Expected:
       Flapstack immediately stops or cancels the late stream; the microphone cannot
@@ -227,11 +235,11 @@ the setup and cross-harness checks needed for full Stage 2 exit.
 - [ ] **V7-03 READY** Toggle global and per-chat read-aloud. Expected: per-chat
       override wins, an inheritance/reset path is understandable, and history does
       not auto-play.
-- [ ] **V8-01 BLOCKED** Select whisper model and fully manage model lifecycle in
-      Settings. Current approved scope says `base`, but the board also requires a
-      model picker and honest download lifecycle surfaces.
+- [ ] **V8-01 READY** Select tiny, base, and small in Settings. Expected: each
+      checksum-pinned model has independent absent/downloading/present/error state,
+      changing selection updates readiness, and existing downloads are retained.
 - [ ] **V9-01 CONDITIONAL (packaged macOS/Windows)** Verify usage strings,
-      permission prompt, denied state, missing engine, missing model, missing FFmpeg,
+      permission prompt, denied state, missing engine, missing model, WAV conversion failure,
       and no-device behavior in packaged apps.
 
 ## 3. Track B — usage and limits
@@ -263,8 +271,10 @@ state without echoing the value.
       that the closed-app daemon cannot read.
 - [ ] **U3-02 READY (macOS)** Disable/uninstall daemon. Expected: process exits,
       status stops advancing, and no duplicate/orphan process remains.
-- [ ] **U3-03 BLOCKED (Windows/Linux)** Native service/scheduled-task lifecycle is
-      not implemented; UI must not offer a working install action there.
+- [ ] **U3-03 CONDITIONAL (Windows/Linux)** Install/disable the Windows per-user
+      Scheduled Task and Linux systemd user service. Expected: closed-app polls use
+      Credential Manager or Secret Service credentials, heartbeat advances, and
+      uninstall leaves no task/unit/wrapper behind.
 - [ ] **U3-04 READY (macOS Electron)** Through a temporary isolated no-TTY
       Electron main-process probe, write a disposable secret using a unique
       Keychain service/account, read it back, and delete only that unique entry. Expected: the
@@ -298,23 +308,25 @@ state without echoing the value.
       cents value is divided by 100 exactly once and matches Claude Console USD.
       Force a two-page response and confirm `next_page` is sent back as the `page`
       cursor without skipping or repeating a bucket.
-- [ ] **U6-03 BLOCKED (personal subscriptions)** Personal Codex quota/profile and
-      Claude Code local OAuth quota paths are not implemented. Flapstack cannot yet
-      replace onWatch for these main subscription accounts.
+- [ ] **U6-03 CONDITIONAL (personal subscriptions)** With local Codex and Claude
+      Code OAuth sessions, poll personal quota windows. Expected: five-hour, weekly,
+      review, and enabled Claude metrics stay distinct from organization API spend,
+      with stable opaque account tags and honest private-source labels.
 - [ ] **U7-01 CONDITIONAL (Cursor logged in)** Auto-detect local Cursor token and
       poll current-period usage with source tag `internal`. Provider state and the
       usage card must remain under the same default-account filter; `internal` is
       provenance, not a fabricated account name.
-- [ ] **U7-02 BLOCKED** Complete onWatch source 1: plan info, credit grants,
-      Stripe balance, request usage, robust account types, and manual-token fallback.
+- [ ] **U7-02 CONDITIONAL (Cursor logged in)** Verify source 1 plan info, credit
+      grants, Stripe balance, request/model usage, robust opaque account tags, token
+      refresh, and the manually configured access-token fallback.
 - [ ] **U8-01 CONDITIONAL (OpenRouter key)** Poll key limits/balance and label the
       provider `run usage plus balance`, never complete account history. Confirm
       `/models` per-token prompt/completion prices become per-million cache values
       and one token-only run receives a nonzero `estimated` cost.
-- [ ] **U8-02 BLOCKED (OpenRouter run)** Persist run tokens and estimated OpenCode
-      message cost without mislabeling the OpenCode assistant-message ID as an
-      upstream generation ID. Exact `/api/v1/generation` reconciliation remains
-      blocked until a verified upstream generation ID is available.
+- [ ] **U8-02 CONDITIONAL (OpenRouter run)** Persist run tokens and estimated
+      message cost. Expected: the localhost pass-through captures OpenRouter's official
+      `X-Generation-Id`, never substitutes an OpenCode message ID, and later exact
+      `/api/v1/generation` reconciliation upgrades that generation only.
 - [ ] **U8-03 READY** A 404/unavailable generation remains an honest gap; no fake
       zero-dollar exact sample is written. It becomes terminal instead of retrying
       every poll; manual retry clears that state.
@@ -335,8 +347,9 @@ state without echoing the value.
       labels, explicit loading/empty/error/limited states, and show-all paging.
 - [ ] **U11-02 READY** Configure cadence, provider toggles, thresholds, keys,
       Discord webhook, daemon state, and Refresh now without editing files.
-- [ ] **U11-03 BLOCKED** Reimplement the approved onWatch historical graphs and
-      top-level dashboard depth. Raw settings tables alone do not satisfy U11 exit.
+- [ ] **U11-03 READY** Historical quota, cost, and token charts render in the
+      top-level Usage surface, follow provider/account filters, and leave missing
+      history absent rather than drawing fabricated zeros.
 - [ ] **U11-04 READY** On a platform without daemon support, the install action is
       hidden/disabled with an honest explanation before click.
 - [ ] **U11-05 READY** Query/provider/refresh failure is visible and cannot look
@@ -366,7 +379,9 @@ state without echoing the value.
       opens local Cursor login and Retry refreshes status/models. `Unauthenticated`
       is disconnected, numeric filenames do not trigger auth, and early login child
       close/error reports `started: false`.
-- [ ] **D3-02 BLOCKED** Local-token-only fallback remains deferred.
+- [ ] **D3-02 CONDITIONAL (Cursor API key)** Configure a Cursor API key without
+      browser login. Expected: `cursor-agent` receives only `CURSOR_API_KEY` through
+      its environment; the value never appears in argv, generated config, or logs.
 - [ ] **D4-01 READY** Before launch, each permission mode shows applied Cursor
       flags and limitations. Failed/empty runs must still preserve the warning.
       Current warning is mainly post-response, so this row remains an exit check.
@@ -412,12 +427,14 @@ Provider-live rows can incur API cost. Use the lowest-cost model/account limits.
       may append or update sub-chat status, and existing messages survive by ID.
 - [ ] **E6-02 READY** Force usage persistence failure after provider completion.
       Expected: telemetry error cannot leave run/sub-chat stuck `running`.
-- [ ] **E6-03 BLOCKED** Verify real provider generation ID and multi-step usage
-      aggregation. OpenCode message IDs/zero derived prices must not be labeled exact.
+- [ ] **E6-03 CONDITIONAL (OpenRouter key)** Run a multi-step tool loop. Expected:
+      every provider step stores its own official generation ID and token/cost row,
+      aggregate alerts evaluate once, and message IDs/zero prices are never exact.
 - [ ] **E7-01 READY** Settings key status, model refresh/cache/seed distinction,
       default selection, provider chips, and new-chat flow agree.
-- [ ] **E7-02 BLOCKED** Catalog pricing/tool-capability metadata required by the
-      approved spec is still incomplete.
+- [ ] **E7-02 CONDITIONAL (provider catalogs)** Refresh OpenRouter and NanoGPT.
+      Expected: pricing, supported parameters/tools, input/output modalities,
+      reasoning hints, and context limits survive cache/reload when exposed.
 - [ ] **E7-03 READY** OpenCode prompts receive the Voice `Spoken:`/`Displayed:`
       read-aloud instruction. Verify both providers live before checking this row.
 

@@ -57,6 +57,11 @@ export type OpencodeModelInfo = {
   label: string
   /** Whether the model is known to expose visible reasoning output. */
   supportsReasoning?: boolean
+  /** Whether provider metadata explicitly reports tool/function calling. */
+  supportsTools?: boolean
+  supportedParameters?: string[]
+  inputModalities?: string[]
+  outputModalities?: string[]
   contextWindow?: number
   /** Normalized USD per million tokens; safe to persist with catalog metadata. */
   pricing?: {

@@ -22,6 +22,12 @@ file-change manifest on the same basis as the Codex and Claude Code harnesses.
 - **THEN** the system reports an actionable not-installed state
 - **AND** does not start a run or fabricate output
 
+#### Scenario: Cursor API key fallback
+
+- **WHEN** browser login is unavailable and the user stores a Cursor API key in Flapstack
+- **THEN** the harness passes it to `cursor-agent` through `CURSOR_API_KEY`
+- **AND** the key is not placed in process arguments, generated config, or logs
+
 ### Requirement: Cursor Harness Identity
 
 The system SHALL identify Cursor with a teal chip and expose Cursor in the harness

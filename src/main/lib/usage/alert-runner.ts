@@ -70,7 +70,7 @@ export async function runAlerts(params: {
       {
         providerId: sample.providerId,
         accountTag: sample.accountTag,
-        billingKind: params.provider.billingKind,
+        billingKind: sample.billingKind ?? params.provider.billingKind,
         costQuality: sample.costQuality,
         percentUsed: sample.percentUsed,
         spendUsd,

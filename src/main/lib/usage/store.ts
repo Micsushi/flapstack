@@ -68,6 +68,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       source: sample.source,
       costQuality: sample.costQuality,
       sourceTag: sample.sourceTag ?? null,
+      metricKey: sample.metricKey ?? null,
       capturedAt: sample.capturedAt ?? new Date(),
       windowStart: sample.windowStart ?? null,
       windowEnd: sample.windowEnd ?? null,
@@ -105,6 +106,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       currency: row.currency,
       dedupeKey: row.dedupeKey,
       ...(row.sourceTag != null ? { sourceTag: row.sourceTag } : {}),
+      ...(row.metricKey != null ? { metricKey: row.metricKey } : {}),
       ...(row.windowStart != null ? { windowStart: row.windowStart } : {}),
       ...(row.windowEnd != null ? { windowEnd: row.windowEnd } : {}),
       ...(row.inputTokens != null ? { inputTokens: row.inputTokens } : {}),
@@ -165,6 +167,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
   const dedupeKey = [
     sample.providerId,
     accountTag || "default",
+    sample.metricKey ?? "-",
     cycleStart?.toISOString() ?? "open",
     cycleEnd?.toISOString() ?? sample.resetAt?.toISOString() ?? "current",
   ].join("|")

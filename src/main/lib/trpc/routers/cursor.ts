@@ -28,6 +28,7 @@ import {
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
 import { getReadAloudEnabled } from "../../speech/settings"
+import { getUsageSecret } from "../../usage/secrets"
 import {
   buildCursorPermissionApplication,
   getGlobalDefault,
@@ -253,12 +254,12 @@ async function completeCursorRun(params: {
 
 export const cursorRouter = router({
   getIntegration: publicProcedure.query(async () => {
-    return await getCursorIntegration()
+    return await getCursorIntegration(getUsageSecret("cursor.api_key"))
   }),
 
   listModels: publicProcedure.query(async () => {
     const catalogFallback = [DEFAULT_CURSOR_MODEL_ID]
-    const live = await listCursorModels()
+    const live = await listCursorModels(getUsageSecret("cursor.api_key"))
     return {
       models: live.length > 0 ? live : catalogFallback,
       source: live.length > 0 ? "cli" : "fallback",
@@ -489,7 +490,9 @@ export const cursorRouter = router({
             child = spawn(binary, args, {
               stdio: ["pipe", "pipe", "pipe"],
               cwd: input.cwd,
-              env: buildCursorEnv(),
+              env: buildCursorEnv({
+                CURSOR_API_KEY: getUsageSecret("cursor.api_key") ?? undefined,
+              }),
               windowsHide: true,
               detached: process.platform !== "win32",
             })

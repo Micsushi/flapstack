@@ -24,6 +24,11 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
   const [apiKey, setApiKey] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const { data: modelCatalog } = trpc.opencode.listModels.useQuery({ provider: providerId })
+  const catalogStats = {
+    priced: modelCatalog?.models.filter((model) => model.pricing).length ?? 0,
+    tools: modelCatalog?.models.filter((model) => model.supportsTools).length ?? 0,
+    reasoning: modelCatalog?.models.filter((model) => model.supportsReasoning).length ?? 0,
+  }
 
   const setKey = trpc.opencode.setKey.useMutation({
     onSuccess: () => {
@@ -135,6 +140,12 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
           {refreshModels.isPending ? "Refreshing…" : "Refresh models"}
         </Button>
       </div>
+      {modelCatalog && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Catalog metadata: {catalogStats.priced} priced · {catalogStats.tools} tool-capable ·{" "}
+          {catalogStats.reasoning} reasoning-capable.
+        </p>
+      )}
       {refreshModels.error && (
         <p className="mt-2 text-xs text-destructive">{refreshModels.error.message}</p>
       )}

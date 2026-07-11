@@ -480,6 +480,7 @@ export function DetailsSidebar({
                     onExpand={canOpenDiff ? onExpandDiff : undefined}
                     onFileSelect={canOpenDiff ? onFileSelect : undefined}
                     diffDisplayMode={diffDisplayMode}
+                    summaryOnly={isRemoteChat && !canOpenDiff}
                   />
                 )
 

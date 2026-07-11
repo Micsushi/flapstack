@@ -11,7 +11,8 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## What Changes
 
-- **Voice I/O (`voice-io`)**: local whisper.cpp STT (`base` multilingual,
+- **Voice I/O (`voice-io`)**: bundled local whisper.cpp batch STT (selectable
+  `tiny`, `base`, or `small` multilingual model; `base` default,
   download-on-first-use; no cloud STT in this stage), offline Kokoro TTS with system
   voice fallback, and harness-authored `Spoken:`/`Displayed:` read-aloud with a
   non-LLM fallback. No per-reply summarization LLM call.

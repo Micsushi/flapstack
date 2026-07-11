@@ -6,6 +6,7 @@ import type {
   UsageProviderContext,
   UsageSampleInput,
 } from "../types"
+import { detectCodexPersonalCredentials, pollCodexPersonal } from "./codex-personal"
 
 const SECRET_KEY = "openai.api_key"
 const COSTS_URL = "https://api.openai.com/v1/organization/costs"
@@ -17,32 +18,65 @@ export function createCodexProvider(): UsageProvider {
     label: "Codex / OpenAI",
     billingKind: "api-spend",
     async isConfigured(ctx) {
-      return (await ctx.getSecret(SECRET_KEY)) != null
+      return (await ctx.getSecret(SECRET_KEY)) != null || detectCodexPersonalCredentials() != null
     },
     async getStatus(ctx): Promise<ProviderStatus> {
       const apiKey = await ctx.getSecret(SECRET_KEY)
-      const configured = apiKey != null
+      const personal = detectCodexPersonalCredentials() != null
+      const configured = apiKey != null || personal
       return {
         providerId: "codex",
         accountTag: apiKey ? credentialAccountTag("openai", apiKey) : undefined,
         status: configured ? "ok" : "not-configured",
-        detail: configured
-          ? "OpenAI organization usage and cost reports are collected with the configured admin key."
-          : "Add an OpenAI Admin API key with usage/cost access.",
+        detail: apiKey
+          ? `OpenAI organization reports${personal ? " and personal Codex quota" : ""} are available.`
+          : personal
+            ? "Personal Codex subscription quota is read from the local Codex OAuth session."
+            : "Log in with Codex locally or add an OpenAI Admin API key with usage/cost access.",
         configured,
         supportsDaemon: true,
-        supportsHistorical: true,
+        supportsHistorical: apiKey != null,
       }
     },
     async pollLatest(ctx) {
-      return collectReports(ctx, startOfUtcDay(ctx.now))
+      return collectConfiguredSources(ctx, startOfUtcDay(ctx.now), false)
     },
     async reconcileSince(ctx, since) {
-      return collectReports(ctx, since ?? new Date(ctx.now.getTime() - 30 * 86_400_000))
+      return collectConfiguredSources(
+        ctx,
+        since ?? new Date(ctx.now.getTime() - 30 * 86_400_000),
+        true,
+      )
     },
     supportsDaemon: () => true,
     supportsHistorical: () => true,
   }
+}
+
+async function collectConfiguredSources(
+  ctx: UsageProviderContext,
+  start: Date,
+  reconcile: boolean,
+): Promise<UsageSampleInput[]> {
+  const hasAdminKey = (await ctx.getSecret(SECRET_KEY)) != null
+  const hasPersonal = detectCodexPersonalCredentials() != null
+  const jobs: Array<Promise<UsageSampleInput[]>> = []
+  if (hasAdminKey) jobs.push(collectReports(ctx, start))
+  if (hasPersonal) jobs.push(pollCodexPersonal(ctx))
+  const results = await Promise.allSettled(jobs)
+  const samples = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  )
+  for (const failure of failures) {
+    ctx.log("warn", "Codex usage source failed; preserving other source data", {
+      message: String((failure.reason as Error)?.message ?? failure.reason),
+      reconcile,
+    })
+  }
+  if (samples.length === 0 && failures.length === jobs.length && failures[0])
+    throw failures[0].reason
+  return samples
 }
 
 async function collectReports(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {

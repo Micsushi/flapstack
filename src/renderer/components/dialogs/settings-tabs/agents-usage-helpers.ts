@@ -4,6 +4,7 @@ export interface UsageSummaryRow {
   capturedAt?: Date | string | number | null
   source?: string | null
   sourceTag?: string | null
+  metricKey?: string | null
   costQuality?: string | null
   costUsd?: number | null
   costUsdEstimated?: number | null
@@ -15,12 +16,21 @@ export interface UsageSummaryRow {
   resetAt?: Date | string | number | null
 }
 
+export type UsageHistoryMetric = "quota" | "cost" | "tokens"
+
+export interface UsageHistorySeries {
+  key: string
+  label: string
+  points: Array<{ at: number; value: number }>
+}
+
 export interface CurrentUsageSummary {
   providerId: string
   accountTag: string
   capturedAt: UsageSummaryRow["capturedAt"]
   source: string | null
   sourceTag: string | null
+  metricKey: string | null
   costQuality: string | null
   costUsd: number | null
   costUsdEstimated: number | null
@@ -54,7 +64,8 @@ export function buildCurrentUsageSummaries(rows: UsageSummaryRow[]): CurrentUsag
 
   for (const row of sorted) {
     const accountTag = row.accountTag ?? ""
-    const key = JSON.stringify([row.providerId, accountTag])
+    const metricKey = row.metricKey ?? ""
+    const key = JSON.stringify([row.providerId, accountTag, metricKey])
     let summary = summaries.get(key)
     if (!summary) {
       summary = {
@@ -63,6 +74,7 @@ export function buildCurrentUsageSummaries(rows: UsageSummaryRow[]): CurrentUsag
         capturedAt: row.capturedAt ?? null,
         source: row.source ?? null,
         sourceTag: row.sourceTag ?? null,
+        metricKey: row.metricKey ?? null,
         costQuality: null,
         costUsd: null,
         costUsdEstimated: null,
@@ -119,4 +131,40 @@ export function formatQuotaUsage(
     return `${formatMicros(usage.quotaUsed)} / ${formatMicros(usage.quotaLimit)}`
   }
   return `${usage.quotaUsed.toLocaleString()} / ${usage.quotaLimit.toLocaleString()}`
+}
+
+export function buildUsageHistorySeries(
+  rows: UsageSummaryRow[],
+  metric: UsageHistoryMetric,
+): UsageHistorySeries[] {
+  const grouped = new Map<string, UsageHistorySeries>()
+  for (const row of rows) {
+    const at = timestamp(row.capturedAt)
+    if (!at) continue
+    const value =
+      metric === "quota"
+        ? row.percentUsed
+        : metric === "cost"
+          ? (row.costUsd ?? row.costUsdEstimated)
+          : row.totalTokens
+    if (value == null || !Number.isFinite(value)) continue
+    const account = row.accountTag ?? ""
+    const metricKey = row.metricKey ?? ""
+    const key = JSON.stringify([row.providerId, account, metricKey])
+    let series = grouped.get(key)
+    if (!series) {
+      series = {
+        key,
+        label: [row.providerId, account || "default", metricKey].filter(Boolean).join(" · "),
+        points: [],
+      }
+      grouped.set(key, series)
+    }
+    series.points.push({ at, value })
+  }
+  return [...grouped.values()]
+    .map((series) => ({ ...series, points: series.points.sort((a, b) => a.at - b.at).slice(-100) }))
+    .filter((series) => series.points.length > 0)
+    .sort((a, b) => b.points[b.points.length - 1]!.at - a.points[a.points.length - 1]!.at)
+    .slice(0, 8)
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronDown, RefreshCw, Square, Volume2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, RefreshCw, Square, Volume2 } from "lucide-react"
 import {
   memo,
   useCallback,
@@ -797,7 +797,6 @@ export const ChatInputArea = memo(function ChatInputArea({
     },
     [parentChatId, setChatPermissionModeMutation],
   )
-
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
     { enabled: !!parentChatId && !sandboxId },
@@ -917,6 +916,16 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Plan mode - per-subChat using atomFamily
   const subChatModeAtom = useMemo(() => subChatModeAtomFamily(subChatId), [subChatId])
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtom)
+  const permissionPreviewHarness = provider === "codex" ? "codex" : "claude"
+  const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery(
+    {
+      harness: permissionPreviewHarness,
+      mode: requestedPermissionMode,
+      chatMode: subChatMode,
+      cwd: selectedWorktreePath ?? null,
+    },
+    { enabled: provider === "codex" || provider === "claude-code" },
+  )
 
   // Helper to update mode (atomFamily + Zustand store sync)
   const updateMode = useCallback(
@@ -2157,6 +2166,34 @@ export const ChatInputArea = memo(function ChatInputArea({
                       )}
                     </DropdownMenuContent>
                   </DropdownMenu>
+
+                  {permissionPreview?.degraded && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="hidden sm:flex items-center gap-1 rounded-md px-1.5 py-1 text-amber-600 hover:bg-amber-500/10"
+                          aria-label="Permission limitations"
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span className="text-[11px]">Limited</span>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" sideOffset={6} className="w-80 text-xs">
+                        <div className="space-y-2">
+                          <div className="font-medium text-foreground">
+                            Applied before this {provider === "codex" ? "Codex" : "Claude"} run
+                          </div>
+                          <p className="text-muted-foreground">{permissionPreview.reason}</p>
+                          {permissionPreview.warnings.map((warning) => (
+                            <div key={warning} className="rounded border bg-muted/20 px-2 py-1.5">
+                              {warning}
+                            </div>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
 
                   {requestedPermissionMode === "custom" && (
                     <Popover>

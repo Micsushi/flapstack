@@ -11,7 +11,8 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 ## 1. Voice (Track A)
 
 - [x] 1.1 V1 Speech adapter interfaces + settings (fill scaffold)
-- [x] 1.2 V2 STT: whisper.cpp `base` local + cloud hardening
+- [x] 1.2 V2 STT: bundled whisper.cpp batch local, selectable pinned models,
+      renderer PCM WAV conversion, and cloud hardening
 - [x] 1.3 V3 TTS: system voice (macOS)
 - [x] 1.4 V4 TTS: system voice (Windows)
 - [x] 1.5 V5 TTS: offline Kokoro engine
@@ -25,17 +26,17 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 
 - [x] 2.1 U1 Shared usage schema + provider adapter interface
 - [x] 2.2 U2 Shared usage engine + scheduler
-- [ ] 2.3 U3 Background usage daemon lifecycle
+- [x] 2.3 U3 Background usage daemon lifecycle
 - [x] 2.4 U4 Shared SQLite store + app/daemon locking
 - [x] 2.5 U5 App startup catch-up + manual refresh
-- [ ] 2.6 U6 Codex + Anthropic/Claude general usage providers
-- [ ] 2.7 U7 Cursor usage provider (source 1 full; sources 2/3 stubbed chain)
-- [ ] 2.8 U8 OpenRouter usage provider (run usage, generation/cost reconcile,
+- [x] 2.6 U6 Codex + Anthropic/Claude general and personal quota providers
+- [x] 2.7 U7 Cursor usage provider (source 1 full; sources 2/3 stubbed chain)
+- [x] 2.8 U8 OpenRouter usage provider (run usage, generation/cost reconcile,
       key credits/limits where available, estimate fallback)
-- [ ] 2.9 U9 NanoGPT usage provider (run usage/cost where available; pricing
+- [x] 2.9 U9 NanoGPT usage provider (run usage/cost where available; pricing
       estimate fallback; account-wide history only if current API exposes it)
-- [ ] 2.10 U10 Threshold alerts + Discord webhook notifications from daemon
-- [ ] 2.11 U11 Usage dashboard + settings + daemon status
+- [x] 2.10 U10 Threshold alerts + Discord webhook notifications from daemon
+- [x] 2.11 U11 Usage dashboard + historical charts + settings + daemon status
 - [ ] 2.12 U-exit usage tests + manual matrix
 
 ## 3. Cursor harness (Track D)
@@ -81,8 +82,8 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 - [x] 6.1 F1 Strict-TS debt cleanup → promote `ts:check` to gate
 - [x] 6.2 F3 Create-branch dialog
 - [x] 6.3 F4 Terminal actions (open file / tab title / focused pane)
-- [ ] 6.4 F5 Sidebar remote-stats decision
-- [ ] 6.5 F6 Codex/Claude permission enforcement hardening
+- [x] 6.4 F5 Sidebar remote-stats decision (summary-only until opened locally)
+- [x] 6.5 F6 Codex/Claude permission enforcement hardening + pre-run limitations
 - [x] 6.6 F7 Worktree UX completion: custom path + unknown state
 - [x] 6.7 F8 Scoped-search result navigation + no hidden first-20 cap
 - [x] 6.8 F9 Attachments/artifacts UX completion + no hidden first-six cap

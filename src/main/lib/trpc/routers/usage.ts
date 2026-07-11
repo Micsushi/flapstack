@@ -18,8 +18,8 @@ import { getUsageSecret, hasUsageSecret, setUsageSecret } from "../../usage/secr
 import { readDaemonStatus } from "../../usage-daemon/lifecycle"
 import {
   describeInstall,
-  installMacLaunchAgent,
-  uninstallMacLaunchAgent,
+  installUsageDaemon,
+  uninstallUsageDaemon,
 } from "../../usage-daemon/platform"
 import { app } from "electron"
 import { join } from "node:path"
@@ -46,6 +46,8 @@ const secretKeySchema = z.enum([
   "anthropic.admin_key",
   "openrouter.api_key",
   "nanogpt.api_key",
+  "cursor.api_key",
+  "cursor.access_token",
   "discord.webhook_url",
 ])
 
@@ -122,6 +124,8 @@ export const usageRouter = router({
     "anthropic.admin_key": hasUsageSecret("anthropic.admin_key"),
     "openrouter.api_key": hasUsageSecret("openrouter.api_key"),
     "nanogpt.api_key": hasUsageSecret("nanogpt.api_key"),
+    "cursor.api_key": hasUsageSecret("cursor.api_key"),
+    "cursor.access_token": hasUsageSecret("cursor.access_token"),
     "discord.webhook_url": hasUsageSecret("discord.webhook_url"),
   })),
 
@@ -238,7 +242,7 @@ export const usageRouter = router({
     const previous = getUsageSettings()
     const settings = setUsageSettings({ daemonEnabled: true, daemonStartAtLogin: true })
     try {
-      installMacLaunchAgent({
+      installUsageDaemon({
         nodePath: process.execPath,
         daemonEntryPath: join(__dirname, "usage-daemon.js"),
         dbPath: getDatabasePath(),
@@ -257,7 +261,7 @@ export const usageRouter = router({
 
   uninstallDaemon: publicProcedure.mutation(async () => {
     setUsageSettings({ daemonEnabled: false, daemonStartAtLogin: false })
-    uninstallMacLaunchAgent()
+    uninstallUsageDaemon(join(app.getPath("userData"), "data"))
     return readDaemonStatus(getDatabase())
   }),
 

@@ -37,7 +37,7 @@ import { buildHarnessStartupContext, prependStartupContext } from "../../harness
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
 import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
 import { getReadAloudEnabled } from "../../speech/settings"
-import { captureOpenCodeRunUsage } from "../../usage/run-usage"
+import { captureOpenCodeRunUsageBatch } from "../../usage/run-usage"
 import { getUsageProvider } from "../../usage/registry"
 import { getUsageSecret } from "../../usage/secrets"
 import { getUsageSettings } from "../../usage/settings"
@@ -549,14 +549,14 @@ export const opencodeRouter = router({
                   ...(usage
                     ? {
                         captureUsage: () =>
-                          captureOpenCodeRunUsage(
+                          captureOpenCodeRunUsageBatch(
                             finalDb,
-                            {
+                            [...usageByObservation.values()].map((observation) => ({
                               providerId: input.provider,
                               runId,
                               model: input.model,
-                              ...usage,
-                            },
+                              ...observation,
+                            })),
                             {
                               alerts: {
                                 settings: getUsageSettings(),

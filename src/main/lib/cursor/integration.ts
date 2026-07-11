@@ -49,7 +49,7 @@ export function normalizeCursorStatus(output: string): {
   return { state: "unknown", email: null }
 }
 
-export async function getCursorIntegration(): Promise<CursorIntegration> {
+export async function getCursorIntegration(apiKey?: string | null): Promise<CursorIntegration> {
   if (!resolveCursorAgentBinary()) {
     return {
       state: "not_installed",
@@ -62,7 +62,10 @@ export async function getCursorIntegration(): Promise<CursorIntegration> {
   }
 
   try {
-    const result = await runCursorCli(["status"], { timeoutMs: 15_000 })
+    const result = await runCursorCli(["status"], {
+      timeoutMs: 15_000,
+      env: apiKey ? { CURSOR_API_KEY: apiKey } : undefined,
+    })
     const combined = [result.stdout, result.stderr]
       .filter((chunk) => chunk.trim().length > 0)
       .join("\n")
@@ -88,9 +91,12 @@ export async function getCursorIntegration(): Promise<CursorIntegration> {
   }
 }
 
-export async function listCursorModels(): Promise<string[]> {
+export async function listCursorModels(apiKey?: string | null): Promise<string[]> {
   try {
-    const result = await runCursorCli(["models"], { timeoutMs: 15_000 })
+    const result = await runCursorCli(["models"], {
+      timeoutMs: 15_000,
+      env: apiKey ? { CURSOR_API_KEY: apiKey } : undefined,
+    })
     return parseCursorModels(result.stdout)
   } catch {
     return []

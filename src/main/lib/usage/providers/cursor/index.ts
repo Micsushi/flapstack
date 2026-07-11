@@ -20,7 +20,7 @@ export type { CursorCredentialsResult, CursorTokenResult } from "./token"
 
 interface CursorSource {
   tag: "internal" | "admin" | "cli"
-  probe: () => CursorSourceResult
+  probe: (manualToken?: string | null) => CursorSourceResult
   poll: (ctx: UsageProviderContext) => Promise<UsageSampleInput[]>
 }
 
@@ -31,9 +31,12 @@ const SOURCES: CursorSource[] = [
 ]
 
 /** First source whose probe reports it can run. */
-function selectActiveSource(): { source: CursorSource; probe: CursorSourceResult } | null {
+async function selectActiveSource(
+  ctx: UsageProviderContext,
+): Promise<{ source: CursorSource; probe: CursorSourceResult } | null> {
+  const manualToken = await ctx.getSecret("cursor.access_token")
   for (const source of SOURCES) {
-    const probe = source.probe()
+    const probe = source.probe(source.tag === "internal" ? manualToken : undefined)
     if (probe.available) return { source, probe }
   }
   return null
@@ -45,13 +48,13 @@ export function createCursorProvider(): UsageProvider {
     label: "Cursor",
     billingKind: "subscription-quota",
 
-    async isConfigured() {
+    async isConfigured(ctx) {
       // Configured = at least one source probes available (local login present).
-      return selectActiveSource() != null
+      return (await selectActiveSource(ctx)) != null
     },
 
-    async getStatus(): Promise<ProviderStatus> {
-      const active = selectActiveSource()
+    async getStatus(ctx): Promise<ProviderStatus> {
+      const active = await selectActiveSource(ctx)
       if (active) {
         return {
           providerId: "cursor",
@@ -65,7 +68,7 @@ export function createCursorProvider(): UsageProvider {
         }
       }
       // Report the most informative probe (internal source drives login state).
-      const internal = probeInternalSource()
+      const internal = probeInternalSource(await ctx.getSecret("cursor.access_token"))
       return {
         providerId: "cursor",
         status:
@@ -82,7 +85,7 @@ export function createCursorProvider(): UsageProvider {
     },
 
     async pollLatest(ctx): Promise<UsageSampleInput[]> {
-      const active = selectActiveSource()
+      const active = await selectActiveSource(ctx)
       if (!active) return []
       const samples = await active.source.poll(ctx)
       return samples.map((s) => ({ ...s, sourceTag: active.source.tag }))

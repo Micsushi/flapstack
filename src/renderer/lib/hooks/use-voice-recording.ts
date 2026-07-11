@@ -232,13 +232,18 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
       // Store mimeType before stopping (some browsers clear it after stop)
       const mimeType = mediaRecorder.mimeType || "audio/webm"
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: mimeType })
 
-        // Clean up
         cleanup()
         setIsRecording(false)
-        resolve(blob)
+        try {
+          resolve(await normalizeRecordingForWhisper(blob))
+        } catch (error) {
+          const normalized = error instanceof Error ? error : new Error(String(error))
+          setError(normalized)
+          reject(normalized)
+        }
       }
 
       mediaRecorder.onerror = () => {
@@ -261,6 +266,58 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     stopRecording,
     cancelRecording,
   }
+}
+
+/**
+ * Decode Chromium's MediaRecorder output in the renderer and hand the main
+ * process a 16 kHz mono PCM WAV. This keeps packaged dictation independent of
+ * an FFmpeg installation.
+ */
+export async function normalizeRecordingForWhisper(blob: Blob): Promise<Blob> {
+  if (blob.type.includes("wav") || blob.size === 0) return blob
+  const context = new AudioContext()
+  try {
+    const decoded = await context.decodeAudioData(await blob.arrayBuffer())
+    const frameCount = Math.max(1, Math.ceil(decoded.duration * 16_000))
+    const offline = new OfflineAudioContext(1, frameCount, 16_000)
+    const source = offline.createBufferSource()
+    source.buffer = decoded
+    source.connect(offline.destination)
+    source.start()
+    const rendered = await offline.startRendering()
+    return new Blob([encodePcmWav(rendered.getChannelData(0), rendered.sampleRate)], {
+      type: "audio/wav",
+    })
+  } finally {
+    await context.close().catch(() => {})
+  }
+}
+
+export function encodePcmWav(samples: Float32Array, sampleRate = 16_000): ArrayBuffer {
+  const buffer = new ArrayBuffer(44 + samples.length * 2)
+  const view = new DataView(buffer)
+  const writeAscii = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index++)
+      view.setUint8(offset + index, value.charCodeAt(index))
+  }
+  writeAscii(0, "RIFF")
+  view.setUint32(4, 36 + samples.length * 2, true)
+  writeAscii(8, "WAVE")
+  writeAscii(12, "fmt ")
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeAscii(36, "data")
+  view.setUint32(40, samples.length * 2, true)
+  for (let index = 0; index < samples.length; index++) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0))
+    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+  }
+  return buffer
 }
 
 export function toMicrophoneError(error: unknown, platform: string): Error {

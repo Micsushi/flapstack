@@ -20,7 +20,7 @@ import {
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
 import { resolveSpeechText } from "../../speech/speech-text"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
-import { ensureModel, getSttModelStatus } from "../../speech/stt-whisper-cpp"
+import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
 import { speakWithTtsFallback } from "../../speech/tts-fallback"
 import { nativeTtsAdapter } from "../../speech/tts-native"
 import {
@@ -61,6 +61,7 @@ export const speechRouter = router({
     .input(
       z.object({
         sttAdapterId: z.string().optional(),
+        whisperModelId: z.enum(["tiny", "base", "small"]).optional(),
         whisperCppBinPath: z.string().nullable().optional(),
         ttsAdapterId: z.string().optional(),
         voiceId: z.string().nullable().optional(),
@@ -126,6 +127,8 @@ export const speechRouter = router({
     const adapter = resolveTtsAdapter(settings)
     return { adapterId: adapter.id, voices: await adapter.listVoices() }
   }),
+
+  listSttModels: publicProcedure.query(() => listWhisperModels()),
 
   speak: publicProcedure
     .input(

@@ -40,6 +40,8 @@ interface ChangesWidgetProps {
   onFileSelect?: (filePath: string) => void
   /** Diff display mode - affects tooltip text */
   diffDisplayMode?: "side-peek" | "center-peek" | "full-page"
+  /** Remote desktop chats only expose aggregate server stats, not file contents. */
+  summaryOnly?: boolean
 }
 
 /**
@@ -82,6 +84,7 @@ export const ChangesWidget = memo(function ChangesWidget({
   onExpand,
   onFileSelect,
   diffDisplayMode = "side-peek",
+  summaryOnly = false,
 }: ChangesWidgetProps) {
   // Data is now cached at the ActiveChat level via workspaceDiffCacheAtomFamily
   // So parsedFileDiffs and diffStats persist across workspace switches
@@ -305,7 +308,16 @@ export const ChangesWidget = memo(function ChangesWidget({
         </div>
 
         {/* Content */}
-        {hasChanges ? (
+        {hasChanges && summaryOnly ? (
+          <div className="space-y-1 px-2 py-2 text-xs text-muted-foreground">
+            <div className="text-foreground">
+              {displayStats.fileCount} changed file{displayStats.fileCount === 1 ? "" : "s"}
+            </div>
+            <div>
+              Remote summary only. Open this chat locally to inspect or commit file changes.
+            </div>
+          </div>
+        ) : hasChanges ? (
           <>
             {/* Select all header - like in changes-view */}
             <div className="flex items-center gap-2 px-2 py-1.5 border-b border-border/50">

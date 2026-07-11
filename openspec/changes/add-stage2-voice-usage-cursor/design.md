@@ -25,8 +25,10 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
 
 ## Decisions
 
-- **STT**: whisper.cpp `base` multilingual, downloaded on first use into app data.
-  Cloud STT is deferred; dictation remains local-only. Small installer, honest download state.
+- **STT**: bundled whisper.cpp batch transcription with renderer-side 16 kHz PCM
+  WAV capture. The user may select pinned `tiny`, `base` (default), or `small`
+  multilingual models, downloaded on first use into app data with checksum
+  validation. Live/tentative sidecar STT is deferred; dictation remains local-only.
 - **TTS**: offline Kokoro default, OS system voice fallback.
 - **Spoken source**: harness-authored `Spoken:`/`Displayed:` via a Flapstack
   read-aloud skill, extracted by the ported filter; non-LLM fallback only when no
@@ -35,9 +37,9 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
 - **Usage engine**: shared TypeScript engine with no renderer dependency. It can
   run inside the Flapstack main process or inside a small background daemon.
 - **Usage daemon**: Stage 2 adds a local background process so provider polling
-  and Discord webhook alerts continue when Flapstack is closed. Mac-first is
-  acceptable for the first implementation; Windows/Linux service hooks are
-  designed but may be completed after the Mac path if needed.
+  and Discord webhook alerts continue when Flapstack is closed. It installs as
+  a macOS LaunchAgent, Windows per-user Scheduled Task, or Linux systemd user
+  service and reads credentials from the platform user secret store.
 - **Usage pollers**: shared interval scheduler, default 5-min, configurable per
   provider. The daemon is the preferred scheduler; the app main process can run
   the same engine for manual refresh, startup reconcile, or fallback.
@@ -58,10 +60,13 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   (NOT ACP); teal chip; permission mapping degrades honestly like Codex.
 - **Codex/OpenAI usage**: track general account usage where current OpenAI usage
   and cost APIs plus credentials allow it, not only Flapstack runs. Preserve
-  onWatch Codex profile/account behavior where still useful.
+  onWatch Codex profile/account behavior where still useful. When a local Codex
+  OAuth session exists, also record personal subscription quota windows and
+  identify each window separately from API-spend metrics.
 - **Claude/Anthropic usage**: track general workspace/account usage through the
   Anthropic Admin Usage and Cost APIs where credentials allow it. If only Claude
-  Code/local credential data is available, label capability limits honestly.
+  Code/local credential data is available, record personal subscription quota
+  windows from that local session and label the private-source limitation honestly.
 - **Harness-engine decision**: OpenCode sidecar first. OpenCode already has an
   agent session runner, model/tool continuation, OpenRouter provider support,
   generic OpenAI-compatible provider support for NanoGPT, permission rules, and

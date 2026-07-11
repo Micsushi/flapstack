@@ -7,7 +7,14 @@
 import { Badge } from "../../ui/badge"
 import { trpc } from "../../../lib/trpc"
 import { useMemo, useState } from "react"
-import { accountLabel, buildCurrentUsageSummaries, formatQuotaUsage } from "./agents-usage-helpers"
+import {
+  accountLabel,
+  buildCurrentUsageSummaries,
+  buildUsageHistorySeries,
+  formatQuotaUsage,
+  type UsageHistoryMetric,
+  type UsageHistorySeries,
+} from "./agents-usage-helpers"
 
 const PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt"] as const
 type ProviderId = (typeof PROVIDER_IDS)[number]
@@ -28,8 +35,22 @@ const MAX_SAMPLE_LIMIT = 1_000
 const MAX_CYCLE_LIMIT = 500
 const MAX_ALERT_LIMIT = 200
 
+const credentialFields = [
+  { key: "openai.api_key", label: "OpenAI Admin API key" },
+  { key: "anthropic.admin_key", label: "Anthropic Admin API key" },
+  { key: "openrouter.api_key", label: "OpenRouter API key" },
+  { key: "nanogpt.api_key", label: "NanoGPT API key" },
+  { key: "cursor.api_key", label: "Cursor CLI API key" },
+  { key: "cursor.access_token", label: "Cursor usage access token" },
+  { key: "discord.webhook_url", label: "Discord webhook URL" },
+] as const
+
 function providerLabel(providerId: string): string {
   return PROVIDER_LABELS[providerId as ProviderId] ?? providerId
+}
+
+function formatMetricLabel(metricKey: string): string {
+  return metricKey.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function accountFilterValue(accountTag: string | undefined): string {
@@ -133,6 +154,97 @@ function DaemonHealthBadge({ health }: { health: string }) {
   )
 }
 
+const CHART_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#dc2626",
+  "#9333ea",
+  "#ea580c",
+  "#0891b2",
+  "#ca8a04",
+  "#db2777",
+]
+
+function UsageHistoryChart({
+  title,
+  metric,
+  rows,
+}: {
+  title: string
+  metric: UsageHistoryMetric
+  rows: Parameters<typeof buildUsageHistorySeries>[0]
+}) {
+  const series = buildUsageHistorySeries(rows, metric)
+  if (series.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-background p-3">
+        <p className="text-xs font-medium text-foreground">{title}</p>
+        <p className="mt-6 text-center text-xs text-muted-foreground">No historical data yet.</p>
+      </div>
+    )
+  }
+  const allPoints = series.flatMap((item) => item.points)
+  const minTime = Math.min(...allPoints.map((point) => point.at))
+  const maxTime = Math.max(...allPoints.map((point) => point.at))
+  const maxValue = metric === "quota" ? 100 : Math.max(1, ...allPoints.map((point) => point.value))
+  const pathFor = (item: UsageHistorySeries) =>
+    item.points
+      .map((point, index) => {
+        const x = maxTime === minTime ? 50 : ((point.at - minTime) / (maxTime - minTime)) * 100
+        const y = 100 - Math.min(100, Math.max(0, (point.value / maxValue) * 100))
+        return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`
+      })
+      .join(" ")
+  return (
+    <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-foreground">{title}</p>
+        <span className="text-[10px] text-muted-foreground">
+          {new Date(minTime).toLocaleDateString()} – {new Date(maxTime).toLocaleDateString()}
+        </span>
+      </div>
+      <svg
+        viewBox="0 0 100 100"
+        role="img"
+        aria-label={`${title} history`}
+        className="h-36 w-full overflow-visible"
+      >
+        <path
+          d="M 0 100 H 100 M 0 50 H 100 M 0 0 H 100"
+          stroke="currentColor"
+          strokeOpacity="0.12"
+          strokeWidth="0.5"
+          fill="none"
+        />
+        {series.map((item, index) => (
+          <path
+            key={item.key}
+            d={pathFor(item)}
+            stroke={CHART_COLORS[index % CHART_COLORS.length]}
+            strokeWidth="1.5"
+            fill="none"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {series.map((item, index) => (
+          <span
+            key={item.key}
+            className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+          >
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+            />
+            {item.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function parseThresholdList(value: string): number[] {
   return value
     .split(",")
@@ -216,14 +328,6 @@ export function AgentsUsageTab() {
     },
   })
 
-  const credentialFields = [
-    { key: "openai.api_key", label: "OpenAI API key" },
-    { key: "anthropic.admin_key", label: "Anthropic Admin API key" },
-    { key: "openrouter.api_key", label: "OpenRouter API key" },
-    { key: "nanogpt.api_key", label: "NanoGPT API key" },
-    { key: "discord.webhook_url", label: "Discord webhook URL" },
-  ] as const
-
   const accountOptions = useMemo(() => {
     const tags = new Set<string>()
     for (const row of [...states, ...currentSamples, ...samples, ...cycles, ...alertEvents]) {
@@ -286,7 +390,8 @@ export function AgentsUsageTab() {
           <p className="text-xs text-muted-foreground">
             Background daemon polls supported provider sources and sends Discord alerts while
             Flapstack is closed. States show the actual available account, key-limit, or run-only
-            data. Personal Codex and Claude subscription quotas are not available yet.
+            data. Local Codex and Claude sessions add personal subscription quota windows when those
+            private sources are available.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -433,7 +538,7 @@ export function AgentsUsageTab() {
               const quota = formatQuotaUsage(summary)
               return (
                 <div
-                  key={`${summary.providerId}|${summary.accountTag}`}
+                  key={`${summary.providerId}|${summary.accountTag}|${summary.metricKey ?? ""}`}
                   className="rounded-lg border border-border bg-background p-3 space-y-2"
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -443,6 +548,7 @@ export function AgentsUsageTab() {
                       </p>
                       <p className="text-[11px] text-muted-foreground">
                         {accountLabel(summary.accountTag)}
+                        {summary.metricKey ? ` · ${formatMetricLabel(summary.metricKey)}` : ""}
                       </p>
                     </div>
                     {summary.costQuality && (
@@ -484,6 +590,21 @@ export function AgentsUsageTab() {
           </div>
         )}
       </div>
+
+      <section className="space-y-2">
+        <div>
+          <h4 className="text-sm font-medium text-foreground">Historical usage</h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Provider/account history from local samples. Estimates remain separate in the raw table
+            below.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <UsageHistoryChart title="Quota used" metric="quota" rows={samples} />
+          <UsageHistoryChart title="Cost (USD)" metric="cost" rows={samples} />
+          <UsageHistoryChart title="Tokens" metric="tokens" rows={samples} />
+        </div>
+      </section>
 
       {/* Global settings */}
       {settingsQuery.isLoading && (

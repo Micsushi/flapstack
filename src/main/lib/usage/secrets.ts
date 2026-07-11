@@ -13,6 +13,7 @@ import { dirname, join } from "node:path"
 const require = createRequire(import.meta.url)
 const secretsFileName = "usage-secrets.json"
 const KEYCHAIN_SERVICE = "dev.flapstack.usage"
+const WINDOWS_CREDENTIAL_PREFIX = "dev.flapstack.usage/"
 
 type SafeStorage = {
   isEncryptionAvailable(): boolean
@@ -59,8 +60,8 @@ function clearRawSecret(key: string): void {
 /** Store (or clear when value is null) an encrypted secret by key. */
 export function setUsageSecret(key: string, value: string | null): void {
   const clearing = value == null || value === ""
-  if (clearing) {
-    const keychainCleared = process.platform !== "darwin" || setKeychainSecret(key, null)
+  if (clearing && process.platform === "darwin") {
+    const keychainCleared = setKeychainSecret(key, null)
     // Always remove the legacy file copy. Otherwise a successful Keychain
     // delete can reveal an older fallback value on the next read.
     clearRawSecret(key)
@@ -81,14 +82,25 @@ export function setUsageSecret(key: string, value: string | null): void {
     throw new Error("Unable to store the usage credential in macOS Keychain")
   }
 
-  const data = readRaw()
-  const safe = getSafeStorage()
-  if (safe?.isEncryptionAvailable()) {
-    data[key] = "enc:" + safe.encryptString(value).toString("base64")
-  } else {
-    throw new Error("Secure credential storage is unavailable; the credential was not stored")
+  if (process.platform === "win32") {
+    if (setWindowsCredential(key, clearing ? null : value!)) {
+      clearRawSecret(key)
+      return
+    }
+    throw new Error("Unable to store the usage credential in Windows Credential Manager")
   }
-  writeRaw(data)
+
+  if (process.platform === "linux") {
+    if (setLinuxSecret(key, clearing ? null : value!)) {
+      clearRawSecret(key)
+      return
+    }
+    throw new Error(
+      "Unable to store the usage credential in Secret Service. Install secret-tool and unlock your login keyring.",
+    )
+  }
+
+  throw new Error("Secure credential storage is unavailable; the credential was not stored")
 }
 
 /** Read a secret by key, decrypting as needed. Returns null when unset. */
@@ -96,6 +108,14 @@ export function getUsageSecret(key: string): string | null {
   if (process.platform === "darwin") {
     const keychainValue = getKeychainSecret(key)
     if (keychainValue != null) return keychainValue
+  }
+  if (process.platform === "win32") {
+    const value = getWindowsCredential(key)
+    if (value != null) return value
+  }
+  if (process.platform === "linux") {
+    const value = getLinuxSecret(key)
+    if (value != null) return value
   }
   const stored = readRaw()[key]
   if (!stored) return null
@@ -114,9 +134,12 @@ export function getUsageSecret(key: string): string | null {
 
 /** True when a secret is present (used by settings UI without exposing value). */
 export function hasUsageSecret(key: string): boolean {
-  return process.platform === "darwin"
-    ? getKeychainSecret(key) != null || Boolean(readRaw()[key])
-    : Boolean(readRaw()[key])
+  if (process.platform === "darwin")
+    return getKeychainSecret(key) != null || Boolean(readRaw()[key])
+  if (process.platform === "win32")
+    return getWindowsCredential(key) != null || Boolean(readRaw()[key])
+  if (process.platform === "linux") return getLinuxSecret(key) != null || Boolean(readRaw()[key])
+  return Boolean(readRaw()[key])
 }
 
 /** macOS Keychain is readable by the app and its user LaunchAgent daemon,
@@ -155,6 +178,105 @@ function setKeychainSecret(key: string, value: string | null): boolean {
     { encoding: "utf8", input: `${value}\n` },
   )
   return result.status === 0
+}
+
+function linuxSecretArgs(key: string): string[] {
+  return ["service", KEYCHAIN_SERVICE, "account", keychainAccount(key)]
+}
+
+function getLinuxSecret(key: string): string | null {
+  const result = spawnSync("secret-tool", ["lookup", ...linuxSecretArgs(key)], {
+    encoding: "utf8",
+  })
+  return result.status === 0 ? result.stdout.replace(/\r?\n$/, "") || null : null
+}
+
+function setLinuxSecret(key: string, value: string | null): boolean {
+  const args = linuxSecretArgs(key)
+  if (value == null || value === "") {
+    const result = spawnSync("secret-tool", ["clear", ...args], { encoding: "utf8" })
+    return result.status === 0 || result.status === 1
+  }
+  const result = spawnSync(
+    "secret-tool",
+    ["store", "--label=Flapstack usage credential", ...args],
+    { encoding: "utf8", input: value },
+  )
+  return result.status === 0
+}
+
+function windowsCredentialTarget(key: string): string {
+  return `${WINDOWS_CREDENTIAL_PREFIX}${keychainAccount(key)}`
+}
+
+function runWindowsCredentialScript(
+  operation: "read" | "write" | "delete",
+  key: string,
+  value = "",
+) {
+  const script = buildWindowsCredentialScript(
+    operation,
+    windowsCredentialTarget(key),
+    Buffer.from(value, "utf8").toString("base64"),
+  )
+  const encoded = Buffer.from(script, "utf16le").toString("base64")
+  return spawnSync(
+    "powershell.exe",
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+    { encoding: "utf8", windowsHide: true },
+  )
+}
+
+function getWindowsCredential(key: string): string | null {
+  const result = runWindowsCredentialScript("read", key)
+  if (result.status !== 0) return null
+  try {
+    return Buffer.from(result.stdout.trim(), "base64").toString("utf8") || null
+  } catch {
+    return null
+  }
+}
+
+function setWindowsCredential(key: string, value: string | null): boolean {
+  const result = runWindowsCredentialScript(value ? "write" : "delete", key, value ?? "")
+  return result.status === 0
+}
+
+export function buildWindowsCredentialScript(
+  operation: "read" | "write" | "delete",
+  target: string,
+  valueBase64: string,
+): string {
+  const operationCode =
+    operation === "read"
+      ? "$pointer = [IntPtr]::Zero; if (-not [CredNative]::CredRead($target, 1, 0, [ref]$pointer)) { exit 1 }; try { $credential = [Runtime.InteropServices.Marshal]::PtrToStructure($pointer, [type][CredNative+CREDENTIAL]); $bytes = New-Object byte[] $credential.CredentialBlobSize; [Runtime.InteropServices.Marshal]::Copy($credential.CredentialBlob, $bytes, 0, $bytes.Length); [Convert]::ToBase64String($bytes) } finally { [CredNative]::CredFree($pointer) }"
+      : operation === "delete"
+        ? "if (-not [CredNative]::CredDelete($target, 1, 0)) { $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error(); if ($errorCode -ne 1168) { exit 1 } }"
+        : "$bytes = [Convert]::FromBase64String($valueBase64); $blob = [Runtime.InteropServices.Marshal]::AllocCoTaskMem($bytes.Length); try { [Runtime.InteropServices.Marshal]::Copy($bytes, 0, $blob, $bytes.Length); $credential = New-Object CredNative+CREDENTIAL; $credential.Type = 1; $credential.TargetName = $target; $credential.CredentialBlobSize = $bytes.Length; $credential.CredentialBlob = $blob; $credential.Persist = 2; $credential.UserName = [Environment]::UserName; if (-not [CredNative]::CredWrite([ref]$credential, 0)) { exit 1 } } finally { [Runtime.InteropServices.Marshal]::FreeCoTaskMem($blob) }"
+  return `$target = '${target.replace(/'/g, "''")}'
+$valueBase64 = '${valueBase64}'
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class CredNative {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct CREDENTIAL {
+    public UInt32 Flags; public UInt32 Type; public string TargetName; public string Comment;
+    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+    public UInt32 CredentialBlobSize; public IntPtr CredentialBlob; public UInt32 Persist;
+    public UInt32 AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName;
+  }
+  [DllImport("advapi32.dll", EntryPoint="CredReadW", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool CredRead(string target, UInt32 type, UInt32 flags, out IntPtr credential);
+  [DllImport("advapi32.dll", EntryPoint="CredWriteW", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool CredWrite(ref CREDENTIAL credential, UInt32 flags);
+  [DllImport("advapi32.dll", EntryPoint="CredDeleteW", CharSet=CharSet.Unicode, SetLastError=true)]
+  public static extern bool CredDelete(string target, UInt32 type, UInt32 flags);
+  [DllImport("advapi32.dll")] public static extern void CredFree(IntPtr buffer);
+}
+'@
+${operationCode}
+`
 }
 
 function getSecretsPath(): string {

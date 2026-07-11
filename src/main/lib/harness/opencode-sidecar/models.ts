@@ -125,16 +125,40 @@ function parseProviderModels(provider: OpencodeProviderId, payload: unknown): Op
         : typeof value.contextWindow === "number"
           ? value.contextWindow
           : undefined
+    const supportedParameters = stringArray(
+      value.supported_parameters ?? value.supportedParameters ?? value.capabilities,
+    )
     const supportsReasoning =
       value.reasoning === true ||
       value.supports_reasoning === true ||
-      value.supportsReasoning === true
+      value.supportsReasoning === true ||
+      supportedParameters.some((parameter) =>
+        ["reasoning", "include_reasoning", "reasoning_effort"].includes(parameter),
+      )
+    const supportsTools =
+      value.supports_tools === true ||
+      value.supportsTools === true ||
+      supportedParameters.some((parameter) => ["tools", "tool_choice"].includes(parameter))
+    const architecture =
+      value.architecture && typeof value.architecture === "object"
+        ? (value.architecture as Record<string, unknown>)
+        : {}
+    const inputModalities = stringArray(
+      architecture.input_modalities ?? value.input_modalities ?? value.inputModalities,
+    )
+    const outputModalities = stringArray(
+      architecture.output_modalities ?? value.output_modalities ?? value.outputModalities,
+    )
     const pricing = normalizePricing(provider, value.pricing)
     models.push({
       id,
       label: name,
       ...(contextWindow ? { contextWindow } : {}),
       ...(supportsReasoning ? { supportsReasoning: true } : {}),
+      ...(supportsTools ? { supportsTools: true } : {}),
+      ...(supportedParameters.length ? { supportedParameters } : {}),
+      ...(inputModalities.length ? { inputModalities } : {}),
+      ...(outputModalities.length ? { outputModalities } : {}),
       ...(pricing ? { pricing } : {}),
     })
   }
@@ -166,6 +190,18 @@ function finiteNonNegative(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return [...new Set(value.filter((item): item is string => typeof item === "string"))]
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, enabled]) =>
+      enabled === true ? [key] : [],
+    )
+  }
+  return []
+}
+
 function hydrateUsagePricing(provider: OpencodeProviderId, models: OpencodeModelInfo[]): void {
   for (const model of models) {
     if (!model.pricing) continue
@@ -184,6 +220,20 @@ function isCachedProviderModels(
   return cached.models.every((model) => {
     if (!model || typeof model !== "object") return false
     if (typeof model.id !== "string" || typeof model.label !== "string") return false
+    if (model.supportsReasoning !== undefined && typeof model.supportsReasoning !== "boolean")
+      return false
+    if (model.supportsTools !== undefined && typeof model.supportsTools !== "boolean") return false
+    for (const value of [
+      model.supportedParameters,
+      model.inputModalities,
+      model.outputModalities,
+    ]) {
+      if (
+        value !== undefined &&
+        (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+      )
+        return false
+    }
     if (model.pricing === undefined) return true
     return (
       model.pricing !== null &&

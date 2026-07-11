@@ -63,6 +63,7 @@ import {
 import { isOpencodeHarness, OPENCODE_HARNESSES } from "../src/shared/harness-types"
 import { estimateCostUsd } from "../src/main/lib/usage/pricing"
 import { mergeSidecarUsage } from "../src/main/lib/harness/opencode-sidecar/usage"
+import { startOpenRouterGenerationProxy } from "../src/main/lib/harness/opencode-sidecar/generation-proxy"
 
 describe("harness identity", () => {
   it("recognizes OpenCode-backed providers", () => {
@@ -92,6 +93,36 @@ describe("catalog", () => {
   it("ships seed models for both providers", () => {
     expect(OPENCODE_SEED_MODELS.openrouter.length).toBeGreaterThan(0)
     expect(OPENCODE_SEED_MODELS.nanogpt.length).toBeGreaterThan(0)
+  })
+})
+
+describe("OpenRouter generation provenance", () => {
+  it("passes through streaming responses and retains the official generation header", async () => {
+    let upstreamUrl = ""
+    const proxy = await startOpenRouterGenerationProxy("https://openrouter.ai/api/v1", (async (
+      url,
+    ) => {
+      upstreamUrl = String(url)
+      return new Response('data: {"choices":[]}\n\n', {
+        headers: {
+          "content-type": "text/event-stream",
+          "x-generation-id": "gen-official-123",
+        },
+      })
+    }) as typeof fetch)
+    try {
+      const response = await fetch(`${proxy.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: "Bearer test", "content-type": "application/json" },
+        body: "{}",
+      })
+      expect(await response.text()).toContain("choices")
+      expect(upstreamUrl).toBe("https://openrouter.ai/api/v1/chat/completions")
+      expect(proxy.takeGenerationId()).toBe("gen-official-123")
+      expect(proxy.takeGenerationId()).toBeUndefined()
+    } finally {
+      proxy.close()
+    }
   })
 })
 
@@ -237,6 +268,43 @@ describe("SSE parsing", () => {
     expect(first.events[0]).toMatchObject({ id: "1", data: '{"a":1}' })
     const second = parseSseChunk(first.buffer, ":2}\n\n")
     expect(second.events[0].data).toBe('{"b":2}')
+  })
+
+  it("attaches proxy generation ids to matching OpenCode usage observations", async () => {
+    const response = new Response(
+      [
+        `data: ${JSON.stringify({
+          type: "message.updated",
+          properties: {
+            info: { sessionID: "session-1", id: "message-1", tokens: { input: 2, output: 3 } },
+          },
+        })}\n\n`,
+        `data: ${JSON.stringify({ type: "session.idle", properties: { sessionID: "session-1" } })}\n\n`,
+      ].join(""),
+    )
+    const events = []
+    for await (const event of streamEvents({
+      client: {} as any,
+      handle: { takeGenerationId: () => "gen-official-456" } as any,
+      sessionId: "session-1",
+      input: {
+        provider: "openrouter",
+        model: "openrouter/test",
+        prompt: "test",
+        cwd: "/tmp",
+        permissionMode: "read-only",
+      },
+      eventResponse: response,
+    })) {
+      events.push(event)
+    }
+    expect(events).toContainEqual({
+      kind: "usage",
+      usage: expect.objectContaining({
+        observationId: "message-1",
+        generationId: "gen-official-456",
+      }),
+    })
   })
 
   it("ignores comment lines", () => {
@@ -865,7 +933,8 @@ describe("credentials + config", () => {
               id: "beta",
               name: "Beta",
               context_length: 200_000,
-              reasoning: true,
+              architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] },
+              supported_parameters: ["tools", "tool_choice", "reasoning"],
               pricing: { prompt: "0.000001", completion: "0.000002" },
             },
             { id: "alpha" },
@@ -881,6 +950,10 @@ describe("credentials + config", () => {
         label: "Beta",
         contextWindow: 200_000,
         supportsReasoning: true,
+        supportsTools: true,
+        supportedParameters: ["tools", "tool_choice", "reasoning"],
+        inputModalities: ["text", "image"],
+        outputModalities: ["text"],
         pricing: { inputPerMTok: 1, outputPerMTok: 2 },
       },
     ])

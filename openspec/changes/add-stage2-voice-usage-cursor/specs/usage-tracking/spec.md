@@ -12,6 +12,12 @@ the Flapstack main process and a background usage daemon, with a default
 - **THEN** configured usage providers are polled on the configured cadence
 - **AND** samples are persisted to the shared SQLite usage store
 
+#### Scenario: Daemon lifecycle on desktop platforms
+
+- **WHEN** the user enables background usage on macOS, Windows, or Linux
+- **THEN** Flapstack installs the native per-user service for that platform
+- **AND** the closed-app daemon reads credentials from the same OS user secret store as the app
+
 #### Scenario: Engine runs in app mode
 
 - **WHEN** the Flapstack app requests manual refresh or startup reconciliation
@@ -65,6 +71,12 @@ APIs and credentials allow it, not only usage from Flapstack-launched runs.
 - **THEN** usage and cost data are stored with provider/account tags
 - **AND** raw payloads are preserved for drift debugging
 
+#### Scenario: Personal Codex quota is recorded
+
+- **WHEN** a local Codex OAuth session exposes subscription rate-limit windows
+- **THEN** each quota window is stored as a distinct subscription metric
+- **AND** organization API-spend samples remain distinct when both sources exist
+
 #### Scenario: Claude/Anthropic usage is recorded
 
 - **WHEN** Anthropic credentials allow Admin Usage and Cost API access
@@ -72,12 +84,20 @@ APIs and credentials allow it, not only usage from Flapstack-launched runs.
 - **AND** limited local-credential paths are labeled honestly when admin API
   access is unavailable
 
+#### Scenario: Personal Claude quota is recorded
+
+- **WHEN** a local Claude Code OAuth session exposes subscription quota windows
+- **THEN** enabled windows are stored as distinct subscription metrics
+- **AND** the private local-session source is labeled honestly
+
 #### Scenario: Cursor usage via local token
 
 - **WHEN** Cursor is installed and logged in locally
 - **THEN** the Cursor provider reads the local access token and fetches usage from
   the internal endpoint (source 1)
 - **AND** the sample is stored tagged with source `internal` plus its raw payload
+- **AND** plan, credit-grant, Stripe-balance, request, and model details are
+  preserved when those source-1 responses expose them
 
 #### Scenario: Lower Cursor sources are stubbed
 
@@ -91,6 +111,8 @@ APIs and credentials allow it, not only usage from Flapstack-launched runs.
   generation metadata
 - **THEN** the sample is stored tagged with provider `openrouter`
 - **AND** generation IDs are preserved for later generation-stat reconciliation
+- **AND** the official upstream generation ID is captured from the OpenRouter
+  response before the OpenCode sidecar can discard provider headers
 - **AND** if exact cost is absent, the sample is marked as an estimate derived
   from normalized token counts and model pricing metadata
 
@@ -145,6 +167,7 @@ light and dark themes.
 - **WHEN** daemon-written samples exist
 - **THEN** the dashboard shows current usage and historical cycles per provider
 - **AND** daemon heartbeat, last poll, last alert, and error state are visible
+- **AND** historical quota, cost, and token series are graphed without fabricating gaps
 
 #### Scenario: Settings configure daemon and alerts
 

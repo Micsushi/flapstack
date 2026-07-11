@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   accountLabel,
   buildCurrentUsageSummaries,
+  buildUsageHistorySeries,
   formatQuotaUsage,
 } from "../src/renderer/components/dialogs/settings-tabs/agents-usage-helpers"
 
@@ -42,6 +43,7 @@ describe("usage dashboard helpers", () => {
         capturedAt: "2026-07-10T12:00:00Z",
         source: "startup-reconcile",
         sourceTag: "organization-usage",
+        metricKey: null,
         costQuality: "provider-reported",
         costUsd: 1.25,
         costUsdEstimated: null,
@@ -58,6 +60,7 @@ describe("usage dashboard helpers", () => {
         capturedAt: "2026-07-10T11:58:00Z",
         source: "app-poll",
         sourceTag: null,
+        metricKey: null,
         costQuality: null,
         costUsd: null,
         costUsdEstimated: null,
@@ -68,6 +71,56 @@ describe("usage dashboard helpers", () => {
         quotaUnit: null,
         resetAt: "2026-07-11T00:00:00Z",
       },
+    ])
+  })
+
+  it("keeps multiple quota windows for one provider account distinct", () => {
+    const summaries = buildCurrentUsageSummaries([
+      { providerId: "codex", accountTag: "me", metricKey: "five_hour", percentUsed: 30 },
+      { providerId: "codex", accountTag: "me", metricKey: "seven_day", percentUsed: 70 },
+    ])
+    expect(summaries.map((summary) => [summary.metricKey, summary.percentUsed])).toEqual([
+      ["five_hour", 30],
+      ["seven_day", 70],
+    ])
+  })
+
+  it("builds bounded historical series per provider account and metric", () => {
+    const series = buildUsageHistorySeries(
+      [
+        {
+          providerId: "codex",
+          accountTag: "me",
+          metricKey: "five_hour",
+          capturedAt: 2,
+          percentUsed: 20,
+        },
+        {
+          providerId: "codex",
+          accountTag: "me",
+          metricKey: "five_hour",
+          capturedAt: 1,
+          percentUsed: 10,
+        },
+        {
+          providerId: "codex",
+          accountTag: "me",
+          metricKey: "seven_day",
+          capturedAt: 2,
+          percentUsed: 40,
+        },
+      ],
+      "quota",
+    )
+    expect(series).toMatchObject([
+      {
+        label: "codex · me · five_hour",
+        points: [
+          { at: 1, value: 10 },
+          { at: 2, value: 20 },
+        ],
+      },
+      { label: "codex · me · seven_day", points: [{ at: 2, value: 40 }] },
     ])
   })
 

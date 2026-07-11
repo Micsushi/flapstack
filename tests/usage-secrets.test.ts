@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }))
 
-import { getUsageSecret, setUsageSecret } from "../src/main/lib/usage/secrets"
+import {
+  buildWindowsCredentialScript,
+  getUsageSecret,
+  setUsageSecret,
+} from "../src/main/lib/usage/secrets"
 
 describe("usage credential hardening", () => {
   let temp: string
@@ -54,5 +58,16 @@ describe("usage credential hardening", () => {
     const [, args, options] = vi.mocked(spawnSync).mock.calls.at(-1)!
     expect(args).not.toContain("super-secret-value")
     expect(options).toMatchObject({ input: "super-secret-value\n" })
+  })
+
+  it("builds a Credential Manager script without embedding the plaintext value", () => {
+    const plaintext = "do-not-embed-this"
+    const script = buildWindowsCredentialScript(
+      "write",
+      "dev.flapstack.usage/account",
+      Buffer.from(plaintext).toString("base64"),
+    )
+    expect(script).toContain("CredWrite")
+    expect(script).not.toContain(plaintext)
   })
 })

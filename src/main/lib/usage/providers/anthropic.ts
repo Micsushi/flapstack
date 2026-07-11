@@ -6,6 +6,7 @@ import type {
   UsageProviderContext,
   UsageSampleInput,
 } from "../types"
+import { detectAnthropicPersonalToken, pollAnthropicPersonal } from "./anthropic-personal"
 
 const ADMIN_KEY = "anthropic.admin_key"
 const COSTS_URL = "https://api.anthropic.com/v1/organizations/cost_report"
@@ -18,32 +19,65 @@ export function createAnthropicProvider(): UsageProvider {
     label: "Claude / Anthropic",
     billingKind: "api-spend",
     async isConfigured(ctx) {
-      return (await ctx.getSecret(ADMIN_KEY)) != null
+      return (await ctx.getSecret(ADMIN_KEY)) != null || detectAnthropicPersonalToken() != null
     },
     async getStatus(ctx): Promise<ProviderStatus> {
       const apiKey = await ctx.getSecret(ADMIN_KEY)
-      const configured = apiKey != null
+      const personal = detectAnthropicPersonalToken() != null
+      const configured = apiKey != null || personal
       return {
         providerId: "anthropic",
         accountTag: apiKey ? credentialAccountTag("anthropic", apiKey) : undefined,
         status: configured ? "ok" : "not-configured",
-        detail: configured
-          ? "Anthropic organization usage and cost reports are collected with the configured Admin API key."
-          : "Add an Anthropic Admin API key for workspace usage and cost.",
+        detail: apiKey
+          ? `Anthropic organization reports${personal ? " and personal Claude quota" : ""} are available.`
+          : personal
+            ? "Personal Claude subscription quota is read from the local Claude Code OAuth session."
+            : "Log in with Claude Code locally or add an Anthropic Admin API key.",
         configured,
         supportsDaemon: true,
-        supportsHistorical: true,
+        supportsHistorical: apiKey != null,
       }
     },
     async pollLatest(ctx) {
-      return collectReports(ctx, startOfUtcDay(ctx.now))
+      return collectConfiguredSources(ctx, startOfUtcDay(ctx.now), false)
     },
     async reconcileSince(ctx, since) {
-      return collectReports(ctx, since ?? new Date(ctx.now.getTime() - 30 * 86_400_000))
+      return collectConfiguredSources(
+        ctx,
+        since ?? new Date(ctx.now.getTime() - 30 * 86_400_000),
+        true,
+      )
     },
     supportsDaemon: () => true,
     supportsHistorical: () => true,
   }
+}
+
+async function collectConfiguredSources(
+  ctx: UsageProviderContext,
+  start: Date,
+  reconcile: boolean,
+): Promise<UsageSampleInput[]> {
+  const hasAdminKey = (await ctx.getSecret(ADMIN_KEY)) != null
+  const hasPersonal = detectAnthropicPersonalToken() != null
+  const jobs: Array<Promise<UsageSampleInput[]>> = []
+  if (hasAdminKey) jobs.push(collectReports(ctx, start))
+  if (hasPersonal) jobs.push(pollAnthropicPersonal(ctx))
+  const results = await Promise.allSettled(jobs)
+  const samples = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  )
+  for (const failure of failures) {
+    ctx.log("warn", "Anthropic usage source failed; preserving other source data", {
+      message: String((failure.reason as Error)?.message ?? failure.reason),
+      reconcile,
+    })
+  }
+  if (samples.length === 0 && failures.length === jobs.length && failures[0])
+    throw failures[0].reason
+  return samples
 }
 
 async function collectReports(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {

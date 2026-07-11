@@ -31,7 +31,9 @@ function getShellEnvironment(): Record<string, string | undefined> {
 
 const BINARY_NAME = process.platform === "win32" ? "cursor-agent.exe" : "cursor-agent"
 
-export function buildCursorEnv(): Record<string, string> {
+export function buildCursorEnv(
+  overrides: Record<string, string | undefined> = {},
+): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value
@@ -39,6 +41,10 @@ export function buildCursorEnv(): Record<string, string> {
   const shellEnv = getShellEnvironment()
   for (const [key, value] of Object.entries(shellEnv)) {
     if (typeof value === "string") env[key] = value
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (typeof value === "string" && value.length > 0) env[key] = value
+    else delete env[key]
   }
   return env
 }
@@ -108,7 +114,7 @@ export type CursorCliResult = {
 /** Run a short-lived cursor-agent command (status/login/models). */
 export async function runCursorCli(
   args: string[],
-  options?: { cwd?: string; timeoutMs?: number },
+  options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string | undefined> },
 ): Promise<CursorCliResult> {
   const binary = resolveCursorAgentBinary()
   if (!binary) throw new CursorAgentNotFoundError()
@@ -118,7 +124,7 @@ export async function runCursorCli(
     const child = spawn(binary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: cwd && cwd.length > 0 ? cwd : undefined,
-      env: buildCursorEnv(),
+      env: buildCursorEnv(options?.env),
       windowsHide: true,
     })
 

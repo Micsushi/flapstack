@@ -1,0 +1,1 @@
+ALTER TABLE `usage_samples` ADD `metric_key` text;

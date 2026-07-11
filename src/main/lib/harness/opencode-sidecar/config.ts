@@ -59,13 +59,15 @@ export default async function flapstackToolEnvironmentGuard() {
 export function buildOpencodeConfig(
   provider: OpencodeProviderId,
   selectedModelId?: string,
+  baseUrlOverride?: string,
 ): GeneratedOpencodeConfig {
   const def = getProviderDefinition(provider)
   const key = getProviderKey(provider)
   if (!key) {
     throw new Error(`No API key configured for ${def.label}`)
   }
-  const baseUrl = (def.allowsCustomBaseUrl && getProviderBaseUrl(provider)) || def.baseUrl
+  const baseUrl =
+    baseUrlOverride || (def.allowsCustomBaseUrl && getProviderBaseUrl(provider)) || def.baseUrl
   const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
 
   const config: Record<string, unknown> = {
@@ -106,11 +108,12 @@ export function buildOpencodeConfig(
 export function writeIsolatedConfig(
   provider: OpencodeProviderId,
   selectedModelId?: string,
+  baseUrlOverride?: string,
 ): {
   configDir: string
   env: Record<string, string>
 } {
-  const { config, env } = buildOpencodeConfig(provider, selectedModelId)
+  const { config, env } = buildOpencodeConfig(provider, selectedModelId, baseUrlOverride)
   const configDir = mkdtempSync(join(tmpdir(), "flapstack-opencode-"))
   const toolGuardPath = join(configDir, TOOL_ENV_GUARD_FILE)
   const secretNames = [

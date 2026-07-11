@@ -30,32 +30,32 @@ implemented manual rows, but it is not ready to archive or call shipped.
   directory semantics so plugin-relative launch paths do not resolve from the
   Flapstack checkout.
 
-## Remaining product blockers
+## Implementation update — 2026-07-11
+
+The full matrix now has zero `BLOCKED` rows. The items below are validation and
+release gates; no manual row is marked passed by this implementation update.
 
 ### Voice and packaging
 
-- Bundle or deliberately provision `whisper-cli` and FFmpeg for a pristine
-  packaged app; current development readiness depends on system tools.
+- Build and test the pinned bundled `whisper-cli` recipe in pristine macOS and
+  Windows artifacts. Renderer PCM WAV capture removes the runtime FFmpeg dependency.
 - Execute audible native/Kokoro, denied-microphone, no-device, packaged macOS,
   and Windows SAPI/microphone rows.
-- Decide whether live/tentative dictation and a broader model picker are Stage 2
-  requirements; the approved implementation is batch Local Whisper with `base`.
+- Verify tiny/base/small model selection and independent download state. Batch
+  Local Whisper is the Stage 2 decision; live/tentative sidecar STT is deferred.
 
 ### Usage
 
-- Implement personal Codex/Claude subscription quota paths if Stage 2 must fully
-  replace onWatch for the user's primary accounts.
-- Complete Cursor source 1: plan, grants, Stripe balance, request usage, account
-  shapes, and robust token fallback.
-- Add approved historical graph/dashboard depth.
-- Route OpenRouter/NanoGPT per-run spend alerts through the daemon alert runner.
-- Add Windows/Linux service lifecycle or explicitly rescope daemon exit to macOS.
+- Verify personal Codex/Claude quota windows with local OAuth sessions.
+- Verify full Cursor source 1 and manual-token fallback with a real account.
+- Verify historical quota/cost/token charts against seeded and provider data.
+- Verify Windows Scheduled Task and Linux systemd user lifecycle plus native-secret access.
 
 ### Harnesses and reasoning
 
-- Verify provider-live OpenCode multi-step aggregation and generation-ID
-  provenance; automated cost-quality aggregation is repaired.
-- Complete OpenCode model pricing/tool-capability metadata.
+- Verify provider-live multi-step aggregation and official OpenRouter
+  `X-Generation-Id` reconciliation; proxy and persistence coverage are automated.
+- Verify provider-live pricing/tool/modality/reasoning catalog metadata.
 - Execute credentialed Cursor, OpenRouter, and NanoGPT runs through the app,
   including approvals, Stop/resume, persistence, search, and error cases.
 - Execute packaged OpenCode PATH/download/process-tree teardown on macOS and
@@ -64,9 +64,8 @@ implemented manual rows, but it is not ready to archive or call shipped.
 
 ### Repository gate and administration
 
-- Resolve the sidebar remote-stats product decision.
 - Reconcile OpenSpec/task-board checkboxes only against executed evidence.
 - Address dependency audit debt: current clean install reports no critical
   vulnerabilities. The production-only tree has no high findings, but the packaged
-  Electron runtime has a non-major security patch available and electron-builder's
-  high build-chain findings require a validated major upgrade or risk acceptance.
+  Electron 39.4.0 is current within its pinned major. electron-builder's high
+  build-chain findings require a validated major upgrade or risk acceptance.

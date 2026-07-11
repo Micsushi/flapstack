@@ -116,8 +116,8 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Keep the resolved strict-TypeScript baseline enforced by `npm run check` and CI.
 - Harden native-module setup (better-sqlite3 / node-pty) so Node and Electron
   ABI targets no longer need a manual rebuild toggle.
-- Harden Codex/Claude permission enforcement and surface any harness limitation
-  before launch and on each run.
+- Keep Codex/Claude permission previews and persisted run limitations aligned
+  with the controls each harness actually enforces.
 - Finish worktree UX gaps: custom path entry and honest unknown/needs-refresh
   status when the app cannot infer state.
 - Finish scoped search navigation so a result opens the chat at the matched

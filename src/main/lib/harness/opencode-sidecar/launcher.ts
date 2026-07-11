@@ -16,6 +16,7 @@ import { generateServerPassword } from "./client"
 import { writeIsolatedConfig } from "./config"
 import { limitation, type SidecarLimitation } from "./contract"
 import type { OpencodeProviderId } from "./contract"
+import { startOpenRouterGenerationProxy, type GenerationProxyHandle } from "./generation-proxy"
 
 const MAX_LOG_LINES = 200
 const BASE_URL_REGEX = /https?:\/\/127\.0\.0\.1:\d+/
@@ -28,6 +29,7 @@ export type SidecarHandle = {
   process: ChildProcess
   /** Bounded, key-redacted recent output for debugging. */
   readLog(): string
+  takeGenerationId(): string | undefined
   stop(): void
 }
 
@@ -81,11 +83,14 @@ export async function startSidecar(params: {
 
   let configDir: string
   let configEnv: Record<string, string>
+  let generationProxy: GenerationProxyHandle | null = null
   try {
-    const generated = writeIsolatedConfig(params.provider, params.modelId)
+    if (params.provider === "openrouter") generationProxy = await startOpenRouterGenerationProxy()
+    const generated = writeIsolatedConfig(params.provider, params.modelId, generationProxy?.baseUrl)
     configDir = generated.configDir
     configEnv = generated.env
   } catch (error) {
+    generationProxy?.close()
     return {
       ok: false,
       limitation: limitation(
@@ -134,7 +139,11 @@ export async function startSidecar(params: {
     configDir,
     process: child,
     readLog: () => logLines.join("\n"),
-    stop: () => stopSidecar(child, configDir),
+    takeGenerationId: () => generationProxy?.takeGenerationId(),
+    stop: () => {
+      generationProxy?.close()
+      stopSidecar(child, configDir)
+    },
   }
 
   const startupTimeoutMs = params.startupTimeoutMs ?? 20_000
@@ -146,6 +155,7 @@ export async function startSidecar(params: {
       settled = true
       clearTimeout(timer)
       if (!result.ok) {
+        generationProxy?.close()
         stopSidecar(child, configDir)
       }
       resolve(result)

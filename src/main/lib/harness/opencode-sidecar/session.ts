@@ -146,6 +146,7 @@ export async function* streamEvents(ctx: {
   const normalizer = new OpencodeEventNormalizer()
   let buffer = ""
   let sawTerminalEvent = false
+  const generationByObservation = new Map<string, string>()
 
   try {
     while (true) {
@@ -168,7 +169,11 @@ export async function* streamEvents(ctx: {
         const sid = eventSessionId(data)
         if (sid && sid !== sessionId) continue
 
-        for (const normalized of normalizer.normalize(data)) {
+        for (const rawNormalized of normalizer.normalize(data)) {
+          const normalized =
+            rawNormalized.kind === "usage" && input.provider === "openrouter"
+              ? attachGenerationId(rawNormalized, ctx.handle, generationByObservation)
+              : rawNormalized
           if (normalized.kind === "permission-asked") {
             if (seenPermissions.has(normalized.requestId)) continue
             seenPermissions.add(normalized.requestId)
@@ -207,6 +212,19 @@ export async function* streamEvents(ctx: {
   } finally {
     reader.releaseLock()
   }
+}
+
+function attachGenerationId(
+  event: Extract<NormalizedSidecarEvent, { kind: "usage" }>,
+  handle: SidecarHandle,
+  byObservation: Map<string, string>,
+): Extract<NormalizedSidecarEvent, { kind: "usage" }> {
+  const observation = event.usage.observationId ?? "latest"
+  const generationId =
+    event.usage.generationId ?? byObservation.get(observation) ?? handle.takeGenerationId()
+  if (!generationId) return event
+  byObservation.set(observation, generationId)
+  return { ...event, usage: { ...event.usage, generationId } }
 }
 
 export async function handlePermissionRequest(

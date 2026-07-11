@@ -74,6 +74,7 @@ export type TtsAdapterInfo = {
 
 export type VoiceSettings = {
   sttAdapterId: string
+  whisperModelId: WhisperModelId
   whisperCppBinPath: string | null
   ttsAdapterId: string
   voiceId: string | null
@@ -83,8 +84,11 @@ export type VoiceSettings = {
   preferOffline: boolean
 }
 
+export type WhisperModelId = "tiny" | "base" | "small"
+
 export const defaultVoiceSettings: VoiceSettings = {
   sttAdapterId: "local-whisper",
+  whisperModelId: "base",
   whisperCppBinPath: null,
   ttsAdapterId: "kokoro",
   voiceId: null,

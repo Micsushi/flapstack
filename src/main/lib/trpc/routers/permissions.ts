@@ -3,6 +3,9 @@ import { eq } from "drizzle-orm"
 import { chats, getDatabase } from "../../db"
 import {
   getGlobalDefault,
+  buildClaudePermissionApplication,
+  buildCodexPermissionApplication,
+  mapClaudeSdkPermissionMode,
   parsePermissionMode,
   permissionModes,
   resolvePermission,
@@ -63,6 +66,28 @@ export const permissionsRouter = router({
       },
     }
   }),
+
+  previewHarness: publicProcedure
+    .input(
+      z.object({
+        harness: z.enum(["claude", "codex"]),
+        mode: permissionModeSchema,
+        chatMode: z.enum(["plan", "agent"]).default("agent"),
+        cwd: z.string().nullable().optional(),
+      }),
+    )
+    .query(({ input }) => {
+      if (input.harness === "codex") {
+        return buildCodexPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
+      }
+      const sdk = mapClaudeSdkPermissionMode(input.mode, input.chatMode)
+      return buildClaudePermissionApplication({
+        permissionMode: input.mode,
+        cwd: input.cwd,
+        sdkPermissionMode: sdk.sdkPermissionMode,
+        canUseToolReadOnlyGuard: input.mode === "read-only",
+      })
+    }),
 })
 
 function readPermissionValuesForChat(chatId: string): {

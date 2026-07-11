@@ -55,6 +55,9 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
   return {
     sttAdapterId:
       typeof raw.sttAdapterId === "string" ? raw.sttAdapterId : defaultVoiceSettings.sttAdapterId,
+    whisperModelId: ["tiny", "base", "small"].includes(raw.whisperModelId ?? "")
+      ? (raw.whisperModelId as VoiceSettings["whisperModelId"])
+      : defaultVoiceSettings.whisperModelId,
     whisperCppBinPath:
       typeof raw.whisperCppBinPath === "string" && raw.whisperCppBinPath.trim()
         ? raw.whisperCppBinPath.trim()

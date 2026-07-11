@@ -24,6 +24,7 @@ import {
   requiresAudioConversion,
   verifyWhisperBinary,
 } from "../src/main/lib/speech/stt-whisper-cpp"
+import { encodePcmWav } from "../src/renderer/lib/hooks/use-voice-recording"
 import {
   appendReadAloudInstruction,
   READ_ALOUD_INSTRUCTION,
@@ -170,6 +171,7 @@ describe("voice settings normalization", () => {
     expect(settings.ttsAdapterId).toBe("kokoro")
     expect(settings.preferOffline).toBe(true)
     expect(settings.autoReadAloud).toBe(false)
+    expect(settings.whisperModelId).toBe("base")
     expect(settings.whisperCppBinPath).toBeNull()
   })
 
@@ -177,6 +179,11 @@ describe("voice settings normalization", () => {
     expect(
       normalizeVoiceSettings({ whisperCppBinPath: " /opt/bin/whisper-cli " }).whisperCppBinPath,
     ).toBe("/opt/bin/whisper-cli")
+  })
+
+  it("keeps a supported model and rejects an unknown one", () => {
+    expect(normalizeVoiceSettings({ whisperModelId: "small" }).whisperModelId).toBe("small")
+    expect(normalizeVoiceSettings({ whisperModelId: "large" }).whisperModelId).toBe("base")
   })
 
   it("uses a per-chat read-aloud override before the global default", () => {
@@ -204,10 +211,28 @@ describe("native voice helpers", () => {
 })
 
 describe("local Whisper audio preparation", () => {
+  it("encodes renderer audio as 16 kHz mono PCM WAV", () => {
+    const wav = encodePcmWav(new Float32Array([0, 1, -1]))
+    const view = new DataView(wav)
+    expect(String.fromCharCode(...new Uint8Array(wav, 0, 4))).toBe("RIFF")
+    expect(view.getUint16(22, true)).toBe(1)
+    expect(view.getUint32(24, true)).toBe(16_000)
+    expect(view.getUint16(34, true)).toBe(16)
+  })
+
   it("pins the model revision and checksum", () => {
     const descriptor = getWhisperModelDescriptor()
     expect(descriptor.url).toContain(descriptor.revision)
     expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it("pins a checksum and size for every selectable model", () => {
+    for (const modelId of ["tiny", "base", "small"] as const) {
+      const descriptor = getWhisperModelDescriptor(modelId)
+      expect(descriptor.url).toContain(descriptor.file)
+      expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(descriptor.sizeBytes).toBeGreaterThan(70_000_000)
+    }
   })
 
   it("converts browser-recorded WebM and Safari M4A before invoking whisper.cpp", () => {

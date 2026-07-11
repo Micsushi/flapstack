@@ -23,6 +23,7 @@ export type OpenCodeUsageCapture = {
   costUsd?: number
   costQuality?: Extract<CostQuality, "provider-reported" | "estimated" | "unknown">
   generationId?: string
+  observationId?: string
   /** Sanitized provider/sidecar payload for drift debugging. */
   rawPayload?: unknown
 }
@@ -42,12 +43,38 @@ export async function captureOpenCodeRunUsage(
   usage: OpenCodeUsageCapture,
   options: OpenCodeUsageCaptureOptions = {},
 ): Promise<number> {
+  return captureOpenCodeRunUsageBatch(db, [usage], options)
+}
+
+/** Persist provider steps independently so every OpenRouter generation id can
+ * reconcile. Alert thresholds evaluate the aggregate run exactly once. */
+export async function captureOpenCodeRunUsageBatch(
+  db: UsageDb,
+  observations: OpenCodeUsageCapture[],
+  options: OpenCodeUsageCaptureOptions = {},
+): Promise<number> {
+  if (observations.length === 0) return 0
+  const samples = observations.map(buildOpenCodeUsageSample)
+  const inserted = await insertSamples(db, samples)
+  if (options.alerts) {
+    await runAlerts({
+      db,
+      settings: options.alerts.settings,
+      getSecret: options.alerts.getSecret,
+      provider: options.alerts.provider,
+      samples: [buildOpenCodeUsageSample(mergeCaptures(observations))],
+    })
+  }
+  return inserted
+}
+
+function buildOpenCodeUsageSample(usage: OpenCodeUsageCapture): UsageSampleInput {
   const reportedCost = typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd)
   const quality = usage.costQuality ?? (reportedCost ? "provider-reported" : "unknown")
   const dedupeKey =
     usage.providerId === "openrouter" && usage.generationId
       ? `openrouter|gen|${usage.generationId}`
-      : `${usage.providerId}|run|${usage.runId}`
+      : `${usage.providerId}|run|${usage.runId}|${usage.observationId ?? "total"}`
   let sample: UsageSampleInput | null = null
 
   if (reportedCost && quality !== "unknown") {
@@ -114,15 +141,42 @@ export async function captureOpenCodeRunUsage(
     rawPayload: usage.rawPayload,
     dedupeKey: sample.dedupeKey ?? dedupeKey,
   }
-  const inserted = await insertSamples(db, [finalSample])
-  if (options.alerts) {
-    await runAlerts({
-      db,
-      settings: options.alerts.settings,
-      getSecret: options.alerts.getSecret,
-      provider: options.alerts.provider,
-      samples: [finalSample],
-    })
+  return finalSample
+}
+
+function mergeCaptures(observations: OpenCodeUsageCapture[]): OpenCodeUsageCapture {
+  const first = observations[0]!
+  const numericKeys = [
+    "inputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "costUsd",
+  ] as const
+  const sums = Object.fromEntries(
+    numericKeys.flatMap((key) => {
+      const values = observations.flatMap((observation) =>
+        typeof observation[key] === "number" ? [observation[key] as number] : [],
+      )
+      return values.length
+        ? [[key, values.reduce((total, value) => total + value, 0)] as const]
+        : []
+    }),
+  )
+  const rank: Record<NonNullable<OpenCodeUsageCapture["costQuality"]>, number> = {
+    "provider-reported": 2,
+    estimated: 1,
+    unknown: 0,
   }
-  return inserted
+  const costQuality = observations
+    .map((observation) => observation.costQuality ?? "unknown")
+    .reduce((weakest, quality) => (rank[quality] < rank[weakest] ? quality : weakest))
+  return {
+    providerId: first.providerId,
+    runId: first.runId,
+    model: first.model,
+    ...sums,
+    costQuality,
+    observationId: "aggregate-alert",
+  }
 }
