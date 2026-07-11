@@ -2,9 +2,9 @@
 
 This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
-## S3-F2 - MCP Implementation
+## S3-F2 — MCP Implementation
 
-### S3-F2-T1 - Lock transport, identity, and registry architecture
+### S3-F2-T1 — Lock transport, identity, and registry architecture
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
@@ -19,7 +19,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T2, S3-F2-T3
 - Relevant context: current MCP scaffold, Electron lifecycle, MCP SDK.
 
-### S3-F2-T2 - Implement local MCP transport and lifecycle
+### S3-F2-T2 — Implement local MCP transport and lifecycle
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
@@ -32,7 +32,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T3, S3-F2-T4, S3-F3-T1
 - Relevant context: Electron main lifecycle and `@modelcontextprotocol/sdk`.
 
-### S3-F2-T3 - Implement compact read-only operations
+### S3-F2-T3 — Implement compact read-only operations
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
@@ -45,7 +45,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T5, S3-F4-T2
 - Relevant context: existing tRPC query services and search contracts.
 
-### S3-F2-T4 - Add harness registration and default-off per-chat exposure
+### S3-F2-T4 — Add harness registration and default-off per-chat exposure
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
@@ -58,7 +58,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F6-T1, S3-F5-T2
 - Relevant context: existing Codex/Claude MCP config writers and chat settings.
 
-### S3-F2-T5 - Implement structured additive and mutating operations
+### S3-F2-T5 — Implement structured additive and mutating operations
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
@@ -71,9 +71,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F5-T2, S3-F6-T4
 - Relevant context: existing mutations, attachments, worktrees, and run launch services.
 
-## S3-F3 - Permissions and Approvals
+## S3-F3 — Permissions and Approvals
 
-### S3-F3-T1 - Implement trusted caller identity and risk gate
+### S3-F3-T1 — Implement trusted caller identity and risk gate
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
@@ -86,7 +86,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F3-T2, S3-F3-T3, S3-F4-T1
 - Relevant context: run permissions, MCP registry, identity token design.
 
-### S3-F3-T2 - Enforce the self-reference safety matrix
+### S3-F3-T2 — Enforce the self-reference safety matrix
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
@@ -99,7 +99,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F3-T3, S3-F5-T1
 - Relevant context: caller lineage, target extraction, lifecycle rules.
 
-### S3-F3-T3 - Implement approval lifecycle and session grants
+### S3-F3-T3 — Implement approval lifecycle and session grants
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
@@ -112,7 +112,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T5, S3-F3-T4, S3-F6-T2
 - Relevant context: main-process lifecycle and renderer transport.
 
-### S3-F3-T4 - Integrate approvals with tool execution
+### S3-F3-T4 — Integrate approvals with tool execution
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
@@ -125,9 +125,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T5, S3-F4-T2
 - Relevant context: registry invoker and handler dispatch.
 
-## S3-F4 - Audit History
+## S3-F4 — Audit History
 
-### S3-F4-T1 - Add redacted MCP audit storage
+### S3-F4-T1 — Add redacted MCP audit storage
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
@@ -140,7 +140,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F4-T2, S3-F4-T3
 - Relevant context: Drizzle schema/journal and secret-redaction utilities.
 
-### S3-F4-T2 - Audit every invocation and decision
+### S3-F4-T2 — Audit every invocation and decision
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
@@ -153,7 +153,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F2-T5, S3-F4-T3, S3-F5-T2
 - Relevant context: invoker, gate, approval service, audit table.
 
-### S3-F4-T3 - Expose filtered audit queries
+### S3-F4-T3 — Expose filtered audit queries
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
@@ -166,9 +166,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F6-T3
 - Relevant context: app-control router and audit storage.
 
-## S3-F5 - Cross-Agent Spawning
+## S3-F5 — Cross-Agent Spawning
 
-### S3-F5-T1 - Define safe thread-spawn contract
+### S3-F5-T1 — Define safe thread-spawn contract
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
@@ -181,7 +181,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F5-T2
 - Relevant context: chat creation, run launch, harness adapters, lineage data.
 
-### S3-F5-T2 - Implement approved cross-harness creation and launch
+### S3-F5-T2 — Implement approved cross-harness creation and launch
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
@@ -194,7 +194,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: shared chat/run services and supported harness adapters.
 
-### S3-F5-T3 - Prove cross-agent behavior live
+### S3-F5-T3 — Prove cross-agent behavior live
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
@@ -207,9 +207,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F6-T4
 - Relevant context: isolated Stage 3 worktree/app instance and manual matrix.
 
-## S3-F6 - MCP Management and Safety UI
+## S3-F6 — MCP Management and Safety UI
 
-### S3-F6-T1 - Add MCP exposure and connection controls
+### S3-F6-T1 — Add MCP exposure and connection controls
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
@@ -222,7 +222,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F6-T4
 - Relevant context: chat settings and existing agents settings surfaces.
 
-### S3-F6-T2 - Add accessible approval UI without focus theft
+### S3-F6-T2 — Add accessible approval UI without focus theft
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
@@ -235,7 +235,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: shared dialog primitives and pending approval service.
 
-### S3-F6-T3 - Add audit viewer
+### S3-F6-T3 — Add audit viewer
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
@@ -248,7 +248,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: audit query DTO and settings/details UI.
 
-### S3-F6-T4 - Run integrated Stage 3 verification and closeout
+### S3-F6-T4 — Run integrated Stage 3 verification and closeout
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6

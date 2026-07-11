@@ -1,4 +1,4 @@
-# S3-F4 - Audit History
+# S3-F4 — Audit History
 
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Tasks: `openspec/changes/add-stage3-mcp-control/tasks.md`

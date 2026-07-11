@@ -1,4 +1,4 @@
-# S3-F3 - Permissions and Approvals
+# S3-F3 — Permissions and Approvals
 
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Tasks: `openspec/changes/add-stage3-mcp-control/tasks.md`
