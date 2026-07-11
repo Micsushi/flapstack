@@ -134,8 +134,8 @@ Smaller fixes (Stage 1 carryover plus backlog):
 
 ### Stage 3: MCP Control
 
-- Preserve the completed technical-debt baseline: strict TypeScript and native
-  ABI setup stay green before expanding the MCP surface.
+- Clear and prove all TypeScript and Stage 3-blocking engineering debt before
+  expanding the MCP surface; keep strict TypeScript and the full gate green.
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
 - Permission gates around agent-initiated app actions.
@@ -145,6 +145,9 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Basic parent/initiator lineage for spawned threads; graph UI, budgets, depth
   limits, and swarm controls remain later work.
 - User approval before agent-created automations become active.
+- User-facing MCP exposure, approval, connection status, and audit controls.
+- Default-off exposure, self-reference guards, worktree write safety, launch
+  loop protection, and no background focus theft.
 
 ### Stage 4: Knowledge, Workspaces, And Multi-Agent Operations
 
