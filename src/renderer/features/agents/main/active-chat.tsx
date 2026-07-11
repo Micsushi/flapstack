@@ -206,6 +206,7 @@ import { AgentQueueIndicator } from "../ui/agent-queue-indicator"
 import { AgentToolCall } from "../ui/agent-tool-call"
 import { AgentToolRegistry } from "../ui/agent-tool-registry"
 import { AttachmentTray } from "../ui/attachment-tray"
+import { FlapshotCapturePanel } from "../ui/flapshot-capture-panel"
 import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
 import { AgentUserQuestion, type AgentUserQuestionHandle } from "../ui/agent-user-question"
@@ -4952,6 +4953,8 @@ const ChatViewInner = memo(function ChatViewInner({
             </div>
           </div>
         )}
+
+        <FlapshotCapturePanel chatId={parentChatId} />
 
         <AttachmentTray
           chatId={parentChatId}

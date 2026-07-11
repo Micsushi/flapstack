@@ -92,6 +92,20 @@ const BLOCKED_ENV_VARS = [
   "OPENAI_API_KEY",
 ]
 
+export function buildSafeMcpEnvironment(
+  overrides: Record<string, string> = {},
+): Record<string, string> {
+  const shellEnv = getClaudeShellEnvironment()
+  const safeEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(shellEnv)) {
+    if (!BLOCKED_ENV_VARS.includes(key)) safeEnv[key] = value
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!BLOCKED_ENV_VARS.includes(key)) safeEnv[key] = value
+  }
+  return safeEnv
+}
+
 /**
  * Fetch tools from a stdio-based MCP server
  * Uses shell environment to ensure proper PATH (homebrew, nvm, etc.) in production
@@ -116,20 +130,12 @@ export async function fetchMcpToolsStdio(
     // Get shell environment with proper PATH (includes homebrew, nvm, etc.)
     // This is critical for production where Electron apps launched from Finder
     // have a minimal PATH that excludes user-installed tools
-    const shellEnv = getClaudeShellEnvironment()
-
-    // Filter sensitive env vars
-    const safeEnv: Record<string, string> = {}
-    for (const [key, value] of Object.entries(shellEnv)) {
-      if (!BLOCKED_ENV_VARS.includes(key)) {
-        safeEnv[key] = value
-      }
-    }
+    const safeEnv = buildSafeMcpEnvironment(config.env)
 
     transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...safeEnv, ...config.env },
+      env: safeEnv,
       cwd: config.cwd,
     })
 

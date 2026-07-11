@@ -20,6 +20,7 @@ import {
 } from "./lib/cli"
 import { cleanupGitWatchers } from "./lib/git/watcher"
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from "./lib/mcp-auth"
+import { flapshotService } from "./lib/flapshot/service"
 import {
   getAllMcpConfigHandler,
   hasActiveClaudeSessions,
@@ -868,6 +869,7 @@ if (gotTheLock) {
     console.log("[App] Shutting down...")
     abortAllAgentSessions()
     cancelAllPendingOAuth()
+    await flapshotService.shutdown()
     await cleanupGitWatchers()
     await shutdownAnalytics()
     await closeDatabase()

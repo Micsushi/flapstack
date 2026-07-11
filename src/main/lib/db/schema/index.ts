@@ -245,6 +245,18 @@ export const attachments = sqliteTable(
     sourcePath: text("source_path"),
     storedPath: text("stored_path"),
     contentText: text("content_text"),
+    mimeType: text("mime_type"),
+    byteLength: integer("byte_length"),
+    sha256: text("sha256"),
+    sourceArtifactId: text("source_artifact_id"),
+    sourceUri: text("source_uri"),
+    sourceApplication: text("source_application"),
+    grantClientId: text("grant_client_id"),
+    provenanceJson: text("provenance_json"),
+    integrityStatus: text("integrity_status"),
+    operationId: text("operation_id"),
+    correlationId: text("correlation_id"),
+    auditCorrelationId: text("audit_correlation_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
@@ -261,6 +273,57 @@ export const attachmentsRelations = relations(attachments, ({ one }) => ({
   task: one(tasks, {
     fields: [attachments.taskId],
     references: [tasks.id],
+  }),
+}))
+
+// ============ FLAPSHOT MCP OPERATIONS ============
+// Flapshot remains an external process. This table stores only the client-side
+// correlation and lifecycle evidence needed to recover honest UI state.
+export const flapshotOperations = sqliteTable(
+  "flapshot_operations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    operationId: text("operation_id").notNull().unique(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    connectionKey: text("connection_key").notNull(),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    auditCorrelationId: text("audit_correlation_id").notNull(),
+    clientId: text("client_id").notNull(),
+    sessionId: text("session_id").notNull(),
+    progressCompleted: integer("progress_completed").notNull().default(0),
+    progressTotal: integer("progress_total"),
+    progressUnit: text("progress_unit"),
+    progressMessage: text("progress_message"),
+    errorCode: text("error_code"),
+    errorReason: text("error_reason"),
+    errorMessage: text("error_message"),
+    resultAttachmentId: text("result_attachment_id").references(() => attachments.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("flapshot_operations_chat_id_idx").on(table.chatId),
+    index("flapshot_operations_connection_state_idx").on(table.connectionKey, table.state),
+  ],
+)
+
+export const flapshotOperationsRelations = relations(flapshotOperations, ({ one }) => ({
+  chat: one(chats, {
+    fields: [flapshotOperations.chatId],
+    references: [chats.id],
+  }),
+  attachment: one(attachments, {
+    fields: [flapshotOperations.resultAttachmentId],
+    references: [attachments.id],
   }),
 }))
 

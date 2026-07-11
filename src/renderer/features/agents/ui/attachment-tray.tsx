@@ -1,6 +1,6 @@
 "use client"
 
-import { Eye, FileText, FolderInput, Plus, Upload } from "lucide-react"
+import { Eye, FileText, FolderInput, Plus, ShieldCheck, TriangleAlert, Upload } from "lucide-react"
 import { useSetAtom } from "jotai"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
@@ -58,6 +58,13 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
     onSuccess: (result) => toast.success(`Wrote ${result.targetPath}`),
     onError: (error) => toast.error(error.message || "Failed to write attachment"),
   })
+  const verifyMutation = trpc.flapshot.verifyAttachment.useMutation({
+    onSuccess: (result) => {
+      result.status === "verified" ? toast.success(result.message) : toast.error(result.message)
+      utils.attachments.listByChat.invalidate({ chatId })
+    },
+    onError: (error) => toast.error(error.message || "Attachment integrity check failed"),
+  })
 
   const visibleAttachments = useMemo(
     () => (showAll ? attachments : attachments.slice(0, ATTACHMENT_PREVIEW_COUNT)),
@@ -104,8 +111,35 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                   <div className="text-[11px] text-muted-foreground">
                     {formatKind(attachment.kind)}
                     {attachment.taskId ? " · task" : " · chat"}
+                    {attachment.sourceApplication === "Flapshot"
+                      ? ` · Flapshot · ${attachment.integrityStatus ?? "unchecked"}`
+                      : ""}
                   </div>
                 </div>
+                {attachment.sourceApplication === "Flapshot" && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        disabled={verifyMutation.isPending}
+                        onClick={() =>
+                          verifyMutation.mutate({ chatId, attachmentId: attachment.id })
+                        }
+                      >
+                        {attachment.integrityStatus === "verified" ? (
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : (
+                          <TriangleAlert className="h-3.5 w-3.5 text-amber-500" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Verify MIME, size, SHA-256, and canonical local path
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <Input
                   value={targetPath}
                   onChange={(event) =>
