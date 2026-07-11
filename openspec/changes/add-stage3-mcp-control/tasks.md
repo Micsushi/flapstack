@@ -75,7 +75,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T1 — Implement trusted caller identity and risk gate
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Every call receives a trusted caller and deterministic gate decision.
 - Scope: Resolve chat/run identity, permission mode, tier, target, and unsupported/stale caller states.

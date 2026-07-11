@@ -1,17 +1,41 @@
+import type { CustomPermissionToggles, PermissionMode } from "../permissions"
+
 export type McpRiskTier = 0 | 1 | 2 | 3
 export type McpGateDecision = "allowed" | "denied" | "approval-required"
+export type McpCapability = keyof CustomPermissionToggles
 
 export type McpControlTool = {
   name: string
   description: string
   tier: McpRiskTier
+  requiredCapabilities: readonly McpCapability[]
   status: "scaffolded" | "implemented" | "stubbed"
 }
 
 export type McpCallerIdentity = {
   chatId: string
   runId?: string
-  permissionMode?: string | null
+  permissionMode?: PermissionMode
+  customPermissions?: CustomPermissionToggles
+}
+
+export type McpCallerRecord = {
+  id: string
+  permissionMode: string | null
+  archived: boolean
+}
+
+export type McpRunRecord = {
+  id: string
+  chatId: string
+  permissionMode: string | null
+  active: boolean
+}
+
+export type McpCallerStore = {
+  findChat(chatId: string): McpCallerRecord | null
+  findRun(runId: string): McpRunRecord | null
+  findCustomPermissions(chatId: string, runId?: string): CustomPermissionToggles | null
 }
 
 export type McpControlErrorCode =
