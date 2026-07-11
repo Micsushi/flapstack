@@ -65,7 +65,21 @@ release gates; no manual row is marked passed by this implementation update.
 ### Repository gate and administration
 
 - Reconcile OpenSpec/task-board checkboxes only against executed evidence.
-- Address dependency audit debt: current clean install reports no critical
-  vulnerabilities. The production-only tree has no high findings, but the packaged
-  Electron 39.4.0 is current within its pinned major. electron-builder's high
-  build-chain findings require a validated major upgrade or risk acceptance.
+- Dynamic vocabulary remains deferred/out of this approved change. Do not count
+  the research-only sidecar/vocabulary architecture as Stage 2 implementation.
+- Dependency remediation completed on 2026-07-11: Electron 39.8.10 and
+  electron-builder 26.15.3 remove every high/critical audit finding, and the
+  builder upgrade produced arm64 and x64 macOS app/DMG/zip artifacts. The
+  final clean-resource build shares explicit target architectures between
+  preparation and electron-builder, atomically replaces a fresh allowlisted
+  resource tree, and includes matching-architecture Claude 2.1.45,
+  Codex 0.144.1, and whisper.cpp 1.8.6; structural and CLI smokes pass in both
+  app bundles. Packaging invalidates shared native ABI state before builder
+  rebuilds; the next Node/Electron command probes real SQLite/PTY loads, repairs
+  the required ABI, and writes the marker only after verification. Node 22 full
+  gates pass before and after the dual-architecture package. Finder/manual
+  feature evidence remains unchecked. The
+  remaining production findings are Monaco's pinned DOMPurify (1 low/1 moderate);
+  the remaining dev-only findings are Drizzle Kit's legacy esbuild loader chain.
+  Both are temporarily risk-accepted because npm offers only incompatible
+  downgrades, with re-audit required on dependency updates.

@@ -50,19 +50,31 @@ selected checkout.
 Latest automated evidence, recorded without checking the human boxes below:
 
 - `npm ci --legacy-peer-deps` passed from the clean-install sequence.
-- Final `npm run check` passed on Node 22 with 342 tests passed and 3 skipped
-  across 37 files, plus lint, formatting, strict TypeScript, and the production build.
+- Final `npm run check` passed on Node 22 with 357 tests passed and 3 skipped
+  across 38 files, plus lint, formatting, strict TypeScript, and the production build.
 - Strict OpenSpec validation passed for 3 changes.
 - The macOS usage-daemon smoke passed.
 - The credential-free OpenCode live suite passed 52 tests; 2 paid-provider tests
   remained skipped.
 - `npm run ts:check` passes and is enforced by `npm run check` and CI.
-- `npm audit` reported 1 low, 5 moderate, 9 high, and 0 critical findings. The
-  production-only tree has no high finding and contains 1 low plus 1 moderate.
-  Electron 39.4.0 is current within the pinned major; electron-builder 26 is a
-  major-chain upgrade that still requires package validation. Remediate or
-  explicitly risk-accept remaining findings before release; counts alone do not
-  prove exploitability.
+- Electron 39.8.10 and electron-builder 26.15.3 are installed. `npm audit`
+  reports 1 low, 5 moderate, 0 high, and 0 critical findings; the
+  production-only tree contains 1 low plus 1 moderate through Monaco's pinned
+  DOMPurify. The builder-chain high findings are remediated. The residual
+  Monaco runtime findings and dev-only Drizzle/esbuild findings are temporarily
+  risk-accepted with exposure recorded in the readiness review; recheck them on
+  every dependency update.
+- electron-builder 26.15.3 produced fresh unsigned arm64 and x64 macOS app, DMG,
+  and zip artifacts with Electron 39.8.10. Preparation and builder consume the
+  same explicit architectures; a fresh allowlisted resource tree atomically
+  replaces ignored `resources/bin` so stale files and symlinks cannot leak.
+  Both packaged apps contain regular, executable, matching-architecture Claude
+  2.1.45, Codex 0.144.1, and whisper.cpp 1.8.6 binaries plus matching Flapstack
+  and better-sqlite3. Both Claude/Codex version and Whisper help smokes pass.
+  A full Node 22 gate passed before and after packaging: builder invalidated the
+  shared ABI marker, the post-package probe detected Electron ABI 140, rebuilt
+  Node ABI 127, verified real SQLite/PTY loads, and passed every SQLite test.
+  Finder launch and feature behavior remain human evidence, so P-08 stays unchecked.
 - The final development app launched from the reviewed source. Agent-assisted UI
   smoke observed Voice/Usage settings, OpenRouter new-chat discovery, Move to
   destinations, and successful MCP tool probing. Paid, audible, daemon-install,
@@ -82,7 +94,9 @@ Latest automated evidence, recorded without checking the human boxes below:
       reaches health, creates a session, and tears down within five seconds.
 - [ ] **P-07 READY** `git diff --check` reports no whitespace errors.
 - [ ] **P-08 CONDITIONAL** packaged macOS app launches from Finder with the same
-      provider/CLI discovery as `npm run dev`.
+      provider/CLI discovery as `npm run dev`. Before human launch, run
+      `npm run package:smoke:mac`; both app bundles must contain regular,
+      executable, matching-architecture Claude, Codex, and Whisper CLIs.
 - [ ] **P-09 CONDITIONAL** packaged Windows app launches and finds every bundled
       or required voice/provider executable.
 - [ ] **P-10 CONDITIONAL** dependency-audit findings are reviewed and either

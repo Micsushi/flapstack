@@ -8,12 +8,14 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 code is
-merged and in readiness repair/manual validation; it is **not** at full exit yet.
-Voice, usage, Cursor, OpenRouter/NanoGPT through an OpenCode sidecar, reasoning
-output, and the smaller-fix surfaces all have runnable implementation, but the
-remaining blockers and exact human test steps are tracked in the
+Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. The approved Stage 2
+implementation scope is complete and in manual/package validation; it is **not**
+at full exit yet. Voice, usage, Cursor, OpenRouter/NanoGPT through an OpenCode
+sidecar, reasoning output, and the smaller-fix surfaces all have runnable
+implementation, but the remaining evidence gates and exact human test steps are tracked in the
 [Stage 2 full-feature matrix](docs/stage2-full-feature-test-matrix.md).
+The research-only dynamic-vocabulary architecture is explicitly deferred: it is
+not an approved Stage 2 requirement and is not claimed as implemented.
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
@@ -23,9 +25,9 @@ remaining blockers and exact human test steps are tracked in the
   file/pasted-text attachments, scoped search, pin/archive, and before/after
   checkpoints with per-run file-change manifests
 - Stage 2 validation: the supported Node gate is green, including strict
-  TypeScript. Clean-install cross-platform voice provisioning, personal
-  Codex/Claude usage coverage, full Cursor usage coverage, dashboard graphs,
-  and credentialed/packaged provider matrices remain open.
+  TypeScript. Electron 39.8.10 and electron-builder 26.15.3 are package-validated
+  on unsigned arm64/x64 macOS artifacts. Human macOS/Windows, credentialed
+  provider, reasoning, daemon, and deep-count matrix evidence remains open.
 - Current UI note: the inherited vertical middle sub-chats **Chats** pane is
   hidden behind `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`. Sub-chat tabs, quick
   switch, split view, and routing remain active. Revisit the pane later only if
@@ -84,6 +86,7 @@ Voice (reuses Agent Hotline):
 - Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
 - Per-OS speech adapters with an offline/local path kept as a supported default.
+- Dynamic vocabulary remains deferred pending a future approved OpenSpec change.
 
 Usage tracking (reuses onWatch):
 
@@ -131,8 +134,8 @@ Smaller fixes (Stage 1 carryover plus backlog):
 
 ### Stage 3: MCP Control
 
-- Start with a technical-debt stabilization gate: resolve or explicitly promote
-  remaining blocking debt before expanding the MCP surface.
+- Preserve the completed technical-debt baseline: strict TypeScript and native
+  ABI setup stay green before expanding the MCP surface.
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
 - Permission gates around agent-initiated app actions.
@@ -167,6 +170,7 @@ Prerequisites:
 - Node.js 22
 - Python 3.11 recommended for native module rebuilds
 - Xcode Command Line Tools on macOS
+- CMake for macOS/Linux packages that build bundled whisper.cpp binaries
 
 Install and run:
 
@@ -187,7 +191,16 @@ Package:
 
 ```bash
 npm run package:mac
+npm run package:smoke:mac
 ```
+
+Every package build command resolves one exact target set, uses it for both pinned
+Claude/Codex/whisper.cpp preparation and electron-builder, validates a fresh
+allowlisted staging tree, then replaces `resources/bin`. The macOS command builds
+arm64 and x64; Windows builds x64; Linux exposes explicit x64 and arm64 commands.
+Before electron-builder can rebuild shared native modules, packaging invalidates
+the ABI marker. The next dev/test command probes real SQLite and PTY loads, repairs
+the required Node/Electron ABI, verifies it, and only then writes a new marker.
 
 ## Useful Commands
 

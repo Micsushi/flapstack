@@ -21,6 +21,7 @@ import type {
   SttResult,
   WhisperModelId,
 } from "./types"
+import { ProgressSubscribers } from "./progress-subscribers"
 
 // Multilingual whisper.cpp models. Models stay out of the installer and are
 // downloaded on demand into app data with checksum validation.
@@ -74,10 +75,7 @@ const verifyingModels = new Map<
     promise: Promise<string>
   }
 >()
-const downloadProgressListeners = new Map<
-  WhisperModelId,
-  Set<(state: SttModelDownloadState) => void>
->()
+const downloadProgressSubscribers = new ProgressSubscribers<WhisperModelId, SttModelDownloadState>()
 const verifiedBinaries = new Map<string, { mtimeMs: number; valid: boolean }>()
 
 export const whisperCppAdapter: SttAdapter = {
@@ -174,7 +172,7 @@ function getDownloadState(modelId: WhisperModelId) {
 
 function setDownloadState(modelId: WhisperModelId, state: SttModelDownloadState) {
   downloadStates.set(modelId, state)
-  for (const listener of downloadProgressListeners.get(modelId) ?? []) listener(state)
+  downloadProgressSubscribers.publish(modelId, state)
 }
 
 /**
@@ -217,12 +215,9 @@ export async function ensureModel(
     return modelPath
   }
   if (existsSync(modelPath)) rmSync(modelPath, { force: true })
-  if (onProgress) {
-    const listeners = downloadProgressListeners.get(modelId) ?? new Set()
-    listeners.add(onProgress)
-    downloadProgressListeners.set(modelId, listeners)
-    onProgress(getDownloadState(modelId))
-  }
+  const unsubscribe = onProgress
+    ? downloadProgressSubscribers.subscribe(modelId, onProgress, getDownloadState(modelId))
+    : undefined
   if (!activeDownloads.has(modelId)) {
     activeDownloads.set(
       modelId,
@@ -232,11 +227,7 @@ export async function ensureModel(
     )
   }
   return activeDownloads.get(modelId)!.finally(() => {
-    if (onProgress) {
-      const listeners = downloadProgressListeners.get(modelId)
-      listeners?.delete(onProgress)
-      if (!listeners?.size) downloadProgressListeners.delete(modelId)
-    }
+    unsubscribe?.()
   })
 }
 

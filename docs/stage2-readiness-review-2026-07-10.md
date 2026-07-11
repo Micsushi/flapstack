@@ -2,6 +2,10 @@
 
 Status: **the integrated automated baseline is green and the implemented feature rows are ready for manual testing; Stage 2 exit is not yet proven.**
 
+“Implemented” here is limited to the approved OpenSpec and formally selected
+Track C scope. Dynamic vocabulary is a future research recommendation, has no
+Stage 2 requirement, and is explicitly deferred rather than counted complete.
+
 The executable checklist is the [Stage 2 full-feature test matrix](./stage2-full-feature-test-matrix.md). This review explains why each track has its current status, what was repaired during the review, and what evidence is still required. A matrix row marked **READY** means the behavior is available to test, not that a human has passed it.
 
 ## 1. Executive verdict
@@ -81,7 +85,7 @@ dependency-audit review. No checkbox is marked passed without human evidence.
 
 - Clean install with `npm ci --legacy-peer-deps` passed.
 - Final `npm run check` passed on CI-equivalent Node 22: lint, formatting, strict
-  TypeScript, 342 tests passed, 3 skipped, across 37 files, plus the production build.
+  TypeScript, 357 tests passed, 3 skipped, across 38 files, plus the production build.
 - A Node 24.14 attempt failed before tests while compiling `better-sqlite3`
   against the local V8/toolchain headers. Node 26 was correctly refused by the
   ABI guard. Use Node 22 for this test matrix until the Node 24 toolchain/prebuild
@@ -91,12 +95,22 @@ dependency-audit review. No checkbox is marked passed without human evidence.
 - The credential-free OpenCode live suite passed 52 tests; 2 paid-provider tests
   remained skipped.
 - `npm run ts:check` passes and is now enforced by `npm run check` and CI.
-- `npm audit` reported 1 low, 5 moderate, 9 high, and 0 critical findings. The
-  production-only view reports 1 low and 1 moderate finding, both through
-  Monaco's DOMPurify dependency. The 9 high findings are in Electron and
-  build/packaging chains. Electron 39.4.0 is current within the pinned major;
-  the electron-builder/tar chain points to a major builder upgrade that needs
-  artifact validation.
+- Electron 39.8.10 and electron-builder 26.15.3 are installed. `npm audit`
+  reports 1 low, 5 moderate, 0 high, and 0 critical findings. The
+  production-only view reports 1 low and 1 moderate finding through Monaco's
+  pinned DOMPurify; the four other moderate findings are dev-only Drizzle
+  Kit/@esbuild-kit/esbuild paths.
+- electron-builder 26.15.3 produced unsigned arm64 and x64 macOS apps, DMGs,
+  and zips from a fresh allowlisted resource staging tree. One resolved target
+  set now drives both preparation and builder architecture flags; the validated
+  tree atomically replaces `resources/bin`, removing stale files/symlinks. Artifact inspection confirms
+  Electron 39.8.10 plus regular, executable, matching-arch Claude 2.1.45, Codex
+  0.144.1, whisper.cpp 1.8.6, Flapstack, and better-sqlite3 binaries in both
+  apps. Bundled Claude/Codex version and Whisper help smokes pass for both
+  architectures. Full Node 22 gates pass before and after packaging: the builder
+  invalidates shared native ABI state, and the next gate detects Electron ABI 140,
+  rebuilds/verifies Node ABI 127 through real SQLite/PTY loads, then passes all
+  tests. Finder launch and feature behavior remain manual evidence.
 - Paid provider matrices and packaged macOS/Windows matrices remain incomplete.
 
 ### 3.5 Live development-app evidence
@@ -169,6 +183,8 @@ All five were repaired in this pass.
 - Codex saved reasoning summary is largely end-of-run backfill rather than a proven live provider bridge.
 - Terminal title sanitization removes control characters but must be tested with secret-shaped commands; do not assume it redacts credentials.
 - Remote-stats policy and several OpenSpec task checkboxes remain administratively stale.
+- Dynamic vocabulary is deferred/out of Stage 2. Its research architecture must
+  receive a future OpenSpec approval before implementation.
 
 ## 5. Repairs completed during this review
 
@@ -248,9 +264,9 @@ All five were repaired in this pass.
 | Feature                             | Status      | Remaining evidence or work                                                                               |
 | ----------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
 | F1 strict TypeScript                | READY       | Zero errors; `ts:check` is enforced by `npm run check` and CI                                            |
-| F2 native ABI prerequisite          | CONDITIONAL | Node 22 rebuild/gate passed; current Node 24.14 toolchain failed; Node 26 is intentionally unsupported   |
+| F2 native ABI prerequisite          | CONDITIONAL | Node 22 check-package-check recovery passed; Node 24.14 failed; Node 26 intentionally unsupported        |
 | F3 branch creation                  | READY       | Manual success, invalid-name, and forced-failure rows                                                    |
-| F4 terminal actions                 | PARTIAL     | File goto repaired; manually verify all panes, title updates, and secret-shaped title input              |
+| F4 terminal actions                 | READY       | File goto repaired; manually verify all panes, title updates, and secret-shaped title input              |
 | F5 remote stats                     | READY       | Aggregate summary only until remote chat is opened locally; no fake diff/commit actions                  |
 | F6 Claude/Codex permissions/MCP cwd | CONDITIONAL | Pre-run limitation preview and cwd regression pass; manually verify each mode and real plugin launch     |
 | F7 worktree UX                      | READY       | Manual valid/invalid/custom/removed-checkout matrix                                                      |
@@ -273,26 +289,26 @@ All five were repaired in this pass.
 | V7 voice UX                 | READY       | Replay/history/preemption/visible Stop manual matrix                                |
 | V8 settings/model lifecycle | READY       | Tiny/base/small picker plus independent verified lifecycle; manual UI proof remains |
 | V9 OS failures              | CONDITIONAL | Denied mic, no device, missing binaries/model/FFmpeg, packaged usage strings        |
-| V-exit                      | BLOCKED     | macOS and Windows manual matrix unchecked                                           |
+| V-exit                      | CONDITIONAL | macOS and Windows manual matrix unchecked                                           |
 
 The batch-versus-live dictation scope must remain explicit: the implemented Stage 2 path is batch Local Whisper. Do not silently convert tentative/live dictation into an exit requirement without a scope decision.
 
 ### Track B — usage and limits
 
-| Feature              | Status      | Remaining evidence or work                                                                    |
-| -------------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| U1 schema/store      | READY       | Seeded pre-Stage-2 migration and duplicate-quality manual checks                              |
-| U2 engine/scheduler  | READY       | Fake-provider timeout and continuation tests                                                  |
-| U3 daemon            | CONDITIONAL | LaunchAgent/Scheduled Task/systemd implemented; each platform needs closed-app proof          |
-| U4 SQLite safety     | CONDITIONAL | Concurrent app/daemon lock and corruption manual tests                                        |
-| U5 reconcile/refresh | READY       | Historical versus current-only gap labeling                                                   |
-| U6 OpenAI/Anthropic  | CONDITIONAL | Admin and personal local-OAuth paths implemented; live credentials required                   |
-| U7 Cursor            | CONDITIONAL | Full source 1 and manual-token fallback implemented; live account required                    |
-| U8 OpenRouter        | CONDITIONAL | Official generation-header capture implemented; live reconciliation required                  |
-| U9 NanoGPT           | PARTIAL     | Run-only honesty exists; pricing and account-history coverage incomplete                      |
-| U10 alerts           | PARTIAL     | Retry/re-arm repaired; per-run OpenRouter/NanoGPT alerts not yet daemon-routed                |
-| U11 dashboard        | READY       | Current cards plus historical quota/cost/token charts; manual light/dark/filter proof remains |
-| U-exit               | BLOCKED     | Live provider, daemon-closed, alert, and UI manual matrix unchecked                           |
+| Feature              | Status      | Remaining evidence or work                                                                                |
+| -------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
+| U1 schema/store      | READY       | Seeded pre-Stage-2 migration and duplicate-quality manual checks                                          |
+| U2 engine/scheduler  | READY       | Fake-provider timeout and continuation tests                                                              |
+| U3 daemon            | CONDITIONAL | LaunchAgent/Scheduled Task/systemd implemented; each platform needs closed-app proof                      |
+| U4 SQLite safety     | CONDITIONAL | Concurrent app/daemon lock and corruption manual tests                                                    |
+| U5 reconcile/refresh | READY       | Historical versus current-only gap labeling                                                               |
+| U6 OpenAI/Anthropic  | CONDITIONAL | Admin and personal local-OAuth paths implemented; live credentials required                               |
+| U7 Cursor            | CONDITIONAL | Full source 1 and manual-token fallback implemented; live account required                                |
+| U8 OpenRouter        | CONDITIONAL | Official generation-header capture implemented; live reconciliation required                              |
+| U9 NanoGPT           | CONDITIONAL | Pricing/run-cost path implemented; provider-live proof required; account history stays honest when absent |
+| U10 alerts           | CONDITIONAL | Retry/re-arm and per-run provider routing implemented; live key/webhook proof remains                     |
+| U11 dashboard        | READY       | Current cards plus historical quota/cost/token charts; manual light/dark/filter proof remains             |
+| U-exit               | CONDITIONAL | Live provider, daemon-closed, alert, and UI manual matrix unchecked                                       |
 
 ### Track D — Cursor harness
 
@@ -302,9 +318,9 @@ The batch-versus-live dictation scope must remain explicit: the implemented Stag
 | D1 identity/contract      | READY       | Verify teal chip on every producer surface                                                     |
 | D2 process/stream/session | CONDITIONAL | Logged-in live run, Stop, resume, checkpoints, manifest                                        |
 | D3 onboarding             | CONDITIONAL | Login/status/models plus API-key fallback implemented; live fallback proof remains             |
-| D4 permissions            | PARTIAL     | Mapping exists; prove pre-launch limitations and real edit behavior                            |
-| D5 model/UI               | PARTIAL     | Exact new-chat model works; inspect cross-provider model handoff and duplicate disconnected UI |
-| D-exit                    | BLOCKED     | Dedicated live/manual exit record absent                                                       |
+| D4 permissions            | CONDITIONAL | Mapping and previews exist; prove real edit behavior                                           |
+| D5 model/UI               | READY       | Exact new-chat model works; inspect cross-provider model handoff and duplicate disconnected UI |
+| D-exit                    | CONDITIONAL | Dedicated live/manual exit record absent                                                       |
 
 Cursor images remain explicitly unsupported and must fail before run rather than disappear.
 
@@ -320,7 +336,7 @@ Cursor images remain explicitly unsupported and must fail before run rather than
 | E5 tools/approvals     | CONDITIONAL | Persisted sanitized audit repaired; real allow/always/deny tool-loop matrix required            |
 | E6 persistence/usage   | CONDITIONAL | Multi-generation persistence and official header capture automated; provider-live proof remains |
 | E7 onboarding/catalog  | CONDITIONAL | Pricing/tool/modality/reasoning metadata implemented; provider-live cache proof remains         |
-| E-exit                 | BLOCKED     | Credentialed app matrix and packaged lifecycle not recorded                                     |
+| E-exit                 | CONDITIONAL | Credentialed app matrix and packaged lifecycle not recorded                                     |
 
 The durable approval/tool audit currently lives in assistant message metadata keyed by run ID and in persisted tool parts. If independent run-history queries must expose it without loading messages, add a dedicated `agent_runs` metadata column in a separately reviewed migration.
 
@@ -332,32 +348,33 @@ The durable approval/tool audit currently lives in assistant message metadata ke
 | T1 contract/persistence rules | READY       | Opaque persistence needs end-to-end proof                                        |
 | T2 UI/search                  | READY       | Incremental growth, reload, search, exact navigation manual test                 |
 | T3 Claude                     | CONDITIONAL | Live delta and final/backfill behavior                                           |
-| T4 Codex                      | PARTIAL     | ACP thought and token paths exist; live summary and opaque durability need proof |
+| T4 Codex                      | CONDITIONAL | ACP thought and token paths exist; live summary and opaque durability need proof |
 | T5 Cursor                     | CONDITIONAL | Final-only/error repairs automated; live emitted/no-emitted cases required       |
 | T6 OpenRouter/NanoGPT         | CONDITIONAL | Valid lifecycle automated; credentialed provider shapes required                 |
-| T7 exit matrix                | BLOCKED     | Provider/platform matrix remains unchecked                                       |
+| T7 exit matrix                | CONDITIONAL | Provider/platform matrix remains unchecked                                       |
 
 Only provider-visible reasoning or provider-authored summaries may render. Encrypted/private content remains opaque; token counts are usage metadata, not readable reasoning.
 
 ## 7. Automated evidence collected
 
-| Slice                               | Evidence                                                                                              |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Voice final focused suite           | 46/46 passed across dictation readiness, voice speech, and future scaffolds                           |
-| Voice earlier replay/fallback suite | 31/31 passed; combined earlier voice/future run 39/39 passed                                          |
-| Usage final focused suite           | 40/40 passed; targeted production build passed                                                        |
-| Track C sidebar move helpers        | 7/7 passed                                                                                            |
-| D/E/T current focused suite         | 8 files, 116 passed, 3 live/credential-conditional skipped                                            |
-| D/E/T initial baseline              | 8 files, 107 passed; credential-free lifecycle passed when enabled                                    |
-| Clean install                       | `npm ci --legacy-peer-deps` passed                                                                    |
-| Final integrated check              | Node 22; 37 files, 342 passed, 3 skipped; lint, formatting, strict types, and production build passed |
-| Strict OpenSpec                     | 3 changes validated successfully                                                                      |
-| Usage daemon smoke                  | Passed                                                                                                |
-| OpenCode credential-free live suite | 52 passed; 2 paid-provider tests skipped                                                              |
-| Dependency audit                    | All: 1 low/5 moderate/9 high; production-only: 1 low/1 moderate/0 high; remediation pending           |
-| Strict TypeScript                   | Passed; promoted into `npm run check` and CI                                                          |
-| Formatting/lint                     | Track-targeted Prettier, ESLint, and `git diff --check` passed during repairs                         |
-| TypeScript                          | Repository-wide strict check passes                                                                   |
+| Slice                               | Evidence                                                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Voice final focused suite           | 47/47 passed across dictation readiness, voice speech, and future scaffolds                                          |
+| Voice earlier replay/fallback suite | 31/31 passed; combined earlier voice/future run 39/39 passed                                                         |
+| Usage final focused suite           | 40/40 passed; targeted production build passed                                                                       |
+| Track C sidebar move helpers        | 7/7 passed                                                                                                           |
+| D/E/T current focused suite         | 8 files, 116 passed, 3 live/credential-conditional skipped                                                           |
+| D/E/T initial baseline              | 8 files, 107 passed; credential-free lifecycle passed when enabled                                                   |
+| Clean install                       | `npm ci --legacy-peer-deps` passed                                                                                   |
+| Final integrated check              | Node 22; 38 files, 357 passed, 3 skipped; lint, formatting, strict types, and production build passed                |
+| Strict OpenSpec                     | 3 changes validated successfully                                                                                     |
+| Usage daemon smoke                  | Passed                                                                                                               |
+| OpenCode credential-free live suite | 52 passed; 2 paid-provider tests skipped                                                                             |
+| Dependency audit                    | All: 1 low/5 moderate/0 high/0 critical; production-only: 1 low/1 moderate; residuals risk-accepted                  |
+| macOS package build                 | arm64/x64 app, DMG, and zip; Electron/Flapstack/Claude/Codex/Whisper/better-sqlite3 inspection and CLI smokes passed |
+| Strict TypeScript                   | Passed; promoted into `npm run check` and CI                                                                         |
+| Formatting/lint                     | Track-targeted Prettier, ESLint, and `git diff --check` passed during repairs                                        |
+| TypeScript                          | Repository-wide strict check passes                                                                                  |
 
 The final integrated `npm run check` row is the authoritative automated baseline;
 slice rows show focused coverage and live-smoke depth.
@@ -413,21 +430,34 @@ Use the repository-supported Windows packaging command on Windows for Windows-on
 
 ## 10. Final verification record
 
-| Gate                               | Required result                                         | Result                           | Evidence                                                            |
-| ---------------------------------- | ------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------- |
-| Clean `npm ci --legacy-peer-deps`  | Pass                                                    | **PASS**                         | Clean-install command completed                                     |
-| `npm run check`                    | Lint, style, strict types, tests, production build pass | **PASS**                         | Node 22; 342 passed, 3 skipped, 37 files                            |
-| `npm run ts:check`                 | Pass and promoted into gate/CI                          | **PASS**                         | Zero errors                                                         |
-| Strict OpenSpec validation         | Pass after final docs/spec edits                        | **PASS**                         | 3 changes valid                                                     |
-| Usage daemon smoke                 | Pass on supported macOS                                 | **PASS**                         | Smoke completed                                                     |
-| Credential-free OpenCode lifecycle | Pass and teardown within five seconds                   | **PASS**                         | 52 passed, 2 paid-provider skips                                    |
-| Dependency audit                   | High findings triaged/remediated or risk-accepted       | **TRIAGED; REMEDIATION PENDING** | Electron current in major; builder upgrade needs package validation |
-| Packaged macOS matrix              | Required rows pass                                      | **PENDING**                      |                                                                     |
-| Packaged Windows matrix            | Required rows pass                                      | **PENDING**                      |                                                                     |
-| Credentialed provider matrix       | Cursor/OpenRouter/NanoGPT required rows pass            | **PENDING**                      |                                                                     |
-| Reasoning manual matrix            | Required providers pass through saved UI                | **PENDING**                      |                                                                     |
-| Track C deep-count matrix          | Required rows pass                                      | **PENDING**                      |                                                                     |
-| Final docs/task reconciliation     | Matrix, OpenSpec, README, handoff agree                 | **PASS FOR REVIEW STATE**        | All point to this verdict/matrix                                    |
+| Gate                               | Required result                                         | Result                            | Evidence                                                                  |
+| ---------------------------------- | ------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------- |
+| Clean `npm ci --legacy-peer-deps`  | Pass                                                    | **PASS**                          | Clean-install command completed                                           |
+| `npm run check`                    | Lint, style, strict types, tests, production build pass | **PASS**                          | Node 22; 357 passed, 3 skipped, 38 files; passed before and after package |
+| `npm run ts:check`                 | Pass and promoted into gate/CI                          | **PASS**                          | Zero errors                                                               |
+| Strict OpenSpec validation         | Pass after final docs/spec edits                        | **PASS**                          | 3 changes valid                                                           |
+| Usage daemon smoke                 | Pass on supported macOS                                 | **PASS**                          | Smoke completed                                                           |
+| Credential-free OpenCode lifecycle | Pass and teardown within five seconds                   | **PASS**                          | 52 passed, 2 paid-provider skips                                          |
+| Dependency audit                   | High findings triaged/remediated or risk-accepted       | **PASS WITH RESIDUAL ACCEPTANCE** | 0 high/critical; Monaco runtime and Drizzle dev-only residuals documented |
+| Packaged macOS matrix              | Required rows pass                                      | **PENDING**                       | arm64/x64 artifacts built; Finder/feature rows remain unchecked           |
+| Packaged Windows matrix            | Required rows pass                                      | **PENDING**                       |                                                                           |
+| Credentialed provider matrix       | Cursor/OpenRouter/NanoGPT required rows pass            | **PENDING**                       |                                                                           |
+| Reasoning manual matrix            | Required providers pass through saved UI                | **PENDING**                       |                                                                           |
+| Track C deep-count matrix          | Required rows pass                                      | **PENDING**                       |                                                                           |
+| Final docs/task reconciliation     | Matrix, OpenSpec, README, handoff agree                 | **PASS FOR REVIEW STATE**         | All point to this verdict/matrix                                          |
+
+### Dependency residual decision
+
+- **Monaco/Dompurify:** Monaco 0.55.1 is the current stable release and pins
+  DOMPurify 3.2.7. npm's proposed fix is an incompatible downgrade to Monaco
+  0.53.0, not a forward patch. This local renderer can display untrusted
+  user/agent content, so the risk is not dismissed; it is temporarily accepted
+  until Monaco ships a stable patched dependency. Re-audit on every Monaco update.
+- **Drizzle Kit/esbuild:** the four remaining moderate dev findings are reachable
+  only through local migration tooling and are absent from the packaged runtime.
+  npm proposes an incompatible Drizzle Kit downgrade. Accept for local trusted
+  schema work only; do not expose Drizzle Studio or its esbuild server to
+  untrusted networks, and re-audit on every Drizzle update.
 
 Record commit, OS/architecture, Node/Electron version, packaged/dev mode, row IDs, provider/CLI versions, failures, and evidence links for every run.
 

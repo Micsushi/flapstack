@@ -12,12 +12,15 @@
 import fs from "node:fs"
 import path from "node:path"
 import https from "node:https"
-import crypto from "node:crypto"
 import { fileURLToPath } from "node:url"
+import { assertBundledBinary, ensureRealDirectory, sha256File } from "./lib/packaged-binary.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.join(__dirname, "..")
-const BIN_DIR = path.join(ROOT_DIR, "resources", "bin")
+const outputRootArg = process.argv.find((argument) => argument.startsWith("--output-root="))
+const BIN_DIR = outputRootArg
+  ? path.resolve(outputRootArg.slice("--output-root=".length))
+  : path.join(ROOT_DIR, "resources", "bin")
 
 // Claude Code distribution base URL
 const DIST_BASE =
@@ -60,29 +63,37 @@ function fetchJson(url) {
  */
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath)
-
-    const request = (url) => {
+    const request = (nextUrl) => {
+      const file = fs.createWriteStream(destPath)
       https
-        .get(url, (res) => {
+        .get(nextUrl, (res) => {
           if (res.statusCode === 301 || res.statusCode === 302) {
-            file.close()
-            fs.unlinkSync(destPath)
-            return request(res.headers.location)
+            const redirectUrl = res.headers.location
+            if (!redirectUrl) {
+              file.close()
+              fs.rmSync(destPath, { force: true })
+              return reject(new Error("Missing redirect location"))
+            }
+            file.close(() => {
+              fs.rmSync(destPath, { force: true })
+              request(redirectUrl)
+            })
+            return
           }
 
           if (res.statusCode !== 200) {
             file.close()
-            fs.unlinkSync(destPath)
+            fs.rmSync(destPath, { force: true })
             return reject(new Error(`HTTP ${res.statusCode}`))
           }
 
-          const totalSize = parseInt(res.headers["content-length"], 10)
+          const totalSize = Number.parseInt(res.headers["content-length"] || "0", 10)
           let downloaded = 0
           let lastPercent = 0
 
           res.on("data", (chunk) => {
             downloaded += chunk.length
+            if (totalSize <= 0) return
             const percent = Math.floor((downloaded / totalSize) * 100)
             if (percent !== lastPercent && percent % 10 === 0) {
               process.stdout.write(`\r  Progress: ${percent}%`)
@@ -94,37 +105,24 @@ function downloadFile(url, destPath) {
 
           file.on("finish", () => {
             file.close()
-            process.stdout.write("\r  Progress: 100%\n")
+            if (totalSize > 0) process.stdout.write("\r  Progress: 100%\n")
             resolve()
           })
 
           res.on("error", (err) => {
             file.close()
-            fs.unlinkSync(destPath)
+            fs.rmSync(destPath, { force: true })
             reject(err)
           })
         })
         .on("error", (err) => {
           file.close()
-          fs.unlinkSync(destPath)
+          fs.rmSync(destPath, { force: true })
           reject(err)
         })
     }
 
     request(url)
-  })
-}
-
-/**
- * Calculate SHA256 hash of file
- */
-function calculateSha256(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256")
-    const stream = fs.createReadStream(filePath)
-    stream.on("data", (chunk) => hash.update(chunk))
-    stream.on("end", () => resolve(hash.digest("hex")))
-    stream.on("error", reject)
   })
 }
 
@@ -165,7 +163,8 @@ async function downloadPlatform(version, platformKey, manifest) {
   const targetPath = path.join(targetDir, platform.binary)
 
   // Create directory
-  fs.mkdirSync(targetDir, { recursive: true })
+  ensureRealDirectory(BIN_DIR)
+  ensureRealDirectory(targetDir)
 
   // Get expected hash from manifest
   const platformManifest = manifest.platforms[platform.dir]
@@ -182,33 +181,42 @@ async function downloadPlatform(version, platformKey, manifest) {
   console.log(`  Size: ${(platformManifest.size / 1024 / 1024).toFixed(1)} MB`)
 
   // Check if already downloaded with correct hash
-  if (fs.existsSync(targetPath)) {
-    const existingHash = await calculateSha256(targetPath)
+  try {
+    assertBundledBinary(targetPath, platformKey)
+    const existingHash = await sha256File(targetPath)
     if (existingHash === expectedHash) {
       console.log(`  Already downloaded and verified`)
       return true
     }
     console.log(`  Existing file has wrong hash, re-downloading...`)
+  } catch {
+    if (fs.existsSync(targetPath)) {
+      console.log(`  Existing Claude cache is non-regular or invalid, re-downloading...`)
+    }
   }
 
-  // Download
-  await downloadFile(downloadUrl, targetPath)
+  const downloadPath = `${targetPath}.download`
+  fs.rmSync(downloadPath, { recursive: true, force: true })
+  await downloadFile(downloadUrl, downloadPath)
 
   // Verify hash
-  const actualHash = await calculateSha256(targetPath)
+  const actualHash = await sha256File(downloadPath)
   if (actualHash !== expectedHash) {
     console.error(`  Hash mismatch!`)
     console.error(`    Expected: ${expectedHash}`)
     console.error(`    Actual:   ${actualHash}`)
-    fs.unlinkSync(targetPath)
+    fs.rmSync(downloadPath, { force: true })
     return false
   }
   console.log(`  Verified SHA256: ${actualHash.substring(0, 16)}...`)
 
   // Make executable (Unix)
-  if (process.platform !== "win32") {
+  fs.rmSync(targetPath, { recursive: true, force: true })
+  fs.renameSync(downloadPath, targetPath)
+  if (!platformKey.startsWith("win32")) {
     fs.chmodSync(targetPath, 0o755)
   }
+  assertBundledBinary(targetPath, platformKey)
 
   console.log(`  Saved to: ${targetPath}`)
   return true
@@ -222,13 +230,12 @@ async function main() {
   const downloadAll = args.includes("--all")
   const versionArg = args.find((a) => a.startsWith("--version="))
   const specifiedVersion = versionArg?.split("=")[1]
-  const platformArgIdx = args.indexOf("--platform")
-  const platformArgEq = args.find((a) => a.startsWith("--platform="))
-  const specifiedPlatform = platformArgEq
-    ? platformArgEq.split("=")[1]
-    : platformArgIdx >= 0
-      ? args[platformArgIdx + 1]
-      : null
+  const specifiedPlatforms = []
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument.startsWith("--platform=")) specifiedPlatforms.push(argument.split("=")[1])
+    else if (argument === "--platform" && args[index + 1]) specifiedPlatforms.push(args[++index])
+  }
 
   console.log("Claude Code Binary Downloader")
   console.log("=============================\n")
@@ -253,14 +260,15 @@ async function main() {
   let platformsToDownload
   if (downloadAll) {
     platformsToDownload = Object.keys(PLATFORMS)
-  } else if (specifiedPlatform) {
+  } else if (specifiedPlatforms.length > 0) {
     // Specific platform requested via --platform
-    if (!PLATFORMS[specifiedPlatform]) {
-      console.error(`Unsupported platform: ${specifiedPlatform}`)
+    const unsupportedPlatform = specifiedPlatforms.find((platform) => !PLATFORMS[platform])
+    if (unsupportedPlatform) {
+      console.error(`Unsupported platform: ${unsupportedPlatform}`)
       console.log(`Supported platforms: ${Object.keys(PLATFORMS).join(", ")}`)
       process.exit(1)
     }
-    platformsToDownload = [specifiedPlatform]
+    platformsToDownload = [...new Set(specifiedPlatforms)]
   } else {
     // Current platform only
     const currentPlatform = `${process.platform}-${process.arch}`
@@ -275,7 +283,7 @@ async function main() {
   console.log(`\nPlatforms to download: ${platformsToDownload.join(", ")}`)
 
   // Create bin directory
-  fs.mkdirSync(BIN_DIR, { recursive: true })
+  ensureRealDirectory(BIN_DIR)
 
   // Write version file
   fs.writeFileSync(path.join(BIN_DIR, "VERSION"), `${version}\n${new Date().toISOString()}\n`)

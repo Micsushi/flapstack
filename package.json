@@ -13,22 +13,22 @@
     "dev:raw": "electron-vite dev",
     "build": "NODE_OPTIONS=--max-old-space-size=6144 node scripts/with-heavy-job-lock.mjs build -- electron-vite build",
     "preview": "electron-vite preview",
-    "prepackage": "npm run whisper:prepare",
-    "package": "electron-builder --dir",
-    "prepackage:mac": "npm run whisper:prepare:mac",
-    "package:mac": "electron-builder --mac",
-    "prepackage:win": "npm run whisper:prepare",
-    "package:win": "electron-builder --win",
-    "prepackage:linux": "npm run whisper:prepare",
-    "package:linux": "electron-builder --linux",
-    "dist": "electron-builder",
+    "package": "node scripts/package-app.mjs --dir",
+    "package:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64",
+    "package:win": "node scripts/package-app.mjs --platform=win32 --arch=x64",
+    "package:linux": "node scripts/package-app.mjs --platform=linux --arch=x64",
+    "package:linux:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64",
+    "dist": "node scripts/package-app.mjs",
     "claude:download": "node scripts/download-claude-binary.mjs --version=2.1.45",
     "claude:download:all": "node scripts/download-claude-binary.mjs --version=2.1.45 --all",
-    "codex:download": "node scripts/download-codex-binary.mjs --version=0.98.0",
-    "codex:download:all": "node scripts/download-codex-binary.mjs --version=0.98.0 --all",
+    "codex:download": "node scripts/download-codex-binary.mjs --version=0.144.1",
+    "codex:download:all": "node scripts/download-codex-binary.mjs --version=0.144.1 --all",
+    "package:prepare": "node scripts/prepare-package-resources.mjs",
+    "package:inspect:mac": "node scripts/inspect-packaged-binaries.mjs --app=release/mac-arm64/Flapstack.app --platform=darwin-arm64 && node scripts/inspect-packaged-binaries.mjs --app=release/mac/Flapstack.app --platform=darwin-x64",
+    "package:smoke:mac": "node scripts/inspect-packaged-binaries.mjs --app=release/mac-arm64/Flapstack.app --platform=darwin-arm64 --smoke && node scripts/inspect-packaged-binaries.mjs --app=release/mac/Flapstack.app --platform=darwin-x64 --smoke",
     "whisper:prepare": "node scripts/prepare-whisper-binary.mjs",
     "whisper:prepare:mac": "node scripts/prepare-whisper-binary.mjs --platform=darwin-arm64 --platform=darwin-x64",
-    "release:local": "rm -rf release && npm run claude:download && npm run codex:download && npm run build && npm run package:mac",
+    "release:local": "rm -rf release && npm run build && npm run package:mac && npm run package:inspect:mac",
     "icon:generate": "node scripts/generate-icon.mjs",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
@@ -42,7 +42,7 @@
     "test:codex-model-catalog": "node scripts/check-codex-model-catalog.mjs",
     "check": "node scripts/with-heavy-job-lock.mjs check -- sh -c \"npm run lint && npm run style:check && npm run ts:check && npm run test && npm run build\"",
     "ts:check": "tsc --noEmit",
-    "postinstall": "node -e \"if(!process.env.VERCEL){require('child_process').execSync('node scripts/ensure-native-abi.mjs electron',{stdio:'inherit'})}\" && node scripts/patch-electron-dev.mjs"
+    "postinstall": "node -e \"if(!process.env.VERCEL){require('child_process').execSync('node node_modules/electron/install.js && node scripts/ensure-native-abi.mjs electron',{stdio:'inherit'})}\" && node scripts/patch-electron-dev.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.1.2",
@@ -144,8 +144,8 @@
     "@welldone-software/why-did-you-render": "^10.0.1",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.8",
-    "electron": "~39.4.0",
-    "electron-builder": "^25.1.8",
+    "electron": "~39.8.10",
+    "electron-builder": "26.15.3",
     "electron-vite": "^3.0.0",
     "eslint": "^10.6.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -260,8 +260,18 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico"
     },

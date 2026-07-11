@@ -12,7 +12,7 @@ change tracking.
 
 | Layer           | Tech                                                                                                |
 | --------------- | --------------------------------------------------------------------------------------------------- |
-| Desktop         | Electron 39.4.0, electron-vite, electron-builder                                                    |
+| Desktop         | Electron 39.8.10, electron-vite, electron-builder                                                   |
 | UI              | React 19, TypeScript 5.4.5, Tailwind CSS                                                            |
 | Components      | Radix UI, Lucide icons, Motion, Sonner                                                              |
 | State           | Jotai, Zustand, React Query                                                                         |

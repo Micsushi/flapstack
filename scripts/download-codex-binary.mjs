@@ -5,19 +5,27 @@
  * Usage:
  *   node scripts/download-codex-binary.mjs              # Download for current platform
  *   node scripts/download-codex-binary.mjs --all        # Download all platforms
- *   node scripts/download-codex-binary.mjs --version=0.98.0
+ *   node scripts/download-codex-binary.mjs --version=0.144.1
  */
 
 import fs from "node:fs"
 import path from "node:path"
 import https from "node:https"
-import crypto from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import {
+  assertBundledBinary,
+  ensureRealDirectory,
+  sha256File,
+  verifyCachedBinaryDigest,
+} from "./lib/packaged-binary.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.join(__dirname, "..")
-const BIN_DIR = path.join(ROOT_DIR, "resources", "bin")
+const outputRootArg = process.argv.find((argument) => argument.startsWith("--output-root="))
+const BIN_DIR = outputRootArg
+  ? path.resolve(outputRootArg.slice("--output-root=".length))
+  : path.join(ROOT_DIR, "resources", "bin")
 
 const RELEASE_REPO = "openai/codex"
 const RELEASE_TAG_PREFIX = "rust-v"
@@ -170,23 +178,6 @@ function downloadFile(url, destPath) {
   })
 }
 
-function calculateSha256(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256")
-    const stream = fs.createReadStream(filePath)
-
-    stream.on("data", (chunk) => {
-      hash.update(chunk)
-    })
-
-    stream.on("end", () => {
-      resolve(hash.digest("hex"))
-    })
-
-    stream.on("error", reject)
-  })
-}
-
 function parseSha256Digest(rawDigest) {
   if (typeof rawDigest !== "string") return null
   if (!rawDigest.startsWith("sha256:")) return null
@@ -250,9 +241,11 @@ async function downloadPlatform(version, platformKey, release) {
 
   const targetDir = path.join(BIN_DIR, platformKey)
   const targetPath = path.join(targetDir, platform.outputBinaryName)
-  const hashMarkerPath = path.join(targetDir, ".codex-asset.sha256")
+  const assetHashMarkerPath = path.join(targetDir, ".codex-asset.sha256")
+  const binaryHashMarkerPath = path.join(targetDir, ".codex-binary.sha256")
 
-  fs.mkdirSync(targetDir, { recursive: true })
+  ensureRealDirectory(BIN_DIR)
+  ensureRealDirectory(targetDir)
 
   const asset = findAsset(release, platform.assetName)
   if (!asset) {
@@ -263,6 +256,11 @@ async function downloadPlatform(version, platformKey, release) {
   const expectedHash = parseSha256Digest(asset.digest)
   const downloadUrl = asset.browser_download_url
 
+  if (!expectedHash) {
+    console.error(`Missing SHA256 digest for pinned Codex asset ${platform.assetName}`)
+    return false
+  }
+
   if (!downloadUrl) {
     console.error(`Missing download URL for ${platform.assetName}`)
     return false
@@ -272,14 +270,20 @@ async function downloadPlatform(version, platformKey, release) {
   console.log(`  URL: ${downloadUrl}`)
   console.log(`  Size: ${(asset.size / 1024 / 1024).toFixed(1)} MB`)
 
-  if (
-    expectedHash &&
-    fs.existsSync(targetPath) &&
-    fs.existsSync(hashMarkerPath) &&
-    fs.readFileSync(hashMarkerPath, "utf8").trim() === expectedHash
-  ) {
-    console.log("  Already downloaded and verified")
-    return true
+  try {
+    const assetMarker = fs.readFileSync(assetHashMarkerPath, "utf8").trim()
+    if (
+      assetMarker === expectedHash &&
+      (await verifyCachedBinaryDigest(targetPath, platformKey, binaryHashMarkerPath))
+    ) {
+      console.log("  Already downloaded and verified")
+      return true
+    }
+    console.log("  Existing Codex cache failed digest validation, re-downloading...")
+  } catch {
+    if (fs.existsSync(targetPath)) {
+      console.log("  Existing Codex cache is missing, non-regular, or invalid; re-downloading...")
+    }
   }
 
   const downloadPath = path.join(targetDir, `${platform.assetName}.download`)
@@ -288,7 +292,7 @@ async function downloadPlatform(version, platformKey, release) {
   await downloadFile(downloadUrl, downloadPath)
 
   if (expectedHash) {
-    const actualHash = await calculateSha256(downloadPath)
+    const actualHash = await sha256File(downloadPath)
     if (actualHash !== expectedHash) {
       console.error("  Hash mismatch!")
       console.error(`    Expected: ${expectedHash}`)
@@ -297,8 +301,6 @@ async function downloadPlatform(version, platformKey, release) {
       return false
     }
     console.log(`  Verified SHA256: ${actualHash.slice(0, 16)}...`)
-  } else {
-    console.warn("  Warning: release digest missing, skipping hash verification")
   }
 
   if (platform.assetName.endsWith(".tar.gz")) {
@@ -315,9 +317,11 @@ async function downloadPlatform(version, platformKey, release) {
       throw new Error(`Extracted binary not found: ${extractedPath}`)
     }
 
+    fs.rmSync(targetPath, { recursive: true, force: true })
     fs.copyFileSync(extractedPath, targetPath)
     fs.rmSync(extractDir, { recursive: true, force: true })
   } else {
+    fs.rmSync(targetPath, { recursive: true, force: true })
     fs.copyFileSync(downloadPath, targetPath)
   }
 
@@ -327,9 +331,10 @@ async function downloadPlatform(version, platformKey, release) {
     fs.chmodSync(targetPath, 0o755)
   }
 
-  if (expectedHash) {
-    fs.writeFileSync(hashMarkerPath, `${expectedHash}\n`)
-  }
+  assertBundledBinary(targetPath, platformKey)
+  const binaryHash = await sha256File(targetPath)
+  fs.writeFileSync(assetHashMarkerPath, `${expectedHash}\n`)
+  fs.writeFileSync(binaryHashMarkerPath, `${binaryHash}\n`)
 
   console.log(`  Saved to: ${targetPath}`)
   return true
@@ -339,13 +344,12 @@ async function main() {
   const args = process.argv.slice(2)
   const downloadAll = args.includes("--all")
   const specifiedVersion = getVersionArg(args)
-  const platformArgIdx = args.indexOf("--platform")
-  const platformArgEq = args.find((a) => a.startsWith("--platform="))
-  const specifiedPlatform = platformArgEq
-    ? platformArgEq.split("=")[1]
-    : platformArgIdx >= 0
-      ? args[platformArgIdx + 1]
-      : null
+  const specifiedPlatforms = []
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument.startsWith("--platform=")) specifiedPlatforms.push(argument.split("=")[1])
+    else if (argument === "--platform" && args[index + 1]) specifiedPlatforms.push(args[++index])
+  }
 
   console.log("Codex Binary Downloader")
   console.log("=======================\n")
@@ -358,13 +362,14 @@ async function main() {
   let platformsToDownload
   if (downloadAll) {
     platformsToDownload = Object.keys(PLATFORMS)
-  } else if (specifiedPlatform) {
-    if (!PLATFORMS[specifiedPlatform]) {
-      console.error(`Unsupported platform: ${specifiedPlatform}`)
+  } else if (specifiedPlatforms.length > 0) {
+    const unsupportedPlatform = specifiedPlatforms.find((platform) => !PLATFORMS[platform])
+    if (unsupportedPlatform) {
+      console.error(`Unsupported platform: ${unsupportedPlatform}`)
       console.log(`Supported platforms: ${Object.keys(PLATFORMS).join(", ")}`)
       process.exit(1)
     }
-    platformsToDownload = [specifiedPlatform]
+    platformsToDownload = [...new Set(specifiedPlatforms)]
   } else {
     const currentPlatform = `${process.platform}-${process.arch}`
     if (!PLATFORMS[currentPlatform]) {
@@ -377,7 +382,7 @@ async function main() {
 
   console.log(`\nPlatforms to download: ${platformsToDownload.join(", ")}`)
 
-  fs.mkdirSync(BIN_DIR, { recursive: true })
+  ensureRealDirectory(BIN_DIR)
 
   let success = true
   for (const platformKey of platformsToDownload) {

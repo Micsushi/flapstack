@@ -40,6 +40,7 @@ import {
 import { buildMessageSpeechRequest } from "../src/renderer/lib/message-speech-request"
 import type { TtsAdapter } from "../src/main/lib/speech/types"
 import { SpeechRequestOwnership } from "../src/main/lib/speech/request-ownership"
+import { ProgressSubscribers } from "../src/main/lib/speech/progress-subscribers"
 
 describe("speakable filter", () => {
   it("extracts only the Spoken section", () => {
@@ -254,6 +255,21 @@ describe("local Whisper audio preparation", () => {
     await expect(raceAbort(Promise.resolve("chunk"), controller.signal)).resolves.toBe("chunk")
     expect(add).toHaveBeenCalledTimes(1)
     expect(remove).toHaveBeenCalledTimes(1)
+  })
+
+  it("fans shared download progress out to every caller and removes only that caller", () => {
+    const subscribers = new ProgressSubscribers<string, number>()
+    const first = vi.fn()
+    const second = vi.fn()
+    const unsubscribeFirst = subscribers.subscribe("base", first, 0)
+    subscribers.subscribe("base", second, 0)
+
+    subscribers.publish("base", 50)
+    unsubscribeFirst()
+    subscribers.publish("base", 100)
+
+    expect(first.mock.calls).toEqual([[0], [50]])
+    expect(second.mock.calls).toEqual([[0], [50], [100]])
   })
 })
 
