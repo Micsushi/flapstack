@@ -1,6 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import { readMcpCallerIdentity } from "./identity"
-import { connectMcpControlServer } from "./server"
+import { readMcpCallerIdentity } from "./lib/mcp-control/identity"
+import { connectMcpControlServer } from "./lib/mcp-control/server"
 
 async function main(): Promise<void> {
   const connection = await connectMcpControlServer(

@@ -35,13 +35,25 @@ import {
   rejectCodexPermissionRequest,
   resolveCodexPermissionOption,
 } from "../../codex/permission-bridge"
-import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
+import {
+  agentRuns,
+  chats,
+  getDatabase,
+  getDatabasePath,
+  projects as projectsTable,
+  subChats,
+} from "../../db"
 import { CODEX_TRANSPORT_DECISION } from "../../harness/codex-transport-decision"
 import {
   buildHarnessContextBundle,
   getLastHarnessContextFingerprint,
   prependStartupContext,
 } from "../../harness/launch-context"
+import { getChatMcpExposure } from "../../mcp-control/exposure"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+} from "../../mcp-control/registration"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
@@ -1994,6 +2006,24 @@ export const codexRouter = router({
               mcpSnapshot = await resolveCodexMcpSnapshot({
                 lookupPath: mcpLookupPath,
               })
+              if (getChatMcpExposure(input.chatId)) {
+                const registration = buildMcpStdioRegistration(
+                  { chatId: input.chatId, runId: input.runId, permissionMode },
+                  {
+                    executablePath: process.execPath,
+                    mainDirectory: __dirname,
+                    databasePath: getDatabasePath(),
+                  },
+                )
+                mcpSnapshot.mcpServersForSession.push({
+                  name: FLAPSTACK_MCP_SERVER_NAME,
+                  type: "stdio",
+                  command: registration.command,
+                  args: registration.args,
+                  env: Object.entries(registration.env).map(([name, value]) => ({ name, value })),
+                })
+                mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServersForSession)
+              }
             } catch (mcpError) {
               console.error("[codex] Failed to resolve MCP servers:", mcpError)
             }

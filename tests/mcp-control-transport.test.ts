@@ -30,9 +30,7 @@ describe("Flapstack MCP stdio transport", () => {
       "CREATE TABLE chats (id TEXT PRIMARY KEY, scope TEXT, task_id TEXT, project_id TEXT); CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, archived_at INTEGER, updated_at INTEGER); INSERT INTO chats VALUES ('chat-transport-test', 'global', NULL, NULL)",
     )
     database.close()
-    const entry = fileURLToPath(
-      new URL("../src/main/lib/mcp-control/stdio-entry.ts", import.meta.url),
-    )
+    const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["--import", "tsx", entry],
