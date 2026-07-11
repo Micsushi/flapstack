@@ -1,4 +1,4 @@
-# S3-F1 - TypeScript and Engineering Debt
+# S3-F1 — TypeScript and Engineering Debt
 
 - Change: `openspec/changes/stabilize-stage3-foundation/`
 - Specification: `openspec/changes/stabilize-stage3-foundation/specs/engineering-quality/spec.md`

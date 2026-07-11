@@ -1,4 +1,4 @@
-# S3-F6 - MCP Management and Safety UI
+# S3-F6 — MCP Management and Safety UI
 
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Tasks: `openspec/changes/add-stage3-mcp-control/tasks.md`

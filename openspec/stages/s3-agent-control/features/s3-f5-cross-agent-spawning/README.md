@@ -1,4 +1,4 @@
-# S3-F5 - Cross-Agent Spawning
+# S3-F5 — Cross-Agent Spawning
 
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Tasks: `openspec/changes/add-stage3-mcp-control/tasks.md`

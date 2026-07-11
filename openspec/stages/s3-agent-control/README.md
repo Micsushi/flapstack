@@ -1,4 +1,4 @@
-# S3 - Safe Agent Control
+# S3 — Safe Agent Control
 
 1. [S3-F1 TypeScript and engineering debt](features/s3-f1-typescript-debt/README.md)
 2. [S3-F2 MCP implementation](features/s3-f2-mcp-implementation/README.md)

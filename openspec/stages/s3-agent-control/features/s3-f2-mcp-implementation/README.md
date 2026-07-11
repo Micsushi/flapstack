@@ -1,4 +1,4 @@
-# S3-F2 - MCP Implementation
+# S3-F2 — MCP Implementation
 
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Specification: `openspec/changes/add-stage3-mcp-control/specs/app-control-mcp/spec.md`
