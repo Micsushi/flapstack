@@ -1,9 +1,7 @@
 # Harness Engine: OpenCode Sidecar (Track E)
 
-Repo-local mirror of the vault decision recorded in
-`Wiki/Projects/flapstack/stage2-implementation-tasks.md` (Track E) and
-`current-handoff.md` (2026-07-10). This file exists so the implementation is
-self-documenting without the vault.
+Repo-local record of the Track E decision, dated 2026-07-10. This file keeps
+the implementation rationale self-contained.
 
 ## E0 decision — use OpenCode as the first harness engine
 

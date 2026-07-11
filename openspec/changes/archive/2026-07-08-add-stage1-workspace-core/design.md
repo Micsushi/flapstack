@@ -58,4 +58,4 @@ DB copy (local-first, single user).
 
 ## Open Questions
 
-- None blocking; per-task open points live in the vault task board.
+- None blocking; per-task open points are recorded in this change's `tasks.md`.

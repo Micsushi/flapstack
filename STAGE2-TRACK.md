@@ -2,8 +2,7 @@
 
 Branch: `codex/stage2-cursor-support`
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track D**.
+Repo-local implementation scope: **Track D**.
 
 ## Tasks
 - D0  Verify `cursor-agent` CLI surface + reasoning fixture (prereq) — CLI already

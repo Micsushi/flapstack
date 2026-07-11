@@ -2,8 +2,7 @@
 
 Branch: `codex/stage2-usage-tracking`
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track B**.
+Repo-local implementation scope: **Track B**.
 
 ## Tasks
 - U1  Shared usage schema + provider adapter interface

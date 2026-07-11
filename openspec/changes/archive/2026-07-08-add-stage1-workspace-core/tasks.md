@@ -1,7 +1,7 @@
 # Tasks
 
-Mirrors the vault task board (`stage1-implementation-tasks.md`, tasks A1–E3),
-which carries per-task files, scope, done criteria, and dependencies.
+This archived checklist records Stage 1 tasks A1–E3. Section order captures the
+dependency sequence; each task names its implementation scope and outcome.
 
 ## 1. Foundation (Block A)
 
