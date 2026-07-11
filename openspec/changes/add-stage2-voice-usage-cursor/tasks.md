@@ -1,8 +1,7 @@
 # Stage 2 Tasks
 
-Full per-task detail (files, scope, done-when, blockers) lives in the vault board
-`Wiki/Projects/flapstack/stage2-implementation-tasks.md`. This checklist mirrors
-it for OpenSpec tracking.
+This repo-local checklist tracks the implementation scope, ordering, and
+blockers for the change.
 
 ## 0. Prerequisite
 

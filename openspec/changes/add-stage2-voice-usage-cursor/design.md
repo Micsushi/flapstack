@@ -3,7 +3,7 @@
 Stage 2 is a large, cross-cutting slice touching the main process (speech, usage,
 harness adapters), the renderer (voice UX, usage dashboard, Cursor/OpenRouter/
 NanoGPT identity), the DB schema (usage tables), and external dependencies.
-Decisions were closed in the S2.0 grill-me gate (2026-07-09). Reuse comes from
+Decisions were closed in the S2.0 planning gate (2026-07-09). Reuse comes from
 four reference repos: `agent-hotline` (speech filter + TTS engines), `onWatch`
 (usage math + a complete Cursor usage client), OpenCode (harness engine), and
 Vibe Kanban (OpenCode sidecar adapter pattern). Aider is cloned for
