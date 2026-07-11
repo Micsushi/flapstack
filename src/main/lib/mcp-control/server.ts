@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
+import { mcpReadInputShapes } from "./read-service"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
@@ -11,10 +12,11 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
       tool.name,
       {
         description: tool.description,
+        inputSchema: mcpReadInputShapes[tool.name],
         annotations: { readOnlyHint: true, destructiveHint: false },
       },
-      async () => {
-        const response = await invokeMcpControlTool(tool.name, caller)
+      async (input) => {
+        const response = await invokeMcpControlTool(tool.name, caller, input)
         return {
           content: [{ type: "text" as const, text: JSON.stringify(response) }],
           structuredContent: response,
