@@ -8,6 +8,7 @@ import { attachments, chats, flapshotOperations, getDatabase, projects } from ".
 import { createId } from "../db/utils"
 import {
   assertServiceResponseCorrelation,
+  assertOperationResponseBinding,
   deriveFlapshotActions,
   buildRecordingStartInput,
   flapshotAuthorizedFileReferenceSchema,
@@ -41,6 +42,7 @@ import {
   validateFlapshotResourceUri,
   verifyStoredFlapshotFile,
 } from "./integrity"
+import { resolveStoredOperationScope } from "./lifecycle"
 
 const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "timed-out", "interrupted"])
 const MONITOR_INTERVAL_MS = 1_000
@@ -51,6 +53,8 @@ interface ChatScope {
   projectPath: string | null
   connectionKey: string
 }
+
+type StoredFlapshotOperation = typeof flapshotOperations.$inferSelect
 
 function getChatScope(chatId: string, clients: FlapshotMcpClientManager): ChatScope {
   const db = getDatabase()
@@ -165,7 +169,11 @@ export class FlapshotService {
           screenshot: { available: false, reason: status.error ?? "Flapshot is unavailable" },
           recording: { available: false, reason: status.error ?? "Flapshot is unavailable" },
         }
-    if (!status.auth?.paired) {
+    if (!status.pairingStatusSupported) {
+      const reason = "Flapshot MCP does not expose exact live pairing status"
+      actions.screenshot = { available: false, reason }
+      actions.recording = { available: false, reason }
+    } else if (!status.auth?.paired) {
       const reason = status.auth?.pairingCode
         ? `Pair code ${status.auth.pairingCode} in Flapshot Agent access`
         : (status.error ?? "Flapshot pairing status is unavailable")
@@ -217,7 +225,8 @@ export class FlapshotService {
       configured: status.configured,
       connected: status.connected,
       serverVersion: status.serverVersion,
-      paired: status.auth?.paired ?? false,
+      paired: status.pairingStatusSupported ? (status.auth?.paired ?? false) : null,
+      pairingStatusSupported: status.pairingStatusSupported,
       connectionId: status.auth?.connectionId ?? null,
       pairingCode: status.auth?.pairingCode ?? null,
       error: status.error,
@@ -360,6 +369,7 @@ export class FlapshotService {
       sizeBytes: attachment.byteLength,
       sha256: attachment.sha256,
       mimeType: attachment.mimeType,
+      grantExpiresAt: attachment.storedPath ? null : attachment.grantExpiresAt,
     })
     db.update(attachments)
       .set({ integrityStatus: result.status })
@@ -388,11 +398,12 @@ export class FlapshotService {
   }
 
   private storeAccepted(scope: ChatScope, kind: string, snapshot: FlapshotOperationSnapshot) {
-    getDatabase()
-      .insert(flapshotOperations)
+    const db = getDatabase()
+    db.insert(flapshotOperations)
       .values({
         operationId: snapshot.operationId,
         chatId: scope.chatId,
+        taskId: scope.taskId,
         connectionKey: scope.connectionKey,
         kind,
         state: snapshot.state,
@@ -407,11 +418,24 @@ export class FlapshotService {
         progressUnit: snapshot.progress.unit,
         progressMessage: snapshot.progress.message,
       })
-      .onConflictDoUpdate({
-        target: flapshotOperations.operationId,
-        set: { state: snapshot.state, updatedAt: new Date() },
-      })
+      .onConflictDoNothing()
       .run()
+    const stored = db
+      .select()
+      .from(flapshotOperations)
+      .where(eq(flapshotOperations.operationId, snapshot.operationId))
+      .get()
+    if (
+      !stored ||
+      stored.chatId !== scope.chatId ||
+      stored.taskId !== scope.taskId ||
+      stored.connectionKey !== scope.connectionKey ||
+      stored.requestId !== snapshot.requestId ||
+      stored.clientId !== snapshot.clientId ||
+      stored.sessionId !== snapshot.sessionId
+    ) {
+      throw new Error("Flapshot accepted operation conflicts with an existing owner")
+    }
   }
 
   private startMonitor(scope: ChatScope, operationId: string) {
@@ -439,7 +463,13 @@ export class FlapshotService {
       .where(eq(flapshotOperations.connectionKey, scope.connectionKey))
       .all()
     for (const row of rows) {
-      if (!TERMINAL_STATES.has(row.state)) this.startMonitor(scope, row.operationId)
+      if (!TERMINAL_STATES.has(row.state)) {
+        try {
+          this.startMonitor(this.scopeForStoredOperation(row), row.operationId)
+        } catch (error) {
+          this.markOperationInterrupted(row.operationId, "SCOPE_MISMATCH", safeMcpError(error))
+        }
+      }
     }
   }
 
@@ -452,17 +482,32 @@ export class FlapshotService {
     await Promise.allSettled(
       rows
         .filter((row) => !TERMINAL_STATES.has(row.state))
-        .map((row) => this.refreshOperation(scope, row.operationId)),
+        .map(async (row) =>
+          this.refreshOperation(this.scopeForStoredOperation(row), row.operationId),
+        ),
     )
   }
 
+  private scopeForStoredOperation(row: StoredFlapshotOperation): ChatScope {
+    return resolveStoredOperationScope(row, (chatId) => getChatScope(chatId, this.clients))
+  }
+
   private async refreshOperation(scope: ChatScope, operationId: string): Promise<boolean> {
+    const stored = getDatabase()
+      .select()
+      .from(flapshotOperations)
+      .where(eq(flapshotOperations.operationId, operationId))
+      .get()
+    if (!stored || stored.chatId !== scope.chatId || stored.connectionKey !== scope.connectionKey) {
+      throw new Error("Flapshot operation refresh scope does not match its stored owner")
+    }
     const client = await this.clients.client(scope.projectPath)
     const value = await callTool(client, FLAPSHOT_TOOLS.operationGet, {
       requestId: `flapstack-operation-${randomUUID()}`,
       operationId,
     })
     const response = operationGetResponseSchema.parse(value)
+    assertOperationResponseBinding(response, stored)
     const snapshot = response.data
     if (!snapshot) {
       this.markOperationInterrupted(
@@ -490,7 +535,12 @@ export class FlapshotService {
         errorMessage: error?.message ?? null,
         updatedAt: new Date(),
       })
-      .where(eq(flapshotOperations.operationId, operationId))
+      .where(
+        and(
+          eq(flapshotOperations.operationId, operationId),
+          eq(flapshotOperations.chatId, stored.chatId),
+        ),
+      )
       .run()
 
     if (snapshot.state === "succeeded") {
@@ -590,6 +640,7 @@ export class FlapshotService {
         sourceUri,
         sourceApplication: "Flapshot",
         grantClientId: authorizedReference.local.grantedToClientId,
+        grantExpiresAt: authorizedReference.local.expiresAt ?? null,
         provenanceJson,
         integrityStatus: "verified",
         operationId: snapshot.operationId,

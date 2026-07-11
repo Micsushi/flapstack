@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { createReadStream } from "node:fs"
-import { lstat, open, realpath, stat } from "node:fs/promises"
-import { isAbsolute, normalize } from "node:path"
+import { copyFile, link, lstat, open, realpath, rename, rm, stat } from "node:fs/promises"
+import { dirname, isAbsolute, join, normalize } from "node:path"
 import {
   FLAPSHOT_CAPABILITIES_URI,
   type FlapshotAuthorizedFileReference,
@@ -15,6 +15,7 @@ export const FLAPSHOT_ATTACHMENT_LIMITS = {
 } as const
 
 export type FlapshotIntegrityStatus = "verified" | "missing" | "tampered"
+export type FlapshotIntegrityResult = { status: FlapshotIntegrityStatus; message: string }
 
 export interface ValidatedFlapshotFile {
   canonicalPath: string
@@ -83,8 +84,11 @@ export async function validateFlapshotFileReference(
   if (reference.kind === "managed-artifact" && !reference.artifactId) {
     throw new Error("Managed Flapshot reference is missing an artifact ID")
   }
-  if (reference.local.expiresAt && Date.parse(reference.local.expiresAt) <= Date.now()) {
-    throw new Error("Flapshot local path grant expired")
+  if (reference.local.expiresAt !== undefined) {
+    const expiry = Date.parse(reference.local.expiresAt)
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+      throw new Error("Flapshot local path grant expired")
+    }
   }
   if (expectedClientId && reference.local.grantedToClientId !== expectedClientId) {
     throw new Error("Flapshot local path grant belongs to another authenticated client")
@@ -133,9 +137,18 @@ export async function verifyStoredFlapshotFile(input: {
   sizeBytes: number | null
   sha256: string | null
   mimeType: string | null
-}): Promise<{ status: FlapshotIntegrityStatus; message: string }> {
+  grantExpiresAt?: string | null
+}): Promise<FlapshotIntegrityResult> {
   if (!input.filePath || input.sizeBytes === null || !input.sha256 || !input.mimeType) {
     return { status: "tampered", message: "Attachment integrity metadata is incomplete" }
+  }
+  if (
+    input.grantExpiresAt !== undefined &&
+    input.grantExpiresAt !== null &&
+    (!Number.isFinite(Date.parse(input.grantExpiresAt)) ||
+      Date.parse(input.grantExpiresAt) <= Date.now())
+  ) {
+    return { status: "tampered", message: "Flapshot local path grant expired" }
   }
   try {
     const linkInfo = await lstat(input.filePath)
@@ -162,5 +175,54 @@ export async function verifyStoredFlapshotFile(input: {
       return { status: "missing", message: "Attachment file is missing" }
     }
     throw error
+  }
+}
+
+export async function copyVerifiedFlapshotFile(input: {
+  sourcePath: string
+  destinationPath: string
+  overwrite: boolean
+  sizeBytes: number | null
+  sha256: string | null
+  mimeType: string | null
+  grantExpiresAt?: string | null
+}): Promise<FlapshotIntegrityResult> {
+  const expected = {
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256,
+    mimeType: input.mimeType,
+  }
+  const sourceResult = await verifyStoredFlapshotFile({
+    filePath: input.sourcePath,
+    ...expected,
+    grantExpiresAt: input.grantExpiresAt,
+  })
+  if (sourceResult.status !== "verified") return sourceResult
+
+  const temporaryPath = join(
+    dirname(input.destinationPath),
+    `.flapstack-verified-${randomUUID()}.tmp`,
+  )
+  try {
+    await copyFile(input.sourcePath, temporaryPath)
+    const copiedResult = await verifyStoredFlapshotFile({
+      filePath: temporaryPath,
+      ...expected,
+    })
+    if (copiedResult.status !== "verified") return copiedResult
+    if (input.overwrite) {
+      await rename(temporaryPath, input.destinationPath)
+    } else {
+      await link(temporaryPath, input.destinationPath)
+      await rm(temporaryPath, { force: true })
+    }
+    return copiedResult
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: "missing", message: "Attachment file disappeared during copy" }
+    }
+    throw error
+  } finally {
+    await rm(temporaryPath, { force: true })
   }
 }

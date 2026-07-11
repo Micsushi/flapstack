@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto"
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { flapshotAuthorizedFileReferenceSchema } from "../src/main/lib/flapshot/contracts"
 import {
   validateFlapshotFileReference,
+  copyVerifiedFlapshotFile,
   verifyStoredFlapshotFile,
 } from "../src/main/lib/flapshot/integrity"
 
@@ -89,5 +90,35 @@ describe("Flapshot attachment integrity", () => {
     await expect(validateFlapshotFileReference(reference, "expected-client")).rejects.toThrow(
       "another authenticated client",
     )
+  })
+
+  it("rejects an expired external grant at use time", async () => {
+    const fixture = await pngFixture()
+    await expect(
+      verifyStoredFlapshotFile({
+        filePath: fixture.filePath,
+        sizeBytes: fixture.bytes.length,
+        sha256: fixture.sha256,
+        mimeType: "image/png",
+        grantExpiresAt: "2000-01-01T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({ status: "tampered", message: expect.stringContaining("expired") })
+  })
+
+  it("copies through a verified temporary file before atomic publication", async () => {
+    const fixture = await pngFixture()
+    const sourcePath = await realpath(fixture.filePath)
+    const destination = join(dirname(sourcePath), "published.png")
+    await expect(
+      copyVerifiedFlapshotFile({
+        sourcePath,
+        destinationPath: destination,
+        overwrite: false,
+        sizeBytes: fixture.bytes.length,
+        sha256: fixture.sha256,
+        mimeType: "image/png",
+      }),
+    ).resolves.toMatchObject({ status: "verified" })
+    await expect(readFile(destination)).resolves.toEqual(fixture.bytes)
   })
 })

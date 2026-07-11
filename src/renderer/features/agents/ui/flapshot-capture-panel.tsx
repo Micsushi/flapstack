@@ -6,7 +6,11 @@ import { toast } from "sonner"
 import { Button } from "../../../components/ui/button"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { flapshotActionErrorMessage, flapshotStatusLabel } from "./flapshot-ui"
+import {
+  flapshotActionErrorMessage,
+  flapshotCaptureControlsEnabled,
+  flapshotStatusLabel,
+} from "./flapshot-ui"
 
 type FlapshotCapturePanelProps = {
   chatId: string
@@ -85,79 +89,82 @@ export function FlapshotCapturePanel({ chatId }: FlapshotCapturePanelProps) {
             Reconnect
           </Button>
         )}
-        {currentStatus?.connected && !currentStatus.paired && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1 px-2 text-xs"
-            disabled={status.isFetching}
-            onClick={() => status.refetch()}
-            title="Refresh this live Flapshot connection after pairing it in Flapshot"
-          >
-            <RotateCw className={cn("h-3.5 w-3.5", status.isFetching && "animate-spin")} />
-            Check pairing
-          </Button>
-        )}
-        {currentStatus?.connected && currentStatus.paired && (
-          <>
+        {currentStatus?.connected &&
+          currentStatus.pairingStatusSupported &&
+          currentStatus.paired === false && (
             <Button
               size="sm"
               variant="ghost"
               className="h-7 gap-1 px-2 text-xs"
-              disabled={
-                !currentStatus.actions.screenshot.available ||
-                screenshot.isPending ||
-                active.length > 0
-              }
-              onClick={() => screenshot.mutate({ chatId })}
-              title={currentStatus.actions.screenshot.reason}
+              disabled={status.isFetching}
+              onClick={() => status.refetch()}
+              title="Refresh this live Flapshot connection after pairing it in Flapshot"
             >
-              {screenshot.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Camera className="h-3.5 w-3.5" />
-              )}
-              Screenshot
+              <RotateCw className={cn("h-3.5 w-3.5", status.isFetching && "animate-spin")} />
+              Check pairing
             </Button>
-            {activeRecording ? (
+          )}
+        {currentStatus &&
+          flapshotCaptureControlsEnabled(currentStatus.connected, currentStatus.paired) && (
+            <>
               <Button
                 size="sm"
                 variant="ghost"
                 className="h-7 gap-1 px-2 text-xs"
-                disabled={stop.isPending}
-                onClick={() => stop.mutate({ chatId, operationId: activeRecording.operationId })}
-                title="Stop recording and validate the resulting video"
+                disabled={
+                  !currentStatus.actions.screenshot.available ||
+                  screenshot.isPending ||
+                  active.length > 0
+                }
+                onClick={() => screenshot.mutate({ chatId })}
+                title={currentStatus.actions.screenshot.reason}
               >
-                <Square className="h-3.5 w-3.5" />
-                Stop
+                {screenshot.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" />
+                )}
+                Screenshot
               </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 gap-1 px-2 text-xs"
-                disabled={!currentStatus.actions.recording.available || recording.isPending}
-                onClick={() => recording.mutate({ chatId })}
-                title={currentStatus.actions.recording.reason}
-              >
-                <Video className="h-3.5 w-3.5" />
-                Record
-              </Button>
-            )}
-            {active[0] && (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                disabled={cancel.isPending || active[0].state === "cancelling"}
-                onClick={() => cancel.mutate({ chatId, operationId: active[0].operationId })}
-                title={`Cancel ${active[0].kind} operation`}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </>
-        )}
+              {activeRecording ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={stop.isPending}
+                  onClick={() => stop.mutate({ chatId, operationId: activeRecording.operationId })}
+                  title="Stop recording and validate the resulting video"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!currentStatus.actions.recording.available || recording.isPending}
+                  onClick={() => recording.mutate({ chatId })}
+                  title={currentStatus.actions.recording.reason}
+                >
+                  <Video className="h-3.5 w-3.5" />
+                  Record
+                </Button>
+              )}
+              {active[0] && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  disabled={cancel.isPending || active[0].state === "cancelling"}
+                  onClick={() => cancel.mutate({ chatId, operationId: active[0].operationId })}
+                  title={`Cancel ${active[0].kind} operation`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </>
+          )}
       </div>
     </div>
   )

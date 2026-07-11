@@ -6,7 +6,9 @@ Stage 3 lifecycle checkpoint. Installed-app manual evidence remains open.
 ## Baselines
 
 - Flapstack implementation base: `049b1f928f73eb02297b3f117724304f7a9211cf`.
-- Flapshot lifecycle schema reference: `c0c120ba21296ddeb5c192c833918b790ebf57a7`.
+- Flapshot final Stage 3 integration reference: `a1fb8a5f163567a65bfbed04bb44c1292f3c6553`.
+- Hardened client/schema predecessor: `e95d0d2bf965140bc276fcc3c3c90b82c7edaec9`.
+- Lifecycle/pairing predecessor: `c0c120ba21296ddeb5c192c833918b790ebf57a7`.
 - MCP server identity at that reference: `flapshot` `0.1.0`.
 - Application envelope and screenshot, recording, artifact, operation, and system
   schemas: version 1.
@@ -78,9 +80,13 @@ enables actions only when the matching application method is available. Unavaila
 actions keep the server reason in the UI.
 
 Each stdio process starts as a random unpaired connection with zero capture authority.
-Flapstack reads `system.authStatus`, displays the exact six-digit pairing code, and
-keeps capture disabled until the user pairs that live connection in Flapshot **Agent
-access**. Pairing ends on disconnect; reconnect displays a new code.
+Flapstack requires the dedicated MCP transport-auth tool
+`flapshot_system_auth_status`, detected from MCP `tools/list` rather than the frozen
+application catalog. It validates the exact response request correlation, displays the
+six-digit pairing code, and keeps capture disabled until the user pairs that live
+connection in Flapshot **Agent access**. If the tool is absent or pairing is unknown,
+capture stays disabled. Flapstack never calls Flapshot's private local transport.
+Pairing ends on disconnect; reconnect displays a new code.
 
 Screenshot uses public bounded screenshot targets. Recording uses
 `recording.listTargets` and selects the first supported display descriptor. Flapstack
@@ -108,17 +114,23 @@ reported as successful attachments.
 
 ## Lifecycle
 
-Flapstack stores operation, request, correlation, audit, progress, terminal error,
-and attachment linkage in SQLite. The UI polls this local record. Cancel calls the
-public operation-cancel tool. Disconnect marks nonterminal client operations
-interrupted. Reconnect queries public operation state and reconciles it when the
-server still has the operation.
+Flapstack stores operation, request, correlation, audit, client, session, progress,
+terminal error, and attachment linkage in SQLite. Every refresh must match the accepted
+operation, request, client, session, and response metadata before update or ingestion.
+Cross-chat recovery rebuilds scope from each stored chat instead of the chat that
+triggered polling. Cancel calls the public operation-cancel tool. Disconnect marks
+nonterminal client operations interrupted.
 
 The default Flapshot `confirm` profile may return `APPROVAL_REQUIRED`. Flapstack tells
 the user to approve in Flapshot and retry without reconnecting. Flapshot binds the
-durable queued approval to the same connection, action, and argument digest.
+in-memory queued approval to the same live connection, action, and argument digest.
 
 No terminal state is inferred from transport success alone.
+
+Every later attachment read or worktree copy revalidates canonical path, grant expiry
+for uncopied references, MIME, size, and SHA-256. Worktree publication copies through a
+same-directory temporary file, verifies copied bytes, then publishes atomically. A
+missing, expired, or changed source is marked and rejected at use time.
 
 ## Verification
 

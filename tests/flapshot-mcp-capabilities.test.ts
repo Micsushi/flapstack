@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   assertServiceResponseCorrelation,
+  assertOperationResponseBinding,
   authStatusResponseSchema,
   deriveFlapshotActions,
   buildRecordingStartInput,
@@ -88,7 +89,7 @@ describe("Flapshot MCP capability gating", () => {
     expect(() => flapshotDiscoverySchema.parse(value)).toThrow()
   })
 
-  it("accepts bounded public recording targets without private display labels", () => {
+  it("accepts bounded public recording targets with privacy-safe window labels", () => {
     const response = recordingTargetsResponseSchema.parse({
       ok: true,
       data: {
@@ -103,6 +104,12 @@ describe("Flapshot MCP capability gating", () => {
             scaleFactor: 2,
             privateLabel: "must be discarded",
           },
+          {
+            kind: "window",
+            sourceId: "window:42:0",
+            windowId: "42",
+            label: "Terminal",
+          },
         ],
       },
       meta: {
@@ -115,6 +122,7 @@ describe("Flapshot MCP capability gating", () => {
       },
     })
     expect(response.data.targets[0]).not.toHaveProperty("privateLabel")
+    expect(response.data.targets[1]).toMatchObject({ label: "Terminal" })
     const target = response.data.targets[0]
     if (target?.kind !== "display") throw new Error("Expected display target")
     expect(buildRecordingStartInput(target, true)).toEqual({
@@ -124,6 +132,34 @@ describe("Flapshot MCP capability gating", () => {
       limits: { maxDurationMs: 300_000 },
       video: { fps: 30, maxWidth: 3_840, maxHeight: 2_160 },
     })
+  })
+
+  it("rejects a recording window label containing a private path", () => {
+    expect(() =>
+      recordingTargetsResponseSchema.parse({
+        ok: true,
+        data: {
+          version: 1,
+          truncated: false,
+          targets: [
+            {
+              kind: "window",
+              sourceId: "window:42:0",
+              windowId: "42",
+              label: "/Users/example/private.mov",
+            },
+          ],
+        },
+        meta: {
+          envelopeVersion: 1,
+          schema: "recording",
+          schemaVersion: 1,
+          requestId: "targets-private",
+          correlationId: "targets-private",
+          auditCorrelationId: "audit-targets-private",
+        },
+      }),
+    ).toThrow()
   })
 
   it("rejects a response correlated to a different request", () => {
@@ -151,6 +187,66 @@ describe("Flapshot MCP capability gating", () => {
     ).toThrow()
   })
 
+  it.each(["operationId", "requestId", "clientId", "sessionId"] as const)(
+    "rejects an operations.get snapshot with a foreign %s",
+    (field) => {
+      const expected = {
+        operationId: "operation-1",
+        requestId: "capture-request-1",
+        clientId: "client-1",
+        sessionId: "session-1",
+      }
+      const response = {
+        ok: true as const,
+        data: operationSnapshotSchema.parse({
+          ...expected,
+          [field]: `foreign-${field}`,
+          correlationId: "correlation-1",
+          auditCorrelationId: "audit-1",
+          state: "running",
+          progress: { sequence: 1, completed: 0, total: null, unit: "items" },
+          terminal: null,
+        }),
+        meta: {
+          envelopeVersion: 1 as const,
+          schema: "operations",
+          schemaVersion: 1,
+          requestId: "poll-request-1",
+          correlationId: "poll-request-1",
+          auditCorrelationId: "poll-audit-1",
+          operationId: "operation-1",
+        },
+      }
+      expect(() => assertOperationResponseBinding(response, expected)).toThrow("accepted owner")
+    },
+  )
+
+  it("rejects operations.get metadata bound to another operation", () => {
+    expect(() =>
+      assertOperationResponseBinding(
+        {
+          ok: true,
+          data: null,
+          meta: {
+            envelopeVersion: 1,
+            schema: "operations",
+            schemaVersion: 1,
+            requestId: "poll-request-1",
+            correlationId: "poll-request-1",
+            auditCorrelationId: "poll-audit-1",
+            operationId: "foreign-operation",
+          },
+        },
+        {
+          operationId: "operation-1",
+          requestId: "capture-request-1",
+          clientId: "client-1",
+          sessionId: "session-1",
+        },
+      ),
+    ).toThrow("metadata")
+  })
+
   it("requires pairing codes only for unpaired live connections", () => {
     const meta = {
       envelopeVersion: 1,
@@ -174,6 +270,19 @@ describe("Flapshot MCP capability gating", () => {
         meta,
       }),
     ).toThrow()
+
+    const expectedRequestId = "auth-transport-1"
+    const unpaired = authStatusResponseSchema.parse({
+      ok: true,
+      data: { paired: false, connectionId: "connection-1", pairingCode: "123456" },
+      meta: {
+        ...meta,
+        schema: "transport-auth",
+        requestId: expectedRequestId,
+        correlationId: expectedRequestId,
+      },
+    })
+    expect(() => assertServiceResponseCorrelation(unpaired, expectedRequestId)).not.toThrow()
   })
 
   it("fails closed when detailed screenshot or recording capabilities deny capture", () => {

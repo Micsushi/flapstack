@@ -137,6 +137,7 @@ export interface FlapshotConnectionStatus {
   serverVersion: string | null
   discovery: FlapshotDiscovery | null
   auth: FlapshotAuthStatus | null
+  pairingStatusSupported: boolean
   error: string | null
 }
 
@@ -155,10 +156,17 @@ interface CachedConnection {
   signature: string
   connection: FlapshotProtocolConnection
   discovery: FlapshotDiscovery
+  toolNames: ReadonlySet<string>
+}
+
+interface PendingConnection {
+  signature: string
+  promise: Promise<CachedConnection>
 }
 
 export class FlapshotMcpClientManager {
   private readonly connections = new Map<string, CachedConnection>()
+  private readonly connecting = new Map<string, PendingConnection>()
 
   constructor(
     private readonly factory: FlapshotConnectionFactory = sdkConnectionFactory,
@@ -180,6 +188,7 @@ export class FlapshotMcpClientManager {
         serverVersion: null,
         discovery: null,
         auth: null,
+        pairingStatusSupported: false,
         error: "Flapshot capture is currently supported by Flapstack on macOS only",
       }
     }
@@ -191,11 +200,26 @@ export class FlapshotMcpClientManager {
         serverVersion: null,
         discovery: null,
         auth: null,
+        pairingStatusSupported: false,
         error: 'Add an external stdio MCP server named "flapshot" in MCP settings',
       }
     }
+    let pairingStatusSupported = false
     try {
-      const cached = await this.connect(projectPath, config)
+      const connected = await this.connect(projectPath, config)
+      const cached = await this.refreshDiscovery(projectPath, connected)
+      pairingStatusSupported = cached.toolNames.has(FLAPSHOT_TOOLS.authStatus)
+      if (!pairingStatusSupported) {
+        return {
+          connected: true,
+          configured: true,
+          serverVersion: cached.connection.client.getServerVersion()?.version ?? null,
+          discovery: cached.discovery,
+          auth: null,
+          pairingStatusSupported: false,
+          error: null,
+        }
+      }
       const authRequestId = `flapstack-auth-${randomUUID()}`
       const authResult = await cached.connection.client.callTool(
         {
@@ -214,6 +238,7 @@ export class FlapshotMcpClientManager {
         serverVersion: cached.connection.client.getServerVersion()?.version ?? null,
         discovery: cached.discovery,
         auth,
+        pairingStatusSupported: true,
         error: null,
       }
     } catch (error) {
@@ -223,6 +248,7 @@ export class FlapshotMcpClientManager {
         serverVersion: null,
         discovery: null,
         auth: null,
+        pairingStatusSupported,
         error: safeMcpError(error),
       }
     }
@@ -241,12 +267,15 @@ export class FlapshotMcpClientManager {
 
   async close(projectPath: string | null): Promise<void> {
     const key = this.connectionKey(projectPath)
+    const pending = this.connecting.get(key)
+    if (pending) await pending.promise.catch(() => undefined)
     const cached = this.connections.get(key)
-    this.connections.delete(key)
+    if (this.connections.get(key) === cached) this.connections.delete(key)
     await cached?.connection.close().catch(() => undefined)
   }
 
   async closeAll(): Promise<void> {
+    await Promise.allSettled([...this.connecting.values()].map((item) => item.promise))
     const closing = [...this.connections.values()].map((item) => item.connection.close())
     this.connections.clear()
     await Promise.allSettled(closing)
@@ -260,41 +289,92 @@ export class FlapshotMcpClientManager {
     const signature = JSON.stringify(config)
     const current = this.connections.get(key)
     if (current?.signature === signature) return current
-    if (current) await this.close(projectPath)
+    const pending = this.connecting.get(key)
+    if (pending?.signature === signature) return pending.promise
+    if (pending) {
+      await pending.promise.catch(() => undefined)
+      return this.connect(projectPath, config)
+    }
 
-    const connection = await this.factory(config, (error) => {
+    const promise = this.createConnection(projectPath, config, signature)
+    const entry = { signature, promise }
+    this.connecting.set(key, entry)
+    try {
+      return await promise
+    } finally {
+      if (this.connecting.get(key) === entry) this.connecting.delete(key)
+    }
+  }
+
+  private async createConnection(
+    projectPath: string | null,
+    config: FlapshotStdioConfig,
+    signature: string,
+  ): Promise<CachedConnection> {
+    const key = this.connectionKey(projectPath)
+    const current = this.connections.get(key)
+    if (current?.signature === signature) return current
+    if (current) {
+      this.connections.delete(key)
+      await current.connection.close().catch(() => undefined)
+    }
+
+    let connection: FlapshotProtocolConnection | null = null
+    connection = await this.factory(config, (error) => {
+      if (!connection) return
+      const active = this.connections.get(key)
+      if (active?.connection !== connection) return
       this.connections.delete(key)
       this.onDisconnect(key, error)
     })
     try {
-      const server = connection.client.getServerVersion()
-      if (!server || server.name !== FLAPSHOT_SERVER_NAME) {
-        throw new Error("Configured MCP server did not identify as Flapshot")
-      }
-      const [listedTools, resource] = await Promise.all([
-        connection.client.listTools(),
-        connection.client.readResource({ uri: FLAPSHOT_CAPABILITIES_URI }),
-      ])
-      const text = readMcpResourceText(resource)
-      const discovery = flapshotDiscoverySchema.parse(JSON.parse(text))
-      const listed = new Set(listedTools.tools.map((tool) => tool.name))
-      for (const tool of discovery.tools) {
-        if (!listed.has(tool.name))
-          throw new Error(`Flapshot discovery listed missing tool ${tool.name}`)
-      }
-      for (const schema of ["screenshot", "recording", "artifacts", "operations", "system"]) {
-        if (discovery.applicationSchemas[schema] !== 1) {
-          throw new Error(`Unsupported Flapshot ${schema} schema version`)
-        }
-      }
-      deriveFlapshotActions(discovery)
-      const cached = { signature, connection, discovery }
+      const discovered = await this.discover(connection.client)
+      const cached = { signature, connection, ...discovered }
       this.connections.set(key, cached)
       return cached
     } catch (error) {
       await connection.close().catch(() => undefined)
       throw error
     }
+  }
+
+  private async refreshDiscovery(
+    projectPath: string | null,
+    cached: CachedConnection,
+  ): Promise<CachedConnection> {
+    const discovered = await this.discover(cached.connection.client)
+    const refreshed = { ...cached, ...discovered }
+    const key = this.connectionKey(projectPath)
+    if (this.connections.get(key)?.connection === cached.connection) {
+      this.connections.set(key, refreshed)
+    }
+    return refreshed
+  }
+
+  private async discover(client: FlapshotProtocolClient) {
+    const server = client.getServerVersion()
+    if (!server || server.name !== FLAPSHOT_SERVER_NAME) {
+      throw new Error("Configured MCP server did not identify as Flapshot")
+    }
+    const [listedTools, resource] = await Promise.all([
+      client.listTools(),
+      client.readResource({ uri: FLAPSHOT_CAPABILITIES_URI }),
+    ])
+    const text = readMcpResourceText(resource)
+    const discovery = flapshotDiscoverySchema.parse(JSON.parse(text))
+    const toolNames = new Set(listedTools.tools.map((tool) => tool.name))
+    for (const tool of discovery.tools) {
+      if (!toolNames.has(tool.name)) {
+        throw new Error(`Flapshot discovery listed missing tool ${tool.name}`)
+      }
+    }
+    for (const schema of ["screenshot", "recording", "artifacts", "operations", "system"]) {
+      if (discovery.applicationSchemas[schema] !== 1) {
+        throw new Error(`Unsupported Flapshot ${schema} schema version`)
+      }
+    }
+    deriveFlapshotActions(discovery)
+    return { discovery, toolNames }
   }
 }
 

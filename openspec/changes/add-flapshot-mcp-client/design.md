@@ -15,8 +15,10 @@ authorized, integrity-checked file reference.
 
 - Reuse the existing MCP configuration surface and reserve server name `flapshot`.
 - Use the official MCP SDK and validate discovery below the renderer boundary.
-- Pin protocol parsing to Flapshot lifecycle checkpoint `c0c120b`.
-- Require explicit six-digit pairing for each live stdio connection before enabling actions.
+- Pin protocol parsing to final Flapshot Stage 3 checkpoint `a1fb8a5`, retaining the
+  `e95d0d2` hardening and `c0c120b` lifecycle contracts where not superseded.
+- Detect dedicated transport authentication from MCP `tools/list`; require exact
+  six-digit live pairing before enabling actions and fail closed when status is absent.
 - Use only public bounded screenshot and recording target descriptors.
 - Persist operation correlation separately from attachments; link them only after terminal
   success and integrity validation.
@@ -29,7 +31,9 @@ authorized, integrity-checked file reference.
 - Pairing and approvals intentionally die on disconnect. Reconnect must expose a new code
   instead of pretending authority persisted.
 - Local path grants are authenticated and may expire. Revalidate on ingestion and expose
-  revoked/missing state instead of caching success.
+  revoked/missing state instead of caching success. Revalidate again before every use.
+- Operation refresh is owner-bound to stored chat, request, client, session, operation,
+  and response metadata so shared project connections cannot cross chat boundaries.
 - Copying video duplicates disk use. The 128 MiB copy threshold bounds duplication while
   larger files retain verified references.
 

@@ -3,7 +3,7 @@ import { z } from "zod"
 export const FLAPSHOT_SERVER_NAME = "flapshot"
 export const FLAPSHOT_CAPABILITIES_URI = "flapshot://v1/capabilities"
 export const FLAPSHOT_MCP_CONTRACT = {
-  baseline: "c0c120ba21296ddeb5c192c833918b790ebf57a7",
+  baseline: "a1fb8a5f163567a65bfbed04bb44c1292f3c6553",
   serverVersion: "0.1.0",
   resourceVersion: 1,
   maxMessageBytes: 1024 * 1024,
@@ -93,7 +93,7 @@ const progressSchema = z.object({
 const localGrantSchema = z.object({
   path: z.string().min(1).max(32_768),
   grantedToClientId: serviceTokenSchema,
-  expiresAt: z.string().optional(),
+  expiresAt: z.string().datetime().optional(),
 })
 
 export const flapshotFileReferenceSchema = z.object({
@@ -190,6 +190,27 @@ export const operationAcceptedResponseSchema = successResponseSchema(
 
 export const operationGetResponseSchema = successResponseSchema(operationSnapshotSchema.nullable())
 
+export function assertOperationResponseBinding(
+  response: z.infer<typeof operationGetResponseSchema>,
+  expected: {
+    operationId: string
+    requestId: string
+    clientId: string
+    sessionId: string
+  },
+): void {
+  if (response.meta.operationId !== expected.operationId) {
+    throw new Error("Flapshot operation response metadata does not match the requested operation")
+  }
+  const snapshot = response.data
+  if (!snapshot) return
+  for (const key of ["operationId", "requestId", "clientId", "sessionId"] as const) {
+    if (snapshot[key] !== expected[key]) {
+      throw new Error(`Flapshot operation ${key} does not match the accepted owner`)
+    }
+  }
+}
+
 export const screenshotTargetsResponseSchema = successResponseSchema(
   z.object({
     displays: z.array(z.object({ id: z.string().min(1).max(128) }).passthrough()).max(32),
@@ -203,6 +224,15 @@ const recordingBoundsSchema = z.object({
   width: z.number().positive().finite(),
   height: z.number().positive().finite(),
 })
+
+const recordingWindowLabelSchema = z
+  .string()
+  .min(1)
+  .refine((value) => Array.from(value).length <= 80, "Window label exceeds 80 code points")
+  .refine(
+    (value) => !/[\\/\p{Cc}\p{Cf}]/u.test(value),
+    "Window label contains private path or control characters",
+  )
 
 export const recordingTargetsResponseSchema = successResponseSchema(
   z.object({
@@ -221,6 +251,7 @@ export const recordingTargetsResponseSchema = successResponseSchema(
             kind: z.literal("window"),
             sourceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
             windowId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+            label: recordingWindowLabelSchema,
           }),
         ]),
       )

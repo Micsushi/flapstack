@@ -1,6 +1,7 @@
 ## 1. Baseline and boundary
 
-- [x] 1.1 Record Flapstack `049b1f9` and Flapshot `c0c120b` schema baseline.
+- [x] 1.1 Record Flapstack `049b1f9`, Flapshot `c0c120b` lifecycle, `e95d0d2`
+      hardening, and final `a1fb8a5` integration baseline.
 - [x] 1.2 Document external-process, GPL, package, config, and secret boundaries.
 - [x] 1.3 Replace provisional compatibility anchor after upstream security/contract fix.
 
@@ -25,3 +26,5 @@
 - [x] 4.2 Pass strict OpenSpec validation.
 - [x] 4.3 Pass pinned Node 22 `npm run check` and production build.
 - [ ] 4.4 Run installed-app screenshot/recording/manual/package evidence after replacement SHA.
+- [x] 4.5 Add fail-closed auth, connection-race, cross-chat owner-binding, stale-discovery,
+      and use-time attachment-integrity regressions.

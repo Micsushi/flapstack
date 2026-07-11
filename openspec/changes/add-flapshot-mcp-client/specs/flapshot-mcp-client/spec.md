@@ -39,8 +39,15 @@ application capability snapshot.
 
 ### Requirement: Explicit live pairing
 
-Flapstack SHALL treat each Flapshot stdio process as a new zero-authority connection and
-SHALL enable capture only after public authentication status reports it paired.
+Flapstack SHALL treat each Flapshot stdio process as a new zero-authority connection,
+discover dedicated transport authentication from MCP `tools/list`, and enable capture
+only after that exact live status reports it paired.
+
+#### Scenario: Transport authentication tool is absent
+
+- **WHEN** `tools/list` does not advertise the dedicated authentication tool
+- **THEN** pairing remains unknown and capture controls stay unusable
+- **AND** Flapstack does not call a private Flapshot transport API
 
 #### Scenario: Connection is unpaired
 
@@ -76,6 +83,18 @@ audit correlation, disconnect, restart, timeout, denial, and terminal errors.
 - **THEN** Flapstack queries the public operation state and reconciles known operations
 - **AND** missing upstream state remains an explicit interruption
 
+#### Scenario: Shared project connection has operations from multiple chats
+
+- **WHEN** polling or restart is triggered by one chat
+- **THEN** each stored operation rebuilds scope from its own chat and task
+- **AND** a result can attach only to its accepted chat owner
+
+#### Scenario: Operation response identity differs
+
+- **WHEN** operation, request, client, session, or response metadata differs from the
+  accepted stored owner
+- **THEN** Flapstack rejects the refresh before update or attachment ingestion
+
 #### Scenario: Confirm profile requires approval
 
 - **WHEN** a capture call returns `APPROVAL_REQUIRED`
@@ -105,3 +124,9 @@ provenance are valid.
 - **WHEN** a stored/reference file disappears or its path, MIME, size, or SHA-256 changes
 - **THEN** Flapstack reports `missing` or `tampered`
 - **AND** does not present the attachment as verified
+
+#### Scenario: Validated reference is used later
+
+- **WHEN** Flapstack reads or copies a Flapshot attachment after ingestion
+- **THEN** it revalidates grant expiry, path, MIME, size, and SHA-256 immediately before use
+- **AND** verifies copied bytes before atomic publication

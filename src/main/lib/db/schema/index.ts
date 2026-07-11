@@ -252,6 +252,7 @@ export const attachments = sqliteTable(
     sourceUri: text("source_uri"),
     sourceApplication: text("source_application"),
     grantClientId: text("grant_client_id"),
+    grantExpiresAt: text("grant_expires_at"),
     provenanceJson: text("provenance_json"),
     integrityStatus: text("integrity_status"),
     operationId: text("operation_id"),
@@ -289,6 +290,7 @@ export const flapshotOperations = sqliteTable(
     chatId: text("chat_id")
       .notNull()
       .references(() => chats.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     connectionKey: text("connection_key").notNull(),
     kind: text("kind").notNull(),
     state: text("state").notNull(),

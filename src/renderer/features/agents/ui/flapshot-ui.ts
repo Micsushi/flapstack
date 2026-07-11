@@ -9,21 +9,28 @@ export function operationStatusLabel(operation: {
   return `${operation.kind}: ${operation.state}`
 }
 
+export function flapshotCaptureControlsEnabled(connected: boolean, paired: boolean | null) {
+  return connected && paired === true
+}
+
 export function flapshotStatusLabel(input: {
   connected: boolean
-  paired: boolean
+  paired: boolean | null
   pairingCode: string | null
   serverVersion: string | null
   error: string | null
   latest?: Parameters<typeof operationStatusLabel>[0]
 }) {
   if (!input.connected) return input.error ?? "Flapshot disconnected"
-  if (!input.paired) {
+  if (input.paired === false) {
     return input.pairingCode
       ? `Pair code ${input.pairingCode} in Flapshot Agent access`
       : "Flapshot pairing status unavailable"
   }
   if (input.latest) return operationStatusLabel(input.latest)
+  if (input.paired === null) {
+    return `Flapshot ${input.serverVersion ?? "connected"} · pair pending MCP access in Flapshot if prompted`
+  }
   return `Flapshot ${input.serverVersion ?? "paired"} · paired`
 }
 

@@ -5,7 +5,8 @@ import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/
 import { basename, dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
-import { attachments, chats, getDatabase, projects, tasks } from "../../db"
+import { attachments, chats, getDatabase, projects, tasks, type Attachment } from "../../db"
+import { copyVerifiedFlapshotFile, verifyStoredFlapshotFile } from "../../flapshot/integrity"
 import { prepareSafeWritePath } from "../../path-safety"
 import { publicProcedure, router } from "../index"
 
@@ -28,6 +29,25 @@ function getChatOrThrow(chatId: string) {
   const chat = db.select().from(chats).where(eq(chats.id, chatId)).get()
   if (!chat) throw new Error("Chat not found")
   return chat
+}
+
+async function verifyFlapshotAttachmentForUse(attachment: Attachment) {
+  const filePath = attachment.storedPath ?? attachment.sourcePath
+  const result = await verifyStoredFlapshotFile({
+    filePath,
+    sizeBytes: attachment.byteLength,
+    sha256: attachment.sha256,
+    mimeType: attachment.mimeType,
+    grantExpiresAt: attachment.storedPath ? null : attachment.grantExpiresAt,
+  })
+  getDatabase()
+    .update(attachments)
+    .set({ integrityStatus: result.status })
+    .where(eq(attachments.id, attachment.id))
+    .run()
+  if (result.status !== "verified") throw new Error(result.message)
+  if (!filePath) throw new Error("Flapshot attachment has no file path")
+  return filePath
 }
 
 export const attachmentsRouter = router({
@@ -181,7 +201,37 @@ export const attachmentsRouter = router({
         input.worktreePath,
         input.targetRelativePath ?? attachment.name,
       )
-      const sourcePath = attachment.storedPath ?? attachment.sourcePath
+      const sourcePath =
+        attachment.sourceApplication === "Flapshot"
+          ? await verifyFlapshotAttachmentForUse(attachment)
+          : (attachment.storedPath ?? attachment.sourcePath)
+
+      if (attachment.sourceApplication === "Flapshot" && sourcePath) {
+        try {
+          const result = await copyVerifiedFlapshotFile({
+            sourcePath,
+            destinationPath: targetPath,
+            overwrite: input.overwrite,
+            sizeBytes: attachment.byteLength,
+            sha256: attachment.sha256,
+            mimeType: attachment.mimeType,
+            grantExpiresAt: attachment.storedPath ? null : attachment.grantExpiresAt,
+          })
+          db.update(attachments)
+            .set({ integrityStatus: result.status })
+            .where(eq(attachments.id, attachment.id))
+            .run()
+          if (result.status !== "verified") throw new Error(result.message)
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+            throw new Error("Target file already exists")
+          }
+          throw error
+        }
+        const resultStat = await stat(targetPath)
+        return { targetPath, byteLength: resultStat.size }
+      }
+
       const writeContent = async (destination: string, exclusive: boolean) => {
         if (sourcePath) {
           await copyFile(sourcePath, destination, exclusive ? constants.COPYFILE_EXCL : 0)
@@ -230,7 +280,10 @@ export const attachmentsRouter = router({
     if (!attachment) throw new Error("Attachment not found")
 
     if (attachment.contentText !== null) return attachment.contentText
-    const sourcePath = attachment.storedPath ?? attachment.sourcePath
+    const sourcePath =
+      attachment.sourceApplication === "Flapshot"
+        ? await verifyFlapshotAttachmentForUse(attachment)
+        : (attachment.storedPath ?? attachment.sourcePath)
     if (!sourcePath) throw new Error("Attachment has no readable text content")
 
     return readFile(sourcePath, "utf-8")

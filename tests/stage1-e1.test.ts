@@ -232,6 +232,7 @@ function createTestSchema() {
       source_uri text,
       source_application text,
       grant_client_id text,
+      grant_expires_at text,
       provenance_json text,
       integrity_status text,
       operation_id text,
