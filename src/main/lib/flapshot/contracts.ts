@@ -3,7 +3,7 @@ import { z } from "zod"
 export const FLAPSHOT_SERVER_NAME = "flapshot"
 export const FLAPSHOT_CAPABILITIES_URI = "flapshot://v1/capabilities"
 export const FLAPSHOT_MCP_CONTRACT = {
-  baseline: "a1fb8a5f163567a65bfbed04bb44c1292f3c6553",
+  baseline: "e693bc941fe670191fa065055967931fc90c2a43",
   serverVersion: "0.1.0",
   resourceVersion: 1,
   maxMessageBytes: 1024 * 1024,
@@ -253,6 +253,15 @@ export const recordingTargetsResponseSchema = successResponseSchema(
             windowId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
             label: recordingWindowLabelSchema,
           }),
+          z
+            .object({
+              kind: z.literal("region"),
+              sourceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+              bounds: recordingBoundsSchema.strict(),
+              displayBounds: recordingBoundsSchema.strict(),
+              displayScaleFactor: z.number().positive().finite(),
+            })
+            .strict(),
         ]),
       )
       .max(32),

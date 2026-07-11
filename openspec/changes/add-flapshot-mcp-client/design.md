@@ -15,14 +15,16 @@ authorized, integrity-checked file reference.
 
 - Reuse the existing MCP configuration surface and reserve server name `flapshot`.
 - Use the official MCP SDK and validate discovery below the renderer boundary.
-- Pin protocol parsing to final Flapshot Stage 3 checkpoint `a1fb8a5`, retaining the
+- Pin protocol parsing to final Flapshot Stage 3 checkpoint `e693bc9`, retaining the
   `e95d0d2` hardening and `c0c120b` lifecycle contracts where not superseded.
 - Detect dedicated transport authentication from MCP `tools/list`; require exact
   six-digit live pairing before enabling actions and fail closed when status is absent.
 - Use only public bounded screenshot and recording target descriptors.
 - Persist operation correlation separately from attachments; link them only after terminal
   success and integrity validation.
-- Copy bounded media into existing attachment storage. Keep large video file-backed.
+- Copy bounded media into existing attachment storage. Link each operation to one
+  attachment in a transaction and reuse its deterministic staged file on retry. Keep
+  large video file-backed.
 - Treat disconnect, missing files, tamper, denial, unsupported capabilities, timeout, and
   cancellation as visible terminal/degraded outcomes.
 
@@ -40,6 +42,7 @@ authorized, integrity-checked file reference.
 ## Migration Plan
 
 1. Add nullable provenance/integrity fields to existing attachments.
-2. Add a local operation correlation table.
-3. Existing attachments remain unchanged and valid.
+2. Add a local operation correlation table and a unique attachment operation index.
+3. Existing attachments remain unchanged and valid because SQLite permits multiple nulls
+   in a unique index.
 4. Removal can drop the client/UI while leaving attachment files readable.

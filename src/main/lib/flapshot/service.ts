@@ -1,11 +1,10 @@
 import { createHash, randomUUID } from "node:crypto"
 import { createReadStream } from "node:fs"
-import { copyFile, mkdir, rename, rm } from "node:fs/promises"
+import { copyFile, mkdir, readdir, rename, rm } from "node:fs/promises"
 import { basename, extname, join } from "node:path"
 import { and, desc, eq } from "drizzle-orm"
 import { app } from "electron"
 import { attachments, chats, flapshotOperations, getDatabase, projects } from "../db"
-import { createId } from "../db/utils"
 import {
   assertServiceResponseCorrelation,
   assertOperationResponseBinding,
@@ -55,6 +54,88 @@ interface ChatScope {
 }
 
 type StoredFlapshotOperation = typeof flapshotOperations.$inferSelect
+type NewAttachment = typeof attachments.$inferInsert
+
+export function flapshotAttachmentId(operationId: string): string {
+  return `flapshot-${createHash("sha256").update(operationId).digest("hex").slice(0, 32)}`
+}
+
+export async function ensureFlapshotStoredCopy(input: {
+  storageRoot: string
+  attachmentId: string
+  name: string
+  sourcePath: string
+  sizeBytes: number
+  sha256: string
+  mimeType: string
+}): Promise<string> {
+  const storageDir = join(input.storageRoot, input.attachmentId)
+  await mkdir(storageDir, { recursive: true })
+  for (const entry of await readdir(storageDir)) {
+    if (entry.startsWith(".flapstack-") && entry.endsWith(".tmp")) {
+      await rm(join(storageDir, entry), { force: true })
+    }
+  }
+  const storedPath = join(storageDir, input.name)
+  const existing = await verifyStoredFlapshotFile({
+    filePath: storedPath,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256,
+    mimeType: input.mimeType,
+    grantExpiresAt: null,
+  })
+  if (existing.status === "verified") return storedPath
+
+  const temporaryPath = join(storageDir, `.flapstack-${randomUUID()}.tmp`)
+  try {
+    await copyFile(input.sourcePath, temporaryPath)
+    const copiedHash = await hashFile(temporaryPath)
+    if (copiedHash !== input.sha256) throw new Error("Copied attachment hash changed")
+    await rename(temporaryPath, storedPath)
+    return storedPath
+  } finally {
+    await rm(temporaryPath, { force: true })
+  }
+}
+
+export function commitFlapshotAttachment(input: {
+  operationId: string
+  attachment: NewAttachment
+}): string {
+  const db = getDatabase()
+  return db.transaction((tx) => {
+    const operation = tx
+      .select()
+      .from(flapshotOperations)
+      .where(eq(flapshotOperations.operationId, input.operationId))
+      .get()
+    if (!operation) throw new Error("Flapshot operation disappeared during attachment ingestion")
+
+    tx.insert(attachments).values(input.attachment).onConflictDoNothing().run()
+    const attachment = tx
+      .select()
+      .from(attachments)
+      .where(eq(attachments.operationId, input.operationId))
+      .get()
+    if (
+      !attachment ||
+      attachment.chatId !== operation.chatId ||
+      attachment.taskId !== operation.taskId ||
+      attachment.sha256 !== input.attachment.sha256 ||
+      attachment.byteLength !== input.attachment.byteLength
+    ) {
+      throw new Error("Flapshot attachment conflicts with an existing operation result")
+    }
+    if (operation.resultAttachmentId && operation.resultAttachmentId !== attachment.id) {
+      throw new Error("Flapshot operation is already linked to another attachment")
+    }
+    tx.update(flapshotOperations)
+      .set({ resultAttachmentId: attachment.id, updatedAt: new Date() })
+      .where(eq(flapshotOperations.operationId, input.operationId))
+      .run()
+    return attachment.id
+  })
+}
 
 function getChatScope(chatId: string, clients: FlapshotMcpClientManager): ChatScope {
   const db = getDatabase()
@@ -151,6 +232,7 @@ function fileReferenceFor(snapshot: FlapshotOperationSnapshot): FlapshotFileRefe
 export class FlapshotService {
   private readonly clients: FlapshotMcpClientManager
   private readonly monitors = new Map<string, NodeJS.Timeout>()
+  private readonly ingestions = new Map<string, Promise<void>>()
 
   constructor(clients?: FlapshotMcpClientManager) {
     this.clients =
@@ -463,7 +545,10 @@ export class FlapshotService {
       .where(eq(flapshotOperations.connectionKey, scope.connectionKey))
       .all()
     for (const row of rows) {
-      if (!TERMINAL_STATES.has(row.state)) {
+      if (
+        !TERMINAL_STATES.has(row.state) ||
+        (row.state === "succeeded" && !row.resultAttachmentId)
+      ) {
         try {
           this.startMonitor(this.scopeForStoredOperation(row), row.operationId)
         } catch (error) {
@@ -545,7 +630,7 @@ export class FlapshotService {
 
     if (snapshot.state === "succeeded") {
       try {
-        await this.ingestResult(scope, snapshot, client)
+        await this.ingestResultOnce(scope, snapshot, client)
       } catch (error) {
         getDatabase()
           .update(flapshotOperations)
@@ -562,6 +647,22 @@ export class FlapshotService {
       }
     }
     return terminal
+  }
+
+  private async ingestResultOnce(
+    scope: ChatScope,
+    snapshot: FlapshotOperationSnapshot,
+    client: FlapshotProtocolClient,
+  ) {
+    const active = this.ingestions.get(snapshot.operationId)
+    if (active) return active
+    const ingestion = this.ingestResult(scope, snapshot, client).finally(() => {
+      if (this.ingestions.get(snapshot.operationId) === ingestion) {
+        this.ingestions.delete(snapshot.operationId)
+      }
+    })
+    this.ingestions.set(snapshot.operationId, ingestion)
+    return ingestion
   }
 
   private async ingestResult(
@@ -606,52 +707,61 @@ export class FlapshotService {
     if (Buffer.byteLength(provenanceJson) > 16 * 1024) {
       throw new Error("Flapshot provenance exceeds the attachment metadata limit")
     }
-    const attachmentId = createId()
+    const attachmentId = flapshotAttachmentId(snapshot.operationId)
     let storedPath: string | null = null
 
     if (validated.copyIntoFlapstack) {
-      const storageDir = join(app.getPath("userData"), "attachments", attachmentId)
-      await mkdir(storageDir, { recursive: true })
-      const temporaryPath = join(storageDir, `.flapstack-${randomUUID()}.tmp`)
-      storedPath = join(storageDir, name)
-      try {
-        await copyFile(validated.canonicalPath, temporaryPath)
-        const copiedHash = await hashFile(temporaryPath)
-        if (copiedHash !== validated.sha256) throw new Error("Copied attachment hash changed")
-        await rename(temporaryPath, storedPath)
-      } finally {
-        await rm(temporaryPath, { force: true })
-      }
+      storedPath = await ensureFlapshotStoredCopy({
+        storageRoot: join(app.getPath("userData"), "attachments"),
+        attachmentId,
+        name: `result${extension}`,
+        sourcePath: validated.canonicalPath,
+        sizeBytes: validated.sizeBytes,
+        sha256: validated.sha256,
+        mimeType: validated.mimeType,
+      })
     }
 
-    db.insert(attachments)
-      .values({
-        id: attachmentId,
-        chatId: scope.chatId,
-        taskId: scope.taskId,
-        kind: validated.mimeType.startsWith("image/") ? "image" : "file",
-        name,
-        sourcePath: validated.canonicalPath,
-        storedPath,
-        mimeType: validated.mimeType,
-        byteLength: validated.sizeBytes,
-        sha256: validated.sha256,
-        sourceArtifactId: provenance.sourceArtifactId,
-        sourceUri,
-        sourceApplication: "Flapshot",
-        grantClientId: authorizedReference.local.grantedToClientId,
-        grantExpiresAt: authorizedReference.local.expiresAt ?? null,
-        provenanceJson,
-        integrityStatus: "verified",
+    try {
+      commitFlapshotAttachment({
         operationId: snapshot.operationId,
-        correlationId: snapshot.correlationId,
-        auditCorrelationId: snapshot.auditCorrelationId,
+        attachment: {
+          id: attachmentId,
+          chatId: scope.chatId,
+          taskId: scope.taskId,
+          kind: validated.mimeType.startsWith("image/") ? "image" : "file",
+          name,
+          sourcePath: validated.canonicalPath,
+          storedPath,
+          mimeType: validated.mimeType,
+          byteLength: validated.sizeBytes,
+          sha256: validated.sha256,
+          sourceArtifactId: provenance.sourceArtifactId,
+          sourceUri,
+          sourceApplication: "Flapshot",
+          grantClientId: authorizedReference.local.grantedToClientId,
+          grantExpiresAt: authorizedReference.local.expiresAt ?? null,
+          provenanceJson,
+          integrityStatus: "verified",
+          operationId: snapshot.operationId,
+          correlationId: snapshot.correlationId,
+          auditCorrelationId: snapshot.auditCorrelationId,
+        },
       })
-      .run()
-    db.update(flapshotOperations)
-      .set({ resultAttachmentId: attachmentId, updatedAt: new Date() })
-      .where(eq(flapshotOperations.operationId, snapshot.operationId))
-      .run()
+    } catch (error) {
+      const committed = db
+        .select({ id: attachments.id })
+        .from(attachments)
+        .where(eq(attachments.operationId, snapshot.operationId))
+        .get()
+      if (storedPath && !committed) {
+        await rm(join(app.getPath("userData"), "attachments", attachmentId), {
+          recursive: true,
+          force: true,
+        })
+      }
+      throw error
+    }
   }
 
   private markDisconnected(connectionKey: string, error?: Error) {

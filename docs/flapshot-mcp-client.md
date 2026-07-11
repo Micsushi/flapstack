@@ -6,7 +6,7 @@ Stage 3 lifecycle checkpoint. Installed-app manual evidence remains open.
 ## Baselines
 
 - Flapstack implementation base: `049b1f928f73eb02297b3f117724304f7a9211cf`.
-- Flapshot final Stage 3 integration reference: `a1fb8a5f163567a65bfbed04bb44c1292f3c6553`.
+- Flapshot final Stage 3 integration reference: `e693bc941fe670191fa065055967931fc90c2a43`.
 - Hardened client/schema predecessor: `e95d0d2bf965140bc276fcc3c3c90b82c7edaec9`.
 - Lifecycle/pairing predecessor: `c0c120ba21296ddeb5c192c833918b790ebf57a7`.
 - MCP server identity at that reference: `flapshot` `0.1.0`.
@@ -18,6 +18,12 @@ Stage 3 lifecycle checkpoint. Installed-app manual evidence remains open.
 This checkpoint provides live human pairing, a random zero-authority unpaired
 connection, per-connection sessions, same-session approval retries, bounded recording
 targets, authenticated resource grants, real export adapters, and audit artifact IDs.
+The final contract replaces raw project `existingPath` inputs with opaque path/write
+capabilities. Flapstack does not invoke project methods. Recording target parsing accepts
+string window IDs and exact region bounds, display bounds, and scale-factor fields.
+Agent artifact exports are pathless and remain inside Flapshot's configured export root;
+agent artifact actions cannot supply `open-with` or a raw application path. Flapstack's
+capture client does not invoke those artifact actions.
 
 ## Process and License Boundary
 
@@ -35,7 +41,7 @@ Add a global or project MCP server named `flapshot` using Flapstack's existing M
 settings. Only stdio is accepted by the direct capture client. HTTP configuration is
 rejected.
 
-Generic launcher form:
+Preferred installed launcher form:
 
 ```json
 {
@@ -48,7 +54,7 @@ Generic launcher form:
 }
 ```
 
-Installed macOS application form:
+Direct application-resource fallback:
 
 ```json
 {
@@ -64,9 +70,9 @@ Installed macOS application form:
 }
 ```
 
-Replace the application placeholder locally. Do not commit a machine path. The
-checkpoint has no dedicated `flapshot-mcp` launcher, so installed-app launch remains
-a package/manual gap.
+Use the dedicated `flapshot-mcp` launcher when it is on `PATH`. The direct resource
+form is only a fallback for package troubleshooting. Replace its application
+placeholder locally; do not commit a machine path.
 
 Flapstack applies its normal MCP environment filtering. Provider tokens and common
 cloud credentials are not inherited by the child process. Configuration must not

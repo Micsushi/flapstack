@@ -263,6 +263,7 @@ export const attachments = sqliteTable(
   (table) => [
     index("attachments_chat_id_idx").on(table.chatId),
     index("attachments_task_id_idx").on(table.taskId),
+    uniqueIndex("attachments_operation_id_unique").on(table.operationId),
   ],
 )
 

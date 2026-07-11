@@ -22,3 +22,10 @@ external media provenance and integrity state.
 - **THEN** the attachment stores its canonical local reference, MIME, size, hash, provenance,
   and integrity state
 - **AND** later missing or tampered state is detectable
+
+#### Scenario: Completed operation ingestion is retried
+
+- **WHEN** Flapstack crashes or refreshes concurrently after copying or partially recording a
+  completed Flapshot result
+- **THEN** retry reuses the verified staged file and atomically links exactly one attachment
+- **AND** no duplicate database row, abandoned staging file, or unlinked attachment remains

@@ -127,6 +127,13 @@
       "when": 1783791272572,
       "tag": "0017_quick_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1783803370251,
+      "tag": "0018_common_phalanx",
+      "breakpoints": true
     }
   ]
 }

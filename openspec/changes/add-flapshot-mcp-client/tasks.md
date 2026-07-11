@@ -1,7 +1,7 @@
 ## 1. Baseline and boundary
 
 - [x] 1.1 Record Flapstack `049b1f9`, Flapshot `c0c120b` lifecycle, `e95d0d2`
-      hardening, and final `a1fb8a5` integration baseline.
+      hardening, and final `e693bc9` integration baseline.
 - [x] 1.2 Document external-process, GPL, package, config, and secret boundaries.
 - [x] 1.3 Replace provisional compatibility anchor after upstream security/contract fix.
 
@@ -17,7 +17,8 @@
 
 - [x] 3.1 Extend existing attachments with MIME, size, hash, artifact, URI, and provenance.
 - [x] 3.2 Validate canonical paths, symlinks, signatures, size, SHA-256, and source identity.
-- [x] 3.3 Copy bounded media atomically and keep large video as validated local references.
+- [x] 3.3 Copy bounded media atomically, link operation results transactionally and
+      idempotently, and keep large video as validated local references.
 - [x] 3.4 Detect missing/tampered files and expose verification in the attachment UI.
 
 ## 4. Tests and exit
@@ -28,3 +29,5 @@
 - [ ] 4.4 Run installed-app screenshot/recording/manual/package evidence after replacement SHA.
 - [x] 4.5 Add fail-closed auth, connection-race, cross-chat owner-binding, stale-discovery,
       and use-time attachment-integrity regressions.
+- [x] 4.6 Add attachment crash/retry, partial-link recovery, staging cleanup, and
+      concurrent-refresh regressions.

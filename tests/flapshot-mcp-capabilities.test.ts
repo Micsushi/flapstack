@@ -6,6 +6,7 @@ import {
   deriveFlapshotActions,
   buildRecordingStartInput,
   flapshotDiscoverySchema,
+  FLAPSHOT_MCP_CONTRACT,
   FLAPSHOT_TOOLS,
   recordingTargetsResponseSchema,
   operationSnapshotSchema,
@@ -64,6 +65,10 @@ function discovery(methodOverrides: Record<string, boolean> = {}) {
 }
 
 describe("Flapshot MCP capability gating", () => {
+  it("pins the final reviewed Flapshot Stage 3 contract", () => {
+    expect(FLAPSHOT_MCP_CONTRACT.baseline).toBe("e693bc941fe670191fa065055967931fc90c2a43")
+  })
+
   it("enables only discovered tools backed by available application methods", () => {
     expect(deriveFlapshotActions(discovery())).toEqual({
       screenshot: { available: true, reason: "AVAILABLE" },
@@ -110,6 +115,13 @@ describe("Flapshot MCP capability gating", () => {
             windowId: "42",
             label: "Terminal",
           },
+          {
+            kind: "region",
+            sourceId: "region:7:0",
+            bounds: { x: -100, y: 50, width: 800, height: 600 },
+            displayBounds: { x: -1920, y: 0, width: 1920, height: 1080 },
+            displayScaleFactor: 2,
+          },
         ],
       },
       meta: {
@@ -123,6 +135,10 @@ describe("Flapshot MCP capability gating", () => {
     })
     expect(response.data.targets[0]).not.toHaveProperty("privateLabel")
     expect(response.data.targets[1]).toMatchObject({ label: "Terminal" })
+    expect(response.data.targets[2]).toMatchObject({
+      kind: "region",
+      displayScaleFactor: 2,
+    })
     const target = response.data.targets[0]
     if (target?.kind !== "display") throw new Error("Expected display target")
     expect(buildRecordingStartInput(target, true)).toEqual({
@@ -132,6 +148,37 @@ describe("Flapshot MCP capability gating", () => {
       limits: { maxDurationMs: 300_000 },
       video: { fps: 30, maxWidth: 3_840, maxHeight: 2_160 },
     })
+  })
+
+  it("rejects malformed or extended recording region targets", () => {
+    const target = {
+      kind: "region",
+      sourceId: "region:7:0",
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      displayBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      displayScaleFactor: 2,
+    }
+    const response = (value: object) => ({
+      ok: true,
+      data: { version: 1, truncated: false, targets: [value] },
+      meta: {
+        envelopeVersion: 1,
+        schema: "recording",
+        schemaVersion: 1,
+        requestId: "targets-region",
+        correlationId: "targets-region",
+        auditCorrelationId: "audit-targets-region",
+      },
+    })
+    expect(() => recordingTargetsResponseSchema.parse(response(target))).not.toThrow()
+    expect(() =>
+      recordingTargetsResponseSchema.parse(response({ ...target, privatePath: "/tmp/private" })),
+    ).toThrow()
+    expect(() =>
+      recordingTargetsResponseSchema.parse(
+        response({ ...target, bounds: { x: 0, y: 0, width: 800 } }),
+      ),
+    ).toThrow()
   })
 
   it("rejects a recording window label containing a private path", () => {
