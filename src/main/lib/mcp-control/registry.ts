@@ -1,4 +1,4 @@
-import type { McpControlTool } from "./types"
+import type { McpCallerIdentity, McpControlResponse, McpControlTool } from "./types"
 
 export const mcpControlTools: McpControlTool[] = [
   {
@@ -47,4 +47,36 @@ export const mcpControlTools: McpControlTool[] = [
 
 export function getMcpControlTool(name: string): McpControlTool | null {
   return mcpControlTools.find((tool) => tool.name === name) ?? null
+}
+
+export function listImplementedMcpControlTools(): McpControlTool[] {
+  return mcpControlTools.filter((tool) => tool.status === "implemented")
+}
+
+export async function invokeMcpControlTool(
+  name: string,
+  caller: McpCallerIdentity,
+): Promise<McpControlResponse> {
+  const tool = getMcpControlTool(name)
+  if (!tool) {
+    return { ok: false, error: { code: "tool-not-found", message: `Unknown tool: ${name}` } }
+  }
+  if (tool.status !== "implemented") {
+    return {
+      ok: false,
+      error: { code: "tool-unavailable", message: `${name} is not available in this build.` },
+    }
+  }
+
+  if (name === "ping") {
+    return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
+  }
+  return {
+    ok: true,
+    data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
+  }
+}
+
+function snapshotCaller(caller: McpCallerIdentity): McpCallerIdentity {
+  return { chatId: caller.chatId, runId: caller.runId, permissionMode: caller.permissionMode }
 }

@@ -6,7 +6,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T1 — Lock transport, identity, and registry architecture
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: One tested MCP architecture is approved for implementation.
 - Scope: Compare stdio child and authenticated loopback transport; define caller
@@ -21,7 +21,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T2 — Implement local MCP transport and lifecycle
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: A local client connects, lists tools, calls `ping` and `describe`, and disconnects cleanly.
 - Scope: Implement approved transport, authentication, startup, shutdown, errors, and one registry bridge.

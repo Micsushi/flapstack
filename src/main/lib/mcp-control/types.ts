@@ -9,10 +9,16 @@ export type McpControlTool = {
 }
 
 export type McpCallerIdentity = {
-  chatId?: string
+  chatId: string
   runId?: string
   permissionMode?: string | null
 }
+
+export type McpControlErrorCode =
+  "invalid-caller" | "tool-not-found" | "tool-unavailable" | "invalid-input"
+
+export type McpControlResponse<T = unknown> =
+  { ok: true; data: T } | { ok: false; error: { code: McpControlErrorCode; message: string } }
 
 export type McpGateResult = {
   decision: McpGateDecision
