@@ -15,7 +15,13 @@ export type McpCallerIdentity = {
 }
 
 export type McpControlErrorCode =
-  "invalid-caller" | "tool-not-found" | "tool-unavailable" | "invalid-input"
+  | "invalid-caller"
+  | "tool-not-found"
+  | "tool-unavailable"
+  | "invalid-input"
+  | "out-of-scope"
+  | "not-found"
+  | "internal-error"
 
 export type McpControlResponse<T = unknown> =
   { ok: true; data: T } | { ok: false; error: { code: McpControlErrorCode; message: string } }
