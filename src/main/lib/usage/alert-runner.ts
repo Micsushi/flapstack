@@ -3,6 +3,7 @@ import { sendDiscordAlert } from "./discord"
 import type { UsageSettings } from "./settings"
 import { deriveDedupeKey, microsToUsd } from "./source-tags"
 import {
+  claimAlertArmState,
   listAlertArmStates,
   listRecentSamples,
   recordAlertEvent,
@@ -32,16 +33,26 @@ export async function runAlerts(params: {
     armed: row.armed,
   }))
   let sent = 0
+  // A failed delivery stays armed for the next daemon tick, but do not hammer
+  // the same webhook repeatedly when one poll returned several high samples.
+  const attemptedThisRun = new Set<string>()
   for (const sample of params.samples) {
     const spendUsd = sample.costUsd ?? sample.costUsdEstimated ?? null
     const history =
       spendUsd != null
-        ? await listRecentSamples(params.db, { providerId: sample.providerId, limit: 20 })
+        ? await listRecentSamples(params.db, {
+            providerId: sample.providerId,
+            accountTag: sample.accountTag ?? "",
+            limit: 20,
+          })
         : []
     const priorSpend = history
       .filter(
         (row) =>
-          row.accountTag === (sample.accountTag ?? "") && row.dedupeKey !== deriveDedupeKey(sample),
+          row.accountTag === (sample.accountTag ?? "") &&
+          row.dedupeKey !== deriveDedupeKey(sample) &&
+          row.sourceTag === (sample.sourceTag ?? null) &&
+          compatibleWindow(row.windowStart, row.windowEnd, sample.windowStart, sample.windowEnd),
       )
       .map((row) => microsToUsd(row.costUsd ?? row.costUsdEstimated))
       .filter((value): value is number => value != null && value > 0)
@@ -50,10 +61,11 @@ export async function runAlerts(params: {
       priorSpend.length >= 3
         ? priorSpend.reduce((total, value) => total + value, 0) / priorSpend.length
         : null
-    const windowHours =
-      sample.windowStart && sample.windowEnd
-        ? (sample.windowEnd.getTime() - sample.windowStart.getTime()) / 3_600_000
-        : null
+    const windowHours = elapsedWindowHours(
+      sample.windowStart,
+      sample.windowEnd,
+      sample.capturedAt ?? new Date(),
+    )
     const { intents, armUpdates } = evaluateSample(
       {
         providerId: sample.providerId,
@@ -74,17 +86,29 @@ export async function runAlerts(params: {
       thresholds,
       arm,
     )
-    await upsertAlertArmStates(params.db, armUpdates)
-    // Keep this run's in-memory arm state current too. A single provider poll
-    // can return several samples; without this, each one could re-send the
-    // same threshold notification before the next daemon tick.
-    arm = mergeArmStates(arm, armUpdates)
+    const rearmUpdates = armUpdates.filter((update) => update.armed)
+    await upsertAlertArmStates(params.db, rearmUpdates)
+    arm = mergeArmStates(arm, rearmUpdates)
     for (const intent of intents) {
+      const key = alertStateKey(intent)
+      if (attemptedThisRun.has(key)) continue
+      attemptedThisRun.add(key)
+      const claimed = await claimAlertArmState(params.db, intent)
+      if (!claimed) continue
+      const claimedState = { ...intent, armed: false }
+      arm = mergeArmStates(arm, [claimedState])
       const delivery = await sendDiscordAlert(webhook, {
         title: `Flapstack usage alert: ${intent.providerId}`,
         body: intent.message,
         color: intent.costQuality === "estimated" ? 0xf59e0b : 0xef4444,
       })
+      if (!delivery.ok) {
+        // Release the claim before any fallible bookkeeping so a failed
+        // delivery is always retried on the next daemon tick.
+        const rearm = { ...intent, armed: true }
+        await upsertAlertArmStates(params.db, [rearm])
+        arm = mergeArmStates(arm, [rearm])
+      }
       await recordAlertEvent(params.db, {
         providerId: intent.providerId,
         accountTag: intent.accountTag ?? "",
@@ -98,24 +122,53 @@ export async function runAlerts(params: {
         message: intent.message,
       })
       if (delivery.ok) sent++
-      if (delivery.ok) await updateDaemonStatus(params.db, { lastAlertAt: new Date() })
+      if (delivery.ok) {
+        await updateDaemonStatus(params.db, { lastAlertAt: new Date() })
+      }
     }
   }
   return sent
 }
 
+export function elapsedWindowHours(
+  windowStart: Date | null | undefined,
+  windowEnd: Date | null | undefined,
+  now: Date,
+): number | null {
+  if (!windowStart || !windowEnd) return null
+  const effectiveEnd = new Date(Math.min(windowEnd.getTime(), now.getTime()))
+  const elapsedMs = effectiveEnd.getTime() - windowStart.getTime()
+  return elapsedMs > 0 ? elapsedMs / 3_600_000 : null
+}
+
+function compatibleWindow(
+  priorStart: Date | null,
+  priorEnd: Date | null,
+  currentStart?: Date | null,
+  currentEnd?: Date | null,
+): boolean {
+  const priorWindowed = Boolean(priorStart && priorEnd)
+  const currentWindowed = Boolean(currentStart && currentEnd)
+  if (priorWindowed !== currentWindowed) return false
+  if (!priorWindowed) return true
+  const priorDuration = priorEnd!.getTime() - priorStart!.getTime()
+  const currentDuration = currentEnd!.getTime() - currentStart!.getTime()
+  return Math.abs(priorDuration - currentDuration) <= 60_000
+}
+
+function alertStateKey(state: {
+  providerId: string
+  accountTag?: string | null
+  alertType: string
+  thresholdValue: number
+}): string {
+  return `${state.providerId}|${state.accountTag ?? ""}|${state.alertType}|${state.thresholdValue}`
+}
+
 function mergeArmStates(current: AlertArmState[], updates: AlertArmState[]): AlertArmState[] {
-  const byKey = new Map(
-    current.map((state) => [
-      `${state.providerId}|${state.accountTag ?? ""}|${state.alertType}|${state.thresholdValue}`,
-      state,
-    ]),
-  )
+  const byKey = new Map(current.map((state) => [alertStateKey(state), state]))
   for (const update of updates) {
-    byKey.set(
-      `${update.providerId}|${update.accountTag ?? ""}|${update.alertType}|${update.thresholdValue}`,
-      update,
-    )
+    byKey.set(alertStateKey(update), update)
   }
   return [...byKey.values()]
 }

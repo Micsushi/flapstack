@@ -12,7 +12,7 @@
 // The key endpoint supplies current credit/limit state. E6 calls the exported
 // run-sample helper for exact per-generation usage after sidecar runs.
 
-import { estimateCostUsd } from "../pricing"
+import { estimateCostUsd, upsertModelPricing } from "../pricing"
 import { getProviderJson } from "./http"
 import {
   UsageProviderError,
@@ -23,6 +23,9 @@ import {
 } from "../types"
 
 const SECRET_KEY = "openrouter.api_key"
+const GENERATION_URL = "https://openrouter.ai/api/v1/generation"
+const MODELS_URL = "https://openrouter.ai/api/v1/models"
+const MAX_GENERATIONS_PER_POLL = 100
 
 /** Build an estimated OpenRouter run sample from tokens when exact cost is
  * missing. Returns null when pricing is unknown (never a $0 sample). Called by
@@ -81,6 +84,15 @@ export function createOpenRouterProvider(): UsageProvider {
     async pollLatest(ctx: UsageProviderContext): Promise<UsageSampleInput[]> {
       const apiKey = await ctx.getSecret(SECRET_KEY)
       if (!apiKey) return []
+      try {
+        await refreshOpenRouterPricing(apiKey)
+      } catch (error) {
+        // Balance/reconciliation remains useful when catalog pricing is briefly
+        // unavailable. Keep the last known cache and report estimates as unknown.
+        ctx.log("warn", "OpenRouter model pricing refresh failed", {
+          message: String((error as Error)?.message ?? error),
+        })
+      }
       const payload = await getProviderJson<OpenRouterKeyResponse>({
         providerId: "openrouter",
         url: "https://openrouter.ai/api/v1/key",
@@ -97,6 +109,7 @@ export function createOpenRouterProvider(): UsageProvider {
       const used = usageForResetWindow(key)
       const remaining = numberOrNull(key.limit_remaining)
       const totalLimit = limit ?? (used != null && remaining != null ? used + remaining : null)
+      const generationSamples = await reconcileStoredGenerations(ctx, apiKey)
       return [
         {
           providerId: "openrouter",
@@ -108,10 +121,12 @@ export function createOpenRouterProvider(): UsageProvider {
           costUsd: used,
           quotaUsed: used == null ? null : Math.round(used * 1_000_000),
           quotaLimit: totalLimit == null ? null : Math.round(totalLimit * 1_000_000),
+          quotaUnit: "usd-micros",
           percentUsed: totalLimit && used != null ? Math.round((used / totalLimit) * 100) : null,
           rawPayload: payload,
           dedupeKey: `openrouter|key|${key.label ?? "default"}|${ctx.now.toISOString().slice(0, 13)}`,
         },
+        ...generationSamples,
       ]
     },
 
@@ -127,6 +142,135 @@ export function createOpenRouterProvider(): UsageProvider {
   }
 }
 
+async function refreshOpenRouterPricing(apiKey: string): Promise<void> {
+  const payload = await getProviderJson<OpenRouterModelsResponse>({
+    providerId: "openrouter",
+    url: MODELS_URL,
+    apiKey,
+  })
+  for (const model of Array.isArray(payload.data) ? payload.data : []) {
+    const input = openRouterPricePerMillion(model.pricing?.prompt)
+    const output = openRouterPricePerMillion(model.pricing?.completion)
+    if (!model.id || input == null || output == null) continue
+    upsertModelPricing({
+      providerId: "openrouter",
+      model: model.id,
+      inputPerMTok: input,
+      outputPerMTok: output,
+      reasoningPerMTok: openRouterPricePerMillion(model.pricing?.internal_reasoning) ?? undefined,
+    })
+  }
+}
+
+function openRouterPricePerMillion(value: unknown): number | null {
+  const perToken = numberOrNull(value)
+  return perToken == null || perToken < 0 ? null : perToken * 1_000_000
+}
+
+async function reconcileStoredGenerations(
+  ctx: UsageProviderContext,
+  apiKey: string,
+): Promise<UsageSampleInput[]> {
+  const generationIds =
+    (await ctx.getPendingGenerationIds?.("openrouter", MAX_GENERATIONS_PER_POLL)) ?? []
+  const samples: UsageSampleInput[] = []
+  for (const generationId of generationIds) {
+    let payload: OpenRouterGenerationResponse
+    try {
+      const url = new URL(GENERATION_URL)
+      url.searchParams.set("id", generationId)
+      payload = await getProviderJson<OpenRouterGenerationResponse>({
+        providerId: "openrouter",
+        url: url.toString(),
+        apiKey,
+      })
+    } catch (error) {
+      // A generation can age out or belong to a different key. Keep the stored
+      // run sample and continue; never fabricate history or zero cost.
+      if (
+        error instanceof UsageProviderError &&
+        error.status === "source-unavailable" &&
+        /HTTP 404/.test(error.message)
+      ) {
+        ctx.log("warn", "OpenRouter generation is unavailable for reconciliation", {
+          generationId,
+        })
+        await ctx.markGenerationReconciliation?.(
+          "openrouter",
+          generationId,
+          "unavailable",
+          "OpenRouter returned HTTP 404",
+        )
+        continue
+      }
+      if (error instanceof UsageProviderError && error.status === "source-unavailable") {
+        await ctx.markGenerationReconciliation?.("openrouter", generationId, "retry", error.message)
+        continue
+      }
+      throw error
+    }
+    if (!payload.data) {
+      throw new UsageProviderError(
+        "openrouter",
+        "source-unavailable",
+        "OpenRouter generation response omitted data",
+      )
+    }
+    if (payload.data.id && payload.data.id !== generationId) {
+      throw new UsageProviderError(
+        "openrouter",
+        "source-unavailable",
+        "OpenRouter generation response id did not match the requested generation",
+      )
+    }
+    const sample = buildGenerationSample(ctx, generationId, payload)
+    samples.push(sample)
+  }
+  return samples
+}
+
+function buildGenerationSample(
+  ctx: UsageProviderContext,
+  generationId: string,
+  payload: OpenRouterGenerationResponse,
+): UsageSampleInput {
+  const generation = payload.data!
+  const exactCost = numberOrNull(generation.total_cost)
+  const reportedCost = numberOrNull(generation.usage)
+  const costUsd = exactCost ?? reportedCost
+  const costQuality =
+    exactCost != null ? "exact" : reportedCost != null ? "provider-reported" : "unknown"
+  const inputTokens = numberOrNull(generation.native_tokens_prompt ?? generation.tokens_prompt)
+  const outputTokens = numberOrNull(
+    generation.native_tokens_completion ?? generation.tokens_completion,
+  )
+  const reasoningTokens = numberOrNull(generation.native_tokens_reasoning)
+  const totalTokens =
+    inputTokens == null && outputTokens == null ? null : (inputTokens ?? 0) + (outputTokens ?? 0)
+  return {
+    providerId: "openrouter",
+    source: ctx.source,
+    sourceTag:
+      exactCost != null
+        ? "generation-total-cost"
+        : reportedCost != null
+          ? "generation-usage-cost"
+          : "generation-stats",
+    costQuality,
+    capturedAt: ctx.now,
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens,
+    requestCount: 1,
+    costUsd,
+    model: typeof generation.model === "string" ? generation.model : null,
+    generationId,
+    rawPayload: payload,
+    dedupeKey: `openrouter|gen|${generationId}`,
+  }
+}
+
 interface OpenRouterKeyResponse {
   data?: {
     label?: string
@@ -137,6 +281,29 @@ interface OpenRouterKeyResponse {
     usage_daily?: number | string | null
     usage_weekly?: number | string | null
     limit_reset?: "daily" | "weekly" | "monthly" | null
+  }
+}
+interface OpenRouterModelsResponse {
+  data?: Array<{
+    id?: string
+    pricing?: {
+      prompt?: number | string | null
+      completion?: number | string | null
+      internal_reasoning?: number | string | null
+    }
+  }>
+}
+interface OpenRouterGenerationResponse {
+  data?: {
+    id?: string
+    model?: string | null
+    total_cost?: number | string | null
+    usage?: number | string | null
+    tokens_prompt?: number | string | null
+    tokens_completion?: number | string | null
+    native_tokens_prompt?: number | string | null
+    native_tokens_completion?: number | string | null
+    native_tokens_reasoning?: number | string | null
   }
 }
 function usageForResetWindow(key: NonNullable<OpenRouterKeyResponse["data"]>): number | null {

@@ -21,7 +21,7 @@ interface FileAgent {
   tools?: string[]
   disallowedTools?: string[]
   model?: "sonnet" | "opus" | "haiku" | "inherit"
-  source: "user" | "project"
+  source: "user" | "project" | "plugin"
   path: string
 }
 
@@ -406,6 +406,7 @@ export function AgentsCustomAgentsTab() {
       data: { description: string; prompt: string; model?: FileAgent["model"] },
     ) => {
       try {
+        if (agent.source === "plugin") throw new Error("Plugin agents are read-only")
         await updateMutation.mutateAsync({
           originalName: agent.name,
           name: agent.name,

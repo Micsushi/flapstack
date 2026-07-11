@@ -23,4 +23,39 @@ describe("chat search visible reasoning output", () => {
       },
     ])
   })
+
+  it("includes standard reasoning parts used by Cursor and OpenCode", () => {
+    const results = extractSearchableText([
+      {
+        id: "assistant-2",
+        role: "assistant",
+        parts: [{ type: "reasoning", text: "Compare the provider responses." }],
+      },
+    ] as any)
+
+    expect(results).toEqual([
+      {
+        messageId: "assistant-2",
+        partIndex: 0,
+        partType: "reasoning",
+        text: "Compare the provider responses.",
+      },
+    ])
+  })
+
+  it("indexes visible file-content parts so scoped results can highlight in chat", () => {
+    const results = extractSearchableText([
+      {
+        id: "user-file",
+        role: "user",
+        parts: [{ type: "file-content", content: "needle inside attachment" }],
+      },
+    ] as any)
+    expect(results).toContainEqual({
+      messageId: "user-file",
+      partIndex: 0,
+      partType: "text",
+      text: "needle inside attachment",
+    })
+  })
 })

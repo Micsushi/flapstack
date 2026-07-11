@@ -6,6 +6,7 @@ import { getWindowId } from "../../../contexts/WindowContext"
 import { clearTaskSnapshotCache } from "../ui/agent-task-tools"
 import { clearSubChatRuntimeCaches } from "./sub-chat-runtime-cleanup"
 import { getDefaultRatios, addPaneRatio, removePaneRatio } from "../atoms"
+import { resolveQueuedSubChatNavigation } from "./sub-chat-navigation"
 
 const MAX_SPLIT_PANES = 4
 
@@ -28,9 +29,11 @@ interface AgentSubChatStore {
   allSubChats: SubChatMeta[] // All sub-chats for history
   splitPaneIds: string[] // Ordered IDs of panes in split group (empty = no split)
   splitRatios: number[] // Per-pane width ratios summing to 1.0
+  pendingNavigation: { chatId: string; subChatId: string } | null
 
   // Actions
   setChatId: (chatId: string | null) => void
+  queueNavigation: (chatId: string, subChatId: string) => void
   setActiveSubChat: (subChatId: string) => void
   setOpenSubChats: (subChatIds: string[]) => void
   addToOpenSubChats: (subChatId: string) => void
@@ -152,6 +155,7 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
   allSubChats: [],
   splitPaneIds: [],
   splitRatios: [],
+  pendingNavigation: null,
 
   setChatId: (chatId) => {
     if (!chatId) {
@@ -169,9 +173,19 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
 
     // Load open/active/pinned IDs from localStorage
     // allSubChats will be populated from DB + placeholders in init effect
-    const openSubChatIds = loadFromLS<string[]>(chatId, "open", [])
-    const activeSubChatId = loadFromLS<string | null>(chatId, "active", null)
+    let openSubChatIds = loadFromLS<string[]>(chatId, "open", [])
+    let activeSubChatId = loadFromLS<string | null>(chatId, "active", null)
     const pinnedSubChatIds = loadFromLS<string[]>(chatId, "pinned", [])
+    const pendingNavigation = get().pendingNavigation
+    if (pendingNavigation?.chatId === chatId) {
+      const resolved = resolveQueuedSubChatNavigation(openSubChatIds, pendingNavigation.subChatId)
+      if (resolved.openSubChatIds !== openSubChatIds) {
+        openSubChatIds = resolved.openSubChatIds
+        saveToLS(chatId, "open", openSubChatIds)
+      }
+      activeSubChatId = resolved.activeSubChatId
+      saveToLS(chatId, "active", activeSubChatId)
+    }
 
     // Load split panes — migrate from old splitSubChatId/splitOriginId if needed
     let splitPaneIds = loadFromLS<string[]>(chatId, "splitPanes", [])
@@ -204,7 +218,19 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
       splitPaneIds,
       splitRatios,
       allSubChats: [],
+      pendingNavigation: pendingNavigation?.chatId === chatId ? null : pendingNavigation,
     })
+  },
+
+  queueNavigation: (chatId, subChatId) => {
+    if (get().chatId !== chatId) {
+      set({ pendingNavigation: { chatId, subChatId } })
+      return
+    }
+    const resolved = resolveQueuedSubChatNavigation(get().openSubChatIds, subChatId)
+    set({ ...resolved, pendingNavigation: null })
+    saveToLS(chatId, "open", resolved.openSubChatIds)
+    saveToLS(chatId, "active", resolved.activeSubChatId)
   },
 
   setActiveSubChat: (subChatId) => {
@@ -427,6 +453,7 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
       allSubChats: [],
       splitPaneIds: [],
       splitRatios: [],
+      pendingNavigation: null,
     })
   },
 }))

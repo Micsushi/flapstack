@@ -5,6 +5,11 @@ import * as path from "node:path"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
 import { APP_META, externalAppSchema, type ExternalApp } from "../../../../shared/external-apps"
+import {
+  editorCommandsForPlatform,
+  editorFileArgs,
+  editorLookupCommand,
+} from "../../external/editor-file-args"
 
 function expandTilde(filePath: string): string {
   if (filePath.startsWith("~/") || filePath === "~") {
@@ -70,6 +75,8 @@ export const externalRouter = router({
       z.object({
         path: z.string(),
         cwd: z.string().optional(),
+        line: z.number().int().positive().optional(),
+        column: z.number().int().positive().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -79,18 +86,16 @@ export const externalRouter = router({
         : input.path
 
       // Try common code editors in order of preference
-      const editors = [
-        { cmd: "cursor", args: [filePath] }, // Cursor
-        { cmd: "code", args: [filePath] }, // VS Code
-        { cmd: "subl", args: [filePath] }, // Sublime Text
-        { cmd: "atom", args: [filePath] }, // Atom
-        { cmd: "open", args: ["-t", filePath] }, // macOS default text editor
-      ]
+      const editors = editorCommandsForPlatform(process.platform).map((cmd) => ({
+        cmd,
+        args: editorFileArgs(cmd, filePath, input.line, input.column),
+      }))
 
       for (const editor of editors) {
         try {
           // Check if the command exists first
-          execFileSync("which", [editor.cmd], { stdio: "ignore" })
+          const lookup = editorLookupCommand(process.platform, editor.cmd)
+          execFileSync(lookup.command, lookup.args, { stdio: "ignore" })
           const child = spawn(editor.cmd, editor.args, {
             cwd: cwd || undefined,
             detached: true,

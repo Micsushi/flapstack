@@ -15,6 +15,7 @@ import {
 } from "../../components/ui/select"
 import { trpc } from "../../lib/trpc"
 import { cn } from "../../lib/utils"
+import { isNavigableScopedSearchResult } from "./scoped-search-navigation"
 
 type Scope = "all" | "project" | "task" | "chat"
 
@@ -22,7 +23,12 @@ type ScopedSearchPanelProps = {
   selectedChatId?: string | null
   selectedProjectId?: string | null
   selectedTaskId?: string | null
-  onNavigateChat?: (chatId: string, subChatId?: string | null) => void
+  onNavigateChat?: (
+    chatId: string,
+    subChatId?: string | null,
+    messageId?: string | null,
+    query?: string,
+  ) => void
 }
 
 const RESULT_PAGE_SIZE = 20
@@ -110,36 +116,62 @@ export function ScopedSearchPanel({
           ) : results.length === 0 ? (
             <div className="px-1 py-2 text-xs text-muted-foreground">No results</div>
           ) : (
-            results.slice(0, visibleCount).map((result, index) => (
-              <button
-                key={`${result.type}-${result.chatId ?? result.projectId ?? result.taskId}-${index}`}
-                type="button"
-                className={cn(
-                  "w-full rounded-md border border-transparent px-2 py-1.5 text-left",
-                  "hover:border-border hover:bg-muted/50",
-                )}
-                onClick={() => {
-                  if (result.chatId) onNavigateChat?.(result.chatId, result.subChatId)
-                }}
-              >
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span>{resultLabel(result.type)}</span>
-                  <CornerDownRight className="h-3 w-3" />
-                  <span className="truncate">
-                    {[result.projectId, result.taskId, result.chatId, result.subChatId]
-                      .filter(Boolean)
-                      .map((value) => String(value).slice(-6))
-                      .join(" / ")}
-                  </span>
-                </div>
-                <div className="truncate text-xs font-medium text-foreground">{result.title}</div>
-                {result.snippet && (
-                  <div className="line-clamp-2 text-[11px] text-muted-foreground">
-                    {result.snippet}
+            results.slice(0, visibleCount).map((result, index) => {
+              const key = `${result.type}-${result.chatId ?? result.projectId ?? result.taskId}-${index}`
+              const navigable = isNavigableScopedSearchResult(result)
+              const content = (
+                <>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span>{resultLabel(result.type)}</span>
+                    {navigable && <CornerDownRight className="h-3 w-3" />}
+                    <span className="truncate">
+                      {[result.projectId, result.taskId, result.chatId, result.subChatId]
+                        .filter(Boolean)
+                        .map((value) => String(value).slice(-6))
+                        .join(" / ")}
+                    </span>
                   </div>
-                )}
-              </button>
-            ))
+                  <div className="truncate text-xs font-medium text-foreground">{result.title}</div>
+                  {result.snippet && (
+                    <div className="line-clamp-2 text-[11px] text-muted-foreground">
+                      {result.snippet}
+                    </div>
+                  )}
+                </>
+              )
+
+              if (!navigable) {
+                return (
+                  <div
+                    key={key}
+                    className="w-full rounded-md border border-transparent px-2 py-1.5 text-left"
+                  >
+                    {content}
+                  </div>
+                )
+              }
+
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={cn(
+                    "w-full rounded-md border border-transparent px-2 py-1.5 text-left",
+                    "hover:border-border hover:bg-muted/50",
+                  )}
+                  onClick={() =>
+                    onNavigateChat?.(
+                      result.chatId!,
+                      result.subChatId,
+                      result.messageId,
+                      trimmedQuery,
+                    )
+                  }
+                >
+                  {content}
+                </button>
+              )
+            })
           )}
         </div>
       )}

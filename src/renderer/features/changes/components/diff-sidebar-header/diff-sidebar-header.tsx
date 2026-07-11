@@ -537,8 +537,10 @@ export const DiffSidebarHeader = memo(function DiffSidebarHeader({
           projectPath={worktreePath}
           branches={dialogBranches}
           defaultBranch={branchData?.defaultBranch ?? currentBranch}
-          onBranchCreated={() => {
+          switchAfterCreate
+          onBranchCreated={(branchName) => {
             setCreateBranchOpen(false)
+            void branchName
             refetchBranches()
           }}
         />

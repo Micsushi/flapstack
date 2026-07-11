@@ -5,6 +5,7 @@ export type SpeechAdapterAvailability = {
   available: boolean
   status: SpeechAdapterStatus
   reason?: string
+  missingDependency?: "engine" | "audio-converter" | "model"
 }
 
 export type SttInput = {
@@ -20,7 +21,7 @@ export type SttResult = {
 
 export type SttAdapter = SttAdapterInfo & {
   isAvailable(): Promise<SpeechAdapterAvailability>
-  /** True when transcribe() can provision a missing runtime asset itself. */
+  /** True when runtime dependencies exist and transcribe() can provision its missing model. */
   canAutoProvision?(): Promise<boolean>
   transcribe(input: SttInput): Promise<SttResult>
 }
@@ -35,6 +36,10 @@ export type TtsInput = {
   text: string
   voiceId?: string | null
   rate?: number
+  /** Electron-window ownership for scoped native cancellation. */
+  requestScopeId?: string
+  /** Cheap cooperative cancellation between local synthesis chunks. */
+  shouldContinue?: () => boolean
 }
 
 export type TtsResult = {
@@ -48,7 +53,7 @@ export type TtsAdapter = TtsAdapterInfo & {
   isAvailable(): Promise<SpeechAdapterAvailability>
   listVoices(): Promise<TtsVoice[]>
   speak(input: TtsInput): Promise<TtsResult>
-  stop(): Promise<void>
+  stop(requestScopeId?: string): Promise<void>
 }
 
 export type SttAdapterInfo = {

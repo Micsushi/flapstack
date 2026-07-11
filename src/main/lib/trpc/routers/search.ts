@@ -20,6 +20,7 @@ type SearchResult = {
   taskId?: string | null
   chatId?: string | null
   subChatId?: string | null
+  messageId?: string | null
 }
 
 function snippet(value: string | null | undefined, query: string): string {
@@ -29,37 +30,58 @@ function snippet(value: string | null | undefined, query: string): string {
   return text.slice(Math.max(0, index - 60), index + query.length + 100)
 }
 
-function extractMessageText(messagesJson: string): string {
+type IndexedMessageText = { messageId?: string; text: string }
+
+function extractMessageTexts(messagesJson: string): IndexedMessageText[] {
   try {
     const messages = JSON.parse(messagesJson) as unknown
-    if (!Array.isArray(messages)) return messagesJson
+    if (typeof messages === "string") return [{ text: messages }]
+    if (!Array.isArray(messages)) return []
 
     return messages
-      .flatMap((message) => {
-        if (!message || typeof message !== "object") return []
+      .map((message): IndexedMessageText | null => {
+        if (!message || typeof message !== "object") return null
         const record = message as Record<string, unknown>
         const parts = record.parts
+        const messageId = typeof record.id === "string" ? record.id : undefined
         if (Array.isArray(parts)) {
-          return parts.flatMap((part) => {
-            if (!part || typeof part !== "object") return []
-            const partRecord = part as Record<string, unknown>
-            if (
-              (partRecord.type === "text" || partRecord.type === "file-content") &&
-              typeof partRecord.text === "string"
-            ) {
-              return [partRecord.text]
-            }
-            if (partRecord.type === "file-content" && typeof partRecord.content === "string") {
-              return [partRecord.content]
-            }
-            return []
-          })
+          const text = parts
+            .flatMap((part) => {
+              if (!part || typeof part !== "object") return []
+              const partRecord = part as Record<string, unknown>
+              if (
+                (partRecord.type === "text" ||
+                  partRecord.type === "reasoning" ||
+                  partRecord.type === "file-content") &&
+                typeof partRecord.text === "string"
+              ) {
+                return [partRecord.text]
+              }
+              if (partRecord.type === "file-content" && typeof partRecord.content === "string") {
+                return [partRecord.content]
+              }
+              if (
+                (partRecord.type === "tool-ReasoningOutput" ||
+                  partRecord.type === "tool-Thinking") &&
+                partRecord.input &&
+                typeof partRecord.input === "object" &&
+                typeof (partRecord.input as Record<string, unknown>).text === "string"
+              ) {
+                return [(partRecord.input as Record<string, string>).text]
+              }
+              return []
+            })
+            .join("\n")
+          return text ? { messageId, text } : null
         }
-        return typeof record.content === "string" ? [record.content] : []
+        return typeof record.content === "string" ? { messageId, text: record.content } : null
       })
-      .join("\n")
+      .filter((entry): entry is IndexedMessageText => entry !== null)
   } catch {
-    return messagesJson
+    // Older rows can contain plain text instead of JSON. Keep those searchable,
+    // but never index malformed JSON because metadata and hidden tool inputs are
+    // outside the user-visible search contract.
+    return /^[\[{]/.test(messagesJson.trim()) ? [] : [{ text: messagesJson }]
   }
 }
 
@@ -181,23 +203,28 @@ export const searchRouter = router({
         .from(subChats)
         .where(and(...messageConditions))
         .all()) {
-        const messageText = extractMessageText(subChat.messages)
-        if (!messageText.toLowerCase().includes(input.query.toLowerCase())) continue
+        const matchingMessages = extractMessageTexts(subChat.messages).filter((entry) =>
+          entry.text.toLowerCase().includes(input.query.toLowerCase()),
+        )
+        if (matchingMessages.length === 0) continue
         const parent = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
         if (!parent) continue
         if (!isChatSearchVisible(db, parent, input.includeArchived)) continue
         if (input.scope === "project" && input.scopeId && parent.projectId !== input.scopeId)
           continue
         if (input.scope === "task" && input.scopeId && parent.taskId !== input.scopeId) continue
-        results.push({
-          type: "message",
-          title: parent.name || subChat.name || "Message",
-          projectId: parent.projectId,
-          taskId: parent.taskId,
-          chatId: parent.id,
-          subChatId: subChat.id,
-          snippet: snippet(messageText, input.query),
-        })
+        for (const match of matchingMessages) {
+          results.push({
+            type: "message",
+            title: parent.name || subChat.name || "Message",
+            projectId: parent.projectId,
+            taskId: parent.taskId,
+            chatId: parent.id,
+            subChatId: subChat.id,
+            messageId: match.messageId,
+            snippet: snippet(match.text, input.query),
+          })
+        }
       }
 
       const attachmentConditions = [

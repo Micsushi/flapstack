@@ -23,6 +23,7 @@ import type {
   NormalizedSidecarEvent,
   SidecarApprovalCallback,
   SidecarLaunchInput,
+  SidecarPermissionResolution,
 } from "./contract"
 
 export function isSidecarRuntimeEnabled(): boolean {
@@ -38,6 +39,14 @@ export async function* runSidecarSession(
   input: SidecarLaunchInput,
   onApproval?: SidecarApprovalCallback,
 ): AsyncGenerator<NormalizedSidecarEvent> {
+  const permissionApplication = buildOpencodePermissionApplication({
+    permissionMode: input.permissionMode,
+    cwd: input.cwd,
+  })
+  // Make the applied controls and limitations part of the run stream so every
+  // exit path, including runtime-disabled and preflight failure, can persist an honest record.
+  yield { kind: "permission-application", application: permissionApplication }
+
   if (!isSidecarRuntimeEnabled()) {
     yield {
       kind: "error",
@@ -46,13 +55,6 @@ export async function* runSidecarSession(
     yield { kind: "done" }
     return
   }
-
-  // Compute the session rules up front. The persisted run wiring will record the
-  // matching permission application when this scaffolding is made live.
-  buildOpencodePermissionApplication({
-    permissionMode: input.permissionMode,
-    cwd: input.cwd,
-  })
 
   const model = parseOpencodeModelString(input.model)
   if (model.providerId !== input.provider || !model.modelId) {
@@ -94,16 +96,20 @@ export async function* runSidecarSession(
     yield { kind: "phase", phase: "creating-session" }
     const permission = buildOpencodeSessionPermissions(input.permissionMode)
     const sessionId = input.resumeSessionId
-      ? await client.forkSession(input.resumeSessionId)
-      : await client.createSession(permission)
-    if (input.resumeSessionId) await client.setSessionPermissions(sessionId, permission)
+      ? await client.forkSession(input.resumeSessionId, input.signal)
+      : await client.createSession(permission, input.signal)
+    if (input.resumeSessionId)
+      await client.setSessionPermissions(sessionId, permission, input.signal)
     yield { kind: "session-start", sessionId }
 
     yield { kind: "phase", phase: "streaming" }
     // Subscribe before prompting. Otherwise short provider responses can finish
     // before the SSE connection exists and their events are lost.
     const eventResponse = await client.openEventStream(input.signal)
-    await client.prompt(sessionId, input.prompt, model, input.attachments)
+    // The synchronous /message endpoint waits for the whole tool loop. That
+    // deadlocks ask-mode runs because permission requests arrive over SSE while
+    // the POST is still waiting. prompt_async returns once the run is queued.
+    await client.promptAsync(sessionId, input.prompt, model, input.attachments, input.signal)
     yield* streamEvents({ client, handle, sessionId, input, onApproval, eventResponse })
     yield { kind: "done" }
   } catch (error) {
@@ -118,7 +124,7 @@ export async function* runSidecarSession(
   }
 }
 
-async function* streamEvents(ctx: {
+export async function* streamEvents(ctx: {
   client: OpencodeClient
   handle: SidecarHandle
   sessionId: string
@@ -139,6 +145,7 @@ async function* streamEvents(ctx: {
   const seenPermissions = new Set<string>()
   const normalizer = new OpencodeEventNormalizer()
   let buffer = ""
+  let sawTerminalEvent = false
 
   try {
     while (true) {
@@ -167,12 +174,34 @@ async function* streamEvents(ctx: {
             seenPermissions.add(normalized.requestId)
             // Surface the request in the run for auditing.
             yield normalized
-            await handlePermission(client, input, onApproval, normalized)
+            const resolution = await handlePermissionRequest(client, input, onApproval, normalized)
+            yield {
+              kind: "permission-decision",
+              requestId: normalized.requestId,
+              toolCallId: normalized.toolCallId,
+              permission: normalized.permission,
+              patterns: normalized.patterns,
+              reply: resolution.decision.reply,
+              ...(resolution.decision.reply === "reject"
+                ? { message: resolution.decision.message }
+                : {}),
+              source: resolution.source,
+            }
             continue
           }
           yield normalized
-          if (normalized.kind === "idle") return
+          if (normalized.kind === "idle") {
+            sawTerminalEvent = true
+            return
+          }
+          if (normalized.kind === "error") sawTerminalEvent = true
         }
+      }
+    }
+    if (!input.signal?.aborted && !sawTerminalEvent) {
+      yield {
+        kind: "error",
+        errorText: "OpenCode event stream ended before the run reached a terminal state.",
       }
     }
   } finally {
@@ -180,26 +209,40 @@ async function* streamEvents(ctx: {
   }
 }
 
-async function handlePermission(
+export async function handlePermissionRequest(
   client: OpencodeClient,
   input: SidecarLaunchInput,
   onApproval: SidecarApprovalCallback | undefined,
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
-): Promise<void> {
+): Promise<SidecarPermissionResolution> {
   const auto = decideAutoApproval(input.permissionMode, request.permission)
-  const decision =
-    auto ??
-    (onApproval
-      ? await onApproval({
-          requestId: request.requestId,
-          toolCallId: request.toolCallId,
-          permission: request.permission,
-        })
-      : { reply: "reject" as const, message: "No approval handler available." })
+  const resolution: SidecarPermissionResolution = auto
+    ? { decision: auto, source: "policy" }
+    : onApproval
+      ? {
+          decision: await onApproval({
+            requestId: request.requestId,
+            toolCallId: request.toolCallId,
+            permission: request.permission,
+            patterns: request.patterns,
+            ...(request.command ? { command: request.command } : {}),
+          }),
+          source: "user",
+        }
+      : {
+          decision: { reply: "reject", message: "No approval handler available." },
+          source: "fallback",
+        }
+  const decision = resolution.decision
 
   if (decision.reply === "reject") {
-    await client.replyPermission(request.requestId, "reject", decision.message)
+    if (input.signal)
+      await client.replyPermission(request.requestId, "reject", decision.message, input.signal)
+    else await client.replyPermission(request.requestId, "reject", decision.message)
   } else {
-    await client.replyPermission(request.requestId, decision.reply)
+    if (input.signal)
+      await client.replyPermission(request.requestId, decision.reply, undefined, input.signal)
+    else await client.replyPermission(request.requestId, decision.reply)
   }
+  return resolution
 }

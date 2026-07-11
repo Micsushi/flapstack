@@ -31,9 +31,10 @@
     "format": "prettier --write .",
     "style:check": "node scripts/with-heavy-job-lock.mjs style:check -- prettier --check .",
     "test": "node scripts/ensure-native-abi.mjs node && node scripts/with-heavy-job-lock.mjs test -- vitest run",
+    "smoke:usage-daemon": "node scripts/ensure-native-abi.mjs electron && node scripts/smoke-usage-daemon.mjs",
     "test:model-catalog": "vitest run tests/model-catalog.test.ts",
     "test:codex-model-catalog": "node scripts/check-codex-model-catalog.mjs",
-    "check": "node scripts/with-heavy-job-lock.mjs check -- sh -c \"npm run lint && npm run style:check && npm run test && npm run build\"",
+    "check": "node scripts/with-heavy-job-lock.mjs check -- sh -c \"npm run lint && npm run style:check && npm run ts:check && npm run test && npm run build\"",
     "ts:check": "tsc --noEmit",
     "postinstall": "node -e \"if(!process.env.VERCEL){require('child_process').execSync('node scripts/ensure-native-abi.mjs electron',{stdio:'inherit'})}\" && node scripts/patch-electron-dev.mjs"
   },

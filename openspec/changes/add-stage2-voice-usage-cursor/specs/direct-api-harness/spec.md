@@ -40,20 +40,20 @@ provider raw payloads, sidecar metadata, and permission-gated tool activity.
 - **THEN** the system reports an actionable sidecar-unavailable state
 - **AND** records the failure on the run without sending a provider request
 
-### Requirement: Direct API Harness Identity
+### Requirement: API Harness Identity
 
 The system SHALL expose OpenRouter and NanoGPT in the harness/model selectors and
 message producer chips with distinct provider identities. Cursor, OpenRouter, and
 NanoGPT chip colors SHALL not conflict with existing Codex, Claude, local, or
 unknown/custom chip colors.
 
-#### Scenario: Direct API identity is visible
+#### Scenario: API harness identity is visible
 
 - **WHEN** an OpenRouter or NanoGPT run produces an assistant message
 - **THEN** the chat tab and message show the correct provider chip
 - **AND** the model selector shows the provider model id used for the run
 
-### Requirement: Direct API Model Catalogs
+### Requirement: API Harness Model Catalogs
 
 The system SHALL fetch, cache, refresh, and search OpenRouter and NanoGPT model
 catalogs, preserving provider model ids, context limits, pricing metadata when
@@ -71,7 +71,7 @@ available, and reasoning/tool capability hints when exposed.
 - **THEN** the system keeps the last successful cache if present
 - **AND** reports the refresh failure without blocking already configured models
 
-### Requirement: Direct API Tool Loop
+### Requirement: API Harness Tool Loop
 
 The system SHALL mediate OpenRouter and NanoGPT local computer access through
 OpenCode's tool loop plus Flapstack's permission mapping and approval bridge, so
@@ -104,7 +104,7 @@ enforce them.
 - **THEN** the system reports a `HarnessPermissionLimitation`
 - **AND** does not claim that the requested control was fully enforced
 
-### Requirement: Direct API Reasoning Streams
+### Requirement: API Harness Reasoning Streams
 
 The system SHALL normalize provider-visible OpenRouter and NanoGPT reasoning
 fields surfaced through OpenCode events into the shared Reasoning output UI while keeping

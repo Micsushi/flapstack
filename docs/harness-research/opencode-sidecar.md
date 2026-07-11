@@ -1,9 +1,7 @@
 # Harness Engine: OpenCode Sidecar (Track E)
 
-Repo-local mirror of the vault decision recorded in
-`Wiki/Projects/flapstack/stage2-implementation-tasks.md` (Track E) and
-`current-handoff.md` (2026-07-10). This file exists so the implementation is
-self-documenting without the vault.
+This repo-local record documents the Track E decision and keeps the
+implementation self-contained.
 
 ## E0 decision — use OpenCode as the first harness engine
 
@@ -26,27 +24,27 @@ and controls.
   (deferred to the E8 spike). We do **not** vendor OpenCode internals unless the
   E8 spike proves the sidecar path cannot meet product needs.
 
-## Local reference repos
+## Reference repos
 
-- OpenCode: `/Users/michaelshi/Documents/GitHub/temp/opencode`
-- Aider: `/Users/michaelshi/Documents/GitHub/temp/aider`
-- Vibe Kanban: `/Users/michaelshi/Documents/GitHub/vibe-kanban`
+- OpenCode
+- Aider
+- Vibe Kanban
 
 ## OpenCode server HTTP/SSE contract (as ported here)
 
 Auth: HTTP Basic `opencode:{password}` plus an `x-opencode-directory` header;
 every request also carries `?directory=<cwd>`.
 
-| Purpose             | Method + path                                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Health              | `GET /global/health` → `{ healthy, version }`                                                                     |
-| Create session      | `POST /session?directory=` → `{ id }`                                                                             |
-| Fork/resume session | `POST /session/{id}/fork?directory=` → `{ id }`                                                                   |
-| Prompt              | `POST /session/{id}/message?directory=` with `{ model:{providerID,modelID}, agent?, parts:[{type:"text",text}] }` |
-| Abort               | `POST /session/{id}/abort?directory=`                                                                             |
-| Event stream (SSE)  | `GET /event?directory=` (`Accept: text/event-stream`)                                                             |
-| Permission reply    | `POST /permission/{id}/reply?directory=` with `{ reply:"once"\|"always"\|"reject", message? }`                    |
-| Providers/config    | `GET /config`, `GET /config/providers`, `GET /provider`                                                           |
+| Purpose             | Method + path                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Health              | `GET /global/health` → `{ healthy, version }`                                                                  |
+| Create session      | `POST /session?directory=` → `{ id }`                                                                          |
+| Fork/resume session | `POST /session/{id}/fork?directory=` → `{ id }`                                                                |
+| Prompt              | `POST /session/{id}/prompt_async?directory=` with `{ model:{providerID,modelID}, parts:[{type:"text",text}] }` |
+| Abort               | `POST /session/{id}/abort?directory=`                                                                          |
+| Event stream (SSE)  | `GET /event?directory=` (`Accept: text/event-stream`)                                                          |
+| Permission reply    | `POST /permission/{id}/reply?directory=` with `{ reply:"once"\|"always"\|"reject", message? }`                 |
+| Providers/config    | `GET /config`, `GET /config/providers`, `GET /provider`                                                        |
 
 Event types consumed: `message.updated`, `message.part.updated`,
 `message.part.delta`, `session.status`, `session.idle`, `session.error`,

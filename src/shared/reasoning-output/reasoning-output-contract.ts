@@ -9,8 +9,8 @@
 //   - Deltas stream into the panel as they arrive; a final block must not
 //     duplicate text already streamed.
 //
-// Authoritative task board: agentsvault Stage 2 "Cross-track — Reasoning Output
-// Parity" (T0-T7). This module is the T1 deliverable that unblocks T2-T6.
+// Repo-local tracking: STAGE2-TRACK.md, "Cross-track — Reasoning Output Parity"
+// (T0-T7). This module is the T1 deliverable that unblocks T2-T6.
 
 export const REASONING_OUTPUT_PROVIDERS = [
   "claude-code",

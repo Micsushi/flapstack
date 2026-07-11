@@ -8,10 +8,12 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 (voice,
-usage, smaller fixes, Cursor, OpenRouter, and NanoGPT provider work) is next.
-Some Stage 1 carryover polish remains tracked in Stage 2 so the MVP is honest to
-manually test instead of hiding thin or capped surfaces.
+Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 code is
+merged and in readiness repair/manual validation; it is **not** at full exit yet.
+Voice, usage, Cursor, OpenRouter/NanoGPT through an OpenCode sidecar, reasoning
+output, and the smaller-fix surfaces all have runnable implementation, but the
+remaining blockers and exact human test steps are tracked in the
+[Stage 2 full-feature matrix](docs/stage2-full-feature-test-matrix.md).
 
 - Base code: 1Code, rebranded to Flapstack
 - Repo visibility: private for now
@@ -20,6 +22,10 @@ manually test instead of hiding thin or capped surfaces.
   runs, permission modes with copy-on-create inheritance, worktree defaults,
   file/pasted-text attachments, scoped search, pin/archive, and before/after
   checkpoints with per-run file-change manifests
+- Stage 2 validation: the supported Node gate is green, including strict
+  TypeScript. Clean-install cross-platform voice provisioning, personal
+  Codex/Claude usage coverage, full Cursor usage coverage, dashboard graphs,
+  and credentialed/packaged provider matrices remain open.
 - Current UI note: the inherited vertical middle sub-chats **Chats** pane is
   hidden behind `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`. Sub-chat tabs, quick
   switch, split view, and routing remain active. Revisit the pane later only if
@@ -95,19 +101,19 @@ Cursor harness:
 - Cursor permission mapping and honest limitation surfacing.
 - Cursor chips and model selector wiring.
 
-OpenRouter + NanoGPT direct API harnesses:
+OpenRouter + NanoGPT OpenCode-backed harnesses:
 
-- OpenAI-compatible streaming chat adapters owned by Flapstack.
+- Flapstack-owned launcher, isolated configuration, authenticated HTTP/SSE
+  bridge, and persistence around a pinned local OpenCode sidecar.
 - Provider keys, model catalogs, chips, usage capture, and visible reasoning
   normalization.
-- App-owned permission-gated tool loop so these providers can get the same local
-  computer access surface as Codex and Claude: file read/write, shell, git,
-  browser, and MCP where the selected permission mode allows it.
+- OpenCode owns the model/tool loop; Flapstack maps permission modes, shows the
+  exact requested command/path patterns, records decisions, and controls the
+  run lifecycle. Browser/MCP parity must be verified rather than inferred.
 
 Smaller fixes (Stage 1 carryover plus backlog):
 
-- Resolve inherited strict-TypeScript debt and promote `npm run ts:check` into
-  the CI/commit gate.
+- Keep the resolved strict-TypeScript baseline enforced by `npm run check` and CI.
 - Harden native-module setup (better-sqlite3 / node-pty) so Node and Electron
   ABI targets no longer need a manual rebuild toggle.
 - Harden Codex/Claude permission enforcement and surface any harness limitation
@@ -121,24 +127,38 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Finish run history UX so users can page or expand beyond the first few runs.
 - Make cross-scope chat moves discoverable from menus, not only hidden
   drag/toggle paths.
-- Keep repo docs and vault docs in sync with shipped status and remaining
-  carryover work.
+- Keep repo docs in sync with shipped status and remaining carryover work.
 
 ### Stage 3: MCP Control
 
+- Start with a technical-debt stabilization gate: resolve or explicitly promote
+  remaining blocking debt before expanding the MCP surface.
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
 - Permission gates around agent-initiated app actions.
+- Cross-harness thread spawning: Claude can create a Codex thread, Codex can
+  create a Claude thread, and other supported harnesses can target each other
+  through approved and audited create-thread and launch-run operations.
+- Basic parent/initiator lineage for spawned threads; graph UI, budgets, depth
+  limits, and swarm controls remain later work.
 - User approval before agent-created automations become active.
+
+### Stage 4: Knowledge, Workspaces, And Multi-Agent Operations
+
+- Unified skills and hooks manager across supported harnesses.
+- Project knowledge vaults for durable docs, decisions, context, and memory.
+- Multi-agent orchestration with lineage, budgets, depth limits, and kill controls.
+- Saved project/task workspaces combining chats, terminals, agents, worktrees,
+  browser/editor/diff panes, tabs, and pop-outs.
+
+Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
+dictation; no separate Flapstack voice platform is planned.
 
 ### Later
 
 - Automation and scheduler.
 - Local models.
-- Full skill manager.
-- Usage and limits tracking.
-- Project Obsidian vault integration.
-- Spawned-agent/thread graph.
+- Additional usage providers, account coverage, and dashboard depth.
 
 ## Development
 
@@ -151,7 +171,7 @@ Prerequisites:
 Install and run:
 
 ```bash
-npm install
+npm ci --legacy-peer-deps
 npm run claude:download
 npm run codex:download
 npm run dev
@@ -177,10 +197,12 @@ npm run style:check
 npm run test
 npm run build
 npm run check
+npm run smoke:usage-daemon
+npm run ts:check # also runs inside npm run check
 ```
 
-`npm run check` is the CI/pre-commit gate. `npm run ts:check` is available but
-currently tracks inherited type debt and is not part of CI yet.
+`npm run check` is the CI/pre-commit gate. It runs lint, formatting, strict
+TypeScript, tests, and the production build; CI enforces the same steps.
 
 ## Source Attribution
 

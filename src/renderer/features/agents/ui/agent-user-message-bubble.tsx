@@ -196,7 +196,7 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                     ? `data:${img.data.mediaType};base64,${img.data.base64Data}`
                     : img.data?.url || ""
                 const allImages = imageParts
-                  .filter((img) => img.data?.url || img.data?.base64Data)
+                  .filter((img) => img.data?.url || (img.data as any)?.base64Data)
                   .map((img, idx) => ({
                     id: `${messageId}-img-${idx}`,
                     filename: img.data?.filename || "image",

@@ -179,8 +179,10 @@ export function ChangesPanelHeader({
         projectPath={worktreePath}
         branches={dialogBranches}
         defaultBranch={branchData?.defaultBranch ?? currentBranch}
-        onBranchCreated={() => {
+        switchAfterCreate
+        onBranchCreated={(branchName) => {
           setCreateBranchOpen(false)
+          void branchName
           refetchBranches()
         }}
       />

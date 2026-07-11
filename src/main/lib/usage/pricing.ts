@@ -2,9 +2,8 @@
 // does not return an exact figure (OpenRouter U8, NanoGPT U9). Estimates derived
 // here are always tagged costQuality: "estimated" by the caller.
 //
-// Scaffold: the fetch/refresh from provider model endpoints is not wired yet.
-// A small hardcoded table lets the estimator and its tests run; real pricing is
-// pulled from provider /models endpoints in U8/U9.
+// Provider adapters refresh this process-local cache from their /models endpoints.
+// A zero-price wildcard remains only as an honest "pricing unknown" sentinel.
 
 import type { UsageProviderId } from "./types"
 
@@ -46,6 +45,14 @@ export function getModelPricing(
   if (model) {
     const exact = cache.get(cacheKey(providerId, model))
     if (exact) return exact
+    // OpenCode addresses models as `providerID/modelID`, while provider model
+    // catalogs return the native model id. Accept both without changing the
+    // model string persisted on the run.
+    const providerPrefix = `${providerId}/`
+    if (model.startsWith(providerPrefix)) {
+      const native = cache.get(cacheKey(providerId, model.slice(providerPrefix.length)))
+      if (native) return native
+    }
   }
   return cache.get(cacheKey(providerId, "*")) ?? null
 }

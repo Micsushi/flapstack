@@ -27,10 +27,12 @@ import {
   codexReasoningEventsToParts,
   extractLatestCodexReasoningEvents,
 } from "../../codex/reasoning"
+import { resolveCodexStdioLaunch } from "../../codex/mcp-stdio"
 import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
+import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import { getReadAloudEnabled } from "../../speech/settings"
 import {
   buildCodexPermissionApplication,
@@ -88,6 +90,8 @@ type CodexMcpServerForSettings = {
   tools: McpToolInfo[]
   needsAuth: boolean
   config: Record<string, unknown>
+  serverInfo?: { name: string; version: string; icons?: Array<{ src: string }> }
+  error?: string
 }
 
 type CodexMcpSnapshot = {
@@ -740,19 +744,23 @@ function normalizeCodexTools(tools: McpToolInfo[]): McpToolInfo[] {
 
 async function fetchCodexMcpTools(entry: CodexMcpListEntry): Promise<McpToolInfo[]> {
   const transportType = entry.transport.type.trim().toLowerCase()
-  const timeoutPromise = new Promise<McpToolInfo[]>((_, reject) =>
-    setTimeout(() => reject(new Error("Timeout")), CODEX_MCP_TOOLS_FETCH_TIMEOUT_MS),
-  )
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), CODEX_MCP_TOOLS_FETCH_TIMEOUT_MS)
 
   const fetchPromise = (async (): Promise<McpToolInfo[]> => {
     if (transportType === "stdio") {
-      const command = entry.transport.command?.trim()
+      const launch = resolveCodexStdioLaunch(entry.transport)
+      const command = launch.command
       if (!command) return []
-      return await fetchMcpToolsStdio({
-        command,
-        args: entry.transport.args || undefined,
-        env: resolveCodexStdioEnv(entry.transport),
-      })
+      return await fetchMcpToolsStdio(
+        {
+          command,
+          args: launch.args,
+          env: resolveCodexStdioEnv(entry.transport),
+          cwd: launch.cwd,
+        },
+        controller.signal,
+      )
     }
 
     if (
@@ -762,17 +770,19 @@ async function fetchCodexMcpTools(entry: CodexMcpListEntry): Promise<McpToolInfo
     ) {
       const url = entry.transport.url?.trim()
       if (!url) return []
-      return await fetchMcpTools(url, resolveCodexHttpHeaders(entry.transport))
+      return await fetchMcpTools(url, resolveCodexHttpHeaders(entry.transport), controller.signal)
     }
 
     return []
   })()
 
   try {
-    const tools = await Promise.race([fetchPromise, timeoutPromise])
+    const tools = await fetchPromise
     return normalizeCodexTools(tools)
   } catch {
     return []
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -833,15 +843,16 @@ async function resolveCodexMcpSnapshot(params: {
 
       let sessionServer: CodexMcpServerForSession | null = null
       if (transportType === "stdio") {
-        const command = entry.transport.command || undefined
-        const args = entry.transport.args || undefined
+        const launch = resolveCodexStdioLaunch(entry.transport)
+        const command = launch.command
+        const args = launch.args
         if (includeInSession && command) {
           const envPairs = objectToPairs(resolvedStdioEnv) || []
           sessionServer = {
             name: entry.name,
             type: "stdio",
             command,
-            args: Array.isArray(args) ? args : [],
+            args,
             env: envPairs,
           }
         }
@@ -850,6 +861,7 @@ async function resolveCodexMcpSnapshot(params: {
         settingsConfig.args = args
         settingsConfig.env = entry.transport.env || undefined
         settingsConfig.envVars = entry.transport.env_vars || undefined
+        settingsConfig.cwd = launch.cwd
       } else if (
         transportType === "streamable_http" ||
         transportType === "http" ||
@@ -1816,9 +1828,18 @@ export const codexRouter = router({
                 return false
               }
 
+              const latestSubChat = db
+                .select({ messages: subChats.messages })
+                .from(subChats)
+                .where(eq(subChats.id, input.subChatId))
+                .get()
+              const mergedMessages = mergeMessagesPreservingSpokenText(
+                parseStoredMessages(latestSubChat?.messages),
+                messages,
+              )
               db.update(subChats)
                 .set({
-                  messages: JSON.stringify(messages),
+                  messages: JSON.stringify(mergedMessages),
                   updatedAt: new Date(),
                 })
                 .where(eq(subChats.id, input.subChatId))

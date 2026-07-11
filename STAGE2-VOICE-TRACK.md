@@ -1,10 +1,22 @@
 # Stage 2 — Track A: Voice (STT/TTS)
 
-Branch: `codex/stage2-voice-io`
+Historical branch: `codex/stage2-voice-io` (merged into `main`)
 
-Authoritative task board (Blocked-by / Blocks / Files / Scope / Done-when for
-every task):
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track A**.
+This file is the authoritative repo-local task board for **Track A**, including
+dependencies, file scope, and done criteria.
+
+## Integrated readiness correction — 2026-07-10
+
+The Voice implementation and review hardening are integrated on `main`. The mic
+now stays discoverable on first use, model download/progress/retry is exposed,
+playback has a single cancellable owner, stale synthesis is discarded, and the
+read-aloud contract covers Claude, Codex, Cursor, OpenRouter, and NanoGPT. Current
+manual rows live in `docs/stage2-full-feature-test-matrix.md`.
+
+Prepared macOS development is testable. A pristine packaged app still depends on
+system `whisper-cli` and FFmpeg because those executables are not bundled.
+Human-audible macOS checks, Windows SAPI/microphone checks, and packaged DMG/Windows
+tests remain Stage 2 exit blockers.
 
 ## Tasks
 

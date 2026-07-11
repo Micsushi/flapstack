@@ -61,7 +61,6 @@ export function buildLaunchAgentPlist(params: {
     <key>FLAPSTACK_DB_PATH</key><string>${xml(params.dbPath)}</string>
     <key>FLAPSTACK_CONFIG_DIR</key><string>${xml(params.configDir)}</string>
     <key>FLAPSTACK_USAGE_CADENCE_SECONDS</key><string>${xml(params.cadenceSeconds)}</string>
-    <key>FLAPSTACK_RUN_DAEMON</key><string>1</string>
     <!-- process.execPath is Electron in packaged builds. This makes it execute
          the standalone daemon bundle as Node rather than opening the app UI. -->
     <key>ELECTRON_RUN_AS_NODE</key><string>1</string>
@@ -114,8 +113,44 @@ export function uninstallMacLaunchAgent(): void {
   if (currentDaemonPlatform() !== "darwin")
     throw new Error("Usage daemon install is currently supported on macOS only")
   const path = launchAgentPlistPath()
+  uninstallLaunchAgent({
+    path,
+    domain: launchctlDomain(),
+    run: (args, options) => execFileSync("launchctl", args, options),
+    remove: (target) => rmSync(target, { force: true }),
+  })
+}
+
+export function uninstallLaunchAgent(params: {
+  path: string
+  domain: string
+  run: (args: string[], options: { stdio: "ignore" }) => unknown
+  remove: (path: string) => void
+}): void {
+  const serviceTarget = `${params.domain}/${LAUNCH_AGENT_LABEL}`
   try {
-    execFileSync("launchctl", ["bootout", launchctlDomain(), path], { stdio: "ignore" })
-  } catch {}
-  rmSync(path, { force: true })
+    params.run(["bootout", params.domain, params.path], { stdio: "ignore" })
+  } catch (bootoutError) {
+    try {
+      params.run(["print", serviceTarget], { stdio: "ignore" })
+    } catch {
+      // launchctl confirms that no job remains loaded. A bootout error is
+      // expected when the plist exists but was already stopped.
+      params.remove(params.path)
+      return
+    }
+    throw new Error(
+      `Unable to stop the usage daemon; its LaunchAgent is still loaded: ${String(
+        (bootoutError as Error)?.message ?? bootoutError,
+      )}`,
+    )
+  }
+
+  try {
+    params.run(["print", serviceTarget], { stdio: "ignore" })
+  } catch {
+    params.remove(params.path)
+    return
+  }
+  throw new Error("Unable to stop the usage daemon; launchctl still reports it as loaded")
 }

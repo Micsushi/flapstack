@@ -12,6 +12,7 @@ const dbPath = join(temp, "agents.db")
 const settingsPath = join(temp, "usage-settings.json")
 const daemonEntry = join(root, "out/main/usage-daemon.js")
 const electronPath = require("electron")
+let child
 
 try {
   const db = new DatabaseSync(dbPath)
@@ -28,22 +29,31 @@ try {
     JSON.stringify({ daemonEnabled: true, daemonStartAtLogin: true, cadenceSeconds: 30 }),
   )
 
-  const child = spawn(electronPath, [daemonEntry], {
+  child = spawn(electronPath, [daemonEntry], {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
-      FLAPSTACK_RUN_DAEMON: "1",
       FLAPSTACK_DB_PATH: dbPath,
       FLAPSTACK_CONFIG_DIR: temp,
     },
     stdio: ["ignore", "pipe", "pipe"],
   })
   let stderr = ""
+  let earlyExit = null
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk)
   })
+  child.once("exit", (code, signal) => {
+    earlyExit = new Error(
+      `usage daemon exited before its first heartbeat (code=${code}, signal=${signal}): ${stderr}`,
+    )
+  })
+  child.once("error", (error) => {
+    earlyExit = error
+  })
 
   await waitFor(() => {
+    if (earlyExit) throw earlyExit
     const check = new DatabaseSync(dbPath, { readOnly: true })
     try {
       const status = check
@@ -72,6 +82,13 @@ try {
   }
   console.log("usage daemon smoke passed")
 } finally {
+  if (child?.exitCode === null && child?.signalCode === null) {
+    child.kill("SIGTERM")
+    await Promise.race([
+      new Promise((resolveExit) => child.once("exit", resolveExit)),
+      new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2_000)),
+    ])
+  }
   rmSync(temp, { recursive: true, force: true })
 }
 

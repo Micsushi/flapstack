@@ -197,6 +197,7 @@ import {
   diffViewModeAtom,
   splitUnifiedDiffByFile,
   type AgentDiffViewRef,
+  type DiffStats,
   type ParsedDiffFile,
 } from "../ui/agent-diff-view"
 import { AgentPlanSidebar } from "../ui/agent-plan-sidebar"
@@ -568,9 +569,14 @@ function PlayButton({
     abortControllerRef.current = new AbortController()
 
     const result = await trpcClient.speech.speak.mutate(
-      { text, rate: playbackRate },
+      { text, rate: 1 },
       { signal: abortControllerRef.current.signal },
     )
+    if (result.skipped) {
+      cleanup()
+      setState("idle")
+      return
+    }
     const response = new Response(base64ToBlob(result.audioBase64, result.mimeType))
 
     if (!response.ok) {
@@ -654,10 +660,15 @@ function PlayButton({
       { text, rate: playbackRate },
       { signal: abortControllerRef.current.signal },
     )
+    if (result.skipped) {
+      setState("idle")
+      return
+    }
     const audio = await playManagedSpeech(result, {
       rate: playbackRate,
       onEnded: () => setState("idle"),
       onError: () => setState("idle"),
+      onStopped: () => setState("idle"),
     })
     audioRef.current = audio
     setState("playing")
@@ -1016,7 +1027,7 @@ interface DiffSidebarContentProps {
   onFileSelect: (file: { path: string }, category: string) => void
   chatId: string
   sandboxId: string | null
-  repository: { owner: string; name: string } | null
+  repository: string | null
   diffStats: {
     isLoading: boolean
     hasChanges: boolean
@@ -1032,17 +1043,11 @@ interface DiffSidebarContentProps {
     deletions: number
   }) => void
   diffContent: string | null
-  parsedFileDiffs: unknown
+  parsedFileDiffs: ParsedDiffFile[] | null
   prefetchedFileContents: Record<string, string> | undefined
-  setDiffCollapseState: (state: Map<string, boolean>) => void
-  diffViewRef: React.RefObject<{
-    expandAll: () => void
-    collapseAll: () => void
-    getViewedCount: () => number
-    markAllViewed: () => void
-    markAllUnviewed: () => void
-  } | null>
-  agentChat: { prUrl?: string; prNumber?: number } | null | undefined
+  setDiffCollapseState: (state: { allCollapsed: boolean; allExpanded: boolean }) => void
+  diffViewRef: React.RefObject<AgentDiffViewRef | null>
+  agentChat: { prUrl?: string | null; prNumber?: number | null } | null | undefined
   // Real-time sidebar width for responsive layout during resize
   sidebarWidth: number
   // Commit with AI
@@ -1382,9 +1387,9 @@ const DiffSidebarContent = memo(function DiffSidebarContent({
             <AgentDiffView
               ref={diffViewRef}
               chatId={chatId}
-              sandboxId={sandboxId}
+              sandboxId={sandboxId ?? ""}
               worktreePath={worktreePath || undefined}
-              repository={repository}
+              repository={repository ?? undefined}
               onStatsChange={setDiffStats}
               initialDiff={effectiveDiff}
               initialParsedFiles={effectiveParsedFiles}
@@ -1511,9 +1516,9 @@ const DiffSidebarContent = memo(function DiffSidebarContent({
           <AgentDiffView
             ref={diffViewRef}
             chatId={chatId}
-            sandboxId={sandboxId}
+            sandboxId={sandboxId ?? ""}
             worktreePath={worktreePath || undefined}
-            repository={repository}
+            repository={repository ?? undefined}
             onStatsChange={setDiffStats}
             initialDiff={effectiveDiff}
             initialParsedFiles={effectiveParsedFiles}
@@ -1712,7 +1717,7 @@ interface DiffSidebarRendererProps {
   worktreePath: string | null
   chatId: string
   sandboxId: string | null
-  repository: { owner: string; name: string } | null
+  repository: string | null
   diffStats: {
     isLoading: boolean
     hasChanges: boolean
@@ -1726,7 +1731,7 @@ interface DiffSidebarRendererProps {
   setDiffCollapseState: (state: { allCollapsed: boolean; allExpanded: boolean }) => void
   diffViewRef: React.RefObject<AgentDiffViewRef | null>
   diffSidebarRef: React.RefObject<HTMLDivElement | null>
-  agentChat: { prUrl?: string; prNumber?: number } | null | undefined
+  agentChat: { prUrl?: string | null; prNumber?: number | null } | null | undefined
   branchData: { current: string } | undefined
   gitStatus:
     | {
@@ -2862,61 +2867,20 @@ const ChatViewInner = memo(function ChatViewInner({
     () => messages.findLast((m) => m.role === "assistant"),
     [messages],
   )
-  const { data: readAloudPreference } = trpc.speech.getReadAloudForChat.useQuery({
-    chatId: subChatId,
-  })
   const previousAutoReadStreamingRef = useRef(isStreaming)
-  const autoReadAudioRef = useRef<HTMLAudioElement | null>(null)
 
-  const stopAutoRead = useCallback(() => {
-    stopManagedSpeech(autoReadAudioRef.current)
-    autoReadAudioRef.current = null
-  }, [])
-
-  // Read only the reply that just completed in this live chat. Existing history
-  // is never replayed when navigating back to a chat.
+  // Starting a new run preempts playback. Completion playback is driven by the
+  // Chat onFinish success boundary below, not by a generic streaming=false edge.
   useEffect(() => {
     const wasStreaming = previousAutoReadStreamingRef.current
     previousAutoReadStreamingRef.current = isStreaming
     if (isStreaming) {
-      if (!wasStreaming) stopAutoRead()
-      return
-    }
-    if (!wasStreaming || !readAloudPreference?.enabled || !lastAssistantMessage) return
-
-    const text =
-      lastAssistantMessage.parts
-        ?.filter((part: any) => part.type === "text")
-        .map((part: any) => part.text || "")
-        .join("\n") || ""
-    if (!text.trim()) return
-
-    let cancelled = false
-    void (async () => {
-      try {
-        const result = await trpcClient.speech.speak.mutate({
-          text,
-          chatId: parentChatId ?? undefined,
-          subChatId,
-          messageId: lastAssistantMessage.id,
-        })
-        if (cancelled) return
-        const audio = await playManagedSpeech(result, {
-          onEnded: stopAutoRead,
-          onError: stopAutoRead,
-        })
-        autoReadAudioRef.current = audio
-      } catch (error) {
-        if (!cancelled) console.error("[AutoRead] TTS error:", error)
+      if (!wasStreaming) {
+        stopManagedSpeech()
+        void trpcClient.speech.stopSpeaking.mutate()
       }
-    })()
-
-    return () => {
-      cancelled = true
     }
-  }, [isStreaming, lastAssistantMessage, readAloudPreference?.enabled, stopAutoRead])
-
-  useEffect(() => stopAutoRead, [stopAutoRead])
+  }, [isStreaming])
 
   // Pre-compute token data for ChatInputArea to avoid passing unstable messages array.
   // Prefer the latest assistant metadata that actually includes token/context fields.
@@ -3704,7 +3668,10 @@ const ChatViewInner = memo(function ChatViewInner({
         store.addToAllSubChats({
           id: newSubChat.id,
           name: newSubChat.name || "Fork",
-          created_at: newSubChat.created_at || new Date().toISOString(),
+          created_at:
+            newSubChat.createdAt instanceof Date
+              ? newSubChat.createdAt.toISOString()
+              : newSubChat.createdAt || new Date().toISOString(),
           mode: newMode,
         })
 
@@ -4116,7 +4083,7 @@ const ChatViewInner = memo(function ChatViewInner({
         if (!builtinNames.has(commandName)) {
           try {
             const commands = await trpcClient.commands.list.query({
-              projectPath,
+              projectPath: projectPath ?? undefined,
             })
             const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
             if (cmd) {
@@ -4451,7 +4418,7 @@ const ChatViewInner = memo(function ChatViewInner({
         if (!builtinNames.has(commandName)) {
           try {
             const commands = await trpcClient.commands.list.query({
-              projectPath,
+              projectPath: projectPath ?? undefined,
             })
             const cmd = commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
             if (cmd) {
@@ -4499,7 +4466,7 @@ const ChatViewInner = memo(function ChatViewInner({
             type: "data-file" as const,
             data: {
               url: f.url,
-              mediaType: f.mediaType,
+              mediaType: f.type,
               filename: f.filename,
               size: f.size,
             },
@@ -4701,6 +4668,12 @@ const ChatViewInner = memo(function ChatViewInner({
           if (!targetElement) {
             const selector = `[data-message-id="${currentSearchMatch.messageId}"][data-part-index="${currentSearchMatch.partIndex}"]`
             targetElement = container.querySelector(selector)
+          }
+
+          if (!targetElement) {
+            targetElement = container.querySelector(
+              `[data-assistant-message-id="${currentSearchMatch.messageId}"], [data-user-message-id="${currentSearchMatch.messageId}"]`,
+            )
           }
 
           if (targetElement) {
@@ -5106,6 +5079,7 @@ export function ChatView({
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtom)
   const { notifyAgentComplete, notifyAgentError } = useDesktopNotifications()
+  const failedAutoReadSubChatsRef = useRef(new Set<string>())
 
   // Check if any chat has unseen changes
   const hasAnyUnseenChanges = unseenChanges.size > 0
@@ -6090,7 +6064,7 @@ export function ChatView({
         let rawDiff: string | null = null
         const response = await fetch(`/api/agents/sandbox/${sandboxId}/diff`)
         if (!response.ok) {
-          setDiffStats((prev) => ({ ...prev, isLoading: false }))
+          setDiffStats((prev: DiffStats) => ({ ...prev, isLoading: false }))
           return
         }
         const data = await response.json()
@@ -6142,7 +6116,7 @@ export function ChatView({
       }
     } catch (error) {
       console.error("[fetchDiffStats] Error:", error)
-      setDiffStats((prev) => ({ ...prev, isLoading: false }))
+      setDiffStats((prev: DiffStats) => ({ ...prev, isLoading: false }))
     } finally {
       console.log("[fetchDiffStats] Done")
       isFetchingDiffRef.current = false
@@ -6817,6 +6791,8 @@ Make sure to preserve all functionality from both branches when resolving confli
       const isRemoteChat = !!(agentChat as any)?.isRemote || !!chatSandboxId
       const targetWorktreePath = appStore.get(selectedTargetWorktreePathAtomFamily(subChatId))
       const runWorktreePath = targetWorktreePath || worktreePath
+      const desiredProvider = inferProviderFromMessages(subChatId)
+      const desiredSubChat = agentSubChats.find((sc) => sc.id === subChatId)
 
       // Fast path for existing chats. Only inspect messages when a local empty-chat provider override
       // might require transport recreation.
@@ -6824,15 +6800,38 @@ Make sure to preserve all functionality from both branches when resolving confli
       if (existing) {
         if (isRemoteChat) return existing
 
+        const existingOpencodeTransport = (existing as any)?.transport
+        if (existingOpencodeTransport instanceof OpencodeChatTransport) {
+          if (desiredProvider === "openrouter" || desiredProvider === "nanogpt") {
+            const fallbackModel =
+              desiredProvider === "openrouter"
+                ? "openrouter/tencent/hy3:free"
+                : "nanogpt/deepseek-chat"
+            const selectedModel = appStore.get(subChatOpencodeModelsAtomFamily(subChatId))[
+              desiredProvider
+            ]
+            existingOpencodeTransport.updateConfig({
+              cwd: runWorktreePath ?? undefined,
+              projectPath: projectPath ?? undefined,
+              provider: desiredProvider,
+              model: (desiredSubChat as any)?.model || selectedModel || fallbackModel,
+            })
+            return existing
+          }
+        }
+
         const overrideProvider = subChatProviderOverrides[subChatId]
         if (!overrideProvider) return existing
 
-        const existingProvider: "claude-code" | "codex" | "cursor-agent" =
+        const existingProvider:
+          "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" =
           (existing as any)?.transport instanceof CursorChatTransport
             ? "cursor-agent"
-            : (existing as any)?.transport instanceof ACPChatTransport
-              ? "codex"
-              : "claude-code"
+            : (existing as any)?.transport instanceof OpencodeChatTransport
+              ? (existing as any).transport.getConfig().provider
+              : (existing as any)?.transport instanceof ACPChatTransport
+                ? "codex"
+                : "claude-code"
         if (existingProvider === overrideProvider) return existing
 
         const subChatForOverride = agentSubChats.find((sc) => sc.id === subChatId)
@@ -6922,8 +6921,9 @@ Make sure to preserve all functionality from both branches when resolving confli
             chatId,
             subChatId,
             cwd: runWorktreePath,
+            projectPath,
             provider: chatProvider,
-            model: subChat?.model || selectedModel || fallbackModel,
+            model: (subChat as any)?.model || selectedModel || fallbackModel,
           })
         } else if (chatProvider === "codex") {
           console.log("[getOrCreateChat] Using ACPChatTransport", { provider: chatProvider })
@@ -6964,6 +6964,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         messages,
         transport,
         onError: (error: Error) => {
+          failedAutoReadSubChatsRef.current.add(subChatId)
           // Sync status to global store on error (allows queue to continue)
           useStreamingStatusStore.getState().setStatus(subChatId, "ready")
           syncFinishedMessagesToChatCache(subChatId, newChat)
@@ -6981,7 +6982,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           pruneIfDetachedAndIdle(subChatId, chatId)
         },
         // Clear loading when streaming completes (works even if component unmounted)
-        onFinish: () => {
+        onFinish: (event: any) => {
           clearLoading(setLoadingSubChats, subChatId)
 
           // Sync status to global store for queue processing (even when component unmounted)
@@ -6991,6 +6992,39 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Check if this was a manual abort (ESC/Ctrl+C) - skip sound if so
           const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId)
           agentChatStore.clearManuallyAborted(subChatId)
+          const failed = failedAutoReadSubChatsRef.current.delete(subChatId)
+          if (!failed && !wasManuallyAborted && !event?.isAbort && !event?.isError) {
+            const completedMessage =
+              event?.message ||
+              [...((newChat as any).messages || [])]
+                .reverse()
+                .find((message: any) => message?.role === "assistant")
+            const completedText =
+              completedMessage?.parts
+                ?.filter((part: any) => part?.type === "text")
+                .map((part: any) => part.text || "")
+                .join("\n") || ""
+            if (typeof completedMessage?.id === "string" && completedText.trim()) {
+              void (async () => {
+                try {
+                  const preference = await trpcClient.speech.getReadAloudForChat.query({
+                    chatId: subChatId,
+                  })
+                  if (!preference.enabled) return
+                  const result = await trpcClient.speech.speak.mutate({
+                    text: completedText,
+                    chatId,
+                    subChatId,
+                    messageId: completedMessage.id,
+                  })
+                  if (result.skipped) return
+                  await playManagedSpeech(result)
+                } catch (error) {
+                  console.error("[AutoRead] TTS error:", error)
+                }
+              })()
+            }
+          }
 
           // Get CURRENT values at runtime (not stale closure values)
           const currentActiveSubChatId = useAgentSubChatStore.getState().activeSubChatId
@@ -7259,6 +7293,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           chatId,
           subChatId: newId,
           cwd: worktreePath,
+          projectPath,
           provider: chatProvider,
           model: selectedModel || fallbackModel,
         })
@@ -7402,7 +7437,6 @@ Make sure to preserve all functionality from both branches when resolving confli
     notifyAgentError,
     syncFinishedMessagesToChatCache,
     pruneIfDetachedAndIdle,
-    agentChat?.isRemote,
     agentChat?.name,
   ])
 
@@ -7673,7 +7707,7 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Also update query cache so init effect doesn't overwrite
           utils.agents.getAgentChat.setData({ chatId }, (old) => {
             if (!old) return old
-            const existsInCache = old.subChats.some((sc) => sc.id === subChatIdToUpdate)
+            const existsInCache = old.subChats.some((sc: any) => sc.id === subChatIdToUpdate)
             if (!existsInCache) {
               // Sub-chat not in cache yet (DB save still in flight) - add it
               return {
@@ -7695,7 +7729,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             }
             return {
               ...old,
-              subChats: old.subChats.map((sc) =>
+              subChats: old.subChats.map((sc: any) =>
                 sc.id === subChatIdToUpdate ? { ...sc, name } : sc,
               ),
             }
@@ -7704,9 +7738,9 @@ Make sure to preserve all functionality from both branches when resolving confli
         updateChatName: (chatIdToUpdate, name) => {
           // Optimistic update for sidebar (list query)
           // On desktop, selectedTeamId is always null, so we update unconditionally
-          utils.agents.getAgentChats.setData({ teamId: selectedTeamId }, (old) => {
+          utils.agents.getAgentChats.setData({ teamId: selectedTeamId }, (old: any) => {
             if (!old) return old
-            return old.map((c) => (c.id === chatIdToUpdate ? { ...c, name } : c))
+            return old.map((c: any) => (c.id === chatIdToUpdate ? { ...c, name } : c))
           })
           // Optimistic update for header (single chat query)
           utils.agents.getAgentChat.setData({ chatId: chatIdToUpdate }, (old) => {
@@ -8280,8 +8314,8 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <DiffSidebarRenderer
                   worktreePath={worktreePath}
                   chatId={chatId}
-                  sandboxId={sandboxId}
-                  repository={repository}
+                  sandboxId={sandboxId ?? null}
+                  repository={repository ?? null}
                   diffStats={diffStats}
                   diffContent={diffContent}
                   parsedFileDiffs={parsedFileDiffs}
@@ -8315,7 +8349,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                   handleMarkAllViewed={handleMarkAllViewed}
                   handleMarkAllUnviewed={handleMarkAllUnviewed}
                   isDesktop={isDesktop}
-                  isFullscreen={isFullscreen}
+                  isFullscreen={Boolean(isFullscreen)}
                   setDiffDisplayMode={setDiffDisplayMode}
                   handleCommitToPr={handleCommitToPr}
                   isCommittingToPr={isCommittingToPr}

@@ -12,6 +12,7 @@ import {
   type CursorAssistantPart,
 } from "../src/main/lib/cursor/stream"
 import { normalizeCursorStatus, parseCursorModels } from "../src/main/lib/cursor/integration"
+import { CursorCliTimeoutError, runCursorCli } from "../src/main/lib/cursor/binary"
 import { buildCursorArgs } from "../src/main/lib/cursor/args"
 import {
   CURSOR_MODELS,
@@ -102,6 +103,63 @@ describe("cursor stream translator (D2)", () => {
     )
   })
 
+  it("preserves reasoning from a completed-only event", () => {
+    const translator = new CursorStreamTranslator()
+    const chunks = translator.push({
+      type: "thinking",
+      subtype: "completed",
+      text: "Completed reasoning output.",
+    })
+
+    expect(chunks.map((chunk) => chunk.type)).toEqual([
+      "reasoning-start",
+      "reasoning-delta",
+      "reasoning-end",
+    ])
+    expect(translator.getParts()).toContainEqual({
+      type: "reasoning",
+      text: "Completed reasoning output.",
+      state: "done",
+    })
+  })
+
+  it("does not duplicate a completed reasoning event after streamed deltas", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({ type: "thinking", subtype: "delta", text: "Streamed reasoning." })
+    translator.push({ type: "assistant", delta: { text: "Answer" } })
+
+    expect(
+      translator.push({
+        type: "thinking",
+        subtype: "completed",
+        text: "Streamed reasoning.",
+      }),
+    ).toEqual([])
+    expect(translator.getParts().filter((part) => part.type === "reasoning")).toHaveLength(1)
+  })
+
+  it("preserves a second id-less completed-only reasoning block", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({ type: "thinking", subtype: "delta", text: "First block." })
+    translator.push({ type: "thinking", subtype: "completed", text: "First block." })
+
+    expect(
+      translator.push({
+        type: "thinking",
+        subtype: "completed",
+        text: "Second block.",
+      }),
+    ).toEqual([
+      expect.objectContaining({ type: "reasoning-start" }),
+      expect.objectContaining({ type: "reasoning-delta", delta: "Second block." }),
+      expect.objectContaining({ type: "reasoning-end" }),
+    ])
+    expect(translator.getParts().filter((part) => part.type === "reasoning")).toMatchObject([
+      { text: "First block." },
+      { text: "Second block." },
+    ])
+  })
+
   it("produces a complete reply when reasoning output is suppressed", () => {
     const { chunks, parts } = runFixture("no-reasoning-output-run.jsonl")
     expect(chunks.some((c) => c.type === "reasoning-delta")).toBe(false)
@@ -140,7 +198,58 @@ describe("cursor stream translator (D2)", () => {
     expect(chunks[0]).toMatchObject({ type: "auth-error" })
     expect(translator.sawAuthError()).toBe(true)
     expect(isCursorAuthText("unauthorized")).toBe(true)
+    expect(isCursorAuthText("1403 files changed")).toBe(false)
+    expect(isCursorAuthText("forbidden-pattern.txt")).toBe(false)
     expect(isCursorAuthText("all good")).toBe(false)
+  })
+
+  it("flags structured failures even when process exit status could be zero", () => {
+    const errorEvent = new CursorStreamTranslator()
+    errorEvent.push({ type: "error", message: "Provider rejected the request" })
+    expect(errorEvent.sawError()).toBe(true)
+
+    const errorResult = new CursorStreamTranslator()
+    const chunks = errorResult.push({ type: "result", subtype: "error", result: "Request failed" })
+    expect(errorResult.sawError()).toBe(true)
+    expect(chunks).toContainEqual({ type: "error", errorText: "Request failed" })
+    expect(errorResult.getParts()).toEqual([])
+  })
+
+  it("does not duplicate cumulative text after a tool call", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({ type: "assistant", message: { text: "Alpha" } })
+    translator.push({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "tool",
+      name: "bash",
+      input: {},
+    })
+    translator.push({ type: "assistant", message: { text: "Alpha Beta" } })
+    translator.finish()
+    const text = translator
+      .getParts()
+      .filter(
+        (part): part is Extract<CursorAssistantPart, { type: "text" }> => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join("")
+    expect(text).toBe("Alpha Beta")
+  })
+
+  it("preserves identical explicit incremental deltas", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({ type: "assistant", delta: { text: "ha" } })
+    translator.push({ type: "assistant", delta: { text: "ha" } })
+    translator.finish()
+    const text = translator
+      .getParts()
+      .filter(
+        (part): part is Extract<CursorAssistantPart, { type: "text" }> => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join("")
+    expect(text).toBe("haha")
   })
 })
 
@@ -182,17 +291,35 @@ describe("cursor permission mapping (D4)", () => {
 
 describe("cursor integration status (D3)", () => {
   it("parses connected/not-logged-in states", () => {
-    expect(normalizeCursorStatus("Logged in as micsushi222@gmail.com")).toEqual({
+    expect(normalizeCursorStatus("Logged in as developer@example.com")).toEqual({
       state: "connected",
-      email: "micsushi222@gmail.com",
+      email: "developer@example.com",
     })
     expect(normalizeCursorStatus("Not logged in").state).toBe("not_logged_in")
+    expect(normalizeCursorStatus("Unauthenticated").state).toBe("not_logged_in")
     expect(normalizeCursorStatus("weird output").state).toBe("unknown")
   })
 
   it("returns executable ids rather than CLI model display lines", () => {
-    expect(parseCursorModels("Available models\nauto - Auto\ngpt-5.3-codex - Codex 5.3\n")).toEqual(
-      ["auto", "gpt-5.3-codex"],
-    )
+    expect(
+      parseCursorModels(
+        "Models:\nModels\nAvailable models\nauto - Auto\ngpt-5.3-codex - Codex 5.3\nauto - Auto\n",
+      ),
+    ).toEqual(["auto", "gpt-5.3-codex"])
+  })
+
+  it("reports a short-lived CLI deadline as a timeout", async () => {
+    const previous = process.env.FLAPSTACK_CURSOR_AGENT_PATH
+    process.env.FLAPSTACK_CURSOR_AGENT_PATH = process.execPath
+    try {
+      const startedAt = Date.now()
+      await expect(
+        runCursorCli(["-e", "setTimeout(() => {}, 10_000)"], { timeoutMs: 20 }),
+      ).rejects.toBeInstanceOf(CursorCliTimeoutError)
+      expect(Date.now() - startedAt).toBeLessThan(2_000)
+    } finally {
+      if (previous === undefined) delete process.env.FLAPSTACK_CURSOR_AGENT_PATH
+      else process.env.FLAPSTACK_CURSOR_AGENT_PATH = previous
+    }
   })
 })

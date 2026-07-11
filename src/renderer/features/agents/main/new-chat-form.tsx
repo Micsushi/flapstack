@@ -32,6 +32,7 @@ import {
   lastSelectedCodexModelIdAtom,
   lastSelectedCodexReasoningAtom,
   lastSelectedCursorModelIdAtom,
+  lastSelectedOpencodeModelsAtom,
   lastSelectedBranchesAtom,
   lastSelectedModelIdAtom,
   lastSelectedRepoAtom,
@@ -79,6 +80,7 @@ import { useAgentsFileUpload } from "../hooks/use-agents-file-upload"
 import { usePastedTextFiles } from "../hooks/use-pasted-text-files"
 import { useFocusInputOnEnter } from "../hooks/use-focus-input-on-enter"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
+import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import {
   useVoiceRecording,
   blobToBase64,
@@ -105,7 +107,7 @@ import {
 } from "../../../components/ui/prompt-input"
 import { agentsSidebarOpenAtom, agentsUnseenChangesAtom } from "../atoms"
 import { AgentSendButton } from "../components/agent-send-button"
-import { AgentModelSelector } from "../components/agent-model-selector"
+import { AgentModelSelector, type AgentProviderId } from "../components/agent-model-selector"
 import { CreateBranchDialog } from "../components/create-branch-dialog"
 import { formatTimeAgo } from "../utils/format-time-ago"
 import { handlePasteEvent } from "../utils/paste-text"
@@ -168,10 +170,17 @@ function useAvailableModels() {
 }
 
 // Agent providers
-const agents = [
+const agents: Array<{
+  id: AgentProviderId
+  name: string
+  hasModels?: boolean
+  disabled?: boolean
+}> = [
   { id: "claude-code", name: "Claude Code", hasModels: true },
   { id: "cursor-agent", name: "Cursor", hasModels: true },
   { id: "codex", name: "OpenAI Codex" },
+  { id: "openrouter", name: "OpenRouter", hasModels: true },
+  { id: "nanogpt", name: "NanoGPT", hasModels: true },
 ]
 
 interface NewChatFormProps {
@@ -285,6 +294,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
   const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
   const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
+  const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery({ provider: "openrouter" })
+  const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery({ provider: "nanogpt" })
   const cursorLoginMutation = trpc.cursor.startLogin.useMutation({
     onSuccess: () => toast.info("Complete Cursor login in the browser, then retry."),
     onError: (error) => toast.error(`Could not start Cursor login: ${error.message}`),
@@ -296,6 +307,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     hasCustomClaudeConfig
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const handleOpenVoiceSettings = useCallback(() => {
+    setSettingsActiveTab("voice")
+    setSettingsDialogOpen(true)
+  }, [setSettingsActiveTab, setSettingsDialogOpen])
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
   const [repoSearchQuery, setRepoSearchQuery] = useState("")
   const [createBranchDialogOpen, setCreateBranchDialogOpen] = useState(false)
@@ -374,6 +389,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [lastSelectedCursorModelId, setLastSelectedCursorModelId] = useAtom(
     lastSelectedCursorModelIdAtom,
   )
+  const [lastSelectedOpencodeModels, setLastSelectedOpencodeModels] = useAtom(
+    lastSelectedOpencodeModelsAtom,
+  )
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
 
   const [selectedModel, setSelectedModel] = useState(
@@ -389,15 +407,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     }
   }, [lastSelectedModelId])
 
+  const selectedModelEfforts =
+    selectedModel && "efforts" in selectedModel ? selectedModel.efforts : undefined
   const selectedClaudeEffort = useMemo<ClaudeEffortLevel>(() => {
-    const efforts = selectedModel?.efforts
+    const efforts = selectedModelEfforts
     if (!efforts || efforts.length === 0) return "high"
     if (efforts.includes(lastSelectedClaudeEffort as ClaudeEffortLevel)) {
       return lastSelectedClaudeEffort as ClaudeEffortLevel
     }
     if (efforts.includes("high")) return "high"
     return efforts[0]!
-  }, [lastSelectedClaudeEffort, selectedModel?.efforts])
+  }, [lastSelectedClaudeEffort, selectedModelEfforts])
 
   useEffect(() => {
     if (lastSelectedClaudeEffort === selectedClaudeEffort) return
@@ -479,12 +499,16 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.id
     }
+    if (selectedAgent.id === "openrouter" || selectedAgent.id === "nanogpt") {
+      return lastSelectedOpencodeModels[selectedAgent.id]
+    }
     return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
   }, [
     selectedAgent.id,
     selectedCodexModel.id,
     selectedCodexReasoning,
     selectedCursorModel.id,
+    lastSelectedOpencodeModels,
     selectedModel?.id,
   ])
 
@@ -498,6 +522,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     }
     if (selectedAgent.id === "cursor-agent") {
       return selectedCursorModel.name
+    }
+
+    if (selectedAgent.id === "openrouter" || selectedAgent.id === "nanogpt") {
+      const modelId = lastSelectedOpencodeModels[selectedAgent.id]
+      const catalog = selectedAgent.id === "openrouter" ? openrouterCatalog : nanogptCatalog
+      return (
+        catalog?.models.find((model) => `${selectedAgent.id}/${model.id}` === modelId)?.label ||
+        modelId
+      )
     }
 
     if (availableModels.isOffline && availableModels.hasOllama) {
@@ -517,6 +550,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     selectedAgent.id,
     selectedCodexModel.name,
     selectedCursorModel.name,
+    lastSelectedOpencodeModels,
+    openrouterCatalog,
+    nanogptCatalog,
     availableModels.isOffline,
     availableModels.hasOllama,
     currentOllamaModel,
@@ -630,31 +666,45 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     cancelRecording,
   } = useVoiceRecording()
   const [isTranscribing, setIsTranscribing] = useState(false)
+  const voiceCaptureRequestedRef = useRef(false)
   const transcribeMutation = trpc.voice.transcribe.useMutation()
-
-  // Check if voice input is available (authenticated OR has OPENAI_API_KEY)
-  const { data: voiceAvailability } = trpc.voice.isAvailable.useQuery()
-  const isVoiceAvailable = voiceAvailability?.available ?? false
+  const {
+    isReady: isVoiceReady,
+    statusLabel: voiceStatusLabel,
+    showSetup: showVoiceSetup,
+  } = useLocalDictationSetup(handleOpenVoiceSettings)
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
-    if (isUploading || isTranscribing || isVoiceRecording) return
+    if (isUploading || isTranscribing || isVoiceRecording || voiceCaptureRequestedRef.current)
+      return
+    if (!isVoiceReady) {
+      showVoiceSetup()
+      return
+    }
+    voiceCaptureRequestedRef.current = true
     try {
       await startRecording()
     } catch (err) {
-      console.error("[NewChatForm] Failed to start recording:", err)
+      const shouldReport = voiceCaptureRequestedRef.current
+      voiceCaptureRequestedRef.current = false
+      if (shouldReport) {
+        console.error("[NewChatForm] Failed to start recording:", err)
+        toast.error(err instanceof Error ? err.message : "Failed to start recording")
+      }
     }
-  }, [isUploading, isTranscribing, isVoiceRecording, startRecording])
+  }, [isUploading, isTranscribing, isVoiceRecording, isVoiceReady, showVoiceSetup, startRecording])
 
   const handleVoiceMouseUp = useCallback(async () => {
-    if (!isVoiceRecording) return
+    if (!voiceCaptureRequestedRef.current) return
+    voiceCaptureRequestedRef.current = false
+    setIsTranscribing(true)
     try {
       const blob = await stopRecording()
       if (blob.size < 1000) {
         console.log("[NewChatForm] Recording too short, ignoring")
         return
       }
-      setIsTranscribing(true)
       const base64 = await blobToBase64(blob)
       const format = getAudioFormat(blob.type)
       const result = await transcribeMutation.mutateAsync({ audio: base64, format })
@@ -673,14 +723,30 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       }
     } catch (err) {
       console.error("[NewChatForm] Transcription failed:", err)
+      toast.error("Voice transcription failed", {
+        description: err instanceof Error ? err.message : "Local Whisper could not transcribe.",
+      })
     } finally {
       setIsTranscribing(false)
     }
-  }, [isVoiceRecording, stopRecording, transcribeMutation])
+  }, [stopRecording, transcribeMutation])
 
-  const handleVoiceMouseLeave = useCallback(() => {
-    if (isVoiceRecording) {
-      cancelRecording()
+  useEffect(() => {
+    const cancelPendingCapture = () => {
+      if (voiceCaptureRequestedRef.current || isVoiceRecording) {
+        voiceCaptureRequestedRef.current = false
+        cancelRecording()
+      }
+    }
+    const handleVisibilityChange = () => {
+      if (document.hidden) cancelPendingCapture()
+    }
+
+    window.addEventListener("blur", cancelPendingCapture)
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    return () => {
+      window.removeEventListener("blur", cancelPendingCapture)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
   }, [isVoiceRecording, cancelRecording])
 
@@ -757,7 +823,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       e.stopPropagation()
 
       // Start recording on keydown
-      if (!isVoiceRecording && !isTranscribing) {
+      if (!voiceCaptureRequestedRef.current && !isVoiceRecording && !isTranscribing) {
         handleVoiceMouseDown()
       }
     }
@@ -766,8 +832,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       // Stop recording when the main key (or any modifier for modifier-only hotkeys) is released
       if (!isMainKeyRelease(e)) return
 
-      // Only stop if we're currently recording
-      if (isVoiceRecording) {
+      if (voiceCaptureRequestedRef.current) {
         e.preventDefault()
         e.stopPropagation()
         handleVoiceMouseUp()
@@ -792,7 +857,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   // Fetch repos from team
   // Desktop: no remote repos, we use local projects
-  const reposData = { repositories: [] }
+  const reposData: {
+    repositories: Array<{
+      id: string
+      name: string
+      full_name: string
+      sandbox_status: "not_setup" | "in_progress" | "ready" | "error"
+      pushed_at?: string | null
+    }>
+  } = { repositories: [] }
   const isLoadingRepos = false
 
   // Memoize repos arrays to prevent useEffect from running on every keystroke
@@ -1310,6 +1383,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     files,
     pastedTexts,
     selectedChatModel,
+    selectedAgent.id,
     agentMode,
     trpcUtils,
   ])
@@ -2002,9 +2076,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                       <AgentModelSelector
                         open={isModelDropdownOpen}
                         onOpenChange={setIsModelDropdownOpen}
-                        selectedAgentId={
-                          selectedAgent.id as "claude-code" | "codex" | "cursor-agent"
-                        }
+                        selectedAgentId={selectedAgent.id as AgentProviderId}
                         onSelectedAgentIdChange={(provider) => {
                           if (provider === "claude-code") {
                             setSelectedAgent(claudeAgent)
@@ -2085,6 +2157,34 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           isLoginPending: cursorLoginMutation.isPending,
                           onLogin: () => cursorLoginMutation.mutate(),
                         }}
+                        opencode={{
+                          openrouter: {
+                            label: "OpenRouter",
+                            models: (openrouterCatalog?.models || []).map((model) => ({
+                              id: `openrouter/${model.id}`,
+                              name: model.label,
+                            })),
+                            selectedModelId: lastSelectedOpencodeModels.openrouter,
+                            onSelectModel: (modelId) =>
+                              setLastSelectedOpencodeModels((current) => ({
+                                ...current,
+                                openrouter: modelId,
+                              })),
+                          },
+                          nanogpt: {
+                            label: "NanoGPT",
+                            models: (nanogptCatalog?.models || []).map((model) => ({
+                              id: `nanogpt/${model.id}`,
+                              name: model.label,
+                            })),
+                            selectedModelId: lastSelectedOpencodeModels.nanogpt,
+                            onSelectModel: (modelId) =>
+                              setLastSelectedOpencodeModels((current) => ({
+                                ...current,
+                                nanogpt: modelId,
+                              })),
+                          },
+                        }}
                       />
                     </div>
                   </div>
@@ -2133,12 +2233,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         onClick={handleSend}
                         mode={agentMode}
                         hasContent={hasContent}
-                        showVoiceInput={isVoiceAvailable}
+                        showVoiceInput
+                        voiceInputReady={isVoiceReady}
+                        voiceStatusLabel={voiceStatusLabel}
+                        onVoiceUnavailableClick={showVoiceSetup}
                         isRecording={isVoiceRecording}
                         isTranscribing={isTranscribing}
                         onVoiceMouseDown={handleVoiceMouseDown}
                         onVoiceMouseUp={handleVoiceMouseUp}
-                        onVoiceMouseLeave={handleVoiceMouseLeave}
                       />
                     </div>
                   </div>

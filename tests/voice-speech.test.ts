@@ -3,6 +3,7 @@ import {
   resolveSttAdapter,
   resolveAvailableSttAdapter,
   resolveTtsAdapter,
+  resolveTtsVoiceId,
   sttAdapterImplementations,
   sttAdapters,
   ttsAdapters,
@@ -10,17 +11,34 @@ import {
 import { normalizeVoiceSettings, resolveReadAloudEnabled } from "../src/main/lib/speech/settings"
 import { extractSpokenSection, filterSpeakableText } from "../src/main/lib/speech/speakable-filter"
 import { createFallbackSpokenSummary } from "../src/main/lib/speech/spoken-summary"
-import { encodeWav, getKokoroChunks } from "../src/main/lib/speech/tts-kokoro"
-import { parseWindowsVoices } from "../src/main/lib/speech/tts-native"
-import { requiresAudioConversion } from "../src/main/lib/speech/stt-whisper-cpp"
+import { resolveSpeechText } from "../src/main/lib/speech/speech-text"
+import {
+  encodeWav,
+  getKokoroChunks,
+  synthesizeKokoroChunks,
+} from "../src/main/lib/speech/tts-kokoro"
+import { buildMacosSayArgs, parseWindowsVoices } from "../src/main/lib/speech/tts-native"
+import {
+  getWhisperModelDescriptor,
+  raceAbort,
+  requiresAudioConversion,
+  verifyWhisperBinary,
+} from "../src/main/lib/speech/stt-whisper-cpp"
 import {
   appendReadAloudInstruction,
   READ_ALOUD_INSTRUCTION,
 } from "../src/main/lib/speech/read-aloud-instruction"
 import { speakWithTtsFallback } from "../src/main/lib/speech/tts-fallback"
 import { toMicrophoneError } from "../src/renderer/lib/hooks/use-voice-recording"
-import { playManagedSpeech, stopManagedSpeech } from "../src/renderer/lib/speech-playback"
+import {
+  getManagedSpeechSnapshot,
+  playManagedSpeech,
+  stopManagedSpeech,
+  subscribeManagedSpeech,
+} from "../src/renderer/lib/speech-playback"
+import { buildMessageSpeechRequest } from "../src/renderer/lib/message-speech-request"
 import type { TtsAdapter } from "../src/main/lib/speech/types"
+import { SpeechRequestOwnership } from "../src/main/lib/speech/request-ownership"
 
 describe("speakable filter", () => {
   it("extracts only the Spoken section", () => {
@@ -50,10 +68,32 @@ describe("speakable filter", () => {
     expect(result.source).toBe("prose")
   })
 
+  it("keeps short hyphen-bullet lists inside Spoken", () => {
+    const result = filterSpeakableText("Spoken:\n- first item\n- second item")
+    expect(result).toMatchObject({ shouldSpeak: true, source: "spoken" })
+    expect(result.text).toContain("first item")
+    expect(result.text).toContain("second item")
+  })
+
+  it("removes +/- lines only after explicit diff context", () => {
+    const result = filterSpeakableText(
+      "Spoken:\nSummary survives.\ndiff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new",
+    )
+    expect(result.text).toBe("Summary survives.")
+  })
+
   it("skips replies that are only code / tables", () => {
     const reply = ["```ts", "const a = 1", "```", "| a | b |", "| --- | --- |"].join("\n")
     const result = filterSpeakableText(reply)
     expect(result.shouldSpeak).toBe(false)
+  })
+
+  it("treats an explicit empty or filtered Spoken section as authoritative", () => {
+    expect(resolveSpeechText("Spoken:\n\nDisplayed:\nSecret details")).toBeNull()
+    expect(
+      resolveSpeechText("Spoken:\n```ts\nconst secret = true\n```\nDisplayed:\nDetails"),
+    ).toBeNull()
+    expect(resolveSpeechText("No explicit section here.")).toContain("No explicit section")
   })
 })
 
@@ -111,6 +151,11 @@ describe("adapter registry", () => {
     const adapter = resolveTtsAdapter({ ttsAdapterId: "nope" })
     expect(adapter.id).toBe("kokoro")
   })
+
+  it("drops a Kokoro voice when availability resolves to Native", () => {
+    expect(resolveTtsVoiceId("kokoro", "native-os", "af_heart")).toBeNull()
+    expect(resolveTtsVoiceId("native-os", "native-os", "Samantha")).toBe("Samantha")
+  })
 })
 
 describe("voice settings normalization", () => {
@@ -159,11 +204,31 @@ describe("native voice helpers", () => {
 })
 
 describe("local Whisper audio preparation", () => {
+  it("pins the model revision and checksum", () => {
+    const descriptor = getWhisperModelDescriptor()
+    expect(descriptor.url).toContain(descriptor.revision)
+    expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/)
+  })
+
   it("converts browser-recorded WebM and Safari M4A before invoking whisper.cpp", () => {
     expect(requiresAudioConversion("webm")).toBe(true)
     expect(requiresAudioConversion("m4a")).toBe(true)
     expect(requiresAudioConversion("wav")).toBe(false)
     expect(requiresAudioConversion("ogg")).toBe(false)
+  })
+
+  it("rejects an arbitrary executable as a Whisper engine", async () => {
+    if (process.platform === "win32") return
+    await expect(verifyWhisperBinary("/bin/echo")).resolves.toBe(false)
+  })
+
+  it("removes each abort listener after a completed chunk read", async () => {
+    const controller = new AbortController()
+    const add = vi.spyOn(controller.signal, "addEventListener")
+    const remove = vi.spyOn(controller.signal, "removeEventListener")
+    await expect(raceAbort(Promise.resolve("chunk"), controller.signal)).resolves.toBe("chunk")
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(remove).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -186,15 +251,18 @@ describe("TTS fallback", () => {
   }
 
   it("uses Native OS TTS if Kokoro's first model download fails", async () => {
+    vi.mocked(native.speak).mockClear()
     const kokoro: TtsAdapter = {
       ...native,
       id: "kokoro",
       label: "Kokoro",
       speak: vi.fn().mockRejectedValue(new Error("model download failed")),
     }
-    await expect(speakWithTtsFallback(kokoro, native, input)).resolves.toMatchObject({
+    const providerVoiceInput = { ...input, voiceId: "af_heart" }
+    await expect(speakWithTtsFallback(kokoro, native, providerVoiceInput)).resolves.toMatchObject({
       adapterId: "native-os",
     })
+    expect(native.speak).toHaveBeenCalledWith({ ...providerVoiceInput, voiceId: null })
   })
 
   it("keeps the selected adapter error when Native OS TTS is unavailable", async () => {
@@ -209,9 +277,76 @@ describe("TTS fallback", () => {
     }
     await expect(speakWithTtsFallback(kokoro, unavailableNative, input)).rejects.toThrow("bad")
   })
+
+  it("does not start native fallback after a speech request is cancelled", async () => {
+    const kokoro: TtsAdapter = {
+      ...native,
+      id: "kokoro",
+      label: "Kokoro",
+      speak: vi.fn().mockRejectedValue(new Error("model download failed")),
+    }
+    const fallback = { ...native, speak: vi.fn() }
+    let checks = 0
+
+    await expect(
+      speakWithTtsFallback(kokoro, fallback, input, {
+        shouldContinue: () => checks++ === 0,
+      }),
+    ).rejects.toThrow("cancelled")
+    expect(fallback.speak).not.toHaveBeenCalled()
+  })
+})
+
+describe("speech request ownership", () => {
+  it("preempts within one window without cancelling another window", () => {
+    const ownership = new SpeechRequestOwnership()
+    const firstWindowA = ownership.begin(1)
+    const firstWindowB = ownership.begin(2)
+    ownership.begin(1)
+    expect(ownership.isActive(1, firstWindowA)).toBe(false)
+    expect(ownership.isActive(2, firstWindowB)).toBe(true)
+  })
+})
+
+describe("message speech request", () => {
+  it("persists replay context and leaves speed control to the audio element", () => {
+    expect(
+      buildMessageSpeechRequest({
+        text: "Spoken:\nReady.",
+        chatId: "chat-1",
+        subChatId: "subchat-1",
+        messageId: "message-1",
+      }),
+    ).toEqual({
+      text: "Spoken:\nReady.",
+      rate: 1,
+      chatId: "chat-1",
+      subChatId: "subchat-1",
+      messageId: "message-1",
+    })
+  })
 })
 
 describe("kokoro helpers", () => {
+  it("stops before synthesizing another chunk after cancellation", async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ audio: new Float32Array([0]), sampling_rate: 24000 })
+    let checks = 0
+    await expect(
+      synthesizeKokoroChunks({ generate }, ["first", "second"], "af_heart", 1, {
+        shouldContinue: () => checks++ < 2,
+      }),
+    ).rejects.toThrow("cancelled")
+    expect(generate).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps macOS spoken text out of argv", () => {
+    const args = buildMacosSayArgs(undefined, 175, "/tmp/speech.aiff")
+    expect(args).toEqual(["-r", "175", "-o", "/tmp/speech.aiff"])
+    expect(args).not.toContain("--leading-option-like-text")
+  })
+
   it("splits text into sentence-aligned chunks under the char cap", () => {
     const chunks = getKokoroChunks("One sentence. Two sentence. Three.", 100)
     expect(chunks.length).toBeGreaterThanOrEqual(1)
@@ -285,6 +420,46 @@ describe("renderer speech playback", () => {
       stopManagedSpeech()
       expect(instances[1]!.pause).toHaveBeenCalledOnce()
     } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("publishes playback state and resets the preempted owner", async () => {
+    const instances: FakeAudio[] = []
+    class TestAudio extends FakeAudio {
+      constructor(src: string) {
+        super(src)
+        instances.push(this)
+      }
+    }
+    vi.stubGlobal("Audio", TestAudio)
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:speech"), revokeObjectURL: vi.fn() })
+    vi.stubGlobal("atob", (value: string) => Buffer.from(value, "base64").toString("binary"))
+
+    const states: boolean[] = []
+    const firstStopped = vi.fn()
+    const unsubscribe = subscribeManagedSpeech(() => states.push(getManagedSpeechSnapshot()))
+
+    try {
+      await playManagedSpeech(
+        { audioBase64: Buffer.from("one").toString("base64"), mimeType: "audio/wav" },
+        { onStopped: firstStopped },
+      )
+      expect(getManagedSpeechSnapshot()).toBe(true)
+
+      await playManagedSpeech({
+        audioBase64: Buffer.from("two").toString("base64"),
+        mimeType: "audio/wav",
+      })
+      expect(firstStopped).toHaveBeenCalledOnce()
+      expect(states).toEqual([true, false, true])
+
+      stopManagedSpeech()
+      expect(getManagedSpeechSnapshot()).toBe(false)
+      expect(states).toEqual([true, false, true, false])
+    } finally {
+      unsubscribe()
+      stopManagedSpeech()
       vi.unstubAllGlobals()
     }
   })

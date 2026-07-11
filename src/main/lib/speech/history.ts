@@ -1,5 +1,6 @@
 import { and, desc, eq, like } from "drizzle-orm"
 import { app } from "electron"
+import { createHash } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { chats, getDatabase, subChats, voiceArtifacts } from "../db"
@@ -43,6 +44,9 @@ export async function recordSpeech(input: {
   messageId?: string | null
   text: string
   result: TtsResult
+  synthesisKey: string
+  voiceId?: string | null
+  rate: number
 }) {
   requireChat(input.chatId)
   const bytes = Buffer.from(input.result.audioBase64, "base64")
@@ -56,6 +60,9 @@ export async function recordSpeech(input: {
       kind: "speech",
       text: input.text,
       adapterId: input.result.adapterId,
+      synthesisKey: input.synthesisKey,
+      voiceId: input.voiceId ?? null,
+      rate: Math.round(input.rate * 1_000),
       mimeType: input.result.mimeType,
       byteLength: bytes.length,
     })
@@ -73,6 +80,77 @@ export async function recordSpeech(input: {
     .get()
   await pruneVoiceHistory()
   return saved
+}
+
+export function createSpeechSynthesisKey(input: {
+  text: string
+  adapterId: string
+  voiceId?: string | null
+  rate: number
+}): string {
+  return createHash("sha256")
+    .update(JSON.stringify([input.text, input.adapterId, input.voiceId ?? null, input.rate]))
+    .digest("hex")
+}
+
+export async function findReusableSpeech(input: {
+  chatId: string
+  messageId?: string | null
+  synthesisKey: string
+}): Promise<{ id: string; result: TtsResult } | null> {
+  if (!input.messageId) return null
+  const artifact = getDatabase()
+    .select()
+    .from(voiceArtifacts)
+    .where(
+      and(
+        eq(voiceArtifacts.chatId, input.chatId),
+        eq(voiceArtifacts.messageId, input.messageId),
+        eq(voiceArtifacts.synthesisKey, input.synthesisKey),
+        eq(voiceArtifacts.kind, "speech"),
+      ),
+    )
+    .orderBy(desc(voiceArtifacts.createdAt))
+    .get()
+  if (!artifact?.audioPath) return null
+  try {
+    const audio = await readFile(artifact.audioPath)
+    return {
+      id: artifact.id,
+      result: {
+        audioBase64: audio.toString("base64"),
+        mimeType: artifact.mimeType === "audio/mpeg" ? "audio/mpeg" : "audio/wav",
+        adapterId: artifact.adapterId,
+        ...(artifact.voiceId ? { voiceId: artifact.voiceId } : {}),
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
+export function mergeMessagesPreservingSpokenText(current: any[], incoming: any[]): any[] {
+  const currentById = new Map(
+    current.flatMap((message) =>
+      typeof message?.id === "string" ? ([[message.id, message]] as const) : [],
+    ),
+  )
+  return incoming.map((message) => {
+    const spokenText = currentById.get(message?.id)?.metadata?.spokenText
+    if (typeof spokenText !== "string" || !spokenText.trim()) return message
+    return { ...message, metadata: { ...(message.metadata || {}), spokenText } }
+  })
+}
+
+export async function deleteVoiceHistoryForChat(chatId: string): Promise<void> {
+  const rows = getDatabase()
+    .select({ id: voiceArtifacts.id })
+    .from(voiceArtifacts)
+    .where(eq(voiceArtifacts.chatId, chatId))
+    .all()
+  await Promise.all(
+    rows.map((row) => rm(join(historyRoot(), basename(row.id)), { recursive: true, force: true })),
+  )
 }
 
 export function getStoredSpokenText(subChatId?: string | null, messageId?: string | null) {

@@ -1,4 +1,5 @@
 import { getProviderJson, startOfUtcDay } from "./http"
+import { credentialAccountTag } from "../provider-identity"
 import type {
   ProviderStatus,
   UsageProvider,
@@ -19,9 +20,11 @@ export function createCodexProvider(): UsageProvider {
       return (await ctx.getSecret(SECRET_KEY)) != null
     },
     async getStatus(ctx): Promise<ProviderStatus> {
-      const configured = (await ctx.getSecret(SECRET_KEY)) != null
+      const apiKey = await ctx.getSecret(SECRET_KEY)
+      const configured = apiKey != null
       return {
         providerId: "codex",
+        accountTag: apiKey ? credentialAccountTag("openai", apiKey) : undefined,
         status: configured ? "ok" : "not-configured",
         detail: configured
           ? "OpenAI organization usage and cost reports are collected with the configured admin key."
@@ -43,13 +46,24 @@ export function createCodexProvider(): UsageProvider {
 }
 
 async function collectReports(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
-  const [costs, usage] = await Promise.all([collectCosts(ctx, start), collectUsage(ctx, start)])
-  return [...costs, ...usage]
+  const results = await Promise.allSettled([collectCosts(ctx, start), collectUsage(ctx, start)])
+  const samples = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  )
+  for (const failure of failures) {
+    ctx.log("warn", "OpenAI usage endpoint failed; preserving data from other endpoints", {
+      message: String((failure.reason as Error)?.message ?? failure.reason),
+    })
+  }
+  if (samples.length === 0 && failures.length === results.length) throw failures[0]!.reason
+  return samples
 }
 
 async function collectCosts(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
   const apiKey = await ctx.getSecret(SECRET_KEY)
   if (!apiKey) return []
+  const accountTag = credentialAccountTag("openai", apiKey)
   const buckets = await fetchOpenAiPages<OpenAiCostBucket>(ctx, apiKey, COSTS_URL, start)
   return buckets.flatMap((bucket) => {
     if (!bucket.results?.length) return []
@@ -59,13 +73,14 @@ async function collectCosts(ctx: UsageProviderContext, start: Date): Promise<Usa
         providerId: "codex" as const,
         source: ctx.source,
         sourceTag: "organization-cost",
+        accountTag,
         costQuality: "provider-reported" as const,
         capturedAt: ctx.now,
         windowStart: unixDate(bucket.start_time),
         windowEnd: unixDate(bucket.end_time),
         costUsd: cost,
         rawPayload: bucket,
-        dedupeKey: `codex|cost|${bucket.start_time ?? start.toISOString().slice(0, 10)}`,
+        dedupeKey: `codex|${accountTag}|cost|${bucket.start_time ?? start.toISOString().slice(0, 10)}`,
       },
     ]
   })
@@ -74,6 +89,7 @@ async function collectCosts(ctx: UsageProviderContext, start: Date): Promise<Usa
 async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
   const apiKey = await ctx.getSecret(SECRET_KEY)
   if (!apiKey) return []
+  const accountTag = credentialAccountTag("openai", apiKey)
   const buckets = await fetchOpenAiPages<OpenAiUsageBucket>(ctx, apiKey, USAGE_URL, start)
   return buckets.flatMap((bucket) => {
     if (!bucket.results?.length) return []
@@ -84,6 +100,7 @@ async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<Usa
         providerId: "codex" as const,
         source: ctx.source,
         sourceTag: "organization-usage",
+        accountTag,
         costQuality: "unknown" as const,
         capturedAt: ctx.now,
         windowStart: unixDate(bucket.start_time),
@@ -93,7 +110,7 @@ async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<Usa
         totalTokens: inputTokens + outputTokens,
         requestCount: sum(bucket.results, "num_model_requests"),
         rawPayload: bucket,
-        dedupeKey: `codex|usage|${bucket.start_time ?? start.toISOString().slice(0, 10)}`,
+        dedupeKey: `codex|${accountTag}|usage|${bucket.start_time ?? start.toISOString().slice(0, 10)}`,
       },
     ]
   })

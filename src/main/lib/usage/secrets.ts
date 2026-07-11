@@ -5,7 +5,7 @@
 // non-secret usage settings. On macOS they live in the user Keychain so the
 // app and its LaunchAgent daemon can both read them. Values are never logged.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
@@ -33,6 +33,8 @@ function readRaw(): Record<string, string> {
   const path = getSecretsPath()
   if (!existsSync(path)) return {}
   try {
+    // Repair permissive modes from older builds before reading legacy values.
+    chmodSync(path, 0o600)
     return JSON.parse(readFileSync(path, "utf8")) as Record<string, string>
   } catch {
     return {}
@@ -42,26 +44,49 @@ function readRaw(): Record<string, string> {
 function writeRaw(data: Record<string, string>): void {
   const path = getSecretsPath()
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(data, null, 2))
+  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 })
+  // `mode` only applies when creating a file; enforce it for existing files too.
+  chmodSync(path, 0o600)
+}
+
+function clearRawSecret(key: string): void {
+  const data = readRaw()
+  if (!(key in data)) return
+  delete data[key]
+  writeRaw(data)
 }
 
 /** Store (or clear when value is null) an encrypted secret by key. */
 export function setUsageSecret(key: string, value: string | null): void {
-  if (process.platform === "darwin") {
-    if (setKeychainSecret(key, value)) return
-  }
-  const data = readRaw()
-  if (value == null || value === "") {
-    delete data[key]
-    writeRaw(data)
+  const clearing = value == null || value === ""
+  if (clearing) {
+    const keychainCleared = process.platform !== "darwin" || setKeychainSecret(key, null)
+    // Always remove the legacy file copy. Otherwise a successful Keychain
+    // delete can reveal an older fallback value on the next read.
+    clearRawSecret(key)
+    if (!keychainCleared) {
+      throw new Error("Unable to clear the usage credential from macOS Keychain")
+    }
     return
   }
+
+  if (process.platform === "darwin") {
+    if (setKeychainSecret(key, value)) {
+      clearRawSecret(key)
+      return
+    }
+    // The closed-app LaunchAgent runs with ELECTRON_RUN_AS_NODE and cannot
+    // decrypt Electron safeStorage. Never claim a daemon credential is stored
+    // when Keychain rejected it.
+    throw new Error("Unable to store the usage credential in macOS Keychain")
+  }
+
+  const data = readRaw()
   const safe = getSafeStorage()
   if (safe?.isEncryptionAvailable()) {
     data[key] = "enc:" + safe.encryptString(value).toString("base64")
   } else {
-    // Fall back to plaintext with an explicit marker so we know it's unprotected.
-    data[key] = "plain:" + value
+    throw new Error("Secure credential storage is unavailable; the credential was not stored")
   }
   writeRaw(data)
 }
@@ -113,19 +138,21 @@ function getKeychainSecret(key: string): string | null {
 function setKeychainSecret(key: string, value: string | null): boolean {
   const account = keychainAccount(key)
   if (value == null || value === "") {
-    spawnSync(
+    const result = spawnSync(
       "/usr/bin/security",
       ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account],
       {
         encoding: "utf8",
       },
     )
-    return true
+    // macOS `security` exits 44 for errSecItemNotFound. Other failures (for
+    // example denied Keychain access) must remain visible to the caller.
+    return result.status === 0 || result.status === 44
   }
   const result = spawnSync(
     "/usr/bin/security",
-    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w", value, "-U"],
-    { encoding: "utf8" },
+    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", "-w"],
+    { encoding: "utf8", input: `${value}\n` },
   )
   return result.status === 0
 }

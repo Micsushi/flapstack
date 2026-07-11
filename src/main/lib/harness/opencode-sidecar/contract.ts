@@ -6,12 +6,14 @@
  * launch, config, credentials, permission mapping, and event normalization;
  * OpenCode owns the model/tool loop.
  *
- * Scaffolding stage: these types are the stable contract. Runtime wiring in the
- * sibling modules is intentionally stubbed and returns honest not-implemented
- * states rather than pretending to execute.
+ * These types are the stable boundary used by the live sidecar runtime and its
+ * persisted run loop.
  */
 
-import type { OpencodeHarness } from "../../../../shared/harness-types"
+import type {
+  HarnessPermissionApplication,
+  OpencodeHarness,
+} from "../../../../shared/harness-types"
 import type { PermissionMode } from "../../permissions"
 
 /** Flapstack-facing provider identity. The runtime engine is always OpenCode. */
@@ -95,12 +97,33 @@ export type NormalizedSidecarEvent =
   | { kind: "text-delta"; partId: string; delta: string }
   | { kind: "reasoning-delta"; partId: string; delta: string }
   | { kind: "reasoning-summary"; partId: string; text: string }
+  | { kind: "reasoning-metadata"; partId: string; metadata: unknown }
   | { kind: "tool-input-start"; toolCallId: string; toolName: string }
   | { kind: "tool-input-delta"; toolCallId: string; delta: string }
   | { kind: "tool-input-available"; toolCallId: string; toolName: string; input: unknown }
   | { kind: "tool-output"; toolCallId: string; output: unknown }
   | { kind: "tool-error"; toolCallId: string; errorText: string }
-  | { kind: "permission-asked"; requestId: string; toolCallId: string; permission: string }
+  | {
+      kind: "permission-asked"
+      requestId: string
+      toolCallId: string
+      permission: string
+      /** Exact OpenCode permission patterns (commands, paths, or resource globs). */
+      patterns: string[]
+      /** Original command when OpenCode provides it separately from its patterns. */
+      command?: string
+    }
+  | {
+      kind: "permission-decision"
+      requestId: string
+      toolCallId: string
+      permission: string
+      patterns: string[]
+      reply: SidecarApprovalDecision["reply"]
+      message?: string
+      source: "policy" | "user" | "fallback"
+    }
+  | { kind: "permission-application"; application: HarnessPermissionApplication }
   | { kind: "usage"; usage: SidecarUsage }
   | { kind: "error"; errorText: string; auth?: boolean }
   | { kind: "idle" }
@@ -121,6 +144,9 @@ export type SidecarUsage = {
   costQuality: SidecarCostQuality
   /** Provider generation id (OpenRouter) for later exact-cost reconciliation. */
   generationId?: string
+  /** OpenCode assistant-message id used only to merge repeated updates. It is
+   * not an upstream provider generation id. */
+  observationId?: string
 }
 
 /** Result of one sidecar run, fed into run persistence + usage hooks. */
@@ -142,7 +168,14 @@ export type SidecarApprovalCallback = (request: {
   requestId: string
   toolCallId: string
   permission: string
+  patterns: string[]
+  command?: string
 }) => Promise<SidecarApprovalDecision>
+
+export type SidecarPermissionResolution = {
+  decision: SidecarApprovalDecision
+  source: "policy" | "user" | "fallback"
+}
 
 export function limitation(
   code: SidecarLimitationCode,

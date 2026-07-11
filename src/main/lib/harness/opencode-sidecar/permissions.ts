@@ -88,11 +88,21 @@ export function buildOpencodeSessionPermissions(mode: PermissionMode): OpencodeS
 }
 
 /** Classify an OpenCode permission string into a coarse capability bucket. */
-export function classifyPermission(permission: string): "edit" | "bash" | "webfetch" | "other" {
+export function classifyPermission(
+  permission: string,
+): "read" | "edit" | "bash" | "webfetch" | "other" {
   const p = permission.toLowerCase()
   if (p.includes("edit") || p.includes("write") || p.includes("patch")) return "edit"
   if (p.includes("bash") || p.includes("shell") || p.includes("run")) return "bash"
-  if (p.includes("webfetch") || p.includes("fetch") || p.includes("network")) return "webfetch"
+  if (p.includes("webfetch") || p.includes("websearch") || p.includes("network")) return "webfetch"
+  if (
+    p.includes("read") ||
+    p.includes("glob") ||
+    p.includes("grep") ||
+    p.includes("list") ||
+    p.includes("lsp")
+  )
+    return "read"
   return "other"
 }
 
@@ -107,6 +117,9 @@ export function decideAutoApproval(
   permission: string,
 ): SidecarApprovalDecision | null {
   const bucket = classifyPermission(permission)
+  // Read/search tools never mutate the workspace. OpenCode normally allows
+  // them without prompting, but preserve that behavior if a request is raised.
+  if (bucket === "read") return { reply: "once" }
   // Unknown tools are treated like shell (most conservative mutation bucket).
   const key: keyof OpencodePermissionConfig = bucket === "other" ? "bash" : bucket
   const rule = buildOpencodePermissionConfig(mode)[key]

@@ -26,9 +26,16 @@ import { execWithShellEnv } from "../../git/shell-env"
 import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
 import { terminalManager } from "../../terminal/manager"
-import { getResolvedWorktreeStatus, listWorktreeOptions } from "../../worktree-resolver"
+import {
+  getResolvedWorktreeStatus,
+  isManagedFlapstackWorktreePath,
+  listWorktreeOptions,
+  resolveDefaultWorktree,
+  validateCustomWorktreePath,
+} from "../../worktree-resolver"
 import { publicProcedure, router } from "../index"
 import { ensureTaskPrimaryWorktree } from "./tasks"
+import { deleteVoiceHistoryForChat } from "../../speech/history"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -288,6 +295,14 @@ export const chatsRouter = router({
   listWorktreeOptions: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
     return listWorktreeOptions(input.id)
   }),
+
+  resolveWorktreeStatus: publicProcedure
+    .input(z.object({ id: z.string(), path: z.string().optional() }))
+    .query(({ input }) => getResolvedWorktreeStatus(input.id, input.path)),
+
+  validateCustomWorktreePath: publicProcedure
+    .input(z.object({ path: z.string().min(1) }))
+    .query(({ input }) => validateCustomWorktreePath(input.path)),
 
   createWorktreeForExistingChat: publicProcedure
     .input(
@@ -644,6 +659,12 @@ export const chatsRouter = router({
       const db = getDatabase()
       const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
       if (!chat) throw new Error("Chat not found")
+      const sourceDefaultWorktreePath = resolveDefaultWorktree(chat)
+      const keepExplicitCustomWorktree = Boolean(
+        chat.worktreePath &&
+        chat.worktreePath !== sourceDefaultWorktreePath &&
+        !isManagedFlapstackWorktreePath(chat.worktreePath),
+      )
 
       if (input.scope === "global") {
         return db
@@ -655,9 +676,9 @@ export const chatsRouter = router({
             // A global chat must not keep a project-owned default checkout.
             // Preserve only an explicit custom worktree so history and user
             // intent survive detaching from a project or task.
-            worktreePath: null,
-            branch: null,
-            baseBranch: null,
+            worktreePath: keepExplicitCustomWorktree ? chat.worktreePath : null,
+            branch: keepExplicitCustomWorktree ? chat.branch : null,
+            baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
             updatedAt: new Date(),
           })
           .where(eq(chats.id, input.id))
@@ -669,9 +690,6 @@ export const chatsRouter = router({
         if (!input.projectId) throw new Error("Project move requires projectId")
         const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
         if (!project) throw new Error("Project not found")
-        const keepExistingWorktree = Boolean(
-          chat.worktreePath && chat.worktreePath !== project.path,
-        )
 
         return db
           .update(chats)
@@ -679,9 +697,9 @@ export const chatsRouter = router({
             scope: "project",
             projectId: project.id,
             taskId: null,
-            worktreePath: keepExistingWorktree ? chat.worktreePath : project.path,
-            branch: keepExistingWorktree ? chat.branch : null,
-            baseBranch: keepExistingWorktree ? chat.baseBranch : null,
+            worktreePath: keepExplicitCustomWorktree ? chat.worktreePath : project.path,
+            branch: keepExplicitCustomWorktree ? chat.branch : null,
+            baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
             updatedAt: new Date(),
           })
           .where(eq(chats.id, input.id))
@@ -694,11 +712,6 @@ export const chatsRouter = router({
       if (!task) throw new Error("Task not found")
       const project = db.select().from(projects).where(eq(projects.id, task.projectId)).get()
       if (!project) throw new Error("Project not found")
-      const keepExistingWorktree = Boolean(
-        chat.worktreePath &&
-        chat.worktreePath !== project.path &&
-        chat.worktreePath !== task.primaryWorktreePath,
-      )
 
       return db
         .update(chats)
@@ -706,11 +719,11 @@ export const chatsRouter = router({
           scope: "task",
           projectId: project.id,
           taskId: task.id,
-          worktreePath: keepExistingWorktree
+          worktreePath: keepExplicitCustomWorktree
             ? chat.worktreePath
             : (task.primaryWorktreePath ?? project.path),
-          branch: keepExistingWorktree ? chat.branch : task.primaryBranch,
-          baseBranch: keepExistingWorktree ? chat.baseBranch : null,
+          branch: keepExplicitCustomWorktree ? chat.branch : task.primaryBranch,
+          baseBranch: keepExplicitCustomWorktree ? chat.baseBranch : null,
           updatedAt: new Date(),
         })
         .where(eq(chats.id, input.id))
@@ -871,6 +884,7 @@ export const chatsRouter = router({
       gitCache.invalidateParsedDiff(chat.worktreePath)
     }
 
+    await deleteVoiceHistoryForChat(input.id)
     return db.delete(chats).where(eq(chats.id, input.id)).returning().get()
   }),
 
@@ -902,6 +916,7 @@ export const chatsRouter = router({
       }
 
       trackWorkspaceDeleted(chat.id)
+      await deleteVoiceHistoryForChat(chat.id)
 
       if (chat.worktreePath) {
         gitCache.invalidateStatus(chat.worktreePath)

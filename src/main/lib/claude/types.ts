@@ -10,8 +10,10 @@ export type UIMessageChunk =
   | { type: "text-delta"; id: string; delta: string }
   | { type: "text-end"; id: string }
   // Reasoning (Extended Thinking)
+  | { type: "reasoning-start"; id: string }
   | { type: "reasoning"; id: string; text: string }
   | { type: "reasoning-delta"; id: string; delta: string }
+  | { type: "reasoning-end"; id: string }
   // Tool calls
   | { type: "tool-input-start"; toolCallId: string; toolName: string }
   | { type: "tool-input-delta"; toolCallId: string; inputTextDelta: string }
@@ -20,6 +22,7 @@ export type UIMessageChunk =
       toolCallId: string
       toolName: string
       input: unknown
+      providerMetadata?: Record<string, unknown>
     }
   | { type: "tool-output-available"; toolCallId: string; output: unknown }
   | { type: "tool-output-error"; toolCallId: string; errorText: string }
@@ -38,6 +41,7 @@ export type UIMessageChunk =
       }>
     }
   | { type: "ask-user-question-timeout"; toolUseId: string }
+  | { type: "ask-user-question-result"; toolUseId: string; result: unknown }
   | { type: "message-metadata"; messageMetadata: MessageMetadata }
   // Session initialization (MCP servers, plugins, tools)
   | {

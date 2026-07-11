@@ -3,6 +3,7 @@ import {
   getNativeTtsAvailability,
   resolveAvailableTtsAdapter,
   resolveSttAdapter,
+  resolveTtsVoiceId,
   resolveTtsAdapter,
   sttAdapterImplementations,
   sttAdapters,
@@ -16,12 +17,15 @@ import {
   setReadAloudForChat,
   setVoiceSettings,
 } from "../../speech/settings"
-import { filterSpeakableText } from "../../speech/speakable-filter"
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
+import { resolveSpeechText } from "../../speech/speech-text"
+import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus } from "../../speech/stt-whisper-cpp"
 import { speakWithTtsFallback } from "../../speech/tts-fallback"
 import { nativeTtsAdapter } from "../../speech/tts-native"
 import {
+  createSpeechSynthesisKey,
+  findReusableSpeech,
   getStoredSpokenText,
   persistSpokenText,
   readSpeechAudio,
@@ -29,6 +33,24 @@ import {
   searchVoiceHistory,
 } from "../../speech/history"
 import { publicProcedure, router } from "../index"
+
+const speechOwnership = new SpeechRequestOwnership()
+
+function beginSpeechRequest(windowId: number) {
+  return speechOwnership.begin(windowId)
+}
+
+function cancelSpeechRequests(windowId: number) {
+  speechOwnership.cancel(windowId)
+}
+
+function isSpeechRequestActive(windowId: number, requestId: number) {
+  return speechOwnership.isActive(windowId, requestId)
+}
+
+async function stopTtsAdapters(requestScopeId: string) {
+  await Promise.allSettled(ttsAdapterImplementations.map((adapter) => adapter.stop(requestScopeId)))
+}
 
 export const speechRouter = router({
   getSettings: publicProcedure.query(() => {
@@ -68,9 +90,11 @@ export const speechRouter = router({
     const ttsAdapter = resolveTtsAdapter(settings)
     const sttAvailability = Object.fromEntries(
       await Promise.all(
-        sttAdapterImplementations.map(
-          async (adapter) => [adapter.id, await adapter.isAvailable()] as const,
-        ),
+        sttAdapterImplementations.map(async (adapter) => {
+          const availability = await adapter.isAvailable()
+          const canAutoProvision = (await adapter.canAutoProvision?.()) ?? false
+          return [adapter.id, { ...availability, canAutoProvision }] as const
+        }),
       ),
     )
     const ttsAvailability = Object.fromEntries(
@@ -114,25 +138,58 @@ export const speechRouter = router({
         messageId: z.string().nullable().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const windowId = ctx.getWindow()?.id ?? 0
+      const requestScopeId = String(windowId)
+      const requestId = beginSpeechRequest(windowId)
+      await stopTtsAdapters(requestScopeId)
+      if (!isSpeechRequestActive(windowId, requestId))
+        throw new Error("Speech request was cancelled.")
+
       const settings = getVoiceSettings()
       const storedText = getStoredSpokenText(input.subChatId, input.messageId)
-      const speakable = filterSpeakableText(input.text)
-      const text =
-        storedText ||
-        (speakable.shouldSpeak ? speakable.text : createFallbackSpokenSummary(input.text))
+      const text = resolveSpeechText(input.text, storedText)
+      if (!text) return { skipped: true as const, reason: "no-speakable-text", artifactId: null }
       persistSpokenText({
         subChatId: input.subChatId,
         messageId: input.messageId,
         text,
       })
       const adapter = await resolveAvailableTtsAdapter(settings)
+      if (!isSpeechRequestActive(windowId, requestId))
+        throw new Error("Speech request was cancelled.")
+      const resolvedVoiceId = resolveTtsVoiceId(
+        settings.ttsAdapterId,
+        adapter.id,
+        input.voiceId ?? settings.voiceId,
+      )
+      const rate = input.rate ?? settings.rate
+      const synthesisKey = createSpeechSynthesisKey({
+        text,
+        adapterId: adapter.id,
+        voiceId: resolvedVoiceId,
+        rate,
+      })
+      const reusable = input.chatId
+        ? await findReusableSpeech({
+            chatId: input.chatId,
+            messageId: input.messageId,
+            synthesisKey,
+          })
+        : null
+      if (reusable) return { ...reusable.result, skipped: false as const, artifactId: reusable.id }
       const ttsInput = {
         text,
-        voiceId: input.voiceId ?? settings.voiceId,
-        rate: input.rate ?? settings.rate,
+        voiceId: resolvedVoiceId,
+        rate,
+        requestScopeId,
+        shouldContinue: () => isSpeechRequestActive(windowId, requestId),
       }
-      const result = await speakWithTtsFallback(adapter, nativeTtsAdapter, ttsInput)
+      const result = await speakWithTtsFallback(adapter, nativeTtsAdapter, ttsInput, {
+        shouldContinue: () => isSpeechRequestActive(windowId, requestId),
+      })
+      if (!isSpeechRequestActive(windowId, requestId))
+        throw new Error("Speech request was cancelled.")
       const artifact = input.chatId
         ? await recordSpeech({
             chatId: input.chatId,
@@ -140,14 +197,18 @@ export const speechRouter = router({
             messageId: input.messageId,
             text,
             result,
+            synthesisKey,
+            voiceId: resolvedVoiceId,
+            rate,
           })
         : null
-      return { ...result, artifactId: artifact?.id ?? null }
+      return { ...result, skipped: false as const, artifactId: artifact?.id ?? null }
     }),
 
-  stopSpeaking: publicProcedure.mutation(async () => {
-    // speak() may fall back off the configured adapter, so stop them all.
-    await Promise.all(ttsAdapterImplementations.map((adapter) => adapter.stop()))
+  stopSpeaking: publicProcedure.mutation(async ({ ctx }) => {
+    const windowId = ctx.getWindow()?.id ?? 0
+    cancelSpeechRequests(windowId)
+    await stopTtsAdapters(String(windowId))
     return { success: true }
   }),
 
@@ -158,8 +219,8 @@ export const speechRouter = router({
     }),
 
   // Local Whisper model status for the settings UI (absent/downloading/present/error).
-  getSttModelStatus: publicProcedure.query(() => {
-    return getSttModelStatus()
+  getSttModelStatus: publicProcedure.query(async () => {
+    return await getSttModelStatus()
   }),
 
   // Trigger download-on-first-use from the settings UI. Resolves when the model
@@ -167,10 +228,10 @@ export const speechRouter = router({
   downloadSttModel: publicProcedure.mutation(async () => {
     try {
       await ensureModel()
-      return { status: getSttModelStatus() }
+      return { status: await getSttModelStatus() }
     } catch (error) {
       return {
-        status: getSttModelStatus(),
+        status: await getSttModelStatus(),
         error: error instanceof Error ? error.message : String(error),
       }
     }

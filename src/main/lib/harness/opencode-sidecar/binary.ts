@@ -11,6 +11,7 @@
  */
 
 import { existsSync } from "node:fs"
+import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 
 /** Pinned OpenCode version used when falling back to npx. Bump deliberately. */
@@ -23,10 +24,8 @@ export type OpencodeBinaryResolution =
   | { kind: "missing"; reason: string }
 
 function isExecutableOnPath(binName: string): string | null {
-  const pathEnv = process.env.PATH
-  if (!pathEnv) return null
   const exts = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""]
-  for (const dir of pathEnv.split(delimiter)) {
+  for (const dir of executableSearchDirs()) {
     if (!dir) continue
     for (const ext of exts) {
       const candidate = join(dir, binName + ext)
@@ -34,6 +33,25 @@ function isExecutableOnPath(binName: string): string | null {
     }
   }
   return null
+}
+
+/** Finder-launched macOS apps inherit a minimal PATH. Search the common package
+ * manager and user CLI locations used by OpenCode/Node as explicit fallbacks. */
+export function executableSearchDirs(): string[] {
+  const pathDirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean)
+  if (process.platform !== "darwin") return [...new Set(pathDirs)]
+  const home = homedir()
+  return [
+    ...new Set([
+      ...pathDirs,
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      join(home, ".opencode", "bin"),
+      join(home, ".local", "bin"),
+      join(home, ".bun", "bin"),
+      join(home, ".npm-global", "bin"),
+    ]),
+  ]
 }
 
 /**

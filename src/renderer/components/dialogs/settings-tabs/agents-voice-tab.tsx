@@ -13,6 +13,7 @@ export function AgentsVoiceTab() {
       await utils.speech.getSettings.invalidate()
       await utils.speech.listAdapters.invalidate()
       await utils.speech.listVoices.invalidate()
+      await utils.speech.getReadAloudForChat.invalidate()
     },
   })
   const speak = trpc.speech.speak.useMutation()
@@ -69,15 +70,18 @@ export function AgentsVoiceTab() {
               <input
                 value={settings.whisperCppBinPath || ""}
                 onChange={(event) => update({ whisperCppBinPath: event.target.value || null })}
-                placeholder="Bundled binary, or choose whisper-cli"
+                placeholder="Path to whisper-cli (optional)"
                 className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
               />
               <span className="text-xs text-muted-foreground">
-                Set this only when Flapstack cannot find whisper-cli automatically.
+                Flapstack does not bundle whisper.cpp. Install it separately; set this path only
+                when whisper-cli is not detected automatically.
               </span>
             </label>
             <WhisperModelStatus
-              binaryReady={!selectedSttAvailability?.reason?.includes("binary not found")}
+              binaryReady={Boolean(
+                selectedSttAvailability && selectedSttAvailability.missingDependency !== "engine",
+              )}
             />
           </>
         )}
@@ -138,7 +142,7 @@ export function AgentsVoiceTab() {
         </h4>
         <select
           value={settings.ttsAdapterId}
-          onChange={(event) => update({ ttsAdapterId: event.target.value })}
+          onChange={(event) => update({ ttsAdapterId: event.target.value, voiceId: null })}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         >
           {adapters.tts.map((adapter) => (
@@ -196,7 +200,9 @@ export function AgentsVoiceTab() {
           <button
             type="button"
             onClick={async () => {
+              stopManagedSpeech()
               const result = await speak.mutateAsync({ text: previewText })
+              if (result.skipped) return
               await playManagedSpeech(result)
             }}
             className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border hover:bg-accent"

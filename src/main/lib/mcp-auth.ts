@@ -33,6 +33,7 @@ export interface McpToolInfo {
 export async function fetchMcpTools(
   serverUrl: string,
   headers?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<McpToolInfo[]> {
   let client: Client | null = null
   let transport: StreamableHTTPClientTransport | null = null
@@ -47,14 +48,17 @@ export async function fetchMcpTools(
     if (headers && Object.keys(headers).length > 0) {
       requestInit.headers = { ...headers }
     }
+    if (signal) requestInit.signal = signal
 
     transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
       requestInit,
     })
 
-    await client.connect(transport)
+    const abort = () => void transport?.close().catch(() => undefined)
+    signal?.addEventListener("abort", abort, { once: true })
+    await raceAbort(client.connect(transport), signal)
 
-    const result = await client.listTools()
+    const result = await raceAbort(client.listTools(), signal)
     const tools = result.tools || []
 
     console.log(`[MCP] Fetched ${tools.length} tools via SDK`)
@@ -92,11 +96,15 @@ const BLOCKED_ENV_VARS = [
  * Fetch tools from a stdio-based MCP server
  * Uses shell environment to ensure proper PATH (homebrew, nvm, etc.) in production
  */
-export async function fetchMcpToolsStdio(config: {
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-}): Promise<McpToolInfo[]> {
+export async function fetchMcpToolsStdio(
+  config: {
+    command: string
+    args?: string[]
+    env?: Record<string, string>
+    cwd?: string
+  },
+  signal?: AbortSignal,
+): Promise<McpToolInfo[]> {
   let transport: StdioClientTransport | null = null
 
   try {
@@ -122,10 +130,13 @@ export async function fetchMcpToolsStdio(config: {
       command: config.command,
       args: config.args,
       env: { ...safeEnv, ...config.env },
+      cwd: config.cwd,
     })
 
-    await client.connect(transport)
-    const result = await client.listTools()
+    const abort = () => void transport?.close().catch(() => undefined)
+    signal?.addEventListener("abort", abort, { once: true })
+    await raceAbort(client.connect(transport), signal)
+    const result = await raceAbort(client.listTools(), signal)
     const tools = result.tools || []
 
     console.log(`[MCP] Fetched ${tools.length} tools via stdio`)
@@ -142,6 +153,19 @@ export async function fetchMcpToolsStdio(config: {
       // Ignore close errors
     }
   }
+}
+
+async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) throw new Error("MCP request aborted")
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      signal.addEventListener("abort", () => reject(new Error("MCP request aborted")), {
+        once: true,
+      }),
+    ),
+  ])
 }
 
 import { AUTH_SERVER_PORT, IS_DEV } from "../constants"

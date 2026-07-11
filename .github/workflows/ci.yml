@@ -28,6 +28,9 @@ jobs:
       - name: Style
         run: npm run style:check
 
+      - name: TypeScript
+        run: npm run ts:check
+
       - name: Test
         run: npm run test
 

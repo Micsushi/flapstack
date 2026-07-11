@@ -10,13 +10,6 @@ import {
   type ReactNode,
 } from "react"
 
-// Chromium 137+ Selection API extension for Shadow DOM support
-declare global {
-  interface Selection {
-    getComposedRanges?(options: { shadowRoots: ShadowRoot[] }): StaticRange[]
-  }
-}
-
 // Discriminated union for selection source
 export type TextSelectionSource =
   | { type: "assistant-message"; messageId: string }
@@ -89,10 +82,13 @@ function getSelectionRange(
   selection: Selection,
 ): { range: Range; element: Element | null; text: string } | null {
   // Try getComposedRanges first — works across Shadow DOM (Chromium 137+)
-  if (typeof selection.getComposedRanges === "function") {
+  const composedSelection = selection as Selection & {
+    getComposedRanges?: (options?: { shadowRoots?: ShadowRoot[] }) => StaticRange[]
+  }
+  if (typeof composedSelection.getComposedRanges === "function") {
     const shadowRoots = getDiffShadowRoots()
     try {
-      const ranges = selection.getComposedRanges({ shadowRoots })
+      const ranges = composedSelection.getComposedRanges({ shadowRoots })
       if (ranges.length > 0) {
         const staticRange = ranges[0]!
         if (

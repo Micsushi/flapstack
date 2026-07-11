@@ -4,18 +4,30 @@ import os from "node:os"
 import path from "node:path"
 import type { SpeechAdapterAvailability, TtsAdapter, TtsInput, TtsResult, TtsVoice } from "./types"
 
-function execFileAsync(command: string, args: string[], options: { timeout?: number } = {}) {
+function execFileAsync(
+  command: string,
+  args: string[],
+  options: { timeout?: number; input?: string } = {},
+  requestScopeId?: string,
+) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = execFileCallback(command, args, options, (error, stdout, stderr) => {
+    const { input, ...execOptions } = options
+    const child = execFileCallback(command, args, execOptions, (error, stdout, stderr) => {
       if (error) reject(error)
       else resolve({ stdout: String(stdout), stderr: String(stderr) })
     })
-    activeChildren.add(child)
+    activeChildren.set(child, requestScopeId)
     child.on("exit", () => activeChildren.delete(child))
+    if (input !== undefined) {
+      // Keep arbitrary/large prose out of argv: avoids option-looking text and
+      // the OS argument-size limit. `say` reads stdin when no message arg exists.
+      child.stdin?.on("error", () => {})
+      child.stdin?.end(input)
+    }
   })
 }
 
-const activeChildren = new Set<ChildProcess>()
+const activeChildren = new Map<ChildProcess, string | undefined>()
 
 export const nativeTtsAdapter: TtsAdapter = {
   id: "native-os",
@@ -52,8 +64,10 @@ export const nativeTtsAdapter: TtsAdapter = {
     throw new Error("Native TTS is not available on this platform.")
   },
 
-  async stop() {
-    for (const child of Array.from(activeChildren)) child.kill()
+  async stop(requestScopeId?: string) {
+    for (const [child, owner] of Array.from(activeChildren)) {
+      if (requestScopeId === undefined || owner === requestScopeId) child.kill()
+    }
   },
 }
 
@@ -72,13 +86,16 @@ async function speakMacos(input: TtsInput): Promise<TtsResult> {
   const rate = Math.round(175 * clamp(input.rate ?? 1, 0.5, 2))
 
   try {
-    const sayArgs = voiceId
-      ? ["-v", voiceId, "-r", String(rate), "-o", aiffPath, text]
-      : ["-r", String(rate), "-o", aiffPath, text]
-    await execFileAsync("say", sayArgs, { timeout: 120000 })
-    await execFileAsync("afconvert", ["-f", "WAVE", "-d", "LEI16@24000", aiffPath, wavPath], {
-      timeout: 30000,
-    })
+    const sayArgs = buildMacosSayArgs(voiceId, rate, aiffPath)
+    await execFileAsync("say", sayArgs, { timeout: 120000, input: text }, input.requestScopeId)
+    await execFileAsync(
+      "afconvert",
+      ["-f", "WAVE", "-d", "LEI16@24000", aiffPath, wavPath],
+      {
+        timeout: 30000,
+      },
+      input.requestScopeId,
+    )
     return {
       audioBase64: readFileSync(wavPath).toString("base64"),
       mimeType: "audio/wav",
@@ -88,6 +105,16 @@ async function speakMacos(input: TtsInput): Promise<TtsResult> {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+export function buildMacosSayArgs(
+  voiceId: string | undefined,
+  rate: number,
+  outputPath: string,
+): string[] {
+  return voiceId
+    ? ["-v", voiceId, "-r", String(rate), "-o", outputPath]
+    : ["-r", String(rate), "-o", outputPath]
 }
 
 async function speakWindows(input: TtsInput): Promise<TtsResult> {
@@ -107,7 +134,12 @@ async function speakWindows(input: TtsInput): Promise<TtsResult> {
   ].join(" ")
 
   try {
-    await execFileAsync("powershell.exe", ["-NoProfile", "-Command", ps], { timeout: 120000 })
+    await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", ps],
+      { timeout: 120000 },
+      input.requestScopeId,
+    )
     return {
       audioBase64: readFileSync(wavPath).toString("base64"),
       mimeType: "audio/wav",

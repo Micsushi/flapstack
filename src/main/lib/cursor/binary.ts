@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
-import { existsSync } from "node:fs"
+import { accessSync, constants, existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 
@@ -55,21 +55,32 @@ function commonInstallDirs(): string[] {
 
 export function resolveCursorAgentBinary(): string | null {
   const override = process.env.FLAPSTACK_CURSOR_AGENT_PATH?.trim()
-  if (override && existsSync(override)) return override
+  if (override && isExecutable(override)) return override
 
   for (const dir of commonInstallDirs()) {
     const candidate = join(dir, BINARY_NAME)
-    if (existsSync(candidate)) return candidate
+    if (isExecutable(candidate)) return candidate
   }
 
   const pathValue = buildCursorEnv().PATH ?? process.env.PATH ?? ""
   for (const dir of pathValue.split(delimiter)) {
     if (!dir) continue
     const candidate = join(dir, BINARY_NAME)
-    if (existsSync(candidate)) return candidate
+    if (isExecutable(candidate)) return candidate
   }
 
   return null
+}
+
+function isExecutable(path: string): boolean {
+  if (!existsSync(path)) return false
+  if (process.platform === "win32") return true
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export class CursorAgentNotFoundError extends Error {
@@ -78,6 +89,13 @@ export class CursorAgentNotFoundError extends Error {
       "cursor-agent CLI not found. Install it (https://cursor.com/cli) or set FLAPSTACK_CURSOR_AGENT_PATH, then reconnect Cursor in Settings.",
     )
     this.name = "CursorAgentNotFoundError"
+  }
+}
+
+export class CursorCliTimeoutError extends Error {
+  constructor(args: string[], timeoutMs: number) {
+    super(`\`cursor-agent ${args.join(" ")}\` timed out after ${timeoutMs}ms`)
+    this.name = "CursorCliTimeoutError"
   }
 }
 
@@ -106,9 +124,20 @@ export async function runCursorCli(
 
     let stdout = ""
     let stderr = ""
+    let settled = false
+    let timedOut = false
+    let forceKillTimeout: ReturnType<typeof setTimeout> | null = null
+    const clearTimers = () => {
+      if (timeout) clearTimeout(timeout)
+      if (forceKillTimeout) clearTimeout(forceKillTimeout)
+    }
     const timeout = options?.timeoutMs
       ? setTimeout(() => {
+          timedOut = true
           child.kill("SIGTERM")
+          forceKillTimeout = setTimeout(() => {
+            child.kill("SIGKILL")
+          }, 1_000)
         }, options.timeoutMs)
       : null
 
@@ -119,13 +148,23 @@ export async function runCursorCli(
       stderr += chunk.toString("utf8")
     })
     child.once("error", (error) => {
-      if (timeout) clearTimeout(timeout)
+      if (settled) return
+      settled = true
+      clearTimers()
       rejectPromise(
-        new Error(`Failed to execute \`cursor-agent ${args.join(" ")}\`: ${error.message}`),
+        timedOut && options?.timeoutMs
+          ? new CursorCliTimeoutError(args, options.timeoutMs)
+          : new Error(`Failed to execute \`cursor-agent ${args.join(" ")}\`: ${error.message}`),
       )
     })
     child.once("close", (exitCode) => {
-      if (timeout) clearTimeout(timeout)
+      if (settled) return
+      settled = true
+      clearTimers()
+      if (timedOut && options?.timeoutMs) {
+        rejectPromise(new CursorCliTimeoutError(args, options.timeoutMs))
+        return
+      }
       resolvePromise({ stdout, stderr, exitCode })
     })
   })

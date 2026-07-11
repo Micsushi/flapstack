@@ -1,60 +1,72 @@
-# Stage 2 Follow-ups
+# Stage 2 Review Follow-ups
 
-Open items surfaced while wiring up the Stage 2 worktrees. Small fixes are already
-applied in their worktrees; the items below still need real work or a decision.
+Current review: `docs/stage2-readiness-review-2026-07-10.md`
 
-## Bigger tasks
+Executable matrix: `docs/stage2-full-feature-test-matrix.md`
 
-### B1 — Whisper "download on first use" (voice-io) — P1
+This file replaces the pre-integration branch notes. Stage 2 is ready for the
+implemented manual rows, but it is not ready to archive or call shipped.
 
-`stt-whisper-cpp.ts::ensureModel()` throws when the base model is missing, but the
-proposal specs download-on-first-use. Needs:
+## Repaired during the integrated review
 
-- Streaming download of `ggml-base.bin` (~140 MB) to the speech data dir, with
-  resume/retry and a checksum/size integrity check.
-- Progress + cancel in the voice settings tab.
-- Concurrency guard so app + daemon don't download at once.
-- Honest failure state when offline / blocked.
-  Track A / V2. Don't auto-download without UI.
+- First-use dictation is discoverable and routes missing binaries to Voice
+  settings; the approved base model has download progress, retry, and honest
+  local-only failure states.
+- Local STT never silently falls back to cloud.
+- Create branch creates and switches; both Changes selectors refresh.
+- Native module ABI preparation is automated by the repo scripts. A clean
+  `npm ci --legacy-peer-deps` plus `npm run check` completes without a manual
+  developer toggle.
+- Cursor, OpenCode harness, reasoning, Voice, Usage, and Track C worktrees are
+  integrated on `main`; the old divergent-branch sequencing warning is obsolete.
+- OpenCode approval deadlock, invalid reasoning lifecycle, missing durable tool
+  audit, and finalization coupling were repaired.
+- Usage daemon double-start, unknown-price loss, weak-cost overwrite, alert retry,
+  secret fallback, and OpenRouter reconciliation defects were repaired.
+- OpenCode usage aggregation now preserves provider-reported totals, downgrades
+  mixed totals to their weakest quality, and hydrates persisted model pricing at
+  run capture instead of depending on model-list UI order.
+- Codex MCP probing and ACP forwarding now preserve Codex-reported stdio working
+  directory semantics so plugin-relative launch paths do not resolve from the
+  Flapstack checkout.
 
-### B2 — Voice adapter selection is not strict (voice-io) — P2
+## Remaining product blockers
 
-`resolveAvailableSttAdapter` silently falls back to cloud Whisper when the chosen
-Local Whisper is unavailable — for a local-first app that can ship mic audio to the
-cloud without the user knowing. Needs a decision + UI:
+### Voice and packaging
 
-- Is an explicit engine choice a hard constraint or a preference?
-- If preference: show a "Local Whisper unavailable — using cloud" banner and
-  honor a `preferOffline` hard-block. Ties to V9.
+- Bundle or deliberately provision `whisper-cli` and FFmpeg for a pristine
+  packaged app; current development readiness depends on system tools.
+- Execute audible native/Kokoro, denied-microphone, no-device, packaged macOS,
+  and Windows SAPI/microphone rows.
+- Decide whether live/tentative dictation and a broader model picker are Stage 2
+  requirements; the approved implementation is batch Local Whisper with `base`.
 
-### B3 — Create-branch no longer switches to the new branch (main) — decision
+### Usage
 
-`createBranch` creates without switching (`branches.ts:121`). The header edit
-replaced the post-create `checkout` with `refetchBranches()`, so creating a branch
-now leaves you on the old branch. Left as-is (looks intentional). Decide:
+- Implement personal Codex/Claude subscription quota paths if Stage 2 must fully
+  replace onWatch for the user's primary accounts.
+- Complete Cursor source 1: plan, grants, Stripe balance, request usage, account
+  shapes, and robust token fallback.
+- Add approved historical graph/dashboard depth.
+- Route OpenRouter/NanoGPT per-run spend alerts through the daemon alert runner.
+- Add Windows/Linux service lifecycle or explicitly rescope daemon exit to macOS.
 
-- switch-on-create (restore the one-line `checkoutMutation`), or
-- create-without-switch (keep, but update dialog copy).
+### Harnesses and reasoning
 
-### B4 — Native-module ABI toggle removal (main) — P1 blocker
+- Verify provider-live OpenCode multi-step aggregation and generation-ID
+  provenance; automated cost-quality aggregation is repaired.
+- Complete OpenCode model pricing/tool-capability metadata.
+- Execute credentialed Cursor, OpenRouter, and NanoGPT runs through the app,
+  including approvals, Stop/resume, persistence, search, and error cases.
+- Execute packaged OpenCode PATH/download/process-tree teardown on macOS and
+  Windows.
+- Complete the real UI reasoning matrix; fixture coverage alone is not exit proof.
 
-Task 0.1 (F2) is the prerequisite so `npm run check` runs cleanly across every
-track. Finish it before trusting any track's `check` gate.
+### Repository gate and administration
 
-### B5 — Overlapping tracks on divergent bases — integration risk
-
-`main`, `mvp-ui-cleanup`, and `voice-io` all rewrite `agents-content.tsx` /
-`agents-sidebar.tsx` incompatibly; `dev-mcp-test-control` is committed on the old
-`cce69ed` base. Order:
-
-- Land `main`'s scope + open-chat-tab work first.
-- Rebase `mvp-ui-cleanup` and `voice-io` onto it, resolve the shared files once,
-  re-run `check`.
-- Rebase `dev-mcp-test-control` onto current `main` before reviewing it.
-
-## Test gaps
-
-- Open-chat tab strip + scope view (main).
-- Voice stop/abort/strict-selection paths (voice-io).
-- `check-codex-model-catalog.mjs` drift script.
-- Full `npm run test` / `build` per worktree.
+- Resolve the sidebar remote-stats product decision.
+- Reconcile OpenSpec/task-board checkboxes only against executed evidence.
+- Address dependency audit debt: current clean install reports no critical
+  vulnerabilities. The production-only tree has no high findings, but the packaged
+  Electron runtime has a non-major security patch available and electron-builder's
+  high build-chain findings require a validated major upgrade or risk acceptance.

@@ -1123,7 +1123,13 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
         <div className="flex justify-between items-center h-6 px-2 mt-1">
           <div className="flex items-center gap-0.5">
             <CopyButton text={getMessageTextContent(message)} isMobile={isMobile} />
-            <PlayButton text={getMessageTextContent(message)} isMobile={isMobile} />
+            <PlayButton
+              text={getMessageTextContent(message)}
+              isMobile={isMobile}
+              chatId={chatId}
+              subChatId={subChatId}
+              messageId={message.id}
+            />
           </div>
           <div className="flex items-center gap-0.5">
             <AgentMessageUsage

@@ -1,9 +1,21 @@
 # Stage 2 — Track B: Usage Tracking (replace onWatch)
 
-Branch: `codex/stage2-usage-tracking`
+Historical branch: `codex/stage2-usage-tracking` (merged into `main`)
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track B**.
+This file is the authoritative repo-local task board for **Track B**.
+
+## Integrated readiness correction — 2026-07-10
+
+The shared store, engine, macOS daemon controls, reconciliation, provider
+adapters, alerts, secrets, and Usage settings surface are integrated on `main`.
+See `docs/stage2-readiness-review-2026-07-10.md` and
+`docs/stage2-full-feature-test-matrix.md` for current evidence.
+
+The feature is testable, but it does not yet fully replace onWatch: personal
+Codex/Claude subscription quota polling, the complete Cursor source-1 data set,
+historical graph depth, daemon-routed per-run provider alerts, and non-macOS
+service lifecycle remain open. Provider-paid and app-closed manual rows are also
+unexecuted.
 
 ## Tasks
 

@@ -82,15 +82,16 @@ export function createNanoGptProvider(): UsageProvider {
         apiKey,
       })
       for (const model of payload.data ?? []) {
-        const input = pricePerMillion(model.pricing?.prompt)
-        const output = pricePerMillion(model.pricing?.completion)
+        const input = pricePerMillion(model.pricing?.prompt, model.pricing?.unit)
+        const output = pricePerMillion(model.pricing?.completion, model.pricing?.unit)
         if (input != null && output != null)
           upsertModelPricing({
             providerId: "nanogpt",
             model: model.id,
             inputPerMTok: input,
             outputPerMTok: output,
-            reasoningPerMTok: pricePerMillion(model.pricing?.internal_reasoning) ?? undefined,
+            reasoningPerMTok:
+              pricePerMillion(model.pricing?.internal_reasoning, model.pricing?.unit) ?? undefined,
           })
       }
       // NanoGPT documents no account-wide usage/balance surface. This request only refreshes pricing.
@@ -116,11 +117,13 @@ interface NanoGptModelsResponse {
       prompt?: string | number
       completion?: string | number
       internal_reasoning?: string | number
+      unit?: string
     }
   }>
 }
-function pricePerMillion(value: unknown): number | null {
+function pricePerMillion(value: unknown, unit: unknown): number | null {
+  if (unit !== "per_million_tokens") return null
   const perMillion =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
-  return Number.isFinite(perMillion) ? perMillion : null
+  return Number.isFinite(perMillion) && perMillion >= 0 ? perMillion : null
 }

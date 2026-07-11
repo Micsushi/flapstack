@@ -32,6 +32,8 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const isStartingRef = useRef(false) // Prevent race conditions
+  const startPromiseRef = useRef<Promise<void> | null>(null)
+  const startGenerationRef = useRef(0)
 
   // Audio analysis refs
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -78,6 +80,8 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      startGenerationRef.current += 1
+      startPromiseRef.current = null
       cleanup()
       setIsRecording(false)
     }
@@ -85,110 +89,136 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
 
   // Cancel recording without returning a blob
   const cancelRecording = useCallback(() => {
+    // getUserMedia cannot be aborted. Invalidate the pending generation so a
+    // late stream is stopped before a MediaRecorder can start.
+    startGenerationRef.current += 1
+    startPromiseRef.current = null
     cleanup()
     setIsRecording(false)
   }, [cleanup])
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback((): Promise<void> => {
     // Prevent multiple simultaneous starts
-    if (isStartingRef.current || mediaRecorderRef.current) {
+    if (startPromiseRef.current) {
       console.warn("[VoiceRecording] Already recording or starting")
-      return
+      return startPromiseRef.current
+    }
+    if (mediaRecorderRef.current) {
+      console.warn("[VoiceRecording] Already recording or starting")
+      return Promise.resolve()
     }
 
+    const generation = ++startGenerationRef.current
     isStartingRef.current = true
-
-    try {
-      setError(null)
-
-      // Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 16000, // Whisper works well with 16kHz
-        },
-      })
-
-      streamRef.current = stream
-
-      // Set up audio analysis for visualization
+    const startPromise = (async () => {
       try {
-        const audioContext = new AudioContext()
-        const analyser = audioContext.createAnalyser()
-        analyser.fftSize = 256
-        analyser.smoothingTimeConstant = 0.5
+        setError(null)
 
-        const source = audioContext.createMediaStreamSource(stream)
-        source.connect(analyser)
+        // Request microphone access. A pending request cannot be aborted, so
+        // cancellation is checked immediately after it resolves.
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 16000, // Whisper works well with 16kHz
+          },
+        })
+        if (generation !== startGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
 
-        audioContextRef.current = audioContext
-        analyserRef.current = analyser
+        streamRef.current = stream
 
-        // Start audio level monitoring (~20fps instead of 60fps to reduce React re-renders)
-        const dataArray = new Uint8Array(analyser.frequencyBinCount)
-        let frameCount = 0
-        const updateLevel = () => {
-          if (!analyserRef.current) return
+        // Set up audio analysis for visualization
+        try {
+          const audioContext = new AudioContext()
+          const analyser = audioContext.createAnalyser()
+          analyser.fftSize = 256
+          analyser.smoothingTimeConstant = 0.5
 
-          frameCount++
-          // Only update state every 3rd frame (~20fps) — CSS transitions smooth the gaps
-          if (frameCount % 3 === 0) {
-            analyserRef.current.getByteFrequencyData(dataArray)
+          const source = audioContext.createMediaStreamSource(stream)
+          source.connect(analyser)
 
-            let sum = 0
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i] ?? 0
+          audioContextRef.current = audioContext
+          analyserRef.current = analyser
+
+          // Start audio level monitoring (~20fps instead of 60fps to reduce React re-renders)
+          const dataArray = new Uint8Array(analyser.frequencyBinCount)
+          let frameCount = 0
+          const updateLevel = () => {
+            if (!analyserRef.current) return
+
+            frameCount++
+            // Only update state every 3rd frame (~20fps) — CSS transitions smooth the gaps
+            if (frameCount % 3 === 0) {
+              analyserRef.current.getByteFrequencyData(dataArray)
+
+              let sum = 0
+              for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i] ?? 0
+              }
+              const average = sum / dataArray.length
+              const raw = average / 255
+              const amplified = Math.pow(raw, 0.6) * 2.5
+              const normalized = Math.min(1, amplified)
+              setAudioLevel(normalized)
             }
-            const average = sum / dataArray.length
-            const raw = average / 255
-            const amplified = Math.pow(raw, 0.6) * 2.5
-            const normalized = Math.min(1, amplified)
-            setAudioLevel(normalized)
+
+            animationFrameRef.current = requestAnimationFrame(updateLevel)
           }
-
-          animationFrameRef.current = requestAnimationFrame(updateLevel)
+          updateLevel()
+        } catch (err) {
+          console.warn("[VoiceRecording] Failed to set up audio analysis:", err)
+          // Continue without audio level - recording still works
         }
-        updateLevel()
+
+        // Determine best supported mime type
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "audio/mp4" // Fallback for Safari
+
+        const mediaRecorder = new MediaRecorder(stream, { mimeType })
+
+        chunksRef.current = []
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunksRef.current.push(event.data)
+          }
+        }
+
+        mediaRecorderRef.current = mediaRecorder
+        mediaRecorder.start(100) // Collect data every 100ms
+        setIsRecording(true)
       } catch (err) {
-        console.warn("[VoiceRecording] Failed to set up audio analysis:", err)
-        // Continue without audio level - recording still works
-      }
+        if (generation !== startGenerationRef.current) return
+        cleanup()
 
-      // Determine best supported mime type
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4" // Fallback for Safari
+        const error = toMicrophoneError(err, navigator.platform)
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType })
-
-      chunksRef.current = []
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data)
+        setError(error)
+        console.error("[VoiceRecording] Start error:", error)
+        throw error
+      } finally {
+        if (generation === startGenerationRef.current) {
+          isStartingRef.current = false
+          startPromiseRef.current = null
         }
       }
-
-      mediaRecorderRef.current = mediaRecorder
-      mediaRecorder.start(100) // Collect data every 100ms
-      setIsRecording(true)
-      isStartingRef.current = false
-    } catch (err) {
-      isStartingRef.current = false
-      cleanup()
-
-      const error = toMicrophoneError(err, navigator.platform)
-
-      setError(error)
-      console.error("[VoiceRecording] Start error:", error)
-      throw error
-    }
+    })()
+    startPromiseRef.current = startPromise
+    return startPromise
   }, [cleanup])
 
   const stopRecording = useCallback(async (): Promise<Blob> => {
+    // A hotkey or pointer release can arrive while microphone permission is
+    // still pending. Wait for that exact start before looking for the recorder.
+    const pendingStart = startPromiseRef.current
+    if (pendingStart) await pendingStart
+
     return new Promise((resolve, reject) => {
       const mediaRecorder = mediaRecorderRef.current
 

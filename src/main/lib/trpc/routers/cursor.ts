@@ -44,9 +44,28 @@ type ActiveCursorStream = {
   runId: string
   child: ChildProcess
   cancelRequested: boolean
+  killTimer?: ReturnType<typeof setTimeout>
 }
 
 const activeStreams = new Map<string, ActiveCursorStream>()
+
+function terminateCursorStream(stream: ActiveCursorStream): void {
+  stream.cancelRequested = true
+  const send = (signal: NodeJS.Signals) => {
+    try {
+      if (process.platform !== "win32" && stream.child.pid) process.kill(-stream.child.pid, signal)
+      else stream.child.kill(signal)
+    } catch {
+      stream.child.kill(signal)
+    }
+  }
+  send("SIGTERM")
+  if (stream.killTimer) clearTimeout(stream.killTimer)
+  stream.killTimer = setTimeout(() => {
+    if (stream.child.exitCode == null && stream.child.signalCode == null) send("SIGKILL")
+  }, 2_000)
+  stream.killTimer.unref?.()
+}
 
 export function hasActiveCursorStreams(): boolean {
   return activeStreams.size > 0
@@ -55,8 +74,7 @@ export function hasActiveCursorStreams(): boolean {
 export function abortAllCursorStreams(): void {
   for (const [subChatId, stream] of activeStreams) {
     console.log(`[cursor] Aborting stream ${subChatId} before reload`)
-    stream.cancelRequested = true
-    stream.child.kill("SIGTERM")
+    terminateCursorStream(stream)
   }
   // Keep each entry until its async finalizer observes cancelRequested. Clearing
   // here loses that signal and can incorrectly mark a killed run as successful.
@@ -222,10 +240,13 @@ async function completeCursorRun(params: {
     .returning()
     .get()
 
-  db.update(subChats)
-    .set({ runStatus: params.status, updatedAt: new Date() })
-    .where(eq(subChats.id, params.subChatId))
-    .run()
+  const active = activeStreams.get(params.subChatId)
+  if (active?.runId === params.runId) {
+    db.update(subChats)
+      .set({ runStatus: params.status, updatedAt: new Date() })
+      .where(eq(subChats.id, params.subChatId))
+      .run()
+  }
 
   return completedRun
 }
@@ -281,23 +302,37 @@ export const cursorRouter = router({
       output += chunk.toString("utf8")
     })
 
-    const urlMatch = await new Promise<string | null>((resolvePromise) => {
-      const timer = setTimeout(() => resolvePromise(null), 8_000)
-      const check = () => {
-        const match = output.match(/https?:\/\/[^\s]+/)
-        if (match) {
+    const loginStart = await new Promise<{ url: string | null; error?: string }>(
+      (resolvePromise) => {
+        let settled = false
+        const finish = (result: { url: string | null; error?: string }) => {
+          if (settled) return
+          settled = true
           clearTimeout(timer)
-          resolvePromise(match[0])
+          resolvePromise(result)
         }
-      }
-      child.stdout.on("data", check)
-      child.stderr.on("data", check)
-    })
+        const timer = setTimeout(() => finish({ url: null }), 8_000)
+        const check = () => {
+          const match = output.match(/https?:\/\/[^\s]+/)
+          if (match) finish({ url: match[0] })
+        }
+        child.stdout.on("data", check)
+        child.stderr.on("data", check)
+        child.once("error", (error) => finish({ url: null, error: error.message }))
+        child.once("close", (code) => {
+          if (code !== 0)
+            finish({
+              url: null,
+              error: output.trim() || `cursor-agent login exited with code ${code}`,
+            })
+        })
+      },
+    )
 
     return {
-      started: true,
-      url: urlMatch,
-      note: "Complete the browser login, then re-check status.",
+      started: !loginStart.error,
+      url: loginStart.url,
+      note: loginStart.error || "Complete the browser login, then re-check status.",
     }
   }),
 
@@ -321,8 +356,7 @@ export const cursorRouter = router({
         // Supersede any in-flight stream for this sub-chat.
         const existingStream = activeStreams.get(input.subChatId)
         if (existingStream) {
-          existingStream.cancelRequested = true
-          existingStream.child.kill("SIGTERM")
+          terminateCursorStream(existingStream)
           activeStreams.delete(input.subChatId)
         }
 
@@ -457,6 +491,7 @@ export const cursorRouter = router({
               cwd: input.cwd,
               env: buildCursorEnv(),
               windowsHide: true,
+              detached: process.platform !== "win32",
             })
             activeStreamForRun = {
               runId: input.runId,
@@ -465,14 +500,19 @@ export const cursorRouter = router({
             }
             activeStreams.set(input.subChatId, activeStreamForRun)
 
-            // Feed the prompt over stdin to avoid argv length limits.
-            child.stdin?.write(promptForModel)
-            child.stdin?.end()
-
             const startedAt = Date.now()
             const translator = new CursorStreamTranslator()
             let stdoutBuffer = ""
             let stderrBuffer = ""
+
+            // Install the stream error boundary before writing. cursor-agent
+            // can close stdin immediately; EPIPE must fail this run, not escape
+            // as a process-wide uncaught exception.
+            child.stdin?.on("error", (error) => {
+              stderrBuffer += `\nstdin: ${error.message}`
+            })
+            child.stdin?.write(promptForModel)
+            child.stdin?.end()
 
             const emitChunks = (chunks: any[]) => {
               for (const chunk of chunks) safeEmit(chunk)
@@ -511,7 +551,7 @@ export const cursorRouter = router({
 
             if (wasCancelled) {
               runStatus = "cancelled"
-            } else if (translator.sawAuthError()) {
+            } else if (translator.sawError()) {
               runStatus = "failure"
             } else if (exitCode === 0) {
               runStatus = "success"
@@ -527,7 +567,7 @@ export const cursorRouter = router({
 
             // Persist the assistant message if this run is still authoritative.
             const currentStream = activeStreams.get(input.subChatId)
-            const isAuthoritative = !currentStream || currentStream.runId === input.runId
+            const isAuthoritative = currentStream?.runId === input.runId
             const metadata = translator.getMetadata()
             const parts = translator.getParts()
             if (isAuthoritative && parts.length > 0) {
@@ -549,9 +589,15 @@ export const cursorRouter = router({
                   resultSubtype: metadata.resultSubtype,
                 },
               }
+              const latest = db
+                .select({ messages: subChats.messages })
+                .from(subChats)
+                .where(eq(subChats.id, input.subChatId))
+                .get()
+              const latestMessages = parseStoredMessages(latest?.messages)
               db.update(subChats)
                 .set({
-                  messages: JSON.stringify([...messagesForStream, assistantMessage]),
+                  messages: JSON.stringify([...latestMessages, assistantMessage]),
                   updatedAt: new Date(),
                 })
                 .where(eq(subChats.id, input.subChatId))
@@ -593,6 +639,7 @@ export const cursorRouter = router({
             }
             const activeStream = activeStreams.get(input.subChatId)
             if (activeStream?.runId === input.runId) {
+              if (activeStream.killTimer) clearTimeout(activeStream.killTimer)
               activeStreams.delete(input.subChatId)
             }
           }
@@ -602,8 +649,7 @@ export const cursorRouter = router({
           isActive = false
           const activeStream = activeStreams.get(input.subChatId)
           if (activeStream?.runId === input.runId) {
-            activeStream.cancelRequested = true
-            activeStream.child.kill("SIGTERM")
+            terminateCursorStream(activeStream)
           }
         }
       })
@@ -616,16 +662,14 @@ export const cursorRouter = router({
       if (!activeStream) return { cancelled: false, ignoredStale: false }
       if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
 
-      activeStream.cancelRequested = true
-      activeStream.child.kill("SIGTERM")
+      terminateCursorStream(activeStream)
       return { cancelled: true, ignoredStale: false }
     }),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     const activeStream = activeStreams.get(input.subChatId)
     if (activeStream) {
-      activeStream.cancelRequested = true
-      activeStream.child.kill("SIGTERM")
+      terminateCursorStream(activeStream)
       activeStreams.delete(input.subChatId)
     }
     return { success: true }

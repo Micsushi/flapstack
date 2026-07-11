@@ -1,18 +1,17 @@
 // Stage 2 Track B — U7: Cursor usage source #1 (internal app endpoints).
 //
 // Ports onWatch `internal/api/cursor_client.go` + `cursor_types.go`. Uses the
-// undocumented internal endpoints that Cursor's own app calls:
-//   GET  https://cursor.com/api/usage
-//   GET  https://cursor.com/api/auth/stripe
-//   POST https://api2.cursor.sh/oauth/token   (refresh)
-// Token comes from ./token.ts auto-detect (source "sqlite"). This is the only
-// source implemented this stage; sources #2/#3 are stubbed fallback slots.
+// undocumented Connect RPC endpoint that Cursor's own app calls, plus the OAuth
+// refresh endpoint. Token rotation is persisted atomically to Cursor SQLite and
+// a combined Flapstack Keychain fallback. Admin/CLI sources remain explicit
+// fallback slots until their contracts are verified.
 //
 // Uses the undocumented endpoint best-effort. Endpoint drift and local-token
 // failures remain explicit provider states.
 
 import { detectCursorCredentials, detectCursorToken, persistCursorCredentials } from "./token"
 import { UsageProviderError, type UsageProviderContext, type UsageSampleInput } from "../../types"
+import { fetchProviderResponse, readProviderJson } from "../http"
 
 export const CURSOR_USAGE_URL = "https://cursor.com/api/usage"
 export const CURSOR_STRIPE_URL = "https://cursor.com/api/auth/stripe"
@@ -91,9 +90,10 @@ export async function pollInternalSource(
     throw new UsageProviderError("cursor", "auth-failed", "Cursor access token is unavailable")
   }
 
-  const response = await fetch(
-    `${CURSOR_API_BASE_URL}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
-    {
+  const response = await fetchProviderResponse({
+    providerId: "cursor",
+    url: `${CURSOR_API_BASE_URL}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+    init: {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -102,7 +102,7 @@ export async function pollInternalSource(
       },
       body: "{}",
     },
-  )
+  })
   if (response.status === 401 || response.status === 403) {
     throw new UsageProviderError("cursor", "auth-failed", "Cursor rejected the local access token")
   }
@@ -121,16 +121,7 @@ export async function pollInternalSource(
     )
   }
 
-  let payload: CursorUsageResponse
-  try {
-    payload = (await response.json()) as CursorUsageResponse
-  } catch {
-    throw new UsageProviderError(
-      "cursor",
-      "source-unavailable",
-      "Cursor usage endpoint returned invalid JSON",
-    )
-  }
+  const payload = await readProviderJson<CursorUsageResponse>(response, "cursor")
   if (payload.enabled === false) return []
 
   const quotaUsed =
@@ -155,6 +146,7 @@ export async function pollInternalSource(
       windowEnd: parseCursorTimestamp(payload.billingCycleEnd),
       quotaUsed,
       quotaLimit,
+      quotaUnit: "provider-native",
       percentUsed,
       resetAt: parseCursorTimestamp(payload.billingCycleEnd),
       rawPayload: payload,
@@ -169,23 +161,27 @@ async function resolveCursorAccessToken(): Promise<string | null> {
     return credentials.token
   }
   if (!credentials.refreshToken) return credentials.token
-  const response = await fetch(CURSOR_OAUTH_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "refresh_token",
-      client_id: CURSOR_CLIENT_ID,
-      refresh_token: credentials.refreshToken,
-    }),
+  const response = await fetchProviderResponse({
+    providerId: "cursor",
+    url: CURSOR_OAUTH_URL,
+    init: {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: CURSOR_CLIENT_ID,
+        refresh_token: credentials.refreshToken,
+      }),
+    },
   })
   if (!response.ok) {
     throw new UsageProviderError("cursor", "auth-failed", "Cursor token refresh failed")
   }
-  const payload = (await response.json()) as {
+  const payload = await readProviderJson<{
     access_token?: string
     refresh_token?: string
     shouldLogout?: boolean
-  }
+  }>(response, "cursor")
   if (payload.shouldLogout || !payload.access_token) {
     throw new UsageProviderError("cursor", "auth-failed", "Cursor session expired")
   }
@@ -205,10 +201,11 @@ function normalizePercent(
     : Math.max(0, Math.min(100, Math.round(value)))
 }
 
-function parseCursorTimestamp(value: string | undefined): Date | null {
+export function parseCursorTimestamp(value: string | undefined): Date | null {
   if (!value) return null
   const numeric = Number(value)
-  if (Number.isFinite(numeric) && numeric > 0) return new Date(numeric)
+  if (Number.isFinite(numeric) && numeric > 0)
+    return new Date(numeric < 1_000_000_000_000 ? numeric * 1_000 : numeric)
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? null : date
 }

@@ -69,6 +69,12 @@ function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined
 }
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : []
+}
+
 /** Extract the sessionID an event belongs to, across the known event shapes. */
 export function eventSessionId(event: Record<string, unknown>): string | undefined {
   const type = asString(event.type)
@@ -95,7 +101,7 @@ function extractUsage(event: Record<string, unknown>): SidecarUsage | undefined 
   const tokens = pointer(event, ["properties", "info", "tokens"]) as
     Record<string, unknown> | undefined
   const cost = asNumber(pointer(event, ["properties", "info", "cost"]))
-  const generationId = asString(pointer(event, ["properties", "info", "id"]))
+  const observationId = asString(pointer(event, ["properties", "info", "id"]))
   if (!tokens && cost === undefined) return undefined
 
   const input = asNumber(tokens?.input)
@@ -108,8 +114,10 @@ function extractUsage(event: Record<string, unknown>): SidecarUsage | undefined 
     ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
     ...(total !== undefined ? { totalTokens: total } : {}),
     ...(cost !== undefined ? { costUsd: cost } : {}),
-    ...(generationId ? { generationId } : {}),
-    costQuality: cost !== undefined ? "provider-reported" : "estimated",
+    ...(observationId ? { observationId } : {}),
+    // OpenCode reports its own calculated message cost. It is useful, but it
+    // is not an upstream provider billing record or generation id.
+    costQuality: cost !== undefined ? "estimated" : "unknown",
   }
 }
 
@@ -130,6 +138,8 @@ export function normalizeOpencodeEvent(event: Record<string, unknown>): Normaliz
 export class OpencodeEventNormalizer {
   private readonly partKinds = new Map<string, string>()
   private readonly partText = new Map<string, string>()
+  private readonly partReasoning = new Map<string, string>()
+  private readonly toolStates = new Map<string, string>()
 
   normalize(event: Record<string, unknown>): NormalizedSidecarEvent[] {
     const type = asString(event.type)
@@ -191,8 +201,17 @@ export class OpencodeEventNormalizer {
         const requestId = asString(pointer(event, ["properties", "id"])) ?? ""
         const toolCallId = asString(pointer(event, ["properties", "tool", "callID"])) ?? requestId
         const permission = asString(pointer(event, ["properties", "permission"])) ?? "tool"
+        const patterns = asStringArray(pointer(event, ["properties", "patterns"]))
+        const command = asString(pointer(event, ["properties", "metadata", "command"]))
         if (requestId) {
-          out.push({ kind: "permission-asked", requestId, toolCallId, permission })
+          out.push({
+            kind: "permission-asked",
+            requestId,
+            toolCallId,
+            permission,
+            patterns,
+            ...(command ? { command } : {}),
+          })
         }
         break
       }
@@ -226,31 +245,39 @@ export class OpencodeEventNormalizer {
     // Visible reasoning from OpenRouter/NanoGPT compatibility fields.
     const reasoning = asString(part.reasoning) ?? asString(part.reasoning_content)
     if (reasoning) {
-      const previous = this.partText.get(partId) ?? ""
+      const previous = this.partReasoning.get(partId) ?? ""
       const delta = reasoning.startsWith(previous) ? reasoning.slice(previous.length) : reasoning
-      this.partText.set(partId, reasoning)
+      this.partReasoning.set(partId, reasoning)
       if (delta) out.push({ kind: "reasoning-delta", partId, delta })
+    }
+
+    if (partType === "reasoning" && part.metadata !== undefined) {
+      out.push({ kind: "reasoning-metadata", partId, metadata: part.metadata })
     }
 
     if (partType === "tool") {
       const toolCallId = asString(part.callID) ?? asString(part.id) ?? partId
       const toolName = asString(part.tool) ?? "tool"
       const state = asString(pointer(part, ["state", "status"]))
+      const previousState = this.toolStates.get(toolCallId)
       const input = pointer(part, ["state", "input"])
       if (state === "completed") {
-        out.push({ kind: "tool-output", toolCallId, output: pointer(part, ["state", "output"]) })
+        if (previousState !== "completed")
+          out.push({ kind: "tool-output", toolCallId, output: pointer(part, ["state", "output"]) })
       } else if (state === "error") {
-        out.push({
-          kind: "tool-error",
-          toolCallId,
-          errorText: asString(pointer(part, ["state", "error"])) ?? "OpenCode tool failed",
-        })
+        if (previousState !== "error")
+          out.push({
+            kind: "tool-error",
+            toolCallId,
+            errorText: asString(pointer(part, ["state", "error"])) ?? "OpenCode tool failed",
+          })
       } else {
-        out.push({ kind: "tool-input-start", toolCallId, toolName })
-        if (input !== undefined) {
+        if (!previousState) out.push({ kind: "tool-input-start", toolCallId, toolName })
+        if (input !== undefined && previousState !== state) {
           out.push({ kind: "tool-input-available", toolCallId, toolName, input })
         }
       }
+      if (state) this.toolStates.set(toolCallId, state)
     }
     return out
   }

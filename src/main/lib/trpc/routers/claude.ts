@@ -17,6 +17,7 @@ import {
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
 import { getReadAloudSystemAppend } from "../../speech/read-aloud-instruction"
+import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -1461,7 +1462,7 @@ export const claudeRouter = router({
 
             // Build final env - only add OAuth token if we have one AND no existing API config
             // Existing CLI config takes precedence over OAuth
-            const finalEnv = {
+            const finalEnv: Record<string, string | undefined> = {
               ...claudeEnv,
               ...(claudeCodeToken &&
                 !hasExistingApiConfig && {
@@ -2055,7 +2056,7 @@ ${prompt}
               // 5. Run Claude SDK
               let stream
               try {
-                stream = claudeQuery(queryOptions)
+                stream = claudeQuery(queryOptions as Parameters<typeof claudeQuery>[0])
               } catch (queryError) {
                 console.error("[CLAUDE] ✗ Failed to create SDK query:", queryError)
                 emitError(queryError, "Failed to start Claude query")
@@ -2707,7 +2708,22 @@ ${prompt}
                 metadata,
               }
 
-              const finalMessages = [...messagesToSave, assistantMessage]
+              const latestSubChat = db
+                .select({ messages: subChats.messages })
+                .from(subChats)
+                .where(eq(subChats.id, input.subChatId))
+                .get()
+              let latestMessages: any[] = []
+              try {
+                const parsed = JSON.parse(latestSubChat?.messages || "[]")
+                latestMessages = Array.isArray(parsed) ? parsed : []
+              } catch {
+                latestMessages = []
+              }
+              const finalMessages = mergeMessagesPreservingSpokenText(latestMessages, [
+                ...messagesToSave,
+                assistantMessage,
+              ])
 
               db.update(subChats)
                 .set({

@@ -1,4 +1,4 @@
-import { index, sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { index, sqliteTable, text, integer, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { relations } from "drizzle-orm"
 import { createId } from "../utils"
 
@@ -281,6 +281,9 @@ export const voiceArtifacts = sqliteTable(
     kind: text("kind").notNull(), // transcription | speech
     text: text("text").notNull(),
     adapterId: text("adapter_id").notNull(),
+    synthesisKey: text("synthesis_key"),
+    voiceId: text("voice_id"),
+    rate: integer("rate_milli"),
     audioPath: text("audio_path"),
     mimeType: text("mime_type"),
     byteLength: integer("byte_length").notNull().default(0),
@@ -290,6 +293,7 @@ export const voiceArtifacts = sqliteTable(
   (table) => [
     index("voice_artifacts_chat_created_idx").on(table.chatId, table.createdAt),
     index("voice_artifacts_message_idx").on(table.messageId),
+    index("voice_artifacts_synthesis_idx").on(table.messageId, table.synthesisKey),
     index("voice_artifacts_kind_created_idx").on(table.kind, table.createdAt),
   ],
 )
@@ -368,6 +372,7 @@ export const usageSamples = sqliteTable(
     percentUsed: integer("percent_used"), // 0-100 integer
     quotaUsed: integer("quota_used"),
     quotaLimit: integer("quota_limit"),
+    quotaUnit: text("quota_unit"),
     resetAt: integer("reset_at", { mode: "timestamp" }),
     // Provider-specific correlation ids
     model: text("model"),
@@ -382,6 +387,30 @@ export const usageSamples = sqliteTable(
     index("usage_samples_provider_idx").on(table.providerId),
     index("usage_samples_captured_at_idx").on(table.capturedAt),
     uniqueIndex("usage_samples_dedupe_key_idx").on(table.dedupeKey),
+  ],
+)
+
+// Retry state for provider generation reconciliation. Kept separate from
+// samples so unavailable ids can become terminal without mutating usage facts.
+export const usageGenerationReconciliation = sqliteTable(
+  "usage_generation_reconciliation",
+  {
+    providerId: text("provider_id").notNull(),
+    generationId: text("generation_id").notNull(),
+    state: text("state").notNull().default("pending"), // pending | retry | unavailable | resolved
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastAttemptAt: integer("last_attempt_at", { mode: "timestamp" }),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }),
+    detail: text("detail"),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.providerId, table.generationId] }),
+    index("usage_generation_reconcile_state_idx").on(
+      table.providerId,
+      table.state,
+      table.nextAttemptAt,
+    ),
   ],
 )
 
@@ -452,6 +481,7 @@ export const usageAlertEvents = sqliteTable(
     // "quota-percent" | "quota-reset" | "throttle-risk" | "api-dollar-budget"
     // | "api-spend-rate" | "api-spend-spike" | "estimated-spend"
     alertType: text("alert_type").notNull(),
+    // Micro-units: USD values use micro-dollars; ratios/multipliers use 1e6.
     thresholdValue: integer("threshold_value"),
     observedValue: integer("observed_value"),
     costQuality: text("cost_quality").notNull().default("unknown"),
@@ -481,6 +511,8 @@ export const usageAlertArmStates = sqliteTable(
     // provider/account/threshold arm rows for the default account.
     accountTag: text("account_tag").notNull().default(""),
     alertType: text("alert_type").notNull(),
+    // Same micro-unit convention as usage_alert_events. Converted back to the
+    // evaluator's decimal number at the store boundary.
     thresholdValue: integer("threshold_value"),
     armed: integer("armed", { mode: "boolean" }).notNull().default(true),
     lastFiredAt: integer("last_fired_at", { mode: "timestamp" }),

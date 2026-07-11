@@ -99,7 +99,7 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   `delta.reasoning_content`. If a provider streams reasoning-output deltas, Flapstack
   shows them incrementally as they arrive instead of waiting to append one final
   block at turn end.
-- **Direct API reasoning controls**: Stage 2 uses provider/model defaults for
+- **OpenCode-backed reasoning controls**: Stage 2 uses provider/model defaults for
   OpenRouter and NanoGPT reasoning parameters. Do not expose effort/max-token
   controls until model capability detection is reliable enough to avoid sending
   unsupported request fields.

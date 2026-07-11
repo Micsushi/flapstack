@@ -40,6 +40,9 @@ export const chatSearchMatchesAtom = atom<SearchMatch[]>([])
 // Current match index (0-based)
 export const chatSearchCurrentIndexAtom = atom<number>(0)
 
+// Scoped search can request that in-chat search opens on one exact message.
+export const chatSearchTargetMessageIdAtom = atom<string | null>(null)
+
 // ============================================================================
 // DERIVED ATOMS
 // ============================================================================
@@ -148,6 +151,7 @@ export const closeSearchAtom = atom(null, (_get, set) => {
   set(chatSearchQueryAtom, "")
   set(chatSearchMatchesAtom, [])
   set(chatSearchCurrentIndexAtom, 0)
+  set(chatSearchTargetMessageIdAtom, null)
   highlightRangesCache.clear()
 })
 
@@ -155,6 +159,16 @@ export const closeSearchAtom = atom(null, (_get, set) => {
 export const openSearchAtom = atom(null, (_get, set) => {
   set(chatSearchOpenAtom, true)
 })
+
+export const focusScopedSearchResultAtom = atom(
+  null,
+  (_get, set, input: { query: string; messageId?: string | null }) => {
+    set(chatSearchOpenAtom, true)
+    set(chatSearchInputAtom, input.query)
+    set(chatSearchQueryAtom, input.query)
+    set(chatSearchTargetMessageIdAtom, input.messageId ?? null)
+  },
+)
 
 /**
  * Toggle search - if already open, select all text instead of closing

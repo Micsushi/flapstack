@@ -16,18 +16,25 @@ import { getUsageProviders } from "../../usage/registry"
 import { getUsageSettings, setUsageSettings } from "../../usage/settings"
 import { getUsageSecret, hasUsageSecret, setUsageSecret } from "../../usage/secrets"
 import { readDaemonStatus } from "../../usage-daemon/lifecycle"
-import { installMacLaunchAgent, uninstallMacLaunchAgent } from "../../usage-daemon/platform"
+import {
+  describeInstall,
+  installMacLaunchAgent,
+  uninstallMacLaunchAgent,
+} from "../../usage-daemon/platform"
 import { app } from "electron"
 import { join } from "node:path"
 import {
   listProviderStates,
   listRecentAlertEvents,
+  listCurrentSamples,
   listRecentCycles,
   listRecentSamples,
+  resetGenerationReconciliation,
 } from "../../usage/store"
 import { USAGE_PROVIDER_IDS } from "../../usage/types"
 
 const providerIdSchema = z.enum(USAGE_PROVIDER_IDS)
+const accountTagSchema = z.string().max(500).optional()
 const thresholdSchema = z.object({
   quotaPercent: z.array(z.number().min(0).max(100)).optional(),
   spendUsd: z.array(z.number().min(0)).optional(),
@@ -50,6 +57,7 @@ export const usageRouter = router({
   // ---- Capabilities (kept for back-compat with the earlier scaffold) ----
   getCapabilities: publicProcedure.query(() => ({
     enabled: true,
+    daemonInstall: describeInstall(),
     providers: getUsageProviders().map((p) => ({
       id: p.id,
       label: p.label,
@@ -129,6 +137,7 @@ export const usageRouter = router({
       z
         .object({
           providerId: providerIdSchema.optional(),
+          accountTag: accountTagSchema,
           limit: z.number().min(1).max(500).optional(),
         })
         .optional(),
@@ -150,6 +159,7 @@ export const usageRouter = router({
       z
         .object({
           providerId: providerIdSchema.optional(),
+          accountTag: accountTagSchema,
           sinceMs: z.number().optional(),
           limit: z.number().min(1).max(1000).optional(),
         })
@@ -158,6 +168,7 @@ export const usageRouter = router({
     .query(async ({ input }) => {
       const rows = await listRecentSamples(getDatabase(), {
         providerId: input?.providerId,
+        accountTag: input?.accountTag,
         since: input?.sinceMs ? new Date(input.sinceMs) : undefined,
         limit: input?.limit,
       })
@@ -169,9 +180,36 @@ export const usageRouter = router({
       }))
     }),
 
+  listCurrentSamples: publicProcedure
+    .input(
+      z
+        .object({
+          providerId: providerIdSchema.optional(),
+          accountTag: accountTagSchema,
+          limitPerAccount: z.number().min(1).max(100).optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => {
+      const rows = await listCurrentSamples(getDatabase(), input)
+      return rows.map((row) => ({
+        ...row,
+        costUsd: microsToUsd(row.costUsd),
+        costUsdEstimated: microsToUsd(row.costUsdEstimated),
+      }))
+    }),
+
   listAlertEvents: publicProcedure
-    .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
-    .query(async ({ input }) => listRecentAlertEvents(getDatabase(), input?.limit ?? 50)),
+    .input(
+      z
+        .object({
+          providerId: providerIdSchema.optional(),
+          accountTag: accountTagSchema,
+          limit: z.number().min(1).max(200).optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => listRecentAlertEvents(getDatabase(), input ?? {})),
 
   // ---- Manual refresh (same reconcile path as startup catch-up) ----
   refresh: publicProcedure
@@ -184,6 +222,13 @@ export const usageRouter = router({
     .mutation(async ({ input }) => {
       const engine = new UsageEngine("app", engineDeps())
       return engine.runProviderById(input.providerId, "poll")
+    }),
+
+  retryGenerationReconciliation: publicProcedure
+    .input(z.object({ providerId: providerIdSchema, generationId: z.string().min(1).optional() }))
+    .mutation(async ({ input }) => {
+      await resetGenerationReconciliation(getDatabase(), input.providerId, input.generationId)
+      return { ok: true }
     }),
 
   // ---- Daemon status ----

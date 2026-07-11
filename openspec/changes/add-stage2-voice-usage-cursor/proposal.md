@@ -5,9 +5,9 @@
 Stage 1 (workspace core) is complete and archived. Stage 2 adds the next
 local-first product slice: talk-to-your-agent voice I/O, usage/limits tracking,
 Cursor integration on both surfaces (usage monitoring + a `cursor-agent` coding
-harness), and direct API harness support for OpenRouter and NanoGPT. Architecture
-decisions were closed in the S2.0 grill-me gate (2026-07-09), then Stage 2 was
-extended to cover OpenRouter/NanoGPT in the same adapter push.
+harness), and OpenCode-backed harness support for OpenRouter and NanoGPT.
+Architecture decisions were closed in the S2.0 grill-me gate (2026-07-09), then
+Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## What Changes
 
@@ -28,12 +28,11 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
   first-class coding harness alongside Codex and Claude Code via a stream-json
   child-process adapter (Claude-style, not ACP), with run records/checkpoints/
   manifests, a teal identity chip, and honest permission-mode degradation.
-- **Direct API harnesses (`direct-api-harness`)**: run OpenRouter and NanoGPT
-  through app-owned OpenAI-compatible streaming chat adapters, with shared model
-  catalog/key storage, visible reasoning normalization, usage capture, run
-  records, checkpoints, and a Flapstack-owned permission-gated tool loop for
-  file, shell, git, browser, and MCP access where the selected permission mode
-  allows it.
+- **OpenCode-backed API harnesses (`direct-api-harness`)**: run OpenRouter and
+  NanoGPT through a Flapstack-managed local OpenCode sidecar. Flapstack owns
+  launch/auth/config, model catalog/key storage, event normalization, approval
+  bridge, usage capture, run records, checkpoints, and manifests; OpenCode owns
+  provider streaming and the model/tool continuation loop.
 - **Track C fixes** (native-module ABI toggle, create-branch dialog, terminal
   actions, sidebar remote-stats, strict-TS debt) are debt/bug work tracked on the
   Stage 2 board; they restore/complete intended behavior and carry no spec deltas
@@ -50,9 +49,9 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
     Usage tab + settings, background usage daemon.
   - `src/shared/harness-types.ts`, `src/shared/model-catalog.ts`,
     `src/main/lib/trpc/routers/cursor.ts` (new), `runs.ts`, `permissions.ts`.
-  - `src/main/lib/trpc/routers/{openrouter,nanogpt}.ts` (new),
-    `src/main/lib/direct-api/*` (new), model/key settings, shared stream
-    normalizers.
+  - `src/main/lib/trpc/routers/opencode.ts` (new),
+    `src/main/lib/harness/opencode-sidecar/*` (new), model/key settings, shared
+    stream normalizers.
 - New/verified externals: whisper.cpp binary+model, Kokoro model, Cursor usage
   endpoints (undocumented, best-effort), `cursor-agent` CLI (must be installed +
   its surface verified before the adapter — see design/D0), OpenAI usage/cost
@@ -63,8 +62,9 @@ extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## Reference
 
-- Vault board: `Wiki/Projects/flapstack/stage2-implementation-tasks.md`
-  (tracks V/U/D/F, per-task files + done-when, S2.0 resolved decisions).
+- Repo-local tracking: this OpenSpec change plus `STAGE2-VOICE-TRACK.md`,
+  `STAGE2-USAGE-TRACK.md`, and `STAGE2-TRACK.md` cover tracks V/U/D/E/T/F,
+  per-task files, done criteria, and resolved S2.0 decisions.
 - Reuse repos: `agent-hotline` (filter + TTS engines), `onWatch` (usage math,
   storage, notification model, Discord sender, dashboard references, and full
   Cursor usage client). External docs checked 2026-07-09/10: OpenAI usage/cost

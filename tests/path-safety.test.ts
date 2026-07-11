@@ -1,33 +1,36 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { resolveInsideRoot } from "../src/main/lib/path-safety"
+import { afterEach, describe, expect, it } from "vitest"
+import { prepareSafeWritePath, resolveInsideRoot } from "../src/main/lib/path-safety"
 
-let rootPath: string
-
-beforeEach(() => {
-  rootPath = mkdtempSync(join(tmpdir(), "flapstack-path-safety-"))
-})
+const roots: string[] = []
 
 afterEach(() => {
-  rmSync(rootPath, { recursive: true, force: true })
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-describe("resolveInsideRoot", () => {
-  it("resolves relative paths under the root", () => {
-    expect(resolveInsideRoot(rootPath, "notes/context.txt")).toBe(
-      join(rootPath, "notes/context.txt"),
-    )
+describe("attachment write path safety", () => {
+  it("rejects lexical traversal and symlinked parent escapes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+    const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
+    roots.push(root, outside)
+    symlinkSync(outside, join(root, "escape"))
+
+    expect(() => resolveInsideRoot(root, "../outside.txt")).toThrow("escapes root")
+    await expect(prepareSafeWritePath(root, "escape/owned.txt")).rejects.toThrow("symbolic link")
   })
 
-  it("rejects path traversal", () => {
-    expect(() => resolveInsideRoot(rootPath, "../outside.txt")).toThrow("escapes root")
-  })
+  it("creates safe nested parents and rejects a symlink final target", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+    const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
+    roots.push(root, outside)
 
-  it("rejects absolute paths", () => {
-    expect(() => resolveInsideRoot(rootPath, join(rootPath, "absolute.txt"))).toThrow(
-      "must be relative",
+    await expect(prepareSafeWritePath(root, "nested/file.txt")).resolves.toBe(
+      join(realpathSync(root), "nested", "file.txt"),
     )
+    writeFileSync(join(outside, "target.txt"), "outside")
+    symlinkSync(join(outside, "target.txt"), join(root, "linked.txt"))
+    await expect(prepareSafeWritePath(root, "linked.txt")).rejects.toThrow("symbolic link")
   })
 })

@@ -47,13 +47,13 @@ change tracking.
 
 ### Testing Strategy
 
-- Commit gate: `npm run check` (lint, style check, Vitest tests, production build)
+- Commit gate: `npm run check` (lint, style check, strict TypeScript, Vitest tests,
+  production build)
 - Unit tests: Vitest (`vitest.config.ts`, tests under `tests/`); pure logic
   (permissions, scope resolution, worktree defaults, search filters, manifests)
   gets focused unit coverage
-- `npm run ts:check` is separate until inherited type debt is cleaned up
-  (scheduled as Stage 2 carryover, then promoted into the commit gate)
-- Manual test matrices per stage live in the vault stage plans
+- `npm run ts:check` is enforced by both `npm run check` and CI
+- Manual test matrices live in repo-local stage docs under `docs/`
 
 ### Git Workflow
 

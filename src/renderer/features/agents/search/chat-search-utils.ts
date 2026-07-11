@@ -29,6 +29,19 @@ function extractTextFromPart(
   if (part.type === "text" && part.text && typeof part.text === "string" && part.text.trim()) {
     results.push({ messageId, partIndex, partType: "text", text: part.text })
   }
+  if (part.type === "reasoning" && part.text && typeof part.text === "string" && part.text.trim()) {
+    results.push({ messageId, partIndex, partType: "reasoning", text: part.text })
+  }
+  if (part.type === "file-content") {
+    const filePart = part as MessagePart & { text?: string; content?: string }
+    const content =
+      typeof filePart.content === "string" && filePart.content.trim()
+        ? filePart.content
+        : filePart.text
+    if (typeof content === "string" && content.trim()) {
+      results.push({ messageId, partIndex, partType: "file-content", text: content })
+    }
+  }
   if (
     (part.type === "tool-ReasoningOutput" || part.type === "tool-Thinking") &&
     typeof part.input?.text === "string" &&
@@ -199,12 +212,19 @@ export function extractSearchableText(messages: Message[]): ExtractedText[] {
     // For user messages, consolidate all text parts into one entry with partIndex 0
     // This matches how user messages are rendered (single bubble with all text joined)
     if (message.role === "user") {
-      const textParts = message.parts.filter(
-        (p): p is MessagePart & { type: "text"; text: string } =>
-          p.type === "text" && typeof p.text === "string" && p.text.trim().length > 0,
-      )
+      const textParts = message.parts.flatMap((part) => {
+        if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+          return [part.text]
+        }
+        if (part.type === "file-content") {
+          const filePart = part as MessagePart & { text?: string; content?: string }
+          const content = filePart.content ?? filePart.text
+          if (typeof content === "string" && content.trim()) return [content]
+        }
+        return []
+      })
       if (textParts.length > 0) {
-        const combinedText = textParts.map((p) => p.text).join("\n")
+        const combinedText = textParts.join("\n")
         results.push({
           messageId: message.id,
           partIndex: 0, // Always 0 for user messages

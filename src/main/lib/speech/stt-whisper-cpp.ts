@@ -1,10 +1,11 @@
 import { execFile as execFileCallback } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   createWriteStream,
+  createReadStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -18,8 +19,12 @@ import type { SpeechAdapterAvailability, SttAdapter, SttInput, SttResult } from 
 // whisper.cpp `base` multilingual model (S2.0 decision: download-on-first-use).
 // Kept out of the installer so the download stays small; the model lands in the
 // app data dir on first dictation with visible progress + an honest failure state.
-const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+const MODEL_REVISION = "80da2d8bfee42b0e836fc3a9890373e5defc00a6"
+const MODEL_URL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/ggml-base.bin`
 const MODEL_FILE = "ggml-base.bin"
+const MODEL_SHA256 = "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
+const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
 // Sanity floor so a truncated/HTML error response is never mistaken for a model.
 const MIN_MODEL_BYTES = 100 * 1024 * 1024
 
@@ -31,6 +36,15 @@ export type SttModelDownloadState =
 
 let downloadState: SttModelDownloadState = { status: "absent" }
 let activeDownload: Promise<string> | null = null
+let verifiedModel: { path: string; size: number; mtimeMs: number; digest: string } | null = null
+let verifyingModel: {
+  path: string
+  size: number
+  mtimeMs: number
+  promise: Promise<string>
+} | null = null
+const downloadProgressListeners = new Set<(state: SttModelDownloadState) => void>()
+const verifiedBinaries = new Map<string, { mtimeMs: number; valid: boolean }>()
 
 export const whisperCppAdapter: SttAdapter = {
   id: "local-whisper",
@@ -40,16 +54,27 @@ export const whisperCppAdapter: SttAdapter = {
   offline: true,
 
   async isAvailable(): Promise<SpeechAdapterAvailability> {
-    const binary = findWhisperBinary()
+    const binary = await findWorkingWhisperBinary()
     if (!binary) {
       return {
         available: false,
         status: "not-configured",
+        missingDependency: "engine",
         reason:
           "whisper.cpp binary not found. Set WHISPER_CPP_BIN or add whisper-cli to resources/bin.",
       }
     }
-    if (!existsSync(getModelPath())) {
+    if (!findFfmpegBinary()) {
+      return {
+        available: false,
+        status: "not-configured",
+        missingDependency: "audio-converter",
+        reason:
+          "ffmpeg is required for browser-recorded audio. Install ffmpeg or add it to resources/bin.",
+      }
+    }
+    const modelValidation = await validateModelFile(getModelPath())
+    if (!modelValidation.valid) {
       const detail =
         downloadState.status === "downloading"
           ? ` Downloading (${downloadState.percent}%).`
@@ -59,20 +84,21 @@ export const whisperCppAdapter: SttAdapter = {
       return {
         available: false,
         status: "not-configured",
-        reason: `Local Whisper base model is not downloaded yet.${detail}`,
+        missingDependency: "model",
+        reason: `${modelValidation.reason || "Local Whisper base model is not downloaded yet."}${detail}`,
       }
     }
     return { available: true, status: "available" }
   },
 
   async canAutoProvision() {
-    // The binary must already be installed or bundled; the model itself is
-    // downloaded atomically by transcribe() on first use.
-    return Boolean(findWhisperBinary())
+    // Runtime tools must already be installed. Only the model can be downloaded
+    // atomically by transcribe() on first use.
+    return Boolean((await findWorkingWhisperBinary()) && findFfmpegBinary())
   },
 
   async transcribe(input: SttInput): Promise<SttResult> {
-    const binary = findWhisperBinary()
+    const binary = await findWorkingWhisperBinary()
     if (!binary) throw new Error("whisper.cpp binary not found. Set WHISPER_CPP_BIN.")
     const modelPath = await ensureModel()
     const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-stt-"))
@@ -99,13 +125,18 @@ export function getModelPath() {
   return path.join(getSpeechDataDir(), "models", MODEL_FILE)
 }
 
+export function getWhisperModelDescriptor() {
+  return { url: MODEL_URL, revision: MODEL_REVISION, sha256: MODEL_SHA256 }
+}
+
 /**
  * Current status of the local Whisper model, used by the settings UI to render
  * an honest download/absent/present/error state (V2/V9).
  */
-export function getSttModelStatus(): SttModelDownloadState {
+export async function getSttModelStatus(): Promise<SttModelDownloadState> {
   const modelPath = getModelPath()
-  if (existsSync(modelPath)) {
+  const validation = await validateModelFile(modelPath)
+  if (validation.valid) {
     // A completed download supersedes a stale in-memory error/absent value.
     if (downloadState.status !== "present") {
       downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
@@ -124,36 +155,52 @@ export async function ensureModel(
   onProgress?: (state: SttModelDownloadState) => void,
 ): Promise<string> {
   const modelPath = getModelPath()
-  if (existsSync(modelPath)) {
+  const validation = await validateModelFile(modelPath)
+  if (validation.valid) {
     downloadState = { status: "present", sizeBytes: statSync(modelPath).size }
     return modelPath
   }
-  if (activeDownload) return activeDownload
-  activeDownload = downloadModel(modelPath, onProgress).finally(() => {
-    activeDownload = null
+  if (existsSync(modelPath)) rmSync(modelPath, { force: true })
+  if (onProgress) {
+    downloadProgressListeners.add(onProgress)
+    onProgress(downloadState)
+  }
+  if (!activeDownload)
+    activeDownload = downloadModel(modelPath).finally(() => {
+      activeDownload = null
+    })
+  return activeDownload.finally(() => {
+    if (onProgress) downloadProgressListeners.delete(onProgress)
   })
-  return activeDownload
 }
 
-async function downloadModel(
-  modelPath: string,
-  onProgress?: (state: SttModelDownloadState) => void,
-): Promise<string> {
+async function downloadModel(modelPath: string): Promise<string> {
   mkdirSync(path.dirname(modelPath), { recursive: true })
   const tmpPath = `${modelPath}.download`
   const setState = (state: SttModelDownloadState) => {
     downloadState = state
-    onProgress?.(state)
+    for (const listener of downloadProgressListeners) listener(state)
   }
   setState({ status: "downloading", receivedBytes: 0, totalBytes: null, percent: 0 })
 
+  let totalTimer: ReturnType<typeof setTimeout> | undefined
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
   try {
-    const response = await fetch(MODEL_URL)
+    const controller = new AbortController()
+    totalTimer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+    totalTimer.unref?.()
+    const response = await fetch(MODEL_URL, { signal: controller.signal })
     if (!response.ok || !response.body) {
       throw new Error(`Model download failed (HTTP ${response.status}).`)
     }
     const totalBytes = Number(response.headers.get("content-length")) || null
     let receivedBytes = 0
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => controller.abort(), DOWNLOAD_IDLE_TIMEOUT_MS)
+      idleTimer.unref?.()
+    }
+    resetIdleTimer()
 
     await new Promise<void>((resolve, reject) => {
       const fileStream = createWriteStream(tmpPath)
@@ -161,9 +208,10 @@ async function downloadModel(
       const pump = async () => {
         try {
           for (;;) {
-            const { done, value } = await reader.read()
+            const { done, value } = await raceAbort(reader.read(), controller.signal)
             if (done) break
             if (!value) continue
+            resetIdleTimer()
             receivedBytes += value.byteLength
             if (!fileStream.write(Buffer.from(value))) {
               await new Promise<void>((resolve) => fileStream.once("drain", () => resolve()))
@@ -180,10 +228,16 @@ async function downloadModel(
       fileStream.on("error", reject)
       void pump()
     })
+    clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
 
     const size = statSync(tmpPath).size
     if (size < MIN_MODEL_BYTES) {
       throw new Error(`Downloaded model looks truncated (${size} bytes). Try again.`)
+    }
+    const digest = await sha256File(tmpPath)
+    if (digest !== MODEL_SHA256) {
+      throw new Error(`Downloaded model checksum mismatch (${digest}).`)
     }
     renameSync(tmpPath, modelPath)
     setState({ status: "present", sizeBytes: size })
@@ -195,7 +249,77 @@ async function downloadModel(
     throw new Error(
       `Local Whisper model download failed: ${message}. Check your connection and retry, or add ${MODEL_FILE} to ${path.dirname(modelPath)} manually.`,
     )
+  } finally {
+    if (totalTimer) clearTimeout(totalTimer)
+    if (idleTimer) clearTimeout(idleTimer)
   }
+}
+
+export function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error("Download aborted"))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error("Download timed out"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort))
+  })
+}
+
+async function validateModelFile(modelPath: string): Promise<{ valid: boolean; reason?: string }> {
+  if (!existsSync(modelPath)) return { valid: false }
+  const size = statSync(modelPath).size
+  if (size < MIN_MODEL_BYTES) return { valid: false, reason: "Local Whisper model is truncated." }
+  return (await sha256File(modelPath)) === MODEL_SHA256
+    ? { valid: true }
+    : { valid: false, reason: "Local Whisper model failed its integrity check." }
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const stat = statSync(filePath)
+  if (
+    verifiedModel?.path === filePath &&
+    verifiedModel.size === stat.size &&
+    verifiedModel.mtimeMs === stat.mtimeMs
+  ) {
+    return verifiedModel.digest
+  }
+  if (
+    verifyingModel?.path === filePath &&
+    verifyingModel.size === stat.size &&
+    verifyingModel.mtimeMs === stat.mtimeMs
+  ) {
+    return verifyingModel.promise
+  }
+  const promise = new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha256")
+    const stream = createReadStream(filePath)
+    stream.on("data", (chunk) => hash.update(chunk))
+    stream.on("error", reject)
+    stream.on("end", () => resolve(hash.digest("hex")))
+  })
+  verifyingModel = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, promise }
+  const digest = await promise
+  verifyingModel = null
+  verifiedModel = { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, digest }
+  return digest
+}
+
+export async function verifyWhisperBinary(binaryPath: string): Promise<boolean> {
+  try {
+    const info = statSync(binaryPath)
+    const cached = verifiedBinaries.get(binaryPath)
+    if (cached?.mtimeMs === info.mtimeMs) return cached.valid
+    const output = await execFileCapture(binaryPath, ["--help"], { timeout: 5_000 })
+    const valid = /whisper(?:\.cpp|-cli)|usage:/i.test(output)
+    verifiedBinaries.set(binaryPath, { mtimeMs: info.mtimeMs, valid })
+    return valid
+  } catch {
+    return false
+  }
+}
+
+async function findWorkingWhisperBinary(): Promise<string | null> {
+  const binary = findWhisperBinary()
+  return binary && (await verifyWhisperBinary(binary)) ? binary : null
 }
 
 function findWhisperBinary() {
@@ -279,6 +403,16 @@ function execFileAsync(command: string, args: string[], options: { timeout?: num
     execFileCallback(command, args, options, (error) => {
       if (error) reject(error)
       else resolve()
+    })
+  })
+}
+
+function execFileCapture(command: string, args: string[], options: { timeout?: number } = {}) {
+  return new Promise<string>((resolve, reject) => {
+    execFileCallback(command, args, options, (error, stdout, stderr) => {
+      const output = `${stdout || ""}\n${stderr || ""}`
+      if (error && !output.trim()) reject(error)
+      else resolve(output)
     })
   })
 }

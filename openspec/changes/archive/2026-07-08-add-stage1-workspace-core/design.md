@@ -5,8 +5,8 @@
 Flapstack inherited the 1Code codebase: Electron + tRPC + Drizzle/SQLite with
 projects → chats → sub_chats and separate Claude/Codex launch paths. Stage 1
 turns this into the Flapstack object model (global/project/task chats, unified
-runs) while staying local-first. Full product rationale lives in the vault
-(`product-vision.md`, `stage1-mvp-plan.md`).
+runs) while staying local-first. The goals and decisions below preserve the
+product rationale needed for this archived change.
 
 ## Goals / Non-Goals
 
@@ -58,4 +58,4 @@ DB copy (local-first, single user).
 
 ## Open Questions
 
-- None blocking; per-task open points live in the vault task board.
+- None blocking; per-task open points are recorded in this change's `tasks.md`.

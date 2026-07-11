@@ -78,6 +78,34 @@
       "when": 1783389600000,
       "tag": "0010_voice_artifacts",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1783710000000,
+      "tag": "0011_usage_generation_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1783713600000,
+      "tag": "0012_usage_alert_threshold_micros",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1783720800000,
+      "tag": "0013_cursor_usage_account_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1783735781395,
+      "tag": "0014_stage2_schema_checkpoint",
+      "breakpoints": true
     }
   ]
 }

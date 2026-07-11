@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm"
 import { getDatabase, chats } from "../db"
-import simpleGit from "simple-git"
+import simpleGit, { type SimpleGit } from "simple-git"
 import { z } from "zod"
 import { publicProcedure, router } from "../trpc"
 import { assertRegisteredWorktree, getRegisteredChat, gitSwitchBranch } from "./security"
@@ -10,6 +10,27 @@ import { createGit, createGitForNetwork, withGitLock, withLockRetry } from "./gi
 const BRANCH_NAME_REGEX = /^[a-zA-Z0-9._/-]+$/
 /** Invalid branch name patterns */
 const INVALID_BRANCH_PATTERNS = [/^-/, /\.\./, /\.$/, /^\./, /@\{/, /\\/, /\s/]
+
+export async function createBranchAtWorktree(input: {
+  git: SimpleGit
+  branchName: string
+  startPoint: string
+  switchAfterCreate: boolean
+  onSwitched?: () => void
+}): Promise<void> {
+  await input.git.branch([input.branchName, input.startPoint])
+  if (!input.switchAfterCreate) return
+  try {
+    await input.git.checkout(input.branchName)
+    input.onSwitched?.()
+  } catch (error) {
+    const current = (await input.git.branchLocal()).current
+    if (current !== input.branchName) {
+      await input.git.branch(["-D", input.branchName]).catch(() => undefined)
+    }
+    throw error
+  }
+}
 
 export const createBranchesRouter = () => {
   return router({
@@ -81,6 +102,7 @@ export const createBranchesRouter = () => {
           projectPath: z.string(),
           branchName: z.string(),
           baseBranch: z.string(),
+          switchAfterCreate: z.boolean().optional().default(false),
         }),
       )
       .mutation(async ({ input }): Promise<{ success: boolean; branchName: string }> => {
@@ -118,8 +140,23 @@ export const createBranchesRouter = () => {
             startPoint = `origin/${input.baseBranch}`
           }
 
-          // Create the new branch (without switching to it)
-          await withLockRetry(input.projectPath, () => git.branch([input.branchName, startPoint]))
+          await withLockRetry(input.projectPath, () =>
+            createBranchAtWorktree({
+              git,
+              branchName: input.branchName,
+              startPoint,
+              switchAfterCreate: input.switchAfterCreate,
+              // Creating and switching inside one lock preserves dirty/untracked files.
+              // The generic checkout route intentionally rejects dirty worktrees.
+              onSwitched: () => {
+                getDatabase()
+                  .update(chats)
+                  .set({ branch: input.branchName })
+                  .where(eq(chats.worktreePath, input.projectPath))
+                  .run()
+              },
+            }),
+          )
 
           return { success: true, branchName: input.branchName }
         })

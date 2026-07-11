@@ -1,7 +1,7 @@
 # cursor-agent stream-json fixtures (Stage 2 Track D / D0)
 
 `cursor-agent` is installed + logged in on the dev machine as of 2026-07-09
-(v2026.07.08-0c04a8a, `~/.local/bin/cursor-agent`, `micsushi222@gmail.com`).
+(v2026.07.08-0c04a8a, `~/.local/bin/cursor-agent`, sanitized test account).
 
 These fixtures back the D2 adapter's stream translator
 (`src/main/lib/cursor/stream.ts`) so tests do not depend on the live CLI. The

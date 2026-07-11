@@ -1,10 +1,12 @@
 import { and, desc, eq } from "drizzle-orm"
 import { app } from "electron"
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { constants } from "node:fs"
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { attachments, chats, getDatabase, projects, tasks } from "../../db"
-import { resolveInsideRoot } from "../../path-safety"
+import { prepareSafeWritePath } from "../../path-safety"
 import { publicProcedure, router } from "../index"
 
 const attachmentKindSchema = z.enum(["file", "image", "pasted-text", "chat-history", "text"])
@@ -175,30 +177,42 @@ export const attachmentsRouter = router({
         throw new Error("Attachment target must be one of the chat's known worktree roots")
       }
 
-      const targetPath = resolveInsideRoot(
+      const targetPath = await prepareSafeWritePath(
         input.worktreePath,
         input.targetRelativePath ?? attachment.name,
       )
-      await mkdir(dirname(targetPath), { recursive: true })
-
-      if (!input.overwrite) {
-        try {
-          await stat(targetPath)
-          throw new Error("Target file already exists")
-        } catch (error) {
-          if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
-            throw error
-          }
+      const sourcePath = attachment.storedPath ?? attachment.sourcePath
+      const writeContent = async (destination: string, exclusive: boolean) => {
+        if (sourcePath) {
+          await copyFile(sourcePath, destination, exclusive ? constants.COPYFILE_EXCL : 0)
+        } else if (attachment.contentText !== null) {
+          await writeFile(destination, attachment.contentText, {
+            encoding: "utf-8",
+            flag: exclusive ? "wx" : "w",
+          })
+        } else {
+          throw new Error("Attachment has no stored content")
         }
       }
 
-      if (attachment.storedPath || attachment.sourcePath) {
-        const sourcePath = attachment.storedPath ?? attachment.sourcePath
-        await copyFile(sourcePath!, targetPath)
-      } else if (attachment.contentText !== null) {
-        await writeFile(targetPath, attachment.contentText, "utf-8")
+      if (!input.overwrite) {
+        try {
+          await writeContent(targetPath, true)
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+            throw new Error("Target file already exists")
+          }
+          throw error
+        }
       } else {
-        throw new Error("Attachment has no stored content")
+        const temporaryPath = join(dirname(targetPath), `.flapstack-${randomUUID()}.tmp`)
+        try {
+          await writeContent(temporaryPath, true)
+          await rm(targetPath, { force: true })
+          await rename(temporaryPath, targetPath)
+        } finally {
+          await rm(temporaryPath, { force: true })
+        }
       }
 
       const resultStat = await stat(targetPath)

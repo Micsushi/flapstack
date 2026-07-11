@@ -11,6 +11,7 @@ import {
   chatSearchOpenAtom,
   chatSearchQueryAtom,
   chatSearchCurrentIndexAtom,
+  chatSearchTargetMessageIdAtom,
   closeSearchAtom,
   goToNextMatchAtom,
   goToPrevMatchAtom,
@@ -30,6 +31,7 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
   const setSearchQuery = useSetAtom(chatSearchQueryAtom)
   const setMatches = useSetAtom(chatSearchMatchesAtom)
   const setCurrentIndex = useSetAtom(chatSearchCurrentIndexAtom)
+  const [targetMessageId, setTargetMessageId] = useAtom(chatSearchTargetMessageIdAtom)
   const countInfo = useAtomValue(chatSearchCountInfoAtom)
   const closeSearch = useSetAtom(closeSearchAtom)
   const goToNext = useSetAtom(goToNextMatchAtom)
@@ -86,7 +88,11 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
       const matches = findMatches(extracted, inputValue)
 
       setMatches(matches)
-      setCurrentIndex(0)
+      const targetIndex = targetMessageId
+        ? matches.findIndex((match) => match.messageId === targetMessageId)
+        : -1
+      setCurrentIndex(targetIndex >= 0 ? targetIndex : 0)
+      if (targetIndex >= 0) setTargetMessageId(null)
       setSearchCompleted(true)
     }, 200)
 
@@ -95,7 +101,15 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
         clearTimeout(debounceTimeoutRef.current)
       }
     }
-  }, [inputValue, messages, setSearchQuery, setMatches, setCurrentIndex])
+  }, [
+    inputValue,
+    messages,
+    setSearchQuery,
+    setMatches,
+    setCurrentIndex,
+    targetMessageId,
+    setTargetMessageId,
+  ])
 
   // Keyboard navigation
   const handleKeyDown = useCallback(
@@ -153,7 +167,10 @@ export function ChatSearchBar({ messages, className, topOffset }: ChatSearchBarP
         ref={inputRef}
         type="text"
         value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
+        onChange={(e) => {
+          setInputValue(e.target.value)
+          setTargetMessageId(null)
+        }}
         onKeyDown={handleKeyDown}
         placeholder="Search..."
         className={cn(

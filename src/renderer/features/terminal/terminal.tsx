@@ -185,7 +185,12 @@ export function Terminal({
       isDark,
       onFileLinkClick: (path, line, column) => {
         console.log("[Terminal] File link clicked:", path, line, column)
-        openFileRef.current({ path, cwd: terminalCwdRef.current || cwd })
+        openFileRef.current({
+          path,
+          cwd: terminalCwdRef.current || cwd,
+          ...(line ? { line } : {}),
+          ...(column ? { column } : {}),
+        })
       },
       onUrlClick: (url) => {
         console.log("[Terminal] URL clicked:", url)

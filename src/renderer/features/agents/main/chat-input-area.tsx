@@ -1,8 +1,16 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronDown, RefreshCw, Volume2 } from "lucide-react"
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, RefreshCw, Square, Volume2 } from "lucide-react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { createPortal } from "react-dom"
 
 import { Button } from "../../../components/ui/button"
@@ -46,6 +54,11 @@ import {
   showOfflineModeFeaturesAtom,
 } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
+import {
+  getManagedSpeechSnapshot,
+  stopManagedSpeech,
+  subscribeManagedSpeech,
+} from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import {
   lastSelectedCodexModelIdAtom,
@@ -105,6 +118,7 @@ import {
 } from "../../../lib/hooks/use-voice-recording"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import { customHotkeysAtom } from "../../../lib/atoms"
+import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { toast } from "sonner"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
@@ -441,6 +455,9 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const currentTargetWorktreePath = targetWorktreePath ?? storedTargetWorktreePath
   const [customWorktreeInput, setCustomWorktreeInput] = useState("")
+  const customWorktreeValidationRef = useRef(0)
+  const [customWorktreeError, setCustomWorktreeError] = useState<string | null>(null)
+  const [isValidatingCustomWorktree, setIsValidatingCustomWorktree] = useState(false)
   const trpcUtils = trpc.useUtils()
   const updateTargetWorktreePath = useCallback(
     (path: string | null) => {
@@ -810,7 +827,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     () => worktreeOptions.find((option) => option.path === selectedWorktreePath),
     [selectedWorktreePath, worktreeOptions],
   )
-  const hasWorktreeChoices = worktreeOptions.length > 0
+  const hasWorktreeChoices = Boolean(parentChatId) && !sandboxId
   const selectedWorktreeLabel =
     selectedWorktreeOption?.label ?? (selectedWorktreePath ? "Custom path" : "No worktree")
   const trimmedCustomWorktree = customWorktreeInput.trim()
@@ -821,6 +838,17 @@ export const ChatInputArea = memo(function ChatInputArea({
     Boolean(defaultWorktreeOption?.path) &&
     selectedWorktreePath !== defaultWorktreeOption?.path
   const canCreateWorktree = Boolean(parentChatId) && Boolean(projectPath) && !sandboxId
+  const { data: resolvedWorktreeStatus } = trpc.chats.resolveWorktreeStatus.useQuery(
+    {
+      id: parentChatId,
+      ...(selectedWorktreePath ? { path: selectedWorktreePath } : {}),
+    },
+    {
+      enabled: Boolean(parentChatId) && !sandboxId,
+      refetchInterval: 5_000,
+    },
+  )
+  const worktreeNeedsRefresh = resolvedWorktreeStatus?.status === "unknown"
 
   useEffect(() => {
     if (currentTargetWorktreePath) return
@@ -832,6 +860,10 @@ export const ChatInputArea = memo(function ChatInputArea({
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const handleOpenVoiceSettings = useCallback(() => {
+    setSettingsTab("voice")
+    setSettingsOpen(true)
+  }, [setSettingsOpen, setSettingsTab])
 
   const {
     data: allMcpConfig,
@@ -914,19 +946,23 @@ export const ChatInputArea = memo(function ChatInputArea({
   } = useVoiceRecording()
   const [isTranscribing, setIsTranscribing] = useState(false)
   const voiceMountedRef = useRef(true)
+  const voiceCaptureRequestedRef = useRef(false)
+  const {
+    isReady: isVoiceReady,
+    statusLabel: voiceStatusLabel,
+    showSetup: showVoiceSetup,
+  } = useLocalDictationSetup(handleOpenVoiceSettings)
 
   useEffect(() => {
     voiceMountedRef.current = true
     return () => {
       voiceMountedRef.current = false
+      voiceCaptureRequestedRef.current = false
     }
   }, [])
 
   const transcribeMutation = trpc.voice.transcribe.useMutation()
 
-  // Check if voice input is available (authenticated OR has OPENAI_API_KEY)
-  const { data: voiceAvailability } = trpc.voice.isAvailable.useQuery()
-  const isVoiceAvailable = voiceAvailability?.available ?? false
   const { data: readAloudPreference } = trpc.speech.getReadAloudForChat.useQuery({
     chatId: subChatId,
   })
@@ -935,6 +971,12 @@ export const ChatInputArea = memo(function ChatInputArea({
       await trpcUtils.speech.getReadAloudForChat.invalidate({ chatId: subChatId })
     },
   })
+  const stopSpeaking = trpc.speech.stopSpeaking.useMutation()
+  const isManagedSpeechPlaying = useSyncExternalStore(
+    subscribeManagedSpeech,
+    getManagedSpeechSnapshot,
+    () => false,
+  )
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)
@@ -968,17 +1010,35 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
-    if (isStreaming || isTranscribing || isVoiceRecording) return
+    if (isStreaming || isTranscribing || isVoiceRecording || voiceCaptureRequestedRef.current)
+      return
+    if (!isVoiceReady) {
+      showVoiceSetup()
+      return
+    }
+    voiceCaptureRequestedRef.current = true
     try {
       await startVoiceRecording()
     } catch (err) {
-      console.error("[VoiceInput] Failed to start recording:", err)
-      toast.error(err instanceof Error ? err.message : "Failed to start recording")
+      const shouldReport = voiceCaptureRequestedRef.current
+      voiceCaptureRequestedRef.current = false
+      if (shouldReport) {
+        console.error("[VoiceInput] Failed to start recording:", err)
+        toast.error(err instanceof Error ? err.message : "Failed to start recording")
+      }
     }
-  }, [isStreaming, isTranscribing, isVoiceRecording, startVoiceRecording])
+  }, [
+    isStreaming,
+    isTranscribing,
+    isVoiceRecording,
+    isVoiceReady,
+    showVoiceSetup,
+    startVoiceRecording,
+  ])
 
   const handleVoiceMouseUp = useCallback(async () => {
-    if (!isVoiceRecording) return
+    if (!voiceCaptureRequestedRef.current) return
+    voiceCaptureRequestedRef.current = false
 
     // Set transcribing immediately to avoid visual flash between recording and transcribing states
     setIsTranscribing(true)
@@ -1020,31 +1080,29 @@ export const ChatInputArea = memo(function ChatInputArea({
       }
     } catch (err) {
       console.error("[VoiceInput] Transcription failed:", err)
-      toast.error("Voice transcription failed")
+      toast.error("Voice transcription failed", {
+        description: err instanceof Error ? err.message : "Local Whisper could not transcribe.",
+      })
     } finally {
       if (voiceMountedRef.current) {
         setIsTranscribing(false)
       }
     }
-  }, [isVoiceRecording, stopVoiceRecording, transcribeMutation, editorRef])
-
-  const handleVoiceMouseLeave = useCallback(() => {
-    if (isVoiceRecording) {
-      // Cancel instead of transcribing when leaving button area
-      cancelVoiceRecording()
-    }
-  }, [isVoiceRecording, cancelVoiceRecording])
+  }, [stopVoiceRecording, transcribeMutation, editorRef])
 
   // Auto-cancel recording when window loses focus (prevents stuck recording if keyup never fires)
   useEffect(() => {
-    if (!isVoiceRecording) return
+    if (!isActive) return
 
     const handleFocusLoss = () => {
-      cancelVoiceRecording()
+      if (voiceCaptureRequestedRef.current || isVoiceRecording) {
+        voiceCaptureRequestedRef.current = false
+        cancelVoiceRecording()
+      }
     }
 
     const handleVisibilityChange = () => {
-      if (document.hidden) cancelVoiceRecording()
+      if (document.hidden) handleFocusLoss()
     }
 
     window.addEventListener("blur", handleFocusLoss)
@@ -1053,7 +1111,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       window.removeEventListener("blur", handleFocusLoss)
       document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
-  }, [isVoiceRecording, cancelVoiceRecording])
+  }, [isActive, isVoiceRecording, cancelVoiceRecording])
 
   // Keyboard shortcut: Voice input hotkey (push-to-talk: hold to record, release to transcribe)
   useEffect(() => {
@@ -1128,7 +1186,12 @@ export const ChatInputArea = memo(function ChatInputArea({
       e.stopPropagation()
 
       // Start recording on keydown
-      if (!isVoiceRecording && !isTranscribing && !isStreaming) {
+      if (
+        !voiceCaptureRequestedRef.current &&
+        !isVoiceRecording &&
+        !isTranscribing &&
+        !isStreaming
+      ) {
         handleVoiceMouseDown()
       }
     }
@@ -1137,8 +1200,9 @@ export const ChatInputArea = memo(function ChatInputArea({
       // Stop recording when the main key (or any modifier for modifier-only hotkeys) is released
       if (!isMainKeyRelease(e)) return
 
-      // Only stop if we're currently recording
-      if (isVoiceRecording) {
+      // The release may arrive while getUserMedia is still pending. The stop
+      // handler waits for that start instead of trusting delayed React state.
+      if (voiceCaptureRequestedRef.current) {
         e.preventDefault()
         e.stopPropagation()
         handleVoiceMouseUp()
@@ -2129,10 +2193,16 @@ export const ChatInputArea = memo(function ChatInputArea({
                   {hasWorktreeChoices && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <button className="hidden md:flex max-w-[180px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
+                        <button
+                          className={cn(
+                            "hidden md:flex max-w-[220px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                            worktreeNeedsRefresh && "text-amber-600 dark:text-amber-400",
+                          )}
+                        >
                           <span className="truncate">
-                            {isNonDefaultWorktree ? "Worktree: " : ""}
-                            {selectedWorktreeLabel}
+                            {worktreeNeedsRefresh
+                              ? `Needs refresh: ${selectedWorktreeLabel}`
+                              : `${isNonDefaultWorktree ? "Worktree: " : ""}${selectedWorktreeLabel}`}
                           </span>
                           <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                         </button>
@@ -2163,6 +2233,11 @@ export const ChatInputArea = memo(function ChatInputArea({
                             )}
                           </DropdownMenuItem>
                         ))}
+                        {worktreeNeedsRefresh && (
+                          <div className="px-2 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                            {resolvedWorktreeStatus.error}
+                          </div>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           disabled={!canCreateWorktree || createWorktreeMutation.isPending}
@@ -2199,26 +2274,66 @@ export const ChatInputArea = memo(function ChatInputArea({
                           <div className="flex items-center gap-1">
                             <input
                               value={customWorktreeInput}
-                              onChange={(e) => setCustomWorktreeInput(e.target.value)}
+                              onChange={(e) => {
+                                customWorktreeValidationRef.current += 1
+                                setCustomWorktreeInput(e.target.value)
+                                setCustomWorktreeError(null)
+                              }}
                               placeholder="/absolute/path/to/checkout"
                               spellCheck={false}
                               className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
                             />
                             <button
                               type="button"
-                              disabled={!isValidCustomWorktree}
-                              onClick={() => {
-                                updateTargetWorktreePath(trimmedCustomWorktree)
-                                setCustomWorktreeInput("")
+                              disabled={!isValidCustomWorktree || isValidatingCustomWorktree}
+                              onClick={async () => {
+                                const requestedPath = trimmedCustomWorktree
+                                const requestId = ++customWorktreeValidationRef.current
+                                setIsValidatingCustomWorktree(true)
+                                setCustomWorktreeError(null)
+                                try {
+                                  const result =
+                                    await trpcUtils.chats.validateCustomWorktreePath.fetch({
+                                      path: trimmedCustomWorktree,
+                                    })
+                                  if (customWorktreeValidationRef.current !== requestId) return
+                                  if (!result.valid) {
+                                    setCustomWorktreeError(result.error)
+                                    return
+                                  }
+                                  if (
+                                    result.path !== requestedPath &&
+                                    customWorktreeInput.trim() !== requestedPath
+                                  )
+                                    return
+                                  updateTargetWorktreePath(result.path)
+                                  setCustomWorktreeInput("")
+                                } catch (error) {
+                                  if (customWorktreeValidationRef.current !== requestId) return
+                                  setCustomWorktreeError(
+                                    error instanceof Error
+                                      ? error.message
+                                      : "Could not validate this checkout.",
+                                  )
+                                } finally {
+                                  if (customWorktreeValidationRef.current === requestId) {
+                                    setIsValidatingCustomWorktree(false)
+                                  }
+                                }
                               }}
                               className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
                             >
-                              Use
+                              {isValidatingCustomWorktree ? "Checking..." : "Use"}
                             </button>
                           </div>
                           {trimmedCustomWorktree && !isValidCustomWorktree && (
                             <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
                               Enter an absolute path.
+                            </div>
+                          )}
+                          {customWorktreeError && (
+                            <div className="mt-1 text-[11px] text-destructive">
+                              {customWorktreeError}
                             </div>
                           )}
                         </div>
@@ -2287,25 +2402,44 @@ export const ChatInputArea = memo(function ChatInputArea({
                               "text-emerald-600 hover:text-emerald-700",
                           )}
                           disabled={setReadAloudForChat.isPending}
-                          onClick={() =>
+                          onClick={() => {
+                            if (isManagedSpeechPlaying) {
+                              stopManagedSpeech()
+                              stopSpeaking.mutate()
+                              return
+                            }
+                            const enabled = readAloudPreference?.enabled ?? false
+                            const inherited = readAloudPreference?.inherited ?? true
                             setReadAloudForChat.mutate({
                               chatId: subChatId,
-                              enabled: !readAloudPreference?.enabled,
+                              enabled: inherited ? !enabled : enabled ? false : null,
                             })
-                          }
+                          }}
                           aria-label={
-                            readAloudPreference?.enabled
-                              ? "Turn read-aloud off for this chat"
-                              : "Turn read-aloud on for this chat"
+                            isManagedSpeechPlaying
+                              ? "Stop read-aloud"
+                              : readAloudPreference?.inherited
+                                ? "Override the global read-aloud setting for this chat"
+                                : readAloudPreference?.enabled
+                                  ? "Turn read-aloud off for this chat"
+                                  : "Return this chat to the global read-aloud setting"
                           }
                         >
-                          <Volume2 className="h-4 w-4" />
+                          {isManagedSpeechPlaying ? (
+                            <Square className="h-3.5 w-3.5 fill-current" />
+                          ) : (
+                            <Volume2 className="h-4 w-4" />
+                          )}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        {readAloudPreference?.enabled
-                          ? "Read-aloud on for this chat"
-                          : "Read-aloud off for this chat"}
+                        {isManagedSpeechPlaying
+                          ? "Stop read-aloud"
+                          : readAloudPreference?.inherited
+                            ? `Using global setting: ${readAloudPreference.enabled ? "on" : "off"}`
+                            : readAloudPreference?.enabled
+                              ? "Read-aloud override: on"
+                              : "Read-aloud override: off; click to inherit global"}
                       </TooltipContent>
                     </Tooltip>
                     <AgentSendButton
@@ -2344,13 +2478,15 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                       onStop={onStop}
                       mode={subChatMode}
-                      // Voice input props - show mic when input is empty and voice is available
-                      showVoiceInput={isVoiceAvailable}
+                      // Keep first-use local dictation discoverable; setup happens from the mic.
+                      showVoiceInput
+                      voiceInputReady={isVoiceReady}
+                      voiceStatusLabel={voiceStatusLabel}
+                      onVoiceUnavailableClick={showVoiceSetup}
                       isRecording={isVoiceRecording}
                       isTranscribing={isTranscribing}
                       onVoiceMouseDown={handleVoiceMouseDown}
                       onVoiceMouseUp={handleVoiceMouseUp}
-                      onVoiceMouseLeave={handleVoiceMouseLeave}
                     />
                   </div>
                 </div>

@@ -268,7 +268,7 @@ export function KanbanView() {
     // Add workspaces
     if (chats) {
       for (const chat of chats) {
-        const project = projectsMap.get(chat.projectId)
+        const project = chat.projectId ? projectsMap.get(chat.projectId) : undefined
 
         const status = deriveWorkspaceStatus(chat.id, {
           workspacesLoading,

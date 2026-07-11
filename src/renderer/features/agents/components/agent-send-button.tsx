@@ -36,12 +36,16 @@ interface AgentSendButtonProps {
   isRecording?: boolean
   /** Whether voice is currently transcribing */
   isTranscribing?: boolean
+  /** Whether local dictation can record immediately */
+  voiceInputReady?: boolean
+  /** Actionable local dictation status shown before first use */
+  voiceStatusLabel?: string
+  /** Click handler when local dictation still needs setup */
+  onVoiceUnavailableClick?: () => void
   /** Mouse down handler for voice recording */
   onVoiceMouseDown?: () => void
   /** Mouse up handler for voice recording */
   onVoiceMouseUp?: () => void
-  /** Mouse leave handler for voice recording */
-  onVoiceMouseLeave?: () => void
 }
 
 export function AgentSendButton({
@@ -58,9 +62,11 @@ export function AgentSendButton({
   showVoiceInput = false,
   isRecording = false,
   isTranscribing = false,
+  voiceInputReady = true,
+  voiceStatusLabel,
+  onVoiceUnavailableClick,
   onVoiceMouseDown,
   onVoiceMouseUp,
-  onVoiceMouseLeave,
 }: AgentSendButtonProps) {
   // Resolved hotkeys for stop-generation tooltip
   const stopHotkey = useResolvedHotkeyDisplayWithAlt("stop-generation")
@@ -120,6 +126,14 @@ export function AgentSendButton({
     if (isVoiceMode) {
       if (isTranscribing) return "Transcribing..."
       if (isRecording) return "Click to stop"
+      if (!voiceInputReady) {
+        return (
+          <div className="flex max-w-64 flex-col items-start gap-0.5">
+            <span>{voiceStatusLabel || "Set up local dictation"}</span>
+            <span className="text-muted-foreground">Audio stays on this device</span>
+          </div>
+        )
+      }
       return (
         <div className="flex flex-col items-start gap-0.5">
           <span>Voice input</span>
@@ -189,6 +203,7 @@ export function AgentSendButton({
     if (isVoiceMode) {
       if (isTranscribing) return "Transcribing..."
       if (isRecording) return "Stop recording"
+      if (!voiceInputReady) return voiceStatusLabel || "Set up local dictation"
       return "Voice input"
     }
     if (isStreaming && !hasContent) return "Stop generation"
@@ -216,7 +231,7 @@ export function AgentSendButton({
   // Handle button interactions for voice mode
   // Supports both hold-to-talk AND click-to-toggle
   const handleMouseDown = () => {
-    if (isVoiceMode && !isRecording && onVoiceMouseDown) {
+    if (isVoiceMode && voiceInputReady && !isRecording && onVoiceMouseDown) {
       onVoiceMouseDown()
     }
   }
@@ -226,15 +241,13 @@ export function AgentSendButton({
     // Click-to-toggle is handled in handleButtonClick
   }
 
-  const handleMouseLeave = () => {
-    if (isVoiceMode && isRecording && onVoiceMouseLeave) {
-      onVoiceMouseLeave()
-    }
-  }
-
   const handleButtonClick = () => {
     // In voice mode: if recording, stop it; if not recording, start it
     if (isVoiceMode) {
+      if (!voiceInputReady) {
+        onVoiceUnavailableClick?.()
+        return
+      }
       if (isRecording && onVoiceMouseUp) {
         onVoiceMouseUp()
       }
@@ -258,7 +271,6 @@ export function AgentSendButton({
           onClick={handleButtonClick}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
           aria-label={getAriaLabel()}
         >
           {getIcon()}

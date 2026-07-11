@@ -130,7 +130,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
 
     return {
       available: !parsed.unavailable,
-      status: parsed as StatusResult,
+      status: parsed as unknown as StatusResult,
       files: {},
       error: parsed.error,
     }

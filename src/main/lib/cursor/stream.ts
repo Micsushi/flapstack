@@ -46,18 +46,18 @@ export type CursorAssistantPart =
       state: "call" | "result"
     }
 
-const AUTH_HINTS = [
-  "not logged in",
-  "please log in",
-  "authentication required",
-  "auth required",
-  "login required",
-  "unauthorized",
-  "forbidden",
-  "cursor-agent login",
-  "no credentials",
-  "401",
-  "403",
+const AUTH_PATTERNS = [
+  /\bnot logged in\b/i,
+  /\bplease log in\b/i,
+  /\bauthentication required\b/i,
+  /\bauth required\b/i,
+  /\blogin required\b/i,
+  /(?:^|\s|[:(])unauthorized(?:\s|$|[).,:])/i,
+  /(?:^|\s|[:(])forbidden(?:\s|$|[).,:])/i,
+  /\bcursor-agent login\b/i,
+  /\bno credentials\b/i,
+  /(?:^|\s|[:(])401(?:\s|$|[).,:])/,
+  /(?:^|\s|[:(])403(?:\s|$|[).,:])/,
 ]
 
 /** Parse one NDJSON line into a raw event, tolerating blank/partial lines. */
@@ -74,8 +74,7 @@ export function parseCursorStreamLine(line: string): CursorRawEvent | null {
 
 export function isCursorAuthText(text: string | null | undefined): boolean {
   if (!text) return false
-  const normalized = text.toLowerCase()
-  return AUTH_HINTS.some((hint) => normalized.includes(hint))
+  return AUTH_PATTERNS.some((pattern) => pattern.test(text))
 }
 
 function asString(value: unknown): string | undefined {
@@ -87,14 +86,16 @@ function asNumber(value: unknown): number | undefined {
 }
 
 /** Pull assistant text out of the several shapes cursor-agent can emit. */
-function extractAssistantText(event: CursorRawEvent): string | undefined {
+function extractAssistantText(
+  event: CursorRawEvent,
+): { text: string; mode: "incremental" | "cumulative" } | undefined {
   const delta = event.delta as Record<string, unknown> | undefined
   const deltaText = asString(delta?.text)
-  if (deltaText) return deltaText
+  if (deltaText) return { text: deltaText, mode: "incremental" }
 
   const message = event.message as Record<string, unknown> | undefined
   const directText = asString(message?.text) ?? asString(event.text)
-  if (directText) return directText
+  if (directText) return { text: directText, mode: "cumulative" }
 
   const content = message?.content ?? event.content
   if (Array.isArray(content)) {
@@ -105,7 +106,7 @@ function extractAssistantText(event: CursorRawEvent): string | undefined {
       )
       .map((part) => asString(part.text))
       .filter((text): text is string => Boolean(text))
-    if (textParts.length > 0) return textParts.join("")
+    if (textParts.length > 0) return { text: textParts.join(""), mode: "cumulative" }
   }
 
   return undefined
@@ -125,12 +126,15 @@ function nextId(prefix: string): string {
 export class CursorStreamTranslator {
   private textId: string | null = null
   private accumulatedText = ""
+  private emittedText = ""
   private hasEmittedText = false
   private reasoningId: string | null = null
   private reasoningText = ""
+  private readonly reasoningIdsWithDeltas = new Set<string>()
   private readonly parts: CursorAssistantPart[] = []
   private readonly metadata: CursorStreamMetadata = {}
   private authErrorSeen = false
+  private errorSeen = false
 
   push(event: CursorRawEvent): UIMessageChunk[] {
     const type = asString(event.type)
@@ -174,6 +178,11 @@ export class CursorStreamTranslator {
     return this.authErrorSeen
   }
 
+  /** True when the structured stream reports failure, even if the process exits zero. */
+  sawError(): boolean {
+    return this.errorSeen
+  }
+
   private handleSystem(event: CursorRawEvent): UIMessageChunk[] {
     this.metadata.sessionId = asString(event.session_id) ?? this.metadata.sessionId
     this.metadata.model = asString(event.model) ?? this.metadata.model
@@ -181,8 +190,9 @@ export class CursorStreamTranslator {
   }
 
   private handleAssistant(event: CursorRawEvent): UIMessageChunk[] {
-    const text = extractAssistantText(event)
-    if (!text) return []
+    const assistantText = extractAssistantText(event)
+    if (!assistantText) return []
+    const { text } = assistantText
 
     const chunks: UIMessageChunk[] = []
     // Close a pending reasoning block before assistant text starts.
@@ -191,12 +201,15 @@ export class CursorStreamTranslator {
     // `--stream-partial-output` may send cumulative text or incremental deltas.
     // Emit only the newly-added suffix; fall back to the whole chunk on reset.
     let delta = text
-    if (text.startsWith(this.accumulatedText) && text.length >= this.accumulatedText.length) {
-      delta = text.slice(this.accumulatedText.length)
-      this.accumulatedText = text
-    } else {
-      this.accumulatedText += text
+    if (
+      assistantText.mode === "cumulative" &&
+      text.startsWith(this.emittedText) &&
+      text.length >= this.emittedText.length
+    ) {
+      delta = text.slice(this.emittedText.length)
     }
+    this.emittedText += delta
+    this.accumulatedText += delta
 
     if (!delta) return chunks
 
@@ -218,11 +231,24 @@ export class CursorStreamTranslator {
     if (!reasoningOutput) return []
 
     if (reasoningOutput.phase === "final") {
-      return this.closeReasoning()
+      // Some Cursor versions emit only a completed reasoning event. Preserve
+      // that text when no deltas were seen, while avoiding duplicate final text
+      // after an incremental stream.
+      const chunks: UIMessageChunk[] = []
+      const hadStreamedDeltas = this.reasoningIdsWithDeltas.delete(reasoningOutput.id)
+      if (!this.reasoningId && reasoningOutput.text && !hadStreamedDeltas) {
+        this.reasoningId = nextId("reasoning")
+        this.reasoningText = reasoningOutput.text
+        chunks.push({ type: "reasoning-start", id: this.reasoningId })
+        chunks.push({ type: "reasoning-delta", id: this.reasoningId, delta: reasoningOutput.text })
+      }
+      chunks.push(...this.closeReasoning())
+      return chunks
     }
 
     const text = reasoningOutput.text
     if (!text) return []
+    this.reasoningIdsWithDeltas.add(reasoningOutput.id)
 
     const chunks: UIMessageChunk[] = []
     if (!this.reasoningId) {
@@ -284,6 +310,22 @@ export class CursorStreamTranslator {
     this.metadata.sessionId = asString(event.session_id) ?? this.metadata.sessionId
     this.metadata.durationMs = asNumber(event.duration_ms) ?? this.metadata.durationMs
     this.metadata.resultSubtype = asString(event.subtype) ?? this.metadata.resultSubtype
+    if (
+      this.metadata.resultSubtype &&
+      ["error", "failed", "failure"].includes(this.metadata.resultSubtype.toLowerCase())
+    ) {
+      this.errorSeen = true
+    }
+
+    const resultText = asString(event.result)
+    if (this.errorSeen) {
+      const errorText = resultText || "cursor-agent reported a failed result."
+      if (isCursorAuthText(errorText)) {
+        this.authErrorSeen = true
+        return [...chunks, { type: "auth-error", errorText }]
+      }
+      return [...chunks, { type: "error", errorText }]
+    }
 
     const usage = event.usage as Record<string, unknown> | undefined
     if (usage) {
@@ -300,7 +342,6 @@ export class CursorStreamTranslator {
 
     // A trailing `result` string is the final answer for non-partial output; if
     // we never streamed text, surface it so the reply is never empty.
-    const resultText = asString(event.result)
     if (resultText && !this.hasEmittedText) {
       const id = nextId("text")
       chunks.push({ type: "text-start", id })
@@ -319,6 +360,7 @@ export class CursorStreamTranslator {
       asString(event.error) ??
       asString((event.error as any)?.message) ??
       "cursor-agent returned an error."
+    this.errorSeen = true
     if (isCursorAuthText(message)) {
       this.authErrorSeen = true
       return [{ type: "auth-error", errorText: message }]

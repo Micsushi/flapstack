@@ -94,7 +94,7 @@ export const CODEX_MODELS = [
   {
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
-    reasoningLevels: ["low", "medium", "high", "xhigh"] as const,
+    reasoningLevels: ["low", "medium", "high", "xhigh"] as readonly CodexReasoningLevel[],
     authSurfaces: ["chatgpt"] as CodexAuthSurface[],
     supportsFastMode: false,
   },

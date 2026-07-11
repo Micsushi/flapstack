@@ -5,10 +5,8 @@
  * `sdk.rs`. Auth is HTTP Basic `opencode:{password}` plus an
  * `x-opencode-directory` header; every request also carries `?directory=`.
  *
- * Scaffolding stage: request builders, auth, and JSON typing are real. Methods
- * that require a live server (health, session, prompt, event stream) are
- * implemented against `fetch` but are not yet driven by a persisted run loop —
- * the orchestrator (`session.ts`) marks the run path as not-implemented.
+ * Request builders, auth, deadlines, cancellation, and JSON typing are used by
+ * the persisted run loop in `session.ts`.
  */
 
 import { randomBytes } from "node:crypto"
@@ -20,6 +18,7 @@ export type OpencodeClientOptions = {
   directory: string
   password: string
   fetchImpl?: typeof fetch
+  requestTimeoutMs?: number
 }
 
 export type OpencodeHealth = { healthy: boolean; version: string }
@@ -29,12 +28,14 @@ export class OpencodeClient {
   private readonly directory: string
   private readonly authHeader: string
   private readonly fetchImpl: typeof fetch
+  private readonly requestTimeoutMs: number
 
   constructor(opts: OpencodeClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, "")
     this.directory = opts.directory
     this.authHeader = "Basic " + Buffer.from(`opencode:${opts.password}`).toString("base64")
     this.fetchImpl = opts.fetchImpl ?? fetch
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? 15_000
   }
 
   private headers(extra?: Record<string, string>): Record<string, string> {
@@ -51,10 +52,94 @@ export class OpencodeClient {
     return `${this.baseUrl}${path}${sep}directory=${encodeURIComponent(this.directory)}`
   }
 
-  async health(): Promise<OpencodeHealth> {
-    const resp = await this.fetchImpl(this.url("/global/health"), { headers: this.headers() })
-    if (!resp.ok) throw new Error(`OpenCode health failed: HTTP ${resp.status}`)
-    return (await resp.json()) as OpencodeHealth
+  private async request(
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+    timeoutMs = this.requestTimeoutMs,
+  ): Promise<Response> {
+    const controller = new AbortController()
+    const abort = () => controller.abort(signal?.reason)
+    signal?.addEventListener("abort", abort, { once: true })
+    const timer = setTimeout(
+      () => controller.abort(new Error("OpenCode request timed out")),
+      timeoutMs,
+    )
+    try {
+      return await raceAbort(
+        this.fetchImpl(this.url(path), { ...init, signal: controller.signal }),
+        controller.signal,
+        signal?.aborted
+          ? "OpenCode request aborted"
+          : `OpenCode request timed out after ${timeoutMs}ms`,
+      )
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          signal?.aborted
+            ? "OpenCode request aborted"
+            : `OpenCode request timed out after ${timeoutMs}ms`,
+        )
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", abort)
+    }
+  }
+
+  private async requestJson<T>(
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+  ): Promise<{ response: Response; body: T }> {
+    const controller = new AbortController()
+    const abort = () => controller.abort(signal?.reason)
+    signal?.addEventListener("abort", abort, { once: true })
+    const timer = setTimeout(
+      () => controller.abort(new Error("OpenCode request timed out")),
+      this.requestTimeoutMs,
+    )
+    try {
+      const response = await raceAbort(
+        this.fetchImpl(this.url(path), { ...init, signal: controller.signal }),
+        controller.signal,
+        signal?.aborted
+          ? "OpenCode request aborted"
+          : `OpenCode request timed out after ${this.requestTimeoutMs}ms`,
+      )
+      const body = await Promise.race([
+        response.json() as Promise<T>,
+        new Promise<never>((_, reject) =>
+          controller.signal.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new Error(
+                  signal?.aborted
+                    ? "OpenCode request aborted"
+                    : `OpenCode request timed out after ${this.requestTimeoutMs}ms`,
+                ),
+              ),
+            { once: true },
+          ),
+        ),
+      ])
+      return { response, body }
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", abort)
+    }
+  }
+
+  async health(signal?: AbortSignal): Promise<OpencodeHealth> {
+    const { response, body } = await this.requestJson<OpencodeHealth>(
+      "/global/health",
+      { headers: this.headers() },
+      signal,
+    )
+    if (!response.ok) throw new Error(`OpenCode health failed: HTTP ${response.status}`)
+    return body
   }
 
   /** Poll health until healthy or the deadline passes. */
@@ -64,7 +149,7 @@ export class OpencodeClient {
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error("Aborted while waiting for OpenCode health")
       try {
-        const health = await this.health()
+        const health = await this.health(signal)
         if (health.healthy) return health
         lastErr = `unhealthy (version ${health.version})`
       } catch (err) {
@@ -75,44 +160,65 @@ export class OpencodeClient {
     throw new Error(`Timed out waiting for OpenCode health: ${lastErr}`)
   }
 
-  async createSession(permission?: OpencodeSessionPermission[]): Promise<string> {
-    const resp = await this.fetchImpl(this.url("/session"), {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(permission ? { permission } : {}),
-    })
+  async createSession(
+    permission?: OpencodeSessionPermission[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const { response: resp, body } = await this.requestJson<{ id: string }>(
+      "/session",
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(permission ? { permission } : {}),
+      },
+      signal,
+    )
     if (!resp.ok) throw new Error(`OpenCode session.create failed: HTTP ${resp.status}`)
-    return ((await resp.json()) as { id: string }).id
+    return body.id
   }
 
-  async forkSession(sessionId: string): Promise<string> {
-    const resp = await this.fetchImpl(this.url(`/session/${sessionId}/fork`), {
-      method: "POST",
-      headers: this.headers(),
-      body: "{}",
-    })
+  async forkSession(sessionId: string, signal?: AbortSignal): Promise<string> {
+    const { response: resp, body } = await this.requestJson<{ id: string }>(
+      `/session/${sessionId}/fork`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: "{}",
+      },
+      signal,
+    )
     if (!resp.ok) throw new Error(`OpenCode session.fork failed: HTTP ${resp.status}`)
-    return ((await resp.json()) as { id: string }).id
+    return body.id
   }
 
   /** Apply the current Flapstack mode to a resumed OpenCode session. */
   async setSessionPermissions(
     sessionId: string,
     permission: OpencodeSessionPermission[],
+    signal?: AbortSignal,
   ): Promise<void> {
-    const resp = await this.fetchImpl(this.url(`/session/${sessionId}`), {
-      method: "PATCH",
-      headers: this.headers(),
-      body: JSON.stringify({ permission }),
-    })
+    const resp = await this.request(
+      `/session/${sessionId}`,
+      {
+        method: "PATCH",
+        headers: this.headers(),
+        body: JSON.stringify({ permission }),
+      },
+      signal,
+    )
     if (!resp.ok) throw new Error(`OpenCode session permission update failed: HTTP ${resp.status}`)
   }
 
-  async prompt(
+  /**
+   * Start a prompt without waiting for the provider/tool loop to finish.
+   * OpenCode publishes progress and permission requests through the SSE stream.
+   */
+  async promptAsync(
     sessionId: string,
     text: string,
     model?: OpencodeModelSpec,
     attachments: SidecarAttachment[] = [],
+    signal?: AbortSignal,
   ): Promise<void> {
     const body = {
       ...(model ? { model: { providerID: model.providerId, modelID: model.modelId } } : {}),
@@ -121,23 +227,31 @@ export class OpencodeClient {
         { type: "text" as const, text },
       ],
     }
-    const resp = await this.fetchImpl(this.url(`/session/${sessionId}/message`), {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    })
+    const resp = await this.request(
+      `/session/${sessionId}/prompt_async`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+      },
+      signal,
+    )
     if (!resp.ok) {
-      const errBody = await resp.text().catch(() => "")
-      throw new Error(`OpenCode session.prompt failed: HTTP ${resp.status} ${errBody}`)
+      throw new Error(`OpenCode session.prompt_async failed: HTTP ${resp.status}`)
     }
   }
 
   async abort(sessionId: string): Promise<void> {
     try {
-      await this.fetchImpl(this.url(`/session/${sessionId}/abort`), {
-        method: "POST",
-        headers: this.headers(),
-      })
+      await this.request(
+        `/session/${sessionId}/abort`,
+        {
+          method: "POST",
+          headers: this.headers(),
+        },
+        undefined,
+        3_000,
+      )
     } catch {
       // Best-effort; process kill is the hard stop.
     }
@@ -147,26 +261,58 @@ export class OpencodeClient {
     requestId: string,
     reply: "once" | "always" | "reject",
     message?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const body =
       reply === "reject" ? { reply, message: message ?? "Denied by Flapstack" } : { reply }
-    const resp = await this.fetchImpl(this.url(`/permission/${requestId}/reply`), {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    })
+    const resp = await this.request(
+      `/permission/${requestId}/reply`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+      },
+      signal,
+    )
     if (!resp.ok) throw new Error(`OpenCode permission reply failed: HTTP ${resp.status}`)
   }
 
   /** Raw SSE event stream Response for the event bridge to consume. */
   async openEventStream(signal?: AbortSignal): Promise<Response> {
-    const resp = await this.fetchImpl(this.url("/event"), {
-      headers: this.headers({ accept: "text/event-stream" }),
-      ...(signal ? { signal } : {}),
-    })
+    const controller = new AbortController()
+    const abort = () => controller.abort(signal?.reason)
+    signal?.addEventListener("abort", abort, { once: true })
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs)
+    let resp: Response
+    try {
+      resp = await raceAbort(
+        this.fetchImpl(this.url("/event"), {
+          headers: this.headers({ accept: "text/event-stream" }),
+          signal: controller.signal,
+        }),
+        controller.signal,
+        signal?.aborted
+          ? "OpenCode request aborted"
+          : `OpenCode request timed out after ${this.requestTimeoutMs}ms`,
+      )
+    } finally {
+      clearTimeout(timer)
+      // Keep the abort listener for the lifetime of the SSE body. The response
+      // stream is cancelled when the owning run signal aborts.
+    }
     if (!resp.ok) throw new Error(`OpenCode event stream failed: HTTP ${resp.status}`)
     return resp
   }
+}
+
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal, message: string): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error(message))
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      signal.addEventListener("abort", () => reject(new Error(message)), { once: true }),
+    ),
+  ])
 }
 
 /** Cryptographically-random per-run server password. */

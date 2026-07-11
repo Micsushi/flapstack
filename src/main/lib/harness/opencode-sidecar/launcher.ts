@@ -5,9 +5,8 @@
  * base URL, and owns process teardown (kill the process group on cancel/end).
  * stdout/stderr are kept as a bounded ring buffer with provider keys redacted.
  *
- * Scaffolding stage: spawn + URL capture + teardown are real. The launcher is
- * not yet driven by a persisted run (see `session.ts`), so nothing here starts a
- * server during normal app use until the orchestrator is enabled.
+ * Spawn + URL capture + teardown are driven by persisted OpenRouter and
+ * NanoGPT runs. Runtime can be disabled explicitly for diagnosis.
  */
 
 import { type ChildProcess, spawn } from "node:child_process"
@@ -41,6 +40,19 @@ function redact(line: string, secrets: string[]): string {
     if (secret && secret.length >= 6) out = out.split(secret).join("***")
   }
   return out
+}
+
+const SIDE_CAR_ENV_SECRET = /(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)/i
+
+/** Keep unrelated app/provider credentials out of the model-controlled sidecar. */
+export function sanitizeSidecarParentEnvironment(
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      ([name]) => name === "SSH_AUTH_SOCK" || !SIDE_CAR_ENV_SECRET.test(name),
+    ),
+  )
 }
 
 /**
@@ -87,7 +99,12 @@ export async function startSidecar(params: {
   }
 
   const password = generateServerPassword()
-  const secrets = Object.values(configEnv)
+  const secrets = [
+    ...Object.entries(configEnv).flatMap(([name, value]) =>
+      SIDE_CAR_ENV_SECRET.test(name) ? [value] : [],
+    ),
+    password,
+  ]
   const logLines: string[] = []
   const pushLog = (chunk: Buffer) => {
     for (const line of chunk.toString("utf8").split("\n")) {
@@ -100,7 +117,7 @@ export async function startSidecar(params: {
   const child = spawn(resolution.command, [...resolution.args, ...serveArgs()], {
     cwd: params.cwd,
     env: {
-      ...process.env,
+      ...sanitizeSidecarParentEnvironment(process.env),
       ...configEnv,
       OPENCODE_SERVER_PASSWORD: password,
       // Do not let a project checkout override this run's provider or rules.

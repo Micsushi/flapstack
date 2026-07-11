@@ -1,14 +1,16 @@
 // Stage 2 Track B — E6 usage handoff for OpenCode-backed provider runs.
 //
-// Track E calls this after a completed OpenRouter or NanoGPT run. This module
-// deliberately uses a structural input contract so Track B does not import the
-// sidecar branch before it lands. It records exact/provider-reported cost when
-// supplied, otherwise an estimate only when live model pricing is known.
+// Track E calls this after a completed OpenRouter or NanoGPT run. It records
+// provider-reported or sidecar-estimated cost when supplied, otherwise it loads
+// persisted model pricing and derives an explicitly labeled estimate.
 
 import { insertSamples, type UsageDb } from "./store"
+import { runAlerts } from "./alert-runner"
+import { hydrateCachedProviderPricing } from "../harness/opencode-sidecar/models"
 import { buildEstimatedNanoGptSample } from "./providers/nanogpt"
 import { buildEstimatedOpenRouterSample } from "./providers/openrouter"
-import type { CostQuality, UsageProviderId, UsageSampleInput } from "./types"
+import type { UsageSettings } from "./settings"
+import type { CostQuality, UsageProvider, UsageProviderId, UsageSampleInput } from "./types"
 
 export type OpenCodeUsageCapture = {
   providerId: Extract<UsageProviderId, "openrouter" | "nanogpt">
@@ -25,15 +27,28 @@ export type OpenCodeUsageCapture = {
   rawPayload?: unknown
 }
 
-/** Persist one completed OpenCode-backed run. Returns zero when neither exact
- * cost nor a defensible estimate is available; absence is better than $0. */
+export type OpenCodeUsageCaptureOptions = {
+  alerts?: {
+    settings: UsageSettings
+    getSecret: (key: string) => Promise<string | null>
+    provider: UsageProvider
+  }
+}
+
+/** Persist one completed OpenCode-backed run. Token usage remains useful when
+ * cost is unknown, so missing pricing never causes the whole sample to vanish. */
 export async function captureOpenCodeRunUsage(
   db: UsageDb,
   usage: OpenCodeUsageCapture,
+  options: OpenCodeUsageCaptureOptions = {},
 ): Promise<number> {
   const reportedCost = typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd)
   const quality = usage.costQuality ?? (reportedCost ? "provider-reported" : "unknown")
-  let sample: UsageSampleInput | null
+  const dedupeKey =
+    usage.providerId === "openrouter" && usage.generationId
+      ? `openrouter|gen|${usage.generationId}`
+      : `${usage.providerId}|run|${usage.runId}`
+  let sample: UsageSampleInput | null = null
 
   if (reportedCost && quality !== "unknown") {
     sample = {
@@ -50,12 +65,15 @@ export async function captureOpenCodeRunUsage(
       ...(quality === "estimated"
         ? { costUsdEstimated: usage.costUsd }
         : { costUsd: usage.costUsd }),
-      dedupeKey:
-        usage.providerId === "openrouter" && usage.generationId
-          ? `openrouter|gen|${usage.generationId}`
-          : `${usage.providerId}|run|${usage.runId}`,
+      dedupeKey,
     }
-  } else if (usage.providerId === "openrouter") {
+  } else {
+    // A completed run can arrive before the renderer lists models. Hydrate the
+    // persisted catalog here so estimates do not depend on an unrelated UI query.
+    hydrateCachedProviderPricing(usage.providerId)
+  }
+
+  if (!sample && usage.providerId === "openrouter") {
     sample = buildEstimatedOpenRouterSample({
       model: usage.model,
       generationId: usage.generationId,
@@ -64,7 +82,7 @@ export async function captureOpenCodeRunUsage(
       reasoningTokens: usage.reasoningTokens,
       source: "flapstack-run",
     })
-  } else {
+  } else if (!sample) {
     sample = buildEstimatedNanoGptSample({
       model: usage.model,
       inputTokens: usage.inputTokens,
@@ -74,14 +92,37 @@ export async function captureOpenCodeRunUsage(
     })
   }
 
-  if (!sample) return 0
-  return insertSamples(db, [
-    {
-      ...sample,
-      runId: usage.runId,
-      model: usage.model,
-      sourceTag: "opencode-sidecar",
-      rawPayload: usage.rawPayload,
-    },
-  ])
+  sample ??= {
+    providerId: usage.providerId,
+    source: "flapstack-run",
+    costQuality: "unknown",
+    runId: usage.runId,
+    model: usage.model,
+    generationId: usage.generationId ?? null,
+    inputTokens: usage.inputTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    reasoningTokens: usage.reasoningTokens ?? null,
+    totalTokens: usage.totalTokens ?? null,
+    dedupeKey,
+  }
+  const finalSample: UsageSampleInput = {
+    ...sample,
+    runId: usage.runId,
+    model: usage.model,
+    totalTokens: sample.totalTokens ?? usage.totalTokens ?? null,
+    sourceTag: "opencode-sidecar",
+    rawPayload: usage.rawPayload,
+    dedupeKey: sample.dedupeKey ?? dedupeKey,
+  }
+  const inserted = await insertSamples(db, [finalSample])
+  if (options.alerts) {
+    await runAlerts({
+      db,
+      settings: options.alerts.settings,
+      getSecret: options.alerts.getSecret,
+      provider: options.alerts.provider,
+      samples: [finalSample],
+    })
+  }
+  return inserted
 }

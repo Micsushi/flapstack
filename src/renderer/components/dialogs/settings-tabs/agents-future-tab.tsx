@@ -28,14 +28,14 @@ export function AgentsFutureTab() {
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h4 className="text-sm font-medium text-foreground">Voice scaffold</h4>
+              <h4 className="text-sm font-medium text-foreground">Stage 2 voice</h4>
               <p className="text-xs text-muted-foreground">
                 {speechAdapters
                   ? `${speechAdapters.stt.length} STT adapters, ${speechAdapters.tts.length} TTS adapters`
                   : "Loading adapter registry"}
               </p>
             </div>
-            <StatusBadge status="scaffolded" />
+            <StatusBadge status="experimental" />
           </div>
         </div>
 

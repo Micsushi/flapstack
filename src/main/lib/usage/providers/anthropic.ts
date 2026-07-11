@@ -1,4 +1,5 @@
 import { getProviderJson, iso, startOfUtcDay } from "./http"
+import { credentialAccountTag } from "../provider-identity"
 import type {
   ProviderStatus,
   UsageProvider,
@@ -20,9 +21,11 @@ export function createAnthropicProvider(): UsageProvider {
       return (await ctx.getSecret(ADMIN_KEY)) != null
     },
     async getStatus(ctx): Promise<ProviderStatus> {
-      const configured = (await ctx.getSecret(ADMIN_KEY)) != null
+      const apiKey = await ctx.getSecret(ADMIN_KEY)
+      const configured = apiKey != null
       return {
         providerId: "anthropic",
+        accountTag: apiKey ? credentialAccountTag("anthropic", apiKey) : undefined,
         status: configured ? "ok" : "not-configured",
         detail: configured
           ? "Anthropic organization usage and cost reports are collected with the configured Admin API key."
@@ -44,37 +47,56 @@ export function createAnthropicProvider(): UsageProvider {
 }
 
 async function collectReports(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
-  const [costs, usage] = await Promise.all([collectCosts(ctx, start), collectUsage(ctx, start)])
-  return [...costs, ...usage]
+  const results = await Promise.allSettled([collectCosts(ctx, start), collectUsage(ctx, start)])
+  const samples = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  )
+  for (const failure of failures) {
+    ctx.log("warn", "Anthropic usage endpoint failed; preserving data from other endpoints", {
+      message: String((failure.reason as Error)?.message ?? failure.reason),
+    })
+  }
+  if (samples.length === 0 && failures.length === results.length) throw failures[0]!.reason
+  return samples
 }
 
 async function collectCosts(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
+  const apiKey = await ctx.getSecret(ADMIN_KEY)
+  if (!apiKey) return []
+  const accountTag = credentialAccountTag("anthropic", apiKey)
   const buckets = await fetchAnthropicPages<AnthropicCostBucket>(ctx, COSTS_URL, start)
   return buckets.flatMap((bucket) => {
     if (!bucket.results?.length) return []
-    // Anthropic reports fractional cents. Convert cents to USD before storage.
-    const cost = bucket.results.reduce(
-      (total, result) => total + centsToUsd(result.amount ?? result.cost_usd),
-      0,
-    )
+    // Anthropic's documented `amount` field is a decimal string in cents.
+    const amounts = bucket.results.flatMap((result) => {
+      const amount = centsToUsd(result.amount)
+      return amount == null ? [] : [amount]
+    })
+    if (amounts.length === 0) return []
+    const cost = amounts.reduce((total, amount) => total + amount, 0)
     return [
       {
         providerId: "anthropic" as const,
         source: ctx.source,
         sourceTag: "organization-cost",
+        accountTag,
         costQuality: "provider-reported" as const,
         capturedAt: ctx.now,
         windowStart: dateOrNull(bucket.starting_at),
         windowEnd: dateOrNull(bucket.ending_at),
         costUsd: cost,
         rawPayload: bucket,
-        dedupeKey: `anthropic|cost|${bucket.starting_at ?? start.toISOString().slice(0, 10)}`,
+        dedupeKey: `anthropic|${accountTag}|cost|${bucket.starting_at ?? start.toISOString().slice(0, 10)}`,
       },
     ]
   })
 }
 
 async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<UsageSampleInput[]> {
+  const apiKey = await ctx.getSecret(ADMIN_KEY)
+  if (!apiKey) return []
+  const accountTag = credentialAccountTag("anthropic", apiKey)
   const buckets = await fetchAnthropicPages<AnthropicUsageBucket>(ctx, USAGE_URL, start)
   return buckets.flatMap((bucket) => {
     if (!bucket.results?.length) return []
@@ -97,6 +119,7 @@ async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<Usa
         providerId: "anthropic" as const,
         source: ctx.source,
         sourceTag: "organization-usage",
+        accountTag,
         costQuality: "unknown" as const,
         capturedAt: ctx.now,
         windowStart: dateOrNull(bucket.starting_at),
@@ -105,7 +128,7 @@ async function collectUsage(ctx: UsageProviderContext, start: Date): Promise<Usa
         outputTokens,
         totalTokens: inputTokens + outputTokens,
         rawPayload: bucket,
-        dedupeKey: `anthropic|usage|${bucket.starting_at ?? start.toISOString().slice(0, 10)}`,
+        dedupeKey: `anthropic|${accountTag}|usage|${bucket.starting_at ?? start.toISOString().slice(0, 10)}`,
       },
     ]
   })
@@ -148,7 +171,7 @@ interface AnthropicPage<T> {
 interface AnthropicCostBucket {
   starting_at?: string
   ending_at?: string
-  results?: Array<{ amount?: number | string | null; cost_usd?: number | string | null }>
+  results?: Array<{ amount?: number | string | null }>
 }
 interface AnthropicUsageBucket {
   starting_at?: string
@@ -163,8 +186,9 @@ interface AnthropicUsageBucket {
     output_tokens?: number
   }>
 }
-function centsToUsd(value: unknown): number {
-  return numberOrZero(value) / 100
+function centsToUsd(value: unknown): number | null {
+  const cents = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
+  return Number.isFinite(cents) ? cents / 100 : null
 }
 function numberOrZero(value: unknown): number {
   const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN

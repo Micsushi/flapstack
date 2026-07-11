@@ -10,7 +10,9 @@ const TABLE_ROW = /^\s*\|.*\|\s*$/
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/
 const STACK_TRACE = /^\s*at\s+\S.*\([^)]+:\d+:\d+\)\s*$/
 const LOG_LINE = /^\s*(?:\[[^\]]+\]\s*)?(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\b/i
-const DIFF_LINE = /^\s*(?:diff --git|index [a-f0-9]|@@\s|[-+]{3}\s|[-+](?![-+]))/
+const DIFF_START = /^\s*diff --git\s/
+const DIFF_HEADER = /^\s*(?:index [a-f0-9]|@@\s|[-+]{3}\s)/
+const DIFF_BODY_LINE = /^[ +\-]/
 
 export type SpeakableResult = {
   shouldSpeak: boolean
@@ -28,7 +30,7 @@ export function filterSpeakableText(input: string): SpeakableResult {
       maxSentences: 0,
     })
     if (text) return { shouldSpeak: true, text, reason: "spoken_section", source: "spoken" }
-    return skipResult()
+    return skipResult("spoken")
   }
 
   const text = styleSpokenText(normalizeSpeakableText(removeUnsafeBlocks(input)))
@@ -75,16 +77,24 @@ export function styleSpokenText(input: string, options: { maxSentences?: number 
   })
 }
 
-function skipResult(): SpeakableResult {
-  return { shouldSpeak: false, text: "", reason: "no_speakable_text", source: "filtered" }
+function skipResult(source: SpeakableResult["source"] = "filtered"): SpeakableResult {
+  return { shouldSpeak: false, text: "", reason: "no_speakable_text", source }
 }
 
 function removeUnsafeBlocks(input: string) {
   const lines = input.replace(FENCED_BLOCK, "\n").split(/\r?\n/)
   const output: string[] = []
+  let inDiff = false
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!
+    if (DIFF_START.test(line) || DIFF_HEADER.test(line)) {
+      inDiff = true
+      continue
+    }
+    if (inDiff && DIFF_BODY_LINE.test(line)) continue
+    if (line.trim() === "") inDiff = false
+    else if (inDiff) inDiff = false
     if (isJsonBlockStart(line)) {
       index = skipJsonBlock(lines, index)
       continue
@@ -116,7 +126,6 @@ function shouldSkipLine(line: string) {
     SEPARATOR_LINE.test(line) ||
     TABLE_SEPARATOR.test(line) ||
     TABLE_ROW.test(line) ||
-    DIFF_LINE.test(line) ||
     LOG_LINE.test(line) ||
     STACK_TRACE.test(line) ||
     looksLikeJsonLine(line)

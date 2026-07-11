@@ -18,6 +18,23 @@ export function sanitizeForTitle(command: string): string {
   // Remove other control characters
   cleaned = cleaned.replace(/[\x00-\x1f\x7f]/g, "")
 
+  // Terminal titles are persisted. Remove credential-bearing forms before
+  // truncation so a useful-looking prefix cannot durably retain a secret.
+  cleaned = cleaned
+    .replace(
+      /(\b[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /(--(?:api[-_]?key|token|secret|password|credential)(?:\s+|=))(?:"[^"]*"|'[^']*'|[^\s]+)/gi,
+      "$1[redacted]",
+    )
+    .replace(/(authorization:\s*(?:bearer|basic)\s+)[^\s'"]+/gi, "$1[redacted]")
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
+      "[redacted]",
+    )
+
   // Trim and limit length
   cleaned = cleaned.trim()
 

@@ -68,11 +68,7 @@ export function detectCursorCredentials(): CursorCredentialsResult {
   const statePath = candidates.find((path) => existsSync(path)) ?? null
   const sqliteCredentials = statePath ? readSqliteCredentials(statePath) : null
   const keychainCredentials = platform() === "darwin" ? readMacKeychainCredentials() : null
-  const selected = sqliteCredentials?.token
-    ? { ...sqliteCredentials, source: "sqlite" as const }
-    : keychainCredentials?.token
-      ? { ...keychainCredentials, source: "keychain" as const }
-      : null
+  const selected = selectNewestCredentials(sqliteCredentials, keychainCredentials)
   if (selected) {
     return {
       token: selected.token,
@@ -90,23 +86,67 @@ export function detectCursorCredentials(): CursorCredentialsResult {
 /** Persist a refreshed rotating credential to every available Cursor store. */
 export function persistCursorCredentials(accessToken: string, refreshToken: string | null): void {
   const statePath = cursorStateDbCandidates().find((path) => existsSync(path))
-  if (statePath) {
-    const Database = loadDatabase()
-    if (Database) {
-      const db = new Database(statePath)
-      try {
-        const statement = db.prepare("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)")
-        statement.run("cursorAuth/accessToken", accessToken)
-        if (refreshToken) statement.run("cursorAuth/refreshToken", refreshToken)
-      } finally {
-        db.close()
-      }
-    }
+  const Database = statePath ? loadDatabase() : null
+  persistCursorCredentialsWithStores(accessToken, refreshToken, {
+    ...(statePath && Database
+      ? {
+          sqlite: () => {
+            const db = new Database(statePath)
+            try {
+              writeCursorCredentialsToDatabase(db, accessToken, refreshToken)
+            } finally {
+              db.close()
+            }
+          },
+        }
+      : {}),
+    ...(platform() === "darwin"
+      ? {
+          keychain: () =>
+            writeMacKeychainSecret(
+              "flapstack-cursor-credentials",
+              JSON.stringify({ accessToken, refreshToken }),
+            ),
+        }
+      : {}),
+  })
+}
+
+export function persistCursorCredentialsWithStores(
+  _accessToken: string,
+  _refreshToken: string | null,
+  stores: { sqlite?: () => void; keychain?: () => boolean },
+): void {
+  let sqliteStored = false
+  let sqliteError: unknown
+  try {
+    stores.sqlite?.()
+    sqliteStored = Boolean(stores.sqlite)
+  } catch (error) {
+    sqliteError = error
   }
-  if (platform() === "darwin") {
-    writeMacKeychainSecret("cursor-access-token", accessToken)
-    if (refreshToken) writeMacKeychainSecret("cursor-refresh-token", refreshToken)
+  const keychainStored = stores.keychain?.() ?? false
+  if (!sqliteStored && !keychainStored) {
+    throw new Error(
+      `Unable to persist rotated Cursor credentials${sqliteError ? `: ${String((sqliteError as Error).message ?? sqliteError)}` : ""}`,
+    )
   }
+}
+
+export function writeCursorCredentialsToDatabase(
+  db: {
+    prepare(sql: string): { run(key: string, value: string): unknown }
+    transaction(fn: () => void): () => void
+  },
+  accessToken: string,
+  refreshToken: string | null,
+): void {
+  const writePair = db.transaction(() => {
+    const statement = db.prepare("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)")
+    statement.run("cursorAuth/accessToken", accessToken)
+    if (refreshToken) statement.run("cursorAuth/refreshToken", refreshToken)
+  })
+  writePair()
 }
 
 function readSqliteCredentials(
@@ -137,7 +177,23 @@ function readSqliteCredentials(
 function readMacKeychainCredentials(): {
   token: string | null
   refreshToken: string | null
+  flapstackManaged?: boolean
 } | null {
+  const combined = readMacKeychainSecret("flapstack-cursor-credentials")
+  if (combined) {
+    try {
+      const parsed = JSON.parse(combined) as { accessToken?: string; refreshToken?: string | null }
+      if (parsed.accessToken) {
+        return {
+          token: parsed.accessToken,
+          refreshToken: parsed.refreshToken ?? null,
+          flapstackManaged: true,
+        }
+      }
+    } catch {
+      // Fall through to Cursor's legacy separate entries.
+    }
+  }
   const token = readMacKeychainSecret("cursor-access-token")
   const refreshToken = readMacKeychainSecret("cursor-refresh-token")
   return token || refreshToken ? { token, refreshToken } : null
@@ -152,11 +208,32 @@ function readMacKeychainSecret(service: string): string | null {
   return result.status === 0 ? result.stdout.trim() || null : null
 }
 
-function writeMacKeychainSecret(service: string, value: string): void {
-  spawnSync(
+function writeMacKeychainSecret(service: string, value: string): boolean {
+  const result = spawnSync(
     "/usr/bin/security",
-    ["add-generic-password", "-s", service, "-a", userInfo().username, "-w", value, "-U"],
-    { encoding: "utf8" },
+    ["add-generic-password", "-s", service, "-a", userInfo().username, "-U", "-w"],
+    { encoding: "utf8", input: `${value}\n` },
+  )
+  return result.status === 0
+}
+
+export function selectNewestCredentials(
+  sqlite: { token: string | null; refreshToken: string | null } | null,
+  keychain: {
+    token: string | null
+    refreshToken: string | null
+    flapstackManaged?: boolean
+  } | null,
+): { token: string | null; refreshToken: string | null; source: CursorTokenSource } | null {
+  const candidates = [
+    sqlite?.token ? { ...sqlite, source: "sqlite" as const } : null,
+    keychain?.token ? { ...keychain, source: "keychain" as const } : null,
+  ].filter((value): value is NonNullable<typeof value> => value != null)
+  return (
+    candidates.sort(
+      (left, right) =>
+        (jwtExpiry(right.token!)?.getTime() ?? 0) - (jwtExpiry(left.token!)?.getTime() ?? 0),
+    )[0] ?? null
   )
 }
 

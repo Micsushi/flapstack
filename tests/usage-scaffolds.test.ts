@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { getUsageProviders, getUsageProvider } from "../src/main/lib/usage/registry"
 import { USAGE_PROVIDER_IDS } from "../src/main/lib/usage/types"
 import {
@@ -11,9 +13,15 @@ import { estimateCostUsd, upsertModelPricing } from "../src/main/lib/usage/prici
 import { evaluateSample, type AlertArmState } from "../src/main/lib/usage/alerts"
 import { sendDiscordAlert } from "../src/main/lib/usage/discord"
 import { normalizeUsageSettings, resolveCadenceSeconds } from "../src/main/lib/usage/settings"
-import { buildLaunchAgentPlist } from "../src/main/lib/usage-daemon/platform"
-import { pollInternalSource } from "../src/main/lib/usage/providers/cursor/source-internal"
-import { captureOpenCodeRunUsage } from "../src/main/lib/usage/run-usage"
+import { buildLaunchAgentPlist, uninstallLaunchAgent } from "../src/main/lib/usage-daemon/platform"
+import {
+  parseCursorTimestamp,
+  pollInternalSource,
+} from "../src/main/lib/usage/providers/cursor/source-internal"
+import { selectNewestCredentials } from "../src/main/lib/usage/providers/cursor/token"
+import { getProviderJson } from "../src/main/lib/usage/providers/http"
+import { credentialAccountTag } from "../src/main/lib/usage/provider-identity"
+import { elapsedWindowHours } from "../src/main/lib/usage/alert-runner"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -80,6 +88,52 @@ describe("usage Track B scaffolds", () => {
     expect(samples.find((sample) => sample.sourceTag === "organization-usage")?.totalTokens).toBe(
       15,
     )
+    expect(new Set(samples.map((sample) => sample.accountTag))).toEqual(
+      new Set([credentialAccountTag("openai", "sk-admin-test")]),
+    )
+  })
+
+  it("keeps valid OpenAI usage when the cost endpoint fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(
+          url.includes("/costs")
+            ? new Response("unavailable", { status: 503 })
+            : new Response(
+                JSON.stringify({
+                  data: [
+                    {
+                      start_time: 1_783_000_000,
+                      end_time: 1_783_086_400,
+                      results: [{ input_tokens: 10, output_tokens: 5 }],
+                    },
+                  ],
+                }),
+              ),
+        ),
+      ),
+    )
+    const log = vi.fn()
+    const samples = await getUsageProvider("codex")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "app-poll",
+      getSecret: async () => "key-a",
+      log,
+    })
+    expect(samples).toMatchObject([{ sourceTag: "organization-usage", totalTokens: 15 }])
+    expect(log).toHaveBeenCalledWith(
+      "warn",
+      "OpenAI usage endpoint failed; preserving data from other endpoints",
+      expect.any(Object),
+    )
+  })
+
+  it("partitions organization history when an admin credential changes", () => {
+    expect(credentialAccountTag("openai", "key-a")).not.toBe(
+      credentialAccountTag("openai", "key-b"),
+    )
+    expect(credentialAccountTag("anthropic", "key-a")).not.toContain("key-a")
   })
 
   it("uses Anthropic x-api-key auth, pagination, cents, and token usage", async () => {
@@ -95,7 +149,7 @@ describe("usage Track B scaffolds", () => {
                   {
                     starting_at: "2026-07-10T00:00:00Z",
                     ending_at: "2026-07-11T00:00:00Z",
-                    results: [{ amount: "123.45" }],
+                    results: [{ amount: "123.45", cost_usd: "999" }],
                   },
                 ],
             has_more: !secondPage,
@@ -144,11 +198,22 @@ describe("usage Track B scaffolds", () => {
   it("normalizes OpenRouter key credit usage", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            data: { label: "Flapstack", limit: 10, limit_remaining: 7.5, usage_monthly: 2.5 },
-          }),
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("/models")
+                ? { data: [] }
+                : {
+                    data: {
+                      label: "Flapstack",
+                      limit: 10,
+                      limit_remaining: 7.5,
+                      usage_monthly: 2.5,
+                    },
+                  },
+            ),
+          ),
         ),
       ),
     )
@@ -158,8 +223,181 @@ describe("usage Track B scaffolds", () => {
       getSecret: async () => "sk-or-test",
       log: () => {},
     })
-    expect(samples[0]?.costUsd).toBe(2.5)
-    expect(samples[0]?.percentUsed).toBe(25)
+    expect(samples[0]).toMatchObject({
+      costUsd: 2.5,
+      percentUsed: 25,
+      quotaUsed: 2_500_000,
+      quotaLimit: 10_000_000,
+      quotaUnit: "usd-micros",
+    })
+  })
+
+  it("reconciles only stored OpenRouter generation ids with explicit cost provenance", async () => {
+    const pending = vi.fn().mockResolvedValue(["gen-exact", "gen-reported"])
+    const mark = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        const parsed = new URL(url)
+        if (parsed.pathname.endsWith("/key")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: { label: "Flapstack", usage: 2 } })),
+          )
+        }
+        const id = parsed.searchParams.get("id")
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              id === "gen-exact"
+                ? {
+                    data: {
+                      id,
+                      model: "openai/gpt-test",
+                      total_cost: 0.0123,
+                      usage: 0.02,
+                      native_tokens_prompt: 100,
+                      native_tokens_completion: 40,
+                      native_tokens_reasoning: 10,
+                    },
+                  }
+                : {
+                    data: {
+                      id,
+                      model: "anthropic/claude-test",
+                      usage: "0.0045",
+                      tokens_prompt: 20,
+                      tokens_completion: 5,
+                    },
+                  },
+            ),
+          ),
+        )
+      }),
+    )
+
+    const samples = await getUsageProvider("openrouter")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "daemon-poll",
+      getSecret: async () => "sk-or-test",
+      getPendingGenerationIds: pending,
+      markGenerationReconciliation: mark,
+      log: () => {},
+    })
+
+    expect(pending).toHaveBeenCalledWith("openrouter", 100)
+    expect(samples.find((sample) => sample.generationId === "gen-exact")).toMatchObject({
+      sourceTag: "generation-total-cost",
+      costQuality: "exact",
+      costUsd: 0.0123,
+      inputTokens: 100,
+      outputTokens: 40,
+      reasoningTokens: 10,
+      totalTokens: 140,
+      dedupeKey: "openrouter|gen|gen-exact",
+    })
+    expect(samples.find((sample) => sample.generationId === "gen-reported")).toMatchObject({
+      sourceTag: "generation-usage-cost",
+      costQuality: "provider-reported",
+      costUsd: 0.0045,
+      inputTokens: 20,
+      outputTokens: 5,
+      totalTokens: 25,
+      dedupeKey: "openrouter|gen|gen-reported",
+    })
+    expect(mark).not.toHaveBeenCalledWith("openrouter", expect.any(String), "resolved")
+  })
+
+  it("keeps unavailable OpenRouter generation ids as gaps instead of zero history", async () => {
+    const log = vi.fn()
+    const mark = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation((url: string) =>
+          Promise.resolve(
+            new Response(
+              url.includes("/generation")
+                ? JSON.stringify({ error: "not found" })
+                : JSON.stringify({ data: { label: "Flapstack", usage: 2 } }),
+              { status: url.includes("/generation") ? 404 : 200 },
+            ),
+          ),
+        ),
+    )
+
+    const samples = await getUsageProvider("openrouter")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "startup-reconcile",
+      getSecret: async () => "sk-or-test",
+      getPendingGenerationIds: async () => ["gen-missing"],
+      markGenerationReconciliation: mark,
+      log,
+    })
+
+    expect(samples).toHaveLength(1)
+    expect(samples[0]?.sourceTag).toBe("key-limits")
+    expect(log).toHaveBeenCalledWith(
+      "warn",
+      "OpenRouter generation is unavailable for reconciliation",
+      { generationId: "gen-missing" },
+    )
+    expect(mark).toHaveBeenCalledWith(
+      "openrouter",
+      "gen-missing",
+      "unavailable",
+      "OpenRouter returned HTTP 404",
+    )
+  })
+
+  it("times out provider HTTP requests with a sanitized source error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            )
+          }),
+      ),
+    )
+    await expect(
+      getProviderJson({
+        providerId: "openrouter",
+        url: "https://openrouter.ai/api/v1/key",
+        apiKey: "secret-value",
+        timeoutMs: 5,
+      }),
+    ).rejects.toMatchObject({
+      status: "source-unavailable",
+      message: "Provider usage request timed out after 5ms",
+    })
+  })
+
+  it("times out when headers arrive but the provider body stalls", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => new Promise(() => {}),
+        body: { cancel },
+      }),
+    )
+    await expect(
+      getProviderJson({
+        providerId: "openrouter",
+        url: "https://openrouter.ai/api/v1/key",
+        apiKey: "secret-value",
+        timeoutMs: 5,
+      }),
+    ).rejects.toMatchObject({
+      status: "source-unavailable",
+      message: "Provider usage response body timed out after 5ms",
+    })
+    expect(cancel).toHaveBeenCalled()
   })
 
   it("collapses daemon-poll and app-poll for the same window to one dedupe key", () => {
@@ -243,7 +481,16 @@ describe("usage Track B scaffolds", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            data: [{ id: "nano-test", pricing: { prompt: 1, completion: 2 } }],
+            data: [
+              {
+                id: "nano-test",
+                pricing: { prompt: 1, completion: 2, unit: "per_million_tokens" },
+              },
+              {
+                id: "nano-wrong-unit",
+                pricing: { prompt: 0.000001, completion: 0.000002, unit: "per_token" },
+              },
+            ],
           }),
         ),
       ),
@@ -260,6 +507,12 @@ describe("usage Track B scaffolds", () => {
         outputTokens: 1_000_000,
       }),
     ).toBe(3)
+    expect(
+      estimateCostUsd("nanogpt", "nano-wrong-unit", {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+      }),
+    ).toBeNull()
   })
 
   it("fires a quota alert once, then re-arms only after a reset below band", () => {
@@ -435,22 +688,62 @@ describe("usage Track B scaffolds", () => {
       configDir: "/app/data",
       cadenceSeconds: 300,
     })
-    expect(plist).toContain("FLAPSTACK_RUN_DAEMON")
     expect(plist).toContain("ELECTRON_RUN_AS_NODE")
     expect(plist).toContain("/path/with &amp; chars/node")
     expect(plist).toContain("<key>KeepAlive</key><false/>")
   })
 
-  it("keeps OpenCode run-usage capture out of the DB when pricing is unknown", async () => {
-    const db = {} as Parameters<typeof captureOpenCodeRunUsage>[0]
-    await expect(
-      captureOpenCodeRunUsage(db, {
-        providerId: "openrouter",
-        runId: "run-unknown-price",
-        model: "unknown-model",
-        inputTokens: 100,
-      }),
-    ).resolves.toBe(0)
+  it("does not remove a daemon plist while launchctl still reports the job loaded", () => {
+    const remove = vi.fn()
+    const run = vi.fn((args: string[]) => {
+      if (args[0] === "bootout") throw new Error("bootout failed")
+      return undefined
+    })
+    expect(() =>
+      uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove }),
+    ).toThrow(/still loaded/)
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it("removes a stale daemon plist only after launchctl confirms no job is loaded", () => {
+    const remove = vi.fn()
+    const run = vi.fn(() => {
+      throw new Error("not loaded")
+    })
+    uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove })
+    expect(remove).toHaveBeenCalledWith("/tmp/test.plist")
+  })
+
+  it("uses elapsed time for in-progress spend windows", () => {
+    expect(
+      elapsedWindowHours(
+        new Date("2026-07-10T00:00:00Z"),
+        new Date("2026-07-11T00:00:00Z"),
+        new Date("2026-07-10T06:00:00Z"),
+      ),
+    ).toBe(6)
+  })
+
+  it("normalizes Cursor epoch seconds and prefers the newer Cursor login", () => {
+    expect(parseCursorTimestamp("1752000000")?.getTime()).toBe(1_752_000_000_000)
+    const jwt = (exp: number) =>
+      `x.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.signature`
+    expect(
+      selectNewestCredentials(
+        { token: jwt(2_000_000_000), refreshToken: "sqlite-refresh" },
+        { token: jwt(1_900_000_000), refreshToken: "managed-refresh", flapstackManaged: true },
+      ),
+    ).toMatchObject({ source: "sqlite", refreshToken: "sqlite-refresh" })
+  })
+
+  it("keeps the daemon library import side-effect free", () => {
+    const entry = readFileSync(resolve(process.cwd(), "src/main/usage-daemon.ts"), "utf8")
+    const library = readFileSync(
+      resolve(process.cwd(), "src/main/lib/usage-daemon/index.ts"),
+      "utf8",
+    )
+    expect(entry.match(/void runDaemon\(\)/g)).toHaveLength(1)
+    expect(library).not.toContain("FLAPSTACK_RUN_DAEMON")
   })
 
   it("normalizes Cursor source-1 quota responses without storing the token", async () => {

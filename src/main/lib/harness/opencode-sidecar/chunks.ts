@@ -29,12 +29,22 @@ export class SidecarChunkMapper {
       }
       case "reasoning-delta": {
         const id = `reasoning-${event.partId}`
-        this.openReasoningIds.add(id)
-        return [{ type: "reasoning-delta", id, delta: event.delta }]
+        const chunks: UIMessageChunk[] = []
+        if (!this.openReasoningIds.has(id)) {
+          this.openReasoningIds.add(id)
+          chunks.push({ type: "reasoning-start", id })
+        }
+        chunks.push({ type: "reasoning-delta", id, delta: event.delta })
+        return chunks
       }
       case "reasoning-summary": {
         const id = `reasoning-${event.partId}`
-        return [{ type: "reasoning", id, text: event.text }]
+        const chunks: UIMessageChunk[] = []
+        if (this.openReasoningIds.delete(id)) chunks.push({ type: "reasoning-end", id })
+        chunks.push({ type: "reasoning-start", id })
+        chunks.push({ type: "reasoning-delta", id, delta: event.text })
+        chunks.push({ type: "reasoning-end", id })
+        return chunks
       }
       case "tool-input-start":
         return [
@@ -70,13 +80,16 @@ export class SidecarChunkMapper {
     }
   }
 
-  /** Emit closing boundaries for any still-open text parts. */
+  /** Emit closing boundaries for any still-open text/reasoning parts. */
   finish(): UIMessageChunk[] {
     const chunks: UIMessageChunk[] = []
     for (const id of this.openTextIds) {
       chunks.push({ type: "text-end", id })
     }
     this.openTextIds.clear()
+    for (const id of this.openReasoningIds) {
+      chunks.push({ type: "reasoning-end", id })
+    }
     this.openReasoningIds.clear()
     return chunks
   }

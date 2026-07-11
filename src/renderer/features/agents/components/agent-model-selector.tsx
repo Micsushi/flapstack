@@ -48,7 +48,7 @@ type ClaudeModelOption = {
 type CodexModelOption = {
   id: string
   name: string
-  reasoningLevels: CodexReasoningLevel[]
+  reasoningLevels: readonly CodexReasoningLevel[]
   supportsFastMode?: boolean
 }
 
@@ -139,7 +139,7 @@ function CodexReasoningSubMenu({
   selectedReasoning,
   onSelectReasoning,
 }: {
-  reasoningLevels: CodexReasoningLevel[]
+  reasoningLevels: readonly CodexReasoningLevel[]
   selectedReasoning: CodexReasoningLevel
   onSelectReasoning: (reasoning: CodexReasoningLevel) => void
 }) {

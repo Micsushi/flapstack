@@ -1,10 +1,10 @@
 /**
- * API Providers settings tab (Track E — E7 renderer scaffold).
+ * API Providers settings tab (Track E — E7).
  *
  * OpenRouter + NanoGPT run through the OpenCode sidecar harness engine. This tab
  * manages provider API keys, shows connection + runtime status, and previews how
- * the sidecar resolves. It is intentionally scaffolding-level: it surfaces the
- * honest "runtime not yet enabled" state instead of implying live runs work.
+ * the sidecar resolves. Runs are available when the runtime and provider key are
+ * configured.
  */
 
 import { useEffect, useState } from "react"
@@ -177,7 +177,7 @@ export function AgentsApiProvidersTab() {
           }
         >
           <div className="font-medium">
-            Engine runtime: {runtime.runtimeEnabled ? "enabled" : "scaffolded (disabled)"}
+            Engine runtime: {runtime.runtimeEnabled ? "enabled" : "disabled"}
           </div>
           <div className="mt-1 text-muted-foreground">{runtime.note}</div>
           <div className="mt-1 text-muted-foreground">

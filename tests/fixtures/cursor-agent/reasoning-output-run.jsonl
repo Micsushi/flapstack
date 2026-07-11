@@ -1,4 +1,4 @@
-{"type":"system","subtype":"init","session_id":"c0ffee00-cafe-4bad-babe-cursor000001","model":"auto","cwd":"/Users/michaelshi/Documents/GitHub/flapstack"}
+{"type":"system","subtype":"init","session_id":"c0ffee00-cafe-4bad-babe-cursor000001","model":"auto","cwd":"/tmp/flapstack-test"}
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"Say hello and think briefly first."}]}}
 {"type":"thinking","subtype":"delta","text":"The user wants a short greeting. "}
 {"type":"thinking","subtype":"delta","text":"I'll keep it to one sentence."}

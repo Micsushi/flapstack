@@ -30,6 +30,8 @@ import {
   hasActiveCodexStreams,
   abortAllCodexStreams,
 } from "./lib/trpc/routers/codex"
+import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
+import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
 import {
   createMainWindow,
   createWindow,
@@ -45,6 +47,22 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 // Use different protocol in dev to avoid conflicts with production app
 const PROTOCOL = IS_DEV ? "flapstack-dev" : "flapstack"
 const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : "Flapstack"
+
+function hasActiveAgentSessions(): boolean {
+  return (
+    hasActiveClaudeSessions() ||
+    hasActiveCodexStreams() ||
+    hasActiveCursorStreams() ||
+    hasActiveOpencodeStreams()
+  )
+}
+
+function abortAllAgentSessions(): void {
+  abortAllClaudeSessions()
+  abortAllCodexStreams()
+  abortAllCursorStreams()
+  abortAllOpencodeStreams()
+}
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
 // This ensures dev and prod have separate instance locks
@@ -595,7 +613,7 @@ if (gotTheLock) {
               label: "Quit",
               accelerator: "CmdOrCtrl+Q",
               click: async () => {
-                if (hasActiveClaudeSessions() || hasActiveCodexStreams()) {
+                if (hasActiveAgentSessions()) {
                   const { dialog } = await import("electron")
                   const { response } = await dialog.showMessageBox({
                     type: "warning",
@@ -607,8 +625,7 @@ if (gotTheLock) {
                     detail: "Quitting now will interrupt them. Are you sure you want to quit?",
                   })
                   if (response === 1) {
-                    abortAllClaudeSessions()
-                    abortAllCodexStreams()
+                    abortAllAgentSessions()
                     setIsQuitting(true)
                     app.quit()
                   }
@@ -680,7 +697,7 @@ if (gotTheLock) {
               click: () => {
                 const win = BrowserWindow.getFocusedWindow()
                 if (!win) return
-                if (hasActiveClaudeSessions() || hasActiveCodexStreams()) {
+                if (hasActiveAgentSessions()) {
                   dialog
                     .showMessageBox(win, {
                       type: "warning",
@@ -694,8 +711,7 @@ if (gotTheLock) {
                     })
                     .then(({ response }) => {
                       if (response === 1) {
-                        abortAllClaudeSessions()
-                        abortAllCodexStreams()
+                        abortAllAgentSessions()
                         win.webContents.reloadIgnoringCache()
                       }
                     })
@@ -850,6 +866,7 @@ if (gotTheLock) {
   // Cleanup before quit
   app.on("before-quit", async () => {
     console.log("[App] Shutting down...")
+    abortAllAgentSessions()
     cancelAllPendingOAuth()
     await cleanupGitWatchers()
     await shutdownAnalytics()

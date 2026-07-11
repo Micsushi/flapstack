@@ -64,6 +64,7 @@ export interface UsageSampleInput {
   percentUsed?: number | null
   quotaUsed?: number | null
   quotaLimit?: number | null
+  quotaUnit?: "provider-native" | "usd-micros" | null
   resetAt?: Date | null
   model?: string | null
   generationId?: string | null
@@ -94,6 +95,15 @@ export interface UsageProviderContext {
   /** Reads a stored credential/setting value for the provider. Returns null when
    * unset. Credential storage lives outside this module. */
   getSecret(key: string): Promise<string | null>
+  /** Stored provider generation ids that still lack exact reconciled cost.
+   * Optional so provider adapters remain easy to test in isolation. */
+  getPendingGenerationIds?(providerId: UsageProviderId, limit?: number): Promise<string[]>
+  markGenerationReconciliation?(
+    providerId: UsageProviderId,
+    generationId: string,
+    state: "retry" | "unavailable" | "resolved",
+    detail?: string,
+  ): Promise<void>
   /** Structured logger; must never receive raw secrets. */
   log: (level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>) => void
 }

@@ -40,6 +40,7 @@ interface CreateBranchDialogProps {
   }>
   defaultBranch: string
   onBranchCreated: (branchName: string) => void
+  switchAfterCreate?: boolean
 }
 
 export function CreateBranchDialog({
@@ -49,6 +50,7 @@ export function CreateBranchDialog({
   branches,
   defaultBranch,
   onBranchCreated,
+  switchAfterCreate = false,
 }: CreateBranchDialogProps) {
   const [branchName, setBranchName] = useState("")
   const [baseBranch, setBaseBranch] = useState(defaultBranch)
@@ -81,7 +83,11 @@ export function CreateBranchDialog({
 
   const createBranchMutation = trpc.changes.createBranch.useMutation({
     onSuccess: (data) => {
-      toast.success(`Branch '${data.branchName}' created successfully`)
+      toast.success(
+        switchAfterCreate
+          ? `Branch '${data.branchName}' created and checked out`
+          : `Branch '${data.branchName}' created successfully`,
+      )
       // Invalidate branches query to refresh the list
       utils.changes.getBranches.invalidate({ worktreePath: projectPath })
       onBranchCreated(data.branchName)
@@ -114,6 +120,7 @@ export function CreateBranchDialog({
       projectPath,
       branchName: branchName.trim(),
       baseBranch,
+      switchAfterCreate,
     })
   }
 

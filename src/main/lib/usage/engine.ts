@@ -15,6 +15,8 @@ import { runAlerts } from "./alert-runner"
 import { getUsageSettings, resolveCadenceSeconds, type UsageSettings } from "./settings"
 import {
   getLatestSampleAt,
+  listPendingGenerationIds,
+  markGenerationReconciliation,
   getProviderLastPollAt,
   insertSamples,
   upsertProviderState,
@@ -66,6 +68,10 @@ export class UsageEngine {
       now: new Date(),
       source,
       getSecret: this.deps.getSecret,
+      getPendingGenerationIds: (providerId, limit) =>
+        listPendingGenerationIds(this.deps.db, providerId, limit),
+      markGenerationReconciliation: (providerId, generationId, state, detail) =>
+        markGenerationReconciliation(this.deps.db, providerId, generationId, state, detail),
       log: this.deps.log ?? noopLog,
     }
   }
@@ -104,8 +110,10 @@ export class UsageEngine {
   ): Promise<ProviderRunResult> {
     const source = this.sourceFor(intent)
     const ctx = this.makeContext(source)
+    let knownStatus: Awaited<ReturnType<UsageProvider["getStatus"]>> | null = null
     try {
       const status = await provider.getStatus(ctx)
+      knownStatus = status
       await upsertProviderState(this.deps.db, status)
       if (!status.configured) {
         return { providerId: provider.id, status: status.status, inserted: 0 }
@@ -115,6 +123,22 @@ export class UsageEngine {
           ? await provider.reconcileSince(ctx, await getLatestSampleAt(this.deps.db, provider.id))
           : await provider.pollLatest(ctx)
       const inserted = await insertSamples(this.deps.db, samples)
+      // Only exact generation costs are terminal. Mark them after the durable
+      // sample write; a crash before this point leaves the id safely retryable.
+      for (const sample of samples) {
+        if (
+          sample.providerId === "openrouter" &&
+          sample.generationId &&
+          sample.costQuality === "exact"
+        ) {
+          await markGenerationReconciliation(
+            this.deps.db,
+            sample.providerId,
+            sample.generationId,
+            "resolved",
+          )
+        }
+      }
       if (this.mode === "daemon") {
         await runAlerts({
           db: this.deps.db,
@@ -126,9 +150,13 @@ export class UsageEngine {
       }
       // A source that was previously unverified is healthy after a successful
       // poll, even when it legitimately returns no new samples.
-      if (status.status === "source-unavailable") {
-        await upsertProviderState(this.deps.db, { ...status, status: "ok", detail: undefined })
-      }
+      await upsertProviderState(
+        this.deps.db,
+        status.status === "source-unavailable"
+          ? { ...status, status: "ok", detail: undefined }
+          : status,
+        { kind: "success" },
+      )
       return {
         providerId: provider.id,
         status: status.status === "source-unavailable" ? "ok" : status.status,
@@ -139,14 +167,21 @@ export class UsageEngine {
       const isScaffold = err instanceof UsageNotImplementedError
       const providerError = err instanceof UsageProviderError ? err : null
       const message = String((err as Error)?.message ?? err)
-      await upsertProviderState(this.deps.db, {
-        providerId: provider.id,
-        status: providerError?.status ?? "source-unavailable",
-        detail: isScaffold ? "Provider not implemented yet" : message,
-        configured: true,
-        supportsDaemon: provider.supportsDaemon(),
-        supportsHistorical: provider.supportsHistorical(),
-      }).catch(() => {})
+      const configured =
+        knownStatus?.configured ?? (await provider.isConfigured(ctx).catch(() => false))
+      await upsertProviderState(
+        this.deps.db,
+        {
+          providerId: provider.id,
+          accountTag: knownStatus?.accountTag,
+          status: providerError?.status ?? "source-unavailable",
+          detail: isScaffold ? "Provider not implemented yet" : message,
+          configured,
+          supportsDaemon: provider.supportsDaemon(),
+          supportsHistorical: provider.supportsHistorical(),
+        },
+        { kind: "error", message },
+      ).catch(() => {})
       this.deps.log?.("warn", `usage provider ${provider.id} failed`, {
         scaffold: isScaffold,
         message,

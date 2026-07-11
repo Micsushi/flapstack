@@ -52,6 +52,14 @@ export async function resolveAvailableTtsAdapter(settings: Pick<VoiceSettings, "
   return preferred
 }
 
+export function resolveTtsVoiceId(
+  configuredAdapterId: string,
+  resolvedAdapterId: string,
+  requestedVoiceId: string | null | undefined,
+): string | null {
+  return configuredAdapterId === resolvedAdapterId ? (requestedVoiceId ?? null) : null
+}
+
 export function getNativeTtsAvailability() {
   const platform = os.platform()
   if (platform === "darwin" || platform === "win32" || platform === "linux") {

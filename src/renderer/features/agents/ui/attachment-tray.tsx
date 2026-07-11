@@ -1,14 +1,17 @@
 "use client"
 
-import { FileText, FolderInput, Plus, Upload } from "lucide-react"
+import { Eye, FileText, FolderInput, Plus, Upload } from "lucide-react"
+import { useSetAtom } from "jotai"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "../../../components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../components/ui/dialog"
 import { Input } from "../../../components/ui/input"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { fileViewerOpenAtomFamily } from "../atoms"
 
 type AttachmentTrayProps = {
   chatId: string
@@ -28,6 +31,9 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
   const utils = trpc.useUtils()
   const [targetPaths, setTargetPaths] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
+  const [textPreview, setTextPreview] = useState<{ name: string; content: string } | null>(null)
+  const fileViewerAtom = useMemo(() => fileViewerOpenAtomFamily(chatId), [chatId])
+  const setFileViewerPath = useSetAtom(fileViewerAtom)
   const { data: attachments = [] } = trpc.attachments.listByChat.useQuery(
     { chatId },
     { enabled: !!chatId },
@@ -57,6 +63,19 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
     () => (showAll ? attachments : attachments.slice(0, ATTACHMENT_PREVIEW_COUNT)),
     [attachments, showAll],
   )
+
+  const viewArtifact = (artifact: (typeof taskArtifacts)[number]) => {
+    const artifactPath = artifact.storedPath ?? artifact.sourcePath
+    if (artifactPath) {
+      setFileViewerPath(artifactPath)
+      return
+    }
+    if (artifact.contentText !== null) {
+      setTextPreview({ name: artifact.name, content: artifact.contentText })
+      return
+    }
+    toast.error("This artifact has no readable content")
+  }
 
   if (attachments.length === 0 && taskArtifacts.length === 0) return null
 
@@ -191,12 +210,36 @@ export function AttachmentTray({ chatId, taskId, worktreePath }: AttachmentTrayP
                   <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
                     {formatKind(artifact.kind)}
                   </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => viewArtifact(artifact)}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>View artifact</TooltipContent>
+                  </Tooltip>
                 </div>
               ))}
             </div>
           </div>
         )}
       </div>
+      <Dialog open={!!textPreview} onOpenChange={(open) => !open && setTextPreview(null)}>
+        <DialogContent className="max-h-[80vh] max-w-2xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{textPreview?.name ?? "Task artifact"}</DialogTitle>
+          </DialogHeader>
+          <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs">
+            {textPreview?.content}
+          </pre>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { eq, sql } from "drizzle-orm"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -229,6 +229,23 @@ function createTestSchema() {
     )`,
     "CREATE INDEX attachments_chat_id_idx ON attachments(chat_id)",
     "CREATE INDEX attachments_task_id_idx ON attachments(task_id)",
+    `CREATE TABLE voice_artifacts (
+      id text PRIMARY KEY NOT NULL,
+      chat_id text NOT NULL REFERENCES chats(id) ON DELETE cascade,
+      sub_chat_id text REFERENCES sub_chats(id) ON DELETE set null,
+      message_id text,
+      kind text NOT NULL,
+      text text NOT NULL,
+      adapter_id text NOT NULL,
+      synthesis_key text,
+      voice_id text,
+      rate_milli integer,
+      audio_path text,
+      mime_type text,
+      byte_length integer DEFAULT 0 NOT NULL,
+      created_at integer,
+      last_played_at integer
+    )`,
   ]
 
   for (const statement of statements) {
@@ -381,6 +398,87 @@ describe("Stage 1 E1 scope lifecycle", () => {
       projectId: project.id,
       taskId: null,
       worktreePath: project.path,
+    })
+
+    const movedAcrossProjects = await chatCaller.move({
+      id: projectChat.id,
+      scope: "project",
+      projectId: otherProject.id,
+    })
+    expect(movedAcrossProjects).toMatchObject({
+      scope: "project",
+      projectId: otherProject.id,
+      taskId: null,
+      worktreePath: otherProject.path,
+      branch: null,
+    })
+
+    await chatCaller.move({
+      id: projectChat.id,
+      scope: "project",
+      projectId: project.id,
+    })
+
+    const movedDefaultToGlobal = await chatCaller.move({
+      id: projectChat.id,
+      scope: "global",
+    })
+    expect(movedDefaultToGlobal).toMatchObject({
+      scope: "global",
+      projectId: null,
+      taskId: null,
+      worktreePath: null,
+      branch: null,
+    })
+
+    const customWorktreePath = join(homeDir, "explicit-custom-worktree")
+    const customChat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Custom checkout",
+      worktreePath: customWorktreePath,
+      branch: "custom/test",
+    })
+    const movedCustomToGlobal = await chatCaller.move({ id: customChat.id, scope: "global" })
+    expect(movedCustomToGlobal).toMatchObject({
+      scope: "global",
+      projectId: null,
+      taskId: null,
+      worktreePath: customWorktreePath,
+      branch: "custom/test",
+    })
+
+    const movedCustomToProject = await chatCaller.move({
+      id: customChat.id,
+      scope: "project",
+      projectId: otherProject.id,
+    })
+    expect(movedCustomToProject).toMatchObject({
+      scope: "project",
+      projectId: otherProject.id,
+      taskId: null,
+      worktreePath: customWorktreePath,
+      branch: "custom/test",
+    })
+
+    const generatedChat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Generated checkout",
+      worktreePath: join(homedir(), ".flapstack", "worktrees", "project", "generated-chat"),
+      branch: "flapstack/generated-chat",
+      baseBranch: "main",
+    })
+    const movedGenerated = await chatCaller.move({
+      id: generatedChat.id,
+      scope: "project",
+      projectId: otherProject.id,
+    })
+    expect(movedGenerated).toMatchObject({
+      projectId: otherProject.id,
+      worktreePath: otherProject.path,
+      branch: null,
+      baseBranch: null,
     })
   })
 
@@ -678,12 +776,26 @@ describe("Stage 1 E1 search archive and scope filters", () => {
       })
       .returning()
       .get()
+    const nonArrayPayload = db
+      .insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify({ metadata: { hidden: "jsonneedle" } }),
+      })
+      .returning()
+      .get()
+    const malformedPayload = db
+      .insert(subChats)
+      .values({ chatId: chat.id, messages: '{"metadata":"jsonneedle"' })
+      .returning()
+      .get()
     const trueMatch = db
       .insert(subChats)
       .values({
         chatId: chat.id,
         messages: JSON.stringify([
           {
+            id: "message-jsonneedle",
             role: "assistant",
             metadata: { model: "other-model" },
             parts: [{ type: "text", text: "actual jsonneedle message body" }],
@@ -692,19 +804,57 @@ describe("Stage 1 E1 search archive and scope filters", () => {
       })
       .returning()
       .get()
+    const legacyReasoningMatch = db
+      .insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify([
+          {
+            id: "message-legacy-reasoning",
+            role: "assistant",
+            parts: [
+              { type: "tool-ReasoningOutput", input: { text: "legacy jsonneedle reasoning" } },
+              { type: "tool-Bash", input: { command: "hidden jsonneedle command" } },
+            ],
+          },
+        ]),
+      })
+      .returning()
+      .get()
 
     const results = await searchRouter.createCaller(ctx).query({ query: "jsonneedle" })
 
-    expect(results).toEqual([
-      expect.objectContaining({
-        type: "message",
-        chatId: chat.id,
-        subChatId: trueMatch.id,
-        snippet: "actual jsonneedle message body",
-      }),
-    ])
+    expect(results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "message",
+          chatId: chat.id,
+          subChatId: trueMatch.id,
+          messageId: "message-jsonneedle",
+          snippet: "actual jsonneedle message body",
+        }),
+        expect.objectContaining({
+          type: "message",
+          chatId: chat.id,
+          subChatId: legacyReasoningMatch.id,
+          messageId: "message-legacy-reasoning",
+          snippet: "legacy jsonneedle reasoning",
+        }),
+      ]),
+    )
+    expect(results).toHaveLength(2)
     expect(results).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ subChatId: falsePositive.id })]),
+      expect.arrayContaining([
+        expect.objectContaining({ subChatId: falsePositive.id }),
+        expect.objectContaining({ subChatId: nonArrayPayload.id }),
+        expect.objectContaining({ subChatId: malformedPayload.id }),
+        expect.objectContaining({
+          type: "message",
+          chatId: chat.id,
+          subChatId: legacyReasoningMatch.id,
+          snippet: expect.stringContaining("hidden jsonneedle command"),
+        }),
+      ]),
     )
   })
 })

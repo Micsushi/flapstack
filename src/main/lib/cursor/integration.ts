@@ -29,13 +29,17 @@ export function normalizeCursorStatus(output: string): {
 } {
   const normalized = output.toLowerCase()
 
-  if (normalized.includes("not logged in") || normalized.includes("please log in")) {
+  if (
+    normalized.includes("not logged in") ||
+    normalized.includes("please log in") ||
+    /\bunauthenticated\b/.test(normalized)
+  ) {
     return { state: "not_logged_in", email: null }
   }
 
   if (
     normalized.includes("logged in") ||
-    normalized.includes("authenticated") ||
+    /\bauthenticated\b/.test(normalized) ||
     normalized.includes("signed in")
   ) {
     const email = output.match(EMAIL_REGEX)?.[0] ?? null
@@ -95,14 +99,13 @@ export async function listCursorModels(): Promise<string[]> {
 
 /** Extract executable model ids from `cursor-agent models` display output. */
 export function parseCursorModels(output: string): string[] {
-  return (
-    output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.toLowerCase().startsWith("available"))
-      // `cursor-agent models` prints "<id> - <display name>". The CLI only
-      // accepts the id, so never return the whole display line to callers.
-      .map((line) => line.split(/\s+-\s+/, 1)[0]?.trim())
-      .filter((model): model is string => Boolean(model))
-  )
+  const models = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !/^(?:available\s+)?models?:?$/i.test(line))
+    // `cursor-agent models` prints "<id> - <display name>". The CLI only
+    // accepts the id, so never return the whole display line to callers.
+    .map((line) => line.split(/\s+-\s+/, 1)[0]?.trim())
+    .filter((model): model is string => Boolean(model))
+  return [...new Set(models)]
 }

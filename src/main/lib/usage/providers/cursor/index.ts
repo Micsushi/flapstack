@@ -55,7 +55,8 @@ export function createCursorProvider(): UsageProvider {
       if (active) {
         return {
           providerId: "cursor",
-          accountTag: active.source.tag,
+          // The active source is provenance, not an account identity. Keep it
+          // in sourceTag on samples until Cursor exposes a stable account key.
           status: active.probe.status === "ok" ? "ok" : "source-unavailable",
           detail: active.probe.detail,
           configured: true,

@@ -13,7 +13,7 @@ const MAX_CHARS_PER_CHUNK = 300
 const KOKORO_CHUNK_GAP_SEC = 0.08
 
 // kokoro-js has no Node type surface here; keep the shape we rely on local.
-type KokoroModel = {
+export type KokoroModel = {
   voices?: Record<string, unknown>
   generate(
     text: string,
@@ -78,18 +78,7 @@ export const kokoroTtsAdapter: TtsAdapter = {
     const speed = clamp(input.rate ?? 1, 0.25, 4)
 
     const chunks = getKokoroChunks(text, MAX_CHARS_PER_CHUNK)
-    const buffers: Float32Array[] = []
-    let sampleRate = DEFAULT_SAMPLE_RATE
-
-    for (const chunk of chunks) {
-      const audio = await model.generate(chunk, { voice, speed })
-      const samples = audio.audio || audio.data
-      if (!samples || typeof samples.length !== "number") {
-        throw new Error("Kokoro generated audio without PCM samples.")
-      }
-      sampleRate = Number(audio.sampling_rate || audio.sampleRate) || DEFAULT_SAMPLE_RATE
-      buffers.push(samples)
-    }
+    const { buffers, sampleRate } = await synthesizeKokoroChunks(model, chunks, voice, speed, input)
 
     const gapSamples = Math.round(sampleRate * KOKORO_CHUNK_GAP_SEC)
     const merged = concatFloat32(buffers, gapSamples)
@@ -107,6 +96,33 @@ export const kokoroTtsAdapter: TtsAdapter = {
     // playback process to kill; the renderer stops the <audio> element. Nothing
     // to cancel here.
   },
+}
+
+function assertRequestActive(input: Pick<TtsInput, "shouldContinue">): void {
+  if (input.shouldContinue?.() === false) throw new Error("Speech request was cancelled.")
+}
+
+export async function synthesizeKokoroChunks(
+  model: KokoroModel,
+  chunks: string[],
+  voice: string,
+  speed: number,
+  input: Pick<TtsInput, "shouldContinue">,
+): Promise<{ buffers: Float32Array[]; sampleRate: number }> {
+  const buffers: Float32Array[] = []
+  let sampleRate = DEFAULT_SAMPLE_RATE
+  for (const chunk of chunks) {
+    assertRequestActive(input)
+    const audio = await model.generate(chunk, { voice, speed })
+    assertRequestActive(input)
+    const samples = audio.audio || audio.data
+    if (!samples || typeof samples.length !== "number") {
+      throw new Error("Kokoro generated audio without PCM samples.")
+    }
+    sampleRate = Number(audio.sampling_rate || audio.sampleRate) || DEFAULT_SAMPLE_RATE
+    buffers.push(samples)
+  }
+  return { buffers, sampleRate }
 }
 
 async function loadModel(): Promise<KokoroModel> {

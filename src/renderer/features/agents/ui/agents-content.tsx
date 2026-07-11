@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 // import { useSearchParams, useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: mock Next.js navigation hooks
-const useSearchParams = () => ({ get: () => null })
-const useRouter = () => ({ push: () => {}, replace: () => {} })
+const useSearchParams = () => ({ get: (_key: string) => null })
+const useRouter = () => ({
+  push: (_url: string, _options?: unknown) => {},
+  replace: (_url: string, _options?: unknown) => {},
+})
 // Desktop: mock Clerk hooks
 const useUser = () => ({ user: null })
-const useClerk = () => ({ signOut: () => {} })
+const useClerk = () => ({ signOut: (_options?: unknown) => {} })
 import {
   openAgentChatIdsAtom,
   selectedAgentChatIdAtom,
@@ -77,7 +80,7 @@ export function AgentsContent() {
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
   const selectedDraftId = useAtomValue(selectedDraftIdAtom)
-  const showNewChatForm = useAtomValue(showNewChatFormAtom)
+  const [showNewChatForm, setShowNewChatForm] = useAtom(showNewChatFormAtom)
   const [selectedTeamId] = useAtom(selectedTeamIdAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
@@ -201,9 +204,7 @@ export function AgentsContent() {
   }, [isMobile, setMobileViewMode, setSelectedChatId])
 
   // Fetch teams for header
-  const { data: teams } = api.teams.getUserTeams.useQuery(undefined, {
-    enabled: !!selectedTeamId,
-  })
+  const { data: teams } = api.teams.getUserTeams.useQuery()
   const selectedTeam = teams?.find((t: any) => t.id === selectedTeamId) as any
 
   // Fetch agent chats for keyboard navigation and mobile view
@@ -416,7 +417,7 @@ export function AgentsContent() {
   // IMPORTANT: Only recalculate when dialog is closed to prevent flickering
   const sortedChats = agentChats
     ? [...agentChats].sort(
-        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        (a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime(),
       )
     : []
 
@@ -540,7 +541,7 @@ export function AgentsContent() {
           if (!isNavigatingRef.current && agentChats && agentChats.length > 0) {
             // Get sorted chat list
             const sortedChats = [...agentChats].sort(
-              (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+              (a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime(),
             )
             isNavigatingRef.current = true
             setTimeout(() => {
@@ -1042,7 +1043,7 @@ export function AgentsContent() {
               isSidebarOpen={sidebarOpen}
               onBackToChats={() => setSidebarOpen((prev) => !prev)}
               isLoading={isLoadingSubChats}
-              agentName={chatData?.name}
+              agentName={chatData?.name ?? undefined}
             />
           </ResizableSidebar>
         )}
@@ -1181,7 +1182,16 @@ export function AgentsContent() {
       {/* Quick-switch dialog - Agents (Opt+Ctrl+Tab) */}
       <AgentsQuickSwitchDialog
         isOpen={quickSwitchOpen}
-        chats={quickSwitchOpen ? (frozenRecentChatsRef.current ?? []) : recentChats}
+        chats={(quickSwitchOpen ? (frozenRecentChatsRef.current ?? []) : recentChats).map(
+          (chat) => ({
+            ...chat,
+            name: chat.name ?? "Untitled chat",
+            meta: null,
+            sandbox_id: null,
+            updated_at: chat.updatedAt ?? new Date(),
+            projectId: chat.projectId ?? "",
+          }),
+        )}
         selectedIndex={quickSwitchSelectedIndex}
         projectsMap={projectsMap}
         onHover={setQuickSwitchSelectedIndex}

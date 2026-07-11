@@ -54,12 +54,13 @@ import {
   Activity,
   Star,
   Plus,
+  ArrowRightLeft,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
-const useCombinedAuth = () => ({ userId: null })
+const useCombinedAuth = () => ({ userId: null, isLoaded: true })
 // import { AuthDialog } from "@/components/auth/auth-dialog"
-const AuthDialog = () => null
+const AuthDialog = (_props: { open: boolean; onOpenChange: (open: boolean) => void }) => null
 // Desktop: archive is handled inline, not via hook
 // import { DiscordIcon } from "@/components/icons"
 import { DiscordIcon } from "../../icons"
@@ -148,6 +149,14 @@ import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-ch
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
 import { getModelChipMeta } from "../agents/constants"
 import { formatModelDisplayName } from "../../../shared/model-catalog"
+import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
+import {
+  buildChatMoveDestinations,
+  chatMoveTargetKey,
+  isCurrentChatMoveTarget,
+  toChatMoveMutationInput,
+  type ChatMoveTarget,
+} from "./chat-move-destinations"
 import { moveIdInOrder, type DragInsertPosition } from "./sidebar-ordering"
 
 // GitHub avatar with loading placeholder
@@ -791,6 +800,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatBranch,
   chatUpdatedAt,
   chatProjectId,
+  chatTaskId,
+  chatScope,
   globalIndex,
   isSelected,
   isLoading,
@@ -825,6 +836,9 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onRenameClick,
   onCopyBranch,
   onOpenLocally,
+  moveDestinations,
+  movePending,
+  onMoveChat,
   onBulkPin,
   onBulkUnpin,
   onBulkArchive,
@@ -849,6 +863,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatBranch: string | null
   chatUpdatedAt: Date | null
   chatProjectId: string
+  chatTaskId: string | null
+  chatScope?: "global" | "project" | "task" | null
   globalIndex: number
   isSelected: boolean
   isLoading: boolean
@@ -892,6 +908,9 @@ const AgentChatItem = React.memo(function AgentChatItem({
   onArchiveAllBelow: (chatId: string) => void
   onArchiveOthers: (chatId: string) => void
   onOpenLocally: (chatId: string) => void
+  moveDestinations: readonly ChatMoveTarget[]
+  movePending: boolean
+  onMoveChat: (chatId: string, target: ChatMoveTarget) => void
   onBulkPin: () => void
   onBulkUnpin: () => void
   onBulkArchive: () => void
@@ -1207,6 +1226,51 @@ const AgentChatItem = React.memo(function AgentChatItem({
                         >
                           Rename chat
                         </DropdownMenuItem>
+                        {!isRemote && (
+                          <DropdownMenuSub>
+                            <DropdownMenuSubTrigger className="gap-2">
+                              <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
+                              Move to...
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent
+                              sideOffset={6}
+                              alignOffset={-4}
+                              className="max-h-80 w-64 overflow-y-auto"
+                            >
+                              {moveDestinations.map((target) => {
+                                const isCurrent = isCurrentChatMoveTarget(
+                                  {
+                                    scope: chatScope,
+                                    projectId: chatProjectId || null,
+                                    taskId: chatTaskId,
+                                  },
+                                  target,
+                                )
+                                return (
+                                  <DropdownMenuItem
+                                    key={chatMoveTargetKey(target)}
+                                    disabled={movePending || isCurrent}
+                                    aria-current={isCurrent ? "location" : undefined}
+                                    onSelect={() => onMoveChat(chatId, target)}
+                                    className="gap-2"
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate">{target.label}</span>
+                                      <span className="block truncate text-[10px] text-muted-foreground">
+                                        {target.detail}
+                                      </span>
+                                    </span>
+                                    {isCurrent && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        Current
+                                      </span>
+                                    )}
+                                  </DropdownMenuItem>
+                                )
+                              })}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        )}
                         {chatBranch && (
                           <DropdownMenuItem onSelect={() => onCopyBranch(chatBranch)}>
                             Copy branch name
@@ -1376,6 +1440,49 @@ const AgentChatItem = React.memo(function AgentChatItem({
             >
               Rename chat
             </ContextMenuItem>
+            {!isRemote && (
+              <ContextMenuSub>
+                <ContextMenuSubTrigger className="gap-2">
+                  <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
+                  Move to...
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent
+                  sideOffset={6}
+                  alignOffset={-4}
+                  className="max-h-80 w-64 overflow-y-auto"
+                >
+                  {moveDestinations.map((target) => {
+                    const isCurrent = isCurrentChatMoveTarget(
+                      {
+                        scope: chatScope,
+                        projectId: chatProjectId || null,
+                        taskId: chatTaskId,
+                      },
+                      target,
+                    )
+                    return (
+                      <ContextMenuItem
+                        key={chatMoveTargetKey(target)}
+                        disabled={movePending || isCurrent}
+                        aria-current={isCurrent ? "location" : undefined}
+                        onClick={() => onMoveChat(chatId, target)}
+                        className="gap-2"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{target.label}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">
+                            {target.detail}
+                          </span>
+                        </span>
+                        {isCurrent && (
+                          <span className="text-[10px] text-muted-foreground">Current</span>
+                        )}
+                      </ContextMenuItem>
+                    )
+                  })}
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+            )}
             {chatBranch && (
               <ContextMenuItem onClick={() => onCopyBranch(chatBranch)}>
                 Copy branch name
@@ -1514,10 +1621,12 @@ function chatListSectionPropsAreEqual(
   if (prevProps.isMobileFullscreen !== nextProps.isMobileFullscreen) return false
   if (prevProps.isDesktop !== nextProps.isDesktop) return false
   if (prevProps.showIcon !== nextProps.showIcon) return false
+  if (prevProps.movePending !== nextProps.movePending) return false
 
   // Check arrays by reference (they're stable from useMemo in parent)
   if (prevProps.chats !== nextProps.chats) return false
   if (prevProps.filteredChats !== nextProps.filteredChats) return false
+  if (prevProps.moveDestinations !== nextProps.moveDestinations) return false
 
   // Check Sets by reference - Jotai atoms return same reference if unchanged
   if (prevProps.loadingChatIds !== nextProps.loadingChatIds) return false
@@ -1605,6 +1714,8 @@ interface ChatListSectionProps {
   canShowPinOption: boolean
   areAllSelectedPinned: boolean
   showIcon: boolean
+  moveDestinations: readonly ChatMoveTarget[]
+  movePending: boolean
   onChatClick: (chatId: string, e?: React.MouseEvent, globalIndex?: number) => void
   onCheckboxClick: (e: React.MouseEvent, chatId: string) => void
   onMouseEnter: (
@@ -1622,6 +1733,7 @@ interface ChatListSectionProps {
   onArchiveAllBelow: (chatId: string) => void
   onArchiveOthers: (chatId: string) => void
   onOpenLocally: (chatId: string) => void
+  onMoveChat: (chatId: string, target: ChatMoveTarget) => void
   onBulkPin: () => void
   onBulkUnpin: () => void
   onBulkArchive: () => void
@@ -1686,6 +1798,8 @@ const ChatListSection = React.memo(function ChatListSection({
   canShowPinOption,
   areAllSelectedPinned,
   showIcon,
+  moveDestinations,
+  movePending,
   onChatClick,
   onCheckboxClick,
   onMouseEnter,
@@ -1698,6 +1812,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onArchiveAllBelow,
   onArchiveOthers,
   onOpenLocally,
+  onMoveChat,
   onBulkPin,
   onBulkUnpin,
   onBulkArchive,
@@ -2307,9 +2422,9 @@ const ChatListSection = React.memo(function ChatListSection({
               taskId: chat.taskId,
               worktreePath: chat.worktreePath,
               branch: chat.branch,
-              baseBranch: chat.baseBranch,
+              baseBranch: (chat as any).baseBranch,
               projectName: project?.name,
-              createdAt: chat.createdAt,
+              createdAt: (chat as any).createdAt,
             })
             const hasCustomWorktree = Boolean(
               normalizedChatWorktreePath &&
@@ -2352,6 +2467,8 @@ const ChatListSection = React.memo(function ChatListSection({
                   chatBranch={chat.branch}
                   chatUpdatedAt={chat.updatedAt}
                   chatProjectId={chat.projectId ?? ""}
+                  chatTaskId={chat.taskId}
+                  chatScope={chat.scope}
                   globalIndex={globalIndex}
                   isSelected={isSelected}
                   isLoading={isLoading}
@@ -2389,6 +2506,9 @@ const ChatListSection = React.memo(function ChatListSection({
                   onArchiveAllBelow={onArchiveAllBelow}
                   onArchiveOthers={onArchiveOthers}
                   onOpenLocally={onOpenLocally}
+                  moveDestinations={moveDestinations}
+                  movePending={movePending}
+                  onMoveChat={onMoveChat}
                   onBulkPin={onBulkPin}
                   onBulkUnpin={onBulkUnpin}
                   onBulkArchive={onBulkArchive}
@@ -2528,8 +2648,8 @@ interface SidebarHeaderProps {
   setSettingsActiveTab: (tab: string) => void
   setShowAuthDialog: (open: boolean) => void
   handleSidebarMouseEnter: () => void
-  handleSidebarMouseLeave: () => void
-  closeButtonRef: React.RefObject<HTMLDivElement>
+  handleSidebarMouseLeave: (event: React.MouseEvent) => void
+  closeButtonRef: React.RefObject<HTMLDivElement | null>
 }
 
 const SidebarHeader = memo(function SidebarHeader({
@@ -2879,6 +2999,7 @@ export function AgentsSidebar({
 }: AgentsSidebarProps) {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
+  const focusScopedSearchResult = useSetAtom(focusScopedSearchResultAtom)
   const previousChatId = useAtomValue(previousAgentChatIdAtom)
   const autoAdvanceTarget = useAtomValue(autoAdvanceTargetAtom)
   const [selectedDraftId, setSelectedDraftId] = useAtom(selectedDraftIdAtom)
@@ -3221,6 +3342,10 @@ export function AgentsSidebar({
   const { data: tasks } = trpc.tasks.list.useQuery({ includeArchived: false })
   const { data: archivedProjects } = trpc.projects.listArchived.useQuery()
   const { data: archivedTasks } = trpc.tasks.listArchived.useQuery()
+  const moveDestinations = useMemo(
+    () => buildChatMoveDestinations(projects ?? [], tasks ?? []),
+    [projects, tasks],
+  )
 
   // Auto-import hook for "Open Locally" functionality
   const { getMatchingProjects, autoImport, isImporting } = useAutoImport()
@@ -3677,12 +3802,104 @@ export function AgentsSidebar({
   })
 
   const moveChatMutation = trpc.chats.move.useMutation({
-    onSuccess: () => {
-      utils.chats.list.invalidate()
-      toast.success("Chat moved")
+    onSuccess: async (movedChat, variables) => {
+      await Promise.all([
+        utils.chats.list.invalidate(),
+        utils.chats.get.invalidate({ id: variables.id }),
+      ])
+
+      if (selectedChatId === variables.id && !selectedChatIsRemote) {
+        if (variables.scope === "global") {
+          setSelectedChatScope({ type: "global", id: "global", name: "Global chats" })
+          setSelectedProject(null)
+        } else if (variables.scope === "project" && variables.projectId) {
+          const project = projects?.find((candidate) => candidate.id === variables.projectId)
+          setSelectedChatScope({
+            type: "project",
+            id: variables.projectId,
+            name: project?.name ?? "Project",
+          })
+          setSelectedProject(
+            project
+              ? {
+                  id: project.id,
+                  name: project.name,
+                  path: project.path,
+                  gitRemoteUrl: project.gitRemoteUrl,
+                  gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+                  gitOwner: project.gitOwner,
+                  gitRepo: project.gitRepo,
+                }
+              : null,
+          )
+        } else if (variables.scope === "task" && variables.taskId) {
+          const task = tasks?.find((candidate) => candidate.id === variables.taskId)
+          const project = task
+            ? projects?.find((candidate) => candidate.id === task.projectId)
+            : null
+          setSelectedChatScope({
+            type: "task",
+            id: variables.taskId,
+            name: task?.name ?? "Task",
+            projectId: task?.projectId ?? movedChat.projectId ?? "",
+            projectName: project?.name ?? null,
+          })
+          setSelectedProject(
+            project
+              ? {
+                  id: project.id,
+                  name: project.name,
+                  path: project.path,
+                  gitRemoteUrl: project.gitRemoteUrl,
+                  gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+                  gitOwner: project.gitOwner,
+                  gitRepo: project.gitRepo,
+                }
+              : null,
+          )
+        }
+      }
+
+      const destination = moveDestinations.find((target) => {
+        if (target.scope !== variables.scope) return false
+        if (target.scope === "global") return true
+        if (target.scope === "project") return target.projectId === variables.projectId
+        return target.taskId === variables.taskId
+      })
+      toast.success(destination ? `Chat moved to ${destination.label}` : "Chat moved")
     },
     onError: (error) => toast.error(error.message || "Failed to move chat"),
   })
+
+  const handleMoveChat = useCallback(
+    (chatId: string, requestedTarget: ChatMoveTarget) => {
+      const chat = agentChats.find((candidate) => candidate.id === chatId)
+      if (!chat || chat.isRemote) {
+        toast.error("Only local chats can be moved")
+        return
+      }
+
+      const requestedTargetKey = chatMoveTargetKey(requestedTarget)
+      const target = moveDestinations.find(
+        (candidate) => chatMoveTargetKey(candidate) === requestedTargetKey,
+      )
+      if (!target) {
+        toast.error("That destination is no longer available")
+        return
+      }
+      if (
+        isCurrentChatMoveTarget(
+          { scope: chat.scope, projectId: chat.projectId, taskId: chat.taskId },
+          target,
+        )
+      ) {
+        return
+      }
+
+      moveChatMutation.mutate(toChatMoveMutationInput(chatId, target))
+    },
+    [agentChats, moveChatMutation, moveDestinations],
+  )
 
   const pinProjectMutation = trpc.projects.pin.useMutation({
     onSuccess: () => {
@@ -6009,7 +6226,7 @@ export function AgentsSidebar({
         onSignOut={onSignOut}
         onToggleSidebar={onToggleSidebar}
         setSettingsDialogOpen={setSettingsDialogOpen}
-        setSettingsActiveTab={setSettingsActiveTab}
+        setSettingsActiveTab={(tab) => setSettingsActiveTab(tab as any)}
         setShowAuthDialog={setShowAuthDialog}
         handleSidebarMouseEnter={handleSidebarMouseEnter}
         handleSidebarMouseLeave={handleSidebarMouseLeave}
@@ -6097,14 +6314,18 @@ export function AgentsSidebar({
                 selectedChatId={selectedLocalChat?.id ?? null}
                 selectedProjectId={selectedLocalChat?.projectId ?? null}
                 selectedTaskId={selectedLocalChat?.taskId ?? null}
-                onNavigateChat={(chatId, subChatId) => {
-                  handleChatClick(chatId)
-                  // Focus the matched sub-chat once the chat has switched.
+                onNavigateChat={(chatId, subChatId, messageId, query) => {
                   if (subChatId) {
-                    setTimeout(() => {
-                      useAgentSubChatStore.getState().setActiveSubChat(subChatId)
-                    }, 0)
+                    useAgentSubChatStore.getState().queueNavigation(chatId, subChatId)
                   }
+                  void handleChatClick(chatId).then(() => {
+                    window.setTimeout(() => {
+                      focusScopedSearchResult({
+                        query: query ?? "",
+                        messageId,
+                      })
+                    }, 0)
+                  })
                   searchInputRef.current?.blur()
                 }}
               />
@@ -6296,6 +6517,8 @@ export function AgentsSidebar({
                       canShowPinOption={canShowPinOption}
                       areAllSelectedPinned={areAllSelectedPinned}
                       showIcon={showWorkspaceIcon}
+                      moveDestinations={moveDestinations}
+                      movePending={moveChatMutation.isPending}
                       onChatClick={handleChatClick}
                       onCheckboxClick={handleCheckboxClick}
                       onMouseEnter={handleAgentMouseEnter}
@@ -6308,6 +6531,7 @@ export function AgentsSidebar({
                       onArchiveAllBelow={handleArchiveAllBelow}
                       onArchiveOthers={handleArchiveOthers}
                       onOpenLocally={handleOpenLocally}
+                      onMoveChat={handleMoveChat}
                       onBulkPin={handleBulkPin}
                       onBulkUnpin={handleBulkUnpin}
                       onBulkArchive={handleBulkArchive}
@@ -6412,6 +6636,8 @@ export function AgentsSidebar({
                     canShowPinOption={canShowPinOption}
                     areAllSelectedPinned={areAllSelectedPinned}
                     showIcon={showWorkspaceIcon}
+                    moveDestinations={moveDestinations}
+                    movePending={moveChatMutation.isPending}
                     onChatClick={handleChatClick}
                     onCheckboxClick={handleCheckboxClick}
                     onMouseEnter={handleAgentMouseEnter}
@@ -6424,6 +6650,7 @@ export function AgentsSidebar({
                     onArchiveAllBelow={handleArchiveAllBelow}
                     onArchiveOthers={handleArchiveOthers}
                     onOpenLocally={handleOpenLocally}
+                    onMoveChat={handleMoveChat}
                     onBulkPin={handleBulkPin}
                     onBulkUnpin={handleBulkUnpin}
                     onBulkArchive={handleBulkArchive}

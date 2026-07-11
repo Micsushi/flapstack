@@ -1,6 +1,12 @@
 import { eq } from "drizzle-orm"
 import { chats, getDatabase, projects, tasks, type Chat } from "./db"
 import { getCurrentBranch } from "./git/worktree"
+import { homedir } from "node:os"
+import { resolve, sep } from "node:path"
+export {
+  validateCustomWorktreePath,
+  type CustomWorktreeValidation,
+} from "./git/validate-custom-worktree"
 
 export type WorktreeOption = {
   path: string
@@ -13,6 +19,12 @@ export type WorktreeStatus =
   | { status: "none"; path: null; isDefault: boolean }
   | { status: "ok"; path: string; branch: string | null; isDefault: boolean }
   | { status: "unknown"; path: string; isDefault: boolean; error: string }
+
+export function isManagedFlapstackWorktreePath(worktreePath: string): boolean {
+  const managedRoot = resolve(homedir(), ".flapstack", "worktrees")
+  const candidate = resolve(worktreePath)
+  return candidate === managedRoot || candidate.startsWith(managedRoot + sep)
+}
 
 export function resolveDefaultWorktree(chat: Chat): string | null {
   if (chat.scope === "global") return null
@@ -72,12 +84,15 @@ export function listWorktreeOptions(chatId: string): WorktreeOption[] {
   return options
 }
 
-export async function getResolvedWorktreeStatus(chatId: string): Promise<WorktreeStatus> {
+export async function getResolvedWorktreeStatus(
+  chatId: string,
+  pathOverride?: string,
+): Promise<WorktreeStatus> {
   const db = getDatabase()
   const chat = db.select().from(chats).where(eq(chats.id, chatId)).get()
   if (!chat) throw new Error("Chat not found")
 
-  const path = chat.worktreePath ?? resolveDefaultWorktree(chat)
+  const path = pathOverride ?? chat.worktreePath ?? resolveDefaultWorktree(chat)
   const defaultPath = resolveDefaultWorktree(chat)
   if (!path) return { status: "none", path: null, isDefault: true }
 

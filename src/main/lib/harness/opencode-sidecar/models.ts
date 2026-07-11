@@ -11,6 +11,7 @@ import { join } from "node:path"
 import { getProviderBaseUrl, getProviderKey, getOpencodeStorageDir } from "./credentials"
 import { getProviderDefinition, OPENCODE_SEED_MODELS, type OpencodeModelInfo } from "./catalog"
 import type { OpencodeProviderId } from "./contract"
+import { upsertModelPricing } from "../../usage/pricing"
 
 const cacheFileName = "opencode-provider-models.json"
 
@@ -27,7 +28,8 @@ export type ProviderModelRefreshResult = CachedProviderModels & {
 }
 
 export function getCachedProviderModels(provider: OpencodeProviderId): CachedProviderModels | null {
-  return readModelCache()[provider] ?? null
+  const cached = readModelCache()[provider]
+  return isCachedProviderModels(provider, cached) ? cached : null
 }
 
 export function getAvailableProviderModels(provider: OpencodeProviderId): {
@@ -36,8 +38,25 @@ export function getAvailableProviderModels(provider: OpencodeProviderId): {
   updatedAt?: number
 } {
   const cached = getCachedProviderModels(provider)
-  if (cached) return { models: cached.models, source: "cache", updatedAt: cached.updatedAt }
+  if (cached) {
+    hydrateUsagePricing(provider, cached.models)
+    return { models: cached.models, source: "cache", updatedAt: cached.updatedAt }
+  }
   return { models: OPENCODE_SEED_MODELS[provider], source: "seed" }
+}
+
+/** Load persisted model prices into the process-local usage cache. */
+export function hydrateCachedProviderPricing(provider: OpencodeProviderId): boolean {
+  try {
+    const cached = getCachedProviderModels(provider)
+    if (!cached) return false
+    hydrateUsagePricing(provider, cached.models)
+    return true
+  } catch {
+    // Usage capture must still persist token-only data when the local catalog
+    // is corrupt or from an incompatible older shape.
+    return false
+  }
 }
 
 export async function refreshProviderModels(
@@ -58,12 +77,13 @@ export async function refreshProviderModels(
     throw new Error(`Model refresh failed: HTTP ${response.status}`)
   }
 
-  const models = parseProviderModels(await response.json())
+  const models = parseProviderModels(provider, await response.json())
   if (models.length === 0) {
     throw new Error("Model refresh returned no usable models")
   }
 
   const entry: CachedProviderModels = { provider, models, updatedAt: Date.now() }
+  hydrateUsagePricing(provider, models)
   const cache = readModelCache()
   cache[provider] = entry
   writeModelCache(cache)
@@ -74,10 +94,12 @@ function getModelsEndpoint(provider: OpencodeProviderId): string {
   const definition = getProviderDefinition(provider)
   const baseUrl =
     (definition.allowsCustomBaseUrl && getProviderBaseUrl(provider)) || definition.baseUrl
-  return `${baseUrl.replace(/\/$/, "")}/models`
+  const endpoint = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
+  if (provider === "nanogpt") endpoint.searchParams.set("detailed", "true")
+  return endpoint.toString()
 }
 
-function parseProviderModels(payload: unknown): OpencodeModelInfo[] {
+function parseProviderModels(provider: OpencodeProviderId, payload: unknown): OpencodeModelInfo[] {
   const raw =
     payload && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)
       ? (payload as { data: unknown[] }).data
@@ -107,22 +129,81 @@ function parseProviderModels(payload: unknown): OpencodeModelInfo[] {
       value.reasoning === true ||
       value.supports_reasoning === true ||
       value.supportsReasoning === true
+    const pricing = normalizePricing(provider, value.pricing)
     models.push({
       id,
       label: name,
       ...(contextWindow ? { contextWindow } : {}),
       ...(supportsReasoning ? { supportsReasoning: true } : {}),
+      ...(pricing ? { pricing } : {}),
     })
   }
 
   return models.sort((a, b) => a.label.localeCompare(b.label))
 }
 
+function normalizePricing(
+  provider: OpencodeProviderId,
+  value: unknown,
+): OpencodeModelInfo["pricing"] | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const raw = value as Record<string, unknown>
+  const multiplier = provider === "openrouter" ? 1_000_000 : 1
+  if (provider === "nanogpt" && raw.unit !== "per_million_tokens") return undefined
+  const input = finiteNonNegative(raw.prompt)
+  const output = finiteNonNegative(raw.completion)
+  if (input == null || output == null) return undefined
+  const reasoning = finiteNonNegative(raw.internal_reasoning)
+  return {
+    inputPerMTok: input * multiplier,
+    outputPerMTok: output * multiplier,
+    ...(reasoning == null ? {} : { reasoningPerMTok: reasoning * multiplier }),
+  }
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function hydrateUsagePricing(provider: OpencodeProviderId, models: OpencodeModelInfo[]): void {
+  for (const model of models) {
+    if (!model.pricing) continue
+    upsertModelPricing({ providerId: provider, model: model.id, ...model.pricing })
+  }
+}
+
+function isCachedProviderModels(
+  provider: OpencodeProviderId,
+  value: unknown,
+): value is CachedProviderModels {
+  if (!value || typeof value !== "object") return false
+  const cached = value as Partial<CachedProviderModels>
+  if (cached.provider !== provider || !Number.isFinite(cached.updatedAt)) return false
+  if (!Array.isArray(cached.models)) return false
+  return cached.models.every((model) => {
+    if (!model || typeof model !== "object") return false
+    if (typeof model.id !== "string" || typeof model.label !== "string") return false
+    if (model.pricing === undefined) return true
+    return (
+      model.pricing !== null &&
+      typeof model.pricing === "object" &&
+      Number.isFinite(model.pricing.inputPerMTok) &&
+      Number.isFinite(model.pricing.outputPerMTok) &&
+      (model.pricing.reasoningPerMTok === undefined ||
+        Number.isFinite(model.pricing.reasoningPerMTok))
+    )
+  })
+}
+
 function readModelCache(): ModelCacheFile {
   const path = getModelCachePath()
   if (!existsSync(path)) return {}
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as ModelCacheFile
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as ModelCacheFile)
+      : {}
   } catch {
     return {}
   }

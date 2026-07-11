@@ -15,7 +15,8 @@
 import { execFileSync, execSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { dirname, join } from "node:path"
+import { delimiter, dirname, join } from "node:path"
+import { nativeAbiMarker } from "./native-abi-key.mjs"
 
 const NATIVE_MODULES = ["better-sqlite3", "node-pty"]
 const root = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -27,11 +28,27 @@ if (target !== "node" && target !== "electron") {
   process.exit(1)
 }
 
-// For Node we key the marker on the ABI (process.versions.modules) so switching
-// Node versions also triggers a rebuild. Electron always rebuilds for the
-// installed Electron, so a plain tag is enough (postinstall reruns on upgrade).
-const desired = target === "node" ? `node-${process.versions.modules}` : "electron"
+const packageVersion = (name) => {
+  try {
+    return JSON.parse(readFileSync(join(root, "node_modules", name, "package.json"), "utf8"))
+      .version
+  } catch {
+    return "missing"
+  }
+}
+const desired = nativeAbiMarker({
+  target,
+  nodeAbi: process.versions.modules,
+  electronVersion: packageVersion("electron"),
+  nativeModuleVersions: Object.fromEntries(
+    NATIVE_MODULES.map((name) => [name, packageVersion(name)]),
+  ),
+})
 const nodeMajor = Number(process.versions.node.split(".")[0])
+const toolEnv = {
+  ...process.env,
+  PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}`,
+}
 
 const current = existsSync(markerPath) ? readFileSync(markerPath, "utf8").trim() : ""
 if (current === desired) {
@@ -57,10 +74,15 @@ try {
     // electron-rebuild does a pure node-gyp compile against the installed
     // Electron ABI — no package lifecycle scripts, so node-pty's own broken tsc
     // build step is never invoked.
-    execSync(`npx electron-rebuild -f -w ${NATIVE_MODULES.join(",")}`, {
-      cwd: root,
-      stdio: "inherit",
-    })
+    execFileSync(
+      join(root, "node_modules", ".bin", "electron-rebuild"),
+      ["-f", "-w", NATIVE_MODULES.join(",")],
+      {
+        cwd: root,
+        stdio: "inherit",
+        env: toolEnv,
+      },
+    )
   } else {
     // Rebuild against the current Node, per module:
     // - better-sqlite3 has a custom build that emits into lib/binding/, so use
@@ -68,7 +90,7 @@ try {
     // - node-pty's `npm rebuild` runs a `tsc` step that fails on its bundled
     //   test files, so compile the native addon directly with node-gyp instead.
     // CXXFLAGS keeps better-sqlite3's C++20 build happy on these toolchains.
-    const env = { ...process.env, CXXFLAGS: "-std=c++20" }
+    const env = { ...toolEnv, CXXFLAGS: "-std=c++20" }
     execSync("npm rebuild better-sqlite3", { cwd: root, stdio: "inherit", env })
     execFileSync(join(root, "node_modules", ".bin", "node-gyp"), ["rebuild"], {
       cwd: join(root, "node_modules", "node-pty"),

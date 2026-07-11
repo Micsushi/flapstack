@@ -16,11 +16,29 @@ import { createAppRouter } from "../lib/trpc/routers"
 import { registerGitWatcherIPC } from "../lib/git/watcher"
 import { hasActiveClaudeSessions, abortAllClaudeSessions } from "../lib/trpc/routers/claude"
 import { hasActiveCodexStreams, abortAllCodexStreams } from "../lib/trpc/routers/codex"
+import { hasActiveCursorStreams, abortAllCursorStreams } from "../lib/trpc/routers/cursor"
+import { hasActiveOpencodeStreams, abortAllOpencodeStreams } from "../lib/trpc/routers/opencode"
 import { registerThemeScannerIPC } from "../lib/vscode-theme-scanner"
 import { windowManager } from "./window-manager"
 
 // Flag to bypass close confirmation when app.quit() has already been confirmed
 let isQuitting = false
+
+function hasActiveAgentSessions(): boolean {
+  return (
+    hasActiveClaudeSessions() ||
+    hasActiveCodexStreams() ||
+    hasActiveCursorStreams() ||
+    hasActiveOpencodeStreams()
+  )
+}
+
+function abortAllAgentSessions(): void {
+  abortAllClaudeSessions()
+  abortAllCodexStreams()
+  abortAllCursorStreams()
+  abortAllOpencodeStreams()
+}
 
 export function setIsQuitting(value: boolean): void {
   isQuitting = value
@@ -530,7 +548,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
       if (!input.shift) {
         // Block Cmd+R entirely
         event.preventDefault()
-      } else if (hasActiveClaudeSessions() || hasActiveCodexStreams()) {
+      } else if (hasActiveAgentSessions()) {
         // Cmd+Shift+R with active streams — intercept and confirm
         event.preventDefault()
         dialog
@@ -546,8 +564,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
           })
           .then(({ response }) => {
             if (response === 1) {
-              abortAllClaudeSessions()
-              abortAllCodexStreams()
+              abortAllAgentSessions()
               window.webContents.reloadIgnoringCache()
             }
           })
@@ -566,12 +583,11 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
     // Skip confirmation if app quit was already confirmed by the user
     if (isQuitting) {
       // Still abort sessions gracefully so partial state is saved
-      abortAllClaudeSessions()
-      abortAllCodexStreams()
+      abortAllAgentSessions()
       return
     }
 
-    if (hasActiveClaudeSessions() || hasActiveCodexStreams()) {
+    if (hasActiveAgentSessions()) {
       event.preventDefault()
       dialog
         .showMessageBox(window, {
@@ -586,8 +602,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
         })
         .then(({ response }) => {
           if (response === 1) {
-            abortAllClaudeSessions()
-            abortAllCodexStreams()
+            abortAllAgentSessions()
             window.destroy()
           }
         })

@@ -60,4 +60,16 @@ describe("harness launch context", () => {
 
     expect(context).toContain("Harness: cursor-agent")
   })
+
+  it("loads repository instructions for OpenCode-backed providers", async () => {
+    writeFileSync(join(rootPath, "AGENTS.md"), "# OpenCode must follow this")
+
+    const context = await buildHarnessStartupContext({
+      cwd: rootPath,
+      harness: "opencode",
+    })
+
+    expect(context).toContain("Harness: opencode")
+    expect(context).toContain("OpenCode must follow this")
+  })
 })

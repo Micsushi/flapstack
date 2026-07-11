@@ -60,7 +60,7 @@ export const voiceRouter = router({
         language: input.language,
       })
       console.log(
-        `[Voice] ${result.adapterId} transcription result: "${result.text.slice(0, 100)}..."`,
+        `[Voice] ${result.adapterId} transcription completed (${result.text.length} chars)`,
       )
       if (input.chatId && result.text.trim()) {
         recordTranscription({
@@ -73,17 +73,19 @@ export const voiceRouter = router({
       return result
     }),
 
-  /**
-   * Check if voice transcription is available
-   * Available if: has local OPENAI_API_KEY OR user has paid subscription
-   */
+  /** Check local-only dictation readiness, including model auto-provisioning. */
   isAvailable: publicProcedure.query(async () => {
     const settings = getVoiceSettings()
     const availability = await Promise.all(
-      sttAdapterImplementations.map(async (adapter) => ({
-        adapterId: adapter.id,
-        ...(await adapter.isAvailable()),
-      })),
+      sttAdapterImplementations.map(async (adapter) => {
+        const adapterAvailability = await adapter.isAvailable()
+        const canAutoProvision = (await adapter.canAutoProvision?.()) ?? false
+        return {
+          adapterId: adapter.id,
+          ...adapterAvailability,
+          canAutoProvision,
+        }
+      }),
     )
     const available = availability.find((entry) => entry.available)
     if (available) {

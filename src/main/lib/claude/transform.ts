@@ -1,7 +1,10 @@
 import type { MCPServer, MCPServerStatus, MessageMetadata, UIMessageChunk } from "./types"
 import { normalizeClaudeReasoningOutput } from "../../../shared/reasoning-output"
 
-export function createTransformer(options?: { isUsingOllama?: boolean }) {
+export function createTransformer(options?: {
+  isUsingOllama?: boolean
+  emitSdkMessageUuid?: boolean
+}) {
   const isUsingOllama = options?.isUsingOllama === true
   let textId: string | null = null
   let textStarted = false
@@ -165,18 +168,20 @@ export function createTransformer(options?: { isUsingOllama?: boolean }) {
         yield* endToolInput()
 
         const originalId = event.content_block.id || genId()
-        currentToolCallId = makeCompositeId(originalId, currentParentToolUseId)
-        currentToolName = event.content_block.name || "unknown"
+        const compositeId = makeCompositeId(originalId, currentParentToolUseId)
+        const toolName = event.content_block.name || "unknown"
+        currentToolCallId = compositeId
+        currentToolName = toolName
         accumulatedToolInput = ""
 
         // Store mapping for tool-result lookup
-        toolIdMapping.set(originalId, currentToolCallId)
+        toolIdMapping.set(originalId, compositeId)
 
         // Emit tool-input-start for progressive UI
         yield {
           type: "tool-input-start",
-          toolCallId: currentToolCallId,
-          toolName: currentToolName,
+          toolCallId: compositeId,
+          toolName,
         }
       }
 

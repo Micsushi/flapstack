@@ -58,6 +58,12 @@ export type OpencodeModelInfo = {
   /** Whether the model is known to expose visible reasoning output. */
   supportsReasoning?: boolean
   contextWindow?: number
+  /** Normalized USD per million tokens; safe to persist with catalog metadata. */
+  pricing?: {
+    inputPerMTok: number
+    outputPerMTok: number
+    reasoningPerMTok?: number
+  }
 }
 
 /**

@@ -1,12 +1,11 @@
 # Stage 2 Tasks
 
-Full per-task detail (files, scope, done-when, blockers) lives in the vault board
-`Wiki/Projects/flapstack/stage2-implementation-tasks.md`. This checklist mirrors
-it for OpenSpec tracking.
+This checklist is the repo-local OpenSpec record for task scope, completion, and
+blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 
 ## 0. Prerequisite
 
-- [ ] 0.1 F2: native-module ABI toggle removal so `npm run check` runs cleanly
+- [x] 0.1 F2: native-module ABI toggle removal so `npm run check` runs cleanly
 - [x] 0.2 D0: verify `cursor-agent` CLI flags, stream-json schema, and reasoning-output fixture
 
 ## 1. Voice (Track A)
@@ -24,11 +23,11 @@ it for OpenSpec tracking.
 
 ## 2. Usage (Track B)
 
-- [ ] 2.1 U1 Shared usage schema + provider adapter interface
-- [ ] 2.2 U2 Shared usage engine + scheduler
+- [x] 2.1 U1 Shared usage schema + provider adapter interface
+- [x] 2.2 U2 Shared usage engine + scheduler
 - [ ] 2.3 U3 Background usage daemon lifecycle
-- [ ] 2.4 U4 Shared SQLite store + app/daemon locking
-- [ ] 2.5 U5 App startup catch-up + manual refresh
+- [x] 2.4 U4 Shared SQLite store + app/daemon locking
+- [x] 2.5 U5 App startup catch-up + manual refresh
 - [ ] 2.6 U6 Codex + Anthropic/Claude general usage providers
 - [ ] 2.7 U7 Cursor usage provider (source 1 full; sources 2/3 stubbed chain)
 - [ ] 2.8 U8 OpenRouter usage provider (run usage, generation/cost reconcile,
@@ -79,23 +78,23 @@ it for OpenSpec tracking.
 
 ## 6. Fixes (Track C)
 
-- [ ] 6.1 F1 Strict-TS debt cleanup → promote `ts:check` to gate
-- [ ] 6.2 F3 Create-branch dialog
-- [ ] 6.3 F4 Terminal actions (open file / tab title / focused pane)
+- [x] 6.1 F1 Strict-TS debt cleanup → promote `ts:check` to gate
+- [x] 6.2 F3 Create-branch dialog
+- [x] 6.3 F4 Terminal actions (open file / tab title / focused pane)
 - [ ] 6.4 F5 Sidebar remote-stats decision
 - [ ] 6.5 F6 Codex/Claude permission enforcement hardening
-- [ ] 6.6 F7 Worktree UX completion: custom path + unknown state
-- [ ] 6.7 F8 Scoped-search result navigation + no hidden first-20 cap
-- [ ] 6.8 F9 Attachments/artifacts UX completion + no hidden first-six cap
-- [ ] 6.9 F10 Run history show-all/pagination
-- [ ] 6.10 F11 Cross-scope move discoverability
-- [ ] 6.11 F12 Docs consistency pass
-- [ ] 6.12 F-exit fixes verified in `npm run check`
+- [x] 6.6 F7 Worktree UX completion: custom path + unknown state
+- [x] 6.7 F8 Scoped-search result navigation + no hidden first-20 cap
+- [x] 6.8 F9 Attachments/artifacts UX completion + no hidden first-six cap
+- [x] 6.9 F10 Run history show-all/pagination
+- [x] 6.10 F11 Cross-scope move discoverability
+- [x] 6.11 F12 Docs consistency pass
+- [x] 6.12 F-exit fixes verified in `npm run check`
 
 (F2 native-module ABI toggle is task 0.1 — the prerequisite done first.)
 
 ## 7. Stage exit
 
-- [ ] 7.1 `npm run check` green (lint, style, tests, build)
+- [x] 7.1 `npm run check` green (lint, style, strict types, tests, build)
 - [ ] 7.2 OpenSpec change validated and archived
-- [ ] 7.3 Handoff + `feature-todo.md` Stage 2 boxes updated with known limitations
+- [x] 7.3 Handoff + `feature-todo.md` Stage 2 boxes updated with known limitations

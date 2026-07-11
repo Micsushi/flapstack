@@ -11,6 +11,7 @@ import {
 } from "../../../components/ui/icons"
 import { cn } from "../../../lib/utils"
 import { trpcClient } from "../../../lib/trpc"
+import { buildMessageSpeechRequest } from "../../../lib/message-speech-request"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
 import { useHaptic } from "../hooks/use-haptic"
 import {
@@ -73,9 +74,18 @@ type PlayButtonState = "idle" | "loading" | "playing"
 interface PlayButtonProps {
   text: string
   isMobile?: boolean
+  chatId?: string
+  subChatId?: string
+  messageId?: string
 }
 
-export const PlayButton = memo(function PlayButton({ text, isMobile = false }: PlayButtonProps) {
+export const PlayButton = memo(function PlayButton({
+  text,
+  isMobile = false,
+  chatId,
+  subChatId,
+  messageId,
+}: PlayButtonProps) {
   const [state, setState] = useState<PlayButtonState>("idle")
   const [playbackRate] = useAtom(ttsPlaybackRateAtom)
   const setPlaybackRate = useSetAtom(setTtsPlaybackRateAtom)
@@ -116,17 +126,22 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
     abortControllerRef.current = new AbortController()
 
     const result = await trpcClient.speech.speak.mutate(
-      { text, rate: playbackRate },
+      buildMessageSpeechRequest({ text, chatId, subChatId, messageId }),
       { signal: abortControllerRef.current.signal },
     )
+    if (result.skipped) {
+      setState("idle")
+      return
+    }
     const audio = await playManagedSpeech(result, {
       rate: playbackRate,
       onEnded: () => setState("idle"),
       onError: () => setState("idle"),
+      onStopped: () => setState("idle"),
     })
     audioRef.current = audio
     setState("playing")
-  }, [text, playbackRate, cleanup])
+  }, [text, playbackRate, chatId, subChatId, messageId])
 
   const handlePlay = useCallback(async () => {
     // If playing, stop the audio (and halt any server-side synthesis).
@@ -145,7 +160,9 @@ export const PlayButton = memo(function PlayButton({ text, isMobile = false }: P
       return
     }
 
-    // Start loading
+    // Preempt current renderer playback immediately. Waiting for the next
+    // synthesis result would allow the old utterance to keep talking.
+    cleanup()
     setState("loading")
     chunkCountRef.current = 0
 

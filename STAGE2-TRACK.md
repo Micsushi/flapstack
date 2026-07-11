@@ -1,9 +1,21 @@
 # Stage 2 — Track D: Cursor Harness (`cursor-agent` CLI)
 
-Branch: `codex/stage2-cursor-support`
+Historical branch: `codex/stage2-cursor-support` (merged into `main`)
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track D**.
+This file is the authoritative repo-local task board for **Track D**.
+
+## Integrated readiness correction — 2026-07-10
+
+Cursor, OpenCode-backed OpenRouter/NanoGPT, and reasoning-output work are now
+integrated on `main`; the branch/base notes below are historical implementation
+notes. The current evidence and executable rows live in:
+
+- `docs/stage2-readiness-review-2026-07-10.md`
+- `docs/stage2-full-feature-test-matrix.md`
+
+Focused automated coverage is green. Stage 2 exit remains open for real Cursor
+run/permission/session tests, paid OpenRouter and NanoGPT runs, persistence in the
+real UI, packaged lifecycle tests, and the cross-provider reasoning matrix.
 
 ## Tasks
 
@@ -64,8 +76,9 @@ status`). Local-token detect from U7 can later back a token-only fallback.
 - Cursor images remain explicitly unsupported until the CLI gains a verified
   headless image-input contract; the transport rejects them before persistence.
 
-Also still open: T5 (Cursor reasoning-output rendering) finalizes how the
-`reasoning`/`reasoning-delta` chunks this adapter emits are displayed.
+T5 is integrated: Cursor completed-only and streamed reasoning share the
+standard reasoning panel, avoid duplicate final text, persist, and are searchable.
+Live provider/manual parity remains an exit check.
 
 ## PRIORITY CONSTRAINT
 
@@ -92,8 +105,7 @@ Off `main` @ 4a2fab7 (== origin/main). Rebase on main before merge.
 
 Branch: `codex/stage2-agent-reasoning-output`
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` →
+The task list below is the authoritative repo-local board for
 **Cross-track — Reasoning Output Parity**.
 
 ## Tasks

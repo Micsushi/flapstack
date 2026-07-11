@@ -79,11 +79,3 @@ export async function runDaemon(): Promise<void> {
 
   scheduler.start()
 }
-
-// Allow `node usage-daemon/index.js` to run the daemon directly.
-if (process.env.FLAPSTACK_RUN_DAEMON === "1") {
-  runDaemon().catch((err) => {
-    console.error("[usage-daemon] fatal:", err)
-    process.exit(1)
-  })
-}

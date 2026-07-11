@@ -3,8 +3,8 @@
  *
  * Exposes the provider onboarding, credential, catalog, permission-preview, and
  * runtime-status surface for OpenRouter + NanoGPT. The persisted `chat`
- * subscription is gated behind FLAPSTACK_OPENCODE_SIDECAR_ENABLED, so the UI
- * never claims a provider run works before the provider manual matrix passes.
+ * subscription is enabled by default and can be disabled explicitly with
+ * FLAPSTACK_OPENCODE_SIDECAR_ENABLED=0.
  */
 
 import { observable } from "@trpc/server/observable"
@@ -18,17 +18,29 @@ import {
   clearProviderKey,
   getAvailableProviderModels,
   getCredentialStatus,
+  getProviderKey,
   isSidecarRuntimeEnabled,
+  finalizeOpencodeRunPersistence,
+  mergeMessagesById,
+  mergeSidecarUsage,
+  OpencodeRunAuditAccumulator,
   refreshProviderModels,
   resolveOpencodeBinary,
   runSidecarSession,
   SidecarChunkMapper,
+  sanitizeOpencodeAuditValue,
   type SidecarApprovalDecision,
   type SidecarUsage,
   setProviderKey,
 } from "../../harness/opencode-sidecar"
+import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
+import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
+import { getReadAloudEnabled } from "../../speech/settings"
 import { captureOpenCodeRunUsage } from "../../usage/run-usage"
+import { getUsageProvider } from "../../usage/registry"
+import { getUsageSecret } from "../../usage/secrets"
+import { getUsageSettings } from "../../usage/settings"
 import { agentRuns, chats, getDatabase, subChats } from "../../db"
 import {
   getGlobalDefault,
@@ -44,12 +56,23 @@ const permissionModeSchema = z.enum(permissionModes)
 type PendingApproval = {
   provider: (typeof OPENCODE_HARNESSES)[number]
   runId: string
+  toolCallId: string
   permission: string
+  patterns: string[]
+  command?: string
   resolve: (decision: SidecarApprovalDecision) => void
 }
 
 const activeStreams = new Map<string, { runId: string; controller: AbortController }>()
 const pendingApprovals = new Map<string, PendingApproval>()
+
+export function hasActiveOpencodeStreams(): boolean {
+  return activeStreams.size > 0
+}
+
+export function abortAllOpencodeStreams(): void {
+  for (const active of activeStreams.values()) active.controller.abort()
+}
 
 function parseStoredMessages(raw: string | null | undefined): any[] {
   try {
@@ -158,9 +181,9 @@ export const opencodeRouter = router({
   }),
 
   /**
-   * Persisted OpenCode-backed run. The renderer wiring can subscribe to this
-   * exactly like the existing harness streams; the server remains gated until
-   * real provider credentials have passed the manual matrix.
+   * Persisted OpenCode-backed run. The renderer subscribes to this exactly like
+   * the existing harness streams. Missing credentials are rejected before any
+   * prompt or run row is persisted.
    */
   chat: publicProcedure
     .input(
@@ -172,6 +195,7 @@ export const opencodeRouter = router({
         model: z.string().min(1),
         prompt: z.string().min(1),
         cwd: z.string().min(1),
+        projectPath: z.string().optional(),
         sessionId: z.string().optional(),
         images: z
           .array(
@@ -192,6 +216,7 @@ export const opencodeRouter = router({
         const controller = new AbortController()
         const runId = input.runId || crypto.randomUUID()
         activeStreams.set(input.subChatId, { runId, controller })
+        const isAuthoritativeRun = () => activeStreams.get(input.subChatId)?.runId === runId
         let active = true
         let completed = false
 
@@ -213,12 +238,40 @@ export const opencodeRouter = router({
           }
         }
 
+        const credentialStatus = getCredentialStatus(input.provider)
+        if (!credentialStatus.configured) {
+          if (activeStreams.get(input.subChatId)?.runId === runId) {
+            activeStreams.delete(input.subChatId)
+          }
+          safeEmit({
+            type: "error",
+            errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
+          })
+          safeEmit({ type: "finish" })
+          complete()
+          return () => controller.abort()
+        }
+
         void (async () => {
           let status: "success" | "failure" | "cancelled" = "failure"
           let permissionMode: PermissionMode = getGlobalDefault()
           let usage: SidecarUsage | undefined
+          const usageByObservation = new Map<string, SidecarUsage>()
+          let db: ReturnType<typeof getDatabase> | undefined
+          let runPersisted = false
+          let messagesWithPrompt: any[] | undefined
+          let sidecarSessionId: string | undefined
+          let text = ""
+          let reasoning = ""
+          const reasoningMetadata: Array<{ partId: string; metadata: unknown }> = []
+          let sawSidecarError = false
+          let sidecarErrorText = ""
+          const auditSecrets = [getProviderKey(input.provider) ?? ""].filter(Boolean)
+          const runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
+          let finalMessageMetadata: Record<string, unknown> | undefined
           try {
-            const db = getDatabase()
+            db = getDatabase()
+            if (!isAuthoritativeRun()) return
             const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
             const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
             if (!subChat) throw new Error("Sub-chat not found")
@@ -237,8 +290,9 @@ export const opencodeRouter = router({
                   role: "user",
                   parts: [{ type: "text", text: input.prompt }],
                 }
-            const messagesWithPrompt = duplicate ? messages : [...messages, promptMessage]
+            messagesWithPrompt = duplicate ? messages : mergeMessagesById(messages, [promptMessage])
             if (!duplicate) {
+              if (!isAuthoritativeRun()) return
               db.update(subChats)
                 .set({ messages: JSON.stringify(messagesWithPrompt), updatedAt: new Date() })
                 .where(eq(subChats.id, input.subChatId))
@@ -268,11 +322,16 @@ export const opencodeRouter = router({
                 status: "running",
               })
               .run()
+            runPersisted = true
             const before = await captureCheckpoint(runId, input.cwd, "before")
             db.update(agentRuns)
               .set({ beforeCheckpointId: before.id })
               .where(eq(agentRuns.id, runId))
               .run()
+            if (!isAuthoritativeRun()) {
+              status = "cancelled"
+              return
+            }
             db.update(subChats)
               .set({
                 harness: input.provider,
@@ -290,17 +349,21 @@ export const opencodeRouter = router({
               .run()
 
             const mapper = new SidecarChunkMapper()
-            let text = ""
-            let reasoning = ""
-            let sawSidecarError = false
-            const toolActivity: Array<{ name: string; id: string }> = []
-            let sidecarSessionId: string | undefined
+            const startupContext = await buildHarnessStartupContext({
+              cwd: input.cwd,
+              projectPath: input.projectPath,
+              harness: "opencode",
+            })
+            const promptForModel = appendReadAloudInstruction(
+              prependStartupContext(input.prompt, startupContext),
+              getReadAloudEnabled(input.subChatId),
+            )
 
             for await (const event of runSidecarSession(
               {
                 provider: input.provider,
                 model: input.model,
-                prompt: input.prompt,
+                prompt: promptForModel,
                 attachments: input.images?.map((image) => ({
                   mime: image.mediaType,
                   url: `data:${image.mediaType};base64,${image.base64Data}`,
@@ -313,27 +376,58 @@ export const opencodeRouter = router({
               },
               async (request) =>
                 new Promise((resolve) => {
+                  let settled = false
+                  const finishApproval = (decision: SidecarApprovalDecision) => {
+                    if (settled) return
+                    settled = true
+                    controller.signal.removeEventListener("abort", abortApproval)
+                    resolve(decision)
+                  }
+                  const abortApproval = () => {
+                    pendingApprovals.delete(request.requestId)
+                    finishApproval({
+                      reply: "reject",
+                      message: "Run cancelled while approval was pending.",
+                    })
+                  }
                   pendingApprovals.set(request.requestId, {
                     provider: input.provider,
                     runId,
+                    toolCallId: request.toolCallId,
                     permission: request.permission,
-                    resolve,
+                    patterns: request.patterns,
+                    ...(request.command ? { command: request.command } : {}),
+                    resolve: finishApproval,
                   })
+                  controller.signal.addEventListener("abort", abortApproval, { once: true })
+                  if (controller.signal.aborted) abortApproval()
                 }),
             )) {
+              runAudit.apply(event)
               if (event.kind === "session-start") {
                 sidecarSessionId = event.sessionId
-                db.update(subChats)
-                  .set({ sessionId: event.sessionId, updatedAt: new Date() })
-                  .where(eq(subChats.id, input.subChatId))
-                  .run()
+                if (isAuthoritativeRun()) {
+                  db.update(subChats)
+                    .set({ sessionId: event.sessionId, updatedAt: new Date() })
+                    .where(eq(subChats.id, input.subChatId))
+                    .run()
+                }
               }
               if (event.kind === "text-delta") text += event.delta
               if (event.kind === "reasoning-delta") reasoning += event.delta
-              if (event.kind === "error") sawSidecarError = true
-              if (event.kind === "usage") usage = event.usage
-              if (event.kind === "tool-input-start") {
-                toolActivity.push({ id: event.toolCallId, name: event.toolName })
+              if (event.kind === "reasoning-metadata") {
+                reasoningMetadata.push({
+                  partId: event.partId,
+                  metadata: sanitizeOpencodeAuditValue(event.metadata, auditSecrets),
+                })
+              }
+              if (event.kind === "error") {
+                sawSidecarError = true
+                sidecarErrorText = event.errorText
+              }
+              if (event.kind === "usage") {
+                usageByObservation.set(event.usage.observationId ?? "latest", event.usage)
+                usage = mergeSidecarUsage([...usageByObservation.values()])
               }
               if (event.kind === "permission-asked") {
                 safeEmit({ type: "opencode-permission-request", ...event, runId })
@@ -342,35 +436,6 @@ export const opencodeRouter = router({
             }
 
             for (const chunk of mapper.finish()) safeEmit(chunk)
-            const assistantParts = [
-              ...(reasoning ? [{ type: "reasoning", text: reasoning, state: "done" }] : []),
-              ...(text ? [{ type: "text", text, state: "done" }] : []),
-            ]
-            if (assistantParts.length > 0) {
-              db.update(subChats)
-                .set({
-                  messages: JSON.stringify([
-                    ...messagesWithPrompt,
-                    {
-                      id: crypto.randomUUID(),
-                      role: "assistant",
-                      parts: assistantParts,
-                      metadata: {
-                        harness: input.provider,
-                        model: input.model,
-                        runId,
-                        sessionId: sidecarSessionId,
-                        permissionMode,
-                        toolActivity,
-                        ...(usage ? { usage } : {}),
-                      },
-                    },
-                  ]),
-                  updatedAt: new Date(),
-                })
-                .where(eq(subChats.id, input.subChatId))
-                .run()
-            }
             status = controller.signal.aborted
               ? "cancelled"
               : sawSidecarError
@@ -389,36 +454,133 @@ export const opencodeRouter = router({
                 approval.resolve({ reply: "reject", message: "Run ended before approval." })
               }
             }
-            if (!completed) {
+            if (db && messagesWithPrompt) {
+              try {
+                const audit = runAudit.snapshot()
+                const assistantParts = [
+                  ...(reasoning || reasoningMetadata.length
+                    ? [
+                        {
+                          type: "reasoning",
+                          text: reasoning,
+                          state: "done",
+                          ...(reasoningMetadata.length ? { metadata: reasoningMetadata } : {}),
+                        },
+                      ]
+                    : []),
+                  ...(text ? [{ type: "text", text, state: "done" }] : []),
+                  ...runAudit.toMessageParts(),
+                  ...(sidecarErrorText
+                    ? [{ type: "text", text: `Error: ${sidecarErrorText}`, state: "done" }]
+                    : []),
+                ]
+                finalMessageMetadata = {
+                  harness: input.provider,
+                  model: input.model,
+                  runId,
+                  sessionId: sidecarSessionId,
+                  permissionMode,
+                  engine: audit.engine,
+                  permissionApplication: audit.permissionApplication,
+                  limitations: audit.limitations,
+                  toolActivity: audit.toolActivity,
+                  approvalActivity: audit.approvalActivity,
+                  ...(usage ? { usage } : {}),
+                }
+                if (
+                  isAuthoritativeRun() &&
+                  (assistantParts.length > 0 || runAudit.hasActivity() || sawSidecarError)
+                ) {
+                  const latest = db
+                    .select({ messages: subChats.messages })
+                    .from(subChats)
+                    .where(eq(subChats.id, input.subChatId))
+                    .get()
+                  const currentMessages = parseStoredMessages(latest?.messages)
+                  const assistantMessage = {
+                    id: crypto.randomUUID(),
+                    role: "assistant",
+                    parts: assistantParts,
+                    metadata: finalMessageMetadata,
+                  }
+                  db.update(subChats)
+                    .set({
+                      messages: JSON.stringify(
+                        mergeMessagesById(currentMessages, [assistantMessage]),
+                      ),
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(subChats.id, input.subChatId))
+                    .run()
+                }
+              } catch (persistenceError) {
+                console.error(
+                  "[opencode] Failed to persist assistant run metadata",
+                  persistenceError,
+                )
+              }
+            }
+            if (!completed && runPersisted) {
               completed = true
               try {
-                const db = getDatabase()
-                const after = await captureCheckpoint(runId, input.cwd, "after")
-                await captureRunManifest(runId)
-                if (usage) {
-                  await captureOpenCodeRunUsage(db, {
-                    providerId: input.provider,
-                    runId,
-                    model: input.model,
-                    ...usage,
-                  })
-                }
-                db.update(agentRuns)
-                  .set({ status, completedAt: new Date(), afterCheckpointId: after.id })
-                  .where(eq(agentRuns.id, runId))
-                  .run()
-                db.update(subChats)
-                  .set({ runStatus: status, updatedAt: new Date() })
-                  .where(eq(subChats.id, input.subChatId))
-                  .run()
+                const finalDb = db ?? getDatabase()
+                await finalizeOpencodeRunPersistence({
+                  captureAfter: async () => (await captureCheckpoint(runId, input.cwd, "after")).id,
+                  updateRunStatus: (afterCheckpointId) => {
+                    finalDb
+                      .update(agentRuns)
+                      .set({
+                        status,
+                        completedAt: new Date(),
+                        ...(afterCheckpointId ? { afterCheckpointId } : {}),
+                      })
+                      .where(eq(agentRuns.id, runId))
+                      .run()
+                  },
+                  updateSubChatStatus: () => {
+                    if (!isAuthoritativeRun()) return
+                    finalDb
+                      .update(subChats)
+                      .set({ runStatus: status, updatedAt: new Date() })
+                      .where(eq(subChats.id, input.subChatId))
+                      .run()
+                  },
+                  captureManifest: () => captureRunManifest(runId),
+                  ...(usage
+                    ? {
+                        captureUsage: () =>
+                          captureOpenCodeRunUsage(
+                            finalDb,
+                            {
+                              providerId: input.provider,
+                              runId,
+                              model: input.model,
+                              ...usage,
+                            },
+                            {
+                              alerts: {
+                                settings: getUsageSettings(),
+                                getSecret: async (key) => getUsageSecret(key),
+                                provider: getUsageProvider(input.provider)!,
+                              },
+                            },
+                          ),
+                      }
+                    : {}),
+                  onError: (stage, error) =>
+                    console.error(`[opencode] Failed finalization stage ${stage}`, error),
+                })
               } catch (persistenceError) {
-                console.error("[opencode] Failed to finalize run", persistenceError)
+                console.error(
+                  "[opencode] Could not access finalization persistence",
+                  persistenceError,
+                )
               }
             }
             if (activeStreams.get(input.subChatId)?.runId === runId) {
               activeStreams.delete(input.subChatId)
             }
-            safeEmit({ type: "finish" })
+            safeEmit({ type: "finish", messageMetadata: finalMessageMetadata })
             complete()
           }
         })()
@@ -435,7 +597,10 @@ export const opencodeRouter = router({
       requestId,
       runId: approval.runId,
       provider: approval.provider,
+      toolCallId: approval.toolCallId,
       permission: approval.permission,
+      patterns: approval.patterns,
+      ...(approval.command ? { command: approval.command } : {}),
     })).filter((approval) => approval.runId === input.runId),
   ),
 
