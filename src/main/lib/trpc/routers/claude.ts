@@ -39,10 +39,16 @@ import {
   chats,
   claudeCodeCredentials,
   getDatabase,
+  getDatabasePath,
   projects as projectsTable,
   subChats,
   tasks as tasksTable,
 } from "../../db"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+} from "../../mcp-control/registration"
+import { getChatMcpExposure } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
@@ -1414,6 +1420,19 @@ export const claudeRouter = router({
                   ...pluginServers,
                   ...globalServers,
                   ...projectServers,
+                }
+
+                if (getChatMcpExposure(input.chatId)) {
+                  const permissionMode = resolveClaudeRunPermission(input.chatId)
+                  const registration = buildMcpStdioRegistration(
+                    { chatId: input.chatId, permissionMode },
+                    {
+                      executablePath: process.execPath,
+                      mainDirectory: __dirname,
+                      databasePath: getDatabasePath(),
+                    },
+                  )
+                  allServers[FLAPSTACK_MCP_SERVER_NAME] = registration
                 }
 
                 // Filter to only working MCPs using scoped cache keys

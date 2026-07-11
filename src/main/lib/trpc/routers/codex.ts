@@ -28,7 +28,19 @@ import {
   extractLatestCodexReasoningEvents,
 } from "../../codex/reasoning"
 import { resolveCodexStdioLaunch } from "../../codex/mcp-stdio"
-import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+} from "../../mcp-control/registration"
+import { getChatMcpExposure } from "../../mcp-control/exposure"
+import {
+  agentRuns,
+  chats,
+  getDatabase,
+  getDatabasePath,
+  projects as projectsTable,
+  subChats,
+} from "../../db"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
@@ -1915,6 +1927,24 @@ export const codexRouter = router({
               mcpSnapshot = await resolveCodexMcpSnapshot({
                 lookupPath: mcpLookupPath,
               })
+              if (getChatMcpExposure(input.chatId)) {
+                const registration = buildMcpStdioRegistration(
+                  { chatId: input.chatId, runId: input.runId, permissionMode },
+                  {
+                    executablePath: process.execPath,
+                    mainDirectory: __dirname,
+                    databasePath: getDatabasePath(),
+                  },
+                )
+                mcpSnapshot.mcpServersForSession.push({
+                  name: FLAPSTACK_MCP_SERVER_NAME,
+                  type: "stdio",
+                  command: registration.command,
+                  args: registration.args,
+                  env: Object.entries(registration.env).map(([name, value]) => ({ name, value })),
+                })
+                mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServersForSession)
+              }
             } catch (mcpError) {
               console.error("[codex] Failed to resolve MCP servers:", mcpError)
             }

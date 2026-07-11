@@ -47,7 +47,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T4 — Add harness registration and default-off per-chat exposure
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: Supported chats see Flapstack MCP only after the user enables it.
 - Scope: Persist exposure, configure/unconfigure Codex and Claude, attach trusted identity, and reconcile startup state.

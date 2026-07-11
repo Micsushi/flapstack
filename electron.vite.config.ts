@@ -18,6 +18,7 @@ export default defineConfig({
       lib: {
         entry: {
           index: resolve(__dirname, "src/main/index.ts"),
+          "mcp-control-stdio": resolve(__dirname, "src/main/mcp-control-stdio.ts"),
           "usage-daemon": resolve(__dirname, "src/main/usage-daemon.ts"),
         },
       },

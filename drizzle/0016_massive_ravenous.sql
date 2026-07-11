@@ -1,0 +1,1 @@
+ALTER TABLE `chats` ADD `mcp_exposure_enabled` integer DEFAULT false NOT NULL;
