@@ -1,3 +1,5 @@
+import { z } from "zod"
+import { createMcpReadService, type McpReadService } from "./read-service"
 import type { McpCallerIdentity, McpControlResponse, McpControlTool } from "./types"
 
 export const mcpControlTools: McpControlTool[] = [
@@ -13,15 +15,43 @@ export const mcpControlTools: McpControlTool[] = [
     tier: 0,
     status: "implemented",
   },
-  { name: "list_projects", description: "List local projects.", tier: 0, status: "scaffolded" },
+  {
+    name: "list_projects",
+    description: "List caller-visible projects.",
+    tier: 0,
+    status: "implemented",
+  },
   {
     name: "list_tasks",
     description: "List tasks in a project or globally.",
     tier: 0,
-    status: "scaffolded",
+    status: "implemented",
   },
-  { name: "list_chats", description: "List chats by scope.", tier: 0, status: "scaffolded" },
-  { name: "search", description: "Run scoped search.", tier: 0, status: "scaffolded" },
+  { name: "list_chats", description: "List caller-visible chats.", tier: 0, status: "implemented" },
+  {
+    name: "list_runs",
+    description: "List caller-visible agent runs.",
+    tier: 0,
+    status: "implemented",
+  },
+  {
+    name: "list_worktrees",
+    description: "List caller-visible worktrees.",
+    tier: 0,
+    status: "implemented",
+  },
+  {
+    name: "list_artifacts",
+    description: "List caller-visible attachment and run artifacts.",
+    tier: 0,
+    status: "implemented",
+  },
+  {
+    name: "search",
+    description: "Search caller-visible object metadata.",
+    tier: 0,
+    status: "implemented",
+  },
   { name: "create_chat", description: "Create a new chat.", tier: 1, status: "stubbed" },
   { name: "create_task", description: "Create a new task.", tier: 1, status: "stubbed" },
   {
@@ -56,6 +86,8 @@ export function listImplementedMcpControlTools(): McpControlTool[] {
 export async function invokeMcpControlTool(
   name: string,
   caller: McpCallerIdentity,
+  input: unknown = {},
+  readService?: McpReadService,
 ): Promise<McpControlResponse> {
   const tool = getMcpControlTool(name)
   if (!tool) {
@@ -71,9 +103,33 @@ export async function invokeMcpControlTool(
   if (name === "ping") {
     return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
   }
-  return {
-    ok: true,
-    data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
+  if (name === "describe") {
+    return {
+      ok: true,
+      data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
+    }
+  }
+
+  try {
+    return { ok: true, data: (readService ?? createMcpReadService()).invoke(name, caller, input) }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        ok: false,
+        error: { code: "invalid-input", message: error.issues[0]?.message ?? "Invalid input." },
+      }
+    }
+    if (error instanceof Error && error.name === "McpReadError") {
+      const [code, message] = error.message.split(":", 2)
+      return {
+        ok: false,
+        error: {
+          code: code as "invalid-input" | "out-of-scope" | "not-found",
+          message: message ?? "Read failed.",
+        },
+      }
+    }
+    return { ok: false, error: { code: "internal-error", message: "Read operation failed." } }
   }
 }
 
