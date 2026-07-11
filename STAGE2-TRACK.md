@@ -2,8 +2,7 @@
 
 Branch: `codex/stage2-cursor-support`
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track D**.
+Repo-local implementation scope: **Track D**.
 
 ## Tasks
 
@@ -92,9 +91,7 @@ Off `main` @ 4a2fab7 (== origin/main). Rebase on main before merge.
 
 Branch: `codex/stage2-agent-reasoning-output`
 
-Authoritative task board:
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` →
-**Cross-track — Reasoning Output Parity**.
+Repo-local implementation scope: **Cross-track — Reasoning Output Parity**.
 
 ## Tasks
 

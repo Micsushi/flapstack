@@ -121,8 +121,7 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Finish run history UX so users can page or expand beyond the first few runs.
 - Make cross-scope chat moves discoverable from menus, not only hidden
   drag/toggle paths.
-- Keep repo docs and vault docs in sync with shipped status and remaining
-  carryover work.
+- Keep repo docs in sync with shipped status and remaining carryover work.
 
 ### Stage 3: MCP Control
 

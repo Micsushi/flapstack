@@ -2,9 +2,7 @@
 
 Branch: `codex/stage2-voice-io`
 
-Authoritative task board (Blocked-by / Blocks / Files / Scope / Done-when for
-every task):
-`agentsvault/Wiki/Projects/flapstack/stage2-implementation-tasks.md` → **Track A**.
+Repo-local implementation scope: **Track A**.
 
 ## Tasks
 
