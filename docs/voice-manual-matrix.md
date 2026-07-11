@@ -21,3 +21,8 @@ automated suite passes. Mark only paths actually verified on the target OS.
 Automated coverage: adapter selection and fallback, settings normalization,
 spoken-text filtering, Kokoro WAV helpers, native voice parsing, and read-aloud
 prompt injection live in `tests/voice-speech.test.ts`.
+
+The proposed macOS/Windows/Linux sidecar, final-only mode, and live-revising
+mode have a separate acceptance gate in [`stt-dictation.md`](stt-dictation.md).
+Do not mark those targets implemented until the Stage 2 OpenSpec is revised and
+approved.

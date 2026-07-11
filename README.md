@@ -75,6 +75,10 @@ Five tracks plus fixes.
 Voice (reuses Agent Hotline):
 
 - Speech-to-text input, cloud plus a local/offline engine.
+- Cross-platform standalone and embedded STT research, transcript modes, model
+  choices, dependency roles, and acceptance gates are documented in
+  [`docs/stt-dictation.md`](docs/stt-dictation.md). The proposed sidecar change
+  still requires an approved OpenSpec revision.
 - Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
 - Per-OS speech adapters with an offline/local path kept as a supported default.
@@ -121,8 +125,7 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Finish run history UX so users can page or expand beyond the first few runs.
 - Make cross-scope chat moves discoverable from menus, not only hidden
   drag/toggle paths.
-- Keep repo docs and vault docs in sync with shipped status and remaining
-  carryover work.
+- Keep repo docs in sync with shipped status and remaining carryover work.
 
 ### Stage 3: MCP Control
 
