@@ -187,6 +187,7 @@ export const mcpAuditRecords = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => createId()),
+    invocationId: text("invocation_id").notNull(),
     status: text("status").notNull(),
     callerChatId: text("caller_chat_id").notNull(),
     callerRunId: text("caller_run_id"),
@@ -197,6 +198,7 @@ export const mcpAuditRecords = sqliteTable(
     runSnapshot: text("run_snapshot").notNull(),
     inputSummary: text("input_summary").notNull(),
     resultSummary: text("result_summary").notNull(),
+    durationMs: integer("duration_ms").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
@@ -204,6 +206,7 @@ export const mcpAuditRecords = sqliteTable(
     index("mcp_audit_records_caller_chat_id_idx").on(table.callerChatId),
     index("mcp_audit_records_tool_name_idx").on(table.toolName),
     index("mcp_audit_records_status_idx").on(table.status),
+    index("mcp_audit_records_invocation_id_idx").on(table.invocationId),
   ],
 )
 
