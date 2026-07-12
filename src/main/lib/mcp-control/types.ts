@@ -55,3 +55,18 @@ export type McpGateResult = {
   reason: string
   requiresApproval: boolean
 }
+
+export type McpSelfReferenceOperation = "rename" | "move" | "archive" | "write" | "launch" | "spawn"
+
+export type McpSelfReferenceTargetKind = "chat" | "run" | "task" | "project"
+
+export type McpSelfReferenceBlockedReason = {
+  code: "self-reference"
+  operation: McpSelfReferenceOperation
+  targetKind: McpSelfReferenceTargetKind
+  targetId: string
+}
+
+export type McpSelfReferenceResult =
+  | { decision: "allowed"; reason: string; blockedReason?: undefined }
+  | { decision: "denied"; reason: string; blockedReason: McpSelfReferenceBlockedReason }
