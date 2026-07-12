@@ -101,7 +101,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T3 — Implement approval lifecycle and session grants
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Required operations wait for one durable user decision and finish exactly once.
 - Scope: Pending state, approve, deny, timeout, cancellation, app shutdown, and in-memory session grants.
