@@ -54,6 +54,10 @@ export type McpControlErrorCode =
   | "not-found"
   | "internal-error"
 
+export type McpMutationService = {
+  invoke(name: string, caller: McpCallerIdentity, input: unknown): Promise<McpControlResponse>
+}
+
 export type McpControlResponse<T = unknown> =
   { ok: true; data: T } | { ok: false; error: { code: McpControlErrorCode; message: string } }
 
