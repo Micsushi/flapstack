@@ -6,6 +6,10 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
+import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
+import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
+import { invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
+import { drainPendingAgentRuns } from "../src/main/lib/run-launch-service"
 import * as schema from "../src/main/lib/db/schema"
 
 let directory = ""
@@ -84,5 +88,70 @@ describe("MCP mutation service", () => {
       { name: "Daily review", trigger: "schedule" },
     )
     expect(result).toMatchObject({ ok: true, data: { runnable: false } })
+  })
+
+  it("queues launch_run once for an idempotency key", async () => {
+    sqlite.prepare("UPDATE chats SET harness = 'codex' WHERE id = 'chat-2'").run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-2', 'chat-2', 'codex', 'full-access', '[]')",
+      )
+      .run()
+    const service = createMcpMutationService(path)
+    const input = {
+      chatId: "chat-2",
+      initialPrompt: "Run the tests.",
+      idempotencyKey: "launch-1",
+    }
+    const first = await service.invoke("launch_run", { chatId: "chat-1" }, input)
+    const second = await service.invoke("launch_run", { chatId: "chat-1" }, input)
+
+    expect(first).toMatchObject({ ok: true, data: { created: true } })
+    expect(second).toMatchObject({ ok: true, data: { created: false } })
+    expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
+    expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "pending" })
+  })
+
+  it("gates launch_run and correlates execution failure to its audit invocation", async () => {
+    sqlite.prepare("UPDATE chats SET harness = 'claude-code' WHERE id = 'chat-2'").run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-2', 'chat-2', 'claude-code', 'full-access', '[]')",
+      )
+      .run()
+    const approvals = new McpApprovalLifecycle()
+    const database = drizzle(sqlite, { schema })
+    const pending = invokeMcpControlTool(
+      "launch_run",
+      { chatId: "chat-1", permissionMode: "full-access" },
+      { chatId: "chat-2", initialPrompt: "Run it.", idempotencyKey: "approved-launch" },
+      undefined,
+      {
+        approvals,
+        approvalId: () => "launch-approval",
+        mutations: createMcpMutationService(path),
+        audit: { append: (record) => appendMcpAuditRecord(database, record) },
+      },
+    )
+    approvals.approve("launch-approval")
+    await expect(pending).resolves.toMatchObject({ ok: true, data: { created: true } })
+    await drainPendingAgentRuns(
+      path,
+      async () => {
+        throw new Error("claude unavailable")
+      },
+      { waitForCompletion: true },
+    )
+
+    const audit = sqlite
+      .prepare(
+        "SELECT invocation_id, status FROM mcp_audit_records WHERE tool_name = 'launch_run' ORDER BY created_at, id",
+      )
+      .all() as Array<{ invocation_id: string; status: string }>
+    expect(audit.map((row) => row.status)).toEqual(
+      expect.arrayContaining(["approval-required", "allowed", "completed", "failed"]),
+    )
+    expect(new Set(audit.map((row) => row.invocation_id)).size).toBe(1)
+    approvals.shutdown()
   })
 })

@@ -209,6 +209,7 @@ function resolveClaudeRunPermission(chatId: string): PermissionMode {
 }
 
 async function createClaudeAgentRun(input: {
+  runId?: string
   chatId: string
   subChatId: string
   model?: string | null
@@ -217,9 +218,14 @@ async function createClaudeAgentRun(input: {
   promptMessageId?: string
 }) {
   const db = getDatabase()
+  if (input.runId) {
+    const existing = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+    if (existing) return existing
+  }
   const run = db
     .insert(agentRuns)
     .values({
+      ...(input.runId ? { id: input.runId } : {}),
       chatId: input.chatId,
       subChatId: input.subChatId,
       harness: HARNESS,
@@ -916,6 +922,7 @@ export const claudeRouter = router({
   chat: publicProcedure
     .input(
       z.object({
+        runId: z.string().optional(),
         subChatId: z.string(),
         chatId: z.string(),
         prompt: z.string(),
@@ -1592,6 +1599,7 @@ export const claudeRouter = router({
               canUseToolReadOnlyGuard: resolvedPermissionMode === "read-only",
             })
             const run = await createClaudeAgentRun({
+              runId: input.runId,
               chatId: input.chatId,
               subChatId: input.subChatId,
               model: resolvedModel,

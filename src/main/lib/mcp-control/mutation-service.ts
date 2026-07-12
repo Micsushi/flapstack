@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import { copyFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
@@ -71,6 +71,13 @@ const schemas = {
       dryRun: z.literal(true).default(true),
     })
     .strict(),
+  launch_run: z
+    .object({
+      chatId: id,
+      initialPrompt: z.string().trim().min(1).max(100_000),
+      idempotencyKey: id,
+    })
+    .strict(),
 } as const
 
 export const mcpMutationInputShapes: Record<string, z.ZodRawShape | undefined> = Object.fromEntries(
@@ -78,14 +85,6 @@ export const mcpMutationInputShapes: Record<string, z.ZodRawShape | undefined> =
 )
 
 type Row = Record<string, unknown>
-export type ThreadSpawnLauncher = (input: {
-  chatId: string
-  subChatId: string
-  runId: string
-  harness: "codex" | "claude-code"
-  initialPrompt: string
-}) => Promise<void> | void
-
 /**
  * The stdio MCP child cannot call renderer tRPC. This is the shared, main-free
  * mutation layer used by its registry and deliberately opens a short-lived DB
@@ -93,7 +92,6 @@ export type ThreadSpawnLauncher = (input: {
  */
 export function createMcpMutationService(
   databasePath = process.env.FLAPSTACK_DB_PATH,
-  options: { launchThread?: ThreadSpawnLauncher } = {},
 ): McpMutationService {
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP mutations.")
   return {
@@ -116,7 +114,6 @@ export function createMcpMutationService(
               db,
               caller,
               input.data as z.infer<typeof threadSpawnRequestSchema>,
-              options.launchThread,
             )
           case "create_chat":
             return createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>)
@@ -138,6 +135,8 @@ export function createMcpMutationService(
               scope,
               input.data as z.infer<typeof schemas.write_attachment_to_worktree>,
             )
+          case "launch_run":
+            return launchRun(db, scope, input.data as z.infer<typeof schemas.launch_run>)
           case "create_automation_draft":
             return {
               ok: true,
@@ -160,6 +159,99 @@ export function createMcpMutationService(
         db.close()
       }
     },
+  }
+}
+
+function launchRun(
+  db: Database.Database,
+  scope: Scope,
+  input: z.infer<typeof schemas.launch_run>,
+): McpControlResponse {
+  const chat = target(db, scope, "chat", input.chatId)
+  if (chat.archived_at) return fail("stale-target", "Chat is archived.")
+  const harness = chat.harness
+  if (harness !== "codex" && harness !== "claude-code")
+    return fail("invalid-input", "Chat does not use a launchable harness.")
+  const subChat = db
+    .prepare(
+      "SELECT id, messages, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
+    )
+    .get(input.chatId) as Row | undefined
+  if (!subChat) return fail("stale-target", "Chat conversation is missing.")
+  const promptMessageId = `mcp-${input.idempotencyKey}`
+  const existing = db
+    .prepare("SELECT id, status FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?")
+    .get(input.chatId, promptMessageId) as Row | undefined
+  if (existing)
+    return {
+      ok: true,
+      data: { runId: existing.id, created: false, launch: { status: existing.status } },
+    }
+
+  const runId = stableRunId(input.chatId, input.idempotencyKey)
+  const messages = parseMessages(subChat.messages)
+  messages.push({
+    id: promptMessageId,
+    role: "user",
+    parts: [{ type: "text", text: input.initialPrompt }],
+    metadata: { harness },
+  })
+  const transaction = db.transaction(() => {
+    db.prepare("UPDATE sub_chats SET messages = ?, run_status = 'pending' WHERE id = ?").run(
+      JSON.stringify(messages),
+      subChat.id,
+    )
+    db.prepare(
+      `INSERT INTO agent_runs (
+        id, chat_id, sub_chat_id, harness, model, permission_mode, worktree_path,
+        prompt_message_id, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    ).run(
+      runId,
+      input.chatId,
+      subChat.id,
+      harness,
+      subChat.model ?? chat.model ?? null,
+      subChat.permission_mode ?? chat.permission_mode,
+      subChat.worktree_path ?? chat.worktree_path ?? null,
+      promptMessageId,
+      Date.now(),
+    )
+  })
+  try {
+    transaction()
+  } catch (error) {
+    const raced = db
+      .prepare("SELECT id, status FROM agent_runs WHERE id = ? AND chat_id = ?")
+      .get(runId, input.chatId) as Row | undefined
+    if (raced)
+      return {
+        ok: true,
+        data: { runId: raced.id, created: false, launch: { status: raced.status } },
+      }
+    throw error
+  }
+  return { ok: true, data: { runId, created: true, launch: { status: "pending" } } }
+}
+
+function stableRunId(chatId: string, idempotencyKey: string): string {
+  const value = createHash("sha256")
+    .update("flapstack-mcp-run\0")
+    .update(chatId)
+    .update("\0")
+    .update(idempotencyKey)
+    .digest("hex")
+    .slice(0, 32)
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-a${value.slice(17, 20)}-${value.slice(20)}`
+}
+
+function parseMessages(value: unknown): Array<Record<string, unknown>> {
+  if (typeof value !== "string") return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
 }
 
@@ -295,7 +387,6 @@ async function spawnThread(
   db: Database.Database,
   caller: McpCallerIdentity,
   request: z.infer<typeof threadSpawnRequestSchema>,
-  launchThread?: ThreadSpawnLauncher,
 ): Promise<McpControlResponse> {
   const callerRow = db
     .prepare(
@@ -328,11 +419,12 @@ async function spawnThread(
   const chatId = randomUUID()
   const subChatId = randomUUID()
   const runId = contract.plan.launch.requested ? randomUUID() : null
+  const promptMessageId = `mcp-spawn-${chatId}`
   const now = Date.now()
   const initialMessages = contract.plan.launch.initialPrompt
     ? JSON.stringify([
         {
-          id: `msg-${chatId}`,
+          id: promptMessageId,
           role: "user",
           parts: [{ type: "text", text: contract.plan.launch.initialPrompt }],
           metadata: { harness: contract.plan.targetHarness },
@@ -390,7 +482,7 @@ async function spawnThread(
         contract.plan.targetHarness,
         contract.plan.permission.mode,
         resolved.worktreePath,
-        `msg-${chatId}`,
+        promptMessageId,
         now,
       )
     }
@@ -404,34 +496,13 @@ async function spawnThread(
       error instanceof Error ? error.message : "Thread creation failed.",
     )
   }
-  if (runId && launchThread && contract.plan.launch.initialPrompt) {
-    try {
-      await launchThread({
-        chatId,
-        subChatId,
-        runId,
-        harness: contract.plan.targetHarness,
-        initialPrompt: contract.plan.launch.initialPrompt,
-      })
-      db.prepare("UPDATE agent_runs SET status = 'running' WHERE id = ?").run(runId)
-      db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(subChatId)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Target harness launch failed."
-      db.prepare("UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ?").run(
-        Date.now(),
-        runId,
-      )
-      db.prepare("UPDATE sub_chats SET run_status = 'failure' WHERE id = ?").run(subChatId)
-      return fail("internal-error", `Thread created but launch failed: ${message}`)
-    }
-  }
   return {
     ok: true,
     data: {
       chatId,
       subChatId,
       ...(runId
-        ? { runId, launch: { status: launchThread ? "running" : "queued" } }
+        ? { runId, launch: { status: "pending" } }
         : { launch: { status: "not-requested" } }),
       lineage: contract.plan.lineage,
       worktreePath: resolved.worktreePath,

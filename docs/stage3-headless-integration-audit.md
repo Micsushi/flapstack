@@ -28,31 +28,31 @@ manual rows. Stage 2 app data and processes were not touched.
 
 ## Requirement audit
 
-| Area                              | Headless result                                                                                                     | Closeout state                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Transport                         | Real stdio SDK child passes; no loopback port                                                                       | Ready                                                                                                 |
-| Caller identity                   | Launch identity, permission mode, and strict custom capability toggles are revalidated against SQLite for each call | Ready                                                                                                 |
-| Exposure and harness registration | Default-off migration and Codex/Claude per-run registration exist                                                   | Automated ready; restart/reconnect manual row open                                                    |
-| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                                      | Ready                                                                                                 |
-| Mutations                         | Structured handlers exist and scope/idempotency tests pass                                                          | Not complete: `launch_run` is still stubbed; approval-required calls have no app bridge               |
-| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                                                | Core gate ready                                                                                       |
-| Approvals                         | Lifecycle unit/concurrency tests pass                                                                               | Not integrated: lifecycle is private to the stdio child; app tRPC has no pending/approve/deny channel |
-| Audit                             | SQLite, redaction, filtering, paging, correlation, and invocation tests pass                                        | Not complete for real user approval/grant decisions because the approval bridge is absent             |
-| Cross-agent spawn                 | Durable creation, lineage, loop rejection, both harness directions, and failed-launch honesty pass                  | Not complete: real stdio launch records a queued run but no consumer starts it                        |
-| Safety UI                         | Model/component tests exist                                                                                         | Owned by S3-F6 UI task; manual rows open                                                              |
+| Area                              | Headless result                                                                                                     | Closeout state                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Transport                         | Real stdio SDK child passes; no loopback port                                                                       | Ready                                                               |
+| Caller identity                   | Launch identity, permission mode, and strict custom capability toggles are revalidated against SQLite for each call | Ready                                                               |
+| Exposure and harness registration | Default-off migration and Codex/Claude per-run registration exist                                                   | Automated ready; restart/reconnect manual row open                  |
+| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                                      | Ready                                                               |
+| Mutations                         | Structured handlers, idempotent `launch_run`, approval, and DB-backed error tests pass                              | Headless ready; live approval evidence remains in the manual matrix |
+| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                                                | Core gate ready                                                     |
+| Approvals                         | Durable coordinator, app decision bridge, lifecycle, timeout, grant, and concurrency tests pass                     | Automated ready; active/background/timeout manual rows open         |
+| Audit                             | SQLite, redaction, filtering, paging, correlation, invocations, decisions, and grants pass                          | Automated ready; live decision/history manual rows open             |
+| Cross-agent spawn                 | Durable creation, lineage, both directions, launch consumption, restart recovery, and failure pass                  | Automated ready; real Codex and Claude evidence remains in S3-F5-T3 |
+| Safety UI                         | Exposure, approval, badge, and audit viewer model/component tests pass                                              | Code ready; manual UI rows open                                     |
 
 ## Corrected task state
 
 The audit reopened S3-F2-T5, S3-F3-T3, S3-F3-T4, S3-F4-T2, and S3-F5-T2.
-Their unit-level pieces exist, but their stated end-to-end acceptance is not
-currently true. S3-F5-T3 and S3-F6-T1 through S3-F6-T4 remain open.
+S3-F2-T5 and S3-F5-T2 are now headless-complete through the shared app-router
+launch path, durable queue, crash recovery, and DB-backed integration tests.
+S3-F5-T3 remains open for real Codex and Claude evidence.
 
 ## Exact manual matrix
 
-Run only after the approval bridge, real target-harness launch consumer, and
-S3-F6 UI work are integrated. Use an isolated Stage 3 data directory and a
-Stage 3 build. Do not use the Stage 2 dev profile. Do not let the test launcher
-activate or focus another app window.
+Run only after Stage 2 protection is explicitly cleared. Use an isolated Stage
+3 data directory and a Stage 3 build. Do not use the Stage 2 dev profile. Do
+not let the test launcher activate or focus another app window.
 
 Record this header before testing:
 

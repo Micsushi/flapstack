@@ -8,7 +8,9 @@ import {
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
-import { closeDatabase, initDatabase } from "./lib/db"
+import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
+import { createMainRunLauncher } from "./lib/main-run-launcher"
+import { drainPendingAgentRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { getUsageSecret } from "./lib/usage/secrets"
@@ -134,6 +136,8 @@ export function getAppUrl(): string {
 
 // Auth manager singleton (use the one from auth-manager module)
 let authManager: AuthManager
+let pendingRunTimer: NodeJS.Timeout | null = null
+let pendingRunDrainActive = false
 
 export function getAuthManager(): AuthManager {
   // First try to get from module, fallback to local variable for backwards compat
@@ -826,6 +830,21 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      recoverInterruptedMcpRuns(getDatabasePath())
+      const pendingRunLauncher = createMainRunLauncher()
+      const launchPendingRuns = async () => {
+        if (pendingRunDrainActive) return
+        pendingRunDrainActive = true
+        try {
+          await drainPendingAgentRuns(getDatabasePath(), pendingRunLauncher)
+        } catch (error) {
+          console.error("[App] Pending run launch failed:", error)
+        } finally {
+          pendingRunDrainActive = false
+        }
+      }
+      pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+      void launchPendingRuns()
       void runStartupCatchUp({
         db: initDatabase(),
         getSecret: getAppUsageSecret,
@@ -887,6 +906,7 @@ if (gotTheLock) {
   app.on("before-quit", async () => {
     console.log("[App] Shutting down...")
     abortAllAgentSessions()
+    if (pendingRunTimer) clearInterval(pendingRunTimer)
     cancelAllPendingOAuth()
     await cleanupGitWatchers()
     await shutdownAnalytics()

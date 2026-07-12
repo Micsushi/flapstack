@@ -178,7 +178,7 @@ export const mcpControlTools: McpControlTool[] = [
     description: "Launch a new agent run.",
     tier: 3,
     requiredCapabilities: ["mcp", "shell"],
-    status: "stubbed",
+    status: "implemented",
   },
   {
     name: "create_automation_draft",
