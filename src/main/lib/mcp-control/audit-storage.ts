@@ -1,5 +1,6 @@
 import { mcpAuditRecords } from "../db/schema"
 import { randomUUID } from "node:crypto"
+import { and, desc, eq, gte, lt, lte, or } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
 import type { McpCallerIdentity, McpRiskTier } from "./types"
@@ -38,6 +39,51 @@ export type AppendMcpAuditRecord = {
 
 type AuditDatabase = Pick<BetterSQLite3Database<typeof schema>, "insert">
 
+export type McpAuditDetailDto = {
+  callerSummary: string
+  chatSummary: string
+  runSummary: string
+  inputSummary: string
+  resultSummary: string
+}
+
+/**
+ * The only audit shape exposed outside storage. It deliberately contains the
+ * already-redacted summaries, never raw invocation snapshots or payloads.
+ */
+export type McpAuditRecordDto = {
+  id: string
+  invocationId: string
+  decision: McpAuditStatus
+  callerChatId: string
+  callerRunId: string | null
+  toolName: string
+  tier: McpRiskTier
+  durationMs: number
+  occurredAt: string
+  detail: McpAuditDetailDto
+}
+
+export type McpAuditQuery = {
+  callerChatId?: string
+  toolName?: string
+  decision?: McpAuditStatus
+  from?: Date
+  to?: Date
+  cursor?: string
+  limit?: number
+}
+
+export type McpAuditPage = {
+  entries: McpAuditRecordDto[]
+  nextCursor: string | null
+}
+
+type QueryDatabase = Pick<BetterSQLite3Database<typeof schema>, "select">
+
+const DEFAULT_PAGE_SIZE = 25
+const MAX_PAGE_SIZE = 100
+
 /** Store bounded, non-recoverable JSON suitable for durable audit summaries. */
 export function redactMcpAuditSummary(value: unknown): string {
   const summary = JSON.stringify(redactValue(value, 0))
@@ -73,6 +119,88 @@ export function appendMcpAuditRecord(database: AuditDatabase, record: AppendMcpA
       ...(record.createdAt ? { createdAt: record.createdAt } : {}),
     })
     .run()
+}
+
+/** Query append-only audit storage in a stable newest-first order. */
+export function listMcpAuditRecords(
+  database: QueryDatabase,
+  query: McpAuditQuery = {},
+): McpAuditPage {
+  const limit = Math.max(1, Math.min(query.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE))
+  const cursor = query.cursor ? decodeCursor(query.cursor) : null
+  const conditions = [
+    query.callerChatId ? eq(mcpAuditRecords.callerChatId, query.callerChatId) : undefined,
+    query.toolName ? eq(mcpAuditRecords.toolName, query.toolName) : undefined,
+    query.decision ? eq(mcpAuditRecords.status, query.decision) : undefined,
+    query.from ? gte(mcpAuditRecords.createdAt, query.from) : undefined,
+    query.to ? lte(mcpAuditRecords.createdAt, query.to) : undefined,
+    cursor
+      ? or(
+          lt(mcpAuditRecords.createdAt, cursor.occurredAt),
+          and(eq(mcpAuditRecords.createdAt, cursor.occurredAt), lt(mcpAuditRecords.id, cursor.id)),
+        )
+      : undefined,
+  ]
+  const rows = database
+    .select()
+    .from(mcpAuditRecords)
+    .where(and(...conditions))
+    .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+    .limit(limit + 1)
+    .all()
+  const page = rows.slice(0, limit).map(toAuditDto)
+
+  return {
+    entries: page,
+    nextCursor: rows.length > limit && page.length > 0 ? encodeCursor(page.at(-1)!) : null,
+  }
+}
+
+function toAuditDto(row: typeof mcpAuditRecords.$inferSelect): McpAuditRecordDto {
+  return {
+    id: row.id,
+    invocationId: row.invocationId,
+    decision: row.status as McpAuditStatus,
+    callerChatId: row.callerChatId,
+    callerRunId: row.callerRunId,
+    toolName: row.toolName,
+    tier: row.tier as McpRiskTier,
+    durationMs: row.durationMs,
+    occurredAt: (row.createdAt ?? new Date(0)).toISOString(),
+    detail: {
+      callerSummary: row.callerSnapshot,
+      chatSummary: row.chatSnapshot,
+      runSummary: row.runSnapshot,
+      inputSummary: row.inputSummary,
+      resultSummary: row.resultSummary,
+    },
+  }
+}
+
+function encodeCursor(entry: McpAuditRecordDto): string {
+  return Buffer.from(
+    JSON.stringify({ occurredAt: entry.occurredAt, id: entry.id }),
+    "utf8",
+  ).toString("base64url")
+}
+
+function decodeCursor(cursor: string): { occurredAt: Date; id: string } {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"))
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof (parsed as { occurredAt?: unknown }).occurredAt !== "string" ||
+      typeof (parsed as { id?: unknown }).id !== "string"
+    ) {
+      throw new Error("invalid cursor")
+    }
+    const occurredAt = new Date((parsed as { occurredAt: string }).occurredAt)
+    if (Number.isNaN(occurredAt.getTime())) throw new Error("invalid cursor")
+    return { occurredAt, id: (parsed as { id: string }).id }
+  } catch {
+    throw new Error("Invalid audit cursor")
+  }
 }
 
 function redactValue(value: unknown, depth: number): unknown {
