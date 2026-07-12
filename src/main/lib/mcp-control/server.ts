@@ -4,6 +4,8 @@ import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
 import { mcpReadInputShapes } from "./read-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
+import { appendMcpAuditRecord } from "./audit-storage"
+import { getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
@@ -22,6 +24,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
       async (input) => {
         const response = await invokeMcpControlTool(tool.name, caller, input, undefined, {
           approvals,
+          audit: { append: (record) => appendMcpAuditRecord(getDatabase(), record) },
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
         })
         return {

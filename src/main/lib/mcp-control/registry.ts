@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { randomUUID } from "node:crypto"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
+import type { AppendMcpAuditRecord, McpAuditStatus } from "./audit-storage"
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
 import type { McpCallerIdentity, McpControlResponse, McpControlTool } from "./types"
@@ -16,12 +17,19 @@ export type McpInvocationDependencies = {
   }) => unknown | null
   approvals?: McpApprovalLifecycle
   approvalId?: () => string
+  /** Stable ID joining all append-only audit events for one tool call. */
+  invocationId?: () => string
+  audit?: Pick<McpAuditWriter, "append">
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
     tool: McpControlTool
     caller: McpCallerIdentity
     rawInput: unknown
   }) => McpControlResponse | Promise<McpControlResponse>
+}
+
+export type McpAuditWriter = {
+  append: (record: AppendMcpAuditRecord) => void
 }
 
 export const mcpControlTools: McpControlTool[] = [
@@ -147,26 +155,101 @@ export async function invokeMcpControlTool(
   readService?: McpReadService,
   dependencies: McpInvocationDependencies = {},
 ): Promise<McpControlResponse> {
+  const invocationId = dependencies.invocationId?.() ?? randomUUID()
+  const startedAt = Date.now()
   const tool = getMcpControlTool(name)
   if (!tool) {
-    return { ok: false, error: { code: "tool-not-found", message: `Unknown tool: ${name}` } }
+    const response = {
+      ok: false as const,
+      error: { code: "tool-not-found" as const, message: `Unknown tool: ${name}` },
+    }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "denied",
+      caller,
+      toolName: name,
+      tier: 0,
+      input,
+      result: response,
+    })
+    return response
   }
   if (tool.status !== "implemented") {
-    return {
+    const response: McpControlResponse = {
       ok: false,
       error: { code: "tool-unavailable", message: `${name} is not available in this build.` },
     }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "denied",
+      caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: response,
+    })
+    return response
   }
 
   const trustedCaller = resolveCaller(caller, dependencies)
-  if (!trustedCaller.ok) return trustedCaller.response
+  if (!trustedCaller.ok) {
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "stale",
+      caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: trustedCaller.response,
+    })
+    return trustedCaller.response
+  }
 
   const initialGate = evaluateMcpToolGate({ tool, caller: trustedCaller.caller })
-  if (initialGate.decision === "denied") return denied(initialGate.reason)
+  if (initialGate.decision === "denied") {
+    const response = denied(initialGate.reason)
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "denied",
+      caller: trustedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: response,
+    })
+    return response
+  }
 
   if (initialGate.decision === "approval-required") {
     const approvals = dependencies.approvals
-    if (!approvals) return denied("Approval lifecycle is unavailable.")
+    if (!approvals) {
+      const response = denied("Approval lifecycle is unavailable.")
+      audit(dependencies, {
+        invocationId,
+        startedAt,
+        status: "denied",
+        caller: trustedCaller.caller,
+        toolName: tool.name,
+        tier: tool.tier,
+        input,
+        result: response,
+      })
+      return response
+    }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "approval-required",
+      caller: trustedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: { decision: initialGate.decision, reason: initialGate.reason },
+    })
     const wait = approvals.request({
       id: dependencies.approvalId?.() ?? randomUUID(),
       caller: trustedCaller.caller,
@@ -175,22 +258,178 @@ export async function invokeMcpControlTool(
     })
     const decision = await wait.decision
     const approvalError = approvalDecisionError(decision.state)
-    if (approvalError) return approvalError
+    if (approvalError) {
+      audit(dependencies, {
+        invocationId,
+        startedAt,
+        status: auditStatusForApproval(decision.state),
+        caller: trustedCaller.caller,
+        toolName: tool.name,
+        tier: tool.tier,
+        input,
+        result: { decision, response: approvalError },
+      })
+      return approvalError
+    }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "allowed",
+      caller: trustedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: { decision },
+    })
 
     // Approval never authorizes an old snapshot. Both caller and selected
     // target are resolved again immediately before any handler can run.
     const recheckedCaller = resolveCaller(caller, dependencies)
-    if (!recheckedCaller.ok) return recheckedCaller.response
+    if (!recheckedCaller.ok) {
+      audit(dependencies, {
+        invocationId,
+        startedAt,
+        status: "stale",
+        caller: trustedCaller.caller,
+        toolName: tool.name,
+        tier: tool.tier,
+        input,
+        result: recheckedCaller.response,
+      })
+      return recheckedCaller.response
+    }
     const finalGate = evaluateMcpToolGate({ tool, caller: recheckedCaller.caller, approved: true })
-    if (finalGate.decision !== "allowed") return denied(finalGate.reason)
+    if (finalGate.decision !== "allowed") {
+      const response = denied(finalGate.reason)
+      audit(dependencies, {
+        invocationId,
+        startedAt,
+        status: "denied",
+        caller: recheckedCaller.caller,
+        toolName: tool.name,
+        tier: tool.tier,
+        input,
+        result: response,
+      })
+      return response
+    }
     const target = resolveTarget(tool, recheckedCaller.caller, input, dependencies)
-    if (!target.ok) return target.response
-    return dispatch(tool, recheckedCaller.caller, input, readService, dependencies)
+    if (!target.ok) {
+      audit(dependencies, {
+        invocationId,
+        startedAt,
+        status: "stale",
+        caller: recheckedCaller.caller,
+        toolName: tool.name,
+        tier: tool.tier,
+        input,
+        result: target.response,
+      })
+      return target.response
+    }
+    return auditedDispatch(
+      tool,
+      recheckedCaller.caller,
+      input,
+      readService,
+      dependencies,
+      invocationId,
+      startedAt,
+    )
   }
 
   const target = resolveTarget(tool, trustedCaller.caller, input, dependencies)
-  if (!target.ok) return target.response
-  return dispatch(tool, trustedCaller.caller, input, readService, dependencies)
+  if (!target.ok) {
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "stale",
+      caller: trustedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: target.response,
+    })
+    return target.response
+  }
+  audit(dependencies, {
+    invocationId,
+    startedAt,
+    status: "allowed",
+    caller: trustedCaller.caller,
+    toolName: tool.name,
+    tier: tool.tier,
+    input,
+    result: { decision: initialGate.decision, reason: initialGate.reason },
+  })
+  return auditedDispatch(
+    tool,
+    trustedCaller.caller,
+    input,
+    readService,
+    dependencies,
+    invocationId,
+    startedAt,
+  )
+}
+
+async function auditedDispatch(
+  tool: McpControlTool,
+  caller: McpCallerIdentity,
+  input: unknown,
+  readService: McpReadService | undefined,
+  dependencies: McpInvocationDependencies,
+  invocationId: string,
+  startedAt: number,
+): Promise<McpControlResponse> {
+  try {
+    const response = await dispatch(tool, caller, input, readService, dependencies)
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: response.ok ? "completed" : "failed",
+      caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: response,
+    })
+    return response
+  } catch (error) {
+    const response: McpControlResponse = {
+      ok: false,
+      error: { code: "internal-error", message: "Tool execution failed." },
+    }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "failed",
+      caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: { response, error: error instanceof Error ? error.message : String(error) },
+    })
+    return response
+  }
+}
+
+function audit(
+  dependencies: McpInvocationDependencies,
+  event: Omit<AppendMcpAuditRecord, "durationMs"> & { startedAt: number },
+): void {
+  try {
+    dependencies.audit?.append({ ...event, durationMs: Date.now() - event.startedAt })
+  } catch {
+    // Audit storage is append-only and must not turn an already safe denial into execution.
+  }
+}
+
+function auditStatusForApproval(
+  state: "approved" | "denied" | "timed-out" | "cancelled" | "shutdown",
+): McpAuditStatus {
+  if (state === "denied" || state === "cancelled" || state === "shutdown") return "denied"
+  return "timed-out"
 }
 
 function dispatch(

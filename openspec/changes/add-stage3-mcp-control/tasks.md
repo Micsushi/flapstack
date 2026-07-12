@@ -142,7 +142,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F4-T2 — Audit every invocation and decision
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
 - Outcome: Allowed, denied, approval-required, failed, and completed calls have correlated records.
 - Scope: Instrument one invoker path, approval decisions, grants, errors, results, and durations.
