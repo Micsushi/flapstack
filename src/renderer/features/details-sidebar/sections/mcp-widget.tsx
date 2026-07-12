@@ -8,7 +8,12 @@ import { Switch } from "../../../components/ui/switch"
 import { sessionInfoAtom, type MCPServer } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
-import { pendingMentionAtom } from "../../agents/atoms"
+import {
+  openAgentChatIdsAtom,
+  pendingMentionAtom,
+  selectedAgentChatIdAtom,
+} from "../../agents/atoms"
+import { McpAuditViewer } from "../../mcp-safety/audit-viewer"
 import { exposurePresentation } from "../../mcp-safety/exposure-model"
 
 function formatToolName(toolName: string): string {
@@ -68,7 +73,10 @@ function ServerIcon({ server }: { server: MCPServer }) {
 export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string }) {
   const sessionInfo = useAtomValue(sessionInfoAtom)
   const setPendingMention = useSetAtom(pendingMentionAtom)
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const setOpenChatIds = useSetAtom(openAgentChatIdsAtom)
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
+  const [showAuditHistory, setShowAuditHistory] = useState(false)
   const exposure = trpc.appControl.getExposure.useQuery({ chatId }, { enabled: !!chatId })
   const utils = trpc.useUtils()
   const setExposure = trpc.appControl.setExposure.useMutation({
@@ -120,6 +128,13 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
     })
   }
 
+  const handleOpenAuditChat = (targetChatId: string) => {
+    setOpenChatIds((current) =>
+      current.includes(targetChatId) ? current : [...current, targetChatId],
+    )
+    setSelectedChatId(targetChatId)
+  }
+
   return (
     <div className="px-2 py-1.5 flex flex-col gap-0.5">
       <div className="rounded border border-border/60 px-2 py-1.5 mb-1">
@@ -140,6 +155,19 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
         {exposure.data?.callerLabel && (
           <div className="mt-1 text-[10px] text-muted-foreground truncate">
             Caller: {exposure.data.callerLabel}
+          </div>
+        )}
+        <button
+          type="button"
+          className="mt-2 text-[10px] text-muted-foreground hover:text-foreground"
+          aria-expanded={showAuditHistory}
+          onClick={() => setShowAuditHistory((open) => !open)}
+        >
+          {showAuditHistory ? "Hide audit history" : "View audit history"}
+        </button>
+        {showAuditHistory && (
+          <div className="mt-3 border-t border-border/60 pt-3">
+            <McpAuditViewer initialCallerChatId={chatId} onOpenChat={handleOpenAuditChat} />
           </div>
         )}
       </div>
