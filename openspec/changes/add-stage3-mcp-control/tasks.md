@@ -88,7 +88,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T2 — Enforce the self-reference safety matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Agents cannot invalidate or recursively relaunch their own execution context.
 - Scope: Define and test own chat/run/task/project rules for rename, move, archive, write, launch, and spawn.
