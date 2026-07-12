@@ -305,10 +305,12 @@ export async function invokeMcpControlTool(
       result: { decision: initialGate.decision, reason: initialGate.reason },
     })
     const wait = approvals.request({
-      id: dependencies.approvalId?.() ?? randomUUID(),
+      id: dependencies.approvalId?.() ?? invocationId,
+      invocationId,
       caller: trustedCaller.caller,
       toolName: tool.name,
       tier: tool.tier,
+      input,
     })
     const decision = await wait.decision
     const approvalError = approvalDecisionError(decision.state)

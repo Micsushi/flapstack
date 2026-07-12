@@ -5,6 +5,7 @@ import { evaluateMcpGate } from "../../mcp-control/gate"
 import { getChatMcpExposureStatus, setChatMcpExposure } from "../../mcp-control/exposure"
 import { mcpControlTools } from "../../mcp-control/registry"
 import { publicProcedure, router } from "../index"
+import { decideMcpApproval, listPendingMcpApprovals } from "../../mcp-control/approval-coordinator"
 
 const riskTierSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)])
 const auditDecisionSchema = z.enum([
@@ -72,4 +73,16 @@ export const appControlRouter = router({
       limit: input?.limit,
     }),
   ),
+
+  listPendingApprovals: publicProcedure.query(() => listPendingMcpApprovals(getDatabase())),
+
+  decideApproval: publicProcedure
+    .input(
+      z.object({
+        id: z.string().min(1).max(256),
+        decision: z.enum(["approve", "deny"]),
+        grantSession: z.boolean().default(false),
+      }),
+    )
+    .mutation(({ input }) => ({ resolved: decideMcpApproval(getDatabase(), input) })),
 })

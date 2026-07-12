@@ -216,6 +216,31 @@ export const mcpAuditRecords = sqliteTable(
   ],
 )
 
+// ============ MCP APPROVAL REQUESTS ============
+// Cross-process coordination only. The harness-owned MCP child keeps grants in
+// memory; this table lets the renderer see and resolve one pending decision.
+export const mcpApprovalRequests = sqliteTable(
+  "mcp_approval_requests",
+  {
+    id: text("id").primaryKey(),
+    invocationId: text("invocation_id").notNull(),
+    callerChatId: text("caller_chat_id").notNull(),
+    callerRunId: text("caller_run_id"),
+    toolName: text("tool_name").notNull(),
+    tier: integer("tier").notNull(),
+    targetSummary: text("target_summary").notNull(),
+    inputSummary: text("input_summary").notNull(),
+    decision: text("decision"),
+    grantSession: integer("grant_session", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("mcp_approval_requests_pending_idx").on(table.decision, table.expiresAt),
+    index("mcp_approval_requests_chat_id_idx").on(table.callerChatId),
+  ],
+)
+
 // ============ CHECKPOINTS ============
 export const checkpoints = sqliteTable(
   "checkpoints",

@@ -2,6 +2,7 @@ import { Provider as JotaiProvider, useAtomValue, useSetAtom } from "jotai"
 import { ThemeProvider, useTheme } from "next-themes"
 import { useEffect, useMemo } from "react"
 import { Toaster } from "sonner"
+import { McpApprovalBridge } from "./features/mcp-safety/approval-bridge"
 import { TooltipProvider } from "./components/ui/tooltip"
 import { TRPCProvider } from "./contexts/TRPCProvider"
 import { WindowProvider, getInitialWindowParams } from "./contexts/WindowContext"
@@ -202,6 +203,7 @@ export function App() {
                   <AppContent />
                 </div>
                 <ThemedToaster />
+                <McpApprovalBridge />
               </TRPCProvider>
             </TooltipProvider>
           </VSCodeThemeProvider>
