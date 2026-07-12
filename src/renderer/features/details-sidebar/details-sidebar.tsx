@@ -508,7 +508,7 @@ export function DetailsSidebar({
                     }
                     hideExpand
                   >
-                    <McpWidget />
+                    <McpWidget chatId={chatId} />
                   </WidgetCard>
                 )
 

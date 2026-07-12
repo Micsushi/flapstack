@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { evaluateMcpGate } from "../../mcp-control/gate"
-import { getChatMcpExposure, setChatMcpExposure } from "../../mcp-control/exposure"
+import { getChatMcpExposureStatus, setChatMcpExposure } from "../../mcp-control/exposure"
 import { mcpControlTools } from "../../mcp-control/registry"
 import { publicProcedure, router } from "../index"
 
@@ -29,9 +29,9 @@ export const appControlRouter = router({
       return evaluateMcpGate(input)
     }),
 
-  getExposure: publicProcedure.input(z.object({ chatId: z.string() })).query(({ input }) => ({
-    enabled: getChatMcpExposure(input.chatId),
-  })),
+  getExposure: publicProcedure
+    .input(z.object({ chatId: z.string() }))
+    .query(({ input }) => getChatMcpExposureStatus(input.chatId)),
 
   setExposure: publicProcedure
     .input(z.object({ chatId: z.string(), enabled: z.boolean() }))

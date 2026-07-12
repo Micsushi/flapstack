@@ -4,9 +4,12 @@ import { useAtomValue, useSetAtom } from "jotai"
 import { ChevronDown } from "lucide-react"
 import { memo, useMemo, useState } from "react"
 import { OriginalMCPIcon } from "../../../components/ui/icons"
+import { Switch } from "../../../components/ui/switch"
 import { sessionInfoAtom, type MCPServer } from "../../../lib/atoms"
+import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import { pendingMentionAtom } from "../../agents/atoms"
+import { exposurePresentation } from "../../mcp-safety/exposure-model"
 
 function formatToolName(toolName: string): string {
   return toolName
@@ -62,10 +65,20 @@ function ServerIcon({ server }: { server: MCPServer }) {
   return <OriginalMCPIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
 }
 
-export const McpWidget = memo(function McpWidget() {
+export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string }) {
   const sessionInfo = useAtomValue(sessionInfoAtom)
   const setPendingMention = useSetAtom(pendingMentionAtom)
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
+  const exposure = trpc.appControl.getExposure.useQuery({ chatId }, { enabled: !!chatId })
+  const utils = trpc.useUtils()
+  const setExposure = trpc.appControl.setExposure.useMutation({
+    onSuccess: () => void utils.appControl.getExposure.invalidate({ chatId }),
+  })
+  const exposureState = exposurePresentation(
+    exposure.data
+      ? { ...exposure.data, error: setExposure.error?.message ?? exposure.data.error }
+      : undefined,
+  )
 
   const toolsByServer = useMemo(() => {
     if (!sessionInfo?.tools || !sessionInfo?.mcpServers) return new Map<string, string[]>()
@@ -85,14 +98,6 @@ export const McpWidget = memo(function McpWidget() {
     }
     return map
   }, [sessionInfo?.tools, sessionInfo?.mcpServers])
-
-  if (!sessionInfo?.mcpServers || sessionInfo.mcpServers.length === 0) {
-    return (
-      <div className="px-2 py-2">
-        <div className="text-xs text-muted-foreground">No MCP servers configured</div>
-      </div>
-    )
-  }
 
   const toggleServer = (name: string) => {
     setExpandedServers((prev) => {
@@ -117,7 +122,31 @@ export const McpWidget = memo(function McpWidget() {
 
   return (
     <div className="px-2 py-1.5 flex flex-col gap-0.5">
-      {sessionInfo.mcpServers.map((server) => {
+      <div className="rounded border border-border/60 px-2 py-1.5 mb-1">
+        <div className="flex items-center gap-2">
+          <OriginalMCPIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs text-foreground">Flapstack MCP</div>
+            <div className="text-[10px] text-muted-foreground truncate">{exposureState.label}</div>
+          </div>
+          <Switch
+            aria-label="Enable Flapstack MCP for this chat"
+            checked={exposure.data?.enabled ?? false}
+            disabled={!exposureState.canToggle || setExposure.isPending}
+            onCheckedChange={(enabled) => setExposure.mutate({ chatId, enabled })}
+          />
+        </div>
+        <div className="mt-1 text-[10px] text-muted-foreground">{exposureState.detail}</div>
+        {exposure.data?.callerLabel && (
+          <div className="mt-1 text-[10px] text-muted-foreground truncate">
+            Caller: {exposure.data.callerLabel}
+          </div>
+        )}
+      </div>
+      {(!sessionInfo?.mcpServers || sessionInfo.mcpServers.length === 0) && (
+        <div className="py-1 text-xs text-muted-foreground">No external MCP servers configured</div>
+      )}
+      {sessionInfo?.mcpServers?.map((server) => {
         const tools = toolsByServer.get(server.name) || []
         const isExpanded = expandedServers.has(server.name)
         const hasTools = tools.length > 0
