@@ -158,7 +158,12 @@ function createTestSchema() {
       branch text,
       base_branch text,
       pr_url text,
-      pr_number integer
+      pr_number integer,
+      mcp_exposure_enabled integer DEFAULT false NOT NULL,
+      parent_chat_id text,
+      initiator_chat_id text,
+      parent_run_id text,
+      ancestor_chat_ids text
     )`,
     "CREATE INDEX chats_worktree_path_idx ON chats(worktree_path)",
     "CREATE INDEX chats_task_id_idx ON chats(task_id)",
