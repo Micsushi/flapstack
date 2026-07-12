@@ -3,9 +3,13 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
 import { mcpReadInputShapes } from "./read-service"
+import { McpApprovalLifecycle } from "./approval-lifecycle"
+import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
+  const approvals = new McpApprovalLifecycle()
+  const callerStore = createSqliteMcpCallerStore()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
@@ -16,7 +20,10 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
         annotations: { readOnlyHint: true, destructiveHint: false },
       },
       async (input) => {
-        const response = await invokeMcpControlTool(tool.name, caller, input)
+        const response = await invokeMcpControlTool(tool.name, caller, input, undefined, {
+          approvals,
+          resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
+        })
         return {
           content: [{ type: "text" as const, text: JSON.stringify(response) }],
           structuredContent: response,
@@ -26,6 +33,11 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
     )
   }
 
+  const close = server.close.bind(server)
+  server.close = async () => {
+    approvals.shutdown()
+    await close()
+  }
   return server
 }
 
