@@ -120,6 +120,13 @@
       "when": 1783808778494,
       "tag": "0016_massive_ravenous",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1783848465220,
+      "tag": "0017_chief_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }
