@@ -81,6 +81,7 @@ describe("Flapstack MCP stdio transport", () => {
       "restore_item",
       "add_attachment",
       "write_attachment_to_worktree",
+      "launch_run",
       "create_automation_draft",
     ])
 
