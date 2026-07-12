@@ -14,6 +14,9 @@ let sqlite: Database.Database | null = null
  * Get the database path in the app's user data directory
  */
 export function getDatabasePath(): string {
+  const explicitPath = process.env.FLAPSTACK_DB_PATH
+  if (explicitPath) return explicitPath
+
   const userDataPath = app.getPath("userData")
   const dataDir = join(userDataPath, "data")
 
@@ -58,6 +61,10 @@ export function initDatabase() {
 
   // Create Drizzle instance
   db = drizzle(sqlite, { schema })
+
+  // The Electron app owns migrations. Headless MCP children receive its already
+  // migrated database explicitly and must not depend on Electron runtime state.
+  if (process.env.FLAPSTACK_DB_PATH) return db
 
   // Run migrations
   const migrationsPath = getMigrationsPath()
