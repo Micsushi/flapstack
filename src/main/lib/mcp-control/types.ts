@@ -51,6 +51,8 @@ export type McpControlErrorCode =
   | "tool-unavailable"
   | "invalid-input"
   | "out-of-scope"
+  | "forbidden-loop"
+  | "forbidden-target"
   | "not-found"
   | "internal-error"
 
