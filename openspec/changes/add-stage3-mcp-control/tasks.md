@@ -129,7 +129,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F4-T1 — Add redacted MCP audit storage
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
 - Outcome: MCP attempts and decisions persist in a queryable SQLite audit table.
 - Scope: Schema, generated migration/snapshot, statuses, caller/tool/tier, timestamps, and redacted summaries.

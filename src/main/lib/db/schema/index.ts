@@ -179,6 +179,34 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   manifest: many(fileChangeManifests),
 }))
 
+// ============ MCP AUDIT RECORDS ============
+// Deliberately no foreign keys: audit history must survive chat/run lifecycle changes.
+export const mcpAuditRecords = sqliteTable(
+  "mcp_audit_records",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    status: text("status").notNull(),
+    callerChatId: text("caller_chat_id").notNull(),
+    callerRunId: text("caller_run_id"),
+    toolName: text("tool_name").notNull(),
+    tier: integer("tier").notNull(),
+    callerSnapshot: text("caller_snapshot").notNull(),
+    chatSnapshot: text("chat_snapshot").notNull(),
+    runSnapshot: text("run_snapshot").notNull(),
+    inputSummary: text("input_summary").notNull(),
+    resultSummary: text("result_summary").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_audit_records_created_at_idx").on(table.createdAt),
+    index("mcp_audit_records_caller_chat_id_idx").on(table.callerChatId),
+    index("mcp_audit_records_tool_name_idx").on(table.toolName),
+    index("mcp_audit_records_status_idx").on(table.status),
+  ],
+)
+
 // ============ CHECKPOINTS ============
 export const checkpoints = sqliteTable(
   "checkpoints",

@@ -120,6 +120,13 @@
       "when": 1783888590563,
       "tag": "0016_glamorous_deathbird",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1783848465220,
+      "tag": "0017_chief_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }
