@@ -18,23 +18,28 @@ manual rows. Stage 2 app data and processes were not touched.
 - The real MCP SDK stdio test listed the implemented catalog and called
   `ping`, `describe`, and `list_projects` through a child process.
 - A migration test now constructs the database at migration 0015, inserts a
-  Stage 2 chat, applies migrations 0016 through 0019, and verifies default-off
-  exposure plus audit table and append-only trigger creation.
+  Stage 2 chat, applies migrations 0016 through 0021, and verifies default-off
+  exposure, null-safe custom permissions, plus audit and approval storage.
+- Per-chat custom capability toggles now persist in SQLite, reload after a
+  database restart, and are revalidated on every call. Missing, malformed,
+  partial, extra-key, stale, and unsupported permission state fails closed;
+  launcher permission claims cannot override stored state, and Tier 3 still
+  requires fresh approval.
 
 ## Requirement audit
 
-| Area                              | Headless result                                                                                    | Closeout state                                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Transport                         | Real stdio SDK child passes; no loopback port                                                      | Ready                                                                                                 |
-| Caller identity                   | Launch identity is revalidated against SQLite for each call; stale chat/run fails closed           | Ready except durable custom capability storage                                                        |
-| Exposure and harness registration | Default-off migration and Codex/Claude per-run registration exist                                  | Automated ready; restart/reconnect manual row open                                                    |
-| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                     | Ready                                                                                                 |
-| Mutations                         | Structured handlers exist and scope/idempotency tests pass                                         | Not complete: `launch_run` is still stubbed; approval-required calls have no app bridge               |
-| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                               | Core gate ready                                                                                       |
-| Approvals                         | Lifecycle unit/concurrency tests pass                                                              | Not integrated: lifecycle is private to the stdio child; app tRPC has no pending/approve/deny channel |
-| Audit                             | SQLite, redaction, filtering, paging, correlation, and invocation tests pass                       | Not complete for real user approval/grant decisions because the approval bridge is absent             |
-| Cross-agent spawn                 | Durable creation, lineage, loop rejection, both harness directions, and failed-launch honesty pass | Not complete: real stdio launch records a queued run but no consumer starts it                        |
-| Safety UI                         | Model/component tests exist                                                                        | Owned by S3-F6 UI task; manual rows open                                                              |
+| Area                              | Headless result                                                                                                     | Closeout state                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Transport                         | Real stdio SDK child passes; no loopback port                                                                       | Ready                                                                                                 |
+| Caller identity                   | Launch identity, permission mode, and strict custom capability toggles are revalidated against SQLite for each call | Ready                                                                                                 |
+| Exposure and harness registration | Default-off migration and Codex/Claude per-run registration exist                                                   | Automated ready; restart/reconnect manual row open                                                    |
+| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                                      | Ready                                                                                                 |
+| Mutations                         | Structured handlers exist and scope/idempotency tests pass                                                          | Not complete: `launch_run` is still stubbed; approval-required calls have no app bridge               |
+| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                                                | Core gate ready                                                                                       |
+| Approvals                         | Lifecycle unit/concurrency tests pass                                                                               | Not integrated: lifecycle is private to the stdio child; app tRPC has no pending/approve/deny channel |
+| Audit                             | SQLite, redaction, filtering, paging, correlation, and invocation tests pass                                        | Not complete for real user approval/grant decisions because the approval bridge is absent             |
+| Cross-agent spawn                 | Durable creation, lineage, loop rejection, both harness directions, and failed-launch honesty pass                  | Not complete: real stdio launch records a queued run but no consumer starts it                        |
+| Safety UI                         | Model/component tests exist                                                                                         | Owned by S3-F6 UI task; manual rows open                                                              |
 
 ## Corrected task state
 

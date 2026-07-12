@@ -44,6 +44,26 @@ export type CustomPermissionToggles = {
   secrets: boolean
 }
 
+export const customPermissionKeys = [
+  "fileWrite",
+  "shell",
+  "network",
+  "git",
+  "browser",
+  "mcp",
+  "secrets",
+] as const satisfies readonly (keyof CustomPermissionToggles)[]
+
+export function parseCustomPermissionToggles(value: unknown): CustomPermissionToggles | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).length !== customPermissionKeys.length) return null
+  if (!customPermissionKeys.every((key) => typeof record[key] === "boolean")) return null
+  return Object.fromEntries(
+    customPermissionKeys.map((key) => [key, record[key]]),
+  ) as CustomPermissionToggles
+}
+
 export type PermissionSource = "chat" | "task" | "project" | "global" | "fallback"
 
 export type PermissionResolutionInput = {

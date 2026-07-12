@@ -1,12 +1,15 @@
 import { fileURLToPath } from "node:url"
 import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
+import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { readMcpCallerIdentity } from "../src/main/lib/mcp-control/identity"
+import * as schema from "../src/main/lib/db/schema"
 
 const transports: StdioClientTransport[] = []
 const directories: string[] = []
@@ -26,9 +29,19 @@ describe("Flapstack MCP stdio transport", () => {
     directories.push(directory)
     const databasePath = join(directory, "agents.db")
     const database = new Database(databasePath)
-    database.exec(
-      "CREATE TABLE chats (id TEXT PRIMARY KEY, scope TEXT, task_id TEXT, project_id TEXT, permission_mode TEXT, archived_at INTEGER); CREATE TABLE agent_runs (id TEXT PRIMARY KEY, chat_id TEXT, permission_mode TEXT, status TEXT); CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, archived_at INTEGER, updated_at INTEGER); INSERT INTO chats VALUES ('chat-transport-test', 'global', NULL, NULL, 'read-only', NULL); INSERT INTO agent_runs VALUES ('run-transport-test', 'chat-transport-test', 'read-only', 'running')",
-    )
+    migrate(drizzle(database, { schema }), {
+      migrationsFolder: resolve(process.cwd(), "drizzle"),
+    })
+    database
+      .prepare(
+        "INSERT INTO chats (id, scope, permission_mode) VALUES ('chat-transport-test', 'global', 'read-only')",
+      )
+      .run()
+    database
+      .prepare(
+        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, status, started_at) VALUES ('run-transport-test', 'chat-transport-test', 'codex', 'read-only', 'running', 0)",
+      )
+      .run()
     database.close()
     const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
     const transport = new StdioClientTransport({

@@ -73,6 +73,7 @@ export const chats = sqliteTable(
     taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
     scope: text("scope").notNull().default("project"),
     permissionMode: text("permission_mode").notNull().default("ask-before-edits"),
+    customPermissions: text("custom_permissions"),
     mcpExposureEnabled: integer("mcp_exposure_enabled", { mode: "boolean" })
       .notNull()
       .default(false),

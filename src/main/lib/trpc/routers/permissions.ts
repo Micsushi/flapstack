@@ -8,6 +8,7 @@ import {
   buildCodexPermissionApplication,
   buildCursorPermissionApplication,
   mapClaudeSdkPermissionMode,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionChangeBehaviors,
   permissionModes,
@@ -17,6 +18,7 @@ import {
   setGlobalDefault,
   type PermissionChangeBehavior,
   type PermissionMode,
+  type CustomPermissionToggles,
 } from "../../permissions"
 import { buildOpencodePermissionApplication } from "../../harness/opencode-sidecar"
 import { publicProcedure, router } from "../index"
@@ -24,6 +26,17 @@ import { publicProcedure, router } from "../index"
 const permissionModeSchema = z.enum(permissionModes)
 const permissionChangeBehaviorSchema = z.enum(permissionChangeBehaviors)
 const permissionChangeScopeSchema = z.enum(["all-chats", "current-chat"])
+const customPermissionsSchema = z
+  .object({
+    fileWrite: z.boolean(),
+    shell: z.boolean(),
+    network: z.boolean(),
+    git: z.boolean(),
+    browser: z.boolean(),
+    mcp: z.boolean(),
+    secrets: z.boolean(),
+  })
+  .strict()
 
 type Row = Record<string, unknown>
 type RawSqlDatabase = {
@@ -62,9 +75,16 @@ export const permissionsRouter = router({
         mode: permissionModeSchema,
         scope: permissionChangeScopeSchema.default("current-chat"),
         rememberBehavior: permissionChangeBehaviorSchema.optional(),
+        customPermissions: customPermissionsSchema.optional(),
       }),
     )
     .mutation(({ input }) => {
+      if (input.mode === "custom" && !input.customPermissions) {
+        throw new Error("Custom permission mode requires explicit capability toggles.")
+      }
+      if (input.mode !== "custom" && input.customPermissions) {
+        throw new Error("Custom capability toggles require custom permission mode.")
+      }
       return applyScopedPermissionChange(input)
     }),
 
@@ -104,6 +124,7 @@ export const permissionsRouter = router({
         ...values,
         globalMode,
       },
+      customPermissions: readCustomPermissionsForChat(input.chatId),
     }
   }),
 
@@ -144,12 +165,14 @@ function applyScopedPermissionChange(input: {
   mode: PermissionMode
   scope: "all-chats" | "current-chat"
   rememberBehavior?: PermissionChangeBehavior
+  customPermissions?: CustomPermissionToggles
 }): {
   mode: PermissionMode
   scope: "all-chats" | "current-chat"
   changeBehavior: PermissionChangeBehavior
   updatedChats: number
   updatedSubChats: number
+  customPermissions: CustomPermissionToggles | null
 } {
   const db = getDatabase()
   const previousPreferences = getPermissionPreferences()
@@ -178,13 +201,16 @@ function applyScopedPermissionChange(input: {
       }
 
       const updatedAt = new Date()
+      const customPermissions = input.customPermissions
+        ? JSON.stringify(input.customPermissions)
+        : null
 
       if (input.scope === "all-chats") {
         tx.update(projects).set({ defaultPermissionMode: input.mode, updatedAt }).run()
         tx.update(tasks).set({ defaultPermissionMode: input.mode, updatedAt }).run()
         const updatedChats = tx
           .update(chats)
-          .set({ permissionMode: input.mode, updatedAt })
+          .set({ permissionMode: input.mode, customPermissions, updatedAt })
           .run().changes
         const updatedSubChats = tx
           .update(subChats)
@@ -196,7 +222,7 @@ function applyScopedPermissionChange(input: {
 
       const updatedChats = tx
         .update(chats)
-        .set({ permissionMode: input.mode, updatedAt })
+        .set({ permissionMode: input.mode, customPermissions, updatedAt })
         .where(eq(chats.id, input.chatId))
         .run().changes
       const updatedSubChats = tx
@@ -212,6 +238,7 @@ function applyScopedPermissionChange(input: {
       mode: input.mode,
       scope: input.scope,
       changeBehavior: nextPreferences.changeBehavior,
+      customPermissions: input.customPermissions ?? null,
       ...result,
     }
   } catch (error) {
@@ -223,6 +250,21 @@ function applyScopedPermissionChange(input: {
       }
     }
     throw error
+  }
+}
+
+function readCustomPermissionsForChat(chatId: string): CustomPermissionToggles | null {
+  const db = getDatabase()
+  const row = getOptional<Row>(
+    db,
+    "SELECT custom_permissions AS customPermissions FROM chats WHERE id = ?",
+    [chatId],
+  )
+  if (!row || typeof row.customPermissions !== "string") return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(row.customPermissions))
+  } catch {
+    return null
   }
 }
 

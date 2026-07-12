@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { z } from "zod"
-import { parsePermissionMode } from "../permissions"
+import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
 
 const callerEnvironmentSchema = z.object({
@@ -104,8 +104,14 @@ export function createSqliteMcpCallerStore(
           }
         : null
     },
-    // Custom capability persistence is intentionally not implemented yet.
-    // Fail closed until its durable source is added with the mutation handlers.
-    findCustomPermissions: () => null,
+    findCustomPermissions(chatId) {
+      const row = query("SELECT custom_permissions FROM chats WHERE id = ?", [chatId])
+      if (!row || typeof row.custom_permissions !== "string") return null
+      try {
+        return parseCustomPermissionToggles(JSON.parse(row.custom_permissions))
+      } catch {
+        return null
+      }
+    },
   }
 }
