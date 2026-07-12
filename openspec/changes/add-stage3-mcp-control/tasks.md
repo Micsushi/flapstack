@@ -155,7 +155,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F4-T3 — Expose filtered audit queries
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
 - Outcome: UI can page and filter audit records by caller, tool, decision, and time.
 - Scope: Stable query contract, bounds, ordering, filters, and redacted detail DTO.
