@@ -24,7 +24,7 @@ do not currently expose a structured question request.
 - Decision: single-select uses radio semantics; multi-select uses checkboxes. Every
   question also offers a custom text answer that is mutually exclusive with single-select
   choices and additive only when the question explicitly allows multiple answers.
-- Decision: “Answer in chat” closes the modal, copies a numbered plain-text question list
+- Decision: "Answer in chat" closes the modal, copies a numbered plain-text question list
   into the composer context, and keeps the list reopenable from the pending card.
 - Decision: normalize all provider events behind one `AgentInputRequest` contract with
   capability fields describing native pause/resume, Flapstack-injected tool support, or

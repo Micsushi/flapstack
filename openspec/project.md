@@ -35,10 +35,10 @@ change tracking.
 - **IPC Communication**: tRPC with `trpc-electron` for type-safe main↔renderer communication
 - **State Management**:
   - Jotai: UI state (selected chat, sidebar open, preview settings)
-  - Zustand: Sub-chat tabs and pinned state (persisted to localStorage)
-  - The vertical sub-chats **Chats** pane is parked behind
-    `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`; top tabs and quick switch are the
-    active sub-chat navigation surfaces.
+  - Zustand: internal conversation state (persisted to localStorage). Each
+    sidebar chat shows exactly one visible conversation; nested sub-chat tabs,
+    quick switch, and the vertical **Chats** pane were removed, and `sub_chats`
+    rows persist only as internal storage compatibility.
   - React Query: Server state via tRPC (auto-caching, refetch)
 - **Database**: Drizzle ORM with SQLite, auto-migration on app startup
 - **Agent Integration**: Claude Code and Codex are the initial target harnesses;

@@ -30,7 +30,7 @@ implemented manual rows, but it is not ready to archive or call shipped.
   directory semantics so plugin-relative launch paths do not resolve from the
   Flapstack checkout.
 
-## Implementation update — 2026-07-11
+## Implementation update - 2026-07-11
 
 The full matrix now has zero `BLOCKED` rows. The items below are validation and
 release gates; no manual row is marked passed by this implementation update.

@@ -1,8 +1,8 @@
-# Stage 2 readiness review — 2026-07-10 (implementation update 2026-07-11)
+# Stage 2 readiness review - 2026-07-10 (implementation update 2026-07-11)
 
 Status: **the integrated automated baseline is green and the implemented feature rows are ready for manual testing; Stage 2 exit is not yet proven.**
 
-“Implemented” here is limited to the approved OpenSpec and formally selected
+"Implemented" here is limited to the approved OpenSpec and formally selected
 Track C scope. Dynamic vocabulary is a future research recommendation, has no
 Stage 2 requirement, and is explicitly deferred rather than counted complete.
 
@@ -139,7 +139,7 @@ increase test readiness but do not convert the corresponding matrix rows to pass
 
 ## 4. Severity-ranked findings
 
-### P0 — blocked meaningful feature testing at review start
+### P0 - blocked meaningful feature testing at review start
 
 1. **OpenRouter/NanoGPT absent from normal new chat.** Settings could select a default, but new chat exposed only Claude, Cursor, and Codex and resolved unknown providers as Claude models.
 2. **OpenCode synchronous prompt deadlock.** Flapstack subscribed to SSE, awaited the synchronous message endpoint, and only then consumed SSE. An approval request waited for Flapstack while Flapstack waited for the request to finish.
@@ -149,7 +149,7 @@ increase test readiness but do not convert the corresponding matrix rows to pass
 
 All five were repaired in this pass.
 
-### P1 — correctness, safety, or exit blockers
+### P1 - correctness, safety, or exit blockers
 
 - OpenCode-derived cost remains labeled estimated until reconciliation. A
   localhost pass-through now captures official OpenRouter `X-Generation-Id`
@@ -170,7 +170,7 @@ All five were repaired in this pass.
   Windows/Linux daemon lifecycle now have implementations and automated coverage.
   Credentialed/platform evidence remains conditional.
 
-### P2 — usability, documentation, and completeness gaps
+### P2 - usability, documentation, and completeness gaps
 
 - Cursor permission degradation is primarily visible after a response; pre-launch presentation still needs human verification and may need more wiring.
 - Cursor API-key fallback is wired through `CURSOR_API_KEY`; live CLI proof remains.
@@ -259,7 +259,7 @@ All five were repaired in this pass.
 
 ## 6. Feature readiness by track
 
-### Track C — carryover and test-surface completion
+### Track C - carryover and test-surface completion
 
 | Feature                             | Status      | Remaining evidence or work                                                                               |
 | ----------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
@@ -276,7 +276,7 @@ All five were repaired in this pass.
 | F11 scope movement                  | READY       | Full global/project/task/cross-project matrix                                                            |
 | F12 docs consistency                | READY       | README, OpenSpec follow-ups/tasks, matrices, track notes, and vault handoff now share the review verdict |
 
-### Track A — voice
+### Track A - voice
 
 | Feature                     | Status      | Remaining evidence or work                                                          |
 | --------------------------- | ----------- | ----------------------------------------------------------------------------------- |
@@ -293,7 +293,7 @@ All five were repaired in this pass.
 
 The batch-versus-live dictation scope must remain explicit: the implemented Stage 2 path is batch Local Whisper. Do not silently convert tentative/live dictation into an exit requirement without a scope decision.
 
-### Track B — usage and limits
+### Track B - usage and limits
 
 | Feature              | Status      | Remaining evidence or work                                                                                |
 | -------------------- | ----------- | --------------------------------------------------------------------------------------------------------- |
@@ -310,7 +310,7 @@ The batch-versus-live dictation scope must remain explicit: the implemented Stag
 | U11 dashboard        | READY       | Current cards plus historical quota/cost/token charts; manual light/dark/filter proof remains             |
 | U-exit               | CONDITIONAL | Live provider, daemon-closed, alert, and UI manual matrix unchecked                                       |
 
-### Track D — Cursor harness
+### Track D - Cursor harness
 
 | Feature                   | Status      | Remaining evidence or work                                                                     |
 | ------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
@@ -324,7 +324,7 @@ The batch-versus-live dictation scope must remain explicit: the implemented Stag
 
 Cursor images remain explicitly unsupported and must fail before run rather than disappear.
 
-### Track E — OpenRouter/NanoGPT through OpenCode
+### Track E - OpenRouter/NanoGPT through OpenCode
 
 | Feature                | Status      | Remaining evidence or work                                                                      |
 | ---------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
@@ -340,7 +340,7 @@ Cursor images remain explicitly unsupported and must fail before run rather than
 
 The durable approval/tool audit currently lives in assistant message metadata keyed by run ID and in persisted tool parts. If independent run-history queries must expose it without loading messages, add a dedicated `agent_runs` metadata column in a separately reviewed migration.
 
-### Track T — reasoning-output parity
+### Track T - reasoning-output parity
 
 | Feature                       | Status      | Remaining evidence or work                                                       |
 | ----------------------------- | ----------- | -------------------------------------------------------------------------------- |

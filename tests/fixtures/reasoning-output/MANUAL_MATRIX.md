@@ -1,4 +1,4 @@
-# Reasoning output manual matrix (Stage 2 Track T — T7)
+# Reasoning output manual matrix (Stage 2 Track T - T7)
 
 Run this matrix in the dev app after the provider/harness branch is wired. The
 fixtures are the repeatable gate; a fixture replay is not a claim that the

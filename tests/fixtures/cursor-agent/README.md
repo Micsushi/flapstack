@@ -19,9 +19,9 @@ cursor-agent -p --output-format stream-json --stream-partial-output \
 
 ## Files
 
-- `reasoning-output-run.jsonl` — a run that emitted provider `thinking` delta/completed events
+- `reasoning-output-run.jsonl` - a run that emitted provider `thinking` delta/completed events
   before assistant text (the observed-on-this-machine shape).
-- `no-reasoning-output-run.jsonl` — the docs-suppressed fallback: assistant text only,
+- `no-reasoning-output-run.jsonl` - the docs-suppressed fallback: assistant text only,
   no `thinking` events. The adapter must still produce a complete reply.
 
 ## Regenerating

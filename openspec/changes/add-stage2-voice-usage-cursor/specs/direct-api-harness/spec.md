@@ -47,6 +47,10 @@ message producer chips with distinct provider identities. Cursor, OpenRouter, an
 NanoGPT chip colors SHALL not conflict with existing Codex, Claude, local, or
 unknown/custom chip colors.
 
+Chat-list and message producer chips SHALL show a compact provider icon and
+provider name rather than the selected model name. The exact model SHALL remain
+available in the chip tooltip and persisted run/message metadata.
+
 #### Scenario: API harness identity is visible
 
 - **WHEN** an OpenRouter or NanoGPT run produces an assistant message
@@ -57,7 +61,23 @@ unknown/custom chip colors.
 
 The system SHALL fetch, cache, refresh, and search OpenRouter and NanoGPT model
 catalogs, preserving provider model ids, context limits, pricing metadata when
-available, and reasoning/tool capability hints when exposed.
+available, and reasoning/tool capability hints when exposed. Normal chat model
+selectors SHALL initially expose only current DeepSeek and GLM defaults for each
+provider. The full catalog SHALL remain searchable through Add model, where the
+user can add or remove models from the normal selectors.
+
+#### Scenario: Small default catalog
+
+- **WHEN** the user has not configured provider model visibility
+- **THEN** OpenRouter and NanoGPT each show one current DeepSeek model and one
+  current GLM model in normal chat selectors
+- **AND** no other fetched catalog models appear until the user adds them
+
+#### Scenario: Add a provider model
+
+- **WHEN** the user searches the full provider catalog and adds a model
+- **THEN** that model becomes available in normal chat selectors
+- **AND** the choice persists locally
 
 #### Scenario: Model catalog refresh succeeds
 

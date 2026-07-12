@@ -24,18 +24,18 @@ blocked-by, blocks, and completion evidence.
 | Task | Title                                         | Blocked by                                   | Blocks             |
 | ---- | --------------------------------------------- | -------------------------------------------- | ------------------ |
 | Q0   | Baseline fixtures and current-behavior lock   | Approved proposal                            | Q1, Q4             |
-| Q1   | Shared input contract and capability registry | Q0                                           | Q2, Q3, Q4–Q8, Q11 |
-| Q2   | Pending-request lifecycle service             | Q1                                           | Q3–Q8, Q9, Q10     |
-| Q3   | Shared transport and persistence bridge       | Q1, Q2                                       | Q4–Q8, Q9, Q10     |
+| Q1   | Shared input contract and capability registry | Q0                                           | Q2, Q3, Q4-Q8, Q11 |
+| Q2   | Pending-request lifecycle service             | Q1                                           | Q3-Q8, Q9, Q10     |
+| Q3   | Shared transport and persistence bridge       | Q1, Q2                                       | Q4-Q8, Q9, Q10     |
 | Q4   | Claude migration                              | Q0, Q1, Q2, Q3                               | Q9, Q10, Q12       |
 | Q5   | OpenCode adapter: OpenRouter + NanoGPT        | Q1, Q2, Q3                                   | Q9, Q10, Q12       |
 | Q6   | Codex ACP adapter                             | Q1, Q2, Q3                                   | Q9, Q10, Q12       |
 | Q7   | Cursor adapter                                | Q1, Q2, Q3                                   | Q9, Q10, Q12       |
 | Q8   | Future/local/custom harness registration      | Q1, Q2, Q3                                   | Q12                |
-| Q9   | Universal question dialog                     | Q2, Q3, one working adapter (Q4 recommended) | Q10–Q12            |
+| Q9   | Universal question dialog                     | Q2, Q3, one working adapter (Q4 recommended) | Q10-Q12            |
 | Q10  | Answer-in-chat and transcript UX              | Q2, Q3, Q9                                   | Q11, Q12           |
 | Q11  | Background-chat inbox, badges, notifications  | Q1, Q9, Q10                                  | Q12                |
-| Q12  | Automated and live provider matrix            | Q4–Q11                                       | Q13                |
+| Q12  | Automated and live provider matrix            | Q4-Q11                                       | Q13                |
 | Q13  | Final gate, docs, and rollout closure         | Q12                                          | Feature exit       |
 
 ## Safe Execution Order
@@ -46,7 +46,7 @@ blocked-by, blocks, and completion evidence.
 4. Q10 → Q11 after the dialog works.
 5. Q12 → Q13 close the feature.
 
-Do not start Q5–Q8 by copying Claude UI state into each adapter. They produce the same
+Do not start Q5-Q8 by copying Claude UI state into each adapter. They produce the same
 shared contract. Do not mark a provider complete from mocks alone; Q12 owns live proof.
 
 ## Tasks
@@ -71,7 +71,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q1. Shared input contract and capability registry
 
-- Blocked by: Q0. Blocks: Q2, Q3, Q4–Q8, Q11.
+- Blocked by: Q0. Blocks: Q2, Q3, Q4-Q8, Q11.
 - Scope:
   - Add provider-neutral types for request, question, option, response, status, origin,
     and completion mode.
@@ -94,7 +94,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q2. Pending-request lifecycle service
 
-- Blocked by: Q1. Blocks: Q3–Q10.
+- Blocked by: Q1. Blocks: Q3-Q10.
 - Scope:
   - Main-process owner for create, wait, answer, skip, cancel, expire, and dispose.
   - Replace Claude's fixed 60-second happy-path dependency with cancellation-aware state.
@@ -115,7 +115,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q3. Shared transport and persistence bridge
 
-- Blocked by: Q1, Q2. Blocks: Q4–Q10.
+- Blocked by: Q1, Q2. Blocks: Q4-Q10.
 - Scope:
   - Define main-to-renderer request/status/result events and renderer-to-main actions.
   - Replace Claude-specific question atoms with shared maps keyed by chat/request.
@@ -139,7 +139,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q4. Claude Agent SDK migration
 
-- Blocked by: Q0–Q3. Blocks: Q9, Q10, Q12.
+- Blocked by: Q0-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Translate native Claude `AskUserQuestion` to/from the shared contract.
   - Remove Claude-specific pending approval ownership after parity is proven.
@@ -159,7 +159,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q5. OpenCode adapter for OpenRouter and NanoGPT
 
-- Blocked by: Q1–Q3. Blocks: Q9, Q10, Q12.
+- Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Inspect the pinned OpenCode server/event/tool surface before choosing native versus
     injected-tool mode; record the exact supported capability.
@@ -182,7 +182,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q6. Codex ACP adapter
 
-- Blocked by: Q1–Q3. Blocks: Q9, Q10, Q12.
+- Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Inspect the installed `@zed-industries/codex-acp` event/request capabilities and lock
     findings in a fixture/test before implementing.
@@ -203,7 +203,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q7. Cursor CLI adapter
 
-- Blocked by: Q1–Q3. Blocks: Q9, Q10, Q12.
+- Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Inspect current `cursor-agent` stream-json tool events for a native/custom question path.
   - Translate supported events or implement continuation fallback.
@@ -223,7 +223,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q8. Future, local, and custom harness registration
 
-- Blocked by: Q1–Q3. Blocks: Q12.
+- Blocked by: Q1-Q3. Blocks: Q12.
 - Scope:
   - Document and test the adapter interface a future harness implements.
   - Add `local` and `custom` default registrations without building their future agent loops.
@@ -242,7 +242,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q9. Universal question dialog
 
-- Blocked by: Q2, Q3, and one working adapter; Q4 recommended. Blocks: Q10–Q12.
+- Blocked by: Q2, Q3, and one working adapter; Q4 recommended. Blocks: Q10-Q12.
 - Scope:
   - Replace the inline active answering surface with an accessible in-app modal.
   - Radio semantics for single-select; checkbox semantics for multi-select.
@@ -309,7 +309,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q12. Automated and live provider matrix
 
-- Blocked by: Q4–Q11. Blocks: Q13.
+- Blocked by: Q4-Q11. Blocks: Q13.
 - Scope:
   - Automated cases for every adapter: single, multi, custom, answer-in-chat, skip, cancel,
     timeout/expiry, stop, disconnect, duplicate answer, reload, background chat, persistence,

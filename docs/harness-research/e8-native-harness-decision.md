@@ -1,6 +1,6 @@
-# E8 — Native harness spike + defer/continue decision
+# E8 - Native harness spike + defer/continue decision
 
-Status (2026-07-10): **DEFERRED — sidecar is the Stage 2 path; native loop is
+Status (2026-07-10): **DEFERRED - sidecar is the Stage 2 path; native loop is
 not built now.**
 
 ## Question

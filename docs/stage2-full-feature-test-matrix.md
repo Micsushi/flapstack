@@ -6,11 +6,11 @@ does not count as a live UI pass.
 
 ## Status legend
 
-- **READY** — the surface is wired and can be tested now on a supported local
+- **READY** - the surface is wired and can be tested now on a supported local
   setup. The checkbox remains empty until a human completes the steps.
-- **CONDITIONAL** — testable only with the named OS, credential, CLI, model, or
+- **CONDITIONAL** - testable only with the named OS, credential, CLI, model, or
   external account.
-- **BLOCKED** — implementation or product-scope work is still missing. Do not
+- **BLOCKED** - implementation or product-scope work is still missing. Do not
   turn a blocked item into a pass by accepting a thinner behavior.
 
 Stage 2 is complete only when every required READY/CONDITIONAL row passes on its
@@ -102,7 +102,7 @@ Latest automated evidence, recorded without checking the human boxes below:
 - [ ] **P-10 CONDITIONAL** dependency-audit findings are reviewed and either
       remediated or explicitly risk-accepted with direct/runtime exposure noted.
 
-## 1. Track C — MVP carryover and test-surface completion
+## 1. Track C - MVP carryover and test-surface completion
 
 ### Branch and terminal
 
@@ -190,7 +190,7 @@ Latest automated evidence, recorded without checking the human boxes below:
 - [ ] **F11-03 READY** Move between tasks in different projects. Expected: target
       task/project agree and no stale source-project metadata remains.
 
-## 2. Track A — voice
+## 2. Track A - voice
 
 The compact OS matrix remains in `docs/voice-manual-matrix.md`; these rows add
 the setup and cross-harness checks needed for full Stage 2 exit.
@@ -256,7 +256,7 @@ the setup and cross-harness checks needed for full Stage 2 exit.
       permission prompt, denied state, missing engine, missing model, WAV conversion failure,
       and no-device behavior in packaged apps.
 
-## 3. Track B — usage and limits
+## 3. Track B - usage and limits
 
 Use low-value test credentials and a disposable Discord webhook. Never paste a
 secret into logs or screenshots. Settings must show configured/unconfigured
@@ -369,7 +369,7 @@ state without echoing the value.
 - [ ] **U11-05 READY** Query/provider/refresh failure is visible and cannot look
       like a legitimate empty or zero state.
 
-## 4. Track D — Cursor harness
+## 4. Track D - Cursor harness
 
 - [ ] **D0-01 READY** `cursor-agent --version`, `--help`, model listing, and login
       status match the adapter assumptions. Record CLI version.
@@ -406,7 +406,7 @@ state without echoing the value.
 - [ ] **D5-02 READY** Images are rejected before run with an honest unsupported
       message, not silently dropped.
 
-## 5. Track E — OpenRouter and NanoGPT through OpenCode
+## 5. Track E - OpenRouter and NanoGPT through OpenCode
 
 Provider-live rows can incur API cost. Use the lowest-cost model/account limits.
 
@@ -452,7 +452,7 @@ Provider-live rows can incur API cost. Use the lowest-cost model/account limits.
 - [ ] **E7-03 READY** OpenCode prompts receive the Voice `Spoken:`/`Displayed:`
       read-aloud instruction. Verify both providers live before checking this row.
 
-## 6. Track T — reasoning-output parity
+## 6. Track T - reasoning-output parity
 
 - [ ] **T1-01 READY** Shared fixtures normalize visible reasoning, summary,
       token-only, and opaque/private forms without rendering encrypted content;

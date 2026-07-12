@@ -28,10 +28,10 @@ not an approved Stage 2 requirement and is not claimed as implemented.
   TypeScript. Electron 39.8.10 and electron-builder 26.15.3 are package-validated
   on unsigned arm64/x64 macOS artifacts. Human macOS/Windows, credentialed
   provider, reasoning, daemon, and deep-count matrix evidence remains open.
-- Current UI note: the inherited vertical middle sub-chats **Chats** pane is
-  hidden behind `SUBCHATS_SIDEBAR_PANEL_ENABLED=false`. Sub-chat tabs, quick
-  switch, split view, and routing remain active. Revisit the pane later only if
-  multiple parallel sub-chats inside one chat become a normal workflow.
+- Each chat item in the left sidebar is one visible conversation. The inherited
+  sub-chat tabs, nested-chat creation, history switcher, and split view are not
+  part of the Flapstack product model. Existing `sub_chats` rows remain only as
+  non-destructive internal storage compatibility.
 
 ## Product Direction
 
@@ -67,8 +67,7 @@ harnesses, permissions, and worktrees.
 - Global, project, and task chats.
 - Codex and Claude Code agent runs.
 - Harness/model chips in chat tabs and messages.
-- Sub-chat tabs remain active; the old vertical sub-chats **Chats** pane is
-  parked/hidden for now.
+- One visible conversation per sidebar chat; no nested chat tabs or split view.
 - Project checkout defaults, task worktree defaults, and a worktree dropdown.
 - Simple permission modes plus copy-on-create inheritance.
 - Basic file and pasted-text attachments.
@@ -134,8 +133,8 @@ Smaller fixes (Stage 1 carryover plus backlog):
 
 ### Stage 3: MCP Control
 
-- Preserve the completed technical-debt baseline: strict TypeScript and native
-  ABI setup stay green before expanding the MCP surface.
+- Clear and prove all TypeScript and Stage 3-blocking engineering debt before
+  expanding the MCP surface; keep strict TypeScript and the full gate green.
 - MCP tools for agents to inspect and control app objects.
 - Structured operations for projects, tasks, chats, runs, files, and worktrees.
 - Permission gates around agent-initiated app actions.
@@ -145,6 +144,9 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - Basic parent/initiator lineage for spawned threads; graph UI, budgets, depth
   limits, and swarm controls remain later work.
 - User approval before agent-created automations become active.
+- User-facing MCP exposure, approval, connection status, and audit controls.
+- Default-off exposure, self-reference guards, worktree write safety, launch
+  loop protection, and no background focus theft.
 
 ### Stage 4: Knowledge, Workspaces, And Multi-Agent Operations
 
@@ -181,6 +183,14 @@ npm run codex:download
 npm run dev
 ```
 
+Before live testing or reporting that a dev change is running, verify the exact
+checkout and data profile. This command fails if a packaged build from this
+checkout is running or the active renderer is not using `Flapstack Dev` data:
+
+```bash
+npm run dev:verify
+```
+
 Build:
 
 ```bash
@@ -190,9 +200,15 @@ npm run build
 Package:
 
 ```bash
+npm run package:preview:mac # local packaged testing: Flapstack Preview.app
 npm run package:mac
 npm run package:smoke:mac
 ```
+
+macOS development, packaged testing, and production use separate app names,
+bundle IDs, protocols, output folders, and data profiles. Use `Flapstack Dev`
+for live source work and `Flapstack Preview` for local packaged smoke tests.
+`Flapstack` is reserved for production builds.
 
 Every package build command resolves one exact target set, uses it for both pinned
 Claude/Codex/whisper.cpp preparation and electron-builder, validates a fresh

@@ -41,6 +41,12 @@ a shared SQLite store that supports daemon writes and app reads.
 - **THEN** the stored sample is labeled with the correct source and cost quality
 - **AND** missing historical detail is not fabricated as zero usage
 
+#### Scenario: Repeated quota polls retain history
+
+- **WHEN** app and daemon polls observe the same quota window over time
+- **THEN** overlap within one captured minute is deduplicated
+- **AND** observations from later minutes remain distinct historical samples
+
 ### Requirement: Startup Catch-up
 
 The system SHALL reconcile latest provider usage when Flapstack starts and when
@@ -168,6 +174,33 @@ light and dark themes.
 - **THEN** the dashboard shows current usage and historical cycles per provider
 - **AND** daemon heartbeat, last poll, last alert, and error state are visible
 - **AND** historical quota, cost, and token series are graphed without fabricating gaps
+
+#### Scenario: Dashboard separates general and Flapstack-only usage
+
+- **WHEN** the user opens the All provider view
+- **THEN** the dashboard shows every provider-visible account/quota source, including usage outside Flapstack
+- **WHEN** the user opens one provider
+- **THEN** they can switch between all provider-visible usage and samples created by Flapstack runs only
+- **AND** both current cards and usage/cost graphs follow that scope
+
+#### Scenario: Provider history matches OnWatch graph behavior
+
+- **WHEN** the user opens a provider with historical samples
+- **THEN** separate Usage Over Time and Cost Over Time graphs are visible
+- **AND** one shared control row offers Cumulative and Per Period modes
+- **AND** the shared controls offer 1h, 6h, 24h, 7d, 30d, and All ranges with 7d selected by default
+- **AND** multi-series graph legends can hide or show individual series
+- **AND** hovering or focusing a point exposes its series, value, and timestamp
+- **AND** quota cards and quota-history series use OnWatch's exact healthy (<50%), warning (>=50%), danger (>=80%), and critical (>=95%) percent-used states and theme colors
+- **AND** an existing local OnWatch store seeds the complete Codex and Claude snapshot range before Flapstack continues collecting new samples
+- **AND** missing buckets remain absent instead of being fabricated as zero usage
+
+#### Scenario: Dashboard keeps routine usage detail minimal
+
+- **WHEN** current usage is available
+- **THEN** quota cards prioritize the metric name, percent used, progress, and reset date
+- **AND** spend-only cards prioritize cost with token count only when available
+- **AND** missing metrics and technical source identifiers are omitted from the default cards
 
 #### Scenario: Settings configure daemon and alerts
 

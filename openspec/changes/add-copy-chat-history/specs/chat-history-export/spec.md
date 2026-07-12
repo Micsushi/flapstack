@@ -61,3 +61,14 @@ failed.
 - **WHEN** the transcript cannot be written to the clipboard
 - **THEN** the app shows a failure toast with a clear reason when available
 - **AND** the chat history remains unchanged
+
+### Requirement: User Message Clipboard Copy
+
+The system SHALL provide a copy action for each user-sent text message.
+
+#### Scenario: Copy a sent message
+
+- **GIVEN** a user text message appears in the transcript
+- **WHEN** the user selects its copy action
+- **THEN** the displayed message text is written to the clipboard
+- **AND** the chat history remains unchanged

@@ -3,7 +3,7 @@
 This repo-local record documents the Track E decision and keeps the
 implementation self-contained.
 
-## E0 decision — use OpenCode as the first harness engine
+## E0 decision - use OpenCode as the first harness engine
 
 OpenRouter and NanoGPT are **API model providers**, not editor CLIs. Rather than
 build a native Flapstack model/tool loop first, Stage 2 runs these providers
@@ -13,7 +13,7 @@ and controls.
 - **Chosen engine:** OpenCode (`opencode-ai@1.17.18`), launched as
   `opencode-ai serve --hostname 127.0.0.1 --port 0` with per-run credentials and
   an isolated config directory.
-- **Adapter blueprint:** Vibe Kanban's OpenCode executor —
+- **Adapter blueprint:** Vibe Kanban's OpenCode executor -
   `crates/executors/src/executors/opencode.rs`,
   `crates/executors/src/executors/opencode/sdk.rs`, and
   `crates/executors/src/approvals.rs`. This TypeScript port mirrors that HTTP +

@@ -11,7 +11,7 @@ permissions hardcoded to bypass.
 ## What Changes
 
 - Add first-class tasks as folder-like context containers inside projects.
-- Allow chats to be global (`projectId` nullable — **BREAKING** schema change),
+- Allow chats to be global (`projectId` nullable - **BREAKING** schema change),
   project-scoped, or task-scoped, with move/promote/detach between scopes.
 - Add unified `agent_runs` records for Codex and Claude Code launches, with
   harness/model/permission/worktree identity persisted per run and per
@@ -40,4 +40,4 @@ permissions hardcoded to bypass.
   sidebar, chat input area, chips, details sidebar, attachments UI, archives
   view, scoped search UI.
 - Execution detail: this archived change's `tasks.md` lists all 27 tasks
-  (A1–E3) and their ordering.
+  (A1-E3) and their ordering.

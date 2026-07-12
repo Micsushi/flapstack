@@ -1,4 +1,4 @@
-# Change: Stage 2 — Voice, Usage Tracking, Cursor, OpenRouter, and NanoGPT
+# Change: Stage 2 - Voice, Usage Tracking, Cursor, OpenRouter, and NanoGPT
 
 ## Why
 
@@ -14,8 +14,9 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 - **Voice I/O (`voice-io`)**: bundled local whisper.cpp batch STT (selectable
   `tiny`, `base`, or `small` multilingual model; `base` default,
   download-on-first-use; no cloud STT in this stage), offline Kokoro TTS with system
-  voice fallback, and harness-authored `Spoken:`/`Displayed:` read-aloud with a
-  non-LLM fallback. No per-reply summarization LLM call.
+  voice fallback, model-independent read-aloud derived after reply completion,
+  and application-owned caveman full plus ponytail full agent defaults. No
+  per-reply summarization LLM call.
 - **Usage tracking (`usage-tracking`)**: replace `onWatch` with a shared
   TypeScript usage engine, background daemon, shared SQLite history, startup
   catch-up/manual refresh, Discord webhook alerts, and a top-level Usage
@@ -55,7 +56,7 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
     stream normalizers.
 - New/verified externals: whisper.cpp binary+model, Kokoro model, Cursor usage
   endpoints (undocumented, best-effort), `cursor-agent` CLI (must be installed +
-  its surface verified before the adapter — see design/D0), OpenAI usage/cost
+  its surface verified before the adapter - see design/D0), OpenAI usage/cost
   APIs, Anthropic Admin usage/cost APIs, OpenRouter API, NanoGPT API, Discord
   webhooks.
 - Prerequisite: fix the native-module ABI toggle (Track C F2) first so the full
@@ -63,8 +64,8 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## Reference
 
-- Repo-local tracking: this OpenSpec change plus `STAGE2-VOICE-TRACK.md`,
-  `STAGE2-USAGE-TRACK.md`, and `STAGE2-TRACK.md` cover tracks V/U/D/E/T/F,
+- Tracking: this OpenSpec change plus machine-local `STAGE2-*-TRACK.md` planning
+  notes kept outside this repository cover tracks V/U/D/E/T/F,
   per-task files, done criteria, and resolved S2.0 decisions.
 - Reuse repos: `agent-hotline` (filter + TTS engines), `onWatch` (usage math,
   storage, notification model, Discord sender, dashboard references, and full

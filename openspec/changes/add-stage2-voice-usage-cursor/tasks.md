@@ -1,7 +1,8 @@
 # Stage 2 Tasks
 
 This checklist is the repo-local OpenSpec record for task scope, completion, and
-blockers. The root `STAGE2-*.md` files carry implementation detail by track.
+blockers. Machine-local `STAGE2-*.md` planning notes kept outside this
+repository carry implementation detail by track.
 
 ## 0. Prerequisite
 
@@ -16,11 +17,17 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 - [x] 1.3 V3 TTS: system voice (macOS)
 - [x] 1.4 V4 TTS: system voice (Windows)
 - [x] 1.5 V5 TTS: offline Kokoro engine
-- [x] 1.6 V6 Spoken/Displayed pipeline (harness skill + extract + non-LLM fallback)
-- [x] 1.7 V7 Voice UX: mic capture + read-aloud controls
+- [x] 1.6 V6 model-independent read-aloud (no harness skill/prompt injection;
+      legacy Spoken extraction + non-LLM fallback)
+- [x] 1.7 V7 Voice UX: mic capture + manual message speech controls
 - [x] 1.8 V8 Voice settings tab
 - [x] 1.9 V9 OS mic permissions + honest failure states
-- [ ] 1.10 V-exit voice tests + manual matrix
+- [x] 1.10 V10 inline seek, global speed, reading cursor, and per-provider voices
+- [x] 1.11a V11 application-owned caveman full + ponytail full defaults across harnesses
+- [x] 1.11b V12 remove read-aloud prompt injection and verify reply-format independence
+- [x] 1.11c V13 optional machine-local vault context across all harnesses
+- [x] 1.11d V14 remove composer/global automatic read-aloud controls and playback
+- [ ] 1.11 V-exit voice tests + manual matrix
 
 ## 2. Usage (Track B)
 
@@ -65,12 +72,17 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 - [x] 4.7 E7 Provider onboarding, model catalog, chips, and settings
 - [x] 4.8 E8 Native harness spike + defer/continue decision
 - [ ] 4.9 E-exit OpenCode-backed harness tests + manual matrix
+- [x] 4.10 Limit normal provider selectors to DeepSeek/GLM defaults with persistent Add model choices
+- [x] 4.10a Use provider-only identity chips with compact icons and limit Cursor
+      selectors to Composer 2.5/Auto defaults with opt-in extra models
+- [ ] 4.11 Replace stale NanoGPT DeepSeek defaults and live-test a chat-capable model
 
 ## 5. Reasoning Output Parity (Cross-track)
 
 - [x] 5.1 T0 Provider behavior matrix + fixture capture
 - [x] 5.2 T1 Shared reasoning-output stream contract + persistence rules
 - [x] 5.3 T2 Incremental Reasoning output UI stream behavior
+- [x] 5.3a T2a Codex-style live/completed reasoning timer and click disclosure
 - [x] 5.4 T3 Claude reasoning-output stream/backfill verification
 - [x] 5.5 T4 Codex/OpenAI/ACP reasoning handling
 - [x] 5.6 T5 Cursor reasoning-output stream integration
@@ -92,7 +104,7 @@ blockers. The root `STAGE2-*.md` files carry implementation detail by track.
 - [x] 6.11 F12 Docs consistency pass
 - [x] 6.12 F-exit fixes verified in `npm run check`
 
-(F2 native-module ABI toggle is task 0.1 — the prerequisite done first.)
+(F2 native-module ABI toggle is task 0.1 - the prerequisite done first.)
 
 ## 7. Stage exit
 

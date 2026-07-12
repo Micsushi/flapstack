@@ -38,6 +38,26 @@ and model selectors and in the per-message producer chips.
 - **WHEN** a Cursor run produces an assistant message
 - **THEN** the chat tab and that message show the teal Cursor chip
 
+### Requirement: Cursor Model Catalog
+
+The system SHALL show Composer 2.5 and Auto in normal Cursor model selectors,
+select Composer 2.5 by default for new local state, and keep all other live
+Cursor CLI models behind the shared Models settings surface until the user adds
+them.
+
+#### Scenario: Small default Cursor catalog
+
+- **WHEN** the user has not configured Cursor model visibility
+- **THEN** normal chat selectors show Composer 2.5 and Auto
+- **AND** Composer 2.5 is selected by default
+- **AND** other models returned by `cursor-agent models` remain hidden
+
+#### Scenario: Add a Cursor model
+
+- **WHEN** the user enables another live Cursor model in Models settings
+- **THEN** that model becomes available in normal chat selectors
+- **AND** the choice persists locally
+
 ### Requirement: Cursor Permission Mapping
 
 The system SHALL map Flapstack permission modes to the controls `cursor-agent`

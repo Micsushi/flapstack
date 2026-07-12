@@ -16,6 +16,16 @@ reasoning output.
 - **AND** the system does not wait for the final assistant message to show one
   large reasoning-output block
 
+#### Scenario: Reasoning progress and completed disclosure
+
+- **WHEN** a running turn exposes visible reasoning output
+- **THEN** the Reasoning output panel shows a live `Working for <duration>` timer
+- **AND** the visible reasoning content remains available while the turn runs
+- **WHEN** the turn finishes
+- **THEN** the panel collapses to `Worked for <duration>` when duration metadata is available
+- **AND** activating the completed row toggles the exact provider-visible reasoning content
+- **AND** opaque, encrypted, or provider-private reasoning remains undisplayed
+
 #### Scenario: Only final visible reasoning output is exposed
 
 - **WHEN** a provider exposes visible reasoning output only after the turn finishes

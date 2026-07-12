@@ -42,7 +42,7 @@ where `stop()` cancels and a new speak request preempts.
 
 #### Scenario: Read a reply aloud offline
 
-- **WHEN** read-aloud is enabled and no TTS API key is configured
+- **WHEN** the user clicks a message speaker control and no TTS API key is configured
 - **THEN** the reply is spoken using the offline Kokoro voice
 
 #### Scenario: Kokoro model unavailable
@@ -51,31 +51,74 @@ where `stop()` cancels and a new speak request preempts.
 - **THEN** the system falls back to the OS system voice
 - **AND** read-aloud still speaks without a cloud dependency
 
-### Requirement: Spoken and Displayed Read-Aloud
+### Requirement: Model-Independent Read-Aloud
 
-The system SHALL read aloud a listener-ready `Spoken:` section authored by the
-harness (prompted via a Flapstack read-aloud skill/instruction) by extracting it
-with the ported speakable filter, and SHALL fall back to a non-LLM summary only
-when a reply contains no `Spoken:` section, making no additional model call for
-the spoken text.
+The system SHALL keep read-aloud independent from agent skills and model output
+formatting. Enabling TTS SHALL NOT inject a read-aloud instruction or require the
+harness to author `Spoken:` or `Displayed:` sections. Flapstack SHALL derive
+speakable text from the completed reply without an additional model call.
 
 #### Scenario: Reply contains a Spoken section
 
-- **WHEN** read-aloud is on and the harness reply includes a `Spoken:` section
+- **WHEN** a legacy or user-authored reply includes a `Spoken:` section
 - **THEN** only the `Spoken:` content is read aloud, with code, diffs, tables, and
   logs excluded
 
 #### Scenario: Reply has no Spoken section
 
-- **WHEN** read-aloud is on and the reply has no `Spoken:` section
+- **WHEN** the user requests speech for a reply with no `Spoken:` section
 - **THEN** the non-LLM fallback summary is spoken
 - **AND** no extra model call is made to generate it
+
+#### Scenario: Enabling TTS does not alter the reply
+
+- **WHEN** the user clicks a message speaker control
+- **THEN** Flapstack does not add a speech-format instruction to the harness prompt
+- **AND** the displayed assistant reply retains its normal format
+
+### Requirement: Default Agent Behavior
+
+The installed application SHALL provide application-owned caveman full and
+ponytail full instructions to every supported harness and every new chat by
+default, even when no external skill or instruction file is installed.
+
+#### Scenario: Fresh installation
+
+- **WHEN** a user starts a chat on a fresh Flapstack installation
+- **THEN** caveman full and ponytail full instructions are included in harness context
+- **AND** this behavior does not depend on files under `.codex`, `.claude`, or a repository
+
+#### Scenario: Cross-provider default
+
+- **WHEN** a chat runs through Claude, Codex, Cursor, OpenRouter, or NanoGPT
+- **THEN** the same application-owned caveman and ponytail defaults are supplied
+
+### Requirement: Optional Machine-Local Vault Context
+
+The system SHALL support an opt-in machine-local vault configuration outside the
+repository and application package. When enabled, every harness SHALL preload the
+vault startup file plus the matching project router and current handoff when they
+exist. A missing or disabled configuration SHALL require no setup and SHALL NOT
+prompt the user to connect a vault.
+
+#### Scenario: Personal vault enabled
+
+- **WHEN** a machine-local configuration enables an absolute vault root
+- **THEN** new chats receive the vault `AGENTS.md`
+- **AND** receive the matching project index and current handoff when present
+
+#### Scenario: Normal installation has no vault
+
+- **WHEN** the machine-local vault configuration is absent or disabled
+- **THEN** Flapstack starts chats normally without vault context
+- **AND** does not ask the user to configure or connect a vault
 
 ### Requirement: Voice Capture Controls
 
 The system SHALL provide a mic control in the chat input supporting push-to-talk
-hold and click-to-toggle, place the transcript in the input for review without
-auto-sending, and offer a per-chat read-aloud toggle with a global default.
+hold and click-to-toggle, and place the transcript in the input for review
+without auto-sending. Speech playback SHALL be requested manually from a message;
+the composer SHALL NOT expose automatic or per-chat read-aloud controls.
 
 #### Scenario: Dictate and review before sending
 
@@ -87,3 +130,39 @@ auto-sending, and offer a per-chat read-aloud toggle with a global default.
 
 - **WHEN** a reply is being spoken and the user presses stop
 - **THEN** speech stops immediately
+
+#### Scenario: Composer has no automatic read-aloud control
+
+- **WHEN** the user opens a chat composer
+- **THEN** no global, inherited, or per-chat read-aloud toggle is shown
+- **AND** assistant replies are not spoken automatically
+
+### Requirement: Read-Aloud Playback Controls
+
+The system SHALL show compact inline playback controls beside the message speaker
+button while speech is active, including a seekable progress bar, a playback-rate
+bar, and smooth cumulative spoken-text highlighting derived from the exact text sent
+to TTS. Highlight progress SHALL advance continuously within each rendered line.
+Seeking SHALL update the highlight in both directions. Each message SHALL
+retain its playback and highlight position while other messages play, including
+the completed state at the end. Playback rate SHALL persist globally across projects
+and chats. Voice settings SHALL retain a separate voice choice for each TTS provider.
+
+#### Scenario: Control active speech
+
+- **WHEN** a reply is being spoken
+- **THEN** the user can seek within the audio and change its playback rate
+- **AND** all words spoken through the seek position are highlighted
+- **AND** playback resumes from the selected position
+
+#### Scenario: Switch between message audio
+
+- **WHEN** the user pauses one message, plays another, and returns to the first
+- **THEN** each message retains its own progress and cumulative highlight
+- **AND** a completed message remains at the end with all spoken words highlighted
+
+#### Scenario: Reuse voice preferences
+
+- **WHEN** the user changes playback rate or selects a voice for a TTS provider
+- **THEN** the rate is reused across all chats and projects
+- **AND** returning to that provider restores its own selected voice

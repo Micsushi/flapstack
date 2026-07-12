@@ -20,14 +20,14 @@ product rationale needed for this archived change.
 
 - Decision: extend the existing schema in place (nullable `chats.projectId`,
   new tables) rather than a new parallel model.
-  Alternatives: new chat table with views — rejected as migration churn for
+  Alternatives: new chat table with views - rejected as migration churn for
   no behavioral gain.
 - Decision: permission inheritance is copy-on-create, never live-linked.
-  Parent changes affect only future children. Alternatives: live resolution —
+  Parent changes affect only future children. Alternatives: live resolution -
   rejected; runs must be reproducible and auditable.
 - Decision: harnesses stay behind their existing routers; unification happens
   in shared types + a persisted `agent_runs` contract, not a rewrite of the
-  launch paths. Alternatives: single abstract harness executor — rejected for
+  launch paths. Alternatives: single abstract harness executor - rejected for
   Stage 1 risk.
 - Decision: permission modes map to native harness controls (Claude SDK
   permissionMode/canUseTool; Codex sandbox/approval). Unsupported custom
