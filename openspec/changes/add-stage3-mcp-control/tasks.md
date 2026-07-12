@@ -170,7 +170,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F5-T1 — Define safe thread-spawn contract
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: One provider-neutral contract defines target harness, scope, lineage, permission, worktree, and optional launch.
 - Scope: Inputs, outputs, validation, approval summary, lineage fields, and loop rules.
