@@ -78,6 +78,12 @@ export const chats = sqliteTable(
       .default(false),
     harness: text("harness"),
     model: text("model"),
+    // Cross-harness spawning keeps enough durable lineage to reject loops and
+    // explain where a thread came from without depending on a live process.
+    parentChatId: text("parent_chat_id"),
+    initiatorChatId: text("initiator_chat_id"),
+    parentRunId: text("parent_run_id"),
+    ancestorChatIds: text("ancestor_chat_ids"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     archivedAt: integer("archived_at", { mode: "timestamp" }),

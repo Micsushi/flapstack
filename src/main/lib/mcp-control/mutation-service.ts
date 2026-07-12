@@ -5,13 +5,24 @@ import { copyFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { z } from "zod"
 import { prepareSafeWritePath } from "../path-safety"
-import type { McpCallerIdentity, McpControlResponse, McpMutationService } from "./types"
+import {
+  prepareThreadSpawn,
+  threadSpawnRequestSchema,
+  type ThreadSpawnPlan,
+} from "./thread-spawn-contract"
+import type {
+  McpCallerIdentity,
+  McpControlErrorCode,
+  McpControlResponse,
+  McpMutationService,
+} from "./types"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
 const id = z.string().trim().min(1).max(128)
 
 const schemas = {
+  spawn_thread: threadSpawnRequestSchema,
   create_chat: z
     .object({
       name,
@@ -67,6 +78,13 @@ export const mcpMutationInputShapes: Record<string, z.ZodRawShape | undefined> =
 )
 
 type Row = Record<string, unknown>
+export type ThreadSpawnLauncher = (input: {
+  chatId: string
+  subChatId: string
+  runId: string
+  harness: "codex" | "claude-code"
+  initialPrompt: string
+}) => Promise<void> | void
 
 /**
  * The stdio MCP child cannot call renderer tRPC. This is the shared, main-free
@@ -75,6 +93,7 @@ type Row = Record<string, unknown>
  */
 export function createMcpMutationService(
   databasePath = process.env.FLAPSTACK_DB_PATH,
+  options: { launchThread?: ThreadSpawnLauncher } = {},
 ): McpMutationService {
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP mutations.")
   return {
@@ -92,6 +111,13 @@ export function createMcpMutationService(
         switch (operation) {
           case "create_task":
             return createTask(db, scope, input.data as z.infer<typeof schemas.create_task>)
+          case "spawn_thread":
+            return await spawnThread(
+              db,
+              caller,
+              input.data as z.infer<typeof threadSpawnRequestSchema>,
+              options.launchThread,
+            )
           case "create_chat":
             return createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>)
           case "add_attachment":
@@ -257,6 +283,270 @@ function createChat(
   ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null)
   return { ok: true, data: { id: chatId, created: true } }
 }
+
+/**
+ * Creates the target chat, its canonical conversation row, and (when asked)
+ * its first run in one durable operation. Harness execution is deliberately
+ * deferred to the target harness's normal consumer: this MCP child has no
+ * renderer session to own a stream. A row therefore never claims success
+ * before it is safely persisted.
+ */
+async function spawnThread(
+  db: Database.Database,
+  caller: McpCallerIdentity,
+  request: z.infer<typeof threadSpawnRequestSchema>,
+  launchThread?: ThreadSpawnLauncher,
+): Promise<McpControlResponse> {
+  const callerRow = db
+    .prepare(
+      `SELECT id, harness, parent_chat_id, initiator_chat_id, ancestor_chat_ids
+       FROM chats WHERE id = ? AND archived_at IS NULL`,
+    )
+    .get(caller.chatId) as Row | undefined
+  const harness = callerRow && typeof callerRow.harness === "string" ? callerRow.harness : null
+  if (harness !== "codex" && harness !== "claude-code") {
+    return fail("invalid-caller", "Caller is not a supported spawned-thread harness.")
+  }
+
+  const ancestors = parseAncestorChatIds(callerRow?.ancestor_chat_ids)
+  if (!ancestors) return fail("forbidden-loop", "Caller has invalid durable lineage.")
+  const contract = prepareThreadSpawn(request, {
+    harness,
+    chatId: caller.chatId,
+    ...(caller.runId ? { runId: caller.runId } : {}),
+    initiatorChatId:
+      typeof callerRow?.initiator_chat_id === "string"
+        ? callerRow.initiator_chat_id
+        : caller.chatId,
+    ancestorChatIds: ancestors,
+  })
+  if (!contract.ok) return fail(contract.error.code, contract.error.message)
+
+  const resolved = resolveSpawnTarget(db, caller, contract.plan)
+  if (!resolved.ok) return resolved
+
+  const chatId = randomUUID()
+  const subChatId = randomUUID()
+  const runId = contract.plan.launch.requested ? randomUUID() : null
+  const now = Date.now()
+  const initialMessages = contract.plan.launch.initialPrompt
+    ? JSON.stringify([
+        {
+          id: `msg-${chatId}`,
+          role: "user",
+          parts: [{ type: "text", text: contract.plan.launch.initialPrompt }],
+          metadata: { harness: contract.plan.targetHarness },
+        },
+      ])
+    : "[]"
+
+  const transaction = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO chats (
+        id, name, scope, project_id, task_id, permission_mode, harness,
+        worktree_path, branch, base_branch, parent_chat_id, initiator_chat_id,
+        parent_run_id, ancestor_chat_ids, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      chatId,
+      `${contract.plan.targetHarness} thread`,
+      resolved.scope,
+      resolved.projectId,
+      resolved.taskId,
+      contract.plan.permission.mode,
+      contract.plan.targetHarness,
+      resolved.worktreePath,
+      resolved.branch,
+      resolved.baseBranch,
+      contract.plan.lineage.parentChatId,
+      contract.plan.lineage.initiatorChatId,
+      contract.plan.lineage.parentRunId ?? null,
+      JSON.stringify(contract.plan.lineage.ancestorChatIds),
+      now,
+      now,
+    )
+    db.prepare(
+      `INSERT INTO sub_chats (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      subChatId,
+      chatId,
+      contract.plan.targetHarness,
+      contract.plan.permission.mode,
+      resolved.worktreePath,
+      runId ? "pending" : null,
+      initialMessages,
+    )
+    if (runId) {
+      db.prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+          prompt_message_id, status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      ).run(
+        runId,
+        chatId,
+        subChatId,
+        contract.plan.targetHarness,
+        contract.plan.permission.mode,
+        resolved.worktreePath,
+        `msg-${chatId}`,
+        now,
+      )
+    }
+  })
+
+  try {
+    transaction()
+  } catch (error) {
+    return fail(
+      "internal-error",
+      error instanceof Error ? error.message : "Thread creation failed.",
+    )
+  }
+  if (runId && launchThread && contract.plan.launch.initialPrompt) {
+    try {
+      await launchThread({
+        chatId,
+        subChatId,
+        runId,
+        harness: contract.plan.targetHarness,
+        initialPrompt: contract.plan.launch.initialPrompt,
+      })
+      db.prepare("UPDATE agent_runs SET status = 'running' WHERE id = ?").run(runId)
+      db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(subChatId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Target harness launch failed."
+      db.prepare("UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ?").run(
+        Date.now(),
+        runId,
+      )
+      db.prepare("UPDATE sub_chats SET run_status = 'failure' WHERE id = ?").run(subChatId)
+      return fail("internal-error", `Thread created but launch failed: ${message}`)
+    }
+  }
+  return {
+    ok: true,
+    data: {
+      chatId,
+      subChatId,
+      ...(runId
+        ? { runId, launch: { status: launchThread ? "running" : "queued" } }
+        : { launch: { status: "not-requested" } }),
+      lineage: contract.plan.lineage,
+      worktreePath: resolved.worktreePath,
+    },
+  }
+}
+
+function parseAncestorChatIds(value: unknown): string[] | null {
+  if (value == null) return []
+  if (typeof value !== "string") return null
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string" && id.length > 0)
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
+}
+
+type ResolvedSpawnTarget = {
+  ok: true
+  scope: string
+  projectId: string | null
+  taskId: string | null
+  worktreePath: string | null
+  branch: string | null
+  baseBranch: string | null
+}
+type FailedSpawnTarget = {
+  ok: false
+  error: { code: McpControlErrorCode; message: string }
+}
+
+function resolveSpawnTarget(
+  db: Database.Database,
+  caller: McpCallerIdentity,
+  plan: ThreadSpawnPlan,
+): ResolvedSpawnTarget | FailedSpawnTarget {
+  const callerScope = callerScopeForSpawn(db, caller.chatId)
+  if (!callerScope) return spawnFail("stale-caller", "Caller chat is stale.")
+  let projectId: string | null = null
+  let taskId: string | null = null
+  if (plan.scope.kind === "project") projectId = plan.scope.projectId
+  if (plan.scope.kind === "task") {
+    projectId = plan.scope.projectId
+    taskId = plan.scope.taskId
+    const task = db
+      .prepare("SELECT project_id FROM tasks WHERE id = ? AND archived_at IS NULL")
+      .get(taskId) as Row | undefined
+    if (!task || task.project_id !== projectId)
+      return spawnFail("stale-target", "Task is missing or stale.")
+  }
+  if (projectId) {
+    const project = db
+      .prepare("SELECT id FROM projects WHERE id = ? AND archived_at IS NULL")
+      .get(projectId)
+    if (!project) return spawnFail("stale-target", "Project is missing or stale.")
+  }
+  if (callerScope.taskId && taskId !== callerScope.taskId)
+    return spawnFail("out-of-scope", "Thread is outside the caller task scope.")
+  if (callerScope.projectId && projectId !== callerScope.projectId)
+    return spawnFail("out-of-scope", "Thread is outside the caller project scope.")
+
+  if (plan.worktree.strategy === "none")
+    return {
+      ok: true,
+      scope: plan.scope.kind,
+      projectId,
+      taskId,
+      worktreePath: null,
+      branch: null,
+      baseBranch: null,
+    }
+  const sourceId = plan.worktree.strategy === "inherit" ? caller.chatId : plan.worktree.worktreeId
+  const source = db
+    .prepare(
+      `SELECT worktree_path, branch, base_branch, project_id, task_id
+       FROM chats WHERE id = ? AND archived_at IS NULL`,
+    )
+    .get(sourceId) as Row | undefined
+  if (!source || typeof source.worktree_path !== "string" || !source.worktree_path)
+    return spawnFail("stale-target", "Requested worktree is missing or stale.")
+  if (source.project_id !== projectId || source.task_id !== taskId)
+    return spawnFail("out-of-scope", "Requested worktree is outside the target scope.")
+  return {
+    ok: true,
+    scope: plan.scope.kind,
+    projectId,
+    taskId,
+    worktreePath: source.worktree_path,
+    branch: stringOrNull(source.branch),
+    baseBranch: stringOrNull(source.base_branch),
+  }
+}
+
+function callerScopeForSpawn(db: Database.Database, chatId: string): Scope | null {
+  const row = db
+    .prepare(
+      "SELECT id, scope, project_id, task_id FROM chats WHERE id = ? AND archived_at IS NULL",
+    )
+    .get(chatId) as Row | undefined
+  return row
+    ? {
+        chatId: String(row.id),
+        kind: String(row.scope),
+        projectId: stringOrNull(row.project_id),
+        taskId: stringOrNull(row.task_id),
+      }
+    : null
+}
+
+function spawnFail(code: McpControlErrorCode, message: string): FailedSpawnTarget {
+  return { ok: false, error: { code, message } }
+}
 function addAttachment(
   db: Database.Database,
   scope: Scope,
@@ -400,9 +690,6 @@ async function writeAttachment(
   }
   return { ok: true, data: { targetPath: destination, byteLength: (await stat(destination)).size } }
 }
-function fail(
-  code: "invalid-input" | "out-of-scope" | "stale-target" | "internal-error",
-  message: string,
-): McpControlResponse {
+function fail(code: McpControlErrorCode, message: string): McpControlResponse {
   return { ok: false, error: { code, message } }
 }

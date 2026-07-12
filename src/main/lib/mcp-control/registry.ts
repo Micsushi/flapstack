@@ -111,6 +111,13 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "spawn_thread",
+    description: "Create and optionally launch a thread for another supported harness.",
+    tier: 3,
+    requiredCapabilities: ["mcp", "shell"],
+    status: "implemented",
+  },
+  {
     name: "create_task",
     description: "Create a new task.",
     tier: 1,
