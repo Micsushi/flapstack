@@ -11,19 +11,28 @@ export type McpApprovalDecision = {
 
 export type McpPendingApproval = {
   id: string
+  invocationId: string
   caller: Pick<McpCallerIdentity, "chatId" | "runId">
   toolName: string
   tier: McpRiskTier
   createdAt: Date
   expiresAt: Date
+  input: unknown
 }
 
 export type McpApprovalRequest = {
   id: string
+  invocationId?: string
   caller: Pick<McpCallerIdentity, "chatId" | "runId">
   toolName: string
   tier: McpRiskTier
   timeoutMs?: number
+  input?: unknown
+}
+
+export type McpApprovalCoordinator = {
+  publish: (pending: McpPendingApproval) => void
+  readDecision: (id: string) => { decision: "approve" | "deny"; grantSession: boolean } | null
 }
 
 export type McpApprovalWait = {
@@ -55,6 +64,8 @@ export class McpApprovalLifecycle {
   private readonly grants = new Map<string, SessionGrant>()
   private stopped = false
 
+  constructor(private readonly coordinator?: McpApprovalCoordinator) {}
+
   request(request: McpApprovalRequest): McpApprovalWait {
     if (this.stopped) return settled(request.id, "shutdown", "shutdown")
 
@@ -79,6 +90,8 @@ export class McpApprovalLifecycle {
     const createdAt = new Date()
     const pending: PendingApproval = {
       ...request,
+      invocationId: request.invocationId ?? request.id,
+      input: request.input ?? null,
       createdAt,
       expiresAt: new Date(createdAt.getTime() + timeoutMs),
       decision,
@@ -86,6 +99,13 @@ export class McpApprovalLifecycle {
       timer: setTimeout(() => this.finish(request.id, "timed-out", "timeout"), timeoutMs),
     }
     this.pending.set(request.id, pending)
+    try {
+      this.coordinator?.publish(snapshot(pending))
+    } catch {
+      this.finish(request.id, "cancelled", "cancellation")
+      return { pending: null, decision }
+    }
+    if (this.coordinator) this.pollDecision(request.id)
     return { pending: snapshot(pending), decision }
   }
 
@@ -169,6 +189,24 @@ export class McpApprovalLifecycle {
     pending.resolve({ id, state, source })
     return true
   }
+
+  private pollDecision(id: string): void {
+    const pending = this.pending.get(id)
+    if (!pending || this.stopped || !this.coordinator) return
+    let decision: ReturnType<McpApprovalCoordinator["readDecision"]> = null
+    try {
+      decision = this.coordinator.readDecision(id)
+    } catch {
+      // A short SQLite lock must not crash the harness child. Retry until the
+      // request's own bounded timeout closes it safely.
+    }
+    if (decision) {
+      if (decision.decision === "approve") this.approve(id, { grantSession: decision.grantSession })
+      else this.deny(id)
+      return
+    }
+    setTimeout(() => this.pollDecision(id), 100).unref?.()
+  }
 }
 
 function settled(
@@ -180,8 +218,8 @@ function settled(
 }
 
 function snapshot(pending: McpPendingApproval): McpPendingApproval {
-  const { id, caller, toolName, tier, createdAt, expiresAt } = pending
-  return { id, caller: { ...caller }, toolName, tier, createdAt, expiresAt }
+  const { id, invocationId, caller, toolName, tier, createdAt, expiresAt, input } = pending
+  return { id, invocationId, caller: { ...caller }, toolName, tier, createdAt, expiresAt, input }
 }
 
 function grantKey(

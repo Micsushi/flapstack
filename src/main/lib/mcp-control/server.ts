@@ -8,10 +8,11 @@ import { McpApprovalLifecycle } from "./approval-lifecycle"
 import { appendMcpAuditRecord } from "./audit-storage"
 import { getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
+import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
-  const approvals = new McpApprovalLifecycle()
+  const approvals = new McpApprovalLifecycle(createSqliteMcpApprovalCoordinator(getDatabase()))
   const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
 
