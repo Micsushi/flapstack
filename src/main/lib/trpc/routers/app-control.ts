@@ -36,8 +36,7 @@ export const appControlRouter = router({
     return {
       enabled: false,
       transport: "stdio-available" as const,
-      reason:
-        "Stage 3 stdio transport is implemented but exposure stays disabled until the trusted risk gate is integrated.",
+      reason: "Flapstack MCP exposure is disabled by default and enabled per supported chat.",
       tools: mcpControlTools,
     }
   }),
