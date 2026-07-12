@@ -1,11 +1,106 @@
 import type { ChatTransport, UIMessage } from "ai"
+import { getDefaultStore } from "jotai"
 import { createElement } from "react"
 import { toast } from "sonner"
+import { normalizeOpencodeModelId } from "../../../../shared/model-catalog"
+import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
+import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
+import { pendingAuthRetryMessageAtom } from "../atoms"
+import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 
 type Provider = "openrouter" | "nanogpt"
 type UIMessageChunk = any
+
+function openProviderSettings(provider: Provider) {
+  localStorage.setItem("flapstack:api-provider-focus", provider)
+  const store = getDefaultStore()
+  store.set(agentsSettingsDialogActiveTabAtom, "api-providers")
+  store.set(agentsSettingsDialogOpenAtom, true)
+}
+
+function markProviderRetryReady(provider: Provider) {
+  const pending = appStore.get(pendingAuthRetryMessageAtom)
+  if (pending?.provider === provider) {
+    appStore.set(pendingAuthRetryMessageAtom, { ...pending, readyToRetry: true })
+  }
+}
+
+function showMissingProviderKeyToast(provider: Provider) {
+  const label = provider === "openrouter" ? "OpenRouter" : "NanoGPT"
+  let apiKey = ""
+
+  toast.custom(
+    (toastId) =>
+      createElement(
+        "div",
+        { className: "w-[380px] rounded-lg border bg-background p-4 shadow-lg" },
+        createElement("div", { className: "font-medium" }, `${label} API key required`),
+        createElement(
+          "div",
+          { className: "mt-1 text-sm text-muted-foreground" },
+          `Add the ${label} key before retrying this message.`,
+        ),
+        createElement("input", {
+          type: "password",
+          autoComplete: "new-password",
+          placeholder: `Paste ${label} API key`,
+          className:
+            "mt-3 h-9 w-full rounded-md border bg-transparent px-3 text-sm outline-none focus:ring-2 focus:ring-ring",
+          onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+            apiKey = event.target.value
+          },
+        }),
+        createElement(
+          "div",
+          { className: "mt-3 flex gap-2" },
+          createElement(
+            "button",
+            {
+              className: "rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground",
+              onClick: async () => {
+                if (!apiKey.trim()) {
+                  toast.error("Enter an API key first")
+                  return
+                }
+                try {
+                  const status = await trpcClient.opencode.setKey.mutate({
+                    provider,
+                    apiKey: apiKey.trim(),
+                  })
+                  toast.dismiss(toastId)
+                  toast.success(
+                    status.sessionOnly
+                      ? `${label} key added for this session`
+                      : `${label} API key saved`,
+                  )
+                  markProviderRetryReady(provider)
+                } catch (error) {
+                  toast.error(`Could not save ${label} key`, {
+                    description: error instanceof Error ? error.message : String(error),
+                  })
+                }
+              },
+            },
+            "Save key",
+          ),
+          createElement(
+            "button",
+            {
+              className: "rounded-md border px-3 py-1.5 text-sm hover:bg-accent",
+              onClick: () => {
+                toast.dismiss(toastId)
+                openProviderSettings(provider)
+              },
+            },
+            "Open settings",
+          ),
+        ),
+      ),
+    { duration: Infinity },
+  )
+}
 
 export type OpencodeChatTransportConfig = {
   chatId: string
@@ -18,7 +113,9 @@ export type OpencodeChatTransportConfig = {
 
 /** Transport for Flapstack-owned OpenCode sidecar runs. */
 export class OpencodeChatTransport implements ChatTransport<UIMessage> {
-  constructor(private config: OpencodeChatTransportConfig) {}
+  constructor(private config: OpencodeChatTransportConfig) {
+    this.config.model = normalizeOpencodeModelId(config.provider, config.model)
+  }
 
   updateConfig(
     config: Partial<
@@ -26,6 +123,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
     >,
   ) {
     this.config = { ...this.config, ...config }
+    this.config.model = normalizeOpencodeModelId(this.config.provider, this.config.model)
   }
 
   getConfig(): Readonly<OpencodeChatTransportConfig> {
@@ -176,9 +274,27 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
               }
               const normalizedChunk = normalizeOpencodeTransportChunk(chunk)
               if (normalizedChunk.type === "error") {
-                toast.error("API provider error", {
-                  description: normalizedChunk.errorText || "The provider run failed.",
-                })
+                if (/add the .* api key/i.test(normalizedChunk.errorText || "")) {
+                  appStore.set(pendingAuthRetryMessageAtom, {
+                    subChatId: this.config.subChatId,
+                    provider: this.config.provider,
+                    prompt,
+                    ...(images.length > 0 ? { images } : {}),
+                    readyToRetry: false,
+                  })
+                  showMissingProviderKeyToast(this.config.provider)
+                } else {
+                  showProviderErrorToast(
+                    "API provider error",
+                    normalizedChunk.errorText || "The provider run failed.",
+                    {
+                      provider: this.config.provider,
+                      model: this.config.model,
+                      chatId: this.config.chatId,
+                      subChatId: this.config.subChatId,
+                    },
+                  )
+                }
               }
               try {
                 controller.enqueue(normalizedChunk)

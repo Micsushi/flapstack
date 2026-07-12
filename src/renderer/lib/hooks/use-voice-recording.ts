@@ -150,7 +150,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
             if (!analyserRef.current) return
 
             frameCount++
-            // Only update state every 3rd frame (~20fps) — CSS transitions smooth the gaps
+            // Only update state every 3rd frame (~20fps) - CSS transitions smooth the gaps
             if (frameCount % 3 === 0) {
               analyserRef.current.getByteFrequencyData(dataArray)
 

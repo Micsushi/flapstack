@@ -123,17 +123,17 @@ export function extractGitActivity(parts: any[]): GitActivity | null {
   }
 
   if (lastCommit && lastPushHash !== null) {
-    // If rebase happened after commit, the original hash is invalid —
+    // If rebase happened after commit, the original hash is invalid -
     // use the hash from the final git push output instead
     if (hadRebase && lastPushHash) {
       lastCommit.hash = lastPushHash
       lastCommit.pushed = true
     } else if (hadRebase && !lastPushHash) {
-      // Rebase happened but couldn't extract new hash from push output —
+      // Rebase happened but couldn't extract new hash from push output -
       // don't mark as pushed (old hash would 404 on GitHub)
       lastCommit.pushed = false
     } else {
-      // No rebase — original hash is valid
+      // No rebase - original hash is valid
       lastCommit.pushed = true
     }
   }

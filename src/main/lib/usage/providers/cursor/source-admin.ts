@@ -1,4 +1,4 @@
-// Stage 2 Track B — U7: Cursor usage source #2 (Admin API) — stubbed slot.
+// Stage 2 Track B - U7: Cursor usage source #2 (Admin API) - stubbed slot.
 //
 // The public Cursor Admin API is team/admin only. It stays a stub unless
 // implementation verifies it is useful for the user's account. This file

@@ -7,6 +7,7 @@ import { ChatMarkdownRenderer } from "../../../components/chat-markdown-renderer
 import { TextShimmer } from "../../../components/ui/text-shimmer"
 import { AgentToolInterrupted } from "./agent-tool-interrupted"
 import { areToolPropsEqual } from "./agent-tool-utils"
+import { formatReasoningStatus } from "../lib/reasoning-duration"
 
 interface ReasoningOutputPart {
   type: string
@@ -18,30 +19,42 @@ interface ReasoningOutputPart {
   }
   output?: {
     completed?: boolean
+    durationMs?: number
+  }
+  result?: {
+    completed?: boolean
+    durationMs?: number
   }
   startedAt?: number
+  callProviderMetadata?: {
+    custom?: { startedAt?: number }
+  }
+  providerMetadata?: {
+    custom?: { startedAt?: number }
+  }
 }
 
 interface AgentReasoningOutputProps {
   part: ReasoningOutputPart
   chatStatus?: string
+  durationMs?: number
+  startedAt?: number
 }
 
-const PREVIEW_LENGTH = 60
-
-function formatElapsedTime(ms: number): string {
-  if (ms < 1000) return ""
-  const seconds = Math.floor(ms / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  if (remainingSeconds === 0) return `${minutes}m`
-  return `${minutes}m ${remainingSeconds}s`
+function areReasoningPropsEqual(
+  prevProps: AgentReasoningOutputProps,
+  nextProps: AgentReasoningOutputProps,
+): boolean {
+  if (prevProps.durationMs !== nextProps.durationMs) return false
+  if (prevProps.startedAt !== nextProps.startedAt) return false
+  return areToolPropsEqual(prevProps, nextProps)
 }
 
 export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   part,
   chatStatus,
+  durationMs,
+  startedAt,
 }: AgentReasoningOutputProps) {
   const isPending = part.state !== "output-available" && part.state !== "output-error"
   const isActivelyStreaming = chatStatus === "streaming" || chatStatus === "submitted"
@@ -61,17 +74,38 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
     wasStreamingRef.current = isStreaming
   }, [isStreaming])
 
-  // Elapsed time — ticks every second while streaming
-  const startedAtRef = useRef(part.startedAt || Date.now())
-  const [elapsedMs, setElapsedMs] = useState(0)
+  // Prefer adapter timestamps, then fall back to when this visible reasoning row mounted.
+  const startedAtRef = useRef(
+    startedAt ||
+      part.startedAt ||
+      part.callProviderMetadata?.custom?.startedAt ||
+      part.providerMetadata?.custom?.startedAt ||
+      Date.now(),
+  )
+  const [elapsedMs, setElapsedMs] = useState(() => durationMs ?? 0)
+  const hasStreamedRef = useRef(isStreaming)
 
   useEffect(() => {
-    if (!isStreaming) return
+    if (!isStreaming) {
+      if (hasStreamedRef.current) {
+        setElapsedMs(Date.now() - startedAtRef.current)
+      }
+      return
+    }
+
+    hasStreamedRef.current = true
     const tick = () => setElapsedMs(Date.now() - startedAtRef.current)
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
   }, [isStreaming])
+
+  // Persisted whole-run duration is more accurate and survives history reloads.
+  useEffect(() => {
+    if (!isStreaming && durationMs !== undefined && durationMs >= 0) {
+      setElapsedMs(durationMs)
+    }
+  }, [durationMs, isStreaming])
 
   // Track whether content overflows the scroll container
   const [isOverflowing, setIsOverflowing] = useState(false)
@@ -89,66 +123,59 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   const reasoningOutputLabel = part.label || "Reasoning output"
   const tokenLabel = typeof part.tokens === "number" ? `${part.tokens.toLocaleString()} tokens` : ""
 
-  const previewText = reasoningOutputText.slice(0, PREVIEW_LENGTH).replace(/\n/g, " ")
-
-  const elapsedDisplay = isStreaming ? formatElapsedTime(elapsedMs) : ""
+  const completedDurationMs =
+    durationMs ??
+    part.output?.durationMs ??
+    part.result?.durationMs ??
+    (elapsedMs > 0 ? elapsedMs : undefined)
+  const statusLabel = formatReasoningStatus(
+    isStreaming,
+    isStreaming ? elapsedMs : completedDurationMs,
+  )
 
   if (isInterrupted && !reasoningOutputText) {
     return <AgentToolInterrupted toolName="Reasoning output" />
   }
 
+  if (!isStreaming && !reasoningOutputText.trim()) return null
+
   return (
-    <div>
+    <div className="mb-3">
       {/* Header - always visible, clickable to toggle */}
-      <div
+      <button
+        type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="group flex items-start gap-1.5 py-0.5 px-2 cursor-pointer"
+        aria-expanded={isExpanded}
+        className="group flex w-full items-center gap-2 border-b border-border/60 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <div className="flex-1 min-w-0 flex items-center gap-1">
-          <div className="text-xs flex items-center gap-1.5 min-w-0">
-            <span className="font-medium whitespace-nowrap flex-shrink-0">
-              {isStreaming && reasoningOutputLabel === "Reasoning output" ? (
-                <TextShimmer
-                  as="span"
-                  duration={1.2}
-                  className="inline-flex items-center text-xs leading-none h-4 m-0"
-                >
-                  Reasoning output
-                </TextShimmer>
-              ) : (
-                <span className="text-muted-foreground">{reasoningOutputLabel}</span>
-              )}
-            </span>
-            {tokenLabel && (
-              <span className="text-muted-foreground/60 tabular-nums flex-shrink-0">
-                {tokenLabel}
-              </span>
-            )}
-            {/* Preview when collapsed */}
-            {!isExpanded && previewText && (
-              <span className="text-muted-foreground/60 truncate">{previewText}</span>
-            )}
-            {/* Elapsed time */}
-            {elapsedDisplay && (
-              <span className="text-muted-foreground/50 tabular-nums flex-shrink-0">
-                {elapsedDisplay}
-              </span>
-            )}
-            {/* Chevron */}
-            <ChevronRight
-              className={cn(
-                "w-3.5 h-3.5 text-muted-foreground/60 transition-transform duration-200 ease-out flex-shrink-0",
-                isExpanded && "rotate-90",
-                !isExpanded && "opacity-0 group-hover:opacity-100",
-              )}
-            />
-          </div>
-        </div>
-      </div>
+        <span className="min-w-0 flex-1 truncate tabular-nums">
+          {isStreaming ? (
+            <TextShimmer as="span" duration={1.2} className="text-sm">
+              {statusLabel}
+            </TextShimmer>
+          ) : (
+            statusLabel
+          )}
+        </span>
+        {reasoningOutputLabel !== "Reasoning output" && (
+          <span className="shrink-0 text-xs text-muted-foreground/60">{reasoningOutputLabel}</span>
+        )}
+        {tokenLabel && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+            {tokenLabel}
+          </span>
+        )}
+        <ChevronRight
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out",
+            isExpanded && "rotate-90",
+          )}
+        />
+      </button>
 
       {/* Content - expanded while streaming, collapsible after */}
       {isExpanded && reasoningOutputText && (
-        <div className="relative mt-1">
+        <div className="relative pt-3">
           {/* Top gradient fade when streaming */}
           <div
             className={cn(
@@ -158,7 +185,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
           />
           <div
             ref={scrollRef}
-            className={cn("px-2", isStreaming && "overflow-y-auto scrollbar-hide max-h-36")}
+            className={cn(isStreaming && "overflow-y-auto scrollbar-hide max-h-36")}
           >
             <ChatMarkdownRenderer
               content={reasoningOutputText}
@@ -170,4 +197,4 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
       )}
     </div>
   )
-}, areToolPropsEqual)
+}, areReasoningPropsEqual)

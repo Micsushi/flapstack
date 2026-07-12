@@ -38,6 +38,7 @@ import {
 } from "../../lib/hooks/use-remote-chats"
 import { usePrefetchLocalChat } from "../../lib/hooks/use-prefetch-local-chat"
 import { ArchivePopover } from "../agents/ui/archive-popover"
+import { isReservedArchivedAccentColor } from "../agents/lib/open-chat-tabs"
 import {
   ChevronDown,
   ChevronRight,
@@ -57,10 +58,6 @@ import {
   ArrowRightLeft,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
-// import { useCombinedAuth } from "@/lib/hooks/use-combined-auth"
-const useCombinedAuth = () => ({ userId: null, isLoaded: true })
-// import { AuthDialog } from "@/components/auth/auth-dialog"
-const AuthDialog = (_props: { open: boolean; onOpenChange: (open: boolean) => void }) => null
 // Desktop: archive is handled inline, not via hook
 // import { DiscordIcon } from "@/components/icons"
 import { DiscordIcon } from "../../icons"
@@ -97,7 +94,6 @@ import {
   IconDoubleChevronLeft,
   SettingsIcon,
   PlusIcon,
-  ProfileIcon,
   PublisherStudioIcon,
   SearchIcon,
   GitHubLogo,
@@ -110,7 +106,6 @@ import {
   KeyboardIcon,
   CloudIcon,
 } from "../../components/ui/icons"
-import { Logo } from "../../components/ui/logo"
 import { Input } from "../../components/ui/input"
 import { Button } from "../../components/ui/button"
 import {
@@ -133,6 +128,7 @@ import {
   type UndoItem,
 } from "../agents/atoms"
 import { NetworkStatus } from "../../components/ui/network-status"
+import flapstackAppIcon from "../../../../build/icons/24x24.png"
 import { useAgentSubChatStore, OPEN_SUB_CHATS_CHANGE_EVENT } from "../agents/stores/sub-chat-store"
 import { getWindowId } from "../../contexts/WindowContext"
 import { AgentsHelpPopover } from "../agents/components/agents-help-popover"
@@ -143,12 +139,13 @@ import { useNewChatDrafts, deleteNewChatDraft, type NewChatDraft } from "../agen
 import { TrafficLightSpacer, TrafficLights } from "../agents/components/traffic-light-spacer"
 import { useHotkeys } from "react-hotkeys-hook"
 import { Checkbox } from "../../components/ui/checkbox"
+import { Switch } from "../../components/ui/switch"
 import { useHaptic } from "./hooks/use-haptic"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
 import { getModelChipMeta } from "../agents/constants"
-import { formatModelDisplayName } from "../../../shared/model-catalog"
+import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
 import {
   buildChatMoveDestinations,
@@ -157,7 +154,17 @@ import {
   toChatMoveMutationInput,
   type ChatMoveTarget,
 } from "./chat-move-destinations"
-import { moveIdInOrder, type DragInsertPosition } from "./sidebar-ordering"
+import {
+  moveIdInOrder,
+  resolveBoundaryHighlightIds,
+  resolveMoveIndicatorIds,
+  resolveSidebarDragCursor,
+  resolveTaskEndDropTarget,
+  resolveTaskGroupDropTarget,
+  resolveTaskHeaderDropPosition,
+  type DragInsertPosition,
+  type SidebarDropPosition,
+} from "./sidebar-ordering"
 
 // GitHub avatar with loading placeholder
 const GitHubAvatar = React.memo(function GitHubAvatar({
@@ -215,7 +222,7 @@ const SidebarChip = React.memo(function SidebarChip({
         className,
       )}
     >
-      <span className="truncate">{children}</span>
+      <span className="inline-flex min-w-0 items-center whitespace-nowrap">{children}</span>
     </span>
   )
 })
@@ -225,7 +232,6 @@ const PROJECT_COLOR_PRESETS = [
   "#22c55e",
   "#f59e0b",
   "#f97316",
-  "#ef4444",
   "#ec4899",
   "#14b8a6",
   "#84cc16",
@@ -358,9 +364,27 @@ function getDragInsertPosition(event: React.DragEvent<HTMLElement>): DragInsertP
   return getElementInsertPosition(event.currentTarget, event.clientY)
 }
 
-function findSidebarPointerDropTarget(clientX: number, clientY: number) {
+function findSidebarPointerDropTarget(
+  clientX: number,
+  clientY: number,
+  draggingKind: string,
+  draggingId: string,
+) {
   const target = document.elementFromPoint(clientX, clientY)
   if (!(target instanceof HTMLElement)) return null
+
+  const taskGroup = target.closest<HTMLElement>("[data-sidebar-task-group-id]")
+  if (taskGroup) {
+    const rect = taskGroup.getBoundingClientRect()
+    const taskGroupDropTarget = resolveTaskGroupDropTarget({
+      draggingKind,
+      draggingId,
+      targetTaskId: taskGroup.dataset.sidebarTaskGroupId,
+      relativeY: (clientY - rect.top) / rect.height,
+      offsetY: clientY - rect.top,
+    })
+    if (taskGroupDropTarget) return taskGroupDropTarget
+  }
 
   const dropElement = target.closest<HTMLElement>(
     "[data-sidebar-drag-target-kind][data-sidebar-drag-target-id]",
@@ -371,10 +395,31 @@ function findSidebarPointerDropTarget(clientX: number, clientY: number) {
   const id = dropElement.dataset.sidebarDragTargetId
   if (!kind || !id) return null
 
+  const rect = dropElement.getBoundingClientRect()
+  const relativeY = (clientY - rect.top) / rect.height
+  const taskHeaderDropPosition = resolveTaskHeaderDropPosition({
+    isTaskHeader: dropElement.dataset.sidebarTaskHeader === "true",
+    splitAfterTaskZone: dropElement.dataset.sidebarTaskHeaderSplit === "true",
+    relativeY,
+  })
+  if (taskHeaderDropPosition) return { kind, id, position: taskHeaderDropPosition }
+  const taskEndDropTarget = resolveTaskEndDropTarget({
+    taskId: dropElement.dataset.sidebarTaskEndTargetId,
+    targetKind: kind,
+    targetId: id,
+    isOnlyTaskChat: dropElement.dataset.sidebarOnlyTaskChat === "true",
+    relativeY,
+  })
+  if (taskEndDropTarget) return taskEndDropTarget
+  const position: SidebarDropPosition =
+    dropElement.dataset.sidebarDropContainer === "true" && relativeY >= 0.25 && relativeY <= 0.75
+      ? "inside"
+      : getElementInsertPosition(dropElement, clientY)
+
   return {
     kind,
     id,
-    position: getElementInsertPosition(dropElement, clientY),
+    position,
   }
 }
 
@@ -395,8 +440,8 @@ function useSidebarPointerDragSource({
   id: string
   blockSelector: string
   onDragStartItem: (kind: string, id: string) => void
-  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
-  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragOverItem: (kind: string, id: string, position: SidebarDropPosition) => void
+  onDropItem: (kind: string, id: string, position: SidebarDropPosition) => void
   onDragEndItem: () => void
   onDragStarted?: () => void
   onDragFinished?: () => void
@@ -418,6 +463,7 @@ function useSidebarPointerDragSource({
         document.removeEventListener("pointercancel", handlePointerCancel, true)
         sourceElement.removeAttribute("data-pointer-drag-source")
         delete document.body.dataset.sidebarPointerDragging
+        delete document.body.dataset.sidebarPointerDragCursor
         document.body.style.cursor = ""
       }
 
@@ -428,8 +474,14 @@ function useSidebarPointerDragSource({
         document.body.style.cursor = "grabbing"
         onDragStartItem(kind, id)
 
-        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        const target = findSidebarPointerDropTarget(
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+          kind,
+          id,
+        )
         if (target) onDragOverItem(target.kind, target.id, target.position)
+        else onDragOverItem(kind, id, "inside")
       }
 
       const handlePointerMove = (pointerEvent: PointerEvent) => {
@@ -441,8 +493,14 @@ function useSidebarPointerDragSource({
         }
 
         pointerEvent.preventDefault()
-        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        const target = findSidebarPointerDropTarget(
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+          kind,
+          id,
+        )
         if (target) onDragOverItem(target.kind, target.id, target.position)
+        else onDragOverItem(kind, id, "inside")
       }
 
       const handlePointerUp = (pointerEvent: PointerEvent) => {
@@ -450,7 +508,12 @@ function useSidebarPointerDragSource({
         if (!dragStarted) return
 
         pointerEvent.preventDefault()
-        const target = findSidebarPointerDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+        const target = findSidebarPointerDropTarget(
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+          kind,
+          id,
+        )
         if (target) {
           onDropItem(target.kind, target.id, target.position)
         } else {
@@ -560,7 +623,7 @@ function DropSeparator({
         initial={{ opacity: 0, scaleX: 0.2 }}
         animate={{ opacity: 1, scaleX: 1 }}
         transition={{ type: "spring", stiffness: 560, damping: 34, mass: 0.55 }}
-        className="absolute left-0 right-0 top-0 h-0.5 origin-left -translate-y-1/2 rounded-full bg-primary shadow-[0_0_0_1px_hsl(var(--background)),0_0_10px_hsl(var(--primary)/0.45)]"
+        className="absolute left-0 right-0 top-0 h-px origin-left -translate-y-1/2 rounded-full bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.35)]"
       />
     </div>
   )
@@ -849,9 +912,12 @@ const AgentChatItem = React.memo(function AgentChatItem({
   isJustCreated,
   dragKind,
   dragItemId,
+  taskEndTargetId,
+  isOnlyTaskChat,
   tintColor,
   isDragging,
   isDragOver,
+  isBoundaryHighlighted,
   dragOverPosition,
   onDragStartItem,
   onDragOverItem,
@@ -928,19 +994,21 @@ const AgentChatItem = React.memo(function AgentChatItem({
     | "pinned-chat"
     | "starred-chat"
   dragItemId?: string
+  taskEndTargetId?: string
+  isOnlyTaskChat: boolean
   tintColor?: string | null
   isDragging: boolean
   isDragOver: boolean
-  dragOverPosition?: DragInsertPosition | null
+  isBoundaryHighlighted: boolean
+  dragOverPosition?: SidebarDropPosition | null
   onDragStartItem: (kind: string, id: string) => void
-  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
-  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragOverItem: (kind: string, id: string, position: SidebarDropPosition) => void
+  onDropItem: (kind: string, id: string, position: SidebarDropPosition) => void
   onDragEndItem: () => void
 }) {
   const modelLabel = model?.trim()
   const harnessChip = getModelChipMeta(modelLabel, harness)
-  const identityChipLabel =
-    formatModelDisplayName(modelLabel) || (harness ? harnessChip.name : null)
+  const identityChipLabel = harness ? harnessChip.name : null
   const effectiveDragItemId = dragItemId ?? chatId
   const suppressClickRef = useRef(false)
   const handlePointerDragStart = useSidebarPointerDragSource({
@@ -999,6 +1067,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
           data-sidebar-drag-source
           data-sidebar-drag-target-kind={dragKind}
           data-sidebar-drag-target-id={effectiveDragItemId}
+          data-sidebar-task-end-target-id={taskEndTargetId}
+          data-sidebar-only-task-chat={isOnlyTaskChat || undefined}
           onPointerDown={handlePointerDragStart}
           onClick={(e) => {
             if (suppressClickRef.current) {
@@ -1029,7 +1099,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
           }}
           onMouseLeave={onMouseLeave}
           className={cn(
-            "w-full text-left py-1 cursor-pointer group relative",
+            "w-full mb-0.5 last:mb-0 text-left py-1 cursor-pointer group relative",
             "transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out",
             "border border-transparent text-foreground",
             "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
@@ -1046,19 +1116,18 @@ const AgentChatItem = React.memo(function AgentChatItem({
                   : "hover:bg-foreground/5",
             isChecked &&
               (isMobileFullscreen ? "bg-primary/10" : "bg-primary/10 hover:bg-primary/15"),
-            dragKind === "project-chat" &&
-              "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]",
-            dragKind === "project-child" &&
-              "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]",
+            dragKind === "project-chat" && "bg-foreground/[0.018] hover:bg-foreground/[0.04]",
+            dragKind === "project-child" && "bg-foreground/[0.018] hover:bg-foreground/[0.04]",
             dragKind === "task-chat" &&
               (normalizedTint
-                ? "my-0.5 bg-[var(--sidebar-chat-bg)] hover:bg-[var(--sidebar-chat-bg-hover)]"
-                : "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]"),
+                ? "bg-[var(--sidebar-chat-bg)] hover:bg-[var(--sidebar-chat-bg-hover)]"
+                : "bg-foreground/[0.018] hover:bg-foreground/[0.04]"),
             dragKind === "global-chat" &&
               (normalizedTint
-                ? "my-0.5 bg-foreground/[0.018] hover:bg-foreground/[0.04]"
+                ? "bg-foreground/[0.018] hover:bg-foreground/[0.04]"
                 : "hover:bg-slate-500/[0.035]"),
             isDragOver && "translate-x-0.5 border-primary/35 bg-primary/[0.055] shadow-sm",
+            isBoundaryHighlighted && "ring-1 ring-inset ring-primary/60",
             isDragging && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
           )}
           style={chatItemStyle}
@@ -1373,7 +1442,14 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 {(identityChipLabel || hasCustomWorktree) && (
                   <div className="flex min-w-0 flex-wrap items-center gap-1">
                     {identityChipLabel && (
-                      <SidebarChip className={harnessChip.className} title={modelLabel}>
+                      <SidebarChip
+                        className={harnessChip.className}
+                        title={harness ? `${harnessChip.name} · ${modelLabel}` : modelLabel}
+                      >
+                        <ProviderChipIcon
+                          provider={harness}
+                          className="mr-1 h-2.5 w-2.5 shrink-0"
+                        />
                         {identityChipLabel}
                       </SidebarChip>
                     )}
@@ -1611,6 +1687,9 @@ function chatListSectionPropsAreEqual(
   if (prevProps.isCollapsed !== nextProps.isCollapsed) return false
   if (prevProps.isDraggingSection !== nextProps.isDraggingSection) return false
   if (prevProps.isDragOverSection !== nextProps.isDragOverSection) return false
+  if (prevProps.isSectionBoundaryHighlighted !== nextProps.isSectionBoundaryHighlighted)
+    return false
+  if (prevProps.isMoveIntoSection !== nextProps.isMoveIntoSection) return false
   if (prevProps.draggingKind !== nextProps.draggingKind) return false
   if (prevProps.draggingId !== nextProps.draggingId) return false
   if (prevProps.dragOverKind !== nextProps.dragOverKind) return false
@@ -1660,12 +1739,14 @@ interface ChatListSectionProps {
   isCollapsed?: boolean
   isDraggingSection?: boolean
   isDragOverSection?: boolean
-  dragOverSectionPosition?: DragInsertPosition | null
+  isSectionBoundaryHighlighted?: boolean
+  isMoveIntoSection?: boolean
+  dragOverSectionPosition?: SidebarDropPosition | null
   draggingKind?: string | null
   draggingId?: string | null
   dragOverKind?: string | null
   dragOverId?: string | null
-  dragOverPosition?: DragInsertPosition | null
+  dragOverPosition?: SidebarDropPosition | null
   lifecycleTarget?: {
     type: "project" | "task"
     id: string
@@ -1737,6 +1818,7 @@ interface ChatListSectionProps {
   onBulkPin: () => void
   onBulkUnpin: () => void
   onBulkArchive: () => void
+  onCreateGlobalChat?: () => void
   onCreateProjectChat?: (projectId: string) => void
   onCreateProjectTask?: (projectId: string) => void
   onCreateTaskChat?: (taskId: string) => void
@@ -1744,8 +1826,8 @@ interface ChatListSectionProps {
   onToggleSection?: (sectionId: string) => void
   onSelectScope?: (scope: SelectedChatScope) => void
   onDragStartItem: (kind: string, id: string) => void
-  onDragOverItem: (kind: string, id: string, position: DragInsertPosition) => void
-  onDropItem: (kind: string, id: string, position: DragInsertPosition) => void
+  onDragOverItem: (kind: string, id: string, position: SidebarDropPosition) => void
+  onDropItem: (kind: string, id: string, position: SidebarDropPosition) => void
   onDragEndItem: () => void
   onToggleLifecyclePin: (type: "project" | "task", id: string, isPinned: boolean) => void
   onToggleLifecycleStar: (type: "project" | "task", id: string) => void
@@ -1771,6 +1853,8 @@ const ChatListSection = React.memo(function ChatListSection({
   isCollapsed = false,
   isDraggingSection = false,
   isDragOverSection = false,
+  isSectionBoundaryHighlighted = false,
+  isMoveIntoSection = false,
   dragOverSectionPosition,
   draggingKind,
   draggingId,
@@ -1816,6 +1900,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onBulkPin,
   onBulkUnpin,
   onBulkArchive,
+  onCreateGlobalChat,
   onCreateProjectChat,
   onCreateProjectTask,
   onCreateTaskChat,
@@ -1925,8 +2010,12 @@ const ChatListSection = React.memo(function ChatListSection({
 
   if (chats.length === 0 && !lifecycleTarget) return null
 
-  const showBeforeSectionDrop = isDragOverSection && dragOverSectionPosition === "before"
-  const showAfterSectionDrop = isDragOverSection && dragOverSectionPosition === "after"
+  const showBeforeSectionDrop =
+    isDragOverSection && !isMoveIntoSection && dragOverSectionPosition === "before"
+  const showAfterSectionDrop =
+    isDragOverSection && !isMoveIntoSection && dragOverSectionPosition === "after"
+  const highlightWholeTaskEdgeDrop =
+    isTaskSection && (isSectionBoundaryHighlighted || showBeforeSectionDrop || showAfterSectionDrop)
   const isTaskScopedDrag = draggingKind === "task-chat"
   // During any drag, the cursor passing over a header still fires CSS :hover,
   // which reveals the header's "+" (add chat) and "⋯" buttons. That looks like
@@ -1936,6 +2025,18 @@ const ChatListSection = React.memo(function ChatListSection({
   const sectionDropSeparatorClass =
     isTaskSection && isTaskScopedDrag ? (isMultiSelectMode ? "ml-6 mr-3" : "ml-6") : ""
   const usesSectionDropSeparator = hideHeader && Boolean(sectionDragId)
+  const chatBoundaryHighlightIds = new Set(
+    !usesSectionDropSeparator && dragOverKind === chatDragKind
+      ? resolveBoundaryHighlightIds({
+          items: chats.map((chat) => ({
+            id: chat.id,
+            groupId: chat.taskId ?? chat.projectId ?? kind,
+          })),
+          targetId: dragOverId ?? null,
+          position: dragOverPosition ?? null,
+        })
+      : [],
+  )
   const getHeaderScope = useCallback((): NonNullable<SelectedChatScope> | null => {
     if (lifecycleTarget?.type === "project") {
       return { type: "project", id: lifecycleTarget.id, name: title }
@@ -2216,339 +2317,394 @@ const ChatListSection = React.memo(function ChatListSection({
           }
         />
       )}
-      {!hideHeader && (
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div
-              data-sidebar-drag-source
-              data-sidebar-drag-target-kind={sectionDragKind}
-              data-sidebar-drag-target-id={effectiveSectionDragId}
-              onPointerDown={handleSectionPointerDragStart}
-              onClick={handleHeaderClick}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return
-                event.preventDefault()
-                handleHeaderClick()
-              }}
-              role={canCollapse || getHeaderScope() ? "button" : undefined}
-              tabIndex={canCollapse || getHeaderScope() ? 0 : undefined}
-              className={cn(
-                "relative flex items-center gap-1 group/section",
-                "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
-                isTopLevelScopedSection || isTaskSection
-                  ? "h-7 mt-3 mb-1 rounded-md pl-2 pr-1"
-                  : "h-5 mb-0.5",
-                isTaskSection
-                  ? isMultiSelectMode
-                    ? "ml-6 pr-3"
-                    : "ml-6"
-                  : isTopLevelScopedSection
-                    ? ""
-                    : isMultiSelectMode
-                      ? "pl-3 pr-3"
-                      : "pl-2 pr-1",
-                Boolean(lifecycleTarget) &&
-                  !isMultiSelectMode &&
-                  "cursor-grab active:cursor-grabbing",
-                (canCollapse || getHeaderScope()) && "cursor-pointer",
-                isDragOverSection && "brightness-110 ring-1 ring-primary/30 shadow-sm",
-                isDraggingSection && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
-              )}
-              style={sectionStyle}
-            >
-              {canCollapse && (
-                <span
-                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
-                  aria-hidden="true"
-                >
-                  <ChevronDown
-                    className={cn(
-                      "h-3.5 w-3.5 flex-shrink-0 transition-transform",
-                      isTopLevelScopedSection || isTaskSection
-                        ? "text-white/80"
-                        : "text-muted-foreground",
-                      isCollapsed && "-rotate-90",
-                    )}
-                  />
-                </span>
-              )}
+      <div
+        data-sidebar-task-group-id={
+          isTaskSection && lifecycleTarget?.type === "task" ? lifecycleTarget.id : undefined
+        }
+        className={cn(
+          isTaskSection ? "relative ml-6 rounded-md pt-1" : "contents",
+          highlightWholeTaskEdgeDrop &&
+            "bg-primary/[0.025] ring-2 ring-inset ring-primary/60 shadow-sm",
+        )}
+      >
+        {!hideHeader && (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
               <div
+                data-sidebar-drag-source
+                data-sidebar-drag-target-kind={sectionDragKind}
+                data-sidebar-drag-target-id={effectiveSectionDragId}
+                data-sidebar-drop-container={Boolean(lifecycleTarget)}
+                data-sidebar-task-header={isTaskSection || undefined}
+                data-sidebar-task-header-split={
+                  (isTaskSection && (isCollapsed || chats.length === 0)) || undefined
+                }
+                onPointerDown={handleSectionPointerDragStart}
+                onClick={handleHeaderClick}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return
+                  event.preventDefault()
+                  handleHeaderClick()
+                }}
+                role={canCollapse || getHeaderScope() ? "button" : undefined}
+                tabIndex={canCollapse || getHeaderScope() ? 0 : undefined}
                 className={cn(
-                  "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none",
-                  canCollapse ? "cursor-pointer" : "cursor-default",
+                  "relative flex items-center gap-1 group/section",
+                  "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
+                  isTaskSection
+                    ? "h-7 mb-0.5 rounded-md pl-2 pr-1"
+                    : isTopLevelScopedSection
+                      ? "h-7 mt-1 mb-0.5 rounded-md pl-2 pr-1"
+                      : "h-5 mb-0.5",
+                  isTaskSection
+                    ? isMultiSelectMode
+                      ? "pr-3"
+                      : ""
+                    : isTopLevelScopedSection
+                      ? ""
+                      : isMultiSelectMode
+                        ? "pl-3 pr-3"
+                        : "pl-2 pr-1",
+                  Boolean(lifecycleTarget) &&
+                    !isMultiSelectMode &&
+                    "cursor-grab active:cursor-grabbing",
+                  (canCollapse || getHeaderScope()) && "cursor-pointer",
+                  isDragOverSection &&
+                    !highlightWholeTaskEdgeDrop &&
+                    "brightness-110 ring-1 ring-primary/30 shadow-sm",
+                  isDraggingSection && "scale-[0.985] opacity-55 shadow-sm ring-1 ring-primary/25",
                 )}
+                style={sectionStyle}
               >
-                {headerIcon}
-                {lifecycleTarget?.isPinned && (
-                  <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />
+                {isMoveIntoSection && (
+                  <span className="pointer-events-none absolute right-2 top-1/2 z-20 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+                    <Plus className="h-3.5 w-3.5" />
+                  </span>
                 )}
-                {lifecycleTarget?.isStarred && (
-                  <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
-                )}
-                <h3
-                  className={cn(
-                    "whitespace-nowrap truncate flex-1",
-                    isTopLevelScopedSection || isTaskSection
-                      ? "text-[11px] font-semibold uppercase tracking-wide text-white"
-                      : "text-xs font-medium text-muted-foreground",
-                  )}
-                >
-                  {title}
-                </h3>
-              </div>
-              {lifecycleTarget && !isMultiSelectMode && (
-                <button
-                  type="button"
-                  data-section-action
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (lifecycleTarget.type === "project") {
-                      // Ctrl/Cmd+click creates a task instead of a chat
-                      if (event.ctrlKey || event.metaKey) {
-                        onCreateProjectTask?.(lifecycleTarget.id)
-                      } else {
-                        onCreateProjectChat?.(lifecycleTarget.id)
-                      }
-                    } else {
-                      onCreateTaskChat?.(lifecycleTarget.id)
-                    }
-                  }}
-                  onContextMenu={(event) => {
-                    // macOS turns Ctrl+click into a contextmenu event instead of a click
-                    if (lifecycleTarget.type === "project" && event.ctrlKey) {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      onCreateProjectTask?.(lifecycleTarget.id)
-                    }
-                  }}
-                  className={cn(
-                    "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                    isTopLevelScopedSection || isTaskSection
-                      ? "text-white/75 hover:bg-white/10 hover:text-white"
-                      : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
-                    isAnyDragActive && "!opacity-0 pointer-events-none",
-                    "group-data-[pointer-drag-source=true]/section:!opacity-0",
-                    "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
-                  )}
-                  aria-label={
-                    lifecycleTarget.type === "project"
-                      ? "New project chat (Ctrl/Cmd+click: new task)"
-                      : "New task chat"
-                  }
-                  title={
-                    lifecycleTarget.type === "project"
-                      ? "New chat · Ctrl/Cmd+click for new task"
-                      : undefined
-                  }
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {lifecycleTarget && !isMultiSelectMode && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      data-section-action
-                      onClick={(event) => event.stopPropagation()}
+                {canCollapse && (
+                  <span
+                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
+                    aria-hidden="true"
+                  >
+                    <ChevronDown
                       className={cn(
-                        "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                        "h-3.5 w-3.5 flex-shrink-0 transition-transform",
                         isTopLevelScopedSection || isTaskSection
-                          ? "text-white/75 hover:bg-white/10 hover:text-white"
-                          : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
-                        isAnyDragActive && "!opacity-0 pointer-events-none",
-                        "group-data-[pointer-drag-source=true]/section:!opacity-0",
-                        "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
+                          ? "text-white/80"
+                          : "text-muted-foreground",
+                        isCollapsed && "-rotate-90",
                       )}
-                      aria-label={`${lifecycleTarget.type} actions`}
-                    >
-                      <MoreHorizontal className="h-3.5 w-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-52" sideOffset={4}>
-                    {dropdownLifecycleMenu}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          </ContextMenuTrigger>
-          {lifecycleTarget && (
-            <ContextMenuContent className="w-52">{contextLifecycleMenu}</ContextMenuContent>
-          )}
-        </ContextMenu>
-      )}
-      {!isCollapsed && chats.length > 0 && (
-        <div
-          className={cn(
-            "list-none p-0 m-0",
-            isTaskSection ? "mb-2 ml-9 pl-2" : isTopLevelScopedSection ? "mb-2 ml-4 pl-2" : "mb-3",
-          )}
-        >
-          {chats.map((chat) => {
-            const isLoading = loadingChatIds.has(chat.id)
-            // For remote chats, compare without prefix; for local, compare directly
-            // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
-            const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
-            const isSelected =
-              selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
-            const isPinned = pinnedChatIds.has(chat.id)
-            const globalIndex = globalIndexMap.get(chat.id) ?? -1
-            const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
-
-            // For remote chats, get repo info from meta; for local, from projectsMap
-            const project = chat.projectId ? projectsMap.get(chat.projectId) : null
-            const repoName = chat.isRemote
-              ? chat.meta?.repository
-              : project?.gitRepo || project?.name
-            const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
-
-            const isChecked = selectedChatIds.has(chat.id)
-            // Local-first: only cheap local workspace stats are shown. Remote
-            // chats intentionally have no stats (remote stat computation was
-            // removed — it caused 50s+ sidebar loads).
-            const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
-            const hasPendingPlan = workspacePendingPlans.has(chat.id)
-            const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
-            const isLastInFilteredChats = globalIndex === filteredChats.length - 1
-            const isJustCreated = justCreatedIds.has(chat.id)
-            const isStarred = starredChatIds.has(chat.id)
-            const defaultWorktreePath = chat.taskId
-              ? (taskDefaultWorktrees.get(chat.taskId) ?? project?.path ?? null)
-              : (project?.path ?? null)
-            const normalizedChatWorktreePath = normalizeWorktreePath(chat.worktreePath)
-            const normalizedDefaultWorktreePath = normalizeWorktreePath(defaultWorktreePath)
-            const isGeneratedDefaultProjectWorktree = isGeneratedProjectWorktreePath({
-              scope: chat.scope,
-              taskId: chat.taskId,
-              worktreePath: chat.worktreePath,
-              branch: chat.branch,
-              baseBranch: (chat as any).baseBranch,
-              projectName: project?.name,
-              createdAt: (chat as any).createdAt,
-            })
-            const hasCustomWorktree = Boolean(
-              normalizedChatWorktreePath &&
-              !isGeneratedDefaultProjectWorktree &&
-              (!normalizedDefaultWorktreePath ||
-                normalizedChatWorktreePath !== normalizedDefaultWorktreePath),
-            )
-            const worktreeLabel = hasCustomWorktree
-              ? getWorktreeDisplayName(normalizedChatWorktreePath)
-              : null
-            const itemDragId = sectionDragId ?? chat.id
-            const showBeforeChatDrop =
-              !usesSectionDropSeparator &&
-              dragOverKind === chatDragKind &&
-              dragOverId === itemDragId &&
-              dragOverPosition === "before"
-            const showAfterChatDrop =
-              !usesSectionDropSeparator &&
-              dragOverKind === chatDragKind &&
-              dragOverId === itemDragId &&
-              dragOverPosition === "after"
-
-            return (
-              <React.Fragment key={chat.id}>
-                {showBeforeChatDrop && (
-                  <DropSeparator
-                    onDragEnter={handleSeparatorDragEnter}
-                    onDragOver={(event) =>
-                      handleSeparatorDragOver(event, chatDragKind, itemDragId, "before")
-                    }
-                    onDrop={(event) =>
-                      handleSeparatorDrop(event, chatDragKind, itemDragId, "before")
-                    }
-                  />
+                    />
+                  </span>
                 )}
-                <AgentChatItem
-                  key={chat.id}
-                  chatId={chat.id}
-                  chatName={chat.name}
-                  chatBranch={chat.branch}
-                  chatUpdatedAt={chat.updatedAt}
-                  chatProjectId={chat.projectId ?? ""}
-                  chatTaskId={chat.taskId}
-                  chatScope={chat.scope}
-                  globalIndex={globalIndex}
-                  isSelected={isSelected}
-                  isLoading={isLoading}
-                  hasUnseenChanges={unseenChanges.has(chat.id)}
-                  hasPendingPlan={hasPendingPlan}
-                  hasPendingQuestion={hasPendingQuestion}
-                  isMultiSelectMode={isMultiSelectMode}
-                  isChecked={isChecked}
-                  isFocused={isFocused}
-                  isMobileFullscreen={isMobileFullscreen}
-                  isDesktop={isDesktop}
-                  isPinned={isPinned}
-                  isStarred={isStarred}
-                  harness={chat.harness}
-                  model={chat.model}
-                  hasCustomWorktree={hasCustomWorktree}
-                  worktreeLabel={worktreeLabel}
-                  displayText={displayText}
-                  stats={stats ?? undefined}
-                  selectedChatIdsSize={selectedChatIds.size}
-                  canShowPinOption={canShowPinOption}
-                  areAllSelectedPinned={areAllSelectedPinned}
-                  filteredChatsLength={filteredChats.length}
-                  isLastInFilteredChats={isLastInFilteredChats}
-                  showIcon={showIcon}
-                  onChatClick={onChatClick}
-                  onCheckboxClick={onCheckboxClick}
-                  onMouseEnter={onMouseEnter}
-                  onMouseLeave={onMouseLeave}
-                  onArchive={onArchive}
-                  onTogglePin={onTogglePin}
-                  onToggleStar={onToggleStar}
-                  onRenameClick={onRenameClick}
-                  onCopyBranch={onCopyBranch}
-                  onArchiveAllBelow={onArchiveAllBelow}
-                  onArchiveOthers={onArchiveOthers}
-                  onOpenLocally={onOpenLocally}
-                  moveDestinations={moveDestinations}
-                  movePending={movePending}
-                  onMoveChat={onMoveChat}
-                  onBulkPin={onBulkPin}
-                  onBulkUnpin={onBulkUnpin}
-                  onBulkArchive={onBulkArchive}
-                  archivePending={archivePending}
-                  archiveBatchPending={archiveBatchPending}
-                  isRemote={chat.isRemote}
-                  nameRefCallback={nameRefCallback}
-                  formatTime={formatTime}
-                  isJustCreated={isJustCreated}
-                  dragKind={chatDragKind}
-                  dragItemId={hideHeader ? sectionDragId : undefined}
-                  tintColor={chatTint}
-                  isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
-                  isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
-                  dragOverPosition={
-                    dragOverKind === chatDragKind && dragOverId === itemDragId
-                      ? dragOverPosition
-                      : null
-                  }
-                  onDragStartItem={onDragStartItem}
-                  onDragOverItem={onDragOverItem}
-                  onDropItem={onDropItem}
-                  onDragEndItem={onDragEndItem}
-                />
-                {showAfterChatDrop && (
-                  <DropSeparator
-                    onDragEnter={handleSeparatorDragEnter}
-                    onDragOver={(event) =>
-                      handleSeparatorDragOver(event, chatDragKind, itemDragId, "after")
+                <div
+                  className={cn(
+                    "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none",
+                    canCollapse ? "cursor-pointer" : "cursor-default",
+                  )}
+                >
+                  {headerIcon}
+                  {lifecycleTarget?.isPinned && (
+                    <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />
+                  )}
+                  {lifecycleTarget?.isStarred && (
+                    <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
+                  )}
+                  <h3
+                    className={cn(
+                      "whitespace-nowrap truncate flex-1",
+                      isTopLevelScopedSection || isTaskSection
+                        ? "text-[11px] font-semibold uppercase tracking-wide text-white"
+                        : "text-xs font-medium text-muted-foreground",
+                    )}
+                  >
+                    {title}
+                  </h3>
+                </div>
+                {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
+                  <button
+                    type="button"
+                    data-section-action
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (isGlobalSection) {
+                        onCreateGlobalChat?.()
+                      } else if (lifecycleTarget?.type === "project") {
+                        // Ctrl/Cmd+click creates a task instead of a chat
+                        if (event.ctrlKey || event.metaKey) {
+                          onCreateProjectTask?.(lifecycleTarget.id)
+                        } else {
+                          onCreateProjectChat?.(lifecycleTarget.id)
+                        }
+                      } else {
+                        onCreateTaskChat?.(lifecycleTarget!.id)
+                      }
+                    }}
+                    onContextMenu={(event) => {
+                      // macOS turns Ctrl+click into a contextmenu event instead of a click
+                      if (lifecycleTarget?.type === "project" && event.ctrlKey) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        onCreateProjectTask?.(lifecycleTarget.id)
+                      }
+                    }}
+                    className={cn(
+                      "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                      isTopLevelScopedSection || isTaskSection
+                        ? "text-white/75 hover:bg-white/10 hover:text-white"
+                        : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+                      isAnyDragActive && "!opacity-0 pointer-events-none",
+                      "group-data-[pointer-drag-source=true]/section:!opacity-0",
+                      "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
+                    )}
+                    aria-label={
+                      isGlobalSection
+                        ? "New global chat"
+                        : lifecycleTarget?.type === "project"
+                          ? "New project chat (Ctrl/Cmd+click: new task)"
+                          : "New task chat"
                     }
-                    onDrop={(event) =>
-                      handleSeparatorDrop(event, chatDragKind, itemDragId, "after")
+                    title={
+                      lifecycleTarget?.type === "project"
+                        ? "New chat · Ctrl/Cmd+click for new task"
+                        : undefined
                     }
-                  />
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
                 )}
-              </React.Fragment>
-            )
-          })}
-        </div>
-      )}
+                {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        data-section-action
+                        onClick={(event) => event.stopPropagation()}
+                        className={cn(
+                          "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                          isTopLevelScopedSection || isTaskSection
+                            ? "text-white/75 hover:bg-white/10 hover:text-white"
+                            : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+                          isAnyDragActive && "!opacity-0 pointer-events-none",
+                          "group-data-[pointer-drag-source=true]/section:!opacity-0",
+                          "group-data-[pressing=true]/sidebar:!opacity-0 group-data-[pressing=true]/sidebar:pointer-events-none",
+                        )}
+                        aria-label={
+                          isGlobalSection
+                            ? "Global chat actions"
+                            : `${lifecycleTarget!.type} actions`
+                        }
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-52" sideOffset={4}>
+                      {isGlobalSection ? (
+                        <DropdownMenuItem className="gap-2" onSelect={onCreateGlobalChat}>
+                          <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                          New chat
+                        </DropdownMenuItem>
+                      ) : (
+                        dropdownLifecycleMenu
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            </ContextMenuTrigger>
+            {lifecycleTarget && (
+              <ContextMenuContent className="w-52">{contextLifecycleMenu}</ContextMenuContent>
+            )}
+          </ContextMenu>
+        )}
+        {!isCollapsed && chats.length > 0 && (
+          <div
+            className={cn(
+              "list-none p-0 m-0",
+              isTaskSection
+                ? "mb-1 ml-3 pl-2"
+                : isTopLevelScopedSection
+                  ? "mb-1 ml-4 pl-2"
+                  : "mb-2",
+            )}
+          >
+            {chats.map((chat) => {
+              const isLoading = loadingChatIds.has(chat.id)
+              // For remote chats, compare without prefix; for local, compare directly
+              // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
+              const chatOriginalId = chat.isRemote ? chat.id.replace(/^remote_/, "") : chat.id
+              const isSelected =
+                selectedChatId === chatOriginalId && selectedChatIsRemote === chat.isRemote
+              const isPinned = pinnedChatIds.has(chat.id)
+              const globalIndex = globalIndexMap.get(chat.id) ?? -1
+              const isFocused = focusedChatIndex === globalIndex && focusedChatIndex >= 0
+
+              // For remote chats, get repo info from meta; for local, from projectsMap
+              const project = chat.projectId ? projectsMap.get(chat.projectId) : null
+              const repoName = chat.isRemote
+                ? chat.meta?.repository
+                : project?.gitRepo || project?.name
+              const displayText = chat.isRemote ? chat.meta?.repository || "Remote project" : ""
+
+              const isChecked = selectedChatIds.has(chat.id)
+              // Local-first: only cheap local workspace stats are shown. Remote
+              // chats intentionally have no stats (remote stat computation was
+              // removed - it caused 50s+ sidebar loads).
+              const stats = chat.isRemote ? null : workspaceFileStats.get(chat.id)
+              const hasPendingPlan = workspacePendingPlans.has(chat.id)
+              const hasPendingQuestion = workspacePendingQuestions.has(chat.id)
+              const isLastInFilteredChats = globalIndex === filteredChats.length - 1
+              const isLastInSection = chat.id === chats.at(-1)?.id
+              const isJustCreated = justCreatedIds.has(chat.id)
+              const isStarred = starredChatIds.has(chat.id)
+              const defaultWorktreePath = chat.taskId
+                ? (taskDefaultWorktrees.get(chat.taskId) ?? project?.path ?? null)
+                : (project?.path ?? null)
+              const normalizedChatWorktreePath = normalizeWorktreePath(chat.worktreePath)
+              const normalizedDefaultWorktreePath = normalizeWorktreePath(defaultWorktreePath)
+              const isGeneratedDefaultProjectWorktree = isGeneratedProjectWorktreePath({
+                scope: chat.scope,
+                taskId: chat.taskId,
+                worktreePath: chat.worktreePath,
+                branch: chat.branch,
+                baseBranch: (chat as any).baseBranch,
+                projectName: project?.name,
+                createdAt: (chat as any).createdAt,
+              })
+              const hasCustomWorktree = Boolean(
+                normalizedChatWorktreePath &&
+                !isGeneratedDefaultProjectWorktree &&
+                (!normalizedDefaultWorktreePath ||
+                  normalizedChatWorktreePath !== normalizedDefaultWorktreePath),
+              )
+              const worktreeLabel = hasCustomWorktree
+                ? getWorktreeDisplayName(normalizedChatWorktreePath)
+                : null
+              const itemDragId = hideHeader ? (sectionDragId ?? chat.id) : chat.id
+              const showBeforeChatDrop =
+                !usesSectionDropSeparator &&
+                dragOverKind === chatDragKind &&
+                dragOverId === itemDragId &&
+                dragOverPosition === "before"
+              const showAfterChatDrop =
+                !usesSectionDropSeparator &&
+                dragOverKind === chatDragKind &&
+                dragOverId === itemDragId &&
+                dragOverPosition === "after"
+
+              return (
+                <React.Fragment key={chat.id}>
+                  {showBeforeChatDrop && (
+                    <DropSeparator
+                      onDragEnter={handleSeparatorDragEnter}
+                      onDragOver={(event) =>
+                        handleSeparatorDragOver(event, chatDragKind, itemDragId, "before")
+                      }
+                      onDrop={(event) =>
+                        handleSeparatorDrop(event, chatDragKind, itemDragId, "before")
+                      }
+                    />
+                  )}
+                  <AgentChatItem
+                    key={chat.id}
+                    chatId={chat.id}
+                    chatName={chat.name}
+                    chatBranch={chat.branch}
+                    chatUpdatedAt={chat.updatedAt}
+                    chatProjectId={chat.projectId ?? ""}
+                    chatTaskId={chat.taskId}
+                    chatScope={chat.scope}
+                    globalIndex={globalIndex}
+                    isSelected={isSelected}
+                    isLoading={isLoading}
+                    hasUnseenChanges={unseenChanges.has(chat.id)}
+                    hasPendingPlan={hasPendingPlan}
+                    hasPendingQuestion={hasPendingQuestion}
+                    isMultiSelectMode={isMultiSelectMode}
+                    isChecked={isChecked}
+                    isFocused={isFocused}
+                    isMobileFullscreen={isMobileFullscreen}
+                    isDesktop={isDesktop}
+                    isPinned={isPinned}
+                    isStarred={isStarred}
+                    harness={chat.harness}
+                    model={chat.model}
+                    hasCustomWorktree={hasCustomWorktree}
+                    worktreeLabel={worktreeLabel}
+                    displayText={displayText}
+                    stats={stats ?? undefined}
+                    selectedChatIdsSize={selectedChatIds.size}
+                    canShowPinOption={canShowPinOption}
+                    areAllSelectedPinned={areAllSelectedPinned}
+                    filteredChatsLength={filteredChats.length}
+                    isLastInFilteredChats={isLastInFilteredChats}
+                    showIcon={showIcon}
+                    onChatClick={onChatClick}
+                    onCheckboxClick={onCheckboxClick}
+                    onMouseEnter={onMouseEnter}
+                    onMouseLeave={onMouseLeave}
+                    onArchive={onArchive}
+                    onTogglePin={onTogglePin}
+                    onToggleStar={onToggleStar}
+                    onRenameClick={onRenameClick}
+                    onCopyBranch={onCopyBranch}
+                    onArchiveAllBelow={onArchiveAllBelow}
+                    onArchiveOthers={onArchiveOthers}
+                    onOpenLocally={onOpenLocally}
+                    moveDestinations={moveDestinations}
+                    movePending={movePending}
+                    onMoveChat={onMoveChat}
+                    onBulkPin={onBulkPin}
+                    onBulkUnpin={onBulkUnpin}
+                    onBulkArchive={onBulkArchive}
+                    archivePending={archivePending}
+                    archiveBatchPending={archiveBatchPending}
+                    isRemote={chat.isRemote}
+                    nameRefCallback={nameRefCallback}
+                    formatTime={formatTime}
+                    isJustCreated={isJustCreated}
+                    dragKind={chatDragKind}
+                    dragItemId={hideHeader ? sectionDragId : undefined}
+                    taskEndTargetId={
+                      isTaskSection && isLastInSection && lifecycleTarget?.type === "task"
+                        ? lifecycleTarget.id
+                        : undefined
+                    }
+                    isOnlyTaskChat={isTaskSection && chats.length === 1}
+                    tintColor={chatTint}
+                    isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
+                    isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
+                    isBoundaryHighlighted={
+                      (!isTaskSection && isSectionBoundaryHighlighted) ||
+                      chatBoundaryHighlightIds.has(chat.id)
+                    }
+                    dragOverPosition={
+                      dragOverKind === chatDragKind && dragOverId === itemDragId
+                        ? dragOverPosition
+                        : null
+                    }
+                    onDragStartItem={onDragStartItem}
+                    onDragOverItem={onDragOverItem}
+                    onDropItem={onDropItem}
+                    onDragEndItem={onDragEndItem}
+                  />
+                  {showAfterChatDrop && (
+                    <DropSeparator
+                      onDragEnter={handleSeparatorDragEnter}
+                      onDragOver={(event) =>
+                        handleSeparatorDragOver(event, chatDragKind, itemDragId, "after")
+                      }
+                      onDrop={(event) =>
+                        handleSeparatorDrop(event, chatDragKind, itemDragId, "after")
+                      }
+                    />
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </div>
+        )}
+      </div>
       {showAfterSectionDrop && effectiveSectionDragId && (
         <DropSeparator
           className={sectionDropSeparatorClass}
@@ -2634,19 +2790,12 @@ const ArchiveSection = memo(function ArchiveSection({ archivedChatsCount }: Arch
   )
 })
 
-// Isolated Sidebar Header - contains dropdown, traffic lights, close button
-// Subscribes to dropdown state internally to prevent sidebar re-renders
+// Isolated Sidebar Header - contains branding, traffic lights, and close button
 interface SidebarHeaderProps {
   isDesktop: boolean
   isFullscreen: boolean | null
   isMobileFullscreen: boolean
-  userId: string | null | undefined
-  desktopUser: { id: string; email: string; name?: string } | null
-  onSignOut: () => void
   onToggleSidebar?: () => void
-  setSettingsDialogOpen: (open: boolean) => void
-  setSettingsActiveTab: (tab: string) => void
-  setShowAuthDialog: (open: boolean) => void
   handleSidebarMouseEnter: () => void
   handleSidebarMouseLeave: (event: React.MouseEvent) => void
   closeButtonRef: React.RefObject<HTMLDivElement | null>
@@ -2656,18 +2805,11 @@ const SidebarHeader = memo(function SidebarHeader({
   isDesktop,
   isFullscreen,
   isMobileFullscreen,
-  userId,
-  desktopUser,
-  onSignOut,
   onToggleSidebar,
-  setSettingsDialogOpen,
-  setSettingsActiveTab,
-  setShowAuthDialog,
   handleSidebarMouseEnter,
   handleSidebarMouseLeave,
   closeButtonRef,
 }: SidebarHeaderProps) {
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
   const toggleSidebarHotkey = useResolvedHotkeyDisplay("toggle-sidebar")
 
@@ -2702,7 +2844,7 @@ const SidebarHeader = memo(function SidebarHeader({
           ref={closeButtonRef}
           className={cn("absolute right-2 z-20 transition-opacity duration-150", "top-2")}
           style={{
-            opacity: isDropdownOpen ? 1 : 0,
+            opacity: 0,
             // @ts-expect-error - WebKit-specific property
             WebkitAppRegion: "no-drag",
           }}
@@ -2731,204 +2873,18 @@ const SidebarHeader = memo(function SidebarHeader({
       {/* Spacer for macOS traffic lights */}
       <TrafficLightSpacer isFullscreen={isFullscreen} isDesktop={isDesktop} />
 
-      {/* Team dropdown - below traffic lights */}
+      {/* Static product branding - below traffic lights */}
       <div className="px-2 pt-2 pb-2">
-        <div className="flex items-center gap-1">
-          <div className="flex-1 min-w-0">
-            <DropdownMenu open={isDropdownOpen} onOpenChange={setIsDropdownOpen}>
-              <DropdownMenuTrigger asChild>
-                <ButtonCustom
-                  variant="ghost"
-                  className="h-6 px-1.5 justify-start hover:bg-foreground/10 rounded-md group/team-button max-w-full"
-                  suppressHydrationWarning
-                >
-                  <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-                    <div className="flex items-center justify-center flex-shrink-0">
-                      <Logo className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0 flex-1 overflow-hidden">
-                      <div className="text-sm font-medium text-foreground truncate">Flapstack</div>
-                    </div>
-                    {showOfflineFeatures && (
-                      <div className="flex-shrink-0">
-                        <NetworkStatus />
-                      </div>
-                    )}
-                    <ChevronDown
-                      className={cn(
-                        "h-3 text-muted-foreground flex-shrink-0 overflow-hidden",
-                        isDropdownOpen
-                          ? "opacity-100 w-3"
-                          : "opacity-0 w-0 group-hover/team-button:opacity-100 group-hover/team-button:w-3",
-                      )}
-                    />
-                  </div>
-                </ButtonCustom>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-52 pt-0" sideOffset={8}>
-                {userId ? (
-                  <>
-                    {/* Project section at the top */}
-                    <div className="relative rounded-t-xl border-b overflow-hidden">
-                      <div className="absolute inset-0 bg-popover brightness-110" />
-                      <div className="relative pl-2 pt-1.5 pb-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-8 h-8 rounded flex items-center justify-center bg-background flex-shrink-0 overflow-hidden">
-                            <Logo className="w-4 h-4" />
-                          </div>
-                          <div className="flex-1 min-w-0 overflow-hidden">
-                            <div className="font-medium text-sm text-foreground truncate">
-                              {desktopUser?.name || "User"}
-                            </div>
-                            <div className="text-xs text-muted-foreground truncate">
-                              {desktopUser?.email}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Settings */}
-                    <DropdownMenuItem
-                      className="gap-2"
-                      onSelect={() => {
-                        setIsDropdownOpen(false)
-                        setSettingsActiveTab("preferences")
-                        setSettingsDialogOpen(true)
-                      }}
-                    >
-                      <SettingsIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                      Settings
-                    </DropdownMenuItem>
-
-                    {/* Help Submenu */}
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger className="gap-2">
-                        <QuestionCircleIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                        <span className="flex-1">Help</span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="w-36" sideOffset={6} alignOffset={-4}>
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            window.open("https://discord.gg/8ektTZGnj4", "_blank")
-                            setIsDropdownOpen(false)
-                          }}
-                          className="gap-2"
-                        >
-                          <DiscordIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="flex-1">Discord</span>
-                        </DropdownMenuItem>
-                        {!isMobileFullscreen && (
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              setIsDropdownOpen(false)
-                              setSettingsActiveTab("keyboard")
-                              setSettingsDialogOpen(true)
-                            }}
-                            className="gap-2"
-                          >
-                            <KeyboardIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span className="flex-1">Shortcuts</span>
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-
-                    <DropdownMenuSeparator />
-
-                    {/* Log out */}
-                    <div className="">
-                      <DropdownMenuItem className="gap-2" onSelect={() => onSignOut()}>
-                        <svg
-                          className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
-                        >
-                          <path
-                            d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          <polyline
-                            points="16,17 21,12 16,7"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          <line
-                            x1="21"
-                            y1="12"
-                            x2="9"
-                            y2="12"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        Log out
-                      </DropdownMenuItem>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {/* Login for unauthenticated users */}
-                    <div className="">
-                      <DropdownMenuItem
-                        className="gap-2"
-                        onSelect={() => {
-                          setIsDropdownOpen(false)
-                          setShowAuthDialog(true)
-                        }}
-                      >
-                        <ProfileIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                        Login
-                      </DropdownMenuItem>
-                    </div>
-
-                    <DropdownMenuSeparator />
-
-                    {/* Help Submenu */}
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger className="gap-2">
-                        <QuestionCircleIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                        <span className="flex-1">Help</span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="w-36" sideOffset={6} alignOffset={-4}>
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            window.open("https://discord.gg/8ektTZGnj4", "_blank")
-                            setIsDropdownOpen(false)
-                          }}
-                          className="gap-2"
-                        >
-                          <DiscordIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="flex-1">Discord</span>
-                        </DropdownMenuItem>
-                        {!isMobileFullscreen && (
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              setIsDropdownOpen(false)
-                              setSettingsActiveTab("keyboard")
-                              setSettingsDialogOpen(true)
-                            }}
-                            className="gap-2"
-                          >
-                            <KeyboardIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span className="flex-1">Shortcuts</span>
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+        <div className="flex h-6 min-w-0 items-center gap-1.5 px-1.5">
+          <img src={flapstackAppIcon} alt="" aria-hidden="true" className="h-4 w-4 flex-shrink-0" />
+          <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            Flapstack
           </div>
+          {showOfflineFeatures && (
+            <div className="flex-shrink-0">
+              <NetworkStatus />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2985,14 +2941,7 @@ const HelpSection = memo(function HelpSection({ isMobile }: HelpSectionProps) {
 })
 
 export function AgentsSidebar({
-  userId = "demo-user-id",
   clerkUser = null,
-  desktopUser = {
-    id: "demo-user-id",
-    email: "demo@example.com",
-    name: "Demo User",
-  },
-  onSignOut = () => {},
   onToggleSidebar,
   isMobileFullscreen = false,
   onChatSelect,
@@ -3105,19 +3054,19 @@ export function AgentsSidebar({
   const [draggingItem, setDraggingItem] = useState<{ kind: string; id: string } | null>(null)
   // True while the mouse is pressed in the sidebar (but not on a header action
   // button). Used to hide the section header "+"/"⋯" buttons the instant a drag
-  // gesture begins, before dragstart fires — otherwise the header's hover "+"
+  // gesture begins, before dragstart fires - otherwise the header's hover "+"
   // flashes as the pointer crosses it at the start of a drag.
   const [isSidebarPressed, setIsSidebarPressed] = useState(false)
   const [dragOverItem, setDragOverItem] = useState<{
     kind: string
     id: string
-    position: DragInsertPosition
+    position: SidebarDropPosition
   } | null>(null)
   const draggingItemRef = useRef<{ kind: string; id: string } | null>(null)
   const dragOverItemRef = useRef<{
     kind: string
     id: string
-    position: DragInsertPosition
+    position: SidebarDropPosition
   } | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -3141,8 +3090,6 @@ export function AgentsSidebar({
     },
     [setDesktopViewForSettings, setSidebarOpenForSettings],
   )
-  const { isLoaded: isAuthLoaded } = useCombinedAuth()
-  const [showAuthDialog, setShowAuthDialog] = useState(false)
   const setCreateTeamDialogOpen = useSetAtom(createTeamDialogOpenAtom)
 
   // Debug mode for testing first-time user experience
@@ -3729,7 +3676,12 @@ export function AgentsSidebar({
       const usedColors = new Set<string>()
 
       projects.forEach((project, index) => {
-        const existingColor = next[project.id] ? normalizeHexColor(next[project.id]) : null
+        const normalizedExistingColor = next[project.id]
+          ? normalizeHexColor(next[project.id])
+          : null
+        const existingColor = isReservedArchivedAccentColor(normalizedExistingColor)
+          ? null
+          : normalizedExistingColor
         const isManualColor = manualProjectColorIds.has(project.id)
 
         if (isManualColor && existingColor) {
@@ -4102,9 +4054,12 @@ export function AgentsSidebar({
   }, [])
 
   const handleChangeProjectColor = useCallback((projectId: string, color: string) => {
+    const normalizedColor = normalizeHexColor(color)
     setProjectColorsById((prev) => ({
       ...prev,
-      [projectId]: normalizeHexColor(color),
+      [projectId]: isReservedArchivedAccentColor(normalizedColor)
+        ? DEFAULT_PROJECT_COLOR
+        : normalizedColor,
     }))
     setManualProjectColorIds((prev) => new Set(prev).add(projectId))
   }, [])
@@ -4504,7 +4459,8 @@ export function AgentsSidebar({
 
   const getDraggedLocalChat = useCallback(
     (item: { kind: string; id: string } | null) => {
-      if (!item || !item.kind.endsWith("chat")) return null
+      if (!item || (!item.kind.endsWith("chat") && item.kind !== "project-child")) return null
+      if (item.kind === "project-child" && !item.id.startsWith("chat:")) return null
       const chatId = item.id.startsWith("chat:") ? item.id.slice("chat:".length) : item.id
       const chat = agentChats.find((candidate) => candidate.id === chatId)
       if (!chat || chat.isRemote) return null
@@ -4514,7 +4470,7 @@ export function AgentsSidebar({
   )
 
   const getCrossScopeDropTarget = useCallback(
-    (targetKind: string, targetId: string) => {
+    (targetKind: string, targetId: string, position: SidebarDropPosition = "inside") => {
       if (targetKind === "project") {
         const project = projects?.find((candidate) => candidate.id === targetId)
         return project ? ({ scope: "project" as const, projectId: project.id } as const) : null
@@ -4523,7 +4479,10 @@ export function AgentsSidebar({
       if (targetKind === "project-child" && targetId.startsWith("task:")) {
         const taskId = targetId.slice("task:".length)
         const task = tasks?.find((candidate) => candidate.id === taskId)
-        return task ? ({ scope: "task" as const, taskId: task.id } as const) : null
+        if (!task) return null
+        return position === "inside"
+          ? ({ scope: "task" as const, taskId: task.id } as const)
+          : ({ scope: "project" as const, projectId: task.projectId } as const)
       }
 
       if (targetKind === "project-child" && targetId.startsWith("chat:")) {
@@ -4557,10 +4516,15 @@ export function AgentsSidebar({
   )
 
   const canMoveChatAcrossScope = useCallback(
-    (item: { kind: string; id: string } | null, targetKind: string, targetId: string) => {
+    (
+      item: { kind: string; id: string } | null,
+      targetKind: string,
+      targetId: string,
+      position: SidebarDropPosition = "inside",
+    ) => {
       if (!crossScopeMoveEnabled) return false
       const chat = getDraggedLocalChat(item)
-      const target = getCrossScopeDropTarget(targetKind, targetId)
+      const target = getCrossScopeDropTarget(targetKind, targetId, position)
       if (!chat || !target) return false
 
       if (target.scope === "project") {
@@ -4771,7 +4735,7 @@ export function AgentsSidebar({
   )
 
   const getTaskDropTarget = useCallback(
-    (targetKind: string, targetId: string, position: DragInsertPosition) => {
+    (targetKind: string, targetId: string, position: SidebarDropPosition) => {
       const taskId =
         targetKind === "task"
           ? targetId
@@ -4791,13 +4755,21 @@ export function AgentsSidebar({
       dragged: { kind: string; id: string },
       targetKind: string,
       targetId: string,
-      position: DragInsertPosition,
+      position: SidebarDropPosition,
     ) => {
-      if (dragged.kind === "project-child" && targetKind === "project") {
+      if (
+        dragged.kind === "project-child" &&
+        !getDraggedLocalChat(dragged) &&
+        targetKind === "project"
+      ) {
         return getProjectChildHeaderDropTarget(dragged.id, targetId)
       }
 
-      if (dragged.kind === "project-child" && targetKind === "task-chat") {
+      if (
+        dragged.kind === "project-child" &&
+        !getDraggedLocalChat(dragged) &&
+        targetKind === "task-chat"
+      ) {
         return getTaskDropTarget(targetKind, targetId, position)
       }
 
@@ -4808,11 +4780,16 @@ export function AgentsSidebar({
 
       return { kind: targetKind, id: targetId, position }
     },
-    [getProjectChildHeaderDropTarget, getTaskDropTarget, resolveProjectIdFromDropTarget],
+    [
+      getDraggedLocalChat,
+      getProjectChildHeaderDropTarget,
+      getTaskDropTarget,
+      resolveProjectIdFromDropTarget,
+    ],
   )
 
   const setDragOverItemState = useCallback(
-    (item: { kind: string; id: string; position: DragInsertPosition } | null) => {
+    (item: { kind: string; id: string; position: SidebarDropPosition } | null) => {
       dragOverItemRef.current = item
       setDragOverItem(item)
     },
@@ -4838,15 +4815,26 @@ export function AgentsSidebar({
   }, [])
 
   const handleDragOverItem = useCallback(
-    (kind: string, id: string, position: DragInsertPosition) => {
+    (kind: string, id: string, position: SidebarDropPosition) => {
       const activeDraggingItem = draggingItemRef.current ?? draggingItem
-      if (!activeDraggingItem || activeDraggingItem.id === id) return
+      if (!activeDraggingItem) return
+      if (activeDraggingItem.id === id) {
+        setDragOverItemState(null)
+        return
+      }
       const normalizedTarget = normalizeDropTarget(activeDraggingItem, kind, id, position)
       if (!normalizedTarget || activeDraggingItem.id === normalizedTarget.id) {
         setDragOverItemState(null)
         return
       }
-      if (canMoveChatAcrossScope(activeDraggingItem, normalizedTarget.kind, normalizedTarget.id)) {
+      if (
+        canMoveChatAcrossScope(
+          activeDraggingItem,
+          normalizedTarget.kind,
+          normalizedTarget.id,
+          normalizedTarget.position,
+        )
+      ) {
         setDragOverItemState(normalizedTarget)
         return
       }
@@ -4886,19 +4874,60 @@ export function AgentsSidebar({
       dropTarget: {
         kind: string
         id: string
-        position: DragInsertPosition
+        position: SidebarDropPosition
       },
     ) => {
       if (draggedItem.id === dropTarget.id) return
 
-      const crossScopeTarget = getCrossScopeDropTarget(dropTarget.kind, dropTarget.id)
+      const crossScopeTarget = getCrossScopeDropTarget(
+        dropTarget.kind,
+        dropTarget.id,
+        dropTarget.position,
+      )
       const draggedChat = getDraggedLocalChat(draggedItem)
       if (
         crossScopeMoveEnabled &&
         draggedChat &&
         crossScopeTarget &&
-        canMoveChatAcrossScope(draggedItem, dropTarget.kind, dropTarget.id)
+        canMoveChatAcrossScope(draggedItem, dropTarget.kind, dropTarget.id, dropTarget.position)
       ) {
+        if (dropTarget.position !== "inside") {
+          const targetPosition = dropTarget.position
+          if (crossScopeTarget.scope === "project" && dropTarget.kind === "project-child") {
+            const activeIds = chatSections
+              .filter(
+                (section) =>
+                  section.parentProjectId === crossScopeTarget.projectId && section.sectionDragId,
+              )
+              .map((section) => section.sectionDragId!)
+            const movedId = `chat:${draggedChat.id}`
+            setManualOrderByKey((prev) => ({
+              ...prev,
+              [`project:${crossScopeTarget.projectId}:children`]: moveIdInOrder(
+                prev[`project:${crossScopeTarget.projectId}:children`] ?? [],
+                [...activeIds.filter((id) => id !== movedId), movedId],
+                movedId,
+                dropTarget.id,
+                targetPosition,
+              ),
+            }))
+          } else if (crossScopeTarget.scope === "task" && dropTarget.kind === "task-chat") {
+            const activeIds = agentChats
+              .filter((chat) => !chat.isRemote && chat.taskId === crossScopeTarget.taskId)
+              .map((chat) => chat.id)
+            setManualOrderByKey((prev) => ({
+              ...prev,
+              [`task:${crossScopeTarget.taskId}:chats`]: moveIdInOrder(
+                prev[`task:${crossScopeTarget.taskId}:chats`] ?? [],
+                [...activeIds.filter((id) => id !== draggedChat.id), draggedChat.id],
+                draggedChat.id,
+                dropTarget.id,
+                targetPosition,
+              ),
+            }))
+          }
+        }
+
         if (crossScopeTarget.scope === "project") {
           moveChatMutation.mutate({
             id: draggedChat.id,
@@ -4916,6 +4945,8 @@ export function AgentsSidebar({
       }
 
       if (draggedItem.kind !== dropTarget.kind) return
+      if (dropTarget.position === "inside") return
+      const reorderPosition = dropTarget.position
 
       const context = getReorderContext(dropTarget.kind, draggedItem.id, dropTarget.id)
       if (!context) return
@@ -4928,13 +4959,15 @@ export function AgentsSidebar({
             context.activeIds,
             draggedItem.id,
             dropTarget.id,
-            dropTarget.position,
+            reorderPosition,
           ),
         }))
       })
     },
     [
       canMoveChatAcrossScope,
+      agentChats,
+      chatSections,
       crossScopeMoveEnabled,
       getCrossScopeDropTarget,
       getDraggedLocalChat,
@@ -4944,7 +4977,7 @@ export function AgentsSidebar({
   )
 
   const handleDropItem = useCallback(
-    (kind: string, id: string, position: DragInsertPosition) => {
+    (kind: string, id: string, position: SidebarDropPosition) => {
       const activeDraggingItem = draggingItemRef.current ?? draggingItem
       if (!activeDraggingItem) {
         clearDragState()
@@ -4986,6 +5019,66 @@ export function AgentsSidebar({
     }
     clearDragState()
   }, [clearDragState, commitDropTarget, dragOverItem, draggingItem])
+
+  const isCrossScopeDragTarget = Boolean(
+    draggingItem &&
+    dragOverItem &&
+    canMoveChatAcrossScope(draggingItem, dragOverItem.kind, dragOverItem.id, dragOverItem.position),
+  )
+
+  const showsCrossScopeAddIndicator = Boolean(
+    isCrossScopeDragTarget &&
+    dragOverItem &&
+    (dragOverItem.position === "inside" ||
+      dragOverItem.kind.endsWith("chat") ||
+      (dragOverItem.kind === "project-child" && !dragOverItem.id.startsWith("task:"))),
+  )
+
+  const crossScopeIndicatorTarget =
+    isCrossScopeDragTarget && dragOverItem
+      ? getCrossScopeDropTarget(dragOverItem.kind, dragOverItem.id, dragOverItem.position)
+      : null
+  const indicatorTask =
+    crossScopeIndicatorTarget?.scope === "task"
+      ? tasks?.find((task) => task.id === crossScopeIndicatorTarget.taskId)
+      : null
+  const indicatorIds = resolveMoveIndicatorIds({
+    targetScope: crossScopeIndicatorTarget?.scope ?? null,
+    targetProjectId:
+      crossScopeIndicatorTarget?.scope === "project"
+        ? crossScopeIndicatorTarget.projectId
+        : (indicatorTask?.projectId ?? null),
+    targetTaskId:
+      crossScopeIndicatorTarget?.scope === "task" ? crossScopeIndicatorTarget.taskId : null,
+    sourceProjectId: getDraggedLocalChat(draggingItem)?.projectId ?? null,
+  })
+
+  const hasValidDropTarget = Boolean(
+    draggingItem && dragOverItem && draggingItem.id !== dragOverItem.id,
+  )
+  const isTaskInsertionTarget = Boolean(
+    hasValidDropTarget &&
+    dragOverItem &&
+    (dragOverItem.kind === "task-chat" ||
+      (dragOverItem.kind === "task" && dragOverItem.position === "inside") ||
+      (dragOverItem.kind === "project-child" &&
+        dragOverItem.id.startsWith("task:") &&
+        dragOverItem.position === "inside")),
+  )
+
+  useEffect(() => {
+    if (!draggingItem) return
+    const cursor = resolveSidebarDragCursor({
+      hasValidDropTarget,
+      isInsertionTarget: showsCrossScopeAddIndicator || isTaskInsertionTarget,
+    })
+    document.body.dataset.sidebarPointerDragCursor = cursor
+    document.body.style.cursor = cursor
+    return () => {
+      delete document.body.dataset.sidebarPointerDragCursor
+      document.body.style.cursor = ""
+    }
+  }, [draggingItem, hasValidDropTarget, isTaskInsertionTarget, showsCrossScopeAddIndicator])
 
   // Clear sidebar drag/press state on releases and app focus changes. Native
   // drag events can miss the source node when a drag ends over another window.
@@ -5039,7 +5132,7 @@ export function AgentsSidebar({
 
   const handleSidebarMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
-    // Don't hide when the press is on an action button itself — that would break
+    // Don't hide when the press is on an action button itself - that would break
     // clicking "+" / "⋯".
     if ((e.target as HTMLElement).closest("[data-section-action]")) return
     setIsSidebarPressed(true)
@@ -5396,6 +5489,32 @@ export function AgentsSidebar({
     cloneProjectMutation.mutate({ repoUrl: repoUrl.trim() })
   }
 
+  const openNewGlobalChat = useCallback(() => {
+    triggerHaptic("light")
+    localStorage.setItem("flapstack:new-chat-scope", "global")
+    localStorage.removeItem("flapstack:new-chat-task-id")
+    setSelectedChatScope({ type: "global", id: "global", name: "Global chats" })
+    setSelectedChatId(null)
+    setSelectedChatIsRemote(false)
+    setSelectedDraftId(null)
+    setShowNewChatForm(true)
+    setDesktopView(null)
+    setSearchQuery("")
+    if (isMobileFullscreen && onChatSelect) {
+      onChatSelect()
+    }
+  }, [
+    triggerHaptic,
+    setSelectedChatScope,
+    setSelectedChatId,
+    setSelectedChatIsRemote,
+    setSelectedDraftId,
+    setShowNewChatForm,
+    setDesktopView,
+    isMobileFullscreen,
+    onChatSelect,
+  ])
+
   const openNewProjectChat = useCallback(
     (projectId: string) => {
       const project = projects?.find((candidate) => candidate.id === projectId)
@@ -5579,7 +5698,7 @@ export function AgentsSidebar({
       const originalId = isRemote ? chatId.replace(/^remote_/, "") : chatId
 
       // Prevent opening same chat in multiple windows.
-      // Claim new chat BEFORE releasing old one — if claim fails, we keep the current chat.
+      // Claim new chat BEFORE releasing old one - if claim fails, we keep the current chat.
       if (window.desktopApi?.claimChat) {
         const result = await window.desktopApi.claimChat(originalId)
         if (!result.ok) {
@@ -6148,6 +6267,21 @@ export function AgentsSidebar({
     [chatSections, collapsedSectionIds],
   )
 
+  const boundaryHighlightIds = useMemo(
+    () =>
+      new Set(
+        resolveBoundaryHighlightIds({
+          items: visibleChatSections.map((section) => ({
+            id: section.sectionDragId ?? "",
+            groupId: section.parentProjectId ?? null,
+          })),
+          targetId: dragOverItem?.kind === "project-child" ? dragOverItem.id : null,
+          position: dragOverItem?.position ?? null,
+        }),
+      ),
+    [dragOverItem, visibleChatSections],
+  )
+
   const projectAfterDropSectionIndex = useMemo(() => {
     if (dragOverItem?.kind !== "project" || dragOverItem.position !== "after") return -1
     return visibleChatSections.reduce((lastIndex, section, index) => {
@@ -6180,7 +6314,7 @@ export function AgentsSidebar({
   )
 
   // While one of our own sidebar items is being dragged, force the "move" cursor
-  // across the WHOLE document — not just inside the sidebar element. Otherwise the
+  // across the WHOLE document - not just inside the sidebar element. Otherwise the
   // moment the pointer crosses a gap, a Radix portal, the scroll edge, or leaves
   // the sidebar, Chromium/Electron on macOS reverts to the green "copy" (+) badge
   // stuck to the cursor. The ref guard means external drags (files into chat, etc.)
@@ -6216,18 +6350,12 @@ export function AgentsSidebar({
       data-mobile-fullscreen={isMobileFullscreen || undefined}
       data-sidebar-content
     >
-      {/* Header area - isolated component to prevent re-renders when dropdown opens */}
+      {/* Header area */}
       <SidebarHeader
         isDesktop={isDesktop}
         isFullscreen={isFullscreen}
         isMobileFullscreen={isMobileFullscreen}
-        userId={userId}
-        desktopUser={desktopUser}
-        onSignOut={onSignOut}
         onToggleSidebar={onToggleSidebar}
-        setSettingsDialogOpen={setSettingsDialogOpen}
-        setSettingsActiveTab={(tab) => setSettingsActiveTab(tab as any)}
-        setShowAuthDialog={setShowAuthDialog}
         handleSidebarMouseEnter={handleSidebarMouseEnter}
         handleSidebarMouseLeave={handleSidebarMouseLeave}
         closeButtonRef={closeButtonRef}
@@ -6479,6 +6607,16 @@ export function AgentsSidebar({
                             : section.lifecycleTarget?.type) &&
                         dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
                       }
+                      isSectionBoundaryHighlighted={
+                        Boolean(section.sectionDragId) &&
+                        boundaryHighlightIds.has(section.sectionDragId!)
+                      }
+                      isMoveIntoSection={
+                        (section.lifecycleTarget?.type === "task" &&
+                          section.lifecycleTarget.id === indicatorIds.taskId) ||
+                        (section.lifecycleTarget?.type === "project" &&
+                          section.lifecycleTarget.id === indicatorIds.projectId)
+                      }
                       dragOverSectionPosition={
                         !suppressProjectHeaderAfterDrop &&
                         Boolean(section.sectionDragId || section.lifecycleTarget) &&
@@ -6535,6 +6673,7 @@ export function AgentsSidebar({
                       onBulkPin={handleBulkPin}
                       onBulkUnpin={handleBulkUnpin}
                       onBulkArchive={handleBulkArchive}
+                      onCreateGlobalChat={openNewGlobalChat}
                       onCreateProjectChat={openNewProjectChat}
                       onCreateProjectTask={createProjectTask}
                       onCreateTaskChat={openNewTaskChat}
@@ -6654,6 +6793,7 @@ export function AgentsSidebar({
                     onBulkPin={handleBulkPin}
                     onBulkUnpin={handleBulkUnpin}
                     onBulkArchive={handleBulkArchive}
+                    onCreateGlobalChat={openNewGlobalChat}
                     onCreateProjectChat={openNewProjectChat}
                     onCreateProjectTask={createProjectTask}
                     onCreateTaskChat={openNewTaskChat}
@@ -6869,12 +7009,17 @@ export function AgentsSidebar({
                 crossScopeMoveEnabled && "border-primary/40 bg-primary/10 text-foreground",
               )}
             >
-              <span className="min-w-0 truncate">Move across scopes</span>
-              <Checkbox
-                checked={crossScopeMoveEnabled}
-                onCheckedChange={(checked) => setCrossScopeMoveEnabled(checked === true)}
-                aria-label="Move chats across projects and tasks"
-              />
+              <span className="min-w-0 truncate">Drag chats between sections</span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <span className="w-5 text-right text-[10px] font-medium uppercase tracking-wide">
+                  {crossScopeMoveEnabled ? "On" : "Off"}
+                </span>
+                <Switch
+                  checked={crossScopeMoveEnabled}
+                  onCheckedChange={setCrossScopeMoveEnabled}
+                  aria-label="Drag chats between Global, projects, and tasks"
+                />
+              </span>
             </label>
           </motion.div>
         )}
@@ -6899,9 +7044,6 @@ export function AgentsSidebar({
           />,
           document.body,
         )}
-
-      {/* Auth Dialog */}
-      <AuthDialog open={showAuthDialog} onOpenChange={setShowAuthDialog} />
 
       {/* Rename Dialog */}
       <AgentsRenameSubChatDialog

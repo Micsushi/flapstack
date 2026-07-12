@@ -164,7 +164,7 @@ export function ResizableBottomPanel({
         setIsResizing(false)
 
         if (!hasMoved && e) {
-          // Click without drag — close
+          // Click without drag - close
           handleClose()
         } else if (hasMoved && e) {
           const finalHeight = clampHeight(startHeight + (startY - e.clientY))
@@ -259,7 +259,7 @@ export function ResizableBottomPanel({
               onMouseLeave={handleMouseLeave}
             />
 
-            {/* Resize handle — top edge */}
+            {/* Resize handle - top edge */}
             <div
               ref={resizeHandleRef}
               onPointerDown={handleResizePointerDown}
@@ -285,7 +285,7 @@ export function ResizableBottomPanel({
               style={{ marginTop: "-2px" }}
             />
 
-            {/* Hover Tooltip — Notion style */}
+            {/* Hover Tooltip - Notion style */}
             {showResizeTooltip &&
               isHoveringResizeHandle &&
               !isResizing &&

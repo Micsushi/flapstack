@@ -6,6 +6,7 @@ import { z } from "zod"
 import { getAuthManager } from "../../../index"
 import { getClaudeShellEnvironment } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
+import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
@@ -28,7 +29,7 @@ function encryptToken(token: string): string {
  */
 function decryptToken(encrypted: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    return Buffer.from(encrypted, "base64").toString("utf-8")
+    return decodePlaintextClaudeToken(encrypted)
   }
   const buffer = Buffer.from(encrypted, "base64")
   return safeStorage.decryptString(buffer)
@@ -106,7 +107,7 @@ async function openClaudeAuthTerminal(): Promise<string> {
     "clear",
     "echo 'Flapstack: starting Claude Code authentication...'",
     "echo",
-    "claude setup-token",
+    "claude auth login",
     "status=$?",
     "echo",
     "if [ $status -eq 0 ]; then echo 'Claude auth command finished. Return to Flapstack and click Check connection.'; else echo 'Claude auth command exited with code '$status'. Fix the message above, then try again.'; fi",
@@ -153,7 +154,33 @@ async function openClaudeAuthTerminal(): Promise<string> {
     }
   }
 
-  throw new Error("Could not open a terminal. Run `claude setup-token` in your terminal.")
+  throw new Error("Could not open a terminal. Run `claude auth login` in your terminal.")
+}
+
+const CLAUDE_AUTH_STATUS_TTL_MS = 10_000
+let claudeAuthStatusCache: { checkedAt: number; loggedIn: boolean } | null = null
+
+async function hasLoggedInClaudeCli(): Promise<boolean> {
+  if (
+    claudeAuthStatusCache &&
+    Date.now() - claudeAuthStatusCache.checkedAt < CLAUDE_AUTH_STATUS_TTL_MS
+  ) {
+    return claudeAuthStatusCache.loggedIn
+  }
+
+  let loggedIn = false
+  try {
+    const shellEnv = getClaudeShellEnvironment()
+    const { stdout } = await execFileAsync("claude", ["auth", "status"], {
+      env: { ...process.env, ...shellEnv },
+    })
+    const status = JSON.parse(stdout) as { loggedIn?: boolean }
+    loggedIn = status.loggedIn === true
+  } catch {
+    loggedIn = false
+  }
+  claudeAuthStatusCache = { checkedAt: Date.now(), loggedIn }
+  return loggedIn
 }
 
 /**
@@ -187,9 +214,18 @@ export const claudeCodeRouter = router({
    * Check if user has Claude Code connected (local check)
    * Now uses multi-account system - checks for active account
    */
-  getIntegration: publicProcedure.query(() => {
+  getIntegration: publicProcedure.query(async () => {
     const db = getDatabase()
     const systemToken = getExistingClaudeToken()?.trim()
+
+    if (await hasLoggedInClaudeCli()) {
+      return {
+        isConnected: true,
+        connectedAt: null,
+        accountId: "system-claude-code",
+        displayName: "Claude Code CLI",
+      }
+    }
 
     // First try multi-account system
     const settings = db
@@ -206,11 +242,17 @@ export const claudeCodeRouter = router({
         .get()
 
       if (account) {
-        return {
-          isConnected: true,
-          connectedAt: account.connectedAt?.toISOString() ?? null,
-          accountId: account.id,
-          displayName: account.displayName,
+        try {
+          if (decryptToken(account.oauthToken).trim()) {
+            return {
+              isConnected: true,
+              connectedAt: account.connectedAt?.toISOString() ?? null,
+              accountId: account.id,
+              displayName: account.displayName,
+            }
+          }
+        } catch {
+          // Keep checking other local auth sources. Encrypted-but-unreadable is not connected.
         }
       }
     }
@@ -222,8 +264,17 @@ export const claudeCodeRouter = router({
       .where(eq(claudeCodeCredentials.id, "default"))
       .get()
 
+    let hasUsableStoredToken = Boolean(systemToken)
+    if (cred?.oauthToken) {
+      try {
+        hasUsableStoredToken = Boolean(decryptToken(cred.oauthToken).trim())
+      } catch {
+        hasUsableStoredToken = false
+      }
+    }
+
     return {
-      isConnected: !!cred?.oauthToken || !!systemToken,
+      isConnected: hasUsableStoredToken,
       connectedAt: cred?.connectedAt?.toISOString() ?? null,
       accountId: systemToken && !cred?.oauthToken ? "system-claude-code" : null,
       displayName: systemToken && !cred?.oauthToken ? "Claude Code CLI" : null,
@@ -308,15 +359,20 @@ export const claudeCodeRouter = router({
   /**
    * Import Claude token from system credentials
    */
-  importSystemToken: publicProcedure.mutation(() => {
+  importSystemToken: publicProcedure.mutation(async () => {
     const token = getExistingClaudeToken()?.trim()
-    if (!token) {
-      throw new Error("No existing Claude token found")
+    if (token) {
+      storeOAuthToken(token)
+      console.log("[ClaudeCode] Token imported from system")
+      return { success: true }
     }
 
-    storeOAuthToken(token)
-    console.log("[ClaudeCode] Token imported from system")
-    return { success: true }
+    if (await hasLoggedInClaudeCli()) {
+      console.log("[ClaudeCode] Using authenticated local Claude CLI")
+      return { success: true }
+    }
+
+    throw new Error("Claude CLI is not logged in. Complete `claude auth login`, then retry.")
   }),
 
   /**

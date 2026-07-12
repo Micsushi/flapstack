@@ -315,7 +315,7 @@ export function InboxView() {
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const queryClient = useQueryClient()
 
-  // Inbox always shows remote/sandbox chats — ensure correct mode on mount
+  // Inbox always shows remote/sandbox chats - ensure correct mode on mount
   useEffect(() => {
     setChatSourceMode("sandbox")
   }, [setChatSourceMode])

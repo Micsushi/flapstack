@@ -52,7 +52,7 @@ interface ProjectIconData {
 }
 
 interface UseProjectIconResult {
-  /** URL to use as img src — blob URL for local icons, direct URL for GitHub avatars */
+  /** URL to use as img src - blob URL for local icons, direct URL for GitHub avatars */
   src: string | null
   isLoading: boolean
   hasError: boolean
@@ -80,7 +80,7 @@ export function useProjectIcon(project: ProjectIconData | null | undefined): Use
     let cancelled = false
 
     if (project.iconPath) {
-      // Local file icon — fetch and cache as blob URL
+      // Local file icon - fetch and cache as blob URL
       const cached = fileIconCache.get(project.id)
       if (cached) {
         setSrc(cached)
@@ -105,7 +105,7 @@ export function useProjectIcon(project: ProjectIconData | null | undefined): Use
         setIsLoading(false)
       })
     } else if (project.gitOwner && project.gitProvider === "github") {
-      // GitHub avatar — return direct URL, <img> handles loading/caching
+      // GitHub avatar - return direct URL, <img> handles loading/caching
       setSrc(`https://github.com/${project.gitOwner}.png?size=64`)
       setIsLoading(false)
       setHasError(false)

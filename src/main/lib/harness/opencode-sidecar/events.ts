@@ -1,14 +1,14 @@
 /**
- * OpenCode SSE event bridge + reasoning-output normalization (Track E — E4).
+ * OpenCode SSE event bridge + reasoning-output normalization (Track E - E4).
  *
  * Two pure pieces, both unit-testable without a running server:
- *  1. `parseSseChunk` — incremental SSE framing (id/event/data lines).
- *  2. `normalizeOpencodeEvent` — one raw OpenCode event -> NormalizedSidecarEvent.
+ *  1. `parseSseChunk` - incremental SSE framing (id/event/data lines).
+ *  2. `normalizeOpencodeEvent` - one raw OpenCode event -> NormalizedSidecarEvent.
  *
  * Reasoning handling maps OpenRouter (`reasoning`, `reasoning_details`) and
  * NanoGPT (`reasoning`, legacy `reasoning_content`) visible reasoning into the
  * shared reasoning-output contract. Encrypted / provider-private reasoning is preserved
- * only as opaque metadata upstream — never fabricated here.
+ * only as opaque metadata upstream - never fabricated here.
  */
 
 import type { NormalizedSidecarEvent, SidecarUsage } from "./contract"
@@ -25,7 +25,7 @@ export function parseSseChunk(
 ): { buffer: string; events: SseEvent[] } {
   const combined = buffer + chunk
   const frames = combined.split(/\n\n/)
-  // The last element is an incomplete frame (or empty) — keep it buffered.
+  // The last element is an incomplete frame (or empty) - keep it buffered.
   const remainder = frames.pop() ?? ""
   const events: SseEvent[] = []
 
@@ -193,7 +193,7 @@ export class OpencodeEventNormalizer {
         const message =
           asString(pointer(event, ["properties", "error", "data", "message"])) ??
           asString(pointer(event, ["properties", "error", "message"])) ??
-          "OpenCode session error"
+          "Provider session error"
         out.push({ kind: "error", errorText: message, auth: name === "ProviderAuthError" })
         break
       }
@@ -269,7 +269,7 @@ export class OpencodeEventNormalizer {
           out.push({
             kind: "tool-error",
             toolCallId,
-            errorText: asString(pointer(part, ["state", "error"])) ?? "OpenCode tool failed",
+            errorText: asString(pointer(part, ["state", "error"])) ?? "Provider tool failed",
           })
       } else {
         if (!previousState) out.push({ kind: "tool-input-start", toolCallId, toolName })

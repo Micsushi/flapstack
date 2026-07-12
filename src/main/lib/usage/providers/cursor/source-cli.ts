@@ -1,4 +1,4 @@
-// Stage 2 Track B — U7: Cursor usage source #3 (`cursor-agent` CLI) — stubbed.
+// Stage 2 Track B - U7: Cursor usage source #3 (`cursor-agent` CLI) - stubbed.
 //
 // Least reliable source: parse whatever `cursor-agent` surfaces. It calls
 // source #1 under the hood anyway, so this is a last resort. Reserved slot only.

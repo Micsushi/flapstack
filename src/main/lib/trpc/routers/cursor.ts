@@ -26,8 +26,6 @@ import {
   parseCursorStreamLine,
 } from "../../cursor/stream"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
-import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
-import { getReadAloudEnabled } from "../../speech/settings"
 import { getUsageSecret } from "../../usage/secrets"
 import {
   buildCursorPermissionApplication,
@@ -436,10 +434,7 @@ export const cursorRouter = router({
               projectPath: input.projectPath,
               harness: HARNESS,
             })
-            const promptForModel = appendReadAloudInstruction(
-              prependStartupContext(input.prompt, startupContext),
-              getReadAloudEnabled(input.subChatId),
-            )
+            const promptForModel = prependStartupContext(input.prompt, startupContext)
 
             // Persist the user message (dedupe a resent prompt like Codex).
             const lastMessage = existingMessages[existingMessages.length - 1]
@@ -675,6 +670,15 @@ export const cursorRouter = router({
       terminateCursorStream(activeStream)
       activeStreams.delete(input.subChatId)
     }
+    const db = getDatabase()
+    db.update(agentRuns)
+      .set({ status: "cancelled", completedAt: new Date() })
+      .where(and(eq(agentRuns.subChatId, input.subChatId), eq(agentRuns.status, "running")))
+      .run()
+    db.update(subChats)
+      .set({ runStatus: "cancelled", updatedAt: new Date() })
+      .where(and(eq(subChats.id, input.subChatId), eq(subChats.runStatus, "running")))
+      .run()
     return { success: true }
   }),
 })

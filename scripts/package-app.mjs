@@ -53,6 +53,9 @@ export function resolvePackageBuild(
     platformFlags[platform],
     ...architectures.map((architecture) => `--${architecture}`),
     ...(options.dir ? ["--dir"] : []),
+    ...(platform === "darwin" && options.channel === "preview"
+      ? ["--config=electron-builder.preview.mac.cjs"]
+      : []),
   ]
   return { platform, architectures, targets, builderArgs }
 }
@@ -64,6 +67,7 @@ function parseBuild(args) {
     platform: platforms[0],
     architectures: valuesFor(args, "--arch"),
     dir: args.includes("--dir"),
+    channel: valuesFor(args, "--channel")[0],
   })
 }
 

@@ -498,7 +498,7 @@ export function AgentsPreferencesTab() {
             <span className="text-sm font-medium text-foreground">Share Usage Analytics</span>
             <span className="text-xs text-muted-foreground">
               Help us improve Agents by sharing anonymous usage data. We only track feature usage
-              and app performance–never your code, prompts, or messages. No AI training on your
+              and app performance - never your code, prompts, or messages. No AI training on your
               data.
             </span>
           </div>

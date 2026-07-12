@@ -27,31 +27,13 @@ export function setVoiceSettings(settings: Partial<VoiceSettings>): VoiceSetting
   return next
 }
 
-export function getReadAloudEnabled(chatId?: string): boolean {
-  return resolveReadAloudEnabled(getVoiceSettings(), chatId)
-}
-
-export function setReadAloudForChat(chatId: string, enabled: boolean | null): VoiceSettings {
-  const settings = getVoiceSettings()
-  const readAloudByChatId = { ...settings.readAloudByChatId }
-  if (enabled === null) delete readAloudByChatId[chatId]
-  else readAloudByChatId[chatId] = enabled
-  return setVoiceSettings({ readAloudByChatId })
-}
-
-export function resolveReadAloudEnabled(settings: VoiceSettings, chatId?: string): boolean {
-  if (chatId && typeof settings.readAloudByChatId[chatId] === "boolean") {
-    return settings.readAloudByChatId[chatId]
-  }
-  return settings.autoReadAloud
-}
-
 export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettings {
-  const readAloudByChatId = Object.fromEntries(
-    Object.entries(raw.readAloudByChatId ?? {}).filter(
-      ([chatId, enabled]) => Boolean(chatId) && typeof enabled === "boolean",
+  const voiceByTtsAdapterId = Object.fromEntries(
+    Object.entries(raw.voiceByTtsAdapterId ?? {}).filter(
+      ([adapterId, voiceId]) =>
+        Boolean(adapterId) && (typeof voiceId === "string" || voiceId === null),
     ),
-  ) as Record<string, boolean>
+  ) as Record<string, string | null>
   return {
     sttAdapterId:
       typeof raw.sttAdapterId === "string" ? raw.sttAdapterId : defaultVoiceSettings.sttAdapterId,
@@ -65,12 +47,11 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
     ttsAdapterId:
       typeof raw.ttsAdapterId === "string" ? raw.ttsAdapterId : defaultVoiceSettings.ttsAdapterId,
     voiceId: typeof raw.voiceId === "string" ? raw.voiceId : null,
+    voiceByTtsAdapterId,
     rate:
       typeof raw.rate === "number" && Number.isFinite(raw.rate)
         ? clamp(raw.rate, 0.5, 2)
         : defaultVoiceSettings.rate,
-    autoReadAloud: raw.autoReadAloud ?? defaultVoiceSettings.autoReadAloud,
-    readAloudByChatId,
     preferOffline: raw.preferOffline ?? defaultVoiceSettings.preferOffline,
   }
 }

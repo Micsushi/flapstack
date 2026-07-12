@@ -334,7 +334,7 @@ export const anthropicSettings = sqliteTable("anthropic_settings", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 })
 
-// ============ USAGE TRACKING (Stage 2 Track B — replaces onWatch) ============
+// ============ USAGE TRACKING (Stage 2 Track B - replaces onWatch) ============
 // Shared usage store written by the background daemon and read by the app.
 // See src/main/lib/usage/* for the engine, providers, and store helpers.
 
@@ -360,7 +360,7 @@ export const usageSamples = sqliteTable(
     capturedAt: integer("captured_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     windowStart: integer("window_start", { mode: "timestamp" }),
     windowEnd: integer("window_end", { mode: "timestamp" }),
-    // Token + request counts (nullable — providers may only expose some)
+    // Token + request counts (nullable - providers may only expose some)
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     reasoningTokens: integer("reasoning_tokens"),

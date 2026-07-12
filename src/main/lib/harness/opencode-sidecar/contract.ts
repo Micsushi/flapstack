@@ -1,5 +1,5 @@
 /**
- * OpenCode sidecar harness contract (Track E — E1).
+ * OpenCode sidecar harness contract (Track E - E1).
  *
  * Typed inputs/outputs that every downstream sidecar module depends on. This is
  * the Flapstack-owned boundary around the OpenCode server: Flapstack controls
@@ -54,7 +54,7 @@ export type SidecarLaunchInput = {
 
 /**
  * Reasons a sidecar run cannot start or continue. Each maps to an honest,
- * actionable UI state — never a silent no-op.
+ * actionable UI state - never a silent no-op.
  */
 export type SidecarLimitationCode =
   | "opencode-missing"

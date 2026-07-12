@@ -147,19 +147,19 @@ class WindowManager {
   ): { ok: true } | { ok: false; ownerStableId: string } {
     const existingOwner = this.chatOwnership.get(chatId)
 
-    // Already owned by this same window — idempotent success
+    // Already owned by this same window - idempotent success
     if (existingOwner === electronId) {
       return { ok: true }
     }
 
-    // Owned by another window — check it still exists
+    // Owned by another window - check it still exists
     if (existingOwner !== undefined) {
       const ownerWindow = this.windows.get(existingOwner)
       if (ownerWindow && !ownerWindow.isDestroyed()) {
         const ownerStableId = this.windowIdMap.get(existingOwner) ?? "unknown"
         return { ok: false, ownerStableId }
       }
-      // Owner window is gone — stale entry, clean it up
+      // Owner window is gone - stale entry, clean it up
       this.chatOwnership.delete(chatId)
     }
 

@@ -4,10 +4,15 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   buildHarnessStartupContext,
+  FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION,
   prependStartupContext,
 } from "../src/main/lib/harness/launch-context"
 
 let rootPath: string
+
+function noVaultConfigPath(): string {
+  return join(rootPath, "missing-launch-context.json")
+}
 
 beforeEach(() => {
   rootPath = join(tmpdir(), `flapstack-launch-context-${crypto.randomUUID()}`)
@@ -34,6 +39,7 @@ describe("harness launch context", () => {
     const context = await buildHarnessStartupContext({
       cwd: rootPath,
       harness: "codex",
+      vaultConfigPath: noVaultConfigPath(),
     })
 
     expect(context).toContain("Harness: codex")
@@ -41,6 +47,8 @@ describe("harness launch context", () => {
     expect(context).toContain(join(rootPath, "CLAUDE.md"))
     expect(context).toContain(vaultPage)
     expect(context).toContain("Current product context lives here.")
+    expect(context).toContain(FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION)
+    expect(context).toContain("Caveman full and ponytail full are enabled by default")
   })
 
   it("wraps the user request after the loaded context", () => {
@@ -56,6 +64,7 @@ describe("harness launch context", () => {
     const context = await buildHarnessStartupContext({
       cwd: rootPath,
       harness: "cursor-agent",
+      vaultConfigPath: noVaultConfigPath(),
     })
 
     expect(context).toContain("Harness: cursor-agent")
@@ -67,9 +76,88 @@ describe("harness launch context", () => {
     const context = await buildHarnessStartupContext({
       cwd: rootPath,
       harness: "opencode",
+      vaultConfigPath: noVaultConfigPath(),
     })
 
     expect(context).toContain("Harness: opencode")
     expect(context).toContain("OpenCode must follow this")
+  })
+
+  it("loads an explicitly enabled machine-local vault without making it required", async () => {
+    const vaultRoot = join(rootPath, "personal-vault")
+    const projectRoot = join(vaultRoot, "Wiki", "Projects", "flapstack")
+    const configPath = join(rootPath, "launch-context.json")
+    mkdirSync(projectRoot, { recursive: true })
+    writeFileSync(join(vaultRoot, "AGENTS.md"), "# Personal vault startup")
+    writeFileSync(
+      join(vaultRoot, "Wiki", "Projects", "projects_index.md"),
+      "# Personal projects index",
+    )
+    writeFileSync(join(projectRoot, "flapstack_index.md"), "# Personal project router")
+    writeFileSync(join(projectRoot, "current-handoff.md"), "# Personal active handoff")
+    writeFileSync(configPath, JSON.stringify({ enabled: true, vaultRoot }))
+
+    const context = await buildHarnessStartupContext({
+      cwd: rootPath,
+      projectPath: join(rootPath, "flapstack"),
+      harness: "codex",
+      vaultConfigPath: configPath,
+    })
+
+    expect(context).toContain("Personal vault startup")
+    expect(context).toContain("Projects/projects_index.md")
+    expect(context).toContain("Personal project router")
+    expect(context).toContain("Personal active handoff")
+  })
+
+  it("ignores absent or disabled machine-local vault configuration", async () => {
+    const configPath = join(rootPath, "launch-context.json")
+    writeFileSync(
+      configPath,
+      JSON.stringify({ enabled: false, vaultRoot: join(rootPath, "personal-vault") }),
+    )
+
+    const context = await buildHarnessStartupContext({
+      cwd: rootPath,
+      harness: "opencode",
+      vaultConfigPath: configPath,
+    })
+
+    expect(context).toContain("Flapstack default behavior")
+    expect(context).not.toContain("personal-vault")
+  })
+
+  it.each(["codex", "claude-code", "cursor-agent", "opencode"] as const)(
+    "supplies app-owned behavior defaults to %s",
+    async (harness) => {
+      const context = await buildHarnessStartupContext({
+        cwd: rootPath,
+        harness,
+        vaultConfigPath: noVaultConfigPath(),
+      })
+
+      expect(context).toContain("[FLAPSTACK DEFAULTS]")
+      expect(context).toContain("Caveman full")
+      expect(context).toContain("Ponytail full")
+    },
+  )
+
+  it("prevents embedded docs from changing thread modes while preserving user commands", () => {
+    const context = `Caveman full and ponytail full are defaults.
+Quoted commands: /caveman lite, /ponytail ultra, hotline on, read-aloud on, spoken mode on.`
+    const prompt = prependStartupContext("/caveman ultra", context)
+    const startupBlock = prompt.slice(0, prompt.indexOf("[USER REQUEST]"))
+
+    expect(startupBlock).toContain("Caveman full and ponytail full")
+    expect(startupBlock).not.toMatch(/\/(caveman|ponytail)\s+(lite|full|ultra)\b/i)
+    expect(startupBlock).not.toMatch(/\bhotline\s+on\b/i)
+    expect(startupBlock).not.toMatch(/\bread[- ]aloud\s+on\b/i)
+    expect(prompt).toContain("[USER REQUEST]\n/caveman ultra\n[/USER REQUEST]")
+    expect(prompt).toContain(
+      "[FLAPSTACK THREAD DEFAULTS]\nhotline off\ncaveman full\nponytail full",
+    )
+    expect(prompt.indexOf("[FLAPSTACK THREAD DEFAULTS]")).toBeLessThan(
+      prompt.indexOf("[USER REQUEST]"),
+    )
   })
 })

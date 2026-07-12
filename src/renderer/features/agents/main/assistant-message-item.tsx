@@ -2,7 +2,7 @@
 
 import { useAtomValue } from "jotai"
 import { ListTree, MoreHorizontal } from "lucide-react"
-import { memo, useCallback, useContext, useMemo, useState } from "react"
+import { memo, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { normalizeCodexToolPart } from "../../../../shared/codex-tool-normalizer"
 
 import {
@@ -36,10 +36,13 @@ import { AgentWebSearchCollapsible } from "../ui/agent-web-search-collapsible"
 import { CopyButton, PlayButton, getMessageTextContent } from "../ui/message-action-buttons"
 import { useFileOpen } from "../mentions"
 import { GitActivityBadges } from "../ui/git-activity-badges"
-import { formatPermissionMode, getHarnessChipMeta, getModelChipMeta } from "../constants"
+import { formatPermissionMode, getHarnessChipMeta } from "../constants"
+import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { formatModelDisplayName } from "../../../../shared/model-catalog"
+import { dedupeVisibleReasoningParts, getVisibleReasoningText } from "../lib/reasoning-parts"
 import { ForkContext } from "./isolated-message-group"
 import { MemoizedTextPart } from "./memoized-text-part"
+import { formatMessageTimestamp } from "../lib/message-timestamp"
 
 // Map first word of an ACP tool title to a canonical Claude Code tool type.
 // Codex tool calls arrive with type = "tool-Read README.md", "tool-Run echo ---",
@@ -92,7 +95,7 @@ function normalizeAcpParts(parts: any[]): any[] {
     const partInput =
       part.input && typeof part.input === "object" ? (part.input as Record<string, any>) : {}
 
-    // Determine the ACP title — either from the type itself or from input.toolName
+    // Determine the ACP title - either from the type itself or from input.toolName
     let title: string | null = null
     let args: Record<string, any> = {}
 
@@ -142,7 +145,7 @@ function normalizeAcpParts(parts: any[]): any[] {
       enrichedInput.file_path = detail
     }
     if (canonicalType === "Bash") {
-      // Codex passes command as array ['/bin/zsh', '-lc', 'actual command'] — extract shell string
+      // Codex passes command as array ['/bin/zsh', '-lc', 'actual command'] - extract shell string
       if (Array.isArray(enrichedInput.command)) {
         enrichedInput.command = enrichedInput.command[enrichedInput.command.length - 1] || detail
       } else if (!enrichedInput.command && detail) {
@@ -194,9 +197,15 @@ function mapReasoningStateToOutputState(state: unknown): string {
 }
 
 function getReasoningOutputText(part: any): string {
-  if (typeof part?.input?.text === "string") return part.input.text
-  if (typeof part?.text === "string") return part.text
-  return ""
+  return getVisibleReasoningText(part)
+}
+
+function isReasoningPart(part: any): boolean {
+  return (
+    part?.type === "reasoning" ||
+    part?.type === "tool-ReasoningOutput" ||
+    part?.type === "tool-Thinking"
+  )
 }
 
 function toReasoningOutputPart(part: any, messageId: string | undefined, index: number): any {
@@ -492,68 +501,35 @@ function ProducerChips({ metadata }: { metadata: AgentMessageMetadata | undefine
         model?: string
         permissionMode?: string
         worktreePath?: string | null
-        permissionApplication?: {
-          degraded?: boolean
-          limitations?: Array<{ reason?: string }>
-          warnings?: string[]
-        } | null
       })
     | null
   const harness = rawMetadata?.harness
   const model = rawMetadata?.model
   const permissionMode = rawMetadata?.permissionMode
   const worktreePath = rawMetadata?.worktreePath
-  const permissionApplication = rawMetadata?.permissionApplication
-  // Honest limitation surface: when the harness cannot fully enforce the
-  // requested mode, show why instead of implying full enforcement.
-  const permissionLimitations = permissionApplication?.degraded
-    ? (permissionApplication.warnings ?? []).concat(
-        (permissionApplication.limitations ?? [])
-          .map((l) => l.reason)
-          .filter((r): r is string => !!r),
-      )
-    : []
 
   if (!harness && !model && !permissionMode && !worktreePath) {
     return null
   }
 
   const harnessMeta = getHarnessChipMeta(harness)
-  const modelMeta = getModelChipMeta(model, harness)
   const worktreeName = worktreePath?.split(/[\\/]/).filter(Boolean).at(-1)
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1 pb-1">
       <span
+        title={model ? `${harnessMeta.name} · ${model}` : harnessMeta.name}
         className={cn(
-          "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium",
+          "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
           harnessMeta.className,
         )}
       >
-        {harness ? harnessMeta.name : "Unknown"}
+        <ProviderChipIcon provider={harness} className="h-2.5 w-2.5 shrink-0" />
+        {formatModelDisplayName(model) || "Unknown model"}
       </span>
-      {model && (
-        <span
-          title={model}
-          className={cn(
-            "inline-flex max-w-[220px] items-center rounded border px-1.5 py-0.5 text-[10px]",
-            modelMeta.className,
-          )}
-        >
-          <span className="truncate">{formatModelDisplayName(model)}</span>
-        </span>
-      )}
       {permissionMode && (
         <span className="inline-flex max-w-[180px] items-center rounded border border-border bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">
           <span className="truncate">{formatPermissionMode(permissionMode)}</span>
-        </span>
-      )}
-      {permissionLimitations.length > 0 && (
-        <span
-          title={`This harness could not fully enforce the requested permission mode:\n\n- ${permissionLimitations.join("\n- ")}`}
-          className="inline-flex items-center rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
-        >
-          limited
         </span>
       )}
       {worktreeName && (
@@ -584,20 +560,20 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   const onOpenFile = useFileOpen()
   const onFork = useContext(ForkContext)
   const isDev = import.meta.env.DEV
+  const reasoningStartedAtRef = useRef(Date.now())
   // Normalize ACP/codex tool parts into canonical types (e.g. "tool-Read README.md" → "tool-Read").
-  // Note: no useMemo — AI SDK mutates parts in-place, so the array reference
+  // Note: no useMemo - AI SDK mutates parts in-place, so the array reference
   // doesn't change and useMemo would return stale results.
-  const messageParts = normalizeAcpParts(
-    (message?.parts || []).map((part: any) => normalizeCodexToolPart(part) as any),
+  const messageParts = dedupeVisibleReasoningParts(
+    normalizeAcpParts(
+      (message?.parts || []).map((part: any) => normalizeCodexToolPart(part) as any),
+    ),
+    isReasoningPart,
   )
 
-  const contentParts = useMemo(
-    () => messageParts.filter((p: any) => p.type !== "step-start"),
-    [messageParts],
-  )
-
-  const shouldShowPlanning =
-    sandboxSetupStatus === "ready" && isStreaming && isLastMessage && contentParts.length === 0
+  const hasReasoningOutput = messageParts.some(isReasoningPart)
+  const shouldShowWorkingTimer =
+    sandboxSetupStatus === "ready" && isStreaming && isLastMessage && !hasReasoningOutput
 
   const {
     nestedToolsMap,
@@ -696,7 +672,11 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     for (let i = 0; i < messageParts.length; i++) {
       const part = messageParts[i]
       // Ignore ExitPlanMode - it's not a real tool for the user
-      if (part.type?.startsWith("tool-") && part.type !== "tool-ExitPlanMode") {
+      if (
+        part.type?.startsWith("tool-") &&
+        part.type !== "tool-ExitPlanMode" &&
+        !isReasoningPart(part)
+      ) {
         lastToolIndex = i
       }
       if (part.type === "text" && part.text?.trim()) {
@@ -719,6 +699,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       if (p.type === "step-start") return false
       if (p.type === "tool-TaskOutput") return false
       if (p.type === "tool-ExitPlanMode") return false
+      if (isReasoningPart(p) && !getReasoningOutputText(p).trim()) return false
       if (p.toolCallId && nestedToolIds.has(p.toolCallId)) return false
       if (
         p.toolCallId &&
@@ -769,6 +750,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   )
 
   const msgMetadata = message?.metadata as AgentMessageMetadata
+  const timestamp = formatMessageTimestamp(message)
 
   const renderPart = useCallback(
     (part: any, idx: number, isFinal = false) => {
@@ -830,16 +812,14 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             chatStatus={status}
           />
         )
-      if (
-        part.type === "reasoning" ||
-        part.type === "tool-ReasoningOutput" ||
-        part.type === "tool-Thinking"
-      ) {
+      if (isReasoningPart(part)) {
         return (
           <AgentReasoningOutput
             key={idx}
             part={toReasoningOutputPart(part, message?.id, idx)}
             chatStatus={status}
+            durationMs={msgMetadata?.durationMs}
+            startedAt={reasoningStartedAtRef.current}
           />
         )
       }
@@ -1011,6 +991,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       isStreaming,
       subChatId,
       message.id,
+      msgMetadata?.durationMs,
       planOpsSummary,
       shouldCollapse,
       lastCollapsedPlanOp,
@@ -1109,12 +1090,15 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           />
         )}
 
-        {shouldShowPlanning && (
-          <AgentToolCall
-            icon={AgentToolRegistry["tool-planning"].icon}
-            title={AgentToolRegistry["tool-planning"].title({})}
-            isPending={true}
-            isError={false}
+        {shouldShowWorkingTimer && (
+          <AgentReasoningOutput
+            part={{
+              type: "tool-ReasoningOutput",
+              state: "input-streaming",
+              input: { text: "" },
+            }}
+            chatStatus={status}
+            startedAt={reasoningStartedAtRef.current}
           />
         )}
       </div>
@@ -1129,7 +1113,15 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
               chatId={chatId}
               subChatId={subChatId}
               messageId={message.id}
+              highlightColor={
+                getHarnessChipMeta(
+                  (msgMetadata as AgentMessageMetadata & { harness?: string })?.harness,
+                ).color
+              }
             />
+            {timestamp && (
+              <span className="ml-1 text-[10px] text-muted-foreground">{timestamp}</span>
+            )}
           </div>
           <div className="flex items-center gap-0.5">
             <AgentMessageUsage

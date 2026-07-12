@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.invoke("window:new", options) as Promise<{ blocked: boolean } | void>,
   setWindowTitle: (title: string) => ipcRenderer.invoke("window:set-title", title),
 
-  // Chat ownership — prevent same chat open in multiple windows
+  // Chat ownership - prevent same chat open in multiple windows
   claimChat: (chatId: string) =>
     ipcRenderer.invoke("chat:claim", chatId) as Promise<
       { ok: true } | { ok: false; ownerStableId: string }
@@ -258,7 +258,7 @@ export interface DesktopApi {
     subChatId?: string
   }) => Promise<{ blocked: boolean } | void>
   setWindowTitle: (title: string) => Promise<void>
-  // Chat ownership — prevent same chat open in multiple windows
+  // Chat ownership - prevent same chat open in multiple windows
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>

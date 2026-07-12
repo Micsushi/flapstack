@@ -1,4 +1,4 @@
-// Stage 2 Track B — U8: OpenRouter usage provider.
+// Stage 2 Track B - U8: OpenRouter usage provider.
 //
 // Blocked on harness-engine E3 for run-usage capture. Reconciliation surfaces:
 //   generation stats:   https://openrouter.ai/docs/api-reference/authentication/get-a-generation
@@ -69,7 +69,7 @@ export function createOpenRouterProvider(): UsageProvider {
       const configured = (await ctx.getSecret(SECRET_KEY)) != null
       return {
         providerId: "openrouter",
-        // OpenRouter cannot expose full account-wide history for a key — label it
+        // OpenRouter cannot expose full account-wide history for a key - label it
         // run-usage + balance rather than complete account history.
         status: configured ? "ok" : "not-configured",
         detail: configured

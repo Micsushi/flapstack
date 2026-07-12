@@ -249,7 +249,7 @@ export const SubChatStatusCard = memo(function SubChatStatusCard({
                 const FileIcon = getFileIconByExtension(file.displayPath)
 
                 const handleFileClick = () => {
-                  // Set selected file and filter to just this file — avoids intermediate 2→1 file flash
+                  // Set selected file and filter to just this file - avoids intermediate 2→1 file flash
                   setSelectedFilePath(file.displayPath)
                   setFilteredDiffFiles([file.displayPath])
                   // Set focus on this specific file (for scroll-to)

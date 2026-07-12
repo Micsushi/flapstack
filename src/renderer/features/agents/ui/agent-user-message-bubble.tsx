@@ -182,10 +182,10 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
   return (
     <>
       <div
-        className="flex justify-start drop-shadow-[0_10px_20px_hsl(var(--background))]"
+        className="flex justify-end drop-shadow-[0_10px_20px_hsl(var(--background))]"
         data-user-bubble
       >
-        <div className="space-y-2 w-full">
+        <div className="space-y-2 min-w-0 max-w-[85%]">
           {/* Show attached images from stored message */}
           {imageParts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">

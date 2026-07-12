@@ -1,4 +1,4 @@
-// Stage 2 Track B — shared usage tracking types.
+// Stage 2 Track B - shared usage tracking types.
 // These types are the contract shared by the usage engine (app + daemon),
 // provider adapters, the SQLite store, and the alert evaluator. Keep this file
 // free of Electron / renderer imports so the daemon can import it standalone.
@@ -8,7 +8,7 @@ export const USAGE_PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter",
 export type UsageProviderId = (typeof USAGE_PROVIDER_IDS)[number]
 
 /** Where a sample came from. Never fabricate historical detail from a current
- * aggregate — pick the honest origin instead. */
+ * aggregate - pick the honest origin instead. */
 export const SAMPLE_SOURCES = [
   "daemon-poll",
   "app-poll",
@@ -140,7 +140,7 @@ export interface UsageProvider {
 }
 
 /** Thrown by scaffolded provider paths that are not implemented yet. Callers
- * (engine) catch this and record a `source-unavailable` status — never a zero
+ * (engine) catch this and record a `source-unavailable` status - never a zero
  * sample. */
 export class UsageNotImplementedError extends Error {
   constructor(

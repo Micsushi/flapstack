@@ -122,7 +122,7 @@ export function ensureNativeAbi(target) {
   const action = nativeAbiAction({ current, desired, probeOk: initialProbe.ok })
   if (action === "verified") {
     console.log(
-      `[native-abi] verified actual ${target} load ABI ${initialProbe.abi} (${desired}) — skipping rebuild`,
+      `[native-abi] verified actual ${target} load ABI ${initialProbe.abi} (${desired}) - skipping rebuild`,
     )
     return { action, marker: desired, probe: initialProbe }
   }

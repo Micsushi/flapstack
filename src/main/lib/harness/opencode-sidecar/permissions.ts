@@ -1,18 +1,18 @@
 /**
  * Permission mapping + approval bridge for OpenCode-backed harnesses
- * (Track E — E5).
+ * (Track E - E5).
  *
  * Two responsibilities, both pure and testable:
- *  1. `buildOpencodePermissionConfig` — map a Flapstack permission mode into
+ *  1. `buildOpencodePermissionConfig` - map a Flapstack permission mode into
  *     OpenCode agent permission rules (edit/bash/webfetch = ask|allow|deny).
- *  2. `decideAutoApproval` — for permission requests OpenCode raises at runtime,
+ *  2. `decideAutoApproval` - for permission requests OpenCode raises at runtime,
  *     decide allow/ask/deny for the current mode without a UI round-trip where
  *     the mode is unambiguous (read-only always denies mutations; full-access
  *     always allows).
  *
  * Anything OpenCode cannot enforce exactly is reported as a
  * `HarnessPermissionLimitation` via `buildOpencodePermissionApplication`, mirroring
- * the Codex/Claude honesty pattern — never claim enforcement we don't have.
+ * the Codex/Claude honesty pattern - never claim enforcement we don't have.
  */
 
 import type {
@@ -127,7 +127,7 @@ export function decideAutoApproval(
   if (rule === "deny") {
     return { reply: "reject", message: `Blocked by Flapstack "${mode}" permission mode.` }
   }
-  return null // ask — route to the user
+  return null // ask - route to the user
 }
 
 function limitation(
@@ -147,7 +147,7 @@ function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
         limitation(
           "mcp",
           "deny mutating MCP tools",
-          "Read-only relies on OpenCode's per-tool deny rules; MCP server side effects cannot be proven from the tool name alone.",
+          "Read-only relies on provider per-tool deny rules; MCP server side effects cannot be proven from the tool name alone.",
         ),
       ]
     case "auto-edit-project-only":
@@ -155,7 +155,7 @@ function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
         limitation(
           "filesystem-write-scope",
           "writes limited to the selected project/worktree",
-          "OpenCode edits are allowed but not filesystem-sandboxed to the project directory by Flapstack.",
+          "Provider edits are allowed but not filesystem-sandboxed to the project directory by Flapstack.",
         ),
       ]
     case "custom":
@@ -163,7 +163,7 @@ function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
         limitation(
           "mcp",
           "custom per-tool toggles",
-          "Custom mode currently maps to a conservative ask-everything OpenCode rule set; fine-grained toggles are not wired yet.",
+          "Custom mode currently maps to a conservative ask-everything provider rule set; fine-grained toggles are not wired yet.",
         ),
       ]
     default:
@@ -184,14 +184,14 @@ export function buildOpencodePermissionApplication(params: {
       applied: Boolean(cwd),
       ...(cwd ? { value: cwd } : {}),
       reason: cwd
-        ? "The OpenCode sidecar operates in this directory."
+        ? "The provider runtime operates in this directory."
         : "No cwd was provided for this launch.",
     },
     {
       control: "filesystem-write-scope" as const,
       applied: rules.edit !== "allow" || params.permissionMode === "auto-edit-project-only",
       value: `edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}`,
-      reason: "Flapstack sends these OpenCode per-tool permission rules with the session request.",
+      reason: "Flapstack sends these provider per-tool permission rules with the session request.",
     },
   ]
 
@@ -203,13 +203,13 @@ export function buildOpencodePermissionApplication(params: {
     limitations,
     warnings: Array.from(
       new Set([
-        `OpenCode permission rules: edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}.`,
+        `Provider permission rules: edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}.`,
         ...limitations.map((l) => l.reason),
       ]),
     ),
     reason:
       limitations.length > 0
-        ? "Flapstack maps the permission mode into OpenCode session rules and bridges approvals, but some controls (MCP side effects, filesystem sandboxing) are delegated to OpenCode."
-        : "Flapstack maps the permission mode into OpenCode session rules and bridges approvals for this run.",
+        ? "Flapstack maps the permission mode into provider session rules and bridges approvals, but some controls (MCP side effects, filesystem sandboxing) are delegated to the provider runtime."
+        : "Flapstack maps the permission mode into provider session rules and bridges approvals for this run.",
   }
 }

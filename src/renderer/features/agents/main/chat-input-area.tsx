@@ -1,16 +1,8 @@
 "use client"
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { AlertTriangle, ChevronDown, RefreshCw, Square, Volume2 } from "lucide-react"
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react"
+import { AlertTriangle, ChevronDown, RefreshCw } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
 import { Button } from "../../../components/ui/button"
@@ -54,13 +46,10 @@ import {
   showOfflineModeFeaturesAtom,
 } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
-import {
-  getManagedSpeechSnapshot,
-  stopManagedSpeech,
-  subscribeManagedSpeech,
-} from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import {
+  enabledOpencodeModelsAtom,
+  enabledCursorModelsAtom,
   lastSelectedCodexModelIdAtom,
   lastSelectedClaudeEffortAtom,
   lastSelectedCodexFastModeAtom,
@@ -91,6 +80,7 @@ import {
   CLAUDE_MODELS,
   CODEX_MODELS,
   CURSOR_MODELS,
+  DEFAULT_OPENCODE_MODELS,
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
 } from "../lib/models"
@@ -175,7 +165,6 @@ export interface ChatInputAreaProps {
   onForceSend: () => void // Opt+Enter: stop stream and send immediately, bypassing queue
   onStop: () => Promise<void>
   onCompact: () => void
-  onCreateNewSubChat?: () => void
   onModeChange?: (newMode: AgentMode) => void
   // State from parent
   isStreaming: boolean
@@ -271,7 +260,6 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.onForceSend !== nextProps.onForceSend ||
     prevProps.onStop !== nextProps.onStop ||
     prevProps.onCompact !== nextProps.onCompact ||
-    prevProps.onCreateNewSubChat !== nextProps.onCreateNewSubChat ||
     prevProps.onModeChange !== nextProps.onModeChange ||
     prevProps.onAddAttachments !== nextProps.onAddAttachments ||
     prevProps.onPersistAttachments !== nextProps.onPersistAttachments ||
@@ -402,7 +390,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   onForceSend,
   onStop,
   onCompact,
-  onCreateNewSubChat,
   onModeChange,
   isStreaming,
   isCompacting,
@@ -539,6 +526,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     [subChatId],
   )
   const [selectedOpencodeModels, setSelectedOpencodeModels] = useAtom(subChatOpencodeModelsAtom)
+  const enabledOpencodeModels = useAtomValue(enabledOpencodeModelsAtom)
   const setLastSelectedModelId = useSetAtom(lastSelectedModelIdAtom)
   const setLastSelectedClaudeEffort = useSetAtom(lastSelectedClaudeEffortAtom)
   const setLastSelectedCodexModelId = useSetAtom(lastSelectedCodexModelIdAtom)
@@ -552,6 +540,16 @@ export const ChatInputArea = memo(function ChatInputArea({
       availableModels.models.find((m) => m.id === selectedSubChatModelId) ||
       availableModels.models[0],
   )
+
+  useEffect(() => {
+    for (const providerId of ["openrouter", "nanogpt"] as const) {
+      if (enabledOpencodeModels[providerId].includes(selectedOpencodeModels[providerId])) continue
+      setSelectedOpencodeModels({
+        [providerId]:
+          enabledOpencodeModels[providerId][0] ?? DEFAULT_OPENCODE_MODELS[providerId][0].id,
+      })
+    }
+  }, [enabledOpencodeModels, selectedOpencodeModels, setSelectedOpencodeModels])
 
   // Sync selectedModel when per-subChat atom value changes (e.g., after localStorage hydration)
   useEffect(() => {
@@ -588,13 +586,17 @@ export const ChatInputArea = memo(function ChatInputArea({
   const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
   const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
   const hiddenModels = useAtomValue(hiddenModelsAtom)
+  const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
 
   // Connection status for providers
   const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
-  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
+  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
+    refetchInterval: (query) => (query.state.data?.isConnected ? false : 2_000),
+  })
+  const { data: codexIntegration } = trpc.codex.getIntegration.useQuery()
   const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
   const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery({ provider: "openrouter" })
   const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery({ provider: "nanogpt" })
@@ -618,18 +620,19 @@ export const ChatInputArea = memo(function ChatInputArea({
     [codexUiModels, selectedSubChatCodexModelId],
   )
   const cursorUiModels = useMemo(() => {
-    const ids = cursorModelData?.models?.length
+    const liveIds = cursorModelData?.models?.length
       ? cursorModelData.models
       : CURSOR_MODELS.map((model) => model.id)
+    const ids = enabledCursorModels.filter((id) => liveIds.includes(id))
     return ids.map((id) => ({
       id,
       name: CURSOR_MODELS.find((model) => model.id === id)?.name ?? id,
     }))
-  }, [cursorModelData?.models])
+  }, [cursorModelData?.models, enabledCursorModels])
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === selectedSubChatCursorModelId) ||
-      cursorUiModels[0] || { id: "auto", name: "Auto" },
+      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
     [cursorUiModels, selectedSubChatCursorModelId],
   )
 
@@ -971,21 +974,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [])
 
   const transcribeMutation = trpc.voice.transcribe.useMutation()
-
-  const { data: readAloudPreference } = trpc.speech.getReadAloudForChat.useQuery({
-    chatId: subChatId,
-  })
-  const setReadAloudForChat = trpc.speech.setReadAloudForChat.useMutation({
-    onSuccess: async () => {
-      await trpcUtils.speech.getReadAloudForChat.invalidate({ chatId: subChatId })
-    },
-  })
-  const stopSpeaking = trpc.speech.stopSpeaking.useMutation()
-  const isManagedSpeechPlaying = useSyncExternalStore(
-    subscribeManagedSpeech,
-    getManagedSpeechSnapshot,
-    () => false,
-  )
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)
@@ -1445,10 +1433,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       if (command.category === "builtin") {
         switch (command.name) {
           case "clear":
-            // Create a new sub-chat (fresh conversation)
-            if (onCreateNewSubChat) {
-              onCreateNewSubChat()
-            }
+            toast.info("Create a new chat from the left sidebar")
             return
           case "plan":
             if (subChatMode !== "plan") {
@@ -1471,7 +1456,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       // insert the command and let user add arguments or press Enter to send
       editorRef.current?.setValue(`/${command.name} `)
     },
-    [subChatMode, updateMode, onCreateNewSubChat, onCompact, editorRef],
+    [subChatMode, updateMode, onCompact, editorRef],
   )
 
   // Paste handler for images, plain text, and large text (saved as files)
@@ -1719,9 +1704,11 @@ export const ChatInputArea = memo(function ChatInputArea({
           <div className="relative w-full cursor-text" onClick={() => editorRef.current?.focus()}>
             <PromptInput
               className={cn(
-                "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
-                isDragOver && "ring-2 ring-primary/50 border-primary/50",
-                isFocused && !isDragOver && "ring-2 ring-primary/50",
+                "mb-9 border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
+                isDragOver && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]",
+                isFocused &&
+                  !isDragOver &&
+                  "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.18)]",
               )}
               maxHeight={200}
               onSubmit={onSend}
@@ -1846,7 +1833,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                 />
               </div>
               <PromptInputActions className="w-full">
-                <div className="flex items-center gap-0.5 flex-1 min-w-0">
+                <div className="relative flex items-center gap-0.5 flex-1 min-w-0">
                   {/* Mode toggle (Agent/Plan) */}
                   <DropdownMenu
                     open={modeDropdownOpen}
@@ -1863,16 +1850,16 @@ export const ChatInputArea = memo(function ChatInputArea({
                     }}
                   >
                     <DropdownMenuTrigger asChild>
-                      <button className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
+                      <button className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
                         {subChatMode === "plan" ? (
-                          <PlanIcon className="h-3.5 w-3.5 shrink-0" />
+                          <PlanIcon className="h-3 w-3 shrink-0" />
                         ) : (
-                          <AgentIcon className="h-3.5 w-3.5 shrink-0" />
+                          <AgentIcon className="h-3 w-3 shrink-0" />
                         )}
                         <span className="truncate">
                           {subChatMode === "plan" ? "Plan" : "Agent"}
                         </span>
-                        <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                        <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
@@ -2011,7 +1998,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       )}
                   </DropdownMenu>
 
-                  <div className="group/model-controls flex items-center gap-0.5">
+                  <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                     <AgentModelSelector
                       open={isModelDropdownOpen}
                       onOpenChange={setIsModelDropdownOpen}
@@ -2022,6 +2009,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         onProviderChange?.(nextProvider)
                       }}
                       allowProviderSwitch={canSwitchProvider}
+                      triggerClassName="max-w-[250px] min-w-0"
                       onContinueWithProvider={
                         !canSwitchProvider ? onContinueWithProvider : undefined
                       }
@@ -2091,7 +2079,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           setSelectedSubChatCodexFastMode(nextEnabled)
                           setLastSelectedCodexFastMode(nextEnabled)
                         },
-                        isConnected: codexOnboardingCompleted,
+                        isConnected: codexIntegration?.isConnected ?? codexOnboardingCompleted,
                       }}
                       cursor={{
                         models: cursorUiModels,
@@ -2109,20 +2097,28 @@ export const ChatInputArea = memo(function ChatInputArea({
                       opencode={{
                         openrouter: {
                           label: "OpenRouter",
-                          models: (openrouterCatalog?.models || []).map((model) => ({
-                            id: `openrouter/${model.id}`,
-                            name: model.label,
-                          })),
+                          models: (openrouterCatalog?.models || [])
+                            .filter((model) =>
+                              enabledOpencodeModels.openrouter.includes(`openrouter/${model.id}`),
+                            )
+                            .map((model) => ({
+                              id: `openrouter/${model.id}`,
+                              name: model.label,
+                            })),
                           selectedModelId: selectedOpencodeModels.openrouter,
                           onSelectModel: (modelId) =>
                             setSelectedOpencodeModels({ openrouter: modelId }),
                         },
                         nanogpt: {
                           label: "NanoGPT",
-                          models: (nanogptCatalog?.models || []).map((model) => ({
-                            id: `nanogpt/${model.id}`,
-                            name: model.label,
-                          })),
+                          models: (nanogptCatalog?.models || [])
+                            .filter((model) =>
+                              enabledOpencodeModels.nanogpt.includes(`nanogpt/${model.id}`),
+                            )
+                            .map((model) => ({
+                              id: `nanogpt/${model.id}`,
+                              name: model.label,
+                            })),
                           selectedModelId: selectedOpencodeModels.nanogpt,
                           onSelectModel: (modelId) =>
                             setSelectedOpencodeModels({ nanogpt: modelId }),
@@ -2131,115 +2127,12 @@ export const ChatInputArea = memo(function ChatInputArea({
                     />
                   </div>
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="hidden sm:flex max-w-[170px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
-                        <span className="truncate">
-                          {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]}
-                        </span>
-                        <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      sideOffset={6}
-                      className="!min-w-[220px]"
-                      onCloseAutoFocus={(e) => e.preventDefault()}
-                    >
-                      {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
-                        <DropdownMenuItem
-                          key={mode}
-                          onClick={() => handlePermissionModeChange(mode)}
-                          className="justify-between gap-2"
-                        >
-                          <span>{RUN_PERMISSION_MODE_LABELS[mode]}</span>
-                          {requestedPermissionMode === mode && (
-                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                          )}
-                        </DropdownMenuItem>
-                      ))}
-                      {requestedPermissionMode === "custom" && (
-                        <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
-                          Custom toggles are stored as a Stage 1 scaffold; this run will use the
-                          backend resolved mode below.
-                        </div>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-
-                  {permissionPreview?.degraded && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="hidden sm:flex items-center gap-1 rounded-md px-1.5 py-1 text-amber-600 hover:bg-amber-500/10"
-                          aria-label="Permission limitations"
-                        >
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                          <span className="text-[11px]">Limited</span>
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent align="start" sideOffset={6} className="w-80 text-xs">
-                        <div className="space-y-2">
-                          <div className="font-medium text-foreground">
-                            Applied before this {provider === "codex" ? "Codex" : "Claude"} run
-                          </div>
-                          <p className="text-muted-foreground">{permissionPreview.reason}</p>
-                          {permissionPreview.warnings.map((warning) => (
-                            <div key={warning} className="rounded border bg-muted/20 px-2 py-1.5">
-                              {warning}
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-
-                  {requestedPermissionMode === "custom" && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button className="hidden md:flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50">
-                          Custom
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        sideOffset={6}
-                        className="w-64 text-xs"
-                        onOpenAutoFocus={(e) => e.preventDefault()}
-                      >
-                        <div className="space-y-2">
-                          <div className="font-medium text-foreground">Best-effort custom mode</div>
-                          <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
-                            {["file write", "shell", "network", "git", "browser", "MCP tools"].map(
-                              (label) => (
-                                <div key={label} className="rounded border bg-muted/20 px-2 py-1">
-                                  {label}
-                                </div>
-                              ),
-                            )}
-                          </div>
-                          <p className="text-muted-foreground">
-                            Harness adapters may not enforce every toggle yet.
-                          </p>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-
-                  {hasWorktreeChoices && (
+                  <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <button
-                          className={cn(
-                            "hidden md:flex max-w-[220px] items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                            worktreeNeedsRefresh && "text-amber-600 dark:text-amber-400",
-                          )}
-                        >
+                        <button className="flex max-w-[150px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
                           <span className="truncate">
-                            {worktreeNeedsRefresh
-                              ? `Needs refresh: ${selectedWorktreeLabel}`
-                              : `${isNonDefaultWorktree ? "Worktree: " : ""}${selectedWorktreeLabel}`}
+                            {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]}
                           </span>
                           <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                         </button>
@@ -2247,136 +2140,241 @@ export const ChatInputArea = memo(function ChatInputArea({
                       <DropdownMenuContent
                         align="start"
                         sideOffset={6}
-                        className="!min-w-[260px] max-w-[420px]"
+                        className="!min-w-[220px]"
                         onCloseAutoFocus={(e) => e.preventDefault()}
                       >
-                        {worktreeOptions.map((option) => (
+                        {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
                           <DropdownMenuItem
-                            key={option.path}
-                            onClick={() => updateTargetWorktreePath(option.path)}
-                            className="items-start justify-between gap-3"
+                            key={mode}
+                            onClick={() => handlePermissionModeChange(mode)}
+                            className="justify-between gap-2"
                           >
-                            <div className="min-w-0">
-                              <div className="truncate">
-                                {option.label}
-                                {option.isDefault ? " (default)" : ""}
-                              </div>
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {option.path}
-                              </div>
-                            </div>
-                            {selectedWorktreePath === option.path && (
-                              <CheckIcon className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            <span>{RUN_PERMISSION_MODE_LABELS[mode]}</span>
+                            {requestedPermissionMode === mode && (
+                              <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
                             )}
                           </DropdownMenuItem>
                         ))}
-                        {worktreeNeedsRefresh && (
-                          <div className="px-2 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
-                            {resolvedWorktreeStatus.error}
+                        {requestedPermissionMode === "custom" && (
+                          <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
+                            Custom toggles are stored as a Stage 1 scaffold; this run will use the
+                            backend resolved mode below.
                           </div>
                         )}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          disabled={!canCreateWorktree || createWorktreeMutation.isPending}
-                          onClick={() => createWorktreeMutation.mutate({ id: parentChatId })}
-                          className="items-start gap-3"
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "h-3.5 w-3.5 mt-0.5 shrink-0",
-                              createWorktreeMutation.isPending && "animate-spin",
-                            )}
-                          />
-                          <div className="min-w-0">
-                            <div>
-                              {createWorktreeMutation.isPending
-                                ? "Creating worktree..."
-                                : "Create new worktree"}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              Creates the git worktree, branch, and runs setup commands.
-                            </div>
-                          </div>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {/* Custom worktree path: for a checkout not in the list. */}
-                        <div
-                          className="px-2 py-1.5"
-                          onKeyDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="mb-1 text-[11px] text-muted-foreground">
-                            Custom worktree path
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <input
-                              value={customWorktreeInput}
-                              onChange={(e) => {
-                                customWorktreeValidationRef.current += 1
-                                setCustomWorktreeInput(e.target.value)
-                                setCustomWorktreeError(null)
-                              }}
-                              placeholder="/absolute/path/to/checkout"
-                              spellCheck={false}
-                              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                            />
-                            <button
-                              type="button"
-                              disabled={!isValidCustomWorktree || isValidatingCustomWorktree}
-                              onClick={async () => {
-                                const requestedPath = trimmedCustomWorktree
-                                const requestId = ++customWorktreeValidationRef.current
-                                setIsValidatingCustomWorktree(true)
-                                setCustomWorktreeError(null)
-                                try {
-                                  const result =
-                                    await trpcUtils.chats.validateCustomWorktreePath.fetch({
-                                      path: trimmedCustomWorktree,
-                                    })
-                                  if (customWorktreeValidationRef.current !== requestId) return
-                                  if (!result.valid) {
-                                    setCustomWorktreeError(result.error)
-                                    return
-                                  }
-                                  if (
-                                    result.path !== requestedPath &&
-                                    customWorktreeInput.trim() !== requestedPath
-                                  )
-                                    return
-                                  updateTargetWorktreePath(result.path)
-                                  setCustomWorktreeInput("")
-                                } catch (error) {
-                                  if (customWorktreeValidationRef.current !== requestId) return
-                                  setCustomWorktreeError(
-                                    error instanceof Error
-                                      ? error.message
-                                      : "Could not validate this checkout.",
-                                  )
-                                } finally {
-                                  if (customWorktreeValidationRef.current === requestId) {
-                                    setIsValidatingCustomWorktree(false)
-                                  }
-                                }
-                              }}
-                              className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
-                            >
-                              {isValidatingCustomWorktree ? "Checking..." : "Use"}
-                            </button>
-                          </div>
-                          {trimmedCustomWorktree && !isValidCustomWorktree && (
-                            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                              Enter an absolute path.
-                            </div>
-                          )}
-                          {customWorktreeError && (
-                            <div className="mt-1 text-[11px] text-destructive">
-                              {customWorktreeError}
-                            </div>
-                          )}
-                        </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  )}
+
+                    {permissionPreview?.degraded && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-amber-600 hover:bg-amber-500/10"
+                            aria-label="Permission limitations"
+                          >
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" sideOffset={6} className="w-64 text-xs">
+                          <div className="font-medium text-foreground">Permission warning</div>
+                          <p className="mt-1 text-muted-foreground">
+                            {provider === "codex" ? "Codex" : "Claude"} may not fully follow this
+                            permission setting.
+                          </p>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+
+                    {requestedPermissionMode === "custom" && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground">
+                            Custom
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="start"
+                          sideOffset={6}
+                          className="w-64 text-xs"
+                          onOpenAutoFocus={(e) => e.preventDefault()}
+                        >
+                          <div className="space-y-2">
+                            <div className="font-medium text-foreground">
+                              Best-effort custom mode
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
+                              {[
+                                "file write",
+                                "shell",
+                                "network",
+                                "git",
+                                "browser",
+                                "MCP tools",
+                              ].map((label) => (
+                                <div key={label} className="rounded border bg-muted/20 px-2 py-1">
+                                  {label}
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-muted-foreground">
+                              Harness adapters may not enforce every toggle yet.
+                            </p>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+
+                    {hasWorktreeChoices && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            className={cn(
+                              "flex max-w-[190px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                              worktreeNeedsRefresh && "text-amber-600 dark:text-amber-400",
+                            )}
+                          >
+                            <span className="truncate">
+                              {worktreeNeedsRefresh
+                                ? `Needs refresh: ${selectedWorktreeLabel}`
+                                : `${isNonDefaultWorktree ? "Worktree: " : ""}${selectedWorktreeLabel}`}
+                            </span>
+                            <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="start"
+                          sideOffset={6}
+                          className="!min-w-[260px] max-w-[420px]"
+                          onCloseAutoFocus={(e) => e.preventDefault()}
+                        >
+                          {worktreeOptions.map((option) => (
+                            <DropdownMenuItem
+                              key={option.path}
+                              onClick={() => updateTargetWorktreePath(option.path)}
+                              className="items-start justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate">
+                                  {option.label}
+                                  {option.isDefault ? " (default)" : ""}
+                                </div>
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {option.path}
+                                </div>
+                              </div>
+                              {selectedWorktreePath === option.path && (
+                                <CheckIcon className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                              )}
+                            </DropdownMenuItem>
+                          ))}
+                          {worktreeNeedsRefresh && (
+                            <div className="px-2 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                              {resolvedWorktreeStatus.error}
+                            </div>
+                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={!canCreateWorktree || createWorktreeMutation.isPending}
+                            onClick={() => createWorktreeMutation.mutate({ id: parentChatId })}
+                            className="items-start gap-3"
+                          >
+                            <RefreshCw
+                              className={cn(
+                                "h-3.5 w-3.5 mt-0.5 shrink-0",
+                                createWorktreeMutation.isPending && "animate-spin",
+                              )}
+                            />
+                            <div className="min-w-0">
+                              <div>
+                                {createWorktreeMutation.isPending
+                                  ? "Creating worktree..."
+                                  : "Create new worktree"}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                Creates the git worktree, branch, and runs setup commands.
+                              </div>
+                            </div>
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {/* Custom worktree path: for a checkout not in the list. */}
+                          <div
+                            className="px-2 py-1.5"
+                            onKeyDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="mb-1 text-[11px] text-muted-foreground">
+                              Custom worktree path
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <input
+                                value={customWorktreeInput}
+                                onChange={(e) => {
+                                  customWorktreeValidationRef.current += 1
+                                  setCustomWorktreeInput(e.target.value)
+                                  setCustomWorktreeError(null)
+                                }}
+                                placeholder="/absolute/path/to/checkout"
+                                spellCheck={false}
+                                className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                              />
+                              <button
+                                type="button"
+                                disabled={!isValidCustomWorktree || isValidatingCustomWorktree}
+                                onClick={async () => {
+                                  const requestedPath = trimmedCustomWorktree
+                                  const requestId = ++customWorktreeValidationRef.current
+                                  setIsValidatingCustomWorktree(true)
+                                  setCustomWorktreeError(null)
+                                  try {
+                                    const result =
+                                      await trpcUtils.chats.validateCustomWorktreePath.fetch({
+                                        path: trimmedCustomWorktree,
+                                      })
+                                    if (customWorktreeValidationRef.current !== requestId) return
+                                    if (!result.valid) {
+                                      setCustomWorktreeError(result.error)
+                                      return
+                                    }
+                                    if (
+                                      result.path !== requestedPath &&
+                                      customWorktreeInput.trim() !== requestedPath
+                                    )
+                                      return
+                                    updateTargetWorktreePath(result.path)
+                                    setCustomWorktreeInput("")
+                                  } catch (error) {
+                                    if (customWorktreeValidationRef.current !== requestId) return
+                                    setCustomWorktreeError(
+                                      error instanceof Error
+                                        ? error.message
+                                        : "Could not validate this checkout.",
+                                    )
+                                  } finally {
+                                    if (customWorktreeValidationRef.current === requestId) {
+                                      setIsValidatingCustomWorktree(false)
+                                    }
+                                  }
+                                }}
+                                className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
+                              >
+                                {isValidatingCustomWorktree ? "Checking..." : "Use"}
+                              </button>
+                            </div>
+                            {trimmedCustomWorktree && !isValidCustomWorktree && (
+                              <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                                Enter an absolute path.
+                              </div>
+                            )}
+                            {customWorktreeError && (
+                              <div className="mt-1 text-[11px] text-destructive">
+                                {customWorktreeError}
+                              </div>
+                            )}
+                          </div>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
@@ -2428,57 +2426,6 @@ export const ChatInputArea = memo(function ChatInputArea({
 
                   {/* Send/Stop/Voice button */}
                   <div className="ml-1">
-                    <Tooltip delayDuration={500}>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={cn(
-                            "mr-1 h-7 w-7 rounded-sm",
-                            readAloudPreference?.enabled &&
-                              "text-emerald-600 hover:text-emerald-700",
-                          )}
-                          disabled={setReadAloudForChat.isPending}
-                          onClick={() => {
-                            if (isManagedSpeechPlaying) {
-                              stopManagedSpeech()
-                              stopSpeaking.mutate()
-                              return
-                            }
-                            const enabled = readAloudPreference?.enabled ?? false
-                            const inherited = readAloudPreference?.inherited ?? true
-                            setReadAloudForChat.mutate({
-                              chatId: subChatId,
-                              enabled: inherited ? !enabled : enabled ? false : null,
-                            })
-                          }}
-                          aria-label={
-                            isManagedSpeechPlaying
-                              ? "Stop read-aloud"
-                              : readAloudPreference?.inherited
-                                ? "Override the global read-aloud setting for this chat"
-                                : readAloudPreference?.enabled
-                                  ? "Turn read-aloud off for this chat"
-                                  : "Return this chat to the global read-aloud setting"
-                          }
-                        >
-                          {isManagedSpeechPlaying ? (
-                            <Square className="h-3.5 w-3.5 fill-current" />
-                          ) : (
-                            <Volume2 className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {isManagedSpeechPlaying
-                          ? "Stop read-aloud"
-                          : readAloudPreference?.inherited
-                            ? `Using global setting: ${readAloudPreference.enabled ? "on" : "off"}`
-                            : readAloudPreference?.enabled
-                              ? "Read-aloud override: on"
-                              : "Read-aloud override: off; click to inherit global"}
-                      </TooltipContent>
-                    </Tooltip>
                     <AgentSendButton
                       isStreaming={isStreaming}
                       isSubmitting={false}
@@ -2510,7 +2457,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         ) {
                           onSendFromQueue(firstQueueItemId)
                         } else {
-                          onSend()
+                          void handleEditorSubmit()
                         }
                       }}
                       onStop={onStop}

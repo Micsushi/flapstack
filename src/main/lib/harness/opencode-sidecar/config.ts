@@ -1,9 +1,9 @@
 /**
- * Generated OpenCode config for OpenRouter + NanoGPT (Track E — E3).
+ * Generated OpenCode config for OpenRouter + NanoGPT (Track E - E3).
  *
  * Flapstack writes an ISOLATED per-run OpenCode config directory instead of
  * mutating the user's global `~/.config/opencode`. Provider keys come from the
- * encrypted credential store and are injected via env / config at launch — never
+ * encrypted credential store and are injected via env / config at launch - never
  * committed to repo files or logs.
  *
  * Scaffolding stage: `buildOpencodeConfig` produces the config object and

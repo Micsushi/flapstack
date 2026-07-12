@@ -22,7 +22,7 @@ function getShellEnvironment(): Record<string, string | undefined> {
 /**
  * Locate the `cursor-agent` CLI (Stage 2 Track D).
  *
- * Unlike Codex/Claude, Flapstack does NOT bundle cursor-agent — it is an
+ * Unlike Codex/Claude, Flapstack does NOT bundle cursor-agent - it is an
  * externally-installed CLI (the D0 dev machine has it at `~/.local/bin`).
  * Resolution order: an explicit override env var, then common install dirs,
  * then a PATH scan using the shell-derived environment so it matches what the

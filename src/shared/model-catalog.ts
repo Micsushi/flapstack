@@ -3,7 +3,7 @@ export type ClaudeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max"
 const CLAUDE_DEEP_EFFORTS: readonly ClaudeEffortLevel[] = ["low", "medium", "high", "xhigh", "max"]
 
 // Picker list: only concrete model versions, matching what Claude Code exposes
-// by default. Alias ids ("opus", "best", …) stay in CLAUDE_MODEL_ID_MAP so
+// by default. Alias ids ("opus", "best", ...) stay in CLAUDE_MODEL_ID_MAP so
 // previously stored selections keep resolving.
 export const CLAUDE_MODELS = [
   { id: "claude-opus-4-8", name: "Opus", version: "4.8", efforts: CLAUDE_DEEP_EFFORTS },
@@ -101,7 +101,7 @@ export const CODEX_MODELS = [
 ] as const
 
 // ---------------------------------------------------------------------------
-// Cursor (`cursor-agent` CLI) — Stage 2 Track D
+// Cursor (`cursor-agent` CLI) - Stage 2 Track D
 //
 // `cursor-agent --model <id>` accepts a bare model id, `auto`, or an id with
 // parameterized overrides, e.g. `claude-opus-4-8[context=1m,effort=high,fast=false]`.
@@ -115,7 +115,34 @@ export type CursorEffortLevel = "low" | "medium" | "high"
 
 export const CURSOR_MODELS = [
   { id: "auto", name: "Auto", efforts: [] as readonly CursorEffortLevel[] },
+  { id: "composer-2.5", name: "Composer 2.5", efforts: [] as readonly CursorEffortLevel[] },
 ] as const
+
+export type OpencodeProviderId = "openrouter" | "nanogpt"
+
+/** Small, chat-capable defaults. Full provider catalogs stay behind Add model. */
+export const DEFAULT_OPENCODE_MODELS: Record<
+  OpencodeProviderId,
+  readonly { id: string; name: string }[]
+> = {
+  openrouter: [
+    { id: "openrouter/deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+    { id: "openrouter/z-ai/glm-5.2", name: "GLM 5.2" },
+  ],
+  nanogpt: [
+    { id: "nanogpt/deepseek/deepseek-latest", name: "DeepSeek Latest" },
+    { id: "nanogpt/zai-org/glm-latest", name: "GLM Latest" },
+  ],
+}
+
+/** Migrate model ids that were previously shipped as defaults but are not chat-capable now. */
+export function normalizeOpencodeModelId(provider: OpencodeProviderId, modelId: string): string {
+  const legacy: Record<OpencodeProviderId, Set<string>> = {
+    openrouter: new Set(["openrouter/tencent/hy3:free", "openrouter/google/gemini-3-pro"]),
+    nanogpt: new Set(["nanogpt/deepseek-v3", "nanogpt/deepseek-chat"]),
+  }
+  return legacy[provider].has(modelId) ? DEFAULT_OPENCODE_MODELS[provider][0].id : modelId
+}
 
 const CURSOR_MODEL_LABELS: Record<string, string> = Object.fromEntries(
   CURSOR_MODELS.map((model) => [model.id, model.name]),
@@ -152,6 +179,29 @@ const CLAUDE_ALIAS_LABELS: Record<string, string> = {
 export function formatModelDisplayName(model?: string | null): string | null {
   const raw = model?.trim()
   if (!raw) return null
+
+  if (raw.startsWith("openrouter/") || raw.startsWith("nanogpt/")) {
+    const configuredModel = Object.values(DEFAULT_OPENCODE_MODELS)
+      .flat()
+      .find((entry) => entry.id === raw)
+    if (configuredModel) return configuredModel.name
+
+    return raw
+      .split("/")
+      .at(-1)!
+      .split("-")
+      .filter(Boolean)
+      .map((part) => {
+        const normalized = part.toLowerCase()
+        if (normalized === "deepseek") return "DeepSeek"
+        if (normalized === "gpt") return "GPT"
+        if (normalized === "glm") return "GLM"
+        return /^v?\d+(?:\.\d+)?$/.test(part)
+          ? part.toUpperCase()
+          : part.charAt(0).toUpperCase() + part.slice(1)
+      })
+      .join(" ")
+  }
 
   // Strip the effort suffix ("gpt-5.5/high", "gpt-5.5[high]") but keep [1m].
   let base = raw.split("/")[0].toLowerCase()
@@ -205,4 +255,4 @@ export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
 export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
-export const DEFAULT_CURSOR_MODEL_ID = "auto"
+export const DEFAULT_CURSOR_MODEL_ID = "composer-2.5"

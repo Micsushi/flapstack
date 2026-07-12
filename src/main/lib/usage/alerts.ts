@@ -1,4 +1,4 @@
-// Stage 2 Track B — U10: threshold alert evaluation + debounce/re-arm.
+// Stage 2 Track B - U10: threshold alert evaluation + debounce/re-arm.
 //
 // The evaluator is pure (sample + thresholds + arm-state -> alert intents) so it
 // is unit-testable. An alert fires once when a threshold is crossed and re-arms

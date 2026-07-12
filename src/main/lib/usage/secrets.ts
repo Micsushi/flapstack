@@ -1,4 +1,4 @@
-// Stage 2 Track B — usage credential storage (app side).
+// Stage 2 Track B - usage credential storage (app side).
 //
 // Provider API keys and the Discord webhook URL are credentials. They are
 // encrypted with Electron safeStorage and written to a separate file from the
@@ -6,7 +6,7 @@
 // app and its LaunchAgent daemon can both read them. Values are never logged.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { spawnSync } from "node:child_process"
+import { execFile, spawn, spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 
@@ -79,7 +79,9 @@ export function setUsageSecret(key: string, value: string | null): void {
     // The closed-app LaunchAgent runs with ELECTRON_RUN_AS_NODE and cannot
     // decrypt Electron safeStorage. Never claim a daemon credential is stored
     // when Keychain rejected it.
-    throw new Error("Unable to store the usage credential in macOS Keychain")
+    throw new Error(
+      "macOS login Keychain is locked or denied access. Unlock it in Keychain Access, then retry.",
+    )
   }
 
   if (process.platform === "win32") {
@@ -175,9 +177,59 @@ function setKeychainSecret(key: string, value: string | null): boolean {
   const result = spawnSync(
     "/usr/bin/security",
     ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", "-w"],
-    { encoding: "utf8", input: `${value}\n` },
+    { encoding: "utf8", input: `${value}\n`, timeout: 10_000 },
   )
   return result.status === 0
+}
+
+export function getUsageSecretAsync(key: string): Promise<string | null> {
+  if (process.platform !== "darwin") return Promise.resolve(getUsageSecret(key))
+  return new Promise((resolve) => {
+    execFile(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", keychainAccount(key), "-w"],
+      { encoding: "utf8", timeout: 10_000 },
+      (error, stdout) => resolve(error ? null : stdout.trim() || null),
+    )
+  })
+}
+
+export function setUsageSecretAsync(key: string, value: string | null): Promise<void> {
+  if (process.platform !== "darwin") {
+    setUsageSecret(key, value)
+    return Promise.resolve()
+  }
+  const account = keychainAccount(key)
+  const args = value
+    ? ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", "-w"]
+    : ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account]
+  return new Promise((resolve, reject) => {
+    const child = spawn("/usr/bin/security", args, {
+      stdio: [value ? "pipe" : "ignore", "ignore", "ignore"],
+      timeout: 10_000,
+    })
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      if (!error) {
+        clearRawSecret(key)
+        resolve()
+        return
+      }
+      reject(
+        new Error(
+          "macOS login Keychain is locked or denied access. Unlock it in Keychain Access, then retry.",
+        ),
+      )
+    }
+    child.once("error", finish)
+    child.once("close", (code) => {
+      if (code === 0 || (!value && code === 44)) finish()
+      else finish(new Error(`security exited with code ${code ?? "unknown"}`))
+    })
+    if (value) child.stdin?.end(`${value}\n`)
+  })
 }
 
 function linuxSecretArgs(key: string): string[] {

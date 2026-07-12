@@ -31,7 +31,12 @@ electron.vite.config.*.mjs
 # Claude binary (downloaded at build time)
 resources/bin/
 
-# Portable repository instructions are tracked; only machine-local overrides stay ignored.
+# AI/agent instruction docs stay local (vault holds the canonical copies).
+AGENTS.md
+CLAUDE.md
+openspec/AGENTS.md
+ui-design.md
+STAGE2-*.md
 CLAUDE.local.md
 AGENTS.local.md
 **/AGENTS.local.md

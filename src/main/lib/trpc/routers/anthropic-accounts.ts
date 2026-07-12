@@ -6,6 +6,7 @@ import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabas
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
 import { clearClaudeCaches } from "./claude"
+import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
 
 /**
  * Encrypt token using Electron's safeStorage
@@ -23,7 +24,7 @@ function encryptToken(token: string): string {
  */
 function decryptToken(encrypted: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    return Buffer.from(encrypted, "base64").toString("utf-8")
+    return decodePlaintextClaudeToken(encrypted)
   }
   const buffer = Buffer.from(encrypted, "base64")
   return safeStorage.decryptString(buffer)

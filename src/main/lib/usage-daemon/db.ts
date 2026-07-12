@@ -1,4 +1,4 @@
-// Stage 2 Track B — U3/U4: daemon-side connection to the shared usage DB.
+// Stage 2 Track B - U3/U4: daemon-side connection to the shared usage DB.
 //
 // The daemon runs outside Electron, so it cannot call app.getPath(). It resolves
 // the same SQLite file the app uses via FLAPSTACK_DB_PATH (set in the LaunchAgent

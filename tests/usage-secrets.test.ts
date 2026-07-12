@@ -11,6 +11,11 @@ import {
   getUsageSecret,
   setUsageSecret,
 } from "../src/main/lib/usage/secrets"
+import { getAppUsageSecret } from "../src/main/lib/usage/app-secrets"
+import {
+  clearProviderKey,
+  setProviderKey,
+} from "../src/main/lib/harness/opencode-sidecar/credentials"
 
 describe("usage credential hardening", () => {
   let temp: string
@@ -46,7 +51,7 @@ describe("usage credential hardening", () => {
   it("refuses to create a plaintext fallback when secure storage is unavailable", () => {
     vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "", stderr: "" } as never)
     expect(() => setUsageSecret("openrouter.api_key", "must-not-be-plaintext")).toThrow(
-      /Secure credential storage is unavailable|Unable to store the usage credential in macOS Keychain/,
+      /Secure credential storage is unavailable|macOS login Keychain is locked or denied access/,
     )
     const path = join(temp, "usage-secrets.json")
     expect(() => readFileSync(path, "utf8")).toThrow()
@@ -57,7 +62,7 @@ describe("usage credential hardening", () => {
     setUsageSecret("openrouter.api_key", "super-secret-value")
     const [, args, options] = vi.mocked(spawnSync).mock.calls.at(-1)!
     expect(args).not.toContain("super-secret-value")
-    expect(options).toMatchObject({ input: "super-secret-value\n" })
+    expect(options).toMatchObject({ input: "super-secret-value\n", timeout: 10_000 })
   })
 
   it("builds a Credential Manager script without embedding the plaintext value", () => {
@@ -69,5 +74,11 @@ describe("usage credential hardening", () => {
     )
     expect(script).toContain("CredWrite")
     expect(script).not.toContain(plaintext)
+  })
+
+  it("reuses a configured chat-provider key for app-side general usage", async () => {
+    setProviderKey("openrouter", "shared-openrouter-key")
+    await expect(getAppUsageSecret("openrouter.api_key")).resolves.toBe("shared-openrouter-key")
+    clearProviderKey("openrouter")
   })
 })

@@ -22,6 +22,7 @@ import {
   expiredUserQuestionsAtom,
   MODEL_ID_MAP,
   pendingUserQuestionsAtom,
+  pendingAuthRetryMessageAtom,
   subChatModelIdAtomFamily,
   subChatClaudeEffortAtomFamily,
 } from "../atoms"
@@ -337,13 +338,20 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                   appStore.set(pendingUserQuestionsAtom, newMap)
                 }
                 // NOTE: Do NOT clear expired questions here. After a timeout,
-                // the agent continues and emits new chunks — that's expected.
+                // the agent continues and emits new chunks - that's expected.
                 // Expired questions should persist until the user answers,
                 // dismisses, or sends a new message.
               }
 
               // Handle authentication errors - show Claude login modal
               if (chunk.type === "auth-error") {
+                appStore.set(pendingAuthRetryMessageAtom, {
+                  subChatId: this.config.subChatId,
+                  provider: "claude-code",
+                  prompt,
+                  ...(images.length > 0 ? { images } : {}),
+                  readyToRetry: false,
+                })
                 toast.error("Claude Code authentication required", {
                   description:
                     "Flapstack uses your local Claude Code credentials. Start Claude login, then retry this message.",

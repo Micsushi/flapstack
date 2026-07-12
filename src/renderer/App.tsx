@@ -79,7 +79,7 @@ function AppContent() {
     if (!currentChatId) return
     window.desktopApi.claimChat(currentChatId).then((result) => {
       if (!result.ok) {
-        // Another window already has this chat — clear our selection
+        // Another window already has this chat - clear our selection
         setSelectedChatId(null)
       }
     })

@@ -3,7 +3,13 @@ import {
   accountLabel,
   buildCurrentUsageSummaries,
   buildUsageHistorySeries,
+  compactHistoryPoints,
   formatQuotaUsage,
+  prepareUsageHistorySeries,
+  quotaPercentRemaining,
+  quotaPercentUsed,
+  usageSeverity,
+  usagePaceStatus,
 } from "../src/renderer/components/dialogs/settings-tabs/agents-usage-helpers"
 
 describe("usage dashboard helpers", () => {
@@ -124,6 +130,95 @@ describe("usage dashboard helpers", () => {
     ])
   })
 
+  it("matches OnWatch ranges and cumulative/per-period graph modes", () => {
+    const base = Date.parse("2026-07-11T12:00:00Z")
+    const source = [
+      {
+        key: "quota",
+        label: "codex · me · five_hour",
+        periodStrategy: "delta" as const,
+        points: [
+          { at: base - 8 * 60 * 60 * 1_000, value: 5 },
+          { at: base - 60 * 60 * 1_000, value: 20 },
+          { at: base - 30 * 60 * 1_000, value: 35 },
+        ],
+      },
+    ]
+
+    expect(prepareUsageHistorySeries(source, "quota", "6h", "cumulative", base)[0]?.points).toEqual(
+      [
+        { at: base - 60 * 60 * 1_000, value: 20 },
+        { at: base - 30 * 60 * 1_000, value: 35 },
+      ],
+    )
+    expect(prepareUsageHistorySeries(source, "quota", "6h", "period", base)[0]?.points).toEqual([
+      { at: base - 45 * 60 * 1_000, value: 0 },
+      { at: base - 15 * 60 * 1_000, value: 15 },
+    ])
+  })
+
+  it("sums observed cost rows in per-period buckets without inventing empty buckets", () => {
+    const base = Date.parse("2026-07-11T12:00:00Z")
+    const [series] = prepareUsageHistorySeries(
+      [
+        {
+          key: "cost",
+          label: "openrouter · default",
+          periodStrategy: "sum" as const,
+          points: [
+            { at: base - 10 * 60 * 1_000, value: 0.02 },
+            { at: base - 5 * 60 * 1_000, value: 0.03 },
+          ],
+        },
+      ],
+      "cost",
+      "1h",
+      "period",
+      base,
+    )
+
+    expect(series?.points).toHaveLength(2)
+    expect(series?.points.reduce((sum, point) => sum + point.value, 0)).toBeCloseTo(0.05)
+  })
+
+  it("builds cumulative cost growth and limits small charts to twenty-four points", () => {
+    const base = Date.parse("2026-07-11T12:00:00Z")
+    const points = Array.from({ length: 100 }, (_, index) => ({
+      at: base - (100 - index) * 60_000,
+      value: 0.25,
+    }))
+    const [series] = prepareUsageHistorySeries(
+      [{ key: "cost", label: "codex", periodStrategy: "sum", points }],
+      "cost",
+      "24h",
+      "cumulative",
+      base,
+    )
+    expect(series?.points).toHaveLength(24)
+    expect(series?.points.at(-1)?.value).toBe(25)
+  })
+
+  it("places provider history buckets on their real window instead of poll time", () => {
+    const [series] = buildUsageHistorySeries(
+      [
+        {
+          providerId: "codex",
+          accountTag: "team",
+          sourceTag: "organization-cost",
+          capturedAt: "2026-07-11T12:00:00Z",
+          windowStart: "2026-07-09T00:00:00Z",
+          windowEnd: "2026-07-10T00:00:00Z",
+          costUsd: 2.5,
+        },
+      ],
+      "cost",
+    )
+
+    expect(series?.label).toBe("codex · team · organization-cost")
+    expect(series?.periodStrategy).toBe("sum")
+    expect(series?.points[0]?.at).toBe(Date.parse("2026-07-09T00:00:00Z"))
+  })
+
   it("keeps a newer estimate instead of mixing it with an older reported cost", () => {
     const [summary] = buildCurrentUsageSummaries([
       {
@@ -171,5 +266,73 @@ describe("usage dashboard helpers", () => {
         quotaUnit: "usd-micros",
       }),
     ).toBe("25% used")
+  })
+
+  it("derives bounded used and remaining percentages for headroom cards", () => {
+    expect(quotaPercentUsed({ quotaUsed: 30, quotaLimit: 120 })).toBe(25)
+    expect(quotaPercentRemaining({ quotaUsed: 30, quotaLimit: 120 })).toBe(75)
+    expect(quotaPercentRemaining({ percentUsed: 140 })).toBe(0)
+    expect(quotaPercentRemaining({})).toBeNull()
+  })
+
+  it("uses consistent utilization severity thresholds", () => {
+    expect(usageSeverity(20)).toBe("healthy")
+    expect(usageSeverity(50)).toBe("warning")
+    expect(usageSeverity(80)).toBe("danger")
+    expect(usageSeverity(95)).toBe("critical")
+  })
+
+  it("matches OnWatch weekly pace states against time until reset", () => {
+    const now = Date.parse("2026-05-27T12:00:00Z")
+    const reset = now + 4 * 24 * 60 * 60 * 1_000
+    const cases = [
+      [43, reset, "healthy", "On pace"],
+      [53, reset, "warning", "Overpace: extra +10% | time-left +18%"],
+      [72, reset, "critical", "Very overpace: extra +29% | time-left +51%"],
+      [28, reset, "very_underuse", "Very under pace: reserve +15% | elapsed +35%"],
+      [11, now + 6 * 24 * 60 * 60 * 1_000, "underuse", "Under pace: reserve +3% | elapsed +23%"],
+    ] as const
+
+    for (const [used, resetsAt, status, label] of cases) {
+      expect(usagePaceStatus(used, "seven_day", resetsAt, now)).toMatchObject({
+        status,
+        label,
+        paceApplied: true,
+      })
+    }
+    expect(usagePaceStatus(80, "five_hour", reset, now)).toMatchObject({
+      status: "danger",
+      paceApplied: false,
+    })
+  })
+
+  it("keeps quota history points data-only so series colors remain fixed", () => {
+    const capturedAt = Date.parse("2026-05-27T12:00:00Z")
+    const [series] = buildUsageHistorySeries(
+      [
+        {
+          providerId: "codex",
+          metricKey: "seven_day",
+          capturedAt,
+          resetAt: capturedAt + 4 * 24 * 60 * 60 * 1_000,
+          percentUsed: 72,
+        },
+      ],
+      "quota",
+    )
+    expect(series?.points[0]).toEqual({ at: capturedAt, value: 72 })
+  })
+
+  it("compacts dense history without losing its full span or reset extremes", () => {
+    const points = Array.from({ length: 1_000 }, (_, at) => ({
+      at,
+      value: at === 500 ? 100 : at === 501 ? 0 : at % 100,
+    }))
+    const compacted = compactHistoryPoints(points, 100)
+    expect(compacted.length).toBeLessThanOrEqual(100)
+    expect(compacted[0]).toEqual(points[0])
+    expect(compacted.at(-1)).toEqual(points.at(-1))
+    expect(compacted.some((point) => point.value === 100)).toBe(true)
+    expect(compacted.some((point) => point.at === 501 && point.value === 0)).toBe(true)
   })
 })

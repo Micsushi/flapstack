@@ -187,7 +187,7 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
       saveToLS(chatId, "active", activeSubChatId)
     }
 
-    // Load split panes — migrate from old splitSubChatId/splitOriginId if needed
+    // Load split panes - migrate from old splitSubChatId/splitOriginId if needed
     let splitPaneIds = loadFromLS<string[]>(chatId, "splitPanes", [])
     if (splitPaneIds.length === 0) {
       const oldSplit = loadFromLS<string | null>(chatId, "split", null)
@@ -235,7 +235,7 @@ export const useAgentSubChatStore = create<AgentSubChatStore>((set, get) => ({
 
   setActiveSubChat: (subChatId) => {
     const { chatId } = get()
-    // Split group is independent — navigating tabs never touches it.
+    // Split group is independent - navigating tabs never touches it.
     // Split view shows automatically when active tab is part of the group.
     set({ activeSubChatId: subChatId })
     if (chatId) saveToLS(chatId, "active", subChatId)

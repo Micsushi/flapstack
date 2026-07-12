@@ -414,19 +414,45 @@ describe("usage Track B scaffolds", () => {
 
   it("collapses daemon-poll and app-poll for the same window to one dedupe key", () => {
     const windowEnd = new Date("2026-07-09T12:00:00Z")
+    const capturedAt = new Date("2026-07-09T11:00:30Z")
     const daemon = deriveDedupeKey({
       providerId: "cursor",
       source: "daemon-poll",
       costQuality: "provider-reported",
       windowEnd,
+      capturedAt,
     })
     const app = deriveDedupeKey({
       providerId: "cursor",
       source: "app-poll",
       costQuality: "provider-reported",
       windowEnd,
+      capturedAt,
     })
     expect(daemon).toBe(app)
+  })
+
+  it("retains poll snapshots from different minutes inside one quota window", () => {
+    const windowEnd = new Date("2026-07-09T17:00:00Z")
+    const first = deriveDedupeKey({
+      providerId: "codex",
+      source: "startup-reconcile",
+      sourceTag: "personal-oauth",
+      metricKey: "five_hour",
+      costQuality: "provider-reported",
+      capturedAt: new Date("2026-07-09T11:00:30Z"),
+      windowEnd,
+    })
+    const second = deriveDedupeKey({
+      providerId: "codex",
+      source: "startup-reconcile",
+      sourceTag: "personal-oauth",
+      metricKey: "five_hour",
+      costQuality: "provider-reported",
+      capturedAt: new Date("2026-07-09T11:01:30Z"),
+      windowEnd,
+    })
+    expect(first).not.toBe(second)
   })
 
   it("collapses timestamp-only poll snapshots within one minute", () => {
@@ -672,6 +698,11 @@ describe("usage Track B scaffolds", () => {
     first.providers.codex.enabled = true
     const second = normalizeUsageSettings({})
     expect(second.providers.codex.enabled).toBe(false)
+  })
+
+  it("keeps provider polling opt-in when settings are absent", () => {
+    const settings = normalizeUsageSettings({})
+    expect(Object.values(settings.providers).every((provider) => !provider.enabled)).toBe(true)
   })
 
   it("allows users to clear all quota thresholds", () => {

@@ -1,5 +1,5 @@
 /**
- * OpenCode sidecar run orchestrator (Track E — E2/E4/E5/E6 glue).
+ * OpenCode sidecar run orchestrator (Track E - E2/E4/E5/E6 glue).
  *
  * Ties launcher + client + event bridge + approval bridge into one async
  * generator of NormalizedSidecarEvents. The tRPC router maps these to
@@ -30,6 +30,10 @@ export function isSidecarRuntimeEnabled(): boolean {
   return process.env.FLAPSTACK_OPENCODE_SIDECAR_ENABLED !== "0"
 }
 
+export function isStaleSidecarSessionError(error: unknown): boolean {
+  return error instanceof Error && /session\.fork failed:\s*HTTP 404/i.test(error.message)
+}
+
 /**
  * Drive one sidecar run. Yields normalized events until the session goes idle,
  * errors, or is cancelled. Approval requests are routed through `onApproval`
@@ -50,7 +54,7 @@ export async function* runSidecarSession(
   if (!isSidecarRuntimeEnabled()) {
     yield {
       kind: "error",
-      errorText: "OpenCode sidecar runtime is disabled by FLAPSTACK_OPENCODE_SIDECAR_ENABLED=0.",
+      errorText: "The provider runtime is disabled by the current environment configuration.",
     }
     yield { kind: "done" }
     return
@@ -76,7 +80,7 @@ export async function* runSidecarSession(
   if (!started.ok) {
     yield {
       kind: "error",
-      errorText: `${started.limitation.message} — ${started.limitation.remedy}`,
+      errorText: `${started.limitation.message} - ${started.limitation.remedy}`,
     }
     yield { kind: "done" }
     return
@@ -95,11 +99,21 @@ export async function* runSidecarSession(
 
     yield { kind: "phase", phase: "creating-session" }
     const permission = buildOpencodeSessionPermissions(input.permissionMode)
-    const sessionId = input.resumeSessionId
-      ? await client.forkSession(input.resumeSessionId, input.signal)
-      : await client.createSession(permission, input.signal)
-    if (input.resumeSessionId)
-      await client.setSessionPermissions(sessionId, permission, input.signal)
+    let sessionId: string | null = null
+    if (input.resumeSessionId) {
+      try {
+        sessionId = await client.forkSession(input.resumeSessionId, input.signal)
+        await client.setSessionPermissions(sessionId, permission, input.signal)
+      } catch (error) {
+        // Stale session id (sidecar restarted or storage reset) - start fresh        // instead of failing the whole run with a 404.
+        if (isStaleSidecarSessionError(error)) {
+          sessionId = null
+        } else {
+          throw error
+        }
+      }
+    }
+    if (!sessionId) sessionId = await client.createSession(permission, input.signal)
     yield { kind: "session-start", sessionId }
 
     yield { kind: "phase", phase: "streaming" }
@@ -136,7 +150,7 @@ export async function* streamEvents(ctx: {
   const resp = ctx.eventResponse
   const body = resp.body
   if (!body) {
-    yield { kind: "error", errorText: "OpenCode event stream returned no body." }
+    yield { kind: "error", errorText: "The provider event stream returned no data." }
     return
   }
 
@@ -206,7 +220,7 @@ export async function* streamEvents(ctx: {
     if (!input.signal?.aborted && !sawTerminalEvent) {
       yield {
         kind: "error",
-        errorText: "OpenCode event stream ended before the run reached a terminal state.",
+        errorText: "The provider event stream ended before the run completed.",
       }
     }
   } finally {

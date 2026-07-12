@@ -1,7 +1,7 @@
-// Stage 2 Track B — usage tracking settings (file-based, no Electron hard
+// Stage 2 Track B - usage tracking settings (file-based, no Electron hard
 // dependency so the daemon can read the same config). Mirrors the speech
 // settings helper. Secrets (provider keys, Discord webhook URL) are NOT stored
-// here — they live in the OS credential store; this file holds only non-secret
+// here - they live in the OS credential store; this file holds only non-secret
 // config plus a boolean of whether a secret is present.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -52,6 +52,8 @@ const defaultThresholds: UsageAlertThresholds = {
 
 function defaultProviderSettings(): UsageProviderSettings {
   return {
+    // Polling can make network requests and inspect local credentials, so it
+    // stays opt-in.
     enabled: false,
     cadenceSecondsOverride: null,
     thresholds: { ...defaultThresholds, quotaPercent: [...defaultThresholds.quotaPercent] },

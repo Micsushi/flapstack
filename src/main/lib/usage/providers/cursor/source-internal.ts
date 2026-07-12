@@ -1,4 +1,4 @@
-// Stage 2 Track B — U7: Cursor usage source #1 (internal app endpoints).
+// Stage 2 Track B - U7: Cursor usage source #1 (internal app endpoints).
 //
 // Ports onWatch `internal/api/cursor_client.go` + `cursor_types.go`. Uses the
 // undocumented Connect RPC endpoint that Cursor's own app calls, plus the OAuth

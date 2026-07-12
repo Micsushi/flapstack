@@ -10,13 +10,7 @@ import {
   ttsAdapterImplementations,
   ttsAdapters,
 } from "../../speech/registry"
-import { READ_ALOUD_INSTRUCTION } from "../../speech/read-aloud-instruction"
-import {
-  getReadAloudEnabled,
-  getVoiceSettings,
-  setReadAloudForChat,
-  setVoiceSettings,
-} from "../../speech/settings"
+import { getVoiceSettings, setVoiceSettings } from "../../speech/settings"
 import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
 import { resolveSpeechText } from "../../speech/speech-text"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
@@ -65,25 +59,14 @@ export const speechRouter = router({
         whisperCppBinPath: z.string().nullable().optional(),
         ttsAdapterId: z.string().optional(),
         voiceId: z.string().nullable().optional(),
+        voiceByTtsAdapterId: z.record(z.string(), z.string().nullable()).optional(),
         rate: z.number().min(0.5).max(2).optional(),
-        autoReadAloud: z.boolean().optional(),
         preferOffline: z.boolean().optional(),
       }),
     )
     .mutation(({ input }) => {
       return setVoiceSettings(input)
     }),
-
-  getReadAloudForChat: publicProcedure
-    .input(z.object({ chatId: z.string().min(1) }))
-    .query(({ input }) => ({
-      enabled: getReadAloudEnabled(input.chatId),
-      inherited: !Object.hasOwn(getVoiceSettings().readAloudByChatId, input.chatId),
-    })),
-
-  setReadAloudForChat: publicProcedure
-    .input(z.object({ chatId: z.string().min(1), enabled: z.boolean().nullable() }))
-    .mutation(({ input }) => setReadAloudForChat(input.chatId, input.enabled)),
 
   listAdapters: publicProcedure.query(async () => {
     const settings = getVoiceSettings()
@@ -164,7 +147,7 @@ export const speechRouter = router({
       const resolvedVoiceId = resolveTtsVoiceId(
         settings.ttsAdapterId,
         adapter.id,
-        input.voiceId ?? settings.voiceId,
+        input.voiceId ?? settings.voiceByTtsAdapterId[settings.ttsAdapterId] ?? settings.voiceId,
       )
       const rate = input.rate ?? settings.rate
       const synthesisKey = createSpeechSynthesisKey({
@@ -180,7 +163,13 @@ export const speechRouter = router({
             synthesisKey,
           })
         : null
-      if (reusable) return { ...reusable.result, skipped: false as const, artifactId: reusable.id }
+      if (reusable)
+        return {
+          ...reusable.result,
+          spokenText: text,
+          skipped: false as const,
+          artifactId: reusable.id,
+        }
       const ttsInput = {
         text,
         voiceId: resolvedVoiceId,
@@ -205,7 +194,12 @@ export const speechRouter = router({
             rate,
           })
         : null
-      return { ...result, skipped: false as const, artifactId: artifact?.id ?? null }
+      return {
+        ...result,
+        spokenText: text,
+        skipped: false as const,
+        artifactId: artifact?.id ?? null,
+      }
     }),
 
   stopSpeaking: publicProcedure.mutation(async ({ ctx }) => {
@@ -238,12 +232,6 @@ export const speechRouter = router({
         error: error instanceof Error ? error.message : String(error),
       }
     }
-  }),
-
-  // The read-aloud Spoken:/Displayed: instruction, for display in settings and
-  // for non-Claude harness prompt injection (Codex/Cursor) done elsewhere.
-  getReadAloudInstruction: publicProcedure.query(() => {
-    return { instruction: READ_ALOUD_INSTRUCTION }
   }),
 
   searchHistory: publicProcedure

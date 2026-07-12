@@ -67,11 +67,34 @@ import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-d
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { SettingsContent } from "../../settings/settings-content"
 import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../../../components/ui/context-menu"
+import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
 // Desktop mock
 const useIsAdmin = () => false
 
+function readStoredProjectColors(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  try {
+    return JSON.parse(localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}") as Record<
+      string,
+      string
+    >
+  } catch {
+    return {}
+  }
+}
+
 // Main Component
 export function AgentsContent() {
+  const openChatTabsRef = useRef<HTMLDivElement>(null)
+  const [openChatTabsHovered, setOpenChatTabsHovered] = useState(false)
+  const [openChatScrollbar, setOpenChatScrollbar] = useState({ left: 0, width: 0 })
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
   const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
@@ -212,6 +235,7 @@ export function AgentsContent() {
     { teamId: selectedTeamId! },
     { enabled: !!selectedTeamId },
   )
+  const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
 
   // Fetch all projects for git info (like sidebar does)
   const { data: projects } = trpc.projects.list.useQuery()
@@ -236,12 +260,38 @@ export function AgentsContent() {
   }, [selectedChatId, selectedChatIsRemote, setOpenChatIds])
 
   const openChatTabs = useMemo(() => {
-    if (!agentChats || openChatIds.length === 0) return []
-    const chatsById = new Map(agentChats.map((chat) => [chat.id, chat]))
-    return openChatIds
-      .map((id) => chatsById.get(id))
-      .filter((chat): chat is NonNullable<typeof agentChats>[number] => Boolean(chat))
-  }, [agentChats, openChatIds])
+    return resolveVisibleOpenChatTabs({
+      chats: agentChats,
+      archivedChats,
+      selectedChat: chatData ?? undefined,
+      openChatIds,
+      selectedChatId,
+      selectedChatIsRemote,
+    })
+  }, [agentChats, archivedChats, chatData, openChatIds, selectedChatId, selectedChatIsRemote])
+  const openChatProjectColors = readStoredProjectColors()
+
+  const updateOpenChatScrollbar = useCallback(() => {
+    const element = openChatTabsRef.current
+    if (!element || element.scrollWidth <= element.clientWidth) {
+      setOpenChatScrollbar({ left: 0, width: 0 })
+      return
+    }
+
+    const width = Math.max(24, (element.clientWidth / element.scrollWidth) * element.clientWidth)
+    const maxLeft = element.clientWidth - width
+    const left = (element.scrollLeft / (element.scrollWidth - element.clientWidth)) * maxLeft
+    setOpenChatScrollbar({ left, width })
+  }, [])
+
+  useEffect(() => {
+    updateOpenChatScrollbar()
+    const element = openChatTabsRef.current
+    if (!element) return
+    const observer = new ResizeObserver(updateOpenChatScrollbar)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [openChatTabs, updateOpenChatScrollbar])
 
   const scopeChats = useMemo(() => {
     if (!agentChats || !selectedChatScope) return []
@@ -268,13 +318,13 @@ export function AgentsContent() {
   }, [agentChats, selectedChatScope])
 
   useEffect(() => {
-    if (!agentChats || openChatIds.length === 0) return
-    const validIds = new Set(agentChats.map((chat) => chat.id))
+    if (!agentChats || !archivedChats || openChatIds.length === 0) return
+    const validIds = new Set([...agentChats, ...archivedChats].map((chat) => chat.id))
     const filtered = openChatIds.filter((id) => validIds.has(id))
     if (filtered.length !== openChatIds.length) {
       setOpenChatIds(filtered)
     }
-  }, [agentChats, openChatIds, setOpenChatIds])
+  }, [agentChats, archivedChats, openChatIds, setOpenChatIds])
 
   const handleSelectOpenChatTab = useCallback(
     async (chatId: string) => {
@@ -318,6 +368,38 @@ export function AgentsContent() {
       openChatIds,
       selectedChatId,
       handleSelectOpenChatTab,
+      setChatSourceMode,
+      setOpenChatIds,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+    ],
+  )
+
+  const handleCloseOpenChatTabs = useCallback(
+    (chatIds: string[], fallbackChatId?: string) => {
+      const closingIds = new Set(chatIds)
+      chatIds.forEach((chatId) => window.desktopApi?.releaseChat?.(chatId))
+      const next = openChatIds.filter((chatId) => !closingIds.has(chatId))
+      setOpenChatIds(next)
+
+      if (!selectedChatId || !closingIds.has(selectedChatId)) return
+
+      const nextSelectedId =
+        (fallbackChatId && next.includes(fallbackChatId) ? fallbackChatId : undefined) ??
+        next[0] ??
+        null
+      if (nextSelectedId) {
+        void handleSelectOpenChatTab(nextSelectedId)
+      } else {
+        setSelectedChatId(null)
+        setSelectedChatIsRemote(false)
+        setChatSourceMode("local")
+      }
+    },
+    [
+      handleSelectOpenChatTab,
+      openChatIds,
+      selectedChatId,
       setChatSourceMode,
       setOpenChatIds,
       setSelectedChatId,
@@ -1059,40 +1141,103 @@ export function AgentsContent() {
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (
-                <div className="h-9 shrink-0 flex items-end gap-0 overflow-x-auto border-b border-border/70 bg-background/95 px-1">
-                  {openChatTabs.map((chat) => {
-                    const isActive = chat.id === selectedChatId
-                    return (
-                      <div
-                        key={chat.id}
-                        className={[
-                          "group flex h-8 max-w-56 min-w-28 items-center gap-1.5 border border-b-0 px-2 text-left text-xs transition-colors",
-                          isActive
-                            ? "bg-background text-foreground border-border"
-                            : "bg-muted/35 text-muted-foreground border-transparent hover:bg-muted/70 hover:text-foreground",
-                        ].join(" ")}
-                      >
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 truncate text-left"
-                          onClick={() => handleSelectOpenChatTab(chat.id)}
-                        >
-                          {chat.name || "New Chat"}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Close ${chat.name || "chat"}`}
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-60 hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleCloseOpenChatTab(chat.id)
-                          }}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )
-                  })}
+                <div
+                  className="relative h-[43px] shrink-0 border-b border-border bg-muted/30"
+                  onMouseEnter={() => {
+                    setOpenChatTabsHovered(true)
+                    updateOpenChatScrollbar()
+                  }}
+                  onMouseLeave={() => setOpenChatTabsHovered(false)}
+                >
+                  <div
+                    ref={openChatTabsRef}
+                    className="scrollbar-hide flex h-full items-start overflow-x-auto px-2 pt-1"
+                    onScroll={updateOpenChatScrollbar}
+                  >
+                    {openChatTabs.map((chat, tabIndex) => {
+                      const isActive = chat.id === selectedChatId
+                      const underlineColor = resolveOpenChatTabUnderlineColor(
+                        chat,
+                        openChatProjectColors,
+                      )
+                      const tabsToRight = openChatTabs.slice(tabIndex + 1).map(({ id }) => id)
+                      const otherTabs = openChatTabs
+                        .filter(({ id }) => id !== chat.id)
+                        .map(({ id }) => id)
+                      return (
+                        <ContextMenu key={chat.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              className={[
+                                "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 pt-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
+                                isActive
+                                  ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
+                                  : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
+                              ].join(" ")}
+                            >
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate text-left"
+                                onClick={() => handleSelectOpenChatTab(chat.id)}
+                              >
+                                {chat.name || "New Chat"}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Close ${chat.name || "chat"}`}
+                                className={[
+                                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100",
+                                  isActive ? "opacity-60" : "opacity-0",
+                                ].join(" ")}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleCloseOpenChatTab(chat.id)
+                                }}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                              <span
+                                aria-hidden
+                                className="pointer-events-none absolute inset-x-0 top-0 h-0.5 opacity-[0.55]"
+                                style={{ backgroundColor: underlineColor }}
+                              />
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-48">
+                            <ContextMenuItem onSelect={() => handleCloseOpenChatTab(chat.id)}>
+                              Close
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={otherTabs.length === 0}
+                              onSelect={() => handleCloseOpenChatTabs(otherTabs, chat.id)}
+                            >
+                              Close Other Tabs
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              disabled={tabsToRight.length === 0}
+                              onSelect={() => handleCloseOpenChatTabs(tabsToRight, chat.id)}
+                            >
+                              Close Tabs to the Right
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem onSelect={() => handleCloseOpenChatTabs(openChatIds)}>
+                              Close All Tabs
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      )
+                    })}
+                  </div>
+                  {openChatScrollbar.width > 0 && (
+                    <span
+                      aria-hidden
+                      className={[
+                        "pointer-events-none absolute bottom-0 h-0.5 bg-muted-foreground/45 transition-opacity duration-100",
+                        openChatTabsHovered ? "opacity-100" : "opacity-0",
+                      ].join(" ")}
+                      style={{ left: openChatScrollbar.left, width: openChatScrollbar.width }}
+                    />
+                  )}
                 </div>
               )}
               <ChatView

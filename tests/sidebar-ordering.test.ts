@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
 
-import { buildOrderedIds, moveIdInOrder } from "../src/renderer/features/sidebar/sidebar-ordering"
+import {
+  buildOrderedIds,
+  moveIdInOrder,
+  resolveBoundaryHighlightIds,
+  resolveMoveIndicatorIds,
+  resolveSidebarDragCursor,
+  resolveTaskEndDropTarget,
+  resolveTaskGroupDropTarget,
+  resolveTaskHeaderDropPosition,
+} from "../src/renderer/features/sidebar/sidebar-ordering"
 
 describe("sidebar ordering", () => {
   it("moves a mixed project child up before a task in one drop", () => {
@@ -41,5 +50,197 @@ describe("sidebar ordering", () => {
       "chat:a",
       "task:one",
     ])
+  })
+
+  it("uses the full expanded task header as an inside-task target", () => {
+    expect(
+      resolveTaskHeaderDropPosition({
+        isTaskHeader: true,
+        splitAfterTaskZone: false,
+        relativeY: 0.99,
+      }),
+    ).toBe("inside")
+  })
+
+  it("splits the full task group for task-on-task reordering", () => {
+    expect(
+      resolveTaskGroupDropTarget({
+        draggingKind: "project-child",
+        draggingId: "task:source",
+        targetTaskId: "target",
+        relativeY: 0.49,
+        offsetY: 20,
+      }),
+    ).toEqual({ kind: "project-child", id: "task:target", position: "before" })
+    expect(
+      resolveTaskGroupDropTarget({
+        draggingKind: "project-child",
+        draggingId: "task:source",
+        targetTaskId: "target",
+        relativeY: 0.5,
+        offsetY: 20,
+      }),
+    ).toEqual({ kind: "project-child", id: "task:target", position: "after" })
+  })
+
+  it("highlights both tasks around a shared task boundary", () => {
+    const items = [
+      { id: "task:one", groupId: "project-a" },
+      { id: "task:two", groupId: "project-a" },
+    ]
+
+    expect(
+      resolveBoundaryHighlightIds({
+        items,
+        targetId: "task:two",
+        position: "before",
+      }),
+    ).toEqual(["task:two", "task:one"])
+    expect(
+      resolveBoundaryHighlightIds({
+        items,
+        targetId: "task:one",
+        position: "after",
+      }),
+    ).toEqual(["task:one", "task:two"])
+  })
+
+  it("does not treat inside-task drops as shared boundaries", () => {
+    expect(
+      resolveBoundaryHighlightIds({
+        items: [
+          { id: "task:one", groupId: "project-a" },
+          { id: "task:two", groupId: "project-a" },
+        ],
+        targetId: "task:two",
+        position: "inside",
+      }),
+    ).toEqual([])
+  })
+
+  it("highlights both items around task-chat and chat-chat boundaries", () => {
+    const items = [
+      { id: "task:one", groupId: "project-a" },
+      { id: "chat:one", groupId: "project-a" },
+      { id: "chat:two", groupId: "project-a" },
+    ]
+
+    expect(
+      resolveBoundaryHighlightIds({ items, targetId: "chat:one", position: "before" }),
+    ).toEqual(["chat:one", "task:one"])
+    expect(resolveBoundaryHighlightIds({ items, targetId: "chat:one", position: "after" })).toEqual(
+      ["chat:one", "chat:two"],
+    )
+  })
+
+  it("uses the task top edge as a before-task target for chats", () => {
+    expect(
+      resolveTaskGroupDropTarget({
+        draggingKind: "project-child",
+        draggingId: "chat:source",
+        targetTaskId: "target",
+        relativeY: 0.05,
+        offsetY: 8,
+      }),
+    ).toEqual({ kind: "project-child", id: "task:target", position: "before" })
+    expect(
+      resolveTaskGroupDropTarget({
+        draggingKind: "task-chat",
+        draggingId: "chat:source",
+        targetTaskId: "target",
+        relativeY: 0.1,
+        offsetY: 8.1,
+      }),
+    ).toBeNull()
+  })
+
+  it("splits collapsed and empty task headers halfway", () => {
+    expect(
+      resolveTaskHeaderDropPosition({
+        isTaskHeader: true,
+        splitAfterTaskZone: true,
+        relativeY: 0.49,
+      }),
+    ).toBe("inside")
+    expect(
+      resolveTaskHeaderDropPosition({
+        isTaskHeader: true,
+        splitAfterTaskZone: true,
+        relativeY: 0.5,
+      }),
+    ).toBe("after")
+  })
+
+  it("splits the last task chat between last-item and after-task targets", () => {
+    expect(
+      resolveTaskEndDropTarget({
+        taskId: "task-one",
+        targetKind: "task-chat",
+        targetId: "chat-last",
+        isOnlyTaskChat: false,
+        relativeY: 0.49,
+      }),
+    ).toEqual({
+      kind: "task-chat",
+      id: "chat-last",
+      position: "after",
+    })
+    expect(
+      resolveTaskEndDropTarget({
+        taskId: "task-one",
+        targetKind: "task-chat",
+        targetId: "chat-last",
+        isOnlyTaskChat: false,
+        relativeY: 0.5,
+      }),
+    ).toEqual({
+      kind: "project-child",
+      id: "task:task-one",
+      position: "after",
+    })
+  })
+
+  it("uses the top half of a single task chat as the first-item target", () => {
+    expect(
+      resolveTaskEndDropTarget({
+        taskId: "task-one",
+        targetKind: "task-chat",
+        targetId: "only-chat",
+        isOnlyTaskChat: true,
+        relativeY: 0.49,
+      }),
+    ).toEqual({ kind: "task-chat", id: "only-chat", position: "before" })
+  })
+
+  it("uses distinct cursors for task insertion and after-task movement", () => {
+    expect(resolveSidebarDragCursor({ hasValidDropTarget: true, isInsertionTarget: true })).toBe(
+      "copy",
+    )
+    expect(resolveSidebarDragCursor({ hasValidDropTarget: true, isInsertionTarget: false })).toBe(
+      "move",
+    )
+    expect(resolveSidebarDragCursor({ hasValidDropTarget: false, isInsertionTarget: false })).toBe(
+      "grabbing",
+    )
+  })
+
+  it("puts insertion indicators on the task and its new project", () => {
+    expect(
+      resolveMoveIndicatorIds({
+        targetScope: "task",
+        targetProjectId: "project-b",
+        targetTaskId: "task-b",
+        sourceProjectId: "project-a",
+      }),
+    ).toEqual({ taskId: "task-b", projectId: "project-b" })
+
+    expect(
+      resolveMoveIndicatorIds({
+        targetScope: "task",
+        targetProjectId: "project-a",
+        targetTaskId: "task-b",
+        sourceProjectId: "project-a",
+      }),
+    ).toEqual({ taskId: "task-b", projectId: null })
   })
 })

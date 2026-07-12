@@ -1,4 +1,4 @@
-// Stage 2 Track B — U1: usage provider registry.
+// Stage 2 Track B - U1: usage provider registry.
 //
 // Single source of truth for the provider adapters the engine (app + daemon)
 // iterates. Adding a provider = register it here.

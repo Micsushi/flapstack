@@ -46,7 +46,7 @@ async function readClaudeSettings(): Promise<Record<string, unknown>> {
 
 /**
  * Get list of enabled plugin identifiers from settings.json
- * Plugins are DISABLED by default — only plugins explicitly in this list are active.
+ * Plugins are DISABLED by default - only plugins explicitly in this list are active.
  * Returns empty array if no plugins have been enabled.
  * Results are cached for 5 seconds to reduce filesystem reads.
  */
@@ -144,7 +144,7 @@ export const claudeSettingsRouter = router({
 
   /**
    * Get list of enabled plugins
-   * Plugins are disabled by default — only explicitly enabled ones are active.
+   * Plugins are disabled by default - only explicitly enabled ones are active.
    */
   getEnabledPlugins: publicProcedure.query(async () => {
     return await getEnabledPlugins()
@@ -152,7 +152,7 @@ export const claudeSettingsRouter = router({
 
   /**
    * Set a plugin's enabled state
-   * Plugins are disabled by default — adding to enabledPlugins activates them.
+   * Plugins are disabled by default - adding to enabledPlugins activates them.
    */
   setPluginEnabled: publicProcedure
     .input(

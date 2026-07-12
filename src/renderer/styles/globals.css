@@ -38,6 +38,18 @@
     --plan-mode-foreground: 0 0% 8%;
     /* Timeline/Content background */
     --tl-background: 0 0% 98%;
+    --usage-healthy: #10b981;
+    --usage-healthy-bg: #d1fae5;
+    --usage-underuse: #3b82f6;
+    --usage-underuse-bg: #dbeafe;
+    --usage-very-underuse: #8b5cf6;
+    --usage-very-underuse-bg: #ede9fe;
+    --usage-warning: #f59e0b;
+    --usage-warning-bg: #fef3c7;
+    --usage-danger: #ef4444;
+    --usage-danger-bg: #fee2e2;
+    --usage-critical: #dc2626;
+    --usage-critical-bg: #fee2e2;
   }
 
   .dark {
@@ -72,6 +84,18 @@
     --plan-mode-foreground: 0 0% 8%;
     /* Timeline/Content background - matches Claude input color #30302E */
     --tl-background: 60 2% 18%;
+    --usage-healthy: #34d399;
+    --usage-healthy-bg: rgba(52, 211, 153, 0.12);
+    --usage-underuse: #60a5fa;
+    --usage-underuse-bg: rgba(96, 165, 250, 0.12);
+    --usage-very-underuse: #8b5cf6;
+    --usage-very-underuse-bg: rgba(139, 92, 246, 0.16);
+    --usage-warning: #fbbf24;
+    --usage-warning-bg: rgba(251, 191, 36, 0.12);
+    --usage-danger: #f87171;
+    --usage-danger-bg: rgba(248, 113, 113, 0.12);
+    --usage-critical: #ef4444;
+    --usage-critical-bg: rgba(239, 68, 68, 0.15);
   }
 }
 
@@ -99,6 +123,28 @@
   color: hsl(0 0% 5%) !important;
 }
 
+::highlight(speech-reading-blue) {
+  color: rgb(147 197 253);
+}
+::highlight(speech-reading-orange) {
+  color: rgb(253 186 116);
+}
+::highlight(speech-reading-green) {
+  color: rgb(134 239 172);
+}
+::highlight(speech-reading-purple) {
+  color: rgb(216 180 254);
+}
+::highlight(speech-reading-rose) {
+  color: rgb(253 164 175);
+}
+::highlight(speech-reading-teal) {
+  color: rgb(94 234 212);
+}
+::highlight(speech-reading-gray) {
+  color: rgb(212 212 216);
+}
+
 [data-sidebar-drag-source] * {
   -webkit-user-drag: none;
 }
@@ -106,6 +152,16 @@
 body[data-sidebar-pointer-dragging="true"],
 body[data-sidebar-pointer-dragging="true"] * {
   cursor: grabbing !important;
+}
+
+body[data-sidebar-pointer-dragging="true"][data-sidebar-pointer-drag-cursor="move"],
+body[data-sidebar-pointer-dragging="true"][data-sidebar-pointer-drag-cursor="move"] * {
+  cursor: move !important;
+}
+
+body[data-sidebar-pointer-dragging="true"][data-sidebar-pointer-drag-cursor="copy"],
+body[data-sidebar-pointer-dragging="true"][data-sidebar-pointer-drag-cursor="copy"] * {
+  cursor: copy !important;
 }
 
 /* Custom scrollbar */

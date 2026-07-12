@@ -1,5 +1,5 @@
 /**
- * Map normalized sidecar events -> AI SDK UIMessageChunks (Track E — E4).
+ * Map normalized sidecar events -> AI SDK UIMessageChunks (Track E - E4).
  *
  * This is the single place the OpenCode sidecar joins the existing renderer
  * stream vocabulary, so OpenRouter/NanoGPT reasoning + text render through the

@@ -1,4 +1,4 @@
-// Stage 2 Track B — U9: NanoGPT usage provider.
+// Stage 2 Track B - U9: NanoGPT usage provider.
 //
 // Blocked on harness-engine E4 for run-usage capture. Docs:
 //   chat completion: https://docs.nano-gpt.com/api-reference/endpoint/chat-completion

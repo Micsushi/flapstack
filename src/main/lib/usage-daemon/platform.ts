@@ -1,4 +1,4 @@
-// Stage 2 Track B — U3: platform install helpers for the background daemon.
+// Stage 2 Track B - U3: platform install helpers for the background daemon.
 //
 // Per-user lifecycle adapters: launchd on macOS, Scheduled Tasks on Windows,
 // and systemd user services on Linux. All run the same standalone daemon bundle.

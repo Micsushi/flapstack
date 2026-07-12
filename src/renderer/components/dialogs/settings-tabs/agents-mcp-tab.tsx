@@ -668,7 +668,7 @@ export function AgentsMcpTab() {
 
       if (result.success) {
         toast.success(`"${serverName}" is authenticated, refreshing...`)
-        // Plugin servers get promoted to Global after OAuth — update selection
+        // Plugin servers get promoted to Global after OAuth - update selection
         setSelectedServerKey(`${provider}:Global:${serverName}`)
         await handleRefresh(true, provider)
       } else {

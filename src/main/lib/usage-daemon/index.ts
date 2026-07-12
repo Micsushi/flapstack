@@ -1,4 +1,4 @@
-// Stage 2 Track B — U3: background usage daemon entry point.
+// Stage 2 Track B - U3: background usage daemon entry point.
 //
 // Runs as a standalone Node process (spawned by launchd/Scheduled Task/systemd),
 // NOT an Electron process. It opens the shared usage DB, polls configured

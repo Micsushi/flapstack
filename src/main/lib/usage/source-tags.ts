@@ -1,4 +1,4 @@
-// Stage 2 Track B — sample origin tags, cost quality helpers, and the
+// Stage 2 Track B - sample origin tags, cost quality helpers, and the
 // deterministic dedupe-key derivation that keeps daemon/app overlap from
 // double-counting usage.
 
@@ -33,7 +33,7 @@ export function isStrongerCostQuality(a: CostQuality, b: CostQuality): boolean {
 /** Samples that came from active polling (daemon or app) rather than a run or
  * external import. Used by the engine's overlap debounce. */
 export function isPollSource(source: SampleSource): boolean {
-  return source === "daemon-poll" || source === "app-poll"
+  return source === "daemon-poll" || source === "app-poll" || source === "startup-reconcile"
 }
 
 /**
@@ -48,7 +48,13 @@ export function isPollSource(source: SampleSource): boolean {
 export function deriveDedupeKey(sample: UsageSampleInput): string {
   if (sample.dedupeKey) return sample.dedupeKey
   const bucket = isPollSource(sample.source) ? "poll" : sample.source
-  const observedAt = sample.windowEnd ?? sample.windowStart ?? sample.capturedAt
+  // Aggregate poll windows describe the provider billing/reset cycle, not the
+  // observation time. Key poll snapshots by captured minute so history keeps
+  // changing utilization while app/daemon overlap in the same minute still
+  // collapses to one row.
+  const observedAt = isPollSource(sample.source)
+    ? sample.capturedAt
+    : (sample.windowEnd ?? sample.windowStart ?? sample.capturedAt)
   // Poll responses are snapshots. Normalizing a timestamp-only snapshot to a
   // minute prevents app/daemon overlap from double-counting the same poll.
   const window = observedAt

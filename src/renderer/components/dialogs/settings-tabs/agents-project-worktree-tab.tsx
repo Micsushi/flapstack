@@ -40,7 +40,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
     { enabled: !!projectId },
   )
 
-  // Save mutation (auto-save, no toast on success — only on error)
+  // Save mutation (auto-save, no toast on success - only on error)
   const saveMutation = trpc.worktreeConfig.save.useMutation({
     onError: (err) => {
       toast.error(`Failed to save: ${err.message}`)
@@ -368,7 +368,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
             <div className="flex items-center justify-between p-4 border-t border-border">
               <div className="flex-1 min-w-0 mr-4">
                 <span className="text-sm font-medium text-foreground">Path</span>
-                <p className="text-sm text-muted-foreground truncate">{project?.path || "—"}</p>
+                <p className="text-sm text-muted-foreground truncate">{project?.path || "-"}</p>
               </div>
               <Button
                 variant="outline"
@@ -498,7 +498,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               )}
             </div>
 
-            {/* Platform overrides — macOS/Linux */}
+            {/* Platform overrides - macOS/Linux */}
             {(unixCommands.length > 0 || showPlatformSpecific) && (
               <div className="p-4 border-t border-border space-y-3">
                 <div className="flex items-center justify-between">
@@ -513,7 +513,7 @@ function ProjectDetail({ projectId }: { projectId: string }) {
               </div>
             )}
 
-            {/* Platform overrides — Windows */}
+            {/* Platform overrides - Windows */}
             {(windowsCommands.length > 0 || showPlatformSpecific) && (
               <div className="p-4 border-t border-border space-y-3">
                 <div className="flex items-center justify-between">

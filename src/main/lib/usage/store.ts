@@ -1,4 +1,4 @@
-// Stage 2 Track B — U4: shared SQLite usage store helpers.
+// Stage 2 Track B - U4: shared SQLite usage store helpers.
 //
 // One local SQLite DB is written by the daemon and read by the app. These
 // helpers take the drizzle db instance so the same code runs in both processes
@@ -14,7 +14,13 @@ import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
 import { deriveDedupeKey, microsToUsd, usdToMicros } from "./source-tags"
-import type { CostQuality, ProviderStatus, UsageProviderId, UsageSampleInput } from "./types"
+import type {
+  CostQuality,
+  ProviderStatus,
+  SampleSource,
+  UsageProviderId,
+  UsageSampleInput,
+} from "./types"
 
 export type UsageDb = BetterSQLite3Database<typeof schema>
 
@@ -236,7 +242,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
   )
 }
 
-/** Latest captured-at timestamp for a provider — the reconcile watermark. */
+/** Latest captured-at timestamp for a provider - the reconcile watermark. */
 export async function getLatestSampleAt(
   db: UsageDb,
   providerId: UsageProviderId,
@@ -353,11 +359,20 @@ export async function resetGenerationReconciliation(
 /** Recent samples for the dashboard, newest first. */
 export async function listRecentSamples(
   db: UsageDb,
-  opts: { providerId?: UsageProviderId; accountTag?: string; since?: Date; limit?: number } = {},
+  opts: {
+    providerId?: UsageProviderId
+    accountTag?: string
+    source?: SampleSource
+    flapstackOnly?: boolean
+    since?: Date
+    limit?: number
+  } = {},
 ): Promise<schema.UsageSample[]> {
   const conds = []
   if (opts.providerId) conds.push(eq(schema.usageSamples.providerId, opts.providerId))
   if (opts.accountTag !== undefined) conds.push(eq(schema.usageSamples.accountTag, opts.accountTag))
+  if (opts.source) conds.push(eq(schema.usageSamples.source, opts.source))
+  if (opts.flapstackOnly) conds.push(isNotNull(schema.usageSamples.runId))
   if (opts.since) conds.push(gte(schema.usageSamples.capturedAt, opts.since))
   return db
     .select()
@@ -371,11 +386,19 @@ export async function listRecentSamples(
  * evict every row for another provider from one global LIMIT. */
 export async function listCurrentSamples(
   db: UsageDb,
-  opts: { providerId?: UsageProviderId; accountTag?: string; limitPerAccount?: number } = {},
+  opts: {
+    providerId?: UsageProviderId
+    accountTag?: string
+    source?: SampleSource
+    flapstackOnly?: boolean
+    limitPerAccount?: number
+  } = {},
 ): Promise<schema.UsageSample[]> {
   const conds = []
   if (opts.providerId) conds.push(eq(schema.usageSamples.providerId, opts.providerId))
   if (opts.accountTag !== undefined) conds.push(eq(schema.usageSamples.accountTag, opts.accountTag))
+  if (opts.source) conds.push(eq(schema.usageSamples.source, opts.source))
+  if (opts.flapstackOnly) conds.push(isNotNull(schema.usageSamples.runId))
   const groups = await db
     .selectDistinct({
       providerId: schema.usageSamples.providerId,
@@ -388,6 +411,8 @@ export async function listCurrentSamples(
       listRecentSamples(db, {
         providerId: group.providerId as UsageProviderId,
         accountTag: group.accountTag,
+        source: opts.source,
+        flapstackOnly: opts.flapstackOnly,
         limit: opts.limitPerAccount ?? 25,
       }),
     ),

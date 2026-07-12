@@ -159,7 +159,7 @@ export function buildCodexPermissionApplication(params: {
  *   --auto-review       (approve safe edits, prompt on the rest)
  *   -f / --force / --yolo (auto-approve everything)
  * Cursor maps more cleanly than Codex, but the app still records honest
- * limitations for controls the CLI does not enforce (network, git, secrets…).
+ * limitations for controls the CLI does not enforce (network, git, secrets...).
  */
 export type CursorPermissionFlags = {
   mode?: "plan" | "ask"

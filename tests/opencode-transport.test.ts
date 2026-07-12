@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it, vi } from "vitest"
 
 vi.mock("../src/renderer/lib/trpc", () => ({ trpcClient: {} }))

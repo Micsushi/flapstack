@@ -137,7 +137,7 @@ function registerIpcHandlers(): void {
         return
       }
 
-      // On macOS, the app icon is used automatically — no custom icon needed.
+      // On macOS, the app icon is used automatically - no custom icon needed.
       // On Windows, use .ico; on Linux, use .png.
       let icon: Electron.NativeImage | undefined
       if (process.platform !== "darwin") {
@@ -256,7 +256,7 @@ function registerIpcHandlers(): void {
     return { blocked: false }
   })
 
-  // Chat ownership — prevent same chat open in multiple windows
+  // Chat ownership - prevent same chat open in multiple windows
   ipcMain.handle("chat:claim", (event, chatId: string) => {
     const win = getWindowFromEvent(event)
     if (!win) return { ok: false, ownerStableId: "unknown" }
@@ -549,7 +549,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
         // Block Cmd+R entirely
         event.preventDefault()
       } else if (hasActiveAgentSessions()) {
-        // Cmd+Shift+R with active streams — intercept and confirm
+        // Cmd+Shift+R with active streams - intercept and confirm
         event.preventDefault()
         dialog
           .showMessageBox(window, {

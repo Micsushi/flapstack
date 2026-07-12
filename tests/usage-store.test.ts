@@ -181,6 +181,27 @@ describe("usage SQLite integration", () => {
     expect(current.some((row) => row.providerId === "anthropic")).toBe(true)
   })
 
+  it("filters current and historical samples to Flapstack-linked runs", async () => {
+    sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?), (?)").run("run-direct", "run-exact")
+    await insertSamples(db, [
+      sample({ source: "app-poll", dedupeKey: "codex|general" }),
+      sample({
+        source: "flapstack-run",
+        runId: "run-direct",
+        dedupeKey: "codex|flapstack-direct",
+      }),
+      sample({
+        source: "startup-reconcile",
+        runId: "run-exact",
+        dedupeKey: "codex|flapstack-exact",
+      }),
+    ])
+
+    expect(await listRecentSamples(db, { source: "flapstack-run" })).toHaveLength(1)
+    expect(await listRecentSamples(db, { flapstackOnly: true })).toHaveLength(2)
+    expect(await listCurrentSamples(db, { flapstackOnly: true })).toHaveLength(2)
+  })
+
   it("removes legacy Cursor source names that were stored as account tags", async () => {
     for (const accountTag of ["internal", "admin", "cli", "real-account"]) {
       await upsertProviderState(db, {
@@ -755,6 +776,7 @@ describe("usage SQLite integration", () => {
       supportsHistorical: false,
     })
     const settings = normalizeUsageSettings({})
+    for (const provider of Object.values(settings.providers)) provider.enabled = false
     settings.providers.cursor.enabled = true
     settings.providers.cursor.cadenceSecondsOverride = 600
     const engine = new UsageEngine("daemon", {

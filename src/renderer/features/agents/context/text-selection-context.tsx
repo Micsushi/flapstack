@@ -81,7 +81,7 @@ function toLiveRange(staticRange: StaticRange): Range | null {
 function getSelectionRange(
   selection: Selection,
 ): { range: Range; element: Element | null; text: string } | null {
-  // Try getComposedRanges first — works across Shadow DOM (Chromium 137+)
+  // Try getComposedRanges first - works across Shadow DOM (Chromium 137+)
   const composedSelection = selection as Selection & {
     getComposedRanges?: (options?: { shadowRoots?: ShadowRoot[] }) => StaticRange[]
   }
@@ -111,7 +111,7 @@ function getSelectionRange(
     }
   }
 
-  // Legacy path — works for light DOM selections
+  // Legacy path - works for light DOM selections
   if (selection.rangeCount === 0 || selection.isCollapsed) return null
   const range = selection.getRangeAt(0)
   const container = range.commonAncestorContainer
@@ -183,7 +183,7 @@ export function TextSelectionProvider({ children }: TextSelectionProviderProps) 
           return
         }
 
-        // Get selection range — works across Shadow DOM via getComposedRanges
+        // Get selection range - works across Shadow DOM via getComposedRanges
         // We get text from the range directly, not selection.toString(),
         // because selection.toString() may be empty for Shadow DOM selections
         const result = getSelectionRange(selection)
@@ -221,7 +221,7 @@ export function TextSelectionProvider({ children }: TextSelectionProviderProps) 
             '[data-part-type="tool-Edit"], [data-part-type="tool-Write"]',
           ) as HTMLElement | null
 
-          // Check for diff — element may be inside Shadow DOM of diffs-container
+          // Check for diff - element may be inside Shadow DOM of diffs-container
           // With getComposedRanges, element is the actual node inside the shadow tree
           // Walk up through shadow boundaries to find [data-diff-file-path]
           const diffCard = (() => {

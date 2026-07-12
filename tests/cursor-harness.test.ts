@@ -45,8 +45,8 @@ describe("cursor harness contract (D1)", () => {
     expect(AGENT_HARNESSES).toContain("cursor-agent")
   })
 
-  it("keeps auto as the default model and labels catalog ids", () => {
-    expect(DEFAULT_CURSOR_MODEL_ID).toBe("auto")
+  it("keeps composer-2.5 as the default model and labels catalog ids", () => {
+    expect(DEFAULT_CURSOR_MODEL_ID).toBe("composer-2.5")
     expect(CURSOR_MODELS.some((m) => m.id === "auto")).toBe(true)
     expect(formatModelDisplayName("auto")).toBe("Auto")
   })

@@ -86,7 +86,7 @@ export interface DesktopApi {
     subChatId?: string
   }) => Promise<{ blocked: boolean } | void>
 
-  // Chat ownership — prevent same chat open in multiple windows
+  // Chat ownership - prevent same chat open in multiple windows
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>

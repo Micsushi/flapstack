@@ -1,4 +1,4 @@
-// Stage 2 Track B — U3: daemon lifecycle helpers used by the app side.
+// Stage 2 Track B - U3: daemon lifecycle helpers used by the app side.
 //
 // The app uses these to detect whether the background daemon is running / stale /
 // missing and to render daemon status. Health is derived from the heartbeat row

@@ -1,7 +1,9 @@
 "use client"
 
 import { Brain, ChevronDown, ChevronRight, Zap } from "lucide-react"
+import { useSetAtom } from "jotai"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { agentsLoginModalOpenAtom, codexLoginModalOpenAtom } from "../../../lib/atoms"
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion } from "motion/react"
 import {
@@ -13,13 +15,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "../../../components/ui/command"
-import {
-  CheckIcon,
-  ClaudeCodeIcon,
-  CursorIcon,
-  IconChevronDown,
-  ReasoningOutputIcon,
-} from "../../../components/ui/icons"
+import { CheckIcon, IconChevronDown, ReasoningOutputIcon } from "../../../components/ui/icons"
 import { Switch } from "../../../components/ui/switch"
 import { Checkbox } from "../../../components/ui/checkbox"
 import { Button } from "../../../components/ui/button"
@@ -27,14 +23,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/
 import { cn } from "../../../lib/utils"
 import type { ClaudeEffortLevel, CodexReasoningLevel } from "../lib/models"
 import { formatClaudeEffortLabel, formatCodexReasoningLevelLabel } from "../lib/models"
+import { getHarnessChipMeta } from "../constants"
+import { ProviderChipIcon } from "./provider-chip-icon"
 
 const CROSS_PROVIDER_DIALOG_DISMISSED_KEY = "agent-model-selector:skip-cross-provider-dialog"
-
-const CodexIcon = ({ className }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />
-  </svg>
-)
 
 export type AgentProviderId = "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
 
@@ -486,15 +478,34 @@ export function AgentModelSelector({
   opencode = EMPTY_OPENCODE_PROVIDERS,
 }: AgentModelSelectorProps) {
   const [search, setSearch] = useState("")
+  const setClaudeLoginOpen = useSetAtom(agentsLoginModalOpenAtom)
+  const setCodexLoginOpen = useSetAtom(codexLoginModalOpenAtom)
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [pendingProvider, setPendingProvider] = useState<AgentProviderId | null>(null)
-  const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>({
-    "claude-code": true,
-    codex: true,
-    "cursor-agent": true,
-    openrouter: true,
-    nanogpt: true,
-  })
+  const [expandedGroups, setExpandedGroups] = useState<Record<ModelGroup["id"], boolean>>(() => ({
+    "claude-code": selectedAgentId === "claude-code",
+    codex: selectedAgentId === "codex",
+    "cursor-agent": selectedAgentId === "cursor-agent",
+    openrouter: selectedAgentId === "openrouter",
+    nanogpt: selectedAgentId === "nanogpt",
+  }))
+
+  // On open: collapse everything except the current provider and scroll its
+  // header to the top of the list (clamped, so short remainders end-align).
+  useEffect(() => {
+    if (!open) return
+    setExpandedGroups({
+      "claude-code": selectedAgentId === "claude-code",
+      codex: selectedAgentId === "codex",
+      "cursor-agent": selectedAgentId === "cursor-agent",
+      openrouter: selectedAgentId === "openrouter",
+      nanogpt: selectedAgentId === "nanogpt",
+    })
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`model-group-${selectedAgentId}`)?.scrollIntoView({ block: "start" })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, selectedAgentId])
 
   const canSelectProvider = (provider: AgentProviderId) =>
     allowProviderSwitch || selectedAgentId === provider
@@ -590,19 +601,14 @@ export function AgentModelSelector({
   const selectedCodexModel =
     codex.models.find((m) => m.id === codex.selectedModelId) || codex.models[0]
   const codexFastAvailable = selectedCodexModel?.supportsFastMode === true
+  const selectedProviderMeta = getHarnessChipMeta(selectedAgentId)
   const triggerIcon =
     selectedAgentId === "claude-code" && claude.isOffline && claude.ollamaModels.length > 0 ? (
-      <Zap className="h-4 w-4" />
+      <Zap className="h-3 w-3" />
     ) : selectedAgentId === "codex" && codex.fastModeEnabled && codexFastAvailable ? (
-      <Zap className="h-4 w-4 text-amber-500" />
-    ) : selectedAgentId === "codex" ? (
-      <CodexIcon className="h-3.5 w-3.5" />
-    ) : selectedAgentId === "cursor-agent" ? (
-      <CursorIcon className="h-3.5 w-3.5" />
-    ) : selectedAgentId === "openrouter" || selectedAgentId === "nanogpt" ? (
-      <Brain className="h-3.5 w-3.5" />
+      <Zap className="h-3 w-3 text-amber-500" />
     ) : (
-      <ClaudeCodeIcon className="h-3.5 w-3.5" />
+      <ProviderChipIcon provider={selectedAgentId} className="h-3 w-3 shrink-0" />
     )
 
   const isItemSelected = (item: FlatModelItem): boolean => {
@@ -760,14 +766,14 @@ export function AgentModelSelector({
       <PopoverTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground transition-[background-color,color] duration-150 ease-out rounded-md outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-            "hover:text-foreground hover:bg-muted/50",
+            "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs transition-[background-color,color,border-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+            selectedProviderMeta.className,
             triggerClassName,
           )}
         >
           {triggerIcon}
           <span className="truncate">{selectedModelLabel}</span>
-          <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+          <IconChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
       <PopoverContent className={cn("w-64 p-0", contentClassName)} align="start">
@@ -851,11 +857,13 @@ export function AgentModelSelector({
             {filteredModelCount > 0 ? (
               filteredGroups.map((group, index) => {
                 const isExpanded = search.trim() ? true : expandedGroups[group.id]
+                const groupMeta = getHarnessChipMeta(group.id)
                 return (
                   <CommandGroup key={group.id}>
                     {index > 0 && <CommandSeparator />}
                     <button
                       type="button"
+                      id={`model-group-${group.id}`}
                       aria-expanded={isExpanded}
                       onPointerDown={(e) => {
                         e.preventDefault()
@@ -875,20 +883,17 @@ export function AgentModelSelector({
                           [group.id]: !current[group.id],
                         }))
                       }}
-                      className="flex w-[calc(100%-8px)] items-center justify-between gap-2 py-1.5 px-2 mx-1 mt-1 rounded-md border border-border/60 bg-muted/45 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground"
+                      className={cn(
+                        "mx-1 mt-1 flex w-[calc(100%-8px)] items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors hover:brightness-110",
+                        groupMeta.className,
+                      )}
                     >
                       <span className="flex items-center gap-1.5">
-                        {group.id === "codex" ? (
-                          <CodexIcon className="h-3 w-3 shrink-0" />
-                        ) : group.id === "cursor-agent" ? (
-                          <CursorIcon className="h-3 w-3 shrink-0" />
-                        ) : (
-                          <ClaudeCodeIcon className="h-3 w-3 shrink-0" />
-                        )}
+                        <ProviderChipIcon provider={group.id} className="h-3 w-3 shrink-0" />
                         <span>{group.label}</span>
                       </span>
                       <span className="flex items-center gap-1.5">
-                        <span className="rounded-sm bg-background/80 px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-muted-foreground">
+                        <span className="rounded-sm bg-background/60 px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-current">
                           {group.items.length}
                         </span>
                         <ChevronDown
@@ -910,7 +915,11 @@ export function AgentModelSelector({
                             value={getItemKey(item)}
                             onSelect={() => handleItemClick(item)}
                             disabled={disabled}
-                            className={cn("gap-2 pl-6", crossProvider && "opacity-60")}
+                            className={cn(
+                              "gap-2 border border-transparent pl-6",
+                              selected && groupMeta.className,
+                              crossProvider && "opacity-60",
+                            )}
                           >
                             <span className="truncate flex-1">{getItemLabel(item)}</span>
                             {crossProvider && (
@@ -923,17 +932,25 @@ export function AgentModelSelector({
                         )
                       })}
 
-                    {selectedAgentId === "cursor-agent" && !cursor.isConnected && (
+                    {((group.id === "claude-code" && !claude.isConnected) ||
+                      (group.id === "codex" && !codex.isConnected) ||
+                      (group.id === "cursor-agent" && !cursor.isConnected)) && (
                       <>
                         <div className="flex items-center justify-between gap-3 px-2 py-2 text-xs text-muted-foreground">
-                          <span>Cursor CLI is not connected.</span>
+                          <span>{group.label} CLI is not connected.</span>
                           <Button
                             size="sm"
                             variant="secondary"
-                            disabled={cursor.isLoginPending}
-                            onClick={cursor.onLogin}
+                            disabled={group.id === "cursor-agent" && cursor.isLoginPending}
+                            onClick={() => {
+                              if (group.id === "claude-code") setClaudeLoginOpen(true)
+                              else if (group.id === "codex") setCodexLoginOpen(true)
+                              else cursor.onLogin()
+                            }}
                           >
-                            {cursor.isLoginPending ? "Opening…" : "Connect"}
+                            {group.id === "cursor-agent" && cursor.isLoginPending
+                              ? "Opening…"
+                              : "Connect"}
                           </Button>
                         </div>
                         <CommandSeparator />

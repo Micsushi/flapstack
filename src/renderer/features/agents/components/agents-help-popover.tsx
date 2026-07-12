@@ -10,6 +10,7 @@ import {
 import { ArrowUpRight } from "lucide-react"
 import { KeyboardIcon } from "../../../components/ui/icons"
 import { useSetAtom } from "jotai"
+import { toast } from "sonner"
 import { agentsSettingsDialogOpenAtom, agentsSettingsDialogActiveTabAtom } from "../../../lib/atoms"
 
 interface AgentsHelpPopoverProps {
@@ -32,13 +33,7 @@ export function AgentsHelpPopover({
   const open = controlledOpen ?? internalOpen
   const setOpen = controlledOnOpenChange ?? setInternalOpen
 
-  const handleWebsiteClick = () => {
-    window.desktopApi.openExternal("https://flapstack.dev")
-  }
-
-  const handleChangelogClick = () => {
-    window.desktopApi.openExternal("https://flapstack.dev/agents/changelog")
-  }
+  const handleComingSoonClick = () => toast.info("Coming soon")
 
   const handleKeyboardShortcutsClick = () => {
     setOpen(false)
@@ -50,7 +45,7 @@ export function AgentsHelpPopover({
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
-        <DropdownMenuItem onClick={handleWebsiteClick} className="gap-2">
+        <DropdownMenuItem onClick={handleComingSoonClick} className="gap-2">
           <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="flex-1">Website</span>
         </DropdownMenuItem>
@@ -62,7 +57,7 @@ export function AgentsHelpPopover({
           </DropdownMenuItem>
         )}
 
-        <DropdownMenuItem onClick={handleChangelogClick} className="gap-2">
+        <DropdownMenuItem onClick={handleComingSoonClick} className="gap-2">
           <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="flex-1">Changelog</span>
         </DropdownMenuItem>

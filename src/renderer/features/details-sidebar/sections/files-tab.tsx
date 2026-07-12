@@ -149,7 +149,7 @@ function parentPath(p: string): string | null {
 }
 
 // ============================================================================
-// TreeNode — receives only primitive/stable props for effective memo
+// TreeNode - receives only primitive/stable props for effective memo
 // ============================================================================
 
 const TreeNode = memo(function TreeNode({
@@ -345,7 +345,7 @@ export const FilesTab = memo(
     )
     const [storedExpanded, setStoredExpanded] = useAtom(expandedAtom)
 
-    // Stable expanded paths Set — only recreate when storedExpanded array changes
+    // Stable expanded paths Set - only recreate when storedExpanded array changes
     const expandedPaths = useMemo(() => new Set(storedExpanded ?? []), [storedExpanded])
 
     // Ref for reading current value in setExpandedPaths (Jotai doesn't support functional updaters)
@@ -420,7 +420,7 @@ export const FilesTab = memo(
       [setExpandedPaths],
     )
 
-    /** Open a file — calls parent callback (activePath syncs via prop) */
+    /** Open a file - calls parent callback (activePath syncs via prop) */
     const activateFile = useCallback(
       (relativePath: string) => {
         if (!worktreePath) return
@@ -444,7 +444,7 @@ export const FilesTab = memo(
 
     const toggleExpandCollapse = useCallback(() => {
       setExpandedPaths((prev) => {
-        // Check if anything is expanded — if so, collapse all
+        // Check if anything is expanded - if so, collapse all
         if (prev.size > 0) {
           setFocusedPath(null)
           return new Set()

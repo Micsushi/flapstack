@@ -3,11 +3,13 @@ import { atomFamily, atomWithStorage } from "jotai/utils"
 import { atomWithWindowStorage } from "../../../lib/window-storage"
 import {
   CLAUDE_MODEL_ID_MAP,
+  CURSOR_MODELS,
   DEFAULT_CLAUDE_EFFORT,
   DEFAULT_CLAUDE_MODEL_ID,
   DEFAULT_CODEX_MODEL_ID,
   DEFAULT_CODEX_REASONING,
   DEFAULT_CURSOR_MODEL_ID,
+  DEFAULT_OPENCODE_MODELS,
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
 } from "../../../../shared/model-catalog"
@@ -290,13 +292,25 @@ export const lastSelectedCodexFastModeAtom = atomWithStorage<boolean>(
 
 export type OpencodeProviderPreference = "openrouter" | "nanogpt"
 
+export const enabledOpencodeModelsAtom = atomWithStorage<
+  Record<OpencodeProviderPreference, string[]>
+>(
+  "agents:enabledOpencodeModels",
+  {
+    openrouter: DEFAULT_OPENCODE_MODELS.openrouter.map((model) => model.id),
+    nanogpt: DEFAULT_OPENCODE_MODELS.nanogpt.map((model) => model.id),
+  },
+  undefined,
+  { getOnInit: true },
+)
+
 export const lastSelectedOpencodeModelsAtom = atomWithStorage<
   Record<OpencodeProviderPreference, string>
 >(
   "agents:lastSelectedOpencodeModels",
   {
-    openrouter: "openrouter/tencent/hy3:free",
-    nanogpt: "nanogpt/deepseek-chat",
+    openrouter: DEFAULT_OPENCODE_MODELS.openrouter[0].id,
+    nanogpt: DEFAULT_OPENCODE_MODELS.nanogpt[0].id,
   },
   undefined,
   { getOnInit: true },
@@ -403,11 +417,18 @@ export const subChatCodexModelIdAtomFamily = atomFamily((subChatId: string) =>
   ),
 )
 
-// --- Cursor (`cursor-agent`) model selection — Stage 2 Track D (D5) ---
+// --- Cursor (`cursor-agent`) model selection - Stage 2 Track D (D5) ---
 // Falls back to lastSelectedCursorModelIdAtom, then "auto".
 export const lastSelectedCursorModelIdAtom = atomWithStorage<string>(
   "agents:lastSelectedCursorModelId",
   DEFAULT_CURSOR_MODEL_ID,
+  undefined,
+  { getOnInit: true },
+)
+
+export const enabledCursorModelsAtom = atomWithStorage<string[]>(
+  "agents:enabledCursorModels",
+  CURSOR_MODELS.map((model) => model.id),
   undefined,
   { getOnInit: true },
 )
@@ -866,7 +887,7 @@ export const pendingConflictResolutionMessageAtom = atom<{
 // After successful OAuth flow, this triggers automatic retry of the message
 export type PendingAuthRetryMessage = {
   subChatId: string // Required: only retry in the correct chat
-  provider: "claude-code" | "codex"
+  provider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
   prompt: string
   images?: Array<{
     base64Data: string
@@ -1215,7 +1236,7 @@ export type InboxMobileViewMode = "list" | "chat"
 export const inboxMobileViewModeAtom = atom<InboxMobileViewMode>("list")
 
 // Settings inner sidebar widths (for MCP, Skills, Agents two-panel layouts)
-// Non-persisted — resets to default on re-render
+// Non-persisted - resets to default on re-render
 export const settingsMcpSidebarWidthAtom = atom(240)
 export const settingsSkillsSidebarWidthAtom = atom(240)
 export const settingsAgentsSidebarWidthAtom = atom(240)

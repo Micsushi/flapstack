@@ -42,7 +42,7 @@ import { fileViewerOpenAtomFamily, type AgentMode } from "../agents/atoms"
 import { agentsSettingsDialogOpenAtom, agentsSettingsDialogActiveTabAtom } from "@/lib/atoms"
 
 // ============================================================================
-// WidgetCard — extracted as a real component to avoid remounts
+// WidgetCard - extracted as a real component to avoid remounts
 // ============================================================================
 
 function getWidgetIcon(widgetId: WidgetId) {
@@ -395,7 +395,7 @@ export function DetailsSidebar({
           )}
         </div>
 
-        {/* Tab content — both tabs always mounted to preserve state */}
+        {/* Tab content - both tabs always mounted to preserve state */}
         <div className={cn("flex-1 overflow-y-auto py-2", activeTab !== "details" && "hidden")}>
           {widgetOrder.map((widgetId) => {
             // Skip if widget is not visible

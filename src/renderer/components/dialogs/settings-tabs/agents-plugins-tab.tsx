@@ -154,7 +154,7 @@ function PluginDetail({
             )}
           </div>
 
-          {/* Components — clickable, navigate to respective tabs */}
+          {/* Components - clickable, navigate to respective tabs */}
           {plugin.components.commands.length > 0 && (
             <div className="space-y-1.5">
               <Label>Commands ({plugin.components.commands.length})</Label>

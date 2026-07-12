@@ -131,7 +131,7 @@ export function AgentsLayout() {
 
   // Show/hide native traffic lights based on sidebar and fullscreen state
   // This also re-syncs visibility when leaving fullscreen.
-  // When settings view is active, don't control traffic lights here —
+  // When settings view is active, don't control traffic lights here -
   // SettingsSidebar manages its own visibility (always hidden).
   const isSettingsView = desktopView === "settings"
   useEffect(() => {

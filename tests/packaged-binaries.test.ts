@@ -104,6 +104,25 @@ describe("packaged harness preparation", () => {
     )
   })
 
+  it("gives macOS preview packages a separate app, protocol, and output identity", () => {
+    expect(
+      resolvePackageBuild({
+        platform: "darwin",
+        architectures: ["arm64"],
+        dir: true,
+        channel: "preview",
+      }),
+    ).toMatchObject({
+      targets: ["darwin-arm64"],
+      builderArgs: expect.arrayContaining([
+        "--mac",
+        "--arm64",
+        "--dir",
+        "--config=electron-builder.preview.mac.cjs",
+      ]),
+    })
+  })
+
   it("recognizes Mach-O, ELF, and PE architectures", () => {
     const dir = mkdtempSync(join(tmpdir(), "flapstack-binaries-"))
     expect(inspectBinaryArchitecture(executable(dir, "mac", macho("arm64")))).toMatchObject({

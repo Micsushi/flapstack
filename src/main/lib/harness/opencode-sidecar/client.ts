@@ -1,5 +1,5 @@
 /**
- * OpenCode HTTP/SSE client (Track E — E2).
+ * OpenCode HTTP/SSE client (Track E - E2).
  *
  * Small typed client over the OpenCode server, ported from Vibe Kanban's
  * `sdk.rs`. Auth is HTTP Basic `opencode:{password}` plus an

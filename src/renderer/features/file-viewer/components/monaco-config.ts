@@ -111,7 +111,7 @@ function normalizeHex(color: string): string {
  *
  * Monaco's built-in Monarch tokenizer (for TS/JS/CSS/HTML etc.) produces
  * token names like "identifier", "keyword", "string", "number", "type.identifier",
- * "delimiter" — NOT TextMate scopes like "entity.name.function".
+ * "delimiter" - NOT TextMate scopes like "entity.name.function".
  *
  * This function extracts foreground colors from the TextMate tokenColors and
  * creates matching Monarch token rules so syntax highlighting works correctly.
@@ -159,7 +159,7 @@ function buildMonarchRules(tokenColors: any[]): editor.ITokenThemeRule[] {
       token: "keyword",
       scopes: ["keyword", "keyword.control", "storage.type", "storage.modifier"],
     },
-    // Identifiers (variable names — Monaco's Monarch doesn't distinguish function calls)
+    // Identifiers (variable names - Monaco's Monarch doesn't distinguish function calls)
     { token: "identifier", scopes: ["variable"] },
     // Type identifiers (type names, class names, interface names)
     { token: "type.identifier", scopes: ["entity.name", "support.type", "support.class"] },

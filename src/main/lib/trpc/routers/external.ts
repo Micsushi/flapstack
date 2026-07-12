@@ -26,7 +26,7 @@ function spawnAsync(command: string, args: string[]): Promise<void> {
     })
     child.unref()
     child.on("error", reject)
-    // Resolve immediately — we just need to launch the app
+    // Resolve immediately - we just need to launch the app
     resolve()
   })
 }

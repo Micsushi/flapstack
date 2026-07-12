@@ -3,8 +3,12 @@ import {
   CLAUDE_MODEL_ID_MAP,
   CLAUDE_MODELS,
   CODEX_MODELS,
+  CURSOR_MODELS,
+  DEFAULT_CURSOR_MODEL_ID,
+  DEFAULT_OPENCODE_MODELS,
   formatCodexModelForAcp,
   formatModelDisplayName,
+  normalizeOpencodeModelId,
 } from "../src/shared/model-catalog"
 
 describe("Claude model catalog", () => {
@@ -109,5 +113,40 @@ describe("Claude model catalog", () => {
     expect(formatModelDisplayName("claude-opus-4-8[1m]")).toBe("Opus 4.8 1M")
     // Plain effort brackets are still stripped.
     expect(formatModelDisplayName("opus[high]")).toBe("Opus")
+  })
+})
+
+describe("Cursor model catalog", () => {
+  it("keeps the normal picker small and defaults to Composer", () => {
+    expect(CURSOR_MODELS.map((model) => model.id)).toEqual(["auto", "composer-2.5"])
+    expect(DEFAULT_CURSOR_MODEL_ID).toBe("composer-2.5")
+  })
+})
+
+describe("OpenCode provider defaults", () => {
+  it("formats provider model paths as exact friendly model names", () => {
+    expect(formatModelDisplayName("openrouter/deepseek/deepseek-v4-pro")).toBe("DeepSeek V4 Pro")
+    expect(formatModelDisplayName("nanogpt/vendor/custom-model-v3")).toBe("Custom Model V3")
+  })
+
+  it("exposes only DeepSeek and GLM by default for each provider", () => {
+    expect(DEFAULT_OPENCODE_MODELS.openrouter).toHaveLength(2)
+    expect(DEFAULT_OPENCODE_MODELS.nanogpt).toHaveLength(2)
+    for (const models of Object.values(DEFAULT_OPENCODE_MODELS)) {
+      expect(models.some((model) => model.id.toLowerCase().includes("deepseek"))).toBe(true)
+      expect(models.some((model) => model.id.toLowerCase().includes("glm"))).toBe(true)
+    }
+  })
+
+  it("migrates stale provider defaults to chat-capable DeepSeek models", () => {
+    expect(normalizeOpencodeModelId("nanogpt", "nanogpt/deepseek-v3")).toBe(
+      "nanogpt/deepseek/deepseek-latest",
+    )
+    expect(normalizeOpencodeModelId("openrouter", "openrouter/google/gemini-3-pro")).toBe(
+      "openrouter/deepseek/deepseek-v4-pro",
+    )
+    expect(normalizeOpencodeModelId("nanogpt", "nanogpt/zai-org/glm-latest")).toBe(
+      "nanogpt/zai-org/glm-latest",
+    )
   })
 })

@@ -361,7 +361,7 @@ export const reasoningOutputEnabledAtom = atomWithStorage<boolean>(
 // When enabled, allow rollback to previous assistant messages
 export const historyEnabledAtom = atomWithStorage<boolean>(
   "preferences:history-enabled",
-  false, // Default OFF — beta feature
+  false, // Default OFF - beta feature
   undefined,
   { getOnInit: true },
 )

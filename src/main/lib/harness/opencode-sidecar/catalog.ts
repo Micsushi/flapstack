@@ -1,6 +1,6 @@
 /**
  * OpenRouter + NanoGPT provider/model catalog for the OpenCode sidecar
- * (Track E — E1/E3, catalog side).
+ * (Track E - E1/E3, catalog side).
  *
  * Scaffolding stage: ships static provider definitions and a small seed model
  * list so the UI can render selectors before any live `GET /api/v1/models`
@@ -9,6 +9,7 @@
  */
 
 import type { OpencodeProviderId } from "./contract"
+import { DEFAULT_OPENCODE_MODELS } from "../../../../shared/model-catalog"
 
 export type OpencodeProviderChip = "purple" | "rose"
 
@@ -73,21 +74,22 @@ export type OpencodeModelInfo = {
 
 /**
  * Minimal seed lists so selectors render before a live refresh. Kept short and
- * conservative on purpose — the authoritative list comes from the provider's
+ * conservative on purpose - the authoritative list comes from the provider's
  * models endpoint at refresh time (E7).
  */
 export const OPENCODE_SEED_MODELS: Record<OpencodeProviderId, OpencodeModelInfo[]> = {
-  openrouter: [
-    { id: "anthropic/claude-opus-4-8", label: "Claude Opus 4.8", supportsReasoning: true },
-    { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5", supportsReasoning: true },
-    { id: "openai/gpt-5.5", label: "GPT-5.5", supportsReasoning: true },
-    { id: "google/gemini-3-pro", label: "Gemini 3 Pro", supportsReasoning: true },
-  ],
-  nanogpt: [
-    { id: "claude-opus-4-8", label: "Claude Opus 4.8", supportsReasoning: true },
-    { id: "gpt-5.5", label: "GPT-5.5", supportsReasoning: true },
-    { id: "deepseek-v3", label: "DeepSeek V3" },
-  ],
+  openrouter: DEFAULT_OPENCODE_MODELS.openrouter.map((model) => ({
+    id: model.id.replace(/^openrouter\//, ""),
+    label: model.name,
+    supportsReasoning: true,
+    supportsTools: true,
+  })),
+  nanogpt: DEFAULT_OPENCODE_MODELS.nanogpt.map((model) => ({
+    id: model.id.replace(/^nanogpt\//, ""),
+    label: model.name,
+    supportsReasoning: true,
+    supportsTools: true,
+  })),
 }
 
 /**

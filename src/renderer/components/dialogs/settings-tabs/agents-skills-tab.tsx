@@ -82,7 +82,7 @@ function ItemDetail({
   const handleToggleViewMode = useCallback(() => {
     setViewMode((prev) => {
       if (prev === "editor" && !isReadOnly) {
-        // Switching from editor to preview — auto-save
+        // Switching from editor to preview - auto-save
         if (description !== item.description || content !== item.content) {
           onSave({ description, content })
         }

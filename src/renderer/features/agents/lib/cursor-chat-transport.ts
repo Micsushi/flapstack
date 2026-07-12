@@ -1,13 +1,17 @@
 import type { ChatTransport, UIMessage } from "ai"
+import { getDefaultStore } from "jotai"
+import { createElement } from "react"
 import { toast } from "sonner"
+import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
 import { DEFAULT_CURSOR_MODEL_ID } from "../../../../shared/model-catalog"
-import { subChatCursorModelIdAtomFamily } from "../atoms"
+import { pendingAuthRetryMessageAtom, subChatCursorModelIdAtomFamily } from "../atoms"
+import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 
 /**
- * Client transport for the Cursor (`cursor-agent`) harness — Stage 2 Track D.
+ * Client transport for the Cursor (`cursor-agent`) harness - Stage 2 Track D.
  *
  * Mirrors {@link ACPChatTransport}: it subscribes to the server-side
  * `cursor.chat` observable (which spawns cursor-agent and streams stream-json
@@ -19,7 +23,7 @@ import type { AgentMessageMetadata } from "../ui/agent-message-usage"
  * must branch to this transport when the chat provider is `cursor-agent`
  * (alongside the existing `codex` / `claude-code` branches) and the harness
  * selector must offer Cursor. Those selector/default decisions are the deferred
- * integration step documented in STAGE2-TRACK.md.
+ * integration step documented in the vault STAGE2-TRACK.md (agentsvault Wiki/Projects/flapstack).
  */
 
 type UIMessageChunk = any
@@ -39,6 +43,78 @@ type ImageAttachment = {
 
 // After an auth-error, force a fresh cursor-agent session on the next send.
 const forceFreshSessionSubChats = new Set<string>()
+
+function openCursorSettings() {
+  const store = getDefaultStore()
+  store.set(agentsSettingsDialogActiveTabAtom, "usage")
+  store.set(agentsSettingsDialogOpenAtom, true)
+}
+
+async function waitForCursorConnection(subChatId: string): Promise<void> {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const integration = await trpcClient.cursor.getIntegration.query().catch(() => null)
+    if (integration?.isConnected) {
+      const pending = appStore.get(pendingAuthRetryMessageAtom)
+      if (pending?.provider === "cursor-agent" && pending.subChatId === subChatId) {
+        appStore.set(pendingAuthRetryMessageAtom, { ...pending, readyToRetry: true })
+        toast.success("Cursor connected. Retrying your message.")
+      }
+      return
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+  }
+  toast.error("Cursor login was not detected. Check the connection and retry.")
+}
+
+function showCursorAuthToast(subChatId: string) {
+  toast.custom(
+    (toastId) =>
+      createElement(
+        "div",
+        { className: "w-[380px] rounded-lg border bg-background p-4 shadow-lg" },
+        createElement("div", { className: "font-medium" }, "Cursor sign-in required"),
+        createElement(
+          "div",
+          { className: "mt-1 text-sm text-muted-foreground" },
+          "Connect Cursor in your browser or configure a Cursor API key, then retry.",
+        ),
+        createElement(
+          "div",
+          { className: "mt-3 flex flex-wrap gap-2" },
+          createElement(
+            "button",
+            {
+              className: "rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground",
+              onClick: () => {
+                toast.dismiss(toastId)
+                void trpcClient.cursor.startLogin.mutate().then(
+                  () => waitForCursorConnection(subChatId),
+                  (error: unknown) => {
+                    toast.error("Could not start Cursor login", {
+                      description: error instanceof Error ? error.message : String(error),
+                    })
+                  },
+                )
+              },
+            },
+            "Connect Cursor",
+          ),
+          createElement(
+            "button",
+            {
+              className: "rounded-md border px-3 py-1.5 text-sm hover:bg-accent",
+              onClick: () => {
+                toast.dismiss(toastId)
+                openCursorSettings()
+              },
+            },
+            "Open settings",
+          ),
+        ),
+      ),
+    { duration: Infinity },
+  )
+}
 
 function getSelectedCursorModel(subChatId: string): string {
   return appStore.get(subChatCursorModelIdAtomFamily(subChatId)) || DEFAULT_CURSOR_MODEL_ID
@@ -102,9 +178,13 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
             onData: (chunk: UIMessageChunk) => {
               if (chunk.type === "auth-error") {
                 forceFreshSessionSubChats.add(this.config.subChatId)
-                toast.error("Cursor authentication required", {
-                  description: chunk.errorText || "Run `cursor-agent login`, then retry.",
+                appStore.set(pendingAuthRetryMessageAtom, {
+                  subChatId: this.config.subChatId,
+                  provider: "cursor-agent",
+                  prompt,
+                  readyToRetry: false,
                 })
+                showCursorAuthToast(this.config.subChatId)
                 void trpcClient.cursor.cleanup
                   .mutate({ subChatId: this.config.subChatId })
                   .catch(() => {})
@@ -113,9 +193,11 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
               }
 
               if (chunk.type === "error") {
-                toast.error("Cursor error", {
-                  description: chunk.errorText || "An unexpected cursor-agent error occurred.",
-                })
+                showProviderErrorToast(
+                  "Cursor error",
+                  chunk.errorText || "An unexpected cursor-agent error occurred.",
+                  { chatId: this.config.chatId, subChatId: this.config.subChatId },
+                )
               }
 
               try {
@@ -133,7 +215,10 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
               }
             },
             onError: (error: Error) => {
-              toast.error("Cursor request failed", { description: error.message })
+              showProviderErrorToast("Cursor request failed", error.message, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
               controller.error(error)
               safeUnsubscribe()
             },

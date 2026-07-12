@@ -3,6 +3,7 @@ import { BrowserWindow } from "electron"
 import * as fs from "fs/promises"
 import * as path from "path"
 import simpleGit from "simple-git"
+import { TRPCError } from "@trpc/server"
 import { z } from "zod"
 import { getAuthManager } from "../../../index"
 import {
@@ -964,6 +965,17 @@ export const chatsRouter = router({
     )
     .mutation(({ input }) => {
       const db = getDatabase()
+      const existingConversation = db
+        .select({ id: subChats.id })
+        .from(subChats)
+        .where(eq(subChats.chatId, input.chatId))
+        .get()
+      if (existingConversation) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Each sidebar chat supports exactly one conversation",
+        })
+      }
       return db
         .insert(subChats)
         .values({

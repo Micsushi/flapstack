@@ -162,10 +162,13 @@ import { useTextContextSelection } from "../hooks/use-text-context-selection"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { ACPChatTransport } from "../lib/acp-chat-transport"
 import { CursorChatTransport } from "../lib/cursor-chat-transport"
-import { formatHistoryForContext } from "../lib/export-chat"
+import { copyChat, formatHistoryForContext } from "../lib/export-chat"
 import { clearSubChatDraft, getSubChatDraftFull } from "../lib/drafts"
 import { IPCChatTransport } from "../lib/ipc-chat-transport"
 import { OpencodeChatTransport } from "../lib/opencode-chat-transport"
+import { ARCHIVED_CHAT_ACCENT_COLOR, resolveProjectAccentColor } from "../lib/open-chat-tabs"
+import { resolveCanonicalConversationId } from "../lib/canonical-conversation"
+import { resolveLocalFolder } from "../lib/resolve-local-folder"
 import {
   createQueueItem,
   createTextPreview,
@@ -211,6 +214,7 @@ import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
 import { AgentUserQuestion, type AgentUserQuestionHandle } from "../ui/agent-user-question"
 import { AgentsHeaderControls } from "../ui/agents-header-controls"
 import { ChatTitleEditor } from "../ui/chat-title-editor"
+import { getHarnessChipMeta } from "../constants"
 import { MobileChatHeader } from "../ui/mobile-chat-header"
 import { QuickCommentInput } from "../ui/quick-comment-input"
 import { SubChatSelector } from "../ui/sub-chat-selector"
@@ -258,7 +262,7 @@ function getScrollToLatestThreshold(container: HTMLElement) {
 import { utf8ToBase64, base64ToUtf8 } from "../utils/base64"
 
 /** Wait for streaming to finish by subscribing to the status store.
- *  Includes a 30s safety timeout — if the store never transitions to "ready",
+ *  Includes a 30s safety timeout - if the store never transitions to "ready",
  *  the promise resolves anyway to prevent hanging the UI indefinitely. */
 const STREAMING_READY_TIMEOUT_MS = 30_000
 
@@ -354,7 +358,7 @@ const CHAT_LAYOUT = {
   stickyTopSidebarClosed: "top-0", // When sidebar closed (desktop, flex header)
   stickyTopMobile: "top-0", // Mobile (flex header, so top-0)
   // Header padding when absolute
-  headerPaddingSidebarOpen: "pt-1.5 pb-12 px-3 pl-2",
+  headerPaddingSidebarOpen: "pt-3 pb-12 px-3 pl-2",
   headerPaddingSidebarClosed: "p-2 pt-1.5",
 } as const
 
@@ -928,8 +932,6 @@ function MessageGroup({ children, isLastGroup }: MessageGroupProps) {
           contentVisibility: "auto",
           containIntrinsicSize: "auto 200px",
         }),
-        // Последняя группа имеет минимальную высоту контейнера чата (минус отступ)
-        ...(isLastGroup && { minHeight: "calc(var(--chat-container-height) - 32px)" }),
       }}
       data-last-group={isLastGroup || undefined}
     >
@@ -1986,7 +1988,6 @@ const ChatViewInner = memo(function ChatViewInner({
   provider = "claude-code",
   isFirstSubChat,
   onAutoRename,
-  onCreateNewSubChat,
   onProviderChange,
   refreshDiff,
   teamId,
@@ -2008,6 +2009,8 @@ const ChatViewInner = memo(function ChatViewInner({
   workspaceName,
   workspaceBranch,
   workspaceRepoName,
+  projectId,
+  localFolderPath,
 }: {
   chat: Chat<any>
   subChatId: string
@@ -2015,7 +2018,6 @@ const ChatViewInner = memo(function ChatViewInner({
   provider?: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
   isFirstSubChat: boolean
   onAutoRename: (userMessage: string, subChatId: string) => void
-  onCreateNewSubChat?: () => void
   onProviderChange?: (
     subChatId: string,
     provider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt",
@@ -2040,6 +2042,8 @@ const ChatViewInner = memo(function ChatViewInner({
   workspaceName?: string | null
   workspaceBranch?: string | null
   workspaceRepoName?: string | null
+  projectId?: string | null
+  localFolderPath?: string
 }) {
   const hasTriggeredRenameRef = useRef(false)
   const hasTriggeredAutoGenerateRef = useRef(false)
@@ -2271,6 +2275,23 @@ const ChatViewInner = memo(function ChatViewInner({
     },
     [subChatId],
   )
+
+  const handleCopyFullChat = useCallback(() => {
+    void copyChat({ chatId: parentChatId, format: "markdown" })
+  }, [parentChatId])
+  const projectColor = useMemo(() => {
+    if (!projectId) return null
+    try {
+      const colors = JSON.parse(
+        localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}",
+      ) as Record<string, string>
+      return resolveProjectAccentColor(projectId, colors)
+    } catch {
+      return "#38bdf8"
+    }
+  }, [projectId])
+  const providerMeta = getHarnessChipMeta(provider)
+  const isAgentsSidebarOpen = useAtomValue(agentsSidebarOpenAtom)
 
   // Plan mode state (per-subChat using atomFamily)
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtomFamily(subChatId))
@@ -2669,7 +2690,7 @@ const ChatViewInner = memo(function ChatViewInner({
     return () => window.removeEventListener("file-viewer-add-to-context", handler)
   }, [addTextContext, isActive])
 
-  // Listen for file-tree "Add to Chat Context" — inserts file mention chip
+  // Listen for file-tree "Add to Chat Context" - inserts file mention chip
   useEffect(() => {
     if (!isActive) return
 
@@ -3255,32 +3276,12 @@ const ChatViewInner = memo(function ChatViewInner({
       // Clear the pending message immediately to prevent double-sending
       setPendingAuthRetry(null)
 
-      // Build message parts
-      const parts: Array<{ type: "text"; text: string } | { type: "data-image"; data: any }> = [
-        { type: "text", text: pendingAuthRetry.prompt },
-      ]
-
-      // Add images if present
-      if (pendingAuthRetry.images && pendingAuthRetry.images.length > 0) {
-        for (const img of pendingAuthRetry.images) {
-          parts.push({
-            type: "data-image",
-            data: {
-              base64Data: img.base64Data,
-              mediaType: img.mediaType,
-              filename: img.filename,
-            },
-          })
-        }
-      }
-
-      // Send the message to Claude
-      sendMessage({
-        role: "user",
-        parts,
-      })
+      // Retry the existing last user turn through the transport. `regenerate`
+      // reuses the current message list instead of appending another user
+      // message, so auth recovery cannot create a duplicate bubble.
+      void regenerate()
     }
-  }, [pendingAuthRetry, provider, isStreaming, sendMessage, setPendingAuthRetry, subChatId])
+  }, [pendingAuthRetry, provider, isStreaming, regenerate, setPendingAuthRetry, subChatId])
 
   const handlePlanApproval = useCallback(async (toolUseId: string, approved: boolean) => {
     if (!toolUseId) return
@@ -3820,7 +3821,7 @@ const ChatViewInner = memo(function ChatViewInner({
   // Initialize scroll position on mount or tab re-activation.
   // Strategy: restore saved position if user was scrolled up, otherwise scroll to bottom.
   // Uses ResizeObserver on content wrapper to catch ALL height changes (markdown rendering,
-  // syntax highlighting, image loading, content-visibility reflows) — not just childList mutations.
+  // syntax highlighting, image loading, content-visibility reflows) - not just childList mutations.
   useLayoutEffect(() => {
     // Skip if not active (keep-alive: hidden tabs don't need scroll init)
     if (!isVisiblePane) return
@@ -3836,13 +3837,13 @@ const ChatViewInner = memo(function ChatViewInner({
     const savedPosition = scrollPositionCache.get(subChatId)
 
     if (savedPosition && !savedPosition.wasAtBottom) {
-      // User was scrolled up — restore their position relative to content bottom.
+      // User was scrolled up - restore their position relative to content bottom.
       // Content may have changed height since we saved, so we offset from the bottom:
       const savedOffset = savedPosition.scrollHeight - savedPosition.scrollTop
       container.scrollTop = Math.max(0, container.scrollHeight - savedOffset)
       shouldAutoScrollRef.current = false
     } else {
-      // No saved position or user was at bottom — scroll to bottom
+      // No saved position or user was at bottom - scroll to bottom
       container.scrollTop = container.scrollHeight
       shouldAutoScrollRef.current = true
     }
@@ -4822,7 +4823,12 @@ const ChatViewInner = memo(function ChatViewInner({
 
         {/* Chat title - flex above scroll area (desktop only) */}
         {!isMobile && (
-          <div className={cn("flex-shrink-0 pb-2", isSubChatsSidebarOpen ? "pt-[52px]" : "pt-2")}>
+          <div
+            className={cn(
+              "relative flex-shrink-0 border-b border-border/70 bg-background/95 py-2",
+              isSubChatsSidebarOpen && "pt-[52px]",
+            )}
+          >
             <ChatTitleEditor
               name={subChatName}
               placeholder="New Chat"
@@ -4830,14 +4836,24 @@ const ChatViewInner = memo(function ChatViewInner({
               isMobile={false}
               chatId={subChatId}
               hasMessages={true} /* Always show "New Chat" placeholder when name is empty */
+              onCopyChat={handleCopyFullChat}
+              isSidebarOpen={isAgentsSidebarOpen}
+              provider={provider}
+              providerName={providerMeta.name}
+              providerClassName={providerMeta.className}
+              workspaceLabel={[workspaceRepoName, workspaceBranch].filter(Boolean).join(" • ")}
+              localFolderPath={localFolderPath}
+              reserveRestoreSpace={isArchived}
             />
-            {/* Workspace subtitle: repo • branch */}
-            {(workspaceRepoName || workspaceBranch) && (
-              <div className="max-w-2xl mx-auto px-4">
-                <span className="text-xs text-muted-foreground/50 truncate block">
-                  {[workspaceRepoName, workspaceBranch].filter(Boolean).join(" • ")}
-                </span>
-              </div>
+            {(isArchived || projectColor) && (
+              <div
+                className="absolute inset-x-0 -bottom-px h-0.5"
+                style={{
+                  backgroundColor: isArchived
+                    ? ARCHIVED_CHAT_ACCENT_COLOR
+                    : (projectColor ?? undefined),
+                }}
+              />
             )}
           </div>
         )}
@@ -4878,7 +4894,7 @@ const ChatViewInner = memo(function ChatViewInner({
         >
           <div
             ref={contentWrapperRef}
-            className="px-2 max-w-2xl mx-auto"
+            className="mx-auto max-w-2xl px-2 pt-6"
             style={{
               paddingBottom: "32px",
             }}
@@ -4967,7 +4983,6 @@ const ChatViewInner = memo(function ChatViewInner({
           onForceSend={handleForceSend}
           onStop={handleStop}
           onCompact={handleCompact}
-          onCreateNewSubChat={onCreateNewSubChat}
           onModeChange={handleModeChange}
           isStreaming={isStreaming}
           isCompacting={isCompacting}
@@ -5002,7 +5017,6 @@ const ChatViewInner = memo(function ChatViewInner({
           onInputContentChange={setInputHasContent}
           onSubmitWithQuestionAnswer={submitWithQuestionAnswerCallback}
           onProviderChange={handleInputProviderChange}
-          onContinueWithProvider={handleContinueWithProvider}
           isActive={isActive}
         />
 
@@ -5079,7 +5093,6 @@ export function ChatView({
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtom)
   const { notifyAgentComplete, notifyAgentError } = useDesktopNotifications()
-  const failedAutoReadSubChatsRef = useRef(new Set<string>())
 
   // Check if any chat has unseen changes
   const hasAnyUnseenChanges = unseenChanges.size > 0
@@ -5632,74 +5645,28 @@ export function ChatView({
     stream_id?: string | null
   }>
 
-  // Workspace isolation: limit mounted tabs to prevent memory growth
-  // CRITICAL: Filter by workspace to prevent rendering sub-chats from other workspaces
-  // Always render: active + pinned, then fill with recent up to limit
-  const MAX_MOUNTED_TABS = 3
-  const tabsToRender = useMemo(() => {
-    if (!activeSubChatId) return []
+  const canonicalConversationId = useMemo(
+    () => resolveCanonicalConversationId(agentSubChats, activeSubChatId),
+    [activeSubChatId, agentSubChats],
+  )
+  const tabsToRender = useMemo(
+    () => (canonicalConversationId ? [canonicalConversationId] : []),
+    [canonicalConversationId],
+  )
 
-    // Combine server data (agentSubChats) with local store (allSubChats) for validation.
-    // This handles:
-    // 1. Race condition where setChatId resets allSubChats but activeSubChatId loads from localStorage
-    // 2. Optimistic updates when creating new sub-chats (new sub-chat is in allSubChats but not in agentSubChats yet)
-    //
-    // By combining both sources, we validate against all known sub-chats from both server and local state.
-    const validSubChatIds = new Set([
-      ...agentSubChats.map((sc) => sc.id),
-      ...allSubChats.map((sc) => sc.id),
-    ])
-
-    // If active sub-chat doesn't belong to this workspace → return []
-    // This prevents rendering sub-chats from another workspace during race condition
-    if (!validSubChatIds.has(activeSubChatId)) {
-      return []
+  // The legacy store remains a transport compatibility layer, but the product
+  // exposes exactly one conversation for each sidebar chat.
+  useEffect(() => {
+    if (!canonicalConversationId) return
+    const store = useAgentSubChatStore.getState()
+    if (store.activeSubChatId !== canonicalConversationId) {
+      store.setActiveSubChat(canonicalConversationId)
     }
-
-    // Filter openSubChatIds and pinnedSubChatIds to only valid IDs for this workspace
-    const validOpenIds = openSubChatIds.filter((id) => validSubChatIds.has(id))
-    const validPinnedIds = pinnedSubChatIds.filter((id) => validSubChatIds.has(id))
-    const validSplitPaneIds = splitPaneIds.filter((id) => validSubChatIds.has(id))
-
-    // Start with active (must always be mounted)
-    const mustRender = new Set([activeSubChatId])
-
-    // Split panes must always be mounted
-    for (const id of validSplitPaneIds) {
-      mustRender.add(id)
+    if (store.openSubChatIds.length !== 1 || store.openSubChatIds[0] !== canonicalConversationId) {
+      store.setOpenSubChats([canonicalConversationId])
     }
-
-    // Add pinned tabs (only valid ones)
-    for (const id of validPinnedIds) {
-      mustRender.add(id)
-    }
-
-    // If we have room, add recent tabs from openSubChatIds (only valid ones)
-    if (mustRender.size < MAX_MOUNTED_TABS) {
-      const remaining = MAX_MOUNTED_TABS - mustRender.size
-      const recentTabs = validOpenIds.filter((id) => !mustRender.has(id)).slice(-remaining) // Take the most recent (end of array)
-
-      for (const id of recentTabs) {
-        mustRender.add(id)
-      }
-    }
-
-    // Return tabs to render
-    // Always include activeSubChatId even if not in validOpenIds (handles race condition
-    // where openSubChatIds from localStorage doesn't include the active tab yet)
-    const result = validOpenIds.filter((id) => mustRender.has(id))
-    if (!result.includes(activeSubChatId)) {
-      result.unshift(activeSubChatId)
-    }
-
-    for (const id of validSplitPaneIds) {
-      if (!result.includes(id)) {
-        result.push(id)
-      }
-    }
-
-    return result
-  }, [activeSubChatId, splitPaneIds, pinnedSubChatIds, openSubChatIds, allSubChats, agentSubChats])
+    if (store.splitPaneIds.length > 0) store.closeSplit()
+  }, [canonicalConversationId])
 
   // Prune chat instances from previous workspace when switching parent chat.
   // Prevents cross-workspace memory accumulation.
@@ -5853,6 +5820,11 @@ export function ChatView({
   const activeTargetWorktreePath = useAtomValue(activeTargetWorktreePathAtom)
   // Desktop: original project path for MCP config lookup
   const originalProjectPath = (agentChat as any)?.project?.path as string | undefined
+  const localFolderPath = resolveLocalFolder(
+    activeTargetWorktreePath,
+    worktreePath,
+    originalProjectPath,
+  )
 
   // Terminal scope key: shared by project path (local mode) or isolated per workspace (worktree)
   const terminalScopeKey = useMemo(() => {
@@ -6964,7 +6936,6 @@ Make sure to preserve all functionality from both branches when resolving confli
         messages,
         transport,
         onError: (error: Error) => {
-          failedAutoReadSubChatsRef.current.add(subChatId)
           // Sync status to global store on error (allows queue to continue)
           useStreamingStatusStore.getState().setStatus(subChatId, "ready")
           syncFinishedMessagesToChatCache(subChatId, newChat)
@@ -6992,40 +6963,6 @@ Make sure to preserve all functionality from both branches when resolving confli
           // Check if this was a manual abort (ESC/Ctrl+C) - skip sound if so
           const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId)
           agentChatStore.clearManuallyAborted(subChatId)
-          const failed = failedAutoReadSubChatsRef.current.delete(subChatId)
-          if (!failed && !wasManuallyAborted && !event?.isAbort && !event?.isError) {
-            const completedMessage =
-              event?.message ||
-              [...((newChat as any).messages || [])]
-                .reverse()
-                .find((message: any) => message?.role === "assistant")
-            const completedText =
-              completedMessage?.parts
-                ?.filter((part: any) => part?.type === "text")
-                .map((part: any) => part.text || "")
-                .join("\n") || ""
-            if (typeof completedMessage?.id === "string" && completedText.trim()) {
-              void (async () => {
-                try {
-                  const preference = await trpcClient.speech.getReadAloudForChat.query({
-                    chatId: subChatId,
-                  })
-                  if (!preference.enabled) return
-                  const result = await trpcClient.speech.speak.mutate({
-                    text: completedText,
-                    chatId,
-                    subChatId,
-                    messageId: completedMessage.id,
-                  })
-                  if (result.skipped) return
-                  await playManagedSpeech(result)
-                } catch (error) {
-                  console.error("[AutoRead] TTS error:", error)
-                }
-              })()
-            }
-          }
-
           // Get CURRENT values at runtime (not stale closure values)
           const currentActiveSubChatId = useAgentSubChatStore.getState().activeSubChatId
           const currentSelectedChatId = appStore.get(selectedAgentChatIdAtom)
@@ -7440,31 +7377,6 @@ Make sure to preserve all functionality from both branches when resolving confli
     agentChat?.name,
   ])
 
-  // Keyboard shortcut: New sub-chat
-  // Web: Opt+Cmd+T (browser uses Cmd+T for new tab)
-  // Desktop: Cmd+T
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isDesktop = isDesktopApp()
-
-      // Desktop: Cmd+T (without Alt)
-      if (isDesktop && e.metaKey && e.code === "KeyT" && !e.altKey) {
-        e.preventDefault()
-        handleCreateNewSubChat()
-        return
-      }
-
-      // Web: Opt+Cmd+T (with Alt)
-      if (e.altKey && e.metaKey && e.code === "KeyT") {
-        e.preventDefault()
-        handleCreateNewSubChat()
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [handleCreateNewSubChat])
-
   // NOTE: Desktop notifications for pending questions are now triggered directly
   // in ipc-chat-transport.ts when the ask-user-question chunk arrives.
   // This prevents duplicate notifications from multiple ChatView instances.
@@ -7765,11 +7677,11 @@ Make sure to preserve all functionality from both branches when resolving confli
 
   // Get or create Chat instance for active sub-chat
   const activeChat = useMemo(() => {
-    if (!activeSubChatId || !agentChat) {
+    if (!canonicalConversationId || !agentChat) {
       return null
     }
-    return getOrCreateChat(activeSubChatId)
-  }, [activeSubChatId, agentChat, getOrCreateChat, chatId, chatWorkingDir])
+    return getOrCreateChat(canonicalConversationId)
+  }, [canonicalConversationId, agentChat, getOrCreateChat, chatId, chatWorkingDir])
 
   // Check if active sub-chat is the first one (for renaming parent chat)
   // Use agentSubChats directly to avoid race condition with store initialization
@@ -7813,22 +7725,21 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <div
                   className={cn(
                     "relative z-20 pointer-events-none",
-                    // Mobile: always flex; Desktop: absolute when sidebar open, flex when closed
-                    !isMobileFullscreen && subChatsSidebarMode === "sidebar"
-                      ? `absolute top-0 left-0 right-0 ${CHAT_LAYOUT.headerPaddingSidebarOpen}`
-                      : `flex-shrink-0 ${CHAT_LAYOUT.headerPaddingSidebarClosed}`,
+                    // Desktop controls share the title bar instead of taking a second row.
+                    isMobileFullscreen
+                      ? `flex-shrink-0 ${CHAT_LAYOUT.headerPaddingSidebarClosed}`
+                      : `absolute top-0 left-0 right-0 ${CHAT_LAYOUT.headerPaddingSidebarOpen}`,
                   )}
                 >
-                  {/* Gradient background - only when not absolute */}
-                  {(isMobileFullscreen || subChatsSidebarMode !== "sidebar") && (
+                  {/* Mobile keeps the soft fade; desktop uses the solid title bar below. */}
+                  {isMobileFullscreen && (
                     <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-transparent" />
                   )}
-                  <div className="pointer-events-auto flex items-center justify-between relative">
+                  <div className="pointer-events-none relative flex items-center justify-between [&_button]:pointer-events-auto">
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       {/* Mobile header - simplified with chat name as trigger */}
                       {isMobileFullscreen ? (
                         <MobileChatHeader
-                          onCreateNew={handleCreateNewSubChat}
                           onBackToChats={onBackToChats}
                           onOpenPreview={onOpenPreview}
                           canOpenPreview={canOpenPreview}
@@ -7853,7 +7764,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                             isSubChatsSidebarOpen={subChatsSidebarMode === "sidebar"}
                           />
                           <SubChatSelector
-                            onCreateNew={handleCreateNewSubChat}
+                            singleConversation
                             isMobile={false}
                             onBackToChats={onBackToChats}
                             onOpenPreview={onOpenPreview}
@@ -8043,7 +7954,6 @@ Make sure to preserve all functionality from both branches when resolving confli
                                   provider={inferProviderFromMessages(paneId)}
                                   isFirstSubChat={isFirstSubChat}
                                   onAutoRename={handleAutoRename}
-                                  onCreateNewSubChat={handleCreateNewSubChat}
                                   onProviderChange={handleProviderChange}
                                   teamId={selectedTeamId || undefined}
                                   repository={repository}
@@ -8065,6 +7975,8 @@ Make sure to preserve all functionality from both branches when resolving confli
                                     (agentChat as any)?.project?.name ||
                                     null
                                   }
+                                  projectId={(agentChat as any)?.project?.id ?? null}
+                                  localFolderPath={localFolderPath}
                                 />
                               </div>
                             ),
@@ -8100,7 +8012,6 @@ Make sure to preserve all functionality from both branches when resolving confli
                                     provider={inferProviderFromMessages(subChatId)}
                                     isFirstSubChat={isFirstSubChat}
                                     onAutoRename={handleAutoRename}
-                                    onCreateNewSubChat={handleCreateNewSubChat}
                                     onProviderChange={handleProviderChange}
                                     teamId={selectedTeamId || undefined}
                                     repository={repository}
@@ -8122,6 +8033,8 @@ Make sure to preserve all functionality from both branches when resolving confli
                                       (agentChat as any)?.project?.name ||
                                       null
                                     }
+                                    projectId={(agentChat as any)?.project?.id ?? null}
+                                    localFolderPath={localFolderPath}
                                   />
                                 </div>
                               )
@@ -8132,7 +8045,9 @@ Make sure to preserve all functionality from both branches when resolving confli
                   ) : (
                     tabsToRender.map((subChatId) => {
                       const chat = getOrCreateChat(subChatId)
-                      const isActive = subChatId === activeSubChatId
+                      // Single-conversation mode renders the canonical row directly.
+                      // Do not hide it behind legacy persisted active-tab state.
+                      const isActive = subChatId === canonicalConversationId
                       const isFirstSubChat = getFirstSubChatId(agentSubChats) === subChatId
 
                       // Defense in depth: double-check workspace ownership
@@ -8169,7 +8084,6 @@ Make sure to preserve all functionality from both branches when resolving confli
                             provider={inferProviderFromMessages(subChatId)}
                             isFirstSubChat={isFirstSubChat}
                             onAutoRename={handleAutoRename}
-                            onCreateNewSubChat={handleCreateNewSubChat}
                             onProviderChange={handleProviderChange}
                             teamId={selectedTeamId || undefined}
                             repository={repository}
@@ -8191,6 +8105,8 @@ Make sure to preserve all functionality from both branches when resolving confli
                               (agentChat as any)?.project?.name ||
                               null
                             }
+                            projectId={(agentChat as any)?.project?.id ?? null}
+                            localFolderPath={localFolderPath}
                           />
                         </div>
                       )
@@ -8537,7 +8453,7 @@ Make sure to preserve all functionality from both branches when resolving confli
             )}
           </div>
 
-          {/* Terminal Bottom Panel — renders below the main row when displayMode is "bottom" */}
+          {/* Terminal Bottom Panel - renders below the main row when displayMode is "bottom" */}
           {terminalDisplayMode === "bottom" && worktreePath && !isMobileFullscreen && (
             <ResizableBottomPanel
               isOpen={isTerminalSidebarOpen}

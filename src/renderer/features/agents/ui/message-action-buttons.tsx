@@ -1,7 +1,8 @@
 "use client"
 
-import { memo, useState, useRef, useCallback, useEffect } from "react"
+import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { useAtom, useSetAtom } from "jotai"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import {
   CheckIcon,
   CopyIcon,
@@ -12,12 +13,23 @@ import {
 import { cn } from "../../../lib/utils"
 import { trpcClient } from "../../../lib/trpc"
 import { buildMessageSpeechRequest } from "../../../lib/message-speech-request"
-import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
+import {
+  getSpeechCursor,
+  getSpeechDisplayTokens,
+  getSpeechPlaybackPosition,
+  getSpeechStartTime,
+  extendSpeechRangeThroughPunctuation,
+  normalizeSpeechDisplayWord,
+  playManagedSpeech,
+  setSpeechPlaybackPosition,
+  stopManagedSpeech,
+} from "../../../lib/speech-playback"
 import { useHaptic } from "../hooks/use-haptic"
 import {
   ttsPlaybackRateAtom,
   setTtsPlaybackRateAtom,
-  PLAYBACK_SPEEDS,
+  MIN_PLAYBACK_SPEED,
+  MAX_PLAYBACK_SPEED,
   type PlaybackSpeed,
 } from "../stores/message-store"
 
@@ -45,6 +57,8 @@ export const CopyButton = memo(function CopyButton({ text, isMobile = false }: C
     <button
       onClick={handleCopy}
       tabIndex={-1}
+      aria-label="Copy message"
+      title="Copy message"
       className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
     >
       <div className="relative w-3.5 h-3.5">
@@ -77,6 +91,8 @@ interface PlayButtonProps {
   chatId?: string
   subChatId?: string
   messageId?: string
+  expandDirection?: "left" | "right"
+  highlightColor?: SpeechHighlightColor
 }
 
 export const PlayButton = memo(function PlayButton({
@@ -85,8 +101,16 @@ export const PlayButton = memo(function PlayButton({
   chatId,
   subChatId,
   messageId,
+  expandDirection = "right",
+  highlightColor = "gray",
 }: PlayButtonProps) {
+  const playbackKey = messageId ?? `${chatId ?? "chat"}:${text}`
+  const savedPosition = getSpeechPlaybackPosition(playbackKey)
   const [state, setState] = useState<PlayButtonState>("idle")
+  const [currentTime, setCurrentTime] = useState(savedPosition.currentTime)
+  const [duration, setDuration] = useState(savedPosition.duration)
+  const [spokenText, setSpokenText] = useState(savedPosition.spokenText)
+  const [isExpanded, setIsExpanded] = useState(false)
   const [playbackRate] = useAtom(ttsPlaybackRateAtom)
   const setPlaybackRate = useSetAtom(setTtsPlaybackRateAtom)
 
@@ -94,7 +118,44 @@ export const PlayButton = memo(function PlayButton({
   const mediaSourceRef = useRef<MediaSource | null>(null)
   const sourceBufferRef = useRef<SourceBuffer | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
   const chunkCountRef = useRef(0)
+  const readingCursor = useMemo(
+    () => getSpeechCursor(spokenText, currentTime, duration),
+    [spokenText, currentTime, duration],
+  )
+
+  useEffect(() => {
+    if (!messageId || !spokenText || readingCursor.count <= 0 || !CSS.highlights) {
+      removeMessageSpeechHighlight(messageId)
+      return
+    }
+
+    const ranges = findRenderedWordRanges(
+      spokenText,
+      readingCursor.count,
+      readingCursor.wordProgress,
+      messageId,
+    )
+    if (!ranges.length) return
+
+    setMessageSpeechHighlight(messageId, ranges, highlightColor)
+    const bounds = ranges[ranges.length - 1]!.getBoundingClientRect()
+    if (bounds.top < 0 || bounds.bottom > window.innerHeight) {
+      ranges[ranges.length - 1]!.startContainer.parentElement?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      })
+    }
+
+    return () => {
+      removeMessageSpeechHighlight(messageId)
+    }
+  }, [messageId, spokenText, readingCursor.count, readingCursor.wordProgress, highlightColor])
+
+  useEffect(() => {
+    setSpeechPlaybackPosition(playbackKey, { currentTime, duration, spokenText })
+  }, [playbackKey, currentTime, duration, spokenText])
 
   // Update playback rate when it changes
   useEffect(() => {
@@ -104,6 +165,10 @@ export const PlayButton = memo(function PlayButton({
   }, [playbackRate])
 
   const cleanup = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -133,20 +198,64 @@ export const PlayButton = memo(function PlayButton({
       setState("idle")
       return
     }
+    const exactSpokenText = result.spokenText
+    setSpokenText(exactSpokenText)
+    setSpeechPlaybackPosition(playbackKey, { spokenText: exactSpokenText })
+    const resumeAt = getSpeechStartTime(getSpeechPlaybackPosition(playbackKey))
     const audio = await playManagedSpeech(result, {
       rate: playbackRate,
-      onEnded: () => setState("idle"),
-      onError: () => setState("idle"),
-      onStopped: () => setState("idle"),
+      startTime: resumeAt,
+      onEnded: () => {
+        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
+        const finalDuration = Number.isFinite(audio.duration) ? audio.duration : duration
+        setCurrentTime(finalDuration)
+        setDuration(finalDuration)
+        setState("idle")
+        audioRef.current = null
+      },
+      onError: () => {
+        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
+        setState("idle")
+        audioRef.current = null
+      },
+      onStopped: () => {
+        if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current)
+        setState("idle")
+        audioRef.current = null
+      },
     })
+    audio.ontimeupdate = () => {
+      setCurrentTime(audio.currentTime)
+      setSpeechPlaybackPosition(playbackKey, { currentTime: audio.currentTime })
+    }
+    const syncProgress = () => {
+      setCurrentTime(audio.currentTime)
+      setSpeechPlaybackPosition(playbackKey, { currentTime: audio.currentTime })
+      if (!audio.paused && !audio.ended) {
+        animationFrameRef.current = requestAnimationFrame(syncProgress)
+      }
+    }
+    animationFrameRef.current = requestAnimationFrame(syncProgress)
+    audio.ondurationchange = () => {
+      const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0
+      setDuration(nextDuration)
+      setSpeechPlaybackPosition(playbackKey, { duration: nextDuration })
+    }
+    const nextDuration = Number.isFinite(audio.duration) ? audio.duration : duration
+    setDuration(nextDuration)
+    setCurrentTime(resumeAt)
+    setSpeechPlaybackPosition(playbackKey, { currentTime: resumeAt, duration: nextDuration })
     audioRef.current = audio
     setState("playing")
-  }, [text, playbackRate, chatId, subChatId, messageId])
+  }, [text, playbackRate, chatId, subChatId, messageId, playbackKey, duration])
 
   const handlePlay = useCallback(async () => {
+    setIsExpanded(true)
+
     // If playing, stop the audio (and halt any server-side synthesis).
     if (state === "playing") {
-      cleanup()
+      stopManagedSpeech(audioRef.current)
+      audioRef.current = null
       void trpcClient.speech.stopSpeaking.mutate()
       setState("idle")
       return
@@ -163,6 +272,7 @@ export const PlayButton = memo(function PlayButton({
     // Preempt current renderer playback immediately. Waiting for the next
     // synthesis result would allow the old utterance to keep talking.
     cleanup()
+    stopManagedSpeech()
     setState("loading")
     chunkCountRef.current = 0
 
@@ -182,17 +292,15 @@ export const PlayButton = memo(function PlayButton({
     return cleanup
   }, [cleanup])
 
-  const handleSpeedChange = useCallback(() => {
-    const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackRate)
-    const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length
-    setPlaybackRate(PLAYBACK_SPEEDS[nextIndex]!)
-  }, [playbackRate, setPlaybackRate])
-
   return (
-    <div className="relative flex items-center">
+    <div
+      className={cn("relative flex items-center", expandDirection === "left" && "flex-row-reverse")}
+    >
       <button
         onClick={handlePlay}
-        tabIndex={-1}
+        tabIndex={0}
+        aria-label={state === "playing" ? "Pause message audio" : "Play message audio"}
+        title={state === "playing" ? "Pause message audio" : "Play message audio"}
         className={cn(
           "p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]",
           state === "loading" && "cursor-wait",
@@ -209,34 +317,182 @@ export const PlayButton = memo(function PlayButton({
         </div>
       </button>
 
-      {/* Speed selector - cyclic button with animation, only visible when playing */}
-      {state === "playing" && (
-        <button
-          onClick={handleSpeedChange}
-          tabIndex={-1}
+      <button
+        type="button"
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+        tabIndex={0}
+        aria-label={isExpanded ? "Hide speech controls" : "Show speech controls"}
+        title={isExpanded ? "Hide speech controls" : "Show speech controls"}
+        className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
+      >
+        {expandDirection === "left" ? (
+          isExpanded ? (
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground" />
+          )
+        ) : isExpanded ? (
+          <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+        )}
+      </button>
+
+      {isExpanded && (
+        <div
           className={cn(
-            "p-1.5 rounded-md transition-[background-color,opacity,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]",
-            isMobile ? "opacity-100" : "opacity-0 group-hover/message:opacity-100",
+            "flex items-center gap-1.5 text-[10px] text-muted-foreground",
+            isMobile ? "max-w-[260px]" : "max-w-[340px]",
           )}
         >
-          <div className="relative w-4 h-3.5 flex items-center justify-center">
-            {PLAYBACK_SPEEDS.map((speed) => (
-              <span
-                key={speed}
-                className={cn(
-                  "absolute inset-0 flex items-center justify-center text-xs font-medium text-muted-foreground transition-[opacity,transform] duration-200 ease-out",
-                  speed === playbackRate ? "opacity-100 scale-100" : "opacity-0 scale-50",
-                )}
-              >
-                {speed}x
-              </span>
-            ))}
-          </div>
-        </button>
+          <input
+            aria-label="Speech progress"
+            title="Speech progress"
+            type="range"
+            min={0}
+            max={duration || 1}
+            step={0.1}
+            value={Math.min(currentTime, duration || 1)}
+            onChange={(event) => {
+              const nextTime = Number(event.target.value)
+              if (audioRef.current) audioRef.current.currentTime = nextTime
+              setCurrentTime(nextTime)
+              setSpeechPlaybackPosition(playbackKey, { currentTime: nextTime })
+            }}
+            className="h-1 w-20 accent-foreground"
+          />
+          <span className="w-8 tabular-nums">{formatSpeechTime(currentTime)}</span>
+          <input
+            aria-label="Playback speed"
+            title={`Playback speed: ${playbackRate.toFixed(2)}x`}
+            type="range"
+            min={MIN_PLAYBACK_SPEED}
+            max={MAX_PLAYBACK_SPEED}
+            step={0.25}
+            value={playbackRate}
+            onChange={(event) => setPlaybackRate(Number(event.target.value))}
+            className="h-1 w-14 accent-foreground"
+          />
+          <span className="w-8 tabular-nums">{playbackRate.toFixed(2)}x</span>
+        </div>
       )}
     </div>
   )
 })
+
+type SpeechHighlightColor = "blue" | "orange" | "green" | "purple" | "rose" | "teal" | "gray"
+const SPEECH_HIGHLIGHT_COLORS: SpeechHighlightColor[] = [
+  "blue",
+  "orange",
+  "green",
+  "purple",
+  "rose",
+  "teal",
+  "gray",
+]
+const WORD_PATTERN = /[\p{L}\p{N}'’-]+/gu
+const messageSpeechRanges = new Map<string, { ranges: Range[]; color: SpeechHighlightColor }>()
+
+function normalizeWord(word: string) {
+  return normalizeSpeechDisplayWord(word)
+}
+
+function findRenderedWordRanges(
+  text: string,
+  wordCount: number,
+  wordProgress: number,
+  messageId: string,
+): Range[] {
+  const sourceWords = getSpeechDisplayTokens(text, wordCount)
+  const completedSourceWords = getSpeechDisplayTokens(text, Math.max(0, wordCount - 1)).length
+  const currentSourceLength = sourceWords
+    .slice(completedSourceWords)
+    .reduce((total, word) => total + word.length, 0)
+  let currentSourceCharacters = currentSourceLength * wordProgress
+  const containers = Array.from(document.querySelectorAll<HTMLElement>("[data-message-id]")).filter(
+    (element) => element.dataset.messageId === messageId,
+  )
+  const renderedWords: Array<{ node: Text; start: number; end: number; word: string }> = []
+  for (const container of containers) {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode() as Text | null
+    while (node) {
+      for (const match of node.data.matchAll(WORD_PATTERN)) {
+        if (match.index === undefined) continue
+        renderedWords.push({
+          node,
+          start: match.index,
+          end: extendSpeechRangeThroughPunctuation(node.data, match.index + match[0].length),
+          word: normalizeWord(match[0]),
+        })
+      }
+      node = walker.nextNode() as Text | null
+    }
+  }
+
+  const ranges: Range[] = []
+  let renderedIndex = 0
+  for (let sourceIndex = 0; sourceIndex < sourceWords.length; sourceIndex += 1) {
+    const sourceWord = sourceWords[sourceIndex]!
+    while (
+      renderedIndex < renderedWords.length &&
+      renderedWords[renderedIndex]!.word !== sourceWord
+    ) {
+      renderedIndex += 1
+    }
+    const match = renderedWords[renderedIndex]
+    if (!match) break
+    let end = match.end
+    if (sourceIndex >= completedSourceWords) {
+      const visibleCharacters = Math.min(match.word.length, Math.max(0, currentSourceCharacters))
+      currentSourceCharacters -= match.word.length
+      if (visibleCharacters <= 0) break
+      end =
+        visibleCharacters >= match.word.length
+          ? match.end
+          : match.start + Math.max(1, Math.ceil(visibleCharacters))
+    }
+    const range = document.createRange()
+    range.setStart(match.node, match.start)
+    range.setEnd(match.node, Math.min(match.end, end))
+    ranges.push(range)
+    renderedIndex += 1
+  }
+  return ranges
+}
+
+function setMessageSpeechHighlight(
+  messageId: string,
+  ranges: Range[],
+  color: SpeechHighlightColor,
+) {
+  messageSpeechRanges.set(messageId, { ranges, color })
+  refreshSpeechHighlights()
+}
+
+function removeMessageSpeechHighlight(messageId?: string) {
+  if (!messageId || !messageSpeechRanges.delete(messageId)) return
+  refreshSpeechHighlights()
+}
+
+function refreshSpeechHighlights() {
+  if (!CSS.highlights) return
+  const highlights = CSS.highlights as HighlightRegistry &
+    Pick<Map<string, Highlight>, "set" | "delete">
+  for (const color of SPEECH_HIGHLIGHT_COLORS) {
+    const ranges = Array.from(messageSpeechRanges.values())
+      .filter((entry) => entry.color === color)
+      .flatMap((entry) => entry.ranges)
+    const name = `speech-reading-${color}`
+    if (ranges.length) highlights.set(name, new Highlight(...ranges))
+    else highlights.delete(name)
+  }
+}
+
+function formatSpeechTime(seconds: number) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`
+}
 
 // ============================================================================
 // HELPER - Get text content from message

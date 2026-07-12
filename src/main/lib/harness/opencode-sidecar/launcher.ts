@@ -1,5 +1,5 @@
 /**
- * OpenCode sidecar launcher + lifecycle (Track E — E2).
+ * OpenCode sidecar launcher + lifecycle (Track E - E2).
  *
  * Spawns `opencode serve --hostname 127.0.0.1 --port 0`, captures the printed
  * base URL, and owns process teardown (kill the process group on cancel/end).
@@ -73,11 +73,7 @@ export async function startSidecar(params: {
   if (resolution.kind === "missing") {
     return {
       ok: false,
-      limitation: limitation(
-        "opencode-missing",
-        resolution.reason,
-        "Install OpenCode or Node.js, or set FLAPSTACK_OPENCODE_BIN.",
-      ),
+      limitation: limitation("opencode-missing", resolution.reason, "Install Node.js and retry."),
     }
   }
 
@@ -166,8 +162,8 @@ export async function startSidecar(params: {
         ok: false,
         limitation: limitation(
           "server-startup-timeout",
-          `OpenCode server did not print a base URL within ${startupTimeoutMs}ms.`,
-          "Retry; if it persists, check the OpenCode install and logs.",
+          `Provider runtime did not start within ${startupTimeoutMs}ms.`,
+          "Retry; if it persists, check the provider runtime logs.",
         ),
       })
     }, startupTimeoutMs)
@@ -195,8 +191,8 @@ export async function startSidecar(params: {
         ok: false,
         limitation: limitation(
           "opencode-missing",
-          `Failed to spawn OpenCode: ${err.message}`,
-          "Verify the OpenCode/Node install.",
+          `Failed to start the provider runtime: ${err.message}`,
+          "Verify the Node.js install.",
         ),
       })
     })
@@ -205,8 +201,8 @@ export async function startSidecar(params: {
         ok: false,
         limitation: limitation(
           "server-startup-timeout",
-          `OpenCode server exited before startup (code ${code ?? "null"}).`,
-          "Check provider credentials and the OpenCode logs.",
+          `Provider runtime exited before startup (code ${code ?? "null"}).`,
+          "Check provider credentials and the provider runtime logs.",
         ),
       })
     })

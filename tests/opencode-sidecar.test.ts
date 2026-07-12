@@ -42,10 +42,14 @@ import {
 } from "../src/main/lib/harness/opencode-sidecar/config"
 import {
   clearProviderKey,
+  clearProviderKeyAsync,
   getCredentialStatus,
+  getCredentialStatusAsync,
   getProviderKey,
+  getProviderKeyAsync,
   hasProviderKey,
   setProviderKey,
+  setProviderKeyAsync,
 } from "../src/main/lib/harness/opencode-sidecar/credentials"
 import {
   getAvailableProviderModels,
@@ -57,6 +61,7 @@ import {
 } from "../src/main/lib/harness/opencode-sidecar/launcher"
 import {
   handlePermissionRequest,
+  isStaleSidecarSessionError,
   runSidecarSession,
   streamEvents,
 } from "../src/main/lib/harness/opencode-sidecar/session"
@@ -64,6 +69,36 @@ import { isOpencodeHarness, OPENCODE_HARNESSES } from "../src/shared/harness-typ
 import { estimateCostUsd } from "../src/main/lib/usage/pricing"
 import { mergeSidecarUsage } from "../src/main/lib/harness/opencode-sidecar/usage"
 import { startOpenRouterGenerationProxy } from "../src/main/lib/harness/opencode-sidecar/generation-proxy"
+import { sanitizeProviderErrorText } from "../src/main/lib/harness/provider-error"
+
+describe("provider error boundary", () => {
+  it("turns stale-session failures into a safe retry message", () => {
+    const message = sanitizeProviderErrorText("OpenCode session.fork failed: HTTP 404")
+    expect(message).toBe("The previous provider session expired. Start a fresh response and retry.")
+    expect(message).not.toMatch(/opencode|1code|session\.fork/i)
+  })
+
+  it("removes inherited engine names from other errors", () => {
+    const message = sanitizeProviderErrorText("OpenCode session.prompt_async failed: HTTP 500")
+    expect(message).toBe("Provider runtime session request failed: HTTP 500")
+    expect(message).not.toMatch(/opencode|1code|prompt_async/i)
+  })
+})
+
+describe("stale provider session recovery", () => {
+  it("recovers only from a missing fork source", () => {
+    expect(isStaleSidecarSessionError(new Error("OpenCode session.fork failed: HTTP 404"))).toBe(
+      true,
+    )
+    expect(isStaleSidecarSessionError(new Error("OpenCode session.fork failed: HTTP 401"))).toBe(
+      false,
+    )
+    expect(
+      isStaleSidecarSessionError(new Error("OpenCode session permission update failed: HTTP 404")),
+    ).toBe(false)
+    expect(isStaleSidecarSessionError(new Error("OpenCode request aborted"))).toBe(false)
+  })
+})
 
 describe("harness identity", () => {
   it("recognizes OpenCode-backed providers", () => {
@@ -257,7 +292,7 @@ describe("SSE parsing", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: "error",
-        errorText: expect.stringContaining("terminal state"),
+        errorText: expect.stringContaining("before the run completed"),
       }),
     )
   })
@@ -888,6 +923,28 @@ describe("credentials + config", () => {
     expect(getCredentialStatus("openrouter").configured).toBe(true)
     clearProviderKey("openrouter")
     expect(hasProviderKey("openrouter")).toBe(false)
+  })
+
+  it("adds, reads, and clears multiple provider keys concurrently", async () => {
+    await Promise.all([
+      setProviderKeyAsync("openrouter", "openrouter-concurrent-key"),
+      setProviderKeyAsync("nanogpt", "nanogpt-concurrent-key"),
+    ])
+
+    const [openrouterKey, nanogptKey, openrouterStatus, nanogptStatus] = await Promise.all([
+      getProviderKeyAsync("openrouter"),
+      getProviderKeyAsync("nanogpt"),
+      getCredentialStatusAsync("openrouter"),
+      getCredentialStatusAsync("nanogpt"),
+    ])
+    expect(openrouterKey).toBe("openrouter-concurrent-key")
+    expect(nanogptKey).toBe("nanogpt-concurrent-key")
+    expect(openrouterStatus.configured).toBe(true)
+    expect(nanogptStatus.configured).toBe(true)
+
+    await Promise.all([clearProviderKeyAsync("openrouter"), clearProviderKeyAsync("nanogpt")])
+    expect(await getProviderKeyAsync("openrouter")).toBeNull()
+    expect(await getProviderKeyAsync("nanogpt")).toBeNull()
   })
 
   it("uses ignored local environment keys when no encrypted key is stored", () => {

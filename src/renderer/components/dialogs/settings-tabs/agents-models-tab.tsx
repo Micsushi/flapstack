@@ -15,8 +15,9 @@ import {
   openaiApiKeyAtom,
   type CustomClaudeConfig,
 } from "../../../lib/atoms"
-import { ClaudeCodeIcon, CodexIcon, SearchIcon } from "../../ui/icons"
-import { CLAUDE_MODELS, CODEX_MODELS } from "../../../features/agents/lib/models"
+import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
+import { ClaudeCodeIcon, CodexIcon, CursorIcon, SearchIcon } from "../../ui/icons"
+import { CLAUDE_MODELS, CODEX_MODELS, CURSOR_MODELS } from "../../../features/agents/lib/models"
 import { trpc } from "../../../lib/trpc"
 import { Badge } from "../../ui/badge"
 import { Button } from "../../ui/button"
@@ -328,7 +329,7 @@ export function AgentsModelsTab() {
         savedConfigRef.current = next
       }
     } else if (!trimmedModel && !trimmedBaseUrl && !trimmedToken) {
-      // All cleared — reset
+      // All cleared - reset
       if (
         savedConfigRef.current.model ||
         savedConfigRef.current.token ||
@@ -386,9 +387,22 @@ export function AgentsModelsTab() {
     (!codexIntegration && hasLocalCodexSubscription)
   const isCodexSubscriptionActive = isCodexSubscriptionConnected && !hasAppCodexApiKey
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom)
+  const [enabledCursorModels, setEnabledCursorModels] = useAtom(enabledCursorModelsAtom)
+  const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
 
   const toggleModelVisibility = useCallback(
-    (modelId: string) => {
+    (modelId: string, provider: "claude" | "codex" | "cursor") => {
+      if (provider === "cursor") {
+        setEnabledCursorModels((current) => {
+          if (!current.includes(modelId)) return [...current, modelId]
+          if (current.length === 1) {
+            toast.error("Cursor needs at least one enabled model")
+            return current
+          }
+          return current.filter((id) => id !== modelId)
+        })
+        return
+      }
       setHiddenModels((prev) => {
         if (prev.includes(modelId)) {
           return prev.filter((id) => id !== modelId)
@@ -396,7 +410,7 @@ export function AgentsModelsTab() {
         return [...prev, modelId]
       })
     },
-    [setHiddenModels],
+    [setEnabledCursorModels, setHiddenModels],
   )
 
   const codexConnectionText = isCodexSubscriptionConnected
@@ -491,15 +505,25 @@ export function AgentsModelsTab() {
 
   // All models merged into one list for the top section
   const allModels = useMemo(() => {
-    const items: { id: string; name: string; provider: "claude" | "codex" }[] = []
+    const items: { id: string; name: string; provider: "claude" | "codex" | "cursor" }[] = []
     for (const m of CLAUDE_MODELS) {
       items.push({ id: m.id, name: `${m.name} ${m.version}`, provider: "claude" })
     }
     for (const m of CODEX_MODELS) {
       items.push({ id: m.id, name: m.name, provider: "codex" })
     }
+    const cursorIds = cursorModelData?.models?.length
+      ? cursorModelData.models
+      : CURSOR_MODELS.map((model) => model.id)
+    for (const id of cursorIds) {
+      items.push({
+        id,
+        name: CURSOR_MODELS.find((model) => model.id === id)?.name ?? id,
+        provider: "cursor",
+      })
+    }
     return items
-  }, [])
+  }, [cursorModelData?.models])
 
   const [modelSearch, setModelSearch] = useState("")
   const filteredModels = useMemo(() => {
@@ -538,18 +562,26 @@ export function AgentsModelsTab() {
           {/* Model list */}
           <div className="divide-y divide-border">
             {filteredModels.map((m) => {
-              const isEnabled = !hiddenModels.includes(m.id)
+              const isEnabled =
+                m.provider === "cursor"
+                  ? enabledCursorModels.includes(m.id)
+                  : !hiddenModels.includes(m.id)
               return (
                 <div key={m.id} className="flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{m.name}</span>
                     {m.provider === "claude" ? (
                       <ClaudeCodeIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : m.provider === "cursor" ? (
+                      <CursorIcon className="h-3.5 w-3.5 text-muted-foreground" />
                     ) : (
                       <CodexIcon className="h-3.5 w-3.5 text-muted-foreground" />
                     )}
                   </div>
-                  <Switch checked={isEnabled} onCheckedChange={() => toggleModelVisibility(m.id)} />
+                  <Switch
+                    checked={isEnabled}
+                    onCheckedChange={() => toggleModelVisibility(m.id, m.provider)}
+                  />
                 </div>
               )
             })}

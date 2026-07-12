@@ -21,6 +21,8 @@ import { IconTextUndo } from "../../../components/ui/icons"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { cn } from "../../../lib/utils"
 import { useStreamingStatusStore } from "../stores/streaming-status-store"
+import { CopyButton, PlayButton } from "../ui/message-action-buttons"
+import { formatMessageTimestamp } from "../lib/message-timestamp"
 
 // Context for fork callback - avoids threading props through MemoizedAssistantMessages
 export const ForkContext = createContext<((messageId: string) => void) | null>(null)
@@ -158,6 +160,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   // Check if this is an attachment-only message (no text but has images or text mentions)
   const isAttachmentOnlyMessage =
     !textContent.trim() && (imageParts.length > 0 || textMentions.length > 0)
+  const timestamp = formatMessageTimestamp(userMsg)
 
   return (
     <MessageGroupWrapper isLastGroup={isLastGroup}>
@@ -204,10 +207,10 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
         <div className="relative">
           {isAttachmentOnlyMessage && !isImageOnlyMessage ? (
             <div
-              className="flex justify-start drop-shadow-[0_10px_20px_hsl(var(--background))]"
+              className="flex justify-end drop-shadow-[0_10px_20px_hsl(var(--background))]"
               data-user-bubble
             >
-              <div className="space-y-2 w-full">
+              <div className="space-y-2 min-w-0 max-w-[85%]">
                 <div className="bg-input-background border px-3 py-2 rounded-xl text-sm text-muted-foreground italic">
                   {(() => {
                     const parts: string[] = []
@@ -244,9 +247,12 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
             />
           )}
 
-          {/* Rollback button - overlay bottom-right of user bubble */}
-          {canRollback && (
-            <div className="absolute bottom-1 right-1 z-20 flex items-center gap-0.5">
+          {/* Match assistant-message actions below the user bubble. */}
+          {(textContent.trim() || canRollback) && (
+            <div className="mt-1 flex h-6 items-center justify-end gap-0.5 px-2">
+              {timestamp && (
+                <span className="mr-1 text-[10px] text-muted-foreground">{timestamp}</span>
+              )}
               {canRollback && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -255,7 +261,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                       disabled={isRollingBack}
                       tabIndex={-1}
                       className={cn(
-                        "p-1 rounded-md transition-all duration-150 ease-out hover:bg-accent/80 active:scale-[0.97] opacity-0 group-hover/user-message:opacity-100",
+                        "p-1.5 rounded-md transition-all duration-150 ease-out hover:bg-accent/80 active:scale-[0.97]",
                         isRollingBack && "!opacity-50 cursor-not-allowed",
                       )}
                     >
@@ -266,6 +272,19 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                     {isRollingBack ? "Rolling back..." : "Rollback to here"}
                   </TooltipContent>
                 </Tooltip>
+              )}
+              {textContent.trim() && (
+                <>
+                  <PlayButton
+                    text={textContent}
+                    isMobile={isMobile}
+                    chatId={chatId}
+                    subChatId={subChatId}
+                    messageId={userMsgId}
+                    expandDirection="left"
+                  />
+                  <CopyButton text={textContent} isMobile={isMobile} />
+                </>
               )}
             </div>
           )}

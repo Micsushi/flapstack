@@ -1,4 +1,4 @@
-// Stage 2 Track B — U7: Cursor usage provider.
+// Stage 2 Track B - U7: Cursor usage provider.
 //
 // Tries a fallback chain: source #1 internal endpoints (implemented path,
 // local-token auth), then #2 Admin API (stub), then #3 cursor-agent CLI (stub).

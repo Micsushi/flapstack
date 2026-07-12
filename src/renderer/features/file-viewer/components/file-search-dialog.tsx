@@ -11,7 +11,7 @@ import { getFileIconByExtension } from "../../agents/mentions/agents-file-mentio
 import { recentlyOpenedFilesAtom } from "../../agents/atoms"
 
 // ============================================================================
-// Highlight helper – splits text into segments with matching parts marked
+// Highlight helper - splits text into segments with matching parts marked
 // ============================================================================
 
 function highlightMatches(

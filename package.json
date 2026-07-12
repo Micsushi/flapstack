@@ -10,11 +10,12 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/ensure-native-abi.mjs electron && node scripts/dev.mjs",
-    "dev:raw": "electron-vite dev",
+    "dev:verify": "node scripts/verify-dev-instance.mjs",
     "build": "NODE_OPTIONS=--max-old-space-size=6144 node scripts/with-heavy-job-lock.mjs build -- electron-vite build",
     "preview": "electron-vite preview",
     "package": "node scripts/package-app.mjs --dir",
     "package:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64",
+    "package:preview:mac": "node scripts/ensure-native-abi.mjs electron && node scripts/package-app.mjs --platform=darwin --arch=arm64 --dir --channel=preview",
     "package:win": "node scripts/package-app.mjs --platform=win32 --arch=x64",
     "package:linux": "node scripts/package-app.mjs --platform=linux --arch=x64",
     "package:linux:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64",

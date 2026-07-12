@@ -285,7 +285,7 @@ export function useAgentsHotkeys(
         }
       }
 
-      // Check new-workspace alt hotkey ("C") — only when not in input
+      // Check new-workspace alt hotkey ("C") - only when not in input
       if (!isInputFocused && matchesHotkey(e, "c")) {
         e.preventDefault()
         e.stopPropagation()

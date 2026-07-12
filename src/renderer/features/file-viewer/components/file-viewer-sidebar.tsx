@@ -519,7 +519,7 @@ function CodeViewer({
           setContextMenu(null)
           return
         }
-        // Don't close viewer if Monaco's find widget is open — let Monaco handle Escape
+        // Don't close viewer if Monaco's find widget is open - let Monaco handle Escape
         const findWidget = containerRef.current?.querySelector(".find-widget.visible")
         if (findWidget) return
 
@@ -709,7 +709,7 @@ function CodeViewer({
       {/* Custom find widget styles to match chat search bar */}
       <style>{`
         /* Fix: Monaco hover tooltip overlaps find widget buttons causing flicker.
-           Hide all Monaco hover tooltips in file viewer — we don't need type hovers in read-only mode. */
+           Hide all Monaco hover tooltips in file viewer - we don't need type hovers in read-only mode. */
         .monaco-hover {
           display: none !important;
         }
@@ -748,7 +748,7 @@ function CodeViewer({
           display: none !important;
         }
 
-        /* Find part — flex layout */
+        /* Find part - flex layout */
         .monaco-editor .find-widget .find-part {
           display: flex !important;
           align-items: center !important;
@@ -757,7 +757,7 @@ function CodeViewer({
           margin: 0 !important;
         }
 
-        /* Monaco findInput container — override absolute positioning of controls */
+        /* Monaco findInput container - override absolute positioning of controls */
         .monaco-editor .find-widget .find-part > .monaco-findInput {
           flex: 1 !important;
           display: flex !important;
@@ -864,13 +864,13 @@ function CodeViewer({
           cursor: default !important;
         }
 
-        /* Close button — sits as direct child of .find-widget */
+        /* Close button - sits as direct child of .find-widget */
         .monaco-editor .find-widget > .codicon-widget-close {
           position: static !important;
           flex-shrink: 0 !important;
         }
 
-        /* Selection toggle in find actions — hide */
+        /* Selection toggle in find actions - hide */
         .monaco-editor .find-widget .find-actions .codicon-find-selection {
           display: none !important;
         }

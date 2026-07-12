@@ -1,4 +1,4 @@
-// Stage 2 Track B — U2: shared usage engine.
+// Stage 2 Track B - U2: shared usage engine.
 //
 // Runs in two modes with the same provider code:
 //   - "app": manual refresh / startup reconcile from the Electron main process.
@@ -8,7 +8,7 @@
 // The engine iterates enabled providers, polls them, persists samples (dedupe
 // handled by the store), and records honest provider states. A scaffolded
 // provider that throws UsageNotImplementedError is recorded as
-// `source-unavailable` — never as zero usage.
+// `source-unavailable` - never as zero usage.
 
 import { getUsageProviders } from "./registry"
 import { runAlerts } from "./alert-runner"

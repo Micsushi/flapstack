@@ -275,7 +275,7 @@ export function isClaudeCliInstalled(): boolean {
 }
 
 /**
- * Run `claude setup-token` to authenticate with Claude
+ * Run `claude auth login` to authenticate with Claude
  * Returns a promise that resolves when the process completes
  *
  * Note: Uses pipe for stdio instead of inherit to prevent hanging in non-TTY
@@ -285,11 +285,11 @@ export function runClaudeSetupToken(
   onStatus: (message: string) => void,
 ): Promise<{ success: boolean; token?: string; error?: string }> {
   return new Promise((resolve) => {
-    onStatus("Starting Claude setup-token...")
+    onStatus("Starting Claude login...")
 
     const fullPath = getExtendedPath()
 
-    const child = spawn("claude", ["setup-token"], {
+    const child = spawn("claude", ["auth", "login"], {
       // Don't use 'inherit' - it causes hang in non-TTY environments
       // Use 'ignore' for stdin and 'pipe' for stdout/stderr
       stdio: ["ignore", "pipe", "pipe"],
@@ -323,7 +323,7 @@ export function runClaudeSetupToken(
       clearTimeout(timeout)
       resolve({
         success: false,
-        error: `Failed to start claude setup-token: ${err.message}`,
+        error: `Failed to start claude auth login: ${err.message}`,
       })
     })
 

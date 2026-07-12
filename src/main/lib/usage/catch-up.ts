@@ -1,9 +1,9 @@
-// Stage 2 Track B — U5: app startup catch-up + manual refresh.
+// Stage 2 Track B - U5: app startup catch-up + manual refresh.
 //
 // On app start, and on a user "refresh now", reconcile provider usage missed
 // while the app and daemon were off. Historical providers use reconcileSince
 // (from the latest stored watermark); providers without history poll latest and
-// the gap is labeled honestly — never backfilled with fabricated zero rows.
+// the gap is labeled honestly - never backfilled with fabricated zero rows.
 
 import { UsageEngine, type EngineDeps, type ProviderRunResult } from "./engine"
 import { getLatestSampleAt } from "./store"
@@ -30,7 +30,7 @@ export async function runStartupCatchUp(deps: EngineDeps): Promise<CatchUpResult
   return { results, limitedProviders }
 }
 
-/** Manual "refresh now" — same reconcile path, optionally scoped to one provider. */
+/** Manual "refresh now" - same reconcile path, optionally scoped to one provider. */
 export async function runManualRefresh(
   deps: EngineDeps,
   providerId?: UsageProviderId,

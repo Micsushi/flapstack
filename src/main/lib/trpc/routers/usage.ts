@@ -1,4 +1,4 @@
-// Stage 2 Track B — usage tracking tRPC router.
+// Stage 2 Track B - usage tracking tRPC router.
 //
 // App/renderer surface for the shared usage engine: settings, credential
 // presence, provider states, samples, manual refresh, and daemon status. Reads
@@ -15,6 +15,8 @@ import { runManualRefresh } from "../../usage/catch-up"
 import { getUsageProviders } from "../../usage/registry"
 import { getUsageSettings, setUsageSettings } from "../../usage/settings"
 import { getUsageSecret, hasUsageSecret, setUsageSecret } from "../../usage/secrets"
+import { getAppUsageSecret } from "../../usage/app-secrets"
+import { syncOnWatchUsageHistory } from "../../usage/onwatch-history"
 import { readDaemonStatus } from "../../usage-daemon/lifecycle"
 import {
   describeInstall,
@@ -31,9 +33,10 @@ import {
   listRecentSamples,
   resetGenerationReconciliation,
 } from "../../usage/store"
-import { USAGE_PROVIDER_IDS } from "../../usage/types"
+import { SAMPLE_SOURCES, USAGE_PROVIDER_IDS } from "../../usage/types"
 
 const providerIdSchema = z.enum(USAGE_PROVIDER_IDS)
+const sampleSourceSchema = z.enum(SAMPLE_SOURCES)
 const accountTagSchema = z.string().max(500).optional()
 const thresholdSchema = z.object({
   quotaPercent: z.array(z.number().min(0).max(100)).optional(),
@@ -52,7 +55,7 @@ const secretKeySchema = z.enum([
 ])
 
 function engineDeps() {
-  return { db: getDatabase(), getSecret: async (key: string) => getUsageSecret(key) }
+  return { db: getDatabase(), getSecret: getAppUsageSecret }
 }
 
 export const usageRouter = router({
@@ -119,11 +122,11 @@ export const usageRouter = router({
     }),
 
   // ---- Credentials (presence only; values never returned) ----
-  getSecretPresence: publicProcedure.query(() => ({
+  getSecretPresence: publicProcedure.query(async () => ({
     "openai.api_key": hasUsageSecret("openai.api_key"),
     "anthropic.admin_key": hasUsageSecret("anthropic.admin_key"),
-    "openrouter.api_key": hasUsageSecret("openrouter.api_key"),
-    "nanogpt.api_key": hasUsageSecret("nanogpt.api_key"),
+    "openrouter.api_key": (await getAppUsageSecret("openrouter.api_key")) != null,
+    "nanogpt.api_key": (await getAppUsageSecret("nanogpt.api_key")) != null,
     "cursor.api_key": hasUsageSecret("cursor.api_key"),
     "cursor.access_token": hasUsageSecret("cursor.access_token"),
     "discord.webhook_url": hasUsageSecret("discord.webhook_url"),
@@ -164,15 +167,25 @@ export const usageRouter = router({
         .object({
           providerId: providerIdSchema.optional(),
           accountTag: accountTagSchema,
+          source: sampleSourceSchema.optional(),
+          flapstackOnly: z.boolean().optional(),
           sinceMs: z.number().optional(),
-          limit: z.number().min(1).max(1000).optional(),
+          limit: z.number().min(1).max(20_000).optional(),
         })
         .optional(),
     )
     .query(async ({ input }) => {
+      if (
+        !input?.flapstackOnly &&
+        (!input?.providerId || input.providerId === "codex" || input.providerId === "anthropic")
+      ) {
+        await syncOnWatchUsageHistory(getDatabasePath())
+      }
       const rows = await listRecentSamples(getDatabase(), {
         providerId: input?.providerId,
         accountTag: input?.accountTag,
+        source: input?.source,
+        flapstackOnly: input?.flapstackOnly,
         since: input?.sinceMs ? new Date(input.sinceMs) : undefined,
         limit: input?.limit,
       })
@@ -190,11 +203,19 @@ export const usageRouter = router({
         .object({
           providerId: providerIdSchema.optional(),
           accountTag: accountTagSchema,
+          source: sampleSourceSchema.optional(),
+          flapstackOnly: z.boolean().optional(),
           limitPerAccount: z.number().min(1).max(100).optional(),
         })
         .optional(),
     )
     .query(async ({ input }) => {
+      if (
+        !input?.flapstackOnly &&
+        (!input?.providerId || input.providerId === "codex" || input.providerId === "anthropic")
+      ) {
+        await syncOnWatchUsageHistory(getDatabasePath())
+      }
       const rows = await listCurrentSamples(getDatabase(), input)
       return rows.map((row) => ({
         ...row,

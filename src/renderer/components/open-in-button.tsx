@@ -127,7 +127,7 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
     openInAppMutation.mutate({ path, app: lastUsedApp })
   }, [path, lastUsedApp, openInAppMutation])
 
-  // Keyboard shortcut: Cmd+Shift+C — copy path
+  // Keyboard shortcut: Cmd+Shift+C - copy path
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (!path) return
@@ -146,7 +146,7 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
         <Button
           variant="outline"
           size="sm"
-          className="rounded-r-none gap-1.5 focus:z-10"
+          className="h-7 rounded-r-none gap-1.5 px-2.5 focus:z-10"
           onClick={handleOpenLastUsed}
           disabled={!path}
         >
@@ -159,10 +159,13 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
           <Button
             variant="outline"
             size="sm"
-            className={label ? "rounded-l-none focus:z-10 gap-1" : "gap-1 focus:z-10"}
+            className={
+              label ? "h-7 w-7 rounded-l-none px-0 focus:z-10" : "h-7 gap-1 px-2.5 focus:z-10"
+            }
             disabled={!path}
+            aria-label={label ? "Choose application" : undefined}
           >
-            <span>Open</span>
+            {!label && <span>Open</span>}
             <ChevronDown className="size-3" />
           </Button>
         </DropdownMenuTrigger>

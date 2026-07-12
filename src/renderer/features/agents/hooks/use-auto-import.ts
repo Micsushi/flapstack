@@ -28,7 +28,7 @@ export function useAutoImport() {
       utils.chats.list.invalidate()
       utils.projects.list.invalidate()
 
-      // Switch to local chat view — let the normal architecture load the chat
+      // Switch to local chat view - let the normal architecture load the chat
       setChatSourceMode("local")
       setSelectedChatId(result.chatId)
       setDesktopView(null)

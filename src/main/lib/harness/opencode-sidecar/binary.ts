@@ -1,5 +1,5 @@
 /**
- * OpenCode binary resolution (Track E — E2).
+ * OpenCode binary resolution (Track E - E2).
  *
  * Resolution strategy (documented update policy per E2): prefer an explicit
  * `FLAPSTACK_OPENCODE_BIN` override, then a resolvable `opencode` on PATH, then
@@ -87,7 +87,7 @@ export function resolveOpencodeBinary(): OpencodeBinaryResolution {
   return {
     kind: "missing",
     reason:
-      "OpenCode is not installed and npx (Node.js) is not available. Install Node.js, or set FLAPSTACK_OPENCODE_BIN.",
+      "The provider runtime is unavailable and npx (Node.js) is not installed. Install Node.js and retry.",
   }
 }
 

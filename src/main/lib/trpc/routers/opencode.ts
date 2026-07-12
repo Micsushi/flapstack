@@ -1,5 +1,5 @@
 /**
- * OpenCode-backed harness router (Track E — E6/E7 backend).
+ * OpenCode-backed harness router (Track E - E6/E7 backend).
  *
  * Exposes the provider onboarding, credential, catalog, permission-preview, and
  * runtime-status surface for OpenRouter + NanoGPT. The persisted `chat`
@@ -15,10 +15,10 @@ import {
   OPENCODE_PROVIDERS,
   buildOpencodePermissionApplication,
   buildOpencodePermissionConfig,
-  clearProviderKey,
+  clearProviderKeyAsync,
   getAvailableProviderModels,
-  getCredentialStatus,
-  getProviderKey,
+  getCredentialStatusAsync,
+  getProviderKeyAsync,
   isSidecarRuntimeEnabled,
   finalizeOpencodeRunPersistence,
   mergeMessagesById,
@@ -31,12 +31,11 @@ import {
   sanitizeOpencodeAuditValue,
   type SidecarApprovalDecision,
   type SidecarUsage,
-  setProviderKey,
+  setProviderKeyAsync,
 } from "../../harness/opencode-sidecar"
 import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import { sanitizeProviderErrorText } from "../../harness/provider-error"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
-import { appendReadAloudInstruction } from "../../speech/read-aloud-instruction"
-import { getReadAloudEnabled } from "../../speech/settings"
 import { captureOpenCodeRunUsageBatch } from "../../usage/run-usage"
 import { getUsageProvider } from "../../usage/registry"
 import { getUsageSecret } from "../../usage/secrets"
@@ -92,43 +91,58 @@ function resolvePermissionMode(
 
 export const opencodeRouter = router({
   /** List the OpenCode-backed providers with config + connection status. */
-  listProviders: publicProcedure.query(() => {
-    return OPENCODE_HARNESSES.map((id) => {
-      const def = OPENCODE_PROVIDERS[id]
-      const status = getCredentialStatus(id)
-      return {
-        id,
-        label: def.label,
-        chip: def.chip,
-        baseUrl: status.baseUrl ?? def.baseUrl,
-        allowsCustomBaseUrl: def.allowsCustomBaseUrl,
-        docsUrl: def.docsUrl,
-        configured: status.configured,
-        engine: "opencode" as const,
-      }
-    })
+  listProviders: publicProcedure.query(async () => {
+    return Promise.all(
+      OPENCODE_HARNESSES.map(async (id) => {
+        const def = OPENCODE_PROVIDERS[id]
+        const status = await getCredentialStatusAsync(id)
+        return {
+          id,
+          label: def.label,
+          chip: def.chip,
+          baseUrl: status.baseUrl ?? def.baseUrl,
+          allowsCustomBaseUrl: def.allowsCustomBaseUrl,
+          docsUrl: def.docsUrl,
+          configured: status.configured,
+          sessionOnly: status.sessionOnly === true,
+          engine: "opencode" as const,
+        }
+      }),
+    )
   }),
 
   /** Local cached catalog, falling back to a short seed list before first refresh. */
-  listModels: publicProcedure.input(z.object({ provider: providerSchema })).query(({ input }) => {
-    const available = getAvailableProviderModels(input.provider)
-    return {
-      provider: input.provider,
-      ...available,
-      note:
-        available.source === "cache"
-          ? "Cached locally from the provider. Refresh to fetch the latest list."
-          : "Seed list. Configure a key and refresh to fetch the provider catalog.",
-    }
-  }),
+  listModels: publicProcedure
+    .input(z.object({ provider: providerSchema }))
+    .query(async ({ input }) => {
+      let available = getAvailableProviderModels(input.provider)
+      if (available.source === "seed" && (await getProviderKeyAsync(input.provider))) {
+        try {
+          await refreshProviderModels(input.provider)
+          available = getAvailableProviderModels(input.provider)
+        } catch {
+          // Keep the seed visible, but chat preflight will block unsupported seed ids.
+        }
+      }
+      return {
+        provider: input.provider,
+        ...available,
+        note:
+          available.source === "cache"
+            ? "Cached locally from the provider. Refresh to fetch the latest list."
+            : "Seed list. Configure a key and refresh to fetch the provider catalog.",
+      }
+    }),
 
   refreshModels: publicProcedure
     .input(z.object({ provider: providerSchema }))
     .mutation(async ({ input }) => refreshProviderModels(input.provider)),
 
-  getKeyStatus: publicProcedure.input(z.object({ provider: providerSchema })).query(({ input }) => {
-    return getCredentialStatus(input.provider)
-  }),
+  getKeyStatus: publicProcedure
+    .input(z.object({ provider: providerSchema }))
+    .query(async ({ input }) => {
+      return getCredentialStatusAsync(input.provider)
+    }),
 
   setKey: publicProcedure
     .input(
@@ -138,19 +152,21 @@ export const opencodeRouter = router({
         baseUrl: z.string().url().optional(),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const definition = OPENCODE_PROVIDERS[input.provider]
       if (input.baseUrl && !definition.allowsCustomBaseUrl) {
         throw new Error(`${definition.label} does not support a custom base URL.`)
       }
-      setProviderKey(input.provider, input.apiKey, input.baseUrl)
-      return getCredentialStatus(input.provider)
+      await setProviderKeyAsync(input.provider, input.apiKey, input.baseUrl)
+      return getCredentialStatusAsync(input.provider)
     }),
 
-  clearKey: publicProcedure.input(z.object({ provider: providerSchema })).mutation(({ input }) => {
-    clearProviderKey(input.provider)
-    return getCredentialStatus(input.provider)
-  }),
+  clearKey: publicProcedure
+    .input(z.object({ provider: providerSchema }))
+    .mutation(async ({ input }) => {
+      await clearProviderKeyAsync(input.provider)
+      return getCredentialStatusAsync(input.provider)
+    }),
 
   /** Preview how a permission mode maps into OpenCode rules + honest limitations. */
   previewPermissions: publicProcedure
@@ -172,11 +188,11 @@ export const opencodeRouter = router({
       runtimeEnabled: isSidecarRuntimeEnabled(),
       binary:
         resolution.kind === "missing"
-          ? { available: false, reason: resolution.reason }
+          ? { available: false, reason: sanitizeProviderErrorText(resolution.reason) }
           : { available: true, kind: resolution.kind, command: resolution.command },
       note: isSidecarRuntimeEnabled()
         ? "Sidecar runtime enabled."
-        : "Sidecar runtime disabled by FLAPSTACK_OPENCODE_SIDECAR_ENABLED=0.",
+        : "Provider runtime disabled by the current environment configuration.",
     }
   }),
 
@@ -215,6 +231,7 @@ export const opencodeRouter = router({
 
         const controller = new AbortController()
         const runId = input.runId || crypto.randomUUID()
+        const startedAt = Date.now()
         activeStreams.set(input.subChatId, { runId, controller })
         const isAuthoritativeRun = () => activeStreams.get(input.subChatId)?.runId === runId
         let active = true
@@ -238,20 +255,6 @@ export const opencodeRouter = router({
           }
         }
 
-        const credentialStatus = getCredentialStatus(input.provider)
-        if (!credentialStatus.configured) {
-          if (activeStreams.get(input.subChatId)?.runId === runId) {
-            activeStreams.delete(input.subChatId)
-          }
-          safeEmit({
-            type: "error",
-            errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
-          })
-          safeEmit({ type: "finish" })
-          complete()
-          return () => controller.abort()
-        }
-
         void (async () => {
           let status: "success" | "failure" | "cancelled" = "failure"
           let permissionMode: PermissionMode = getGlobalDefault()
@@ -266,7 +269,47 @@ export const opencodeRouter = router({
           const reasoningMetadata: Array<{ partId: string; metadata: unknown }> = []
           let sawSidecarError = false
           let sidecarErrorText = ""
-          const auditSecrets = [getProviderKey(input.provider) ?? ""].filter(Boolean)
+          const providerKey = await getProviderKeyAsync(input.provider)
+          if (!providerKey) {
+            if (activeStreams.get(input.subChatId)?.runId === runId) {
+              activeStreams.delete(input.subChatId)
+            }
+            safeEmit({
+              type: "error",
+              errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
+            })
+            safeEmit({ type: "finish" })
+            complete()
+            return
+          }
+          let availableModels = getAvailableProviderModels(input.provider)
+          if (availableModels.source === "seed") {
+            try {
+              await refreshProviderModels(input.provider)
+              availableModels = getAvailableProviderModels(input.provider)
+            } catch (error) {
+              safeEmit({
+                type: "error",
+                errorText: `Could not load current ${OPENCODE_PROVIDERS[input.provider].label} models: ${sanitizeProviderErrorText(error)}`,
+              })
+              safeEmit({ type: "finish" })
+              complete()
+              return
+            }
+          }
+          const modelId = input.model.startsWith(`${input.provider}/`)
+            ? input.model.slice(input.provider.length + 1)
+            : input.model
+          if (!availableModels.models.some((model) => model.id === modelId)) {
+            safeEmit({
+              type: "error",
+              errorText: `${modelId} is no longer available from ${OPENCODE_PROVIDERS[input.provider].label}. Select a refreshed model and retry.`,
+            })
+            safeEmit({ type: "finish" })
+            complete()
+            return
+          }
+          const auditSecrets = [providerKey]
           const runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
           let finalMessageMetadata: Record<string, unknown> | undefined
           try {
@@ -354,10 +397,7 @@ export const opencodeRouter = router({
               projectPath: input.projectPath,
               harness: "opencode",
             })
-            const promptForModel = appendReadAloudInstruction(
-              prependStartupContext(input.prompt, startupContext),
-              getReadAloudEnabled(input.subChatId),
-            )
+            const promptForModel = prependStartupContext(input.prompt, startupContext)
 
             for await (const event of runSidecarSession(
               {
@@ -423,7 +463,7 @@ export const opencodeRouter = router({
               }
               if (event.kind === "error") {
                 sawSidecarError = true
-                sidecarErrorText = event.errorText
+                sidecarErrorText = sanitizeProviderErrorText(event.errorText)
               }
               if (event.kind === "usage") {
                 usageByObservation.set(event.usage.observationId ?? "latest", event.usage)
@@ -432,7 +472,11 @@ export const opencodeRouter = router({
               if (event.kind === "permission-asked") {
                 safeEmit({ type: "opencode-permission-request", ...event, runId })
               }
-              for (const chunk of mapper.map(event)) safeEmit(chunk)
+              const publicEvent =
+                event.kind === "error"
+                  ? { ...event, errorText: sanitizeProviderErrorText(event.errorText) }
+                  : event
+              for (const chunk of mapper.map(publicEvent)) safeEmit(chunk)
             }
 
             for (const chunk of mapper.finish()) safeEmit(chunk)
@@ -445,7 +489,7 @@ export const opencodeRouter = router({
             status = controller.signal.aborted ? "cancelled" : "failure"
             safeEmit({
               type: "error",
-              errorText: error instanceof Error ? error.message : String(error),
+              errorText: sanitizeProviderErrorText(error),
             })
           } finally {
             for (const [requestId, approval] of pendingApprovals) {
@@ -478,6 +522,7 @@ export const opencodeRouter = router({
                   harness: input.provider,
                   model: input.model,
                   runId,
+                  durationMs: Date.now() - startedAt,
                   sessionId: sidecarSessionId,
                   permissionMode,
                   engine: audit.engine,

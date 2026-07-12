@@ -14,7 +14,6 @@ export function AgentsVoiceTab() {
       await utils.speech.getSettings.invalidate()
       await utils.speech.listAdapters.invalidate()
       await utils.speech.listVoices.invalidate()
-      await utils.speech.getReadAloudForChat.invalidate()
       await utils.speech.getSttModelStatus.invalidate()
     },
   })
@@ -166,7 +165,13 @@ export function AgentsVoiceTab() {
         </h4>
         <select
           value={settings.ttsAdapterId}
-          onChange={(event) => update({ ttsAdapterId: event.target.value, voiceId: null })}
+          onChange={(event) => {
+            const ttsAdapterId = event.target.value
+            update({
+              ttsAdapterId,
+              voiceId: settings.voiceByTtsAdapterId[ttsAdapterId] ?? null,
+            })
+          }}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         >
           {adapters.tts.map((adapter) => (
@@ -182,7 +187,16 @@ export function AgentsVoiceTab() {
 
         <select
           value={settings.voiceId || ""}
-          onChange={(event) => update({ voiceId: event.target.value || null })}
+          onChange={(event) => {
+            const voiceId = event.target.value || null
+            update({
+              voiceId,
+              voiceByTtsAdapterId: {
+                ...settings.voiceByTtsAdapterId,
+                [settings.ttsAdapterId]: voiceId,
+              },
+            })
+          }}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
         >
           <option value="">Default voice</option>
@@ -192,6 +206,9 @@ export function AgentsVoiceTab() {
             </option>
           ))}
         </select>
+        <span className="text-xs text-muted-foreground">
+          Voice choice is remembered separately for each TTS provider.
+        </span>
 
         <label className="space-y-1.5 block">
           <span className="text-sm text-foreground">Rate: {settings.rate.toFixed(1)}x</span>
@@ -204,15 +221,6 @@ export function AgentsVoiceTab() {
             onChange={(event) => update({ rate: Number(event.target.value) })}
             className="w-full"
           />
-        </label>
-
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={settings.autoReadAloud}
-            onChange={(event) => update({ autoReadAloud: event.target.checked })}
-          />
-          Read assistant replies aloud by default
         </label>
 
         <div className="flex gap-2">

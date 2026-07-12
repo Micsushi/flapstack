@@ -1,4 +1,4 @@
-// Stage 2 Track B — E6 usage handoff for OpenCode-backed provider runs.
+// Stage 2 Track B - E6 usage handoff for OpenCode-backed provider runs.
 //
 // Track E calls this after a completed OpenRouter or NanoGPT run. It records
 // provider-reported or sidecar-estimated cost when supplied, otherwise it loads

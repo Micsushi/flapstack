@@ -172,7 +172,8 @@ const SearchHistoryPopover = memo(
 )
 
 interface SubChatSelectorProps {
-  onCreateNew: () => void
+  onCreateNew?: () => void
+  singleConversation?: boolean
   isMobile?: boolean
   onBackToChats?: () => void
   onOpenPreview?: () => void
@@ -189,6 +190,7 @@ interface SubChatSelectorProps {
 
 export function SubChatSelector({
   onCreateNew,
+  singleConversation = false,
   isMobile = false,
   onBackToChats,
   onOpenPreview,
@@ -668,291 +670,299 @@ export function SubChatSelector({
         </Tooltip>
       )}
 
-      <div
-        className="relative flex-1 min-w-0 flex items-center"
-        style={{
-          // @ts-expect-error - WebKit-specific property
-          WebkitAppRegion: "no-drag",
-        }}
-      >
-        {/* Left gradient - visibility controlled via ref */}
+      {!singleConversation && (
         <div
-          ref={leftGradientRef}
-          className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent pointer-events-none z-30"
-          style={{ display: "none" }}
-        />
-
-        {/* Scrollable tabs container - with padding-right for plus button */}
-        <div
-          ref={tabsContainerRef}
-          className={cn(
-            "flex items-center px-1 py-1 -my-1 gap-1 flex-1 min-w-0 overflow-x-auto scrollbar-hide pr-12",
-            // Hide tabs when sidebar is open (desktop) or when only one chat exists
-            effectiveSubChatsSidebarMode === "sidebar" && !isMobile && "hidden",
-            hasSingleChat && "invisible",
-          )}
-        >
-          {hasNoChats
-            ? null
-            : openSubChats.map((subChat, index) => {
-                const isActive = activeSubChatId === subChat.id
-                const isInSplitPair = splitPaneIdSet.has(subChat.id)
-                const hasSplitPrev = index > 0 && splitPaneIdSet.has(openSubChats[index - 1]?.id)
-                const hasSplitNext =
-                  index < openSubChats.length - 1 && splitPaneIdSet.has(openSubChats[index + 1]?.id)
-                const isLoading = loadingSubChats.has(subChat.id)
-                const hasUnseen = subChatUnseenChanges.has(subChat.id)
-                const hasTabsToRight = index < openSubChats.length - 1
-                const isPinned = pinnedSubChatIds.includes(subChat.id)
-                // Get mode from sub-chat itself (defaults to "agent")
-                const mode = subChat.mode || "agent"
-                // Check if this chat is waiting for user answer
-                const hasPendingQuestion = pendingQuestionsMap.has(subChat.id)
-                // Check if this chat has a pending plan approval
-                const hasPendingPlan = pendingPlanApprovals.has(subChat.id)
-
-                return (
-                  <ContextMenu key={subChat.id}>
-                    <ContextMenuTrigger asChild>
-                      <button
-                        ref={(el) => {
-                          if (el) {
-                            tabRefs.current.set(subChat.id, el)
-                          } else {
-                            tabRefs.current.delete(subChat.id)
-                          }
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          e.preventDefault()
-                          if (editingSubChatId !== subChat.id) {
-                            onSwitch(subChat.id)
-                          }
-                        }}
-                        onMouseDown={(e) => {
-                          // Middle-click to close tab (like Chrome)
-                          if (e.button === 1 && openSubChats.length > 1) {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            onCloseTab(subChat.id)
-                          }
-                        }}
-                        onAuxClick={(e) => {
-                          // Prevent context menu on middle-click
-                          if (e.button === 1) {
-                            e.preventDefault()
-                            e.stopPropagation()
-                          }
-                        }}
-                        onDoubleClick={(e) => {
-                          e.stopPropagation()
-                          e.preventDefault()
-                          if (editingSubChatId !== subChat.id) {
-                            handleRenameClick(subChat)
-                          }
-                        }}
-                        className={cn(
-                          "group relative flex items-center text-sm rounded-md transition-colors duration-75 cursor-pointer h-6 flex-shrink-0",
-                          "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                          editingSubChatId === subChat.id
-                            ? "overflow-visible px-0"
-                            : "overflow-hidden px-1.5 py-0.5 whitespace-nowrap min-w-[50px] gap-1.5",
-                          isActive
-                            ? "bg-muted text-foreground max-w-[180px]"
-                            : "hover:bg-muted/80 max-w-[150px]",
-                          isInSplitPair && "border border-border/60",
-                          isInSplitPair && !isActive && "bg-muted/40 hover:bg-muted/60",
-                          isInSplitPair && hasSplitPrev && "-ml-1 rounded-l-none",
-                          isInSplitPair && hasSplitNext && "rounded-r-none",
-                        )}
-                      >
-                        {/* Icon: question icon (priority) OR loading spinner OR mode icon with badge (hide when editing) */}
-                        {editingSubChatId !== subChat.id && (
-                          <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center relative">
-                            {hasPendingQuestion ? (
-                              // Waiting for user answer: show question icon (highest priority)
-                              <QuestionIcon className="w-3.5 h-3.5 text-blue-500" />
-                            ) : isLoading ? (
-                              // Loading: show spinner
-                              <IconSpinner className="w-3.5 h-3.5 text-muted-foreground" />
-                            ) : (
-                              <>
-                                {/* Main mode icon */}
-                                {mode === "plan" ? (
-                                  <PlanIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                                ) : (
-                                  <AgentIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                                )}
-                                {/* Badge in bottom-right corner: amber dot (plan) > unseen dot > pin icon */}
-                                {(hasPendingPlan || hasUnseen || isPinned) && (
-                                  <div
-                                    className={cn(
-                                      "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full flex items-center justify-center",
-                                      isActive ? "bg-muted" : "bg-background",
-                                    )}
-                                  >
-                                    {hasPendingPlan ? (
-                                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                    ) : hasUnseen ? (
-                                      <div className="w-1.5 h-1.5 rounded-full bg-[#307BD0]" />
-                                    ) : isPinned ? (
-                                      <PinFilledIcon className="w-2 h-2 text-muted-foreground" />
-                                    ) : null}
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        )}
-
-                        {editingSubChatId === subChat.id ? (
-                          <InlineEdit
-                            value={editName}
-                            onChange={setEditName}
-                            onSave={() => handleEditSave(subChat)}
-                            onCancel={() => handleEditCancel(subChat)}
-                            isEditing={true}
-                            disabled={editLoading}
-                            className="text-sm !px-1 !py-0 !h-6 min-w-[100px] border border-input rounded-md !ring-0 !shadow-none focus-visible:!ring-0 focus-visible:!ring-offset-0 focus-visible:!border-input"
-                          />
-                        ) : (
-                          <span
-                            ref={(el) => {
-                              if (el) {
-                                textRefs.current.set(subChat.id, el)
-                              } else {
-                                textRefs.current.delete(subChat.id)
-                              }
-                            }}
-                            className="relative z-0 text-left flex-1 min-w-0 pr-1 overflow-hidden block whitespace-nowrap"
-                          >
-                            {subChat.name || "New Chat"}
-                          </span>
-                        )}
-
-                        {/* Gradient fade on the right when text is truncated and not editing - visibility controlled via DOM */}
-                        {editingSubChatId !== subChat.id && (
-                          <div
-                            data-truncate-gradient
-                            className={cn(
-                              "absolute right-0 top-0 bottom-0 w-6 pointer-events-none z-[1] rounded-r-md opacity-100 group-hover:opacity-0 transition-opacity duration-200",
-                              isActive
-                                ? "bg-gradient-to-l from-muted to-transparent"
-                                : "bg-gradient-to-l from-background to-transparent",
-                            )}
-                            style={{
-                              display: truncatedTabsRef.current.has(subChat.id) ? "block" : "none",
-                            }}
-                          />
-                        )}
-
-                        {/* Close button - only show when hovered and multiple tabs and not editing */}
-                        {openSubChats.length > 1 && editingSubChatId !== subChat.id && (
-                          <div className="absolute right-0 top-0 bottom-0 flex items-center justify-end pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                            <div
-                              className={cn(
-                                "absolute right-0 top-0 bottom-0 w-9 flex items-center justify-center rounded-r-md",
-                                isActive
-                                  ? "bg-[linear-gradient(to_left,hsl(var(--muted))_0%,hsl(var(--muted))_60%,transparent_100%)]"
-                                  : "bg-[linear-gradient(to_left,color-mix(in_srgb,hsl(var(--muted))_80%,hsl(var(--background)))_0%,color-mix(in_srgb,hsl(var(--muted))_80%,hsl(var(--background)))_60%,transparent_100%)]",
-                              )}
-                            />
-                            <span
-                              role="button"
-                              tabIndex={-1}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                onCloseTab(subChat.id)
-                              }}
-                              className="relative z-20 hover:text-foreground rounded p-0.5 transition-[color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
-                              title={
-                                isActive && archiveAgentHotkey
-                                  ? `Close tab (${archiveAgentHotkey})`
-                                  : "Close tab"
-                              }
-                            >
-                              <X className="h-3 w-3" />
-                            </span>
-                          </div>
-                        )}
-                      </button>
-                    </ContextMenuTrigger>
-                    <SubChatContextMenu
-                      subChat={subChat}
-                      isPinned={isPinned}
-                      onTogglePin={togglePinSubChat}
-                      onRename={handleRenameClick}
-                      onArchive={onCloseTab}
-                      onArchiveOthers={onCloseOtherTabs}
-                      isOnlyChat={openSubChats.length === 1}
-                      showCloseTabOptions={true}
-                      onCloseTab={onCloseTab}
-                      onCloseOtherTabs={onCloseOtherTabs}
-                      onCloseTabsToRight={onCloseTabsToRight}
-                      visualIndex={index}
-                      hasTabsToRight={hasTabsToRight}
-                      canCloseOtherTabs={openSubChats.length > 2}
-                      chatId={parentChatId}
-                      onOpenInSplit={addToSplit}
-                      onCloseSplit={closeSplit}
-                      onRemoveFromSplit={removeFromSplit}
-                      splitPaneCount={splitPaneIds.length}
-                      isActiveTab={isActive}
-                      isSplitTab={isInSplitPair}
-                    />
-                  </ContextMenu>
-                )
-              })}
-        </div>
-
-        {/* Plus button - absolute positioned on right with gradient cover */}
-        {(isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
-          <div className="absolute right-0 top-0 bottom-0 flex items-center z-20">
-            {/* Gradient to cover content peeking from the left */}
-            <div className="w-6 h-full bg-gradient-to-r from-transparent to-background" />
-            <div className="h-full flex items-center bg-background pr-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onCreateNew}
-                    className="h-6 w-6 p-0 hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] rounded-md"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  New chat
-                  {newAgentHotkey && <Kbd>{newAgentHotkey}</Kbd>}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Action buttons - always visible on mobile, on desktop only in tabs mode */}
-      {(isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
-        <div
-          className="flex items-center gap-1"
+          className="relative flex-1 min-w-0 flex items-center"
           style={{
             // @ts-expect-error - WebKit-specific property
             WebkitAppRegion: "no-drag",
           }}
         >
-          <SearchHistoryPopover
-            ref={searchHistoryPopoverRef}
-            sortedSubChats={sortedSubChats}
-            loadingSubChats={loadingSubChats}
-            subChatUnseenChanges={subChatUnseenChanges}
-            pendingQuestionsMap={pendingQuestionsMap}
-            pendingPlanApprovals={pendingPlanApprovals}
-            allSubChatsLength={allSubChats.length}
-            onSelect={handleSelectFromHistory}
+          {/* Left gradient - visibility controlled via ref */}
+          <div
+            ref={leftGradientRef}
+            className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent pointer-events-none z-30"
+            style={{ display: "none" }}
           />
+
+          {/* Scrollable tabs container - with padding-right for plus button */}
+          <div
+            ref={tabsContainerRef}
+            className={cn(
+              "flex items-center px-1 py-1 -my-1 gap-1 flex-1 min-w-0 overflow-x-auto scrollbar-hide pr-12",
+              // Hide tabs when sidebar is open (desktop) or when only one chat exists
+              effectiveSubChatsSidebarMode === "sidebar" && !isMobile && "hidden",
+              hasSingleChat && "invisible",
+            )}
+          >
+            {hasNoChats
+              ? null
+              : openSubChats.map((subChat, index) => {
+                  const isActive = activeSubChatId === subChat.id
+                  const isInSplitPair = splitPaneIdSet.has(subChat.id)
+                  const hasSplitPrev = index > 0 && splitPaneIdSet.has(openSubChats[index - 1]?.id)
+                  const hasSplitNext =
+                    index < openSubChats.length - 1 &&
+                    splitPaneIdSet.has(openSubChats[index + 1]?.id)
+                  const isLoading = loadingSubChats.has(subChat.id)
+                  const hasUnseen = subChatUnseenChanges.has(subChat.id)
+                  const hasTabsToRight = index < openSubChats.length - 1
+                  const isPinned = pinnedSubChatIds.includes(subChat.id)
+                  // Get mode from sub-chat itself (defaults to "agent")
+                  const mode = subChat.mode || "agent"
+                  // Check if this chat is waiting for user answer
+                  const hasPendingQuestion = pendingQuestionsMap.has(subChat.id)
+                  // Check if this chat has a pending plan approval
+                  const hasPendingPlan = pendingPlanApprovals.has(subChat.id)
+
+                  return (
+                    <ContextMenu key={subChat.id}>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          ref={(el) => {
+                            if (el) {
+                              tabRefs.current.set(subChat.id, el)
+                            } else {
+                              tabRefs.current.delete(subChat.id)
+                            }
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            if (editingSubChatId !== subChat.id) {
+                              onSwitch(subChat.id)
+                            }
+                          }}
+                          onMouseDown={(e) => {
+                            // Middle-click to close tab (like Chrome)
+                            if (e.button === 1 && openSubChats.length > 1) {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              onCloseTab(subChat.id)
+                            }
+                          }}
+                          onAuxClick={(e) => {
+                            // Prevent context menu on middle-click
+                            if (e.button === 1) {
+                              e.preventDefault()
+                              e.stopPropagation()
+                            }
+                          }}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            if (editingSubChatId !== subChat.id) {
+                              handleRenameClick(subChat)
+                            }
+                          }}
+                          className={cn(
+                            "group relative flex items-center text-sm rounded-md transition-colors duration-75 cursor-pointer h-6 flex-shrink-0",
+                            "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                            editingSubChatId === subChat.id
+                              ? "overflow-visible px-0"
+                              : "overflow-hidden px-1.5 py-0.5 whitespace-nowrap min-w-[50px] gap-1.5",
+                            isActive
+                              ? "bg-muted text-foreground max-w-[180px]"
+                              : "hover:bg-muted/80 max-w-[150px]",
+                            isInSplitPair && "border border-border/60",
+                            isInSplitPair && !isActive && "bg-muted/40 hover:bg-muted/60",
+                            isInSplitPair && hasSplitPrev && "-ml-1 rounded-l-none",
+                            isInSplitPair && hasSplitNext && "rounded-r-none",
+                          )}
+                        >
+                          {/* Icon: question icon (priority) OR loading spinner OR mode icon with badge (hide when editing) */}
+                          {editingSubChatId !== subChat.id && (
+                            <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center relative">
+                              {hasPendingQuestion ? (
+                                // Waiting for user answer: show question icon (highest priority)
+                                <QuestionIcon className="w-3.5 h-3.5 text-blue-500" />
+                              ) : isLoading ? (
+                                // Loading: show spinner
+                                <IconSpinner className="w-3.5 h-3.5 text-muted-foreground" />
+                              ) : (
+                                <>
+                                  {/* Main mode icon */}
+                                  {mode === "plan" ? (
+                                    <PlanIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                                  ) : (
+                                    <AgentIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                                  )}
+                                  {/* Badge in bottom-right corner: amber dot (plan) > unseen dot > pin icon */}
+                                  {(hasPendingPlan || hasUnseen || isPinned) && (
+                                    <div
+                                      className={cn(
+                                        "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full flex items-center justify-center",
+                                        isActive ? "bg-muted" : "bg-background",
+                                      )}
+                                    >
+                                      {hasPendingPlan ? (
+                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                      ) : hasUnseen ? (
+                                        <div className="w-1.5 h-1.5 rounded-full bg-[#307BD0]" />
+                                      ) : isPinned ? (
+                                        <PinFilledIcon className="w-2 h-2 text-muted-foreground" />
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {editingSubChatId === subChat.id ? (
+                            <InlineEdit
+                              value={editName}
+                              onChange={setEditName}
+                              onSave={() => handleEditSave(subChat)}
+                              onCancel={() => handleEditCancel(subChat)}
+                              isEditing={true}
+                              disabled={editLoading}
+                              className="text-sm !px-1 !py-0 !h-6 min-w-[100px] border border-input rounded-md !ring-0 !shadow-none focus-visible:!ring-0 focus-visible:!ring-offset-0 focus-visible:!border-input"
+                            />
+                          ) : (
+                            <span
+                              ref={(el) => {
+                                if (el) {
+                                  textRefs.current.set(subChat.id, el)
+                                } else {
+                                  textRefs.current.delete(subChat.id)
+                                }
+                              }}
+                              className="relative z-0 text-left flex-1 min-w-0 pr-1 overflow-hidden block whitespace-nowrap"
+                            >
+                              {subChat.name || "New Chat"}
+                            </span>
+                          )}
+
+                          {/* Gradient fade on the right when text is truncated and not editing - visibility controlled via DOM */}
+                          {editingSubChatId !== subChat.id && (
+                            <div
+                              data-truncate-gradient
+                              className={cn(
+                                "absolute right-0 top-0 bottom-0 w-6 pointer-events-none z-[1] rounded-r-md opacity-100 group-hover:opacity-0 transition-opacity duration-200",
+                                isActive
+                                  ? "bg-gradient-to-l from-muted to-transparent"
+                                  : "bg-gradient-to-l from-background to-transparent",
+                              )}
+                              style={{
+                                display: truncatedTabsRef.current.has(subChat.id)
+                                  ? "block"
+                                  : "none",
+                              }}
+                            />
+                          )}
+
+                          {/* Close button - only show when hovered and multiple tabs and not editing */}
+                          {openSubChats.length > 1 && editingSubChatId !== subChat.id && (
+                            <div className="absolute right-0 top-0 bottom-0 flex items-center justify-end pr-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                              <div
+                                className={cn(
+                                  "absolute right-0 top-0 bottom-0 w-9 flex items-center justify-center rounded-r-md",
+                                  isActive
+                                    ? "bg-[linear-gradient(to_left,hsl(var(--muted))_0%,hsl(var(--muted))_60%,transparent_100%)]"
+                                    : "bg-[linear-gradient(to_left,color-mix(in_srgb,hsl(var(--muted))_80%,hsl(var(--background)))_0%,color-mix(in_srgb,hsl(var(--muted))_80%,hsl(var(--background)))_60%,transparent_100%)]",
+                                )}
+                              />
+                              <span
+                                role="button"
+                                tabIndex={-1}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onCloseTab(subChat.id)
+                                }}
+                                className="relative z-20 hover:text-foreground rounded p-0.5 transition-[color,transform] duration-150 ease-out active:scale-[0.97] cursor-pointer"
+                                title={
+                                  isActive && archiveAgentHotkey
+                                    ? `Close tab (${archiveAgentHotkey})`
+                                    : "Close tab"
+                                }
+                              >
+                                <X className="h-3 w-3" />
+                              </span>
+                            </div>
+                          )}
+                        </button>
+                      </ContextMenuTrigger>
+                      <SubChatContextMenu
+                        subChat={subChat}
+                        isPinned={isPinned}
+                        onTogglePin={togglePinSubChat}
+                        onRename={handleRenameClick}
+                        onArchive={onCloseTab}
+                        onArchiveOthers={onCloseOtherTabs}
+                        isOnlyChat={openSubChats.length === 1}
+                        showCloseTabOptions={true}
+                        onCloseTab={onCloseTab}
+                        onCloseOtherTabs={onCloseOtherTabs}
+                        onCloseTabsToRight={onCloseTabsToRight}
+                        visualIndex={index}
+                        hasTabsToRight={hasTabsToRight}
+                        canCloseOtherTabs={openSubChats.length > 2}
+                        chatId={parentChatId}
+                        onOpenInSplit={addToSplit}
+                        onCloseSplit={closeSplit}
+                        onRemoveFromSplit={removeFromSplit}
+                        splitPaneCount={splitPaneIds.length}
+                        isActiveTab={isActive}
+                        isSplitTab={isInSplitPair}
+                      />
+                    </ContextMenu>
+                  )
+                })}
+          </div>
+
+          {/* Plus button - absolute positioned on right with gradient cover */}
+          {(isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
+            <div className="absolute right-0 top-0 bottom-0 flex items-center z-20">
+              {/* Gradient to cover content peeking from the left */}
+              <div className="w-6 h-full bg-gradient-to-r from-transparent to-background" />
+              <div className="h-full flex items-center bg-background pr-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onCreateNew}
+                      className="h-6 w-6 p-0 hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] rounded-md"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    New chat
+                    {newAgentHotkey && <Kbd>{newAgentHotkey}</Kbd>}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      {singleConversation && <div className="flex-1" />}
+
+      {/* Action buttons - always visible on mobile, on desktop only in tabs mode */}
+      {!singleConversation &&
+        (isMobile || (!isMobile && effectiveSubChatsSidebarMode === "tabs")) && (
+          <div
+            className="flex items-center gap-1"
+            style={{
+              // @ts-expect-error - WebKit-specific property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <SearchHistoryPopover
+              ref={searchHistoryPopoverRef}
+              sortedSubChats={sortedSubChats}
+              loadingSubChats={loadingSubChats}
+              subChatUnseenChanges={subChatUnseenChanges}
+              pendingQuestionsMap={pendingQuestionsMap}
+              pendingPlanApprovals={pendingPlanApprovals}
+              allSubChatsLength={allSubChats.length}
+              onSelect={handleSelectFromHistory}
+            />
+          </div>
+        )}
 
       {/* Diff button - visible on desktop when unified sidebar is disabled OR diff widget is hidden */}
       {/* Only show if onOpenDiff is provided (clickable action available) */}

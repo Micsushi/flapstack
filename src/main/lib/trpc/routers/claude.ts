@@ -16,7 +16,7 @@ import {
   type UIMessageChunk,
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
-import { getReadAloudSystemAppend } from "../../speech/read-aloud-instruction"
+import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
   getMergedGlobalMcpServers,
@@ -176,7 +176,7 @@ function parseMentions(prompt: string): {
  */
 function decryptToken(encrypted: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    return Buffer.from(encrypted, "base64").toString("utf-8")
+    return decodePlaintextClaudeToken(encrypted)
   }
   const buffer = Buffer.from(encrypted, "base64")
   return safeStorage.decryptString(buffer)
@@ -379,6 +379,11 @@ function getClaudeCodeToken(): string | null {
     return decrypted
   } catch (error) {
     console.error("[claude-auth] Error getting Claude Code token:", error)
+    const systemToken = getExistingClaudeToken()?.trim()
+    if (systemToken) {
+      console.log("[claude-auth] Falling back to Claude Code token from system credentials")
+      return systemToken
+    }
     return null
   }
 }
@@ -1451,7 +1456,8 @@ export const claudeRouter = router({
             const hasExistingApiConfig = !!(
               claudeEnv.ANTHROPIC_API_KEY ||
               claudeEnv.ANTHROPIC_AUTH_TOKEN ||
-              claudeEnv.ANTHROPIC_BASE_URL
+              (claudeEnv.ANTHROPIC_BASE_URL &&
+                claudeEnv.ANTHROPIC_BASE_URL !== "https://api.anthropic.com")
             )
 
             if (hasExistingApiConfig) {
@@ -1786,12 +1792,10 @@ ${prompt}
 
             // System prompt config - use preset for both Claude and Ollama
             // If AGENTS.md exists, append its content to the system prompt.
-            // When read-aloud is enabled, also append the Spoken:/Displayed:
-            // instruction so the harness authors the spoken text upstream (V6).
-            const systemPromptAppend =
-              (agentsMdContent
-                ? `\n\n# AGENTS.md\nThe following are the project's AGENTS.md instructions:\n\n${agentsMdContent}`
-                : "") + getReadAloudSystemAppend(input.subChatId)
+            // Read-aloud never changes model output; speech is derived after the reply.
+            const systemPromptAppend = agentsMdContent
+              ? `\n\n# AGENTS.md\nThe following are the project's AGENTS.md instructions:\n\n${agentsMdContent}`
+              : ""
             const systemPromptConfig = systemPromptAppend
               ? {
                   type: "preset" as const,
@@ -2789,7 +2793,7 @@ ${prompt}
           clearPendingApprovals("Session ended.", input.subChatId)
 
           // Clear streamId since we're no longer streaming.
-          // sessionId is NOT saved here — the save block in the async function
+          // sessionId is NOT saved here - the save block in the async function
           // handles it (saves on normal completion, clears on abort). This avoids
           // a redundant DB write that the cancel mutation would then overwrite.
           const db = getDatabase()

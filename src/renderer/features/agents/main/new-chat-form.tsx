@@ -25,6 +25,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/
 import { cn } from "../../../lib/utils"
 import {
   agentsDebugModeAtom,
+  enabledOpencodeModelsAtom,
+  enabledCursorModelsAtom,
   justCreatedIdsAtom,
   lastSelectedAgentIdAtom,
   lastSelectedClaudeEffortAtom,
@@ -123,6 +125,7 @@ import {
   CLAUDE_MODELS,
   CODEX_MODELS,
   CURSOR_MODELS,
+  DEFAULT_OPENCODE_MODELS,
   DEFAULT_CLAUDE_MODEL_ID,
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
@@ -130,6 +133,7 @@ import {
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
 type ChatScope = "global" | "project" | "task"
+const DEFAULT_PROJECT_COLOR = "#38bdf8"
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
@@ -232,6 +236,18 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return exists ? selectedProject : null
   }, [selectedProject, projectsList, isLoadingProjects])
 
+  const selectedProjectColor = useMemo(() => {
+    if (!validatedProject?.id) return DEFAULT_PROJECT_COLOR
+    try {
+      const colors = JSON.parse(
+        localStorage.getItem("flapstack-sidebar-project-colors") ?? "{}",
+      ) as Record<string, string>
+      return colors[validatedProject.id] ?? DEFAULT_PROJECT_COLOR
+    } catch {
+      return DEFAULT_PROJECT_COLOR
+    }
+  }, [validatedProject?.id])
+
   // Clear invalid project from storage
   useEffect(() => {
     if (selectedProject && projectsList && !validatedProject) {
@@ -292,7 +308,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
-  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery()
+  const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
+    refetchInterval: (query) => (query.state.data?.isConnected ? false : 2_000),
+  })
+  const { data: codexIntegration } = trpc.codex.getIntegration.useQuery()
   const { data: cursorModelData } = trpc.cursor.listModels.useQuery()
   const { data: openrouterCatalog } = trpc.opencode.listModels.useQuery({ provider: "openrouter" })
   const { data: nanogptCatalog } = trpc.opencode.listModels.useQuery({ provider: "nanogpt" })
@@ -392,6 +411,19 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [lastSelectedOpencodeModels, setLastSelectedOpencodeModels] = useAtom(
     lastSelectedOpencodeModelsAtom,
   )
+  const enabledOpencodeModels = useAtomValue(enabledOpencodeModelsAtom)
+  const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
+  useEffect(() => {
+    for (const providerId of ["openrouter", "nanogpt"] as const) {
+      if (enabledOpencodeModels[providerId].includes(lastSelectedOpencodeModels[providerId]))
+        continue
+      setLastSelectedOpencodeModels((current) => ({
+        ...current,
+        [providerId]:
+          enabledOpencodeModels[providerId][0] ?? DEFAULT_OPENCODE_MODELS[providerId][0].id,
+      }))
+    }
+  }, [enabledOpencodeModels, lastSelectedOpencodeModels, setLastSelectedOpencodeModels])
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
 
   const [selectedModel, setSelectedModel] = useState(
@@ -440,18 +472,19 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     [codexUiModels, lastSelectedCodexModelId],
   )
   const cursorUiModels = useMemo(() => {
-    const ids = cursorModelData?.models?.length
+    const liveIds = cursorModelData?.models?.length
       ? cursorModelData.models
       : CURSOR_MODELS.map((model) => model.id)
+    const ids = enabledCursorModels.filter((id) => liveIds.includes(id))
     return ids.map((id) => ({
       id,
       name: CURSOR_MODELS.find((model) => model.id === id)?.name ?? id,
     }))
-  }, [cursorModelData?.models])
+  }, [cursorModelData?.models, enabledCursorModels])
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === lastSelectedCursorModelId) ||
-      cursorUiModels[0] || { id: "auto", name: "Auto" },
+      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
     [cursorUiModels, lastSelectedCursorModelId],
   )
 
@@ -1857,17 +1890,27 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                   ? "Start a task chat"
                   : "Start a project chat"}
             </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {chatScope === "global"
-                ? "No repo is attached until you choose one."
-                : chatScope === "task"
-                  ? selectedTask
-                    ? `${validatedProject?.name ?? "Project"} / ${selectedTask.name}`
-                    : "Choose a task before sending."
-                  : validatedProject?.name
-                    ? `Using ${validatedProject.name}`
+            {chatScope === "project" && validatedProject?.name ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                For
+                <span
+                  className="ml-2 text-base font-semibold md:text-lg"
+                  style={{ color: selectedProjectColor }}
+                >
+                  {validatedProject.name}
+                </span>
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {chatScope === "global"
+                  ? "No repo is attached until you choose one."
+                  : chatScope === "task"
+                    ? selectedTask
+                      ? `${validatedProject?.name ?? "Project"} / ${selectedTask.name}`
+                      : "Choose a task before sending."
                     : "Choose a repo before sending."}
-            </p>
+              </p>
+            )}
           </div>
 
           {/* Input Area */}
@@ -1881,8 +1924,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
               <PromptInput
                 className={cn(
                   "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
-                  isDragOver && "ring-2 ring-primary/50 border-primary/50",
-                  isFocused && !isDragOver && "ring-2 ring-primary/50",
+                  isDragOver && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]",
+                  isFocused &&
+                    !isDragOver &&
+                    "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.18)]",
                 )}
                 maxHeight={240}
                 onSubmit={handleSend}
@@ -2072,7 +2117,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         )}
                     </DropdownMenu>
 
-                    <div className="group/model-controls flex items-center gap-0.5">
+                    <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                       <AgentModelSelector
                         open={isModelDropdownOpen}
                         onOpenChange={setIsModelDropdownOpen}
@@ -2088,6 +2133,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           setLastSelectedAgentId(provider)
                         }}
                         selectedModelLabel={selectedModelLabel}
+                        triggerClassName="max-w-[250px] min-w-0"
                         onOpenModelsSettings={() => {
                           setSettingsActiveTab("models")
                           setSettingsDialogOpen(true)
@@ -2144,7 +2190,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                             setLastSelectedCodexFastMode(
                               selectedCodexModel.supportsFastMode ? enabled : false,
                             ),
-                          isConnected: codexOnboardingCompleted,
+                          isConnected: codexIntegration?.isConnected ?? codexOnboardingCompleted,
                         }}
                         cursor={{
                           models: cursorUiModels,
@@ -2160,10 +2206,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         opencode={{
                           openrouter: {
                             label: "OpenRouter",
-                            models: (openrouterCatalog?.models || []).map((model) => ({
-                              id: `openrouter/${model.id}`,
-                              name: model.label,
-                            })),
+                            models: (openrouterCatalog?.models || [])
+                              .filter((model) =>
+                                enabledOpencodeModels.openrouter.includes(`openrouter/${model.id}`),
+                              )
+                              .map((model) => ({
+                                id: `openrouter/${model.id}`,
+                                name: model.label,
+                              })),
                             selectedModelId: lastSelectedOpencodeModels.openrouter,
                             onSelectModel: (modelId) =>
                               setLastSelectedOpencodeModels((current) => ({
@@ -2173,10 +2223,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           },
                           nanogpt: {
                             label: "NanoGPT",
-                            models: (nanogptCatalog?.models || []).map((model) => ({
-                              id: `nanogpt/${model.id}`,
-                              name: model.label,
-                            })),
+                            models: (nanogptCatalog?.models || [])
+                              .filter((model) =>
+                                enabledOpencodeModels.nanogpt.includes(`nanogpt/${model.id}`),
+                              )
+                              .map((model) => ({
+                                id: `nanogpt/${model.id}`,
+                                name: model.label,
+                              })),
                             selectedModelId: lastSelectedOpencodeModels.nanogpt,
                             onSelectModel: (modelId) =>
                               setLastSelectedOpencodeModels((current) => ({

@@ -1,4 +1,4 @@
-// Provider reasoning normalizers (Stage 2 Track T — T3/T4/T5/T6 scaffolding).
+// Provider reasoning normalizers (Stage 2 Track T - T3/T4/T5/T6 scaffolding).
 //
 // Each normalizer is a pure function: it takes ONE raw parsed provider event and
 // returns zero or more `ReasoningOutputEvent`s targeting the shared contract. Live

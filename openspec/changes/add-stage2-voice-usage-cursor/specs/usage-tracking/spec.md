@@ -191,8 +191,16 @@ light and dark themes.
 - **AND** the shared controls offer 1h, 6h, 24h, 7d, 30d, and All ranges with 7d selected by default
 - **AND** multi-series graph legends can hide or show individual series
 - **AND** hovering or focusing a point exposes its series, value, and timestamp
-- **AND** quota cards and quota-history series use OnWatch's exact healthy (<50%), warning (>=50%), danger (>=80%), and critical (>=95%) percent-used states and theme colors
+- **AND** short-window quota cards use OnWatch's utilization thresholds
+- **AND** weekly quota cards and historical points use OnWatch's exact time-to-reset pace calculation and very-under, under, on-pace, over, and very-over theme colors
 - **AND** an existing local OnWatch store seeds the complete Codex and Claude snapshot range before Flapstack continues collecting new samples
+- **AND** local OnWatch Codex CLI and Claude Code token-cost events seed ten-minute cost-history buckets
+- **AND** each graph renders no more than 24 representative points per series on its own full-width row
+- **AND** provider detail quota cards fill their row and add remaining quota, exact reset, pace, and freshness context while All-tab cards remain compact
+- **AND** history plots use the available graph-card width and materially more vertical space
+- **AND** quota series use OnWatch's fixed provider quota colors without changing color between points based on utilization or pace, while token and cost history share OnWatch's cyan/teal dual-axis line graph
+- **AND** both graphs show labeled axes, a full background grid, and a no-click nearest-point tooltip with a dashed vertical crosshair
+- **AND** quota cards show a live time-until-reset box and a colored pace chip containing the exact over/under amount
 - **AND** missing buckets remain absent instead of being fabricated as zero usage
 
 #### Scenario: Dashboard keeps routine usage detail minimal

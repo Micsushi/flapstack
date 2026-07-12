@@ -3,6 +3,7 @@
 import { atom } from "jotai"
 import { atomFamily } from "jotai/utils"
 import { appStore } from "../../../lib/jotai-store"
+import { getMessageDate } from "../lib/message-timestamp"
 
 // Types
 export interface MessagePart {
@@ -863,6 +864,21 @@ export const syncMessagesWithStatusAtom = atom(
       }
     }
 
+    // Backfill and persist timestamps. Historical assistant messages inherit the
+    // triggering user turn because older storage did not record reply times.
+    let previousMessageDate: Date | null = null
+    for (const msg of messages) {
+      const messageDate = getMessageDate(msg)
+      if (messageDate) {
+        previousMessageDate = messageDate
+        if (!msg.metadata?.createdAt) {
+          msg.metadata = { ...msg.metadata, createdAt: messageDate.toISOString() }
+        }
+      } else if (previousMessageDate) {
+        msg.metadata = { ...msg.metadata, createdAt: previousMessageDate.toISOString() }
+      }
+    }
+
     // Build new IDs list and roles map
     const newIds = messages.map((m) => m.id)
     const newRoles = new Map<string, "user" | "assistant" | "system">()
@@ -1084,8 +1100,9 @@ export function clearAllCaches() {
 // This allows PlayButton to manage its own state without passing callbacks
 // through props (which would break memoization).
 
-export const PLAYBACK_SPEEDS = [1, 2, 3] as const
-export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number]
+export const MIN_PLAYBACK_SPEED = 0.5
+export const MAX_PLAYBACK_SPEED = 3
+export type PlaybackSpeed = number
 
 // Atom with localStorage persistence
 export const ttsPlaybackRateAtom = atom<PlaybackSpeed>(
@@ -1093,8 +1110,8 @@ export const ttsPlaybackRateAtom = atom<PlaybackSpeed>(
   (() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("tts-playback-rate")
-      if (saved && PLAYBACK_SPEEDS.includes(Number(saved) as PlaybackSpeed)) {
-        return Number(saved) as PlaybackSpeed
+      if (saved && Number(saved) >= MIN_PLAYBACK_SPEED && Number(saved) <= MAX_PLAYBACK_SPEED) {
+        return Number(saved)
       }
     }
     return 1

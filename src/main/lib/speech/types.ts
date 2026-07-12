@@ -78,9 +78,8 @@ export type VoiceSettings = {
   whisperCppBinPath: string | null
   ttsAdapterId: string
   voiceId: string | null
+  voiceByTtsAdapterId: Record<string, string | null>
   rate: number
-  autoReadAloud: boolean
-  readAloudByChatId: Record<string, boolean>
   preferOffline: boolean
 }
 
@@ -92,8 +91,7 @@ export const defaultVoiceSettings: VoiceSettings = {
   whisperCppBinPath: null,
   ttsAdapterId: "kokoro",
   voiceId: null,
+  voiceByTtsAdapterId: {},
   rate: 1,
-  autoReadAloud: false,
-  readAloudByChatId: {},
   preferOffline: true,
 }

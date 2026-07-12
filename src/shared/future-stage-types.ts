@@ -58,7 +58,7 @@ export const futureStageCapabilities: FutureStageCapability[] = [
     stage: "Later",
     title: "Local models and OpenRouter",
     status: "scaffolded",
-    gate: "Local-model runtime; OpenRouter and NanoGPT are active through OpenCode",
+    gate: "Local-model runtime; OpenRouter and NanoGPT provider support is active",
     summary: "OpenRouter and NanoGPT are implemented; local-model execution remains future work.",
     dependencies: ["Stage 1 harness contract"],
   },

@@ -314,7 +314,7 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
               </span>
             )}
 
-            {/* Result count — more muted than args */}
+            {/* Result count - more muted than args */}
             {resultCount && (
               <span className="text-muted-foreground/40 font-normal whitespace-nowrap flex-shrink-0">
                 {resultCount}

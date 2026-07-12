@@ -1,4 +1,4 @@
-// Stage 2 Track B — model pricing cache used to estimate cost when a provider
+// Stage 2 Track B - model pricing cache used to estimate cost when a provider
 // does not return an exact figure (OpenRouter U8, NanoGPT U9). Estimates derived
 // here are always tagged costQuality: "estimated" by the caller.
 //
@@ -64,7 +64,7 @@ export function upsertModelPricing(pricing: ModelPricing): void {
 
 /**
  * Estimate USD cost from token counts + pricing. Returns null when pricing is
- * unknown or a wildcard zero-price placeholder — callers must not treat null as
+ * unknown or a wildcard zero-price placeholder - callers must not treat null as
  * $0 usage. Reasoning tokens are priced separately because they can materially
  * change NanoGPT/OpenRouter output cost.
  */
@@ -76,7 +76,7 @@ export function estimateCostUsd(
   const pricing = getModelPricing(providerId, model)
   if (!pricing) return null
   if (pricing.model === "*" && pricing.inputPerMTok === 0 && pricing.outputPerMTok === 0) {
-    // Placeholder wildcard — no real pricing loaded yet.
+    // Placeholder wildcard - no real pricing loaded yet.
     return null
   }
   const input = ((tokens.inputTokens ?? 0) / 1_000_000) * pricing.inputPerMTok

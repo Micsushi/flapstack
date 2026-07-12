@@ -8,7 +8,7 @@ import {
   sttAdapters,
   ttsAdapters,
 } from "../src/main/lib/speech/registry"
-import { normalizeVoiceSettings, resolveReadAloudEnabled } from "../src/main/lib/speech/settings"
+import { normalizeVoiceSettings } from "../src/main/lib/speech/settings"
 import { extractSpokenSection, filterSpeakableText } from "../src/main/lib/speech/speakable-filter"
 import { createFallbackSpokenSummary } from "../src/main/lib/speech/spoken-summary"
 import { resolveSpeechText } from "../src/main/lib/speech/speech-text"
@@ -25,15 +25,17 @@ import {
   verifyWhisperBinary,
 } from "../src/main/lib/speech/stt-whisper-cpp"
 import { encodePcmWav } from "../src/renderer/lib/hooks/use-voice-recording"
-import {
-  appendReadAloudInstruction,
-  READ_ALOUD_INSTRUCTION,
-} from "../src/main/lib/speech/read-aloud-instruction"
 import { speakWithTtsFallback } from "../src/main/lib/speech/tts-fallback"
 import { toMicrophoneError } from "../src/renderer/lib/hooks/use-voice-recording"
 import {
+  extendSpeechRangeThroughPunctuation,
   getManagedSpeechSnapshot,
+  getSpeechCursor,
+  getSpeechDisplayTokens,
+  getSpeechPlaybackPosition,
+  getSpeechStartTime,
   playManagedSpeech,
+  setSpeechPlaybackPosition,
   stopManagedSpeech,
   subscribeManagedSpeech,
 } from "../src/renderer/lib/speech-playback"
@@ -171,7 +173,6 @@ describe("voice settings normalization", () => {
     expect(settings.sttAdapterId).toBe("local-whisper")
     expect(settings.ttsAdapterId).toBe("kokoro")
     expect(settings.preferOffline).toBe(true)
-    expect(settings.autoReadAloud).toBe(false)
     expect(settings.whisperModelId).toBe("base")
     expect(settings.whisperCppBinPath).toBeNull()
   })
@@ -187,13 +188,14 @@ describe("voice settings normalization", () => {
     expect(normalizeVoiceSettings({ whisperModelId: "large" }).whisperModelId).toBe("base")
   })
 
-  it("uses a per-chat read-aloud override before the global default", () => {
+  it("keeps separate voice choices for each TTS provider", () => {
     const settings = normalizeVoiceSettings({
-      autoReadAloud: false,
-      readAloudByChatId: { "chat-1": true },
+      voiceByTtsAdapterId: { kokoro: "af_heart", "native-os": "Samantha" },
     })
-    expect(resolveReadAloudEnabled(settings, "chat-1")).toBe(true)
-    expect(resolveReadAloudEnabled(settings, "chat-2")).toBe(false)
+    expect(settings.voiceByTtsAdapterId).toEqual({
+      kokoro: "af_heart",
+      "native-os": "Samantha",
+    })
   })
 })
 
@@ -410,25 +412,66 @@ describe("kokoro helpers", () => {
   })
 })
 
-describe("read-aloud instruction", () => {
-  it("tells the harness to author Spoken and Displayed sections", () => {
-    expect(READ_ALOUD_INSTRUCTION).toContain("Spoken:")
-    expect(READ_ALOUD_INSTRUCTION).toContain("Displayed:")
-  })
-
-  it("adds the instruction to prompt-only harnesses only when enabled", () => {
-    expect(appendReadAloudInstruction("Fix the bug", true)).toContain("Spoken:")
-    expect(appendReadAloudInstruction("Fix the bug", false)).toBe("Fix the bug")
-  })
-
-  it("uses the same prompt instruction for every prompt-only harness", () => {
-    const prompt = appendReadAloudInstruction("Fix the bug", true)
-    expect(prompt).toContain("Displayed:")
-    expect(prompt).toContain("no code")
-  })
-})
-
 describe("renderer speech playback", () => {
+  it("maps audio progress to cumulative, punctuation-weighted reading progress", () => {
+    expect(getSpeechCursor("one two three four", 5, 10)).toMatchObject({ count: 3 })
+    expect(getSpeechCursor("one, extraordinarily long. two", 5, 10).current).toBe("extraordinarily")
+    expect(getSpeechCursor("one two", 0, 10)).toMatchObject({ current: "", count: 0 })
+    expect(getSpeechCursor("one two", 10, 10)).toMatchObject({
+      current: "two",
+      count: 2,
+      wordProgress: 1,
+    })
+    expect(getSpeechCursor("one two", 1, 10).wordProgress).toBeGreaterThan(0)
+  })
+
+  it("keeps each message position when another message plays", () => {
+    setSpeechPlaybackPosition("message-one", {
+      currentTime: 4.5,
+      duration: 10,
+      spokenText: "one message",
+    })
+    setSpeechPlaybackPosition("message-two", {
+      currentTime: 2,
+      duration: 8,
+      spokenText: "another message",
+    })
+    expect(getSpeechPlaybackPosition("message-one")).toMatchObject({ currentTime: 4.5 })
+    expect(getSpeechPlaybackPosition("message-two")).toMatchObject({ currentTime: 2 })
+  })
+
+  it("resumes partial audio but restarts completed audio", () => {
+    expect(getSpeechStartTime({ currentTime: 4.5, duration: 10 })).toBe(4.5)
+    expect(getSpeechStartTime({ currentTime: 9.9, duration: 10 })).toBe(0)
+    expect(getSpeechStartTime({ currentTime: 10, duration: 10 })).toBe(0)
+  })
+
+  it("maps spoken contractions and word substitutions back to displayed text", () => {
+    expect(getSpeechDisplayTokens("I'm ready, so I'll start.", 5)).toEqual([
+      "i",
+      "am",
+      "ready",
+      "so",
+      "i",
+      "will",
+      "start",
+    ])
+    expect(getSpeechDisplayTokens("Use about so but start stop", 6)).toEqual([
+      "use",
+      "about",
+      "so",
+      "but",
+      "start",
+      "stop",
+    ])
+  })
+
+  it("extends completed spoken words through attached punctuation", () => {
+    expect(extendSpeechRangeThroughPunctuation("ready. Next", 5)).toBe(6)
+    expect(extendSpeechRangeThroughPunctuation("done?!", 4)).toBe(6)
+    expect(extendSpeechRangeThroughPunctuation("word next", 4)).toBe(4)
+  })
+
   it("preempts the active utterance when new speech starts", async () => {
     const instances: FakeAudio[] = []
     const createObjectURL = vi.fn(() => `blob:${instances.length}`)
@@ -523,6 +566,8 @@ describe("microphone failure states", () => {
 
 class FakeAudio {
   playbackRate = 1
+  currentTime = 0
+  duration = 10
   onended: (() => void) | null = null
   onerror: (() => void) | null = null
   play = vi.fn(async () => undefined)

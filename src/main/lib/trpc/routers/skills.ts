@@ -324,7 +324,7 @@ export const skillsRouter = router({
           ? path.join(input.cwd, input.path)
           : resolveSkillPath(input.path)
 
-      // Skills are directories containing SKILL.md — delete the parent directory
+      // Skills are directories containing SKILL.md - delete the parent directory
       const skillDir = path.dirname(absolutePath)
       await fs.access(skillDir)
       await fs.rm(skillDir, { recursive: true })

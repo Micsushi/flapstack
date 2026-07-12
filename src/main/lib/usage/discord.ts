@@ -1,4 +1,4 @@
-// Stage 2 Track B — U10: Discord webhook sender.
+// Stage 2 Track B - U10: Discord webhook sender.
 //
 // Ports onWatch `internal/notify/discord.go`. The webhook URL is a credential:
 // it is never logged, never included in raw payloads, and never put into the
@@ -16,7 +16,7 @@ export interface DiscordSendResult {
   ok: boolean
   /** HTTP status when a response was received. */
   status?: number
-  /** Sanitized error message — guaranteed free of the webhook URL. */
+  /** Sanitized error message - guaranteed free of the webhook URL. */
   error?: string
 }
 

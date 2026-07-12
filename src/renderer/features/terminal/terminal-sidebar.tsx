@@ -497,7 +497,7 @@ export function TerminalSidebar({
     )
   }
 
-  // Bottom mode — rendering handled by TerminalBottomPanel in active-chat
+  // Bottom mode - rendering handled by TerminalBottomPanel in active-chat
   if (displayMode === "bottom") {
     return null
   }
@@ -599,7 +599,7 @@ export function TerminalSidebar({
 }
 
 /**
- * Terminal Bottom Panel — used when displayMode is "bottom".
+ * Terminal Bottom Panel - used when displayMode is "bottom".
  * Renders terminal content in a horizontal panel at the bottom of active-chat.
  */
 interface TerminalBottomPanelContentProps {

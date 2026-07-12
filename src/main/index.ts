@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron"
 import { existsSync, readFileSync, readlinkSync, unlinkSync } from "fs"
 import { createServer } from "http"
-import { join } from "path"
+import { basename, join, resolve } from "path"
 import {
   AuthManager,
   initAuthManager,
@@ -10,6 +10,7 @@ import {
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, initDatabase } from "./lib/db"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
+import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -45,8 +46,22 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
-const PROTOCOL = IS_DEV ? "flapstack-dev" : "flapstack"
-const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : "Flapstack"
+const IS_MAC_PREVIEW =
+  process.platform === "darwin" && !IS_DEV && basename(process.execPath) === "Flapstack Preview"
+const PROTOCOL = IS_DEV ? "flapstack-dev" : IS_MAC_PREVIEW ? "flapstack-preview" : "flapstack"
+const APP_DISPLAY_NAME = IS_DEV
+  ? "Flapstack Dev"
+  : IS_MAC_PREVIEW
+    ? "Flapstack Preview"
+    : "Flapstack"
+
+if (process.platform === "darwin" && IS_DEV) {
+  const expectedCheckout = process.env.FLAPSTACK_DEV_CHECKOUT?.trim()
+  if (!expectedCheckout || resolve(expectedCheckout) !== resolve(app.getAppPath())) {
+    console.error("[Dev] Refusing unverified macOS launch. Start with: npm run dev")
+    app.exit(1)
+  }
+}
 
 function hasActiveAgentSessions(): boolean {
   return (
@@ -76,6 +91,11 @@ if (IS_DEV) {
   app.setPath("userData", devUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
+} else if (IS_MAC_PREVIEW) {
+  const previewUserData = join(app.getPath("userData"), "..", "Flapstack Preview")
+  app.setPath("userData", previewUserData)
+  app.setName(APP_DISPLAY_NAME)
+  console.log("[Preview] Using separate userData path:", previewUserData)
 }
 
 // Increase V8 old-space limit for renderer/main processes to reduce OOM frequency
@@ -808,7 +828,7 @@ if (gotTheLock) {
       console.log("[App] Database initialized")
       void runStartupCatchUp({
         db: initDatabase(),
-        getSecret: async (key) => getUsageSecret(key),
+        getSecret: getAppUsageSecret,
       }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
     } catch (error) {
       console.error("[App] Failed to initialize database:", error)

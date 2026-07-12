@@ -1,4 +1,4 @@
-// Stage 2 Track B — U7: Cursor local credential detection and refresh storage.
+// Stage 2 Track B - U7: Cursor local credential detection and refresh storage.
 // Reads Cursor's state.vscdb and, on macOS, the same Keychain entries Cursor
 // uses. Refreshed rotating credentials are written back to both available
 // stores so the background daemon keeps working while Flapstack is closed.

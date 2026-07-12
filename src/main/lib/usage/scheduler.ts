@@ -1,4 +1,4 @@
-// Stage 2 Track B — U2: usage poll scheduler.
+// Stage 2 Track B - U2: usage poll scheduler.
 //
 // Wraps a UsageEngine with a cadence timer. Used by the daemon (U3) and can also
 // drive an in-app periodic refresh. Default cadence 5 minutes (S2.0),

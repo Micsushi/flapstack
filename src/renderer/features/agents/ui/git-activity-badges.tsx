@@ -66,7 +66,7 @@ export const GitActivityBadges = memo(function GitActivityBadges({
   const handleOpenCommit = useCallback(() => {
     if (activity?.type !== "commit") return
 
-    // If pushed to remote — open on GitHub
+    // If pushed to remote - open on GitHub
     const owner = selectedProject?.gitOwner
     const repo = selectedProject?.gitRepo
     if (activity.pushed && activity.hash && owner && repo) {
@@ -74,7 +74,7 @@ export const GitActivityBadges = memo(function GitActivityBadges({
       return
     }
 
-    // Otherwise — open local diff sidebar with History tab
+    // Otherwise - open local diff sidebar with History tab
     if (activity.hash) {
       setSelectedCommit({
         hash: activity.hash,
@@ -102,10 +102,10 @@ export const GitActivityBadges = memo(function GitActivityBadges({
   const handleFileClick = useCallback(
     (file: ChangedFileInfo) => {
       if (filesCommitted) {
-        // Files already committed — open file preview
+        // Files already committed - open file preview
         onOpenFile?.(file.filePath)
       } else {
-        // Files not yet committed — open diff view with this file selected
+        // Files not yet committed - open diff view with this file selected
         setSelectedFilePath(file.displayPath)
         setFilteredDiffFiles([file.displayPath])
         setFocusedDiffFile(file.displayPath)
