@@ -60,7 +60,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T5 — Implement structured additive and mutating operations
 
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: Approved tools create and manage supported app objects through shared services.
 - Scope: Create chat/task, add attachment, rename, move, pin, archive, restore, worktree write, launch run, and automation draft handlers.
@@ -101,7 +101,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T3 — Implement approval lifecycle and session grants
 
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Required operations wait for one durable user decision and finish exactly once.
 - Scope: Pending state, approve, deny, timeout, cancellation, app shutdown, and in-memory session grants.
@@ -114,7 +114,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T4 — Integrate approvals with tool execution
 
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: No mutation runs before its final gate and approval decision.
 - Scope: Gate all handlers, revalidate target/context after approval, and return structured denial or timeout results.
@@ -142,7 +142,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F4-T2 — Audit every invocation and decision
 
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
 - Outcome: Allowed, denied, approval-required, failed, and completed calls have correlated records.
 - Scope: Instrument one invoker path, approval decisions, grants, errors, results, and durations.
@@ -183,7 +183,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F5-T2 — Implement approved cross-harness creation and launch
 
-- [x] Completion: acceptance and verification passed
+- [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: Approved Codex and Claude callers create and optionally launch target-harness threads.
 - Scope: Durable chat creation, lineage, permission/worktree resolution, first run, rollback, and audit.
