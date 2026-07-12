@@ -6,15 +6,28 @@ import {
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
   mapClaudeSdkPermissionMode,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionModes,
   resolvePermission,
   setGlobalDefault,
   type PermissionMode,
+  type CustomPermissionToggles,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
 
 const permissionModeSchema = z.enum(permissionModes)
+const customPermissionsSchema = z
+  .object({
+    fileWrite: z.boolean(),
+    shell: z.boolean(),
+    network: z.boolean(),
+    git: z.boolean(),
+    browser: z.boolean(),
+    mcp: z.boolean(),
+    secrets: z.boolean(),
+  })
+  .strict()
 
 type Row = Record<string, unknown>
 type RawSqlDatabase = {
@@ -37,12 +50,30 @@ export const permissionsRouter = router({
     }),
 
   setChatMode: publicProcedure
-    .input(z.object({ chatId: z.string(), mode: permissionModeSchema }))
+    .input(
+      z.object({
+        chatId: z.string(),
+        mode: permissionModeSchema,
+        customPermissions: customPermissionsSchema.optional(),
+      }),
+    )
     .mutation(({ input }) => {
+      if (input.mode === "custom" && !input.customPermissions) {
+        throw new Error("Custom permission mode requires explicit capability toggles.")
+      }
+      if (input.mode !== "custom" && input.customPermissions) {
+        throw new Error("Custom capability toggles require custom permission mode.")
+      }
       const db = getDatabase()
       const chat = db
         .update(chats)
-        .set({ permissionMode: input.mode, updatedAt: new Date() })
+        .set({
+          permissionMode: input.mode,
+          customPermissions: input.customPermissions
+            ? JSON.stringify(input.customPermissions)
+            : null,
+          updatedAt: new Date(),
+        })
         .where(eq(chats.id, input.chatId))
         .returning()
         .get()
@@ -51,7 +82,7 @@ export const permissionsRouter = router({
         throw new Error(`Chat not found: ${input.chatId}`)
       }
 
-      return { mode: input.mode }
+      return { mode: input.mode, customPermissions: input.customPermissions ?? null }
     }),
 
   resolveForChat: publicProcedure.input(z.object({ chatId: z.string() })).query(({ input }) => {
@@ -64,6 +95,7 @@ export const permissionsRouter = router({
         ...values,
         globalMode,
       },
+      customPermissions: readCustomPermissionsForChat(input.chatId),
     }
   }),
 
@@ -89,6 +121,21 @@ export const permissionsRouter = router({
       })
     }),
 })
+
+function readCustomPermissionsForChat(chatId: string): CustomPermissionToggles | null {
+  const db = getDatabase()
+  const row = getOptional<Row>(
+    db,
+    "SELECT custom_permissions AS customPermissions FROM chats WHERE id = ?",
+    [chatId],
+  )
+  if (!row || typeof row.customPermissions !== "string") return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(row.customPermissions))
+  } catch {
+    return null
+  }
+}
 
 function readPermissionValuesForChat(chatId: string): {
   chatMode?: PermissionMode | null

@@ -98,8 +98,12 @@ describe("MCP audit storage", () => {
       migrate(upgradeDrizzle, { migrationsFolder: sourceMigrations })
 
       expect(
-        upgradeDb.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = 'stage2-chat'").get(),
-      ).toEqual({ mcp_exposure_enabled: 0 })
+        upgradeDb
+          .prepare(
+            "SELECT mcp_exposure_enabled, custom_permissions FROM chats WHERE id = 'stage2-chat'",
+          )
+          .get(),
+      ).toEqual({ mcp_exposure_enabled: 0, custom_permissions: null })
       expect(
         upgradeDb
           .prepare(

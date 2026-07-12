@@ -148,6 +148,7 @@ function createTestSchema() {
       task_id text REFERENCES tasks(id) ON DELETE cascade,
       scope text DEFAULT 'project' NOT NULL,
       permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      custom_permissions text,
       harness text,
       model text,
       created_at integer,

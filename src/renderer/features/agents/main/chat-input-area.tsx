@@ -117,6 +117,16 @@ import {
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
 
+const disabledCustomPermissions = {
+  fileWrite: false,
+  shell: false,
+  network: false,
+  git: false,
+  browser: false,
+  mcp: false,
+  secrets: false,
+} as const
+
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
   const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
@@ -796,9 +806,18 @@ export const ChatInputArea = memo(function ChatInputArea({
   const handlePermissionModeChange = useCallback(
     (mode: RunPermissionMode) => {
       setRequestedPermissionMode(mode)
-      setChatPermissionModeMutation.mutate({ chatId: parentChatId, mode })
+      setChatPermissionModeMutation.mutate({
+        chatId: parentChatId,
+        mode,
+        ...(mode === "custom"
+          ? {
+              customPermissions:
+                permissionResolution?.customPermissions ?? disabledCustomPermissions,
+            }
+          : {}),
+      })
     },
-    [parentChatId, setChatPermissionModeMutation],
+    [parentChatId, permissionResolution?.customPermissions, setChatPermissionModeMutation],
   )
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
@@ -2157,8 +2176,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         ))}
                         {requestedPermissionMode === "custom" && (
                           <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
-                            Custom toggles are stored as a Stage 1 scaffold; this run will use the
-                            backend resolved mode below.
+                            New custom mode starts with every capability disabled until configured.
                           </div>
                         )}
                       </DropdownMenuContent>

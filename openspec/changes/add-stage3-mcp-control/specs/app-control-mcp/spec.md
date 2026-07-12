@@ -40,6 +40,13 @@ execution. Tier 3 operations MUST receive explicit user approval.
 - **WHEN** any caller requests a Tier 3 action
 - **THEN** Flapstack waits for explicit approval and denies on rejection or timeout
 
+#### Scenario: Custom caller capabilities
+
+- **WHEN** a caller uses custom permission mode
+- **THEN** Flapstack loads its exact per-chat capability toggles from durable
+  storage for every call and fails closed when that state is missing, malformed,
+  stale, or unsupported
+
 #### Scenario: Background approval
 
 - **WHEN** a background chat needs approval
