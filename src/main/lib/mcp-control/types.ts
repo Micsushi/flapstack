@@ -40,6 +40,13 @@ export type McpCallerStore = {
 
 export type McpControlErrorCode =
   | "invalid-caller"
+  | "permission-denied"
+  | "stale-caller"
+  | "stale-target"
+  | "approval-denied"
+  | "approval-timeout"
+  | "approval-cancelled"
+  | "approval-shutdown"
   | "tool-not-found"
   | "tool-unavailable"
   | "invalid-input"

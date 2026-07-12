@@ -27,7 +27,7 @@ describe("Flapstack MCP stdio transport", () => {
     const databasePath = join(directory, "agents.db")
     const database = new Database(databasePath)
     database.exec(
-      "CREATE TABLE chats (id TEXT PRIMARY KEY, scope TEXT, task_id TEXT, project_id TEXT); CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, archived_at INTEGER, updated_at INTEGER); INSERT INTO chats VALUES ('chat-transport-test', 'global', NULL, NULL)",
+      "CREATE TABLE chats (id TEXT PRIMARY KEY, scope TEXT, task_id TEXT, project_id TEXT, permission_mode TEXT, archived_at INTEGER); CREATE TABLE agent_runs (id TEXT PRIMARY KEY, chat_id TEXT, permission_mode TEXT, status TEXT); CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, archived_at INTEGER, updated_at INTEGER); INSERT INTO chats VALUES ('chat-transport-test', 'global', NULL, NULL, 'read-only', NULL); INSERT INTO agent_runs VALUES ('run-transport-test', 'chat-transport-test', 'read-only', 'running')",
     )
     database.close()
     const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))

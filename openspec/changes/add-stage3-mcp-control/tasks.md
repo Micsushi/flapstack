@@ -114,7 +114,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T4 — Integrate approvals with tool execution
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: No mutation runs before its final gate and approval decision.
 - Scope: Gate all handlers, revalidate target/context after approval, and return structured denial or timeout results.

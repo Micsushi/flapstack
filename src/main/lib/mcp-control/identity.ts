@@ -1,3 +1,4 @@
+import Database from "better-sqlite3"
 import { z } from "zod"
 import { parsePermissionMode } from "../permissions"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
@@ -55,5 +56,56 @@ export function resolveTrustedMcpCaller(
     runId: run?.id,
     permissionMode: mode,
     customPermissions: customPermissions ?? undefined,
+  }
+}
+
+/**
+ * Opens a fresh read-only view for each caller check. The stdio child must not
+ * trust the immutable launch environment after the chat or run has changed.
+ */
+export function createSqliteMcpCallerStore(
+  databasePath = process.env.FLAPSTACK_DB_PATH,
+): McpCallerStore {
+  if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP caller validation.")
+
+  const query = (sql: string, params: unknown[]): Record<string, unknown> | undefined => {
+    const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+    try {
+      db.pragma("query_only = ON")
+      db.pragma("busy_timeout = 5000")
+      return db.prepare(sql).get(...params) as Record<string, unknown> | undefined
+    } finally {
+      db.close()
+    }
+  }
+
+  return {
+    findChat(chatId) {
+      const row = query("SELECT id, permission_mode, archived_at FROM chats WHERE id = ?", [chatId])
+      return row
+        ? {
+            id: String(row.id),
+            permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
+            archived: row.archived_at != null,
+          }
+        : null
+    },
+    findRun(runId) {
+      const row = query(
+        "SELECT id, chat_id, permission_mode, status FROM agent_runs WHERE id = ?",
+        [runId],
+      )
+      return row
+        ? {
+            id: String(row.id),
+            chatId: String(row.chat_id),
+            permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
+            active: row.status === "running",
+          }
+        : null
+    },
+    // Custom capability persistence is intentionally not implemented yet.
+    // Fail closed until its durable source is added with the mutation handlers.
+    findCustomPermissions: () => null,
   }
 }
