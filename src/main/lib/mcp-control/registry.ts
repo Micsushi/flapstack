@@ -4,7 +4,13 @@ import { McpApprovalLifecycle } from "./approval-lifecycle"
 import type { AppendMcpAuditRecord, McpAuditStatus } from "./audit-storage"
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
-import type { McpCallerIdentity, McpControlResponse, McpControlTool } from "./types"
+import { evaluateMcpGateWithSelfReference } from "./self-reference"
+import type {
+  McpCallerIdentity,
+  McpControlResponse,
+  McpControlTool,
+  McpMutationService,
+} from "./types"
 
 export type McpInvocationDependencies = {
   /** Resolves immutable launch identity against durable state on every check. */
@@ -20,6 +26,7 @@ export type McpInvocationDependencies = {
   /** Stable ID joining all append-only audit events for one tool call. */
   invocationId?: () => string
   audit?: Pick<McpAuditWriter, "append">
+  mutations?: McpMutationService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
     tool: McpControlTool
@@ -101,35 +108,63 @@ export const mcpControlTools: McpControlTool[] = [
     description: "Create a new chat.",
     tier: 1,
     requiredCapabilities: ["mcp"],
-    status: "stubbed",
+    status: "implemented",
   },
   {
     name: "create_task",
     description: "Create a new task.",
     tier: 1,
     requiredCapabilities: ["mcp"],
-    status: "stubbed",
+    status: "implemented",
   },
   {
     name: "rename_item",
     description: "Rename a project, task, or chat.",
     tier: 2,
     requiredCapabilities: ["mcp"],
-    status: "stubbed",
+    status: "implemented",
   },
   {
     name: "archive_item",
     description: "Archive a project, task, or chat.",
     tier: 2,
     requiredCapabilities: ["mcp"],
-    status: "stubbed",
+    status: "implemented",
+  },
+  {
+    name: "move_chat",
+    description: "Move a chat within caller scope.",
+    tier: 2,
+    requiredCapabilities: ["mcp"],
+    status: "implemented",
+  },
+  {
+    name: "pin_item",
+    description: "Pin or unpin an app item.",
+    tier: 1,
+    requiredCapabilities: ["mcp"],
+    status: "implemented",
+  },
+  {
+    name: "restore_item",
+    description: "Restore an archived app item.",
+    tier: 2,
+    requiredCapabilities: ["mcp"],
+    status: "implemented",
+  },
+  {
+    name: "add_attachment",
+    description: "Add a text attachment to a chat.",
+    tier: 1,
+    requiredCapabilities: ["mcp"],
+    status: "implemented",
   },
   {
     name: "write_attachment_to_worktree",
     description: "Write an attachment into a worktree.",
     tier: 3,
     requiredCapabilities: ["mcp", "fileWrite"],
-    status: "stubbed",
+    status: "implemented",
   },
   {
     name: "launch_run",
@@ -137,6 +172,13 @@ export const mcpControlTools: McpControlTool[] = [
     tier: 3,
     requiredCapabilities: ["mcp", "shell"],
     status: "stubbed",
+  },
+  {
+    name: "create_automation_draft",
+    description: "Create a non-runnable automation draft.",
+    tier: 1,
+    requiredCapabilities: ["mcp"],
+    status: "implemented",
   },
 ]
 
@@ -208,7 +250,12 @@ export async function invokeMcpControlTool(
     return trustedCaller.response
   }
 
-  const initialGate = evaluateMcpToolGate({ tool, caller: trustedCaller.caller })
+  const initialGate = applySelfReference(
+    tool,
+    trustedCaller.caller,
+    input,
+    evaluateMcpToolGate({ tool, caller: trustedCaller.caller }),
+  )
   if (initialGate.decision === "denied") {
     const response = denied(initialGate.reason)
     audit(dependencies, {
@@ -298,7 +345,12 @@ export async function invokeMcpControlTool(
       })
       return recheckedCaller.response
     }
-    const finalGate = evaluateMcpToolGate({ tool, caller: recheckedCaller.caller, approved: true })
+    const finalGate = applySelfReference(
+      tool,
+      recheckedCaller.caller,
+      input,
+      evaluateMcpToolGate({ tool, caller: recheckedCaller.caller, approved: true }),
+    )
     if (finalGate.decision !== "allowed") {
       const response = denied(finalGate.reason)
       audit(dependencies, {
@@ -441,7 +493,7 @@ function dispatch(
 ): McpControlResponse | Promise<McpControlResponse> {
   return (
     dependencies.execute?.({ tool, caller, rawInput: input }) ??
-    executeImplementedTool(tool.name, caller, input, readService)
+    executeImplementedTool(tool.name, caller, input, readService, dependencies.mutations)
   )
 }
 
@@ -450,6 +502,7 @@ function executeImplementedTool(
   caller: McpCallerIdentity,
   input: unknown,
   readService?: McpReadService,
+  mutations?: McpMutationService,
 ): McpControlResponse | Promise<McpControlResponse> {
   if (name === "ping") {
     return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
@@ -459,6 +512,15 @@ function executeImplementedTool(
       ok: true,
       data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
     }
+  }
+
+  if (mcpControlTools.some((tool) => tool.name === name && tool.tier > 0)) {
+    return mutations
+      ? mutations.invoke(name, caller, input)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Mutation service is unavailable." },
+        }
   }
 
   try {
@@ -553,4 +615,41 @@ function approvalDecisionError(
 
 function snapshotCaller(caller: McpCallerIdentity): McpCallerIdentity {
   return { chatId: caller.chatId, runId: caller.runId, permissionMode: caller.permissionMode }
+}
+
+function applySelfReference(
+  tool: McpControlTool,
+  caller: McpCallerIdentity,
+  rawInput: unknown,
+  gate: ReturnType<typeof evaluateMcpToolGate>,
+) {
+  if (!rawInput || typeof rawInput !== "object") return gate
+  const input = rawInput as Record<string, unknown>
+  const operation =
+    tool.name === "rename_item"
+      ? "rename"
+      : tool.name === "archive_item"
+        ? "archive"
+        : tool.name === "move_chat"
+          ? "move"
+          : tool.name === "write_attachment_to_worktree"
+            ? "write"
+            : tool.name === "launch_run"
+              ? "launch"
+              : null
+  const kind =
+    input.kind === "project" || input.kind === "task" || input.kind === "chat"
+      ? input.kind
+      : tool.name === "move_chat" || tool.name === "launch_run"
+        ? "chat"
+        : null
+  const targetId =
+    typeof input.id === "string" ? input.id : typeof input.chatId === "string" ? input.chatId : null
+  if (!operation || !kind || !targetId) return gate
+  return evaluateMcpGateWithSelfReference({
+    caller,
+    operation,
+    target: { kind, id: targetId },
+    gate,
+  })
 }

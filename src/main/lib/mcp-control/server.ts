@@ -3,6 +3,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
 import { mcpReadInputShapes } from "./read-service"
+import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import { appendMcpAuditRecord } from "./audit-storage"
 import { getDatabase } from "../db"
@@ -12,19 +13,21 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
   const approvals = new McpApprovalLifecycle()
   const callerStore = createSqliteMcpCallerStore()
+  const mutations = createMcpMutationService()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
       tool.name,
       {
         description: tool.description,
-        inputSchema: mcpReadInputShapes[tool.name],
-        annotations: { readOnlyHint: true, destructiveHint: false },
+        inputSchema: mcpReadInputShapes[tool.name] ?? mcpMutationInputShapes[tool.name],
+        annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input) => {
         const response = await invokeMcpControlTool(tool.name, caller, input, undefined, {
           approvals,
           audit: { append: (record) => appendMcpAuditRecord(getDatabase(), record) },
+          mutations,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
         })
         return {
