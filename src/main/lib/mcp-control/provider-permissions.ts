@@ -238,7 +238,10 @@ function explicitReference(
   serverName: string | null | undefined,
   toolName: string | null | undefined,
 ): ProviderMcpToolReference | null {
-  const server = serverName?.trim().toLowerCase()
+  // Preserve case. The product launcher owns one exact reserved registration;
+  // case-insensitive user collisions are third-party even if a provider reports
+  // them in a shape that otherwise resembles the product tool name.
+  const server = serverName?.trim()
   const tool = toolName?.trim()
   if (!server || !tool || !/^[a-zA-Z0-9_-]+$/.test(server) || !/^[a-zA-Z0-9_-]+$/.test(tool)) {
     return null
@@ -261,6 +264,6 @@ function mcpApprovalServerName(value: unknown): string | null {
     "server_name",
     "server",
   ])
-  const normalized = serverName?.trim().toLowerCase()
+  const normalized = serverName?.trim()
   return normalized && /^[a-zA-Z0-9_-]+$/.test(normalized) ? normalized : null
 }

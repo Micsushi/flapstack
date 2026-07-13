@@ -201,7 +201,11 @@ function expectStage3Schema(sqlite: Database.Database, chatId: string): void {
       .get(chatId),
   ).toEqual({ mcp_exposure_enabled: 0, custom_permissions: null })
   expect(tableNames(sqlite)).toEqual(
-    expect.arrayContaining(["mcp_approval_requests", "mcp_audit_records"]),
+    expect.arrayContaining([
+      "filesystem_root_registrations",
+      "mcp_approval_requests",
+      "mcp_audit_records",
+    ]),
   )
   expect(triggerNames(sqlite)).toEqual(
     expect.arrayContaining(["mcp_audit_records_no_update", "mcp_audit_records_no_delete"]),

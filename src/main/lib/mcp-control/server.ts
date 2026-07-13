@@ -6,7 +6,11 @@ import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
-import { appendMcpAuditRecord, findUnresolvedMcpDispatch } from "./audit-storage"
+import {
+  appendMcpAuditRecord,
+  findUnresolvedMcpDispatch,
+  recoverMcpDispatchClaims,
+} from "./audit-storage"
 import { getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
@@ -17,6 +21,7 @@ import {
 } from "../../../shared/product-mcp-invalidation"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
+  recoverMcpDispatchClaims(getDatabase())
   const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
   const publish = (event: ProductMcpRendererInvalidation): void => {
     void publishProductMcpInvalidation(event)
@@ -52,7 +57,10 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
               appendMcpAuditRecord(getDatabase(), record)
               publish({ version: 1, source: "product-mcp", domains: ["audit"] })
             },
-            findUnresolvedDispatch: (lookup) => findUnresolvedMcpDispatch(getDatabase(), lookup),
+            findUnresolvedDispatch: (lookup) => {
+              recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0, limit: 25 })
+              return findUnresolvedMcpDispatch(getDatabase(), lookup)
+            },
           },
           mutations,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),

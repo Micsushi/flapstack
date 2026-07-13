@@ -138,6 +138,15 @@ feature-local closeout gates.
   pass. No live, UI, package, provider, Keychain, Windows, or Linux row was
   promoted. Claim-before-dispatch prevents blind retry but leaves
   cross-resource exactly-once reconciliation as an explicit residual limit.
+- 2026-07-13 security repair round-3 note: six additional findings were repaired
+  with durable filesystem-root identity, rooted file read/list/watch contracts,
+  exhaustive case-insensitive reserved-name collision handling, pre-payload
+  namespace validation, and restart-safe bounded terminal-audit recovery.
+  Continuous namespace/openat limits, Windows reparse behavior, cross-resource
+  exactly-once, and every live/UI/package/platform row remain explicitly open.
+  Node 22 focused attacks pass 60/60; the full gate passes 855 tests with 3
+  conditional skips plus lint, format, TypeScript, and production build. All 18
+  active changes and the 323-scenario ledger validate.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

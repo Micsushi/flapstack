@@ -431,6 +431,7 @@ export function DetailsSidebar({
                     key="plan"
                     chatId={chatId}
                     activeSubChatId={activeSubChatId}
+                    worktreePath={worktreePath}
                     planPath={planPath}
                     refetchTrigger={planRefetchTrigger}
                     mode={mode}

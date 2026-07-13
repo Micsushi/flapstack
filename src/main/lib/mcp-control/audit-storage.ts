@@ -59,6 +59,13 @@ export type McpAuditStatus =
   | "stale"
   | "failed"
   | "completed"
+  | "recovery-retryable"
+  | "recovery-unknown"
+  | "retry-authorized"
+  | "retry-consumed"
+  | "reconciled-completed"
+  | "reconciled-failed"
+  | "recovery-exhausted"
 
 export type McpAuditSnapshot = Record<string, unknown> | null
 
@@ -78,6 +85,10 @@ export type AppendMcpAuditRecord = {
 }
 
 type AuditDatabase = Pick<BetterSQLite3Database<typeof schema>, "insert">
+type RecoveryDatabase = Pick<
+  BetterSQLite3Database<typeof schema>,
+  "insert" | "select" | "transaction"
+>
 
 export type McpAuditDetailDto = {
   callerSummary: string
@@ -122,9 +133,27 @@ export type McpAuditPage = {
 type QueryDatabase = Pick<BetterSQLite3Database<typeof schema>, "select">
 
 export type McpDispatchLookup = {
+  invocationId: string
   caller: Pick<McpCallerIdentity, "chatId" | "runId">
   toolName: string
   input: unknown
+}
+
+export type McpDispatchRecoveryClaim = {
+  invocationId: string
+  callerChatId: string
+  callerRunId: string | null
+  toolName: string
+  tier: McpRiskTier
+  state: McpAuditStatus
+  retrySafe: boolean
+  createdAt: string
+}
+
+export type McpDispatchBlock = {
+  invocationId: string
+  state: McpAuditStatus
+  relation: "same-invocation" | "matching-retry"
 }
 
 const DEFAULT_PAGE_SIZE = 25
@@ -434,40 +463,254 @@ function isSafeDigestField(key: string, value: unknown): value is string {
  * and redacted input. Callers must reconcile it instead of blindly retrying.
  */
 export function findUnresolvedMcpDispatch(
-  database: QueryDatabase,
+  database: RecoveryDatabase,
   lookup: McpDispatchLookup,
-): string | null {
-  const rows = database
-    .select({
-      invocationId: mcpAuditRecords.invocationId,
-      status: mcpAuditRecords.status,
-      inputSummary: mcpAuditRecords.inputSummary,
-      createdAt: mcpAuditRecords.createdAt,
-    })
-    .from(mcpAuditRecords)
-    .where(
-      and(
-        eq(mcpAuditRecords.callerChatId, lookup.caller.chatId),
-        lookup.caller.runId
-          ? eq(mcpAuditRecords.callerRunId, lookup.caller.runId)
-          : isNull(mcpAuditRecords.callerRunId),
-        eq(mcpAuditRecords.toolName, lookup.toolName),
-      ),
+): McpDispatchBlock | null {
+  return database.transaction((tx) => {
+    const rows = tx
+      .select()
+      .from(mcpAuditRecords)
+      .where(
+        and(
+          eq(mcpAuditRecords.callerChatId, lookup.caller.chatId),
+          lookup.caller.runId
+            ? eq(mcpAuditRecords.callerRunId, lookup.caller.runId)
+            : isNull(mcpAuditRecords.callerRunId),
+          eq(mcpAuditRecords.toolName, lookup.toolName),
+        ),
+      )
+      .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+      .all()
+    const inputSummary = redactMcpAuditSummary(
+      summarizeMcpAuditInput(lookup.toolName, lookup.input),
     )
-    .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+    const claim = activeRecoveryClaims(rows).find((row) => row.inputSummary === inputSummary)
+    if (!claim) return null
+    if (claim.state === "retry-authorized" && claim.invocationId !== lookup.invocationId) {
+      appendRecoveryEvent(tx, claim, "retry-consumed", {
+        sha256: invocationDigest(lookup.invocationId),
+        state: "retry-consumed",
+      })
+      return null
+    }
+    return {
+      invocationId: claim.invocationId,
+      state: claim.state,
+      relation: claim.invocationId === lookup.invocationId ? "same-invocation" : "matching-retry",
+    }
+  })
+}
+
+export function recoverMcpDispatchClaims(
+  database: RecoveryDatabase,
+  options: { staleAfterMs?: number; limit?: number; now?: Date } = {},
+): number {
+  const now = options.now ?? new Date()
+  const staleBefore = now.getTime() - (options.staleAfterMs ?? 30_000)
+  const limit = Math.max(1, Math.min(options.limit ?? 100, 100))
+  const rows = database
+    .select()
+    .from(mcpAuditRecords)
+    .orderBy(desc(mcpAuditRecords.createdAt))
     .all()
-  const terminal = new Set(
-    rows
-      .filter((row) => row.status === "completed" || row.status === "failed")
-      .map((row) => row.invocationId),
-  )
-  const inputSummary = redactMcpAuditSummary(summarizeMcpAuditInput(lookup.toolName, lookup.input))
-  return (
-    rows.find(
-      (row) =>
-        row.status === "dispatch-started" &&
-        row.inputSummary === inputSummary &&
-        !terminal.has(row.invocationId),
-    )?.invocationId ?? null
-  )
+  const candidates = activeRecoveryClaims(rows)
+    .filter((claim) => claim.state === "dispatch-started")
+    .filter((claim) => (claim.createdAt?.getTime() ?? 0) <= staleBefore)
+    .slice(0, limit)
+  let recovered = 0
+  for (const candidate of candidates) {
+    database.transaction((tx) => {
+      const invocationRows = tx
+        .select()
+        .from(mcpAuditRecords)
+        .where(eq(mcpAuditRecords.invocationId, candidate.invocationId))
+        .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+        .all()
+      const current = activeRecoveryClaims(invocationRows)[0]
+      if (!current || current.state !== "dispatch-started") return
+      const retrySafe = isRetrySafeClaim(current)
+      const priorConsumed = rows.some(
+        (row) =>
+          row.invocationId !== current.invocationId &&
+          row.callerChatId === current.callerChatId &&
+          row.callerRunId === current.callerRunId &&
+          row.toolName === current.toolName &&
+          row.inputSummary === current.inputSummary &&
+          row.status === "retry-consumed",
+      )
+      appendRecoveryEvent(
+        tx,
+        current,
+        retrySafe
+          ? priorConsumed
+            ? "recovery-exhausted"
+            : "recovery-retryable"
+          : "recovery-unknown",
+        { retrySafe, boundedRetryUsed: priorConsumed },
+      )
+      recovered += 1
+    })
+  }
+  return recovered
+}
+
+export function listMcpDispatchRecoveryClaims(database: QueryDatabase): McpDispatchRecoveryClaim[] {
+  const rows = database
+    .select()
+    .from(mcpAuditRecords)
+    .orderBy(desc(mcpAuditRecords.createdAt))
+    .all()
+  return activeRecoveryClaims(rows).map((claim) => ({
+    invocationId: claim.invocationId,
+    callerChatId: claim.callerChatId,
+    callerRunId: claim.callerRunId,
+    toolName: claim.toolName,
+    tier: claim.tier as McpRiskTier,
+    state: claim.state,
+    retrySafe: isRetrySafeClaim(claim),
+    createdAt: (claim.createdAt ?? new Date(0)).toISOString(),
+  }))
+}
+
+export function authorizeMcpDispatchRetry(
+  database: RecoveryDatabase,
+  invocationId: string,
+): boolean {
+  return database.transaction((tx) => {
+    const rows = tx
+      .select()
+      .from(mcpAuditRecords)
+      .where(eq(mcpAuditRecords.invocationId, invocationId))
+      .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+      .all()
+    const claim = activeRecoveryClaims(rows)[0]
+    if (!claim || claim.state !== "recovery-retryable" || !isRetrySafeClaim(claim)) return false
+    appendRecoveryEvent(tx, claim, "retry-authorized", { authorized: true })
+    return true
+  })
+}
+
+export function reconcileMcpDispatchClaim(
+  database: RecoveryDatabase,
+  invocationId: string,
+  outcome: "completed" | "failed",
+): boolean {
+  return database.transaction((tx) => {
+    const rows = tx
+      .select()
+      .from(mcpAuditRecords)
+      .where(eq(mcpAuditRecords.invocationId, invocationId))
+      .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+      .all()
+    const claim = activeRecoveryClaims(rows)[0]
+    if (!claim) return false
+    appendRecoveryEvent(
+      tx,
+      claim,
+      outcome === "completed" ? "reconciled-completed" : "reconciled-failed",
+      { externallyVerifiedOutcome: outcome },
+    )
+    return true
+  })
+}
+
+type AuditRow = typeof mcpAuditRecords.$inferSelect
+
+function activeRecoveryClaims(rows: AuditRow[]): Array<AuditRow & { state: McpAuditStatus }> {
+  const grouped = new Map<string, AuditRow[]>()
+  for (const row of rows) {
+    const group = grouped.get(row.invocationId) ?? []
+    group.push(row)
+    grouped.set(row.invocationId, group)
+  }
+  const terminal = new Set<McpAuditStatus>([
+    "completed",
+    "failed",
+    "reconciled-completed",
+    "reconciled-failed",
+  ])
+  const claims: Array<AuditRow & { state: McpAuditStatus }> = []
+  for (const group of grouped.values()) {
+    const statuses = group.map((row) => row.status as McpAuditStatus)
+    if (statuses.some((status) => terminal.has(status))) continue
+    const consumed = group.find((row) => row.status === "retry-consumed")
+    const successorDigest = consumed ? resultDigest(consumed.resultSummary) : null
+    if (
+      successorDigest &&
+      rows.some(
+        (row) =>
+          invocationDigest(row.invocationId) === successorDigest &&
+          (row.status === "dispatch-started" || terminal.has(row.status as McpAuditStatus)),
+      )
+    ) {
+      continue
+    }
+    const dispatch = group.find((row) => row.status === "dispatch-started")
+    if (!dispatch) continue
+    const latestLifecycle = group.find((row) =>
+      [
+        "recovery-retryable",
+        "recovery-unknown",
+        "retry-authorized",
+        "retry-consumed",
+        "recovery-exhausted",
+      ].includes(row.status),
+    )
+    claims.push({
+      ...dispatch,
+      state: (latestLifecycle?.status ?? "dispatch-started") as McpAuditStatus,
+    })
+  }
+  return claims
+}
+
+function invocationDigest(invocationId: string): string {
+  return createHash("sha256").update(invocationId).digest("hex")
+}
+
+function resultDigest(summary: string): string | null {
+  try {
+    const parsed = JSON.parse(summary) as { sha256?: unknown }
+    return typeof parsed.sha256 === "string" && /^[a-f0-9]{64}$/.test(parsed.sha256)
+      ? parsed.sha256
+      : null
+  } catch {
+    return null
+  }
+}
+
+function isRetrySafeClaim(claim: Pick<AuditRow, "tier" | "toolName" | "inputSummary">): boolean {
+  if (claim.tier === 0) return true
+  if (claim.toolName !== "launch_run") return false
+  try {
+    return Object.prototype.hasOwnProperty.call(JSON.parse(claim.inputSummary), "idempotencyKey")
+  } catch {
+    return false
+  }
+}
+
+function appendRecoveryEvent(
+  database: AuditDatabase,
+  source: AuditRow,
+  status: McpAuditStatus,
+  result: unknown,
+): void {
+  database
+    .insert(mcpAuditRecords)
+    .values({
+      invocationId: source.invocationId,
+      status,
+      callerChatId: source.callerChatId,
+      callerRunId: source.callerRunId,
+      toolName: source.toolName,
+      tier: source.tier,
+      callerSnapshot: source.callerSnapshot,
+      chatSnapshot: source.chatSnapshot,
+      runSnapshot: source.runSnapshot,
+      inputSummary: source.inputSummary,
+      resultSummary: redactMcpAuditSummary(result),
+      durationMs: source.durationMs,
+      createdAt: new Date(),
+    })
+    .run()
 }

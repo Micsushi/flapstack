@@ -1,6 +1,9 @@
 import { isAbsolute, normalize, resolve, sep } from "node:path"
 import { eq } from "drizzle-orm"
-import { getDatabase, projects, chats } from "../../db"
+import { lstatSync, realpathSync } from "node:fs"
+import { getDatabase, projects, chats, filesystemRootRegistrations } from "../../db"
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
+import type * as schema from "../../db/schema"
 
 /**
  * Security model for desktop app filesystem access:
@@ -31,6 +34,13 @@ import { getDatabase, projects, chats } from "../../db"
 export type PathValidationErrorCode =
   "ABSOLUTE_PATH" | "PATH_TRAVERSAL" | "UNREGISTERED_WORKTREE" | "INVALID_TARGET" | "SYMLINK_ESCAPE"
 
+export type RegisteredFilesystemRoot = {
+  path: string
+  canonicalPath: string
+  deviceId: string | null
+  inodeId: string | null
+}
+
 /**
  * Error thrown when path validation fails.
  * Includes a code for programmatic handling.
@@ -55,27 +65,160 @@ export class PathValidationError extends Error {
  *
  * @throws PathValidationError if path is not registered
  */
-export function assertRegisteredWorktree(workspacePath: string): void {
+export function assertRegisteredWorktree(workspacePath: string): RegisteredFilesystemRoot {
   const db = getDatabase()
 
   // Check chats.worktreePath first (most common case)
   const chatExists = db.select().from(chats).where(eq(chats.worktreePath, workspacePath)).get()
 
-  if (chatExists) {
-    return
-  }
+  if (chatExists) return verifyOrBindFilesystemRoot(workspacePath)
 
   // Check projects.path for direct project access
   const projectExists = db.select().from(projects).where(eq(projects.path, workspacePath)).get()
 
-  if (projectExists) {
-    return
-  }
+  if (projectExists) return verifyOrBindFilesystemRoot(workspacePath)
 
   throw new PathValidationError(
     "Workspace path not registered in database",
     "UNREGISTERED_WORKTREE",
   )
+}
+
+/**
+ * Capture a durable root identity after the pathname has been registered as a
+ * project or chat worktree. Existing bindings are immutable and are verified,
+ * never silently refreshed when a directory is replaced.
+ */
+export function bindRegisteredFilesystemRoot(workspacePath: string): RegisteredFilesystemRoot {
+  const db = getDatabase()
+  const registered =
+    db
+      .select({ path: chats.worktreePath })
+      .from(chats)
+      .where(eq(chats.worktreePath, workspacePath))
+      .get() ??
+    db.select({ path: projects.path }).from(projects).where(eq(projects.path, workspacePath)).get()
+  if (!registered) {
+    throw new PathValidationError(
+      "Workspace path not registered in database",
+      "UNREGISTERED_WORKTREE",
+    )
+  }
+  return bindFilesystemRootIdentity(workspacePath)
+}
+
+export function bindFilesystemRootIdentity(
+  workspacePath: string,
+  database: Pick<BetterSQLite3Database<typeof schema>, "insert" | "select"> = getDatabase(),
+): RegisteredFilesystemRoot {
+  const captured = captureFilesystemRoot(workspacePath)
+  database
+    .insert(filesystemRootRegistrations)
+    .values({ ...captured, boundAt: new Date() })
+    .onConflictDoNothing()
+    .run()
+  return verifyFilesystemRootRegistration(workspacePath, database)
+}
+
+export function backfillFilesystemRootRegistrations(
+  database: Pick<BetterSQLite3Database<typeof schema>, "insert" | "select">,
+): number {
+  const paths = new Set<string>()
+  for (const row of database.select({ path: projects.path }).from(projects).all())
+    paths.add(row.path)
+  for (const row of database.select({ path: chats.worktreePath }).from(chats).all()) {
+    if (row.path) paths.add(row.path)
+  }
+  let bound = 0
+  for (const path of paths) {
+    const existing = database
+      .select({ path: filesystemRootRegistrations.path })
+      .from(filesystemRootRegistrations)
+      .where(eq(filesystemRootRegistrations.path, path))
+      .get()
+    if (existing) continue
+    try {
+      bindFilesystemRootIdentity(path, database)
+      bound += 1
+    } catch {
+      // Legacy missing/inaccessible roots remain unbound and fail closed.
+    }
+  }
+  return bound
+}
+
+function verifyOrBindFilesystemRoot(workspacePath: string): RegisteredFilesystemRoot {
+  return verifyFilesystemRootRegistration(workspacePath, getDatabase())
+}
+
+function verifyFilesystemRootRegistration(
+  workspacePath: string,
+  db: Pick<BetterSQLite3Database<typeof schema>, "select">,
+): RegisteredFilesystemRoot {
+  const existing = db
+    .select()
+    .from(filesystemRootRegistrations)
+    .where(eq(filesystemRootRegistrations.path, workspacePath))
+    .get()
+
+  if (!existing) {
+    throw new PathValidationError(
+      "Registered root has no durable filesystem identity",
+      "UNREGISTERED_WORKTREE",
+    )
+  }
+  const registration = {
+    path: existing.path,
+    canonicalPath: existing.canonicalPath,
+    deviceId: existing.deviceId,
+    inodeId: existing.inodeId,
+  }
+  verifyFilesystemRootIdentity(registration)
+  return registration
+}
+
+function captureFilesystemRoot(workspacePath: string): RegisteredFilesystemRoot {
+  try {
+    const lexicalPath = resolve(workspacePath)
+    const info = lstatSync(lexicalPath, { bigint: true })
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new PathValidationError("Registered root must be a real directory", "SYMLINK_ESCAPE")
+    }
+    const canonicalPath = realpathSync(lexicalPath)
+    return {
+      path: workspacePath,
+      canonicalPath,
+      deviceId: info.dev === 0n && info.ino === 0n ? null : info.dev.toString(),
+      inodeId: info.dev === 0n && info.ino === 0n ? null : info.ino.toString(),
+    }
+  } catch (error) {
+    if (error instanceof PathValidationError) throw error
+    throw new PathValidationError("Registered root identity cannot be captured", "SYMLINK_ESCAPE")
+  }
+}
+
+function verifyFilesystemRootIdentity(registration: RegisteredFilesystemRoot): void {
+  try {
+    const lexicalPath = resolve(registration.path)
+    const info = lstatSync(lexicalPath, { bigint: true })
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new PathValidationError("Registered root was replaced or symlinked", "SYMLINK_ESCAPE")
+    }
+    if (realpathSync(lexicalPath) !== registration.canonicalPath) {
+      throw new PathValidationError("Registered root canonical path changed", "SYMLINK_ESCAPE")
+    }
+    if (
+      registration.deviceId !== null &&
+      registration.inodeId !== null &&
+      (info.dev.toString() !== registration.deviceId ||
+        info.ino.toString() !== registration.inodeId)
+    ) {
+      throw new PathValidationError("Registered root filesystem identity changed", "SYMLINK_ESCAPE")
+    }
+  } catch (error) {
+    if (error instanceof PathValidationError) throw error
+    throw new PathValidationError("Registered root identity cannot be verified", "SYMLINK_ESCAPE")
+  }
 }
 
 /**

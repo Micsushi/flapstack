@@ -55,7 +55,7 @@ import {
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
-  renameProductMcpRecordCollision,
+  renameProductMcpRecordCollisions,
 } from "../../mcp-control/registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
@@ -1541,10 +1541,10 @@ export const claudeRouter = router({
                       databasePath: getDatabasePath(),
                     },
                   )
-                  const collisionAlias = renameProductMcpRecordCollision(allServers)
-                  if (collisionAlias) {
+                  const collisionAliases = renameProductMcpRecordCollisions(allServers)
+                  if (collisionAliases.length > 0) {
                     console.warn(
-                      `[claude] Renamed third-party MCP collision "${FLAPSTACK_MCP_SERVER_NAME}" to "${collisionAlias}" for this run.`,
+                      `[claude] Renamed ${collisionAliases.length} third-party MCP collision(s) for reserved name "${FLAPSTACK_MCP_SERVER_NAME}" to ${collisionAliases.join(", ")} for this run.`,
                     )
                   }
                   allServers[FLAPSTACK_MCP_SERVER_NAME] = registration

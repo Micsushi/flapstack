@@ -15,12 +15,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/
 import { ChatMarkdownRenderer } from "../../../components/chat-markdown-renderer"
 import { cn } from "../../../lib/utils"
 import { trpc } from "../../../lib/trpc"
+import { toDurablePlanFileTarget } from "../../../lib/file-target"
 import { CopyButton } from "./message-action-buttons"
 import type { AgentMode } from "../atoms"
 
 interface AgentPlanSidebarProps {
   chatId: string
   planPath: string | null
+  worktreePath: string | null
   onClose: () => void
   onBuildPlan?: () => void
   /** Timestamp that triggers refetch when changed (e.g., after plan Edit completes) */
@@ -32,6 +34,7 @@ interface AgentPlanSidebarProps {
 export function AgentPlanSidebar({
   chatId,
   planPath,
+  worktreePath,
   onClose,
   onBuildPlan,
   refetchTrigger,
@@ -39,6 +42,10 @@ export function AgentPlanSidebar({
 }: AgentPlanSidebarProps) {
   // View mode: rendered markdown or plaintext
   const [viewMode, setViewMode] = useState<"rendered" | "plaintext">("rendered")
+  const fileTarget = useMemo(
+    () => toDurablePlanFileTarget(worktreePath, chatId, planPath),
+    [worktreePath, chatId, planPath],
+  )
 
   // Toggle view mode
   const handleToggleViewMode = useCallback(() => {
@@ -51,7 +58,10 @@ export function AgentPlanSidebar({
     isLoading,
     error,
     refetch,
-  } = trpc.files.readFile.useQuery({ filePath: planPath! }, { enabled: !!planPath })
+  } = trpc.files.readFile.useQuery(
+    fileTarget ?? { rootPath: worktreePath || "invalid", relativePath: "invalid" },
+    { enabled: !!fileTarget },
+  )
 
   // Refetch when trigger changes
   useEffect(() => {

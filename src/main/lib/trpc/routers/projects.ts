@@ -10,6 +10,10 @@ import { existsSync } from "node:fs"
 import { mkdir, copyFile, unlink } from "node:fs/promises"
 import { extname } from "node:path"
 import { getGitRemoteInfo } from "../../git"
+import {
+  bindFilesystemRootIdentity,
+  bindRegisteredFilesystemRoot,
+} from "../../git/security/path-validation"
 import { trackProjectOpened } from "../../analytics"
 import { getLaunchDirectory } from "../../cli"
 import {
@@ -108,6 +112,7 @@ export const projectsRouter = router({
     const existing = db.select().from(projects).where(eq(projects.path, folderPath)).get()
 
     if (existing) {
+      bindRegisteredFilesystemRoot(folderPath)
       // Update the updatedAt timestamp and git info (in case remote changed)
       const updatedProject = db
         .update(projects)
@@ -131,6 +136,9 @@ export const projectsRouter = router({
       return updatedProject
     }
 
+    // Capture identity before pathname persistence so replacement can never be
+    // blessed by first use.
+    bindFilesystemRootIdentity(folderPath)
     // Create new project with git info
     const newProject = db
       .insert(projects)
@@ -158,45 +166,6 @@ export const projectsRouter = router({
 
     return newProject
   }),
-
-  /**
-   * Create a project from a known path
-   */
-  create: publicProcedure
-    .input(z.object({ path: z.string(), name: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      const db = getDatabase()
-      const name = input.name || basename(input.path)
-      const permissionPreferences = getPermissionPreferences()
-
-      // Check if project already exists
-      const existing = db.select().from(projects).where(eq(projects.path, input.path)).get()
-
-      if (existing) {
-        return existing
-      }
-
-      // Get git remote info
-      const gitInfo = await getGitRemoteInfo(input.path)
-
-      return db
-        .insert(projects)
-        .values({
-          name,
-          path: input.path,
-          gitRemoteUrl: gitInfo.remoteUrl,
-          gitProvider: gitInfo.provider,
-          gitOwner: gitInfo.owner,
-          gitRepo: gitInfo.repo,
-          defaultPermissionMode: permissionPreferences.globalDefault,
-          defaultCustomPermissions:
-            permissionPreferences.globalDefault === "custom"
-              ? JSON.stringify(permissionPreferences.globalCustomPermissions)
-              : null,
-        })
-        .returning()
-        .get()
-    }),
 
   /**
    * Rename a project
@@ -373,6 +342,7 @@ export const projectsRouter = router({
         const existing = db.select().from(projects).where(eq(projects.path, clonePath)).get()
 
         if (existing) {
+          bindRegisteredFilesystemRoot(clonePath)
           trackProjectOpened({
             id: existing.id,
             hasGitRemote: !!existing.gitRemoteUrl,
@@ -382,6 +352,7 @@ export const projectsRouter = router({
 
         // Create project for existing clone
         const gitInfo = await getGitRemoteInfo(clonePath)
+        bindFilesystemRootIdentity(clonePath)
         const newProject = db
           .insert(projects)
           .values({
@@ -413,6 +384,7 @@ export const projectsRouter = router({
       const db = getDatabase()
       const gitInfo = await getGitRemoteInfo(clonePath)
 
+      bindFilesystemRootIdentity(clonePath)
       const newProject = db
         .insert(projects)
         .values({
@@ -488,6 +460,7 @@ export const projectsRouter = router({
       const existing = db.select().from(projects).where(eq(projects.path, folderPath)).get()
 
       if (existing) {
+        bindRegisteredFilesystemRoot(folderPath)
         // Update git info in case it changed
         const updated = db
           .update(projects)
@@ -505,6 +478,7 @@ export const projectsRouter = router({
         return { success: true as const, project: updated }
       }
 
+      bindFilesystemRootIdentity(folderPath)
       const project = db
         .insert(projects)
         .values({

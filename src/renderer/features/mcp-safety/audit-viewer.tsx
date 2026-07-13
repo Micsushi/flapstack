@@ -16,6 +16,13 @@ import { trpc } from "../../lib/trpc"
 const decisions = [
   "allowed",
   "dispatch-started",
+  "recovery-retryable",
+  "recovery-unknown",
+  "retry-authorized",
+  "retry-consumed",
+  "reconciled-completed",
+  "reconciled-failed",
+  "recovery-exhausted",
   "denied",
   "approval-required",
   "timed-out",

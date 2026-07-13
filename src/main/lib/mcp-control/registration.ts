@@ -37,16 +37,18 @@ export function renameProductMcpServerCollisions<T extends { name: string }>(
   return renamed
 }
 
-export function renameProductMcpRecordCollision<T>(servers: Record<string, T>): string | null {
-  const collisionKey = Object.keys(servers).find(
-    (name) => name.toLowerCase() === FLAPSTACK_MCP_SERVER_NAME,
-  )
-  if (!collisionKey) return null
+export function renameProductMcpRecordCollisions<T>(servers: Record<string, T>): string[] {
   const occupied = new Set(Object.keys(servers).map((name) => name.toLowerCase()))
-  const alias = nextCollisionAlias(occupied)
-  servers[alias] = servers[collisionKey]
-  delete servers[collisionKey]
-  return alias
+  const renamed: string[] = []
+  for (const collisionKey of Object.keys(servers)) {
+    if (collisionKey.toLowerCase() !== FLAPSTACK_MCP_SERVER_NAME) continue
+    const alias = nextCollisionAlias(occupied)
+    occupied.add(alias)
+    servers[alias] = servers[collisionKey]
+    delete servers[collisionKey]
+    renamed.push(alias)
+  }
+  return renamed
 }
 
 function nextCollisionAlias(occupied: Set<string>): string {

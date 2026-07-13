@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { randomUUID } from "node:crypto"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
-import type { AppendMcpAuditRecord, McpAuditStatus } from "./audit-storage"
+import type { AppendMcpAuditRecord, McpAuditStatus, McpDispatchBlock } from "./audit-storage"
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
 import { evaluateMcpGateWithSelfReference } from "./self-reference"
@@ -38,10 +38,11 @@ export type McpInvocationDependencies = {
 export type McpAuditWriter = {
   append: (record: AppendMcpAuditRecord) => void
   findUnresolvedDispatch?: (input: {
+    invocationId: string
     caller: Pick<McpCallerIdentity, "chatId" | "runId">
     toolName: string
     input: unknown
-  }) => string | null
+  }) => McpDispatchBlock | null
 }
 
 export const mcpControlTools: McpControlTool[] = [
@@ -382,9 +383,15 @@ export async function invokeMcpControlTool(
       })
       return target.response
     }
-    const unresolved = unresolvedDispatch(dependencies, recheckedCaller.caller, tool, input)
+    const unresolved = unresolvedDispatch(
+      dependencies,
+      invocationId,
+      recheckedCaller.caller,
+      tool,
+      input,
+    )
     if (unresolved.failed) return auditStorageUnavailable(false)
-    if (unresolved.invocationId) return reconciliationRequired(unresolved.invocationId)
+    if (unresolved.block) return reconciliationRequired(unresolved.block)
     const approvalAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
@@ -421,9 +428,15 @@ export async function invokeMcpControlTool(
     })
     return target.response
   }
-  const unresolved = unresolvedDispatch(dependencies, trustedCaller.caller, tool, input)
+  const unresolved = unresolvedDispatch(
+    dependencies,
+    invocationId,
+    trustedCaller.caller,
+    tool,
+    input,
+  )
   if (unresolved.failed) return auditStorageUnavailable(false)
-  if (unresolved.invocationId) return reconciliationRequired(unresolved.invocationId)
+  if (unresolved.block) return reconciliationRequired(unresolved.block)
   const preExecutionAuditPersisted = audit(dependencies, {
     invocationId,
     startedAt,
@@ -516,28 +529,35 @@ function auditStorageUnavailable(afterDispatch: boolean): McpControlResponse {
 
 function unresolvedDispatch(
   dependencies: McpInvocationDependencies,
+  invocationId: string,
   caller: McpCallerIdentity,
   tool: McpControlTool,
   input: unknown,
-): { failed: boolean; invocationId: string | null } {
+): { failed: boolean; block: McpDispatchBlock | null } {
   try {
     return {
       failed: false,
-      invocationId:
-        dependencies.audit?.findUnresolvedDispatch?.({ caller, toolName: tool.name, input }) ??
-        null,
+      block:
+        dependencies.audit?.findUnresolvedDispatch?.({
+          invocationId,
+          caller,
+          toolName: tool.name,
+          input,
+        }) ?? null,
     }
   } catch {
-    return { failed: true, invocationId: null }
+    return { failed: true, block: null }
   }
 }
 
-function reconciliationRequired(invocationId: string): McpControlResponse {
+function reconciliationRequired(block: McpDispatchBlock | string): McpControlResponse {
+  const invocationId = typeof block === "string" ? block : block.invocationId
+  const state = typeof block === "string" ? "dispatch-started" : block.state
   return {
     ok: false,
     error: {
       code: "reconciliation-required",
-      message: `Execution may have completed, but terminal audit persistence failed. Reconcile invocation ${invocationId} before retrying.`,
+      message: `Execution may have completed, but terminal audit persistence failed. Reconcile invocation ${invocationId} (${state}) before retrying.`,
     },
   }
 }

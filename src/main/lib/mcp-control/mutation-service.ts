@@ -1,8 +1,10 @@
 import Database from "better-sqlite3"
 import { createHash, randomUUID } from "node:crypto"
-import { basename, resolve } from "node:path"
+import { realpath } from "node:fs/promises"
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { z } from "zod"
-import { writeFileInsideRoot } from "../path-safety"
+import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
+import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getPermissionPreferences } from "../permissions"
 import {
   prepareThreadSpawn,
@@ -761,16 +763,37 @@ async function writeAttachment(
     .map((value) => resolve(value))
   if (!roots.includes(resolve(input.worktreePath)))
     return fail("out-of-scope", "Worktree is not a known target for this attachment.")
-  const source = stringOrNull(attachment.stored_path) ?? stringOrNull(attachment.source_path)
+  const source = stringOrNull(attachment.stored_path)
   const content = typeof attachment.content_text === "string" ? attachment.content_text : null
   if (!source && content === null) return fail("invalid-input", "Attachment has no content.")
+  const registeredRoot = assertRegisteredWorktree(input.worktreePath)
+  const storedData = source ? await readStoredAttachment(databasePathFromDb(db), source) : null
   const result = await writeFileInsideRoot(
-    input.worktreePath,
+    registeredRoot.canonicalPath,
     input.targetRelativePath ?? String(attachment.name),
-    source ? { sourcePath: source } : { data: content! },
+    storedData ? { data: storedData } : { data: content! },
     { overwrite: input.overwrite },
   )
   return { ok: true, data: result }
+}
+
+async function readStoredAttachment(databasePath: string, storedPath: string): Promise<Buffer> {
+  const rootPath = await realpath(resolve(dirname(dirname(databasePath)), "attachments"))
+  const absolutePath = resolve(storedPath)
+  const relativePath = relative(rootPath, absolutePath)
+  if (
+    !isAbsolute(storedPath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error("Attachment storage path is outside the durable attachment namespace")
+  }
+  return readFileInsideRoot(rootPath, relativePath)
+}
+
+function databasePathFromDb(db: Database.Database): string {
+  return db.name
 }
 function fail(code: McpControlErrorCode, message: string): McpControlResponse {
   return { ok: false, error: { code, message } }

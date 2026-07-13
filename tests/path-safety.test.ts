@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -67,11 +68,12 @@ describe("attachment write path safety", () => {
     roots.push(root, outside)
     mkdirSync(join(root, "nested"))
 
+    const payload = "secret-payload-must-not-survive"
     await expect(
       writeFileInsideRoot(
         root,
         "nested/file.txt",
-        { data: "blocked" },
+        { data: payload },
         {
           overwrite: true,
           beforeCommit: () => {
@@ -82,6 +84,19 @@ describe("attachment write path safety", () => {
       ),
     ).rejects.toThrow(/parent/)
     expect(existsSync(join(outside, "file.txt"))).toBe(false)
+    const survivingFiles = listRealFiles(root).concat(listRealFiles(outside))
+    expect(
+      survivingFiles.some((path) => path.includes(".flapstack-") && path.endsWith(".tmp")),
+    ).toBe(false)
+    expect(
+      survivingFiles.some((path) => {
+        try {
+          return readFileSync(path, "utf8").includes(payload)
+        } catch {
+          return false
+        }
+      }),
+    ).toBe(false)
   })
 
   it("aborts when the final inode is replaced by a symlink before commit", async () => {
@@ -203,3 +218,13 @@ describe("attachment write path safety", () => {
     }
   })
 })
+
+function listRealFiles(root: string): string[] {
+  const files: string[] = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isFile()) files.push(path)
+    if (entry.isDirectory() && !entry.isSymbolicLink()) files.push(...listRealFiles(path))
+  }
+  return files
+}

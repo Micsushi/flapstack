@@ -29,6 +29,17 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   tasks: many(tasks),
 }))
 
+// Durable filesystem identity for project and worktree roots. The pathname is
+// only the lookup key; security decisions also require the canonical path and,
+// where the platform exposes them, the device/inode pair captured at binding.
+export const filesystemRootRegistrations = sqliteTable("filesystem_root_registrations", {
+  path: text("path").primaryKey(),
+  canonicalPath: text("canonical_path").notNull(),
+  deviceId: text("device_id"),
+  inodeId: text("inode_id"),
+  boundAt: integer("bound_at", { mode: "timestamp" }).notNull(),
+})
+
 // ============ TASKS ============
 export const tasks = sqliteTable(
   "tasks",

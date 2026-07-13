@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef } from "react"
 import { trpc } from "../../../lib/trpc"
+import { toRootedFileTarget } from "../../../lib/file-target"
 
 /**
  * Error reasons for file loading failures
@@ -36,22 +37,21 @@ export function getErrorMessage(error: FileLoadError): string {
 
 /**
  * Hook to fetch file content from the backend
- * Uses the files.readTextFile procedure with absolute path
+ * Uses an explicit registered-root plus relative-path contract.
  * Auto-refetches when the file changes on disk
  */
 export function useFileContent(
   projectPath: string | null,
   filePath: string | null,
 ): FileContentResult {
-  const absolutePath = useMemo(() => {
-    if (!projectPath || !filePath) return null
-    return filePath.startsWith("/") ? filePath : `${projectPath}/${filePath}`
-  }, [projectPath, filePath])
-
-  const enabled = !!absolutePath
+  const fileTarget = useMemo(
+    () => toRootedFileTarget(projectPath, filePath),
+    [projectPath, filePath],
+  )
+  const enabled = !!fileTarget
 
   const { data, isLoading, error, refetch } = trpc.files.readTextFile.useQuery(
-    { filePath: absolutePath || "" },
+    fileTarget ?? { rootPath: projectPath || "invalid", relativePath: "invalid" },
     {
       enabled,
       staleTime: 30000,

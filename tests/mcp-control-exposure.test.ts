@@ -9,7 +9,7 @@ import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
 import {
   buildMcpStdioRegistration,
-  renameProductMcpRecordCollision,
+  renameProductMcpRecordCollisions,
   renameProductMcpServerCollisions,
 } from "../src/main/lib/mcp-control/registration"
 import {
@@ -75,13 +75,22 @@ describe("Flapstack MCP per-chat exposure", () => {
   it("preserves reserved-name third-party servers under explicit collision aliases", () => {
     const record = {
       flapstack: { command: "third-party" },
+      Flapstack: { command: "case-variant" },
+      FLAPSTACK: { command: "upper-variant" },
       "flapstack-third-party": { command: "existing" },
     }
-    expect(renameProductMcpRecordCollision(record)).toBe("flapstack-third-party-2")
+    expect(renameProductMcpRecordCollisions(record)).toEqual([
+      "flapstack-third-party-2",
+      "flapstack-third-party-3",
+      "flapstack-third-party-4",
+    ])
     expect(record).toEqual({
       "flapstack-third-party": { command: "existing" },
       "flapstack-third-party-2": { command: "third-party" },
+      "flapstack-third-party-3": { command: "case-variant" },
+      "flapstack-third-party-4": { command: "upper-variant" },
     })
+    expect(Object.keys(record).some((name) => name.toLowerCase() === "flapstack")).toBe(false)
 
     const list = [
       { name: "flapstack", command: "first" },
