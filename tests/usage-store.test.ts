@@ -359,7 +359,11 @@ describe("usage SQLite integration", () => {
     settings.providers.anthropic.enabled = true
     const providers: UsageProvider[] = [
       testProvider("codex", async () => {
-        throw new UsageProviderError("codex", "source-unavailable", "deadline exceeded")
+        throw new UsageProviderError(
+          "codex",
+          "source-unavailable",
+          "deadline exceeded Authorization: Bearer sk-provider-secret-value",
+        )
       }),
       testProvider("anthropic", async (source) => [
         sample({
@@ -385,10 +389,14 @@ describe("usage SQLite integration", () => {
     expect(await listRecentSamples(db, { providerId: "anthropic" })).toHaveLength(1)
     expect(await listProviderStates(db)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ providerId: "codex", lastError: "deadline exceeded" }),
+        expect.objectContaining({
+          providerId: "codex",
+          lastError: "deadline exceeded Authorization: [redacted]",
+        }),
         expect.objectContaining({ providerId: "anthropic", lastSuccessAt: expect.any(Date) }),
       ]),
     )
+    expect(JSON.stringify(await listProviderStates(db))).not.toContain("provider-secret-value")
   })
 
   it("persists OpenCode token usage even when model pricing is unknown", async () => {

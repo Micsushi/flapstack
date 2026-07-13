@@ -12,7 +12,56 @@ const dbPath = join(temp, "agents.db")
 const settingsPath = join(temp, "usage-settings.json")
 const daemonEntry = join(root, "out/main/usage-daemon.js")
 const electronPath = require("electron")
-let child
+const children = new Set()
+
+function spawnDaemon() {
+  const child = spawn(electronPath, [daemonEntry], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      FLAPSTACK_DB_PATH: dbPath,
+      FLAPSTACK_CONFIG_DIR: temp,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  const output = { stderr: "" }
+  child.stderr.on("data", (chunk) => {
+    output.stderr += String(chunk)
+  })
+  children.add(child)
+  child.once("exit", () => children.delete(child))
+  return { child, output }
+}
+
+function waitForExit(child, timeoutMs = 8_000) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode })
+  }
+  return new Promise((resolveExit, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("timed out waiting for daemon exit")),
+      timeoutMs,
+    )
+    child.once("error", reject)
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer)
+      resolveExit({ code, signal })
+    })
+  })
+}
+
+function readStatus() {
+  const check = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return check
+      .prepare(
+        "SELECT enabled, running, pid, last_heartbeat_at, last_poll_at FROM usage_daemon_status WHERE id = 'singleton'",
+      )
+      .get()
+  } finally {
+    check.close()
+  }
+}
 
 try {
   const db = new DatabaseSync(dbPath)
@@ -29,66 +78,57 @@ try {
     JSON.stringify({ daemonEnabled: true, daemonStartAtLogin: true, cadenceSeconds: 30 }),
   )
 
-  child = spawn(electronPath, [daemonEntry], {
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      FLAPSTACK_DB_PATH: dbPath,
-      FLAPSTACK_CONFIG_DIR: temp,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-  let stderr = ""
-  let earlyExit = null
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk)
-  })
-  child.once("exit", (code, signal) => {
-    earlyExit = new Error(
-      `usage daemon exited before its first heartbeat (code=${code}, signal=${signal}): ${stderr}`,
-    )
-  })
-  child.once("error", (error) => {
-    earlyExit = error
-  })
+  const first = spawnDaemon()
 
   await waitFor(() => {
-    if (earlyExit) throw earlyExit
-    const check = new DatabaseSync(dbPath, { readOnly: true })
-    try {
-      const status = check
-        .prepare("SELECT running, last_poll_at FROM usage_daemon_status WHERE id = 'singleton'")
-        .get()
-      return status?.running === 1 && status?.last_poll_at != null
-    } finally {
-      check.close()
+    if (first.child.exitCode !== null || first.child.signalCode !== null) {
+      throw new Error(`usage daemon exited before its first heartbeat: ${first.output.stderr}`)
     }
+    const status = readStatus()
+    return status?.running === 1 && status?.pid === first.child.pid && status?.last_poll_at != null
   })
 
-  child.kill("SIGTERM")
-  const exitCode = await new Promise((resolveExit, reject) => {
-    child.once("error", reject)
-    child.once("exit", resolveExit)
-  })
-  if (exitCode !== 0) throw new Error(`daemon exited ${exitCode}: ${stderr}`)
+  const duplicate = spawnDaemon()
+  const duplicateExit = await waitForExit(duplicate.child)
+  if (duplicateExit.code !== 1 || !duplicate.output.stderr.includes("already running")) {
+    throw new Error(
+      `duplicate daemon did not fail closed: ${JSON.stringify(duplicateExit)} ${duplicate.output.stderr}`,
+    )
+  }
 
-  const check = new DatabaseSync(dbPath, { readOnly: true })
-  const status = check
-    .prepare("SELECT enabled, running, last_heartbeat_at, last_poll_at FROM usage_daemon_status")
-    .get()
-  check.close()
-  if (status?.enabled !== 1 || status?.running !== 0 || status?.last_poll_at == null) {
+  first.child.kill("SIGKILL")
+  await waitForExit(first.child)
+
+  const restarted = spawnDaemon()
+  await waitFor(() => {
+    if (restarted.child.exitCode !== null || restarted.child.signalCode !== null) {
+      throw new Error(`restarted daemon exited before recovery: ${restarted.output.stderr}`)
+    }
+    const status = readStatus()
+    return status?.running === 1 && status?.pid === restarted.child.pid
+  })
+
+  restarted.child.kill("SIGTERM")
+  const restartedExit = await waitForExit(restarted.child)
+  if (restartedExit.code !== 0) {
+    throw new Error(`restarted daemon exited ${restartedExit.code}: ${restarted.output.stderr}`)
+  }
+
+  const status = readStatus()
+  if (
+    status?.enabled !== 1 ||
+    status?.running !== 0 ||
+    status?.pid != null ||
+    status?.last_poll_at == null
+  ) {
     throw new Error(`unexpected final daemon status: ${JSON.stringify(status)}`)
   }
-  console.log("usage daemon smoke passed")
+  console.log("usage daemon smoke passed (duplicate, crash recovery, restart, clean stop)")
 } finally {
-  if (child?.exitCode === null && child?.signalCode === null) {
+  for (const child of children) {
     child.kill("SIGTERM")
-    await Promise.race([
-      new Promise((resolveExit) => child.once("exit", resolveExit)),
-      new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2_000)),
-    ])
   }
+  await Promise.allSettled([...children].map((child) => waitForExit(child, 2_000)))
   rmSync(temp, { recursive: true, force: true })
 }
 

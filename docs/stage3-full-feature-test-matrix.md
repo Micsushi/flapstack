@@ -130,6 +130,14 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
       macOS; Windows/package gaps remain explicit until observed.
 - [ ] **S3-U01 (S3-F14)** migrated Usage rows `U1-*` through `U11-*` pass for
       engine, store, daemon, providers, reconciliation, alerts, and dashboard.
+      2026-07-13 safe evidence: 107 focused tests, matrix coverage, production
+      build, duplicate/crash/restart daemon smoke, isolated verified dev,
+      read-only Codex/Claude quota probes, and unsigned arm64 Preview
+      build/inspection/smoke plus exact process launch/cleanup passed. Locked-Mac
+      main initialization and database migration did not run. Node 22 full check
+      passed with 102 test files, 745 passed, and 3 credential-conditional skips.
+      Visual, Keychain closed-app, packaged-startup, credentialed conditional
+      provider, Windows, and Linux rows remain open; S3-U01 is not complete.
 - [ ] **S3-H01 (S3-F15)** migrated Cursor rows `D1-*` through `D5-*` and
       OpenRouter/NanoGPT rows `E1-*` through `E7-*` pass in live UI and package
       contexts; NanoGPT defaults name a currently chat-capable tested model.

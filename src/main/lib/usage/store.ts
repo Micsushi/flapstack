@@ -13,6 +13,7 @@
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
+import { redactUsageDiagnostic } from "./diagnostics"
 import { deriveDedupeKey, microsToUsd, usdToMicros } from "./source-tags"
 import type {
   CostQuality,
@@ -451,7 +452,7 @@ export async function upsertProviderState(
     providerId: status.providerId,
     accountTag: status.accountTag ?? "",
     status: status.status,
-    statusDetail: status.detail ?? null,
+    statusDetail: status.detail ? redactUsageDiagnostic(status.detail) : null,
     configured: status.configured,
     supportsDaemon: status.supportsDaemon,
     supportsHistorical: status.supportsHistorical,
@@ -459,7 +460,7 @@ export async function upsertProviderState(
     ...(outcome?.kind === "success"
       ? { lastSuccessAt: now, lastError: null }
       : outcome?.kind === "error"
-        ? { lastErrorAt: now, lastError: outcome.message }
+        ? { lastErrorAt: now, lastError: redactUsageDiagnostic(outcome.message) }
         : {}),
     updatedAt: now,
   }

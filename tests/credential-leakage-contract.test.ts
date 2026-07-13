@@ -59,6 +59,8 @@ describe("credential leakage contracts", () => {
     expect(dev).toContain("Flapstack Preview.app/Contents/MacOS/Flapstack Preview")
     expect(verifier).toContain("realpathSync")
     expect(verifier).toContain("--app-path=${root}")
+    expect(verifier).toContain("FLAPSTACK_DEV_INSTANCE")
+    expect(verifier).toContain("profileName")
     expect(verifier).toContain("release-preview")
   })
 })
