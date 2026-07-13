@@ -4,7 +4,7 @@ import { Copy, Download, FolderOpen, Play, Plus, Square, Trash2 } from "lucide-r
 import { toast } from "sonner"
 import { trpc } from "../../../lib/trpc"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
-import { agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
+import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
 import {
   captureVoiceHistoryInsertTarget,
   insertVoiceHistoryIntoTarget,
@@ -12,6 +12,7 @@ import {
 
 export function AgentsVoiceTab() {
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
+  const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const utils = trpc.useUtils()
   const { data: settings } = trpc.speech.getSettings.useQuery()
   const { data: adapters } = trpc.speech.listAdapters.useQuery()
@@ -29,16 +30,6 @@ export function AgentsVoiceTab() {
   const speak = trpc.speech.speak.useMutation()
   const stopSpeaking = trpc.speech.stopSpeaking.useMutation()
   const [previewText, setPreviewText] = useState("Flapstack voice output is ready.")
-  const [openAIKey, setOpenAIKey] = useState("")
-  const setOpenAIKeyMutation = trpc.voice.setOpenAIKey.useMutation({
-    onSuccess: async () => {
-      setOpenAIKey("")
-      await utils.voice.hasOpenAIKey.invalidate()
-      await utils.speech.listAdapters.invalidate()
-      toast.success("OpenAI transcription key updated")
-    },
-    onError: (error) => toast.error(error.message),
-  })
   const [historySearch, setHistorySearch] = useState("")
   const { data: history } = trpc.speech.searchHistory.useQuery({ query: historySearch })
   const deleteHistory = trpc.speech.deleteHistoryEntry.useMutation({
@@ -108,37 +99,17 @@ export function AgentsVoiceTab() {
             <p className="text-sm text-foreground">OpenAI transcription API key</p>
             <p className="text-xs text-muted-foreground">
               {openAIKeyStatus?.hasKey
-                ? "A key is available for OpenAI Whisper. A key entered here lasts for this app session."
-                : "Optional for OpenAI Whisper. A key entered here lasts for this app session."}
+                ? "A credential is available for OpenAI Whisper. Manage it in API Providers; stored plaintext is never shown here."
+                : "Optional for OpenAI Whisper. Add a write-only credential in API Providers, or use a local speech adapter."}
             </p>
           </div>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={openAIKey}
-              onChange={(event) => setOpenAIKey(event.target.value)}
-              placeholder="sk-..."
-              className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm font-mono"
-            />
-            <button
-              type="button"
-              disabled={!openAIKey.trim() || setOpenAIKeyMutation.isPending}
-              onClick={() => setOpenAIKeyMutation.mutate({ key: openAIKey })}
-              className="h-9 rounded-md border border-border bg-background px-3 text-sm disabled:opacity-50"
-            >
-              Save
-            </button>
-            {openAIKeyStatus?.hasKey && (
-              <button
-                type="button"
-                disabled={setOpenAIKeyMutation.isPending}
-                onClick={() => setOpenAIKeyMutation.mutate({ key: "" })}
-                className="h-9 rounded-md px-3 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveSettingsTab("api-providers")}
+            className="h-9 rounded-md border border-border bg-background px-3 text-sm hover:bg-accent"
+          >
+            Manage secure credentials
+          </button>
         </div>
         {settings.sttAdapterId === "local-parakeet" && (
           <>

@@ -159,6 +159,10 @@ export const opencodeRouter = router({
           docsUrl: def.docsUrl,
           configured: status.configured,
           sessionOnly: status.sessionOnly === true,
+          source: status.source ?? null,
+          fingerprint: status.fingerprint ?? null,
+          updatedAt: status.updatedAt ?? null,
+          warning: status.warning ?? null,
           engine: "opencode" as const,
         }
       }),

@@ -1500,6 +1500,15 @@ export const codexRouter = router({
     }
   }),
 
+  removeApiKey: publicProcedure.mutation(() => {
+    const service = getCredentialService()
+    if (service.status("codex.api-key").configured) {
+      service.remove("codex.api-key")
+      cleanupAllCodexProviders()
+    }
+    return service.status("codex.api-key")
+  }),
+
   logout: publicProcedure.mutation(async () => {
     const hadStoredApiKey = getCredentialService().status("codex.api-key").configured
     if (hadStoredApiKey) {

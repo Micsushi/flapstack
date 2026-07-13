@@ -65,4 +65,19 @@ describe("Settings search", () => {
     const result = searchSettings("keyboard shortcuts", { showDevelopment: false })[0]
     expect(result).toMatchObject({ tab: "keyboard", targetId: "settings-tab-keyboard" })
   })
+
+  it("routes credential aliases to the exact write-only provider rows", () => {
+    expect(searchSettings("openai whisper key", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "credential-openai-voice-api-key",
+    })
+    expect(searchSettings("codex api key", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "credential-codex-api-key",
+    })
+    expect(searchSettings("nanogpt credential", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "nanogpt-provider-card",
+    })
+  })
 })

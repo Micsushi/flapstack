@@ -33,6 +33,7 @@ export type ProviderCredentialStatus = {
   provider: OpencodeProviderId
   configured: boolean
   sessionOnly?: boolean
+  source?: "encrypted-store" | "session-memory" | "environment"
   baseUrl?: string
   updatedAt?: number
   fingerprint?: string
@@ -234,12 +235,22 @@ export function hasProviderKey(provider: OpencodeProviderId): boolean {
 }
 
 export function getCredentialStatus(provider: OpencodeProviderId): ProviderCredentialStatus {
-  const status = getCredentialService().status(credentialId(provider))
-  const configured = status.configured || getProviderKey(provider) !== null
+  let status = getCredentialService().status(credentialId(provider))
+  if (!status.configured) getProviderKey(provider)
+  status = getCredentialService().status(credentialId(provider))
+  const environmentConfigured = Boolean(
+    process.env[`FLAPSTACK_${provider.toUpperCase()}_API_KEY`]?.trim(),
+  )
+  const configured = status.configured || environmentConfigured
   return {
     provider,
     configured,
     ...(status.persistence === "session" ? { sessionOnly: true } : {}),
+    ...(status.source
+      ? { source: status.source }
+      : environmentConfigured
+        ? { source: "environment" as const }
+        : {}),
     ...(getProviderBaseUrl(provider) ? { baseUrl: getProviderBaseUrl(provider) } : {}),
     ...(status.updatedAt ? { updatedAt: status.updatedAt } : {}),
     ...(status.fingerprint ? { fingerprint: status.fingerprint } : {}),
