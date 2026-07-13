@@ -16,6 +16,12 @@ import { DEFAULT_CLAUDE_MODEL_ID } from "../../../shared/model-catalog"
 import { OPENCODE_HARNESSES, type OpencodeHarness } from "../../../shared/harness-types"
 import { buildReasoningTimerState } from "../../../shared/reasoning-duration"
 import {
+  discoverProviderExtensions,
+  mutateProviderExtension,
+  type ProviderExtensionKind,
+  type ProviderExtensionProvider,
+} from "../provider-extensions"
+import {
   getAvailableProviderModels,
   getCredentialStatusAsync,
   sanitizeOpencodeAuditValue,
@@ -141,6 +147,39 @@ export async function getProviderStatus() {
       }
     }),
   )
+}
+
+export async function listProviderExtensions(input?: { cwd?: string }) {
+  const items = await discoverProviderExtensions({ cwd: input?.cwd })
+  const counts = items.reduce<Record<string, number>>((result, item) => {
+    const key = `${item.provider}:${item.kind}:${item.source}`
+    result[key] = (result[key] ?? 0) + 1
+    return result
+  }, {})
+  return {
+    cwd: input?.cwd ?? null,
+    total: items.length,
+    counts,
+    items: items.map(({ content: _content, ...item }) => item),
+  }
+}
+
+export async function mutateProjectProviderExtension(input: {
+  operation: "create" | "update" | "delete"
+  provider: ProviderExtensionProvider
+  kind: ProviderExtensionKind
+  cwd: string
+  sourceId?: string
+  name: string
+  description?: string
+  content?: string
+}) {
+  return mutateProviderExtension({
+    ...input,
+    source: "project",
+    description: input.description ?? "",
+    content: input.content ?? "",
+  })
 }
 
 function safeMessageMetadata(metadata: Record<string, unknown> | undefined) {
