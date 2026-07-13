@@ -54,6 +54,7 @@ import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
 } from "../../mcp-control/registration"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
@@ -2029,6 +2030,19 @@ export const codexRouter = router({
             }
 
             const handleCodexPermissionRequest: CodexPermissionHandler = async (request) => {
+              const providerMcpDecision = resolveProviderMcpPermission({
+                permissionMode,
+                correlationId: request.toolCall.toolCallId,
+                providerToolName: request.toolCall.title,
+                metadata: request.toolCall.rawInput ?? request._meta,
+                isMcpToolApproval: request._meta?.is_mcp_tool_approval === true,
+              })
+              if (providerMcpDecision?.decision === "deny") {
+                return rejectCodexPermissionRequest(request)
+              }
+              if (providerMcpDecision?.decision === "allow") {
+                return allowCodexPermissionRequest(request)
+              }
               if (permissionMode === "read-only" || abortController.signal.aborted || !isActive) {
                 return rejectCodexPermissionRequest(request)
               }

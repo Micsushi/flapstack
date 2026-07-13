@@ -20,6 +20,7 @@ import type {
   HarnessPermissionLimitation,
 } from "../../../../shared/harness-types"
 import type { PermissionMode } from "../../permissions"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import type { SidecarApprovalDecision } from "./contract"
 
 /** OpenCode per-tool permission verb. */
@@ -119,7 +120,22 @@ export function classifyPermission(
 export function decideAutoApproval(
   mode: PermissionMode,
   permission: string,
+  patterns: readonly string[] = [],
+  correlationId = permission,
 ): SidecarApprovalDecision | null {
+  for (const providerToolName of [permission, ...patterns]) {
+    const mcpDecision = resolveProviderMcpPermission({
+      permissionMode: mode,
+      correlationId,
+      providerToolName,
+    })
+    if (mcpDecision?.decision === "deny") {
+      return { reply: "reject", message: mcpDecision.reason }
+    }
+    if (mcpDecision?.decision === "allow") return { reply: "once" }
+    if (mcpDecision?.decision === "provider-approval") return null
+  }
+
   const bucket = classifyPermission(permission)
   // Read/search tools never mutate the workspace. OpenCode normally allows
   // them without prompting, but preserve that behavior if a request is raised.

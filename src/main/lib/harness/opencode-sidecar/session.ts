@@ -279,7 +279,12 @@ export async function handlePermissionRequest(
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
   remembered?: SidecarPermissionResolution,
 ): Promise<SidecarPermissionResolution> {
-  const auto = decideAutoApproval(input.permissionMode, request.permission)
+  const auto = decideAutoApproval(
+    input.permissionMode,
+    request.permission,
+    request.patterns,
+    request.requestId,
+  )
   const resolution: Omit<SidecarPermissionResolution, "replyStatus"> =
     remembered ??
     (auto

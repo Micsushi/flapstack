@@ -18,26 +18,42 @@ export type AgentRunLauncher = (run: QueuedAgentRun) => Promise<void>
 
 type Row = Record<string, unknown>
 
-/** App restart ends provider streams; return only MCP-origin claims to pending. */
+/** App restart ends provider streams; requeue MCP work and cancel everything else. */
 export function recoverInterruptedMcpRuns(databasePath: string): number {
   const db = new Database(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
-    const runIds = db
+    const runs = db
       .prepare(
-        `SELECT id, sub_chat_id FROM agent_runs
-         WHERE status = 'running' AND completed_at IS NULL AND prompt_message_id LIKE 'mcp-%'`,
+        `SELECT id, sub_chat_id, prompt_message_id FROM agent_runs
+         WHERE status = 'running' AND completed_at IS NULL`,
       )
       .all() as Row[]
+    let recovered = 0
     const recover = db.transaction(() => {
-      for (const run of runIds) {
-        db.prepare("UPDATE agent_runs SET status = 'pending' WHERE id = ?").run(run.id)
-        db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(run.sub_chat_id)
+      const now = Date.now()
+      for (const run of runs) {
+        const isMcp =
+          typeof run.prompt_message_id === "string" && run.prompt_message_id.startsWith("mcp-")
+        if (isMcp) {
+          db.prepare("UPDATE agent_runs SET status = 'pending' WHERE id = ?").run(run.id)
+          db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(
+            run.sub_chat_id,
+          )
+          recovered += 1
+        } else {
+          db.prepare(
+            "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ?",
+          ).run(now, run.id)
+          db.prepare("UPDATE sub_chats SET run_status = 'cancelled' WHERE id = ?").run(
+            run.sub_chat_id,
+          )
+        }
       }
     })
     recover()
-    return runIds.length
+    return recovered
   } finally {
     db.close()
   }
@@ -48,7 +64,7 @@ export function recoverInterruptedMcpRuns(databasePath: string): number {
  * launch path. Claiming is atomic, so repeated polls and app restarts cannot
  * start the same run twice.
  */
-export async function drainPendingAgentRuns(
+export async function drainPendingMcpRuns(
   databasePath: string,
   launch: AgentRunLauncher,
   options: { waitForCompletion?: boolean } = {},
@@ -67,7 +83,7 @@ export async function drainPendingAgentRuns(
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
-         WHERE r.status = 'pending'
+         WHERE r.status = 'pending' AND r.prompt_message_id LIKE 'mcp-%'
          ORDER BY r.started_at, r.id`,
       )
       .all() as Row[]
@@ -102,6 +118,9 @@ export async function drainPendingAgentRuns(
     db.close()
   }
 }
+
+/** @deprecated Use the MCP-specific name; retained for existing callers. */
+export const drainPendingAgentRuns = drainPendingMcpRuns
 
 function recordLaunchOutcome(
   databasePath: string,

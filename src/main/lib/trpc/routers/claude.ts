@@ -48,6 +48,7 @@ import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
 } from "../../mcp-control/registration"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
@@ -1927,6 +1928,24 @@ ${prompt}
                       toolInput.command = toolInput.cmd
                       delete toolInput.cmd
                       console.log("[Ollama] Fixed Bash tool: cmd -> command")
+                    }
+                  }
+
+                  const providerMcpDecision = resolveProviderMcpPermission({
+                    permissionMode: resolvedPermissionMode,
+                    correlationId: options.toolUseID,
+                    providerToolName: toolName,
+                  })
+                  if (providerMcpDecision?.decision === "deny") {
+                    return { behavior: "deny", message: providerMcpDecision.reason }
+                  }
+                  if (providerMcpDecision?.decision === "allow") {
+                    return { behavior: "allow", updatedInput: toolInput }
+                  }
+                  if (providerMcpDecision?.decision === "provider-approval") {
+                    return {
+                      behavior: "deny",
+                      message: "Third-party MCP requires a provider approval bridge.",
                     }
                   }
 

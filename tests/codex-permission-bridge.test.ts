@@ -102,5 +102,8 @@ describe("Codex ACP permission bridge", () => {
       )
       expect(source).toContain('outcome: "cancelled"')
     }
+
+    const codexAcpSource = readFileSync(require.resolve("@agentclientprotocol/codex-acp"), "utf8")
+    expect(codexAcpSource).toContain("rawInput: { serverName: params.serverName }")
   })
 })

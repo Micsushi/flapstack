@@ -79,6 +79,11 @@ export const permissionsRouter = router({
       }),
     )
     .mutation(({ input }) => {
+      if (input.scope === "all-chats" && input.mode === "custom") {
+        throw new Error(
+          "All-chat custom permissions require S3-F12 durable global, project, and task defaults.",
+        )
+      }
       if (input.mode === "custom" && !input.customPermissions) {
         throw new Error("Custom permission mode requires explicit capability toggles.")
       }
@@ -174,6 +179,11 @@ function applyScopedPermissionChange(input: {
   updatedSubChats: number
   customPermissions: CustomPermissionToggles | null
 } {
+  if (input.scope === "all-chats" && input.mode === "custom") {
+    throw new Error(
+      "All-chat custom permissions require S3-F12 durable global, project, and task defaults.",
+    )
+  }
   const db = getDatabase()
   const previousPreferences = getPermissionPreferences()
   const nextPreferences = {
