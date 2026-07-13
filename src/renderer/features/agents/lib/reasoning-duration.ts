@@ -1,14 +1,16 @@
-export function formatReasoningDuration(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
+export {
+  buildReasoningTimerState,
+  formatReasoningDuration,
+  formatReasoningStatus,
+} from "../../../../shared/reasoning-duration"
 
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`
-}
+const reasoningStartedAtByMessage = new Map<string, number>()
 
-export function formatReasoningStatus(isWorking: boolean, durationMs?: number): string {
-  const verb = isWorking ? "Working" : "Worked"
-  if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return verb
-  return `${verb} for ${formatReasoningDuration(durationMs)}`
+/** Keep a live timer stable when chat navigation remounts its message row. */
+export function getReasoningStartedAt(messageKey: string, preferred?: number): number {
+  const existing = reasoningStartedAtByMessage.get(messageKey)
+  if (existing !== undefined) return existing
+  const startedAt = preferred ?? Date.now()
+  reasoningStartedAtByMessage.set(messageKey, startedAt)
+  return startedAt
 }

@@ -34,6 +34,16 @@ export function isStaleSidecarSessionError(error: unknown): boolean {
   return error instanceof Error && /session\.fork failed:\s*HTTP 404/i.test(error.message)
 }
 
+export function isAlreadyResolvedPermissionReplyError(error: unknown): boolean {
+  return error instanceof Error && /permission reply failed:\s*HTTP 404/i.test(error.message)
+}
+
+function permissionScopeKey(
+  request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
+): string {
+  return JSON.stringify([request.permission, [...request.patterns].sort()])
+}
+
 /**
  * Drive one sidecar run. Yields normalized events until the session goes idle,
  * errors, or is cancelled. Approval requests are routed through `onApproval`
@@ -74,6 +84,8 @@ export async function* runSidecarSession(
   const started = await startSidecar({
     provider: input.provider,
     modelId: model.modelId,
+    reasoningEnabled: input.reasoningEnabled,
+    reasoningEffort: input.reasoningEffort,
     cwd: input.cwd,
     ...(input.signal ? { signal: input.signal } : {}),
   })
@@ -157,6 +169,7 @@ export async function* streamEvents(ctx: {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   const seenPermissions = new Set<string>()
+  const alwaysApprovals = new Map<string, SidecarPermissionResolution>()
   const normalizer = new OpencodeEventNormalizer()
   let buffer = ""
   let sawTerminalEvent = false
@@ -181,7 +194,11 @@ export async function* streamEvents(ctx: {
           continue
         }
         const sid = eventSessionId(data)
-        if (sid && sid !== sessionId) continue
+        // Child agents share this isolated sidecar and event stream. Ignore their
+        // prose/tool events, but bridge their permission requests or the parent
+        // task waits forever with no approval UI.
+        const isNestedPermission = data.type === "permission.asked" && sid !== sessionId
+        if (sid && sid !== sessionId && !isNestedPermission) continue
 
         for (const rawNormalized of normalizer.normalize(data)) {
           const normalized =
@@ -191,9 +208,22 @@ export async function* streamEvents(ctx: {
           if (normalized.kind === "permission-asked") {
             if (seenPermissions.has(normalized.requestId)) continue
             seenPermissions.add(normalized.requestId)
-            // Surface the request in the run for auditing.
-            yield normalized
-            const resolution = await handlePermissionRequest(client, input, onApproval, normalized)
+            const scopeKey = permissionScopeKey(normalized)
+            const remembered = alwaysApprovals.get(scopeKey)
+            // OpenCode's "always" reply can resolve equivalent requests that
+            // were already queued. Reuse that exact user decision instead of
+            // showing a duplicate approval that now has a stale request id.
+            if (!remembered) yield normalized
+            const resolution = await handlePermissionRequest(
+              client,
+              input,
+              onApproval,
+              normalized,
+              remembered,
+            )
+            if (resolution.decision.reply === "always") {
+              alwaysApprovals.set(scopeKey, resolution)
+            }
             yield {
               kind: "permission-decision",
               requestId: normalized.requestId,
@@ -246,35 +276,44 @@ export async function handlePermissionRequest(
   input: SidecarLaunchInput,
   onApproval: SidecarApprovalCallback | undefined,
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
+  remembered?: SidecarPermissionResolution,
 ): Promise<SidecarPermissionResolution> {
   const auto = decideAutoApproval(input.permissionMode, request.permission)
-  const resolution: SidecarPermissionResolution = auto
-    ? { decision: auto, source: "policy" }
-    : onApproval
-      ? {
-          decision: await onApproval({
-            requestId: request.requestId,
-            toolCallId: request.toolCallId,
-            permission: request.permission,
-            patterns: request.patterns,
-            ...(request.command ? { command: request.command } : {}),
-          }),
-          source: "user",
-        }
-      : {
-          decision: { reply: "reject", message: "No approval handler available." },
-          source: "fallback",
-        }
+  const resolution: SidecarPermissionResolution =
+    remembered ??
+    (auto
+      ? { decision: auto, source: "policy" }
+      : onApproval
+        ? {
+            decision: await onApproval({
+              requestId: request.requestId,
+              toolCallId: request.toolCallId,
+              permission: request.permission,
+              patterns: request.patterns,
+              ...(request.command ? { command: request.command } : {}),
+            }),
+            source: "user",
+          }
+        : {
+            decision: { reply: "reject", message: "No approval handler available." },
+            source: "fallback",
+          })
   const decision = resolution.decision
 
-  if (decision.reply === "reject") {
-    if (input.signal)
-      await client.replyPermission(request.requestId, "reject", decision.message, input.signal)
-    else await client.replyPermission(request.requestId, "reject", decision.message)
-  } else {
-    if (input.signal)
-      await client.replyPermission(request.requestId, decision.reply, undefined, input.signal)
-    else await client.replyPermission(request.requestId, decision.reply)
+  try {
+    if (decision.reply === "reject") {
+      if (input.signal)
+        await client.replyPermission(request.requestId, "reject", decision.message, input.signal)
+      else await client.replyPermission(request.requestId, "reject", decision.message)
+    } else {
+      if (input.signal)
+        await client.replyPermission(request.requestId, decision.reply, undefined, input.signal)
+      else await client.replyPermission(request.requestId, decision.reply)
+    }
+  } catch (error) {
+    // An equivalent "always" reply may have removed this queued request before
+    // Flapstack reaches it. That is an idempotent success, not a provider failure.
+    if (!remembered || !isAlreadyResolvedPermissionReplyError(error)) throw error
   }
   return resolution
 }

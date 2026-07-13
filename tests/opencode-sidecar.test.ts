@@ -61,6 +61,7 @@ import {
 } from "../src/main/lib/harness/opencode-sidecar/launcher"
 import {
   handlePermissionRequest,
+  isAlreadyResolvedPermissionReplyError,
   isStaleSidecarSessionError,
   runSidecarSession,
   streamEvents,
@@ -342,6 +343,109 @@ describe("SSE parsing", () => {
     })
   })
 
+  it("surfaces permissions from a child agent without merging its output", async () => {
+    const response = new Response(
+      [
+        `data: ${JSON.stringify({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "child-text",
+              sessionID: "child-session",
+              type: "text",
+              text: "private child output",
+            },
+          },
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "permission.asked",
+          properties: {
+            sessionID: "child-session",
+            id: "child-permission",
+            tool: { callID: "child-read" },
+            permission: "external_directory",
+            patterns: ["/vault/*"],
+          },
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "session.idle",
+          properties: { sessionID: "parent-session" },
+        })}\n\n`,
+      ].join(""),
+    )
+    const events = []
+    for await (const event of streamEvents({
+      client: { replyPermission: vi.fn() } as any,
+      handle: {} as any,
+      sessionId: "parent-session",
+      input: {
+        provider: "openrouter",
+        model: "openrouter/test",
+        prompt: "test",
+        cwd: "/tmp",
+        permissionMode: "full-access",
+      },
+      eventResponse: response,
+    })) {
+      events.push(event)
+    }
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "permission-asked", requestId: "child-permission" }),
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ kind: "text-delta", delta: "private child output" }),
+    )
+  })
+
+  it("reuses one always decision for duplicate permission scopes", async () => {
+    const permissionEvent = (id: string, callID: string) =>
+      `data: ${JSON.stringify({
+        type: "permission.asked",
+        properties: {
+          sessionID: "session-1",
+          id,
+          tool: { callID },
+          permission: "external_directory",
+          patterns: ["/vault/*"],
+        },
+      })}\n\n`
+    const response = new Response(
+      permissionEvent("permission-1", "read-1") +
+        permissionEvent("permission-2", "read-2") +
+        `data: ${JSON.stringify({
+          type: "session.idle",
+          properties: { sessionID: "session-1" },
+        })}\n\n`,
+    )
+    const replyPermission = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("OpenCode permission reply failed: HTTP 404"))
+    const onApproval = vi.fn().mockResolvedValue({ reply: "always" })
+    const events = []
+    for await (const event of streamEvents({
+      client: { replyPermission } as any,
+      handle: {} as any,
+      sessionId: "session-1",
+      input: {
+        provider: "nanogpt",
+        model: "nanogpt/test",
+        prompt: "test",
+        cwd: "/tmp",
+        permissionMode: "ask-before-edits",
+      },
+      onApproval,
+      eventResponse: response,
+    })) {
+      events.push(event)
+    }
+
+    expect(onApproval).toHaveBeenCalledTimes(1)
+    expect(events.filter((event) => event.kind === "permission-asked")).toHaveLength(1)
+    expect(events.filter((event) => event.kind === "permission-decision")).toHaveLength(2)
+    expect(events.some((event) => event.kind === "error")).toBe(false)
+  })
+
   it("ignores comment lines", () => {
     const { events } = parseSseChunk("", ": keepalive\ndata: x\n\n")
     expect(events).toHaveLength(1)
@@ -393,6 +497,62 @@ describe("event normalization", () => {
         properties: { part: { id: "r1", type: "reasoning", text: "think", sessionID: "s" } },
       }),
     ).toEqual([])
+  })
+
+  it("removes echoed Flapstack context envelopes from streamed reasoning", () => {
+    const normalizer = new OpencodeEventNormalizer()
+    normalizer.normalize({
+      type: "message.part.updated",
+      properties: { part: { id: "r-context", type: "reasoning", text: "" } },
+    })
+
+    expect(
+      normalizer.normalize({
+        type: "message.part.delta",
+        properties: {
+          partID: "r-context",
+          field: "text",
+          delta: "[FLAPSTACK STARTUP CONTEXT]\n[FILE: /repo/AGENTS.md]\nSpoken:\n",
+        },
+      }),
+    ).toEqual([])
+    expect(
+      normalizer.normalize({
+        type: "message.part.delta",
+        properties: {
+          partID: "r-context",
+          field: "text",
+          delta: "junk\n[/FILE]\n[/FLAPSTACK STARTUP CONTEXT]\nNow I will inspect the project.",
+        },
+      }),
+    ).toEqual([
+      { kind: "reasoning-delta", partId: "r-context", delta: "Now I will inspect the project." },
+    ])
+  })
+
+  it("removes echoed context envelopes from provider prose without removing the answer", () => {
+    const normalizer = new OpencodeEventNormalizer()
+    const events = normalizer.normalize({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-context",
+          type: "text",
+          text: `--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---
+secret
+--- END FLAPSTACK INTERNAL CONTEXT ---
+The project is a local-first coding workspace.`,
+        },
+      },
+    })
+
+    expect(events).toEqual([
+      {
+        kind: "text-delta",
+        partId: "text-context",
+        delta: "The project is a local-first coding workspace.",
+      },
+    ])
   })
 
   it("maps tool inputs, output, and errors from part updates", () => {
@@ -688,6 +848,71 @@ describe("approval bridge", () => {
     expect(replies).toEqual([["req-1", "once"]])
     expect(resolution).toEqual({ decision: { reply: "once" }, source: "user" })
   })
+
+  it("propagates a permission 404 for the first reply", async () => {
+    const client = {
+      replyPermission: async () => {
+        throw new Error("OpenCode permission reply failed: HTTP 404")
+      },
+    } as unknown as OpencodeClient
+
+    await expect(
+      handlePermissionRequest(
+        client,
+        {
+          provider: "nanogpt",
+          model: "nanogpt/test-model",
+          prompt: "test",
+          cwd: "/repo",
+          permissionMode: "ask-before-edits",
+        },
+        async () => ({ reply: "always" }),
+        {
+          kind: "permission-asked",
+          requestId: "stale-request",
+          toolCallId: "read-2",
+          permission: "external_directory",
+          patterns: ["/vault/*"],
+        },
+      ),
+    ).rejects.toThrow("permission reply failed: HTTP 404")
+    expect(
+      isAlreadyResolvedPermissionReplyError(
+        new Error("OpenCode permission reply failed: HTTP 404"),
+      ),
+    ).toBe(true)
+  })
+
+  it("treats a remembered always reply 404 as already resolved", async () => {
+    const client = {
+      replyPermission: async () => {
+        throw new Error("OpenCode permission reply failed: HTTP 404")
+      },
+    } as unknown as OpencodeClient
+    const remembered = { decision: { reply: "always" as const }, source: "user" as const }
+
+    await expect(
+      handlePermissionRequest(
+        client,
+        {
+          provider: "nanogpt",
+          model: "nanogpt/test-model",
+          prompt: "test",
+          cwd: "/repo",
+          permissionMode: "ask-before-edits",
+        },
+        undefined,
+        {
+          kind: "permission-asked",
+          requestId: "stale-request",
+          toolCallId: "read-2",
+          permission: "external_directory",
+          patterns: ["/vault/*"],
+        },
+        remembered,
+      ),
+    ).resolves.toEqual(remembered)
+  })
 })
 
 describe("sanitized run audit persistence", () => {
@@ -976,6 +1201,52 @@ describe("credentials + config", () => {
       nanogpt: { models: { "deepseek-chat": { name: "deepseek-chat" } } },
     })
     clearProviderKey("nanogpt")
+  })
+
+  it("maps the per-chat reasoning toggle and depth into provider options", () => {
+    setProviderKey("openrouter", "openrouter-secret-key")
+    const enabled = buildOpencodeConfig(
+      "openrouter",
+      "anthropic/claude-opus-4-8",
+      undefined,
+      true,
+      "xhigh",
+    ).config
+    expect(enabled.provider).toMatchObject({
+      openrouter: {
+        models: {
+          "anthropic/claude-opus-4-8": {
+            options: {
+              reasoning: { enabled: true, effort: "xhigh", exclude: false },
+              reasoningEffort: "xhigh",
+              includeReasoning: true,
+            },
+          },
+        },
+      },
+    })
+
+    const disabled = buildOpencodeConfig(
+      "openrouter",
+      "anthropic/claude-opus-4-8",
+      undefined,
+      false,
+      "high",
+    ).config
+    expect(disabled.provider).toMatchObject({
+      openrouter: {
+        models: {
+          "anthropic/claude-opus-4-8": {
+            options: {
+              reasoning: { enabled: false, exclude: true },
+              reasoningEffort: "minimal",
+              includeReasoning: false,
+            },
+          },
+        },
+      },
+    })
+    clearProviderKey("openrouter")
   })
 
   it("refreshes and serves a locally cached model catalog", async () => {

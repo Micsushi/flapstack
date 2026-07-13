@@ -1,8 +1,8 @@
 "use client"
 
 import { useAtomValue } from "jotai"
-import { ListTree, MoreHorizontal } from "lucide-react"
-import { memo, useCallback, useContext, useMemo, useRef, useState } from "react"
+import { ChevronRight, MoreHorizontal } from "lucide-react"
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { normalizeCodexToolPart } from "../../../../shared/codex-tool-normalizer"
 
 import {
@@ -11,7 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu"
-import { CollapseIcon, ExpandIcon, PlanIcon } from "../../../components/ui/icons"
+import { PlanIcon } from "../../../components/ui/icons"
 import { TextShimmer } from "../../../components/ui/text-shimmer"
 import { cn } from "../../../lib/utils"
 import { selectedProjectAtom, showMessageJsonAtom } from "../atoms"
@@ -27,6 +27,7 @@ import { AgentMessageUsage, type AgentMessageMetadata } from "../ui/agent-messag
 import { AgentPlanTool } from "../ui/agent-plan-tool"
 import { AgentTaskTool } from "../ui/agent-task-tool"
 import { AgentReasoningOutput } from "../ui/agent-reasoning-output"
+import { AgentChangedFilesCard } from "../ui/agent-changed-files-card"
 import { AgentTodoTool } from "../ui/agent-todo-tool"
 import { AgentMcpToolCall } from "../ui/agent-mcp-tool-call"
 import { AgentToolCall } from "../ui/agent-tool-call"
@@ -40,6 +41,7 @@ import { formatPermissionMode, getHarnessChipMeta } from "../constants"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { formatModelDisplayName } from "../../../../shared/model-catalog"
 import { dedupeVisibleReasoningParts, getVisibleReasoningText } from "../lib/reasoning-parts"
+import { formatReasoningStatus, getReasoningStartedAt } from "../lib/reasoning-duration"
 import { ForkContext } from "./isolated-message-group"
 import { MemoizedTextPart } from "./memoized-text-part"
 import { formatMessageTimestamp } from "../lib/message-timestamp"
@@ -59,6 +61,18 @@ const ACP_VERB_TO_TOOL_TYPE: Record<string, string> = {
   Write: "Write",
   Thought: "ReasoningOutput",
   Fetch: "WebFetch",
+}
+
+const PROVIDER_TOOL_TO_CANONICAL_TYPE: Record<string, string> = {
+  apply_patch: "Edit",
+  bash: "Bash",
+  edit: "Edit",
+  glob: "Glob",
+  grep: "Grep",
+  read: "Read",
+  webfetch: "WebFetch",
+  websearch: "WebSearch",
+  write: "Write",
 }
 
 // Check if a part.type looks like an ACP title-based type (e.g. "tool-Read README.md")
@@ -82,6 +96,12 @@ function getAcpVerb(partType: string): string | null {
 function normalizeAcpParts(parts: any[]): any[] {
   return parts.map((part) => {
     if (!part.type?.startsWith("tool-")) return part
+
+    const rawToolName = part.type.slice(5)
+    const providerCanonicalType = PROVIDER_TOOL_TO_CANONICAL_TYPE[rawToolName.toLowerCase()]
+    if (providerCanonicalType) {
+      return { ...part, type: `tool-${providerCanonicalType}` }
+    }
 
     // Guard: only process ACP parts, not Claude Code parts.
     // ACP parts have: input.toolName, or space in type (e.g. "tool-Read README.md"),
@@ -304,58 +324,166 @@ function groupTaskTools(parts: any[], nestedToolIds: Set<string>): any[] {
   return result
 }
 
-// Collapsible steps component
-interface CollapsibleStepsProps {
-  stepsCount: number
-  children: React.ReactNode
-  defaultExpanded?: boolean
+function isGroupableToolActivity(part: any, nestedToolIds: Set<string>): boolean {
+  return (
+    part?.type?.startsWith("tool-") &&
+    part.type !== "tool-ExitPlanMode" &&
+    !isReasoningPart(part) &&
+    !(part.toolCallId && nestedToolIds.has(part.toolCallId))
+  )
 }
 
-function CollapsibleSteps({
-  stepsCount,
-  children,
-  defaultExpanded = false,
-}: CollapsibleStepsProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+function groupToolActivities(parts: any[], nestedToolIds: Set<string>): any[] {
+  const result: any[] = []
+  let current: any[] = []
 
-  if (stepsCount === 0) return null
+  const flush = () => {
+    if (current.length >= 2) result.push({ type: "activity-group", parts: current })
+    else result.push(...current)
+    current = []
+  }
+
+  for (const part of parts) {
+    if (part?.type === "step-start" || part?.type === "tool-TaskOutput") continue
+    if (isGroupableToolActivity(part, nestedToolIds)) current.push(part)
+    else {
+      flush()
+      result.push(part)
+    }
+  }
+  flush()
+  return result
+}
+
+function summarizeToolActivities(parts: any[]): string {
+  let edits = 0
+  let reads = 0
+  let commands = 0
+  let tools = 0
+
+  for (const part of parts) {
+    const type = String(part.type).toLowerCase()
+    if (type === "tool-edit" || type === "tool-write" || type === "tool-apply_patch") edits++
+    else if (
+      ["tool-read", "tool-grep", "tool-glob", "tool-websearch", "tool-webfetch"].includes(type)
+    )
+      reads++
+    else if (type === "tool-bash") commands++
+    else tools++
+  }
+
+  const summary: string[] = []
+  if (edits) summary.push(edits === 1 ? "Edited a file" : `Edited ${edits} files`)
+  if (reads) summary.push(reads === 1 ? "Read a file" : `Read ${reads} files`)
+  if (commands) summary.push(commands === 1 ? "Ran a command" : `Ran ${commands} commands`)
+  if (tools) summary.push(tools === 1 ? "Used a tool" : `Used ${tools} tools`)
+  return summary.join(", ")
+}
+
+interface ToolActivityGroupProps {
+  parts: any[]
+  isStreaming: boolean
+  children: React.ReactNode
+}
+
+function ToolActivityGroup({ parts, isStreaming, children }: ToolActivityGroupProps) {
+  const [isExpanded, setIsExpanded] = useState(isStreaming)
+  const wasStreamingRef = useRef(isStreaming)
+
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) setIsExpanded(false)
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming])
 
   return (
-    <div className="mb-2" data-collapsible-steps="true">
-      <div
-        className="flex items-center justify-between rounded-md py-0.5 px-2 cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+    <div className="mx-2 overflow-hidden rounded-md bg-muted/35">
+      <button
+        type="button"
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+        aria-expanded={isExpanded}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground"
       >
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <ListTree className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="font-medium whitespace-nowrap">
-            {stepsCount} {stepsCount === 1 ? "step" : "steps"}
-          </span>
-        </div>
-        <button
-          className="p-1 rounded-md hover:bg-accent transition-[background-color,transform] duration-150 ease-out active:scale-95"
-          onClick={(e) => {
-            e.stopPropagation()
-            setIsExpanded(!isExpanded)
-          }}
-        >
-          <div className="relative w-4 h-4">
-            <ExpandIcon
-              className={cn(
-                "absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out",
-                isExpanded ? "opacity-0 scale-75" : "opacity-100 scale-100",
-              )}
-            />
-            <CollapseIcon
-              className={cn(
-                "absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out",
-                isExpanded ? "opacity-100 scale-100" : "opacity-0 scale-75",
-              )}
-            />
-          </div>
-        </button>
-      </div>
-      {isExpanded && <div className="mt-1 space-y-1.5">{children}</div>}
+        <span className="min-w-0 flex-1 truncate">{summarizeToolActivities(parts)}</span>
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform duration-200 ease-out",
+            isExpanded && "rotate-90",
+          )}
+        />
+      </button>
+      {isExpanded && <div className="space-y-1.5 border-t border-border/60 py-2">{children}</div>}
+    </div>
+  )
+}
+
+// Collapsible steps component
+interface ReasoningTimelineProps {
+  children: React.ReactNode
+  isStreaming: boolean
+  durationMs?: number
+  startedAt: number
+}
+
+function ReasoningTimeline({
+  children,
+  isStreaming,
+  durationMs,
+  startedAt,
+}: ReasoningTimelineProps) {
+  const [isExpanded, setIsExpanded] = useState(isStreaming)
+  const [elapsedMs, setElapsedMs] = useState(durationMs ?? 0)
+  const wasStreamingRef = useRef(isStreaming)
+
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) setIsExpanded(false)
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming])
+
+  useEffect(() => {
+    if (!isStreaming) {
+      if (durationMs !== undefined) setElapsedMs(durationMs)
+      return
+    }
+    const tick = () => setElapsedMs(Date.now() - startedAt)
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [durationMs, isStreaming, startedAt])
+
+  const label = formatReasoningStatus(isStreaming, isStreaming ? elapsedMs : durationMs)
+
+  return (
+    <div
+      className={cn(
+        "mb-2",
+        isExpanded &&
+          "overflow-hidden rounded-lg border border-border bg-muted/30 shadow-[0_0_0_1px_hsl(var(--border)/0.2)]",
+      )}
+      data-reasoning-timeline="true"
+    >
+      <button
+        type="button"
+        className="group flex w-full items-center gap-2 border-b border-border/60 px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+        aria-expanded={isExpanded}
+      >
+        <span className="min-w-0 flex-1 truncate tabular-nums">
+          {isStreaming ? (
+            <TextShimmer as="span" duration={1.2} className="text-sm">
+              {label}
+            </TextShimmer>
+          ) : (
+            label
+          )}
+        </span>
+        <ChevronRight
+          className={cn(
+            "h-4 w-4 shrink-0 transition-transform duration-200 ease-out",
+            isExpanded && "rotate-90",
+          )}
+        />
+      </button>
+      {isExpanded && <div className="space-y-1.5 px-1 py-3">{children}</div>}
     </div>
   )
 }
@@ -560,7 +688,9 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   const onOpenFile = useFileOpen()
   const onFork = useContext(ForkContext)
   const isDev = import.meta.env.DEV
-  const reasoningStartedAtRef = useRef(Date.now())
+  const reasoningStartedAtRef = useRef(
+    getReasoningStartedAt(`${subChatId}:${message.id}`, (message.metadata as any)?.startedAt),
+  )
   // Normalize ACP/codex tool parts into canonical types (e.g. "tool-Read README.md" → "tool-Read").
   // Note: no useMemo - AI SDK mutates parts in-place, so the array reference
   // doesn't change and useMemo would return stale results.
@@ -664,37 +794,31 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     }
   }, [messageParts])
 
-  // Collapsing logic: collapse only if final text exists after tools
-  const { shouldCollapse, visibleStepsCount, collapseBeforeIndex } = useMemo(() => {
-    let lastToolIndex = -1
+  // Keep one Codex-style run disclosure. Provider summaries can arrive after the
+  // final answer, so select the final text explicitly instead of relying on order.
+  const { shouldCollapse, hasActivity, visibleStepsCount, collapseBeforeIndex } = useMemo(() => {
     let lastTextIndex = -1
+    let hasActivity = false
 
     for (let i = 0; i < messageParts.length; i++) {
       const part = messageParts[i]
-      // Ignore ExitPlanMode - it's not a real tool for the user
-      if (
-        part.type?.startsWith("tool-") &&
-        part.type !== "tool-ExitPlanMode" &&
-        !isReasoningPart(part)
-      ) {
-        lastToolIndex = i
-      }
+      if (part.type?.startsWith("tool-") || isReasoningPart(part)) hasActivity = true
       if (part.type === "text" && part.text?.trim()) {
         lastTextIndex = i
       }
     }
 
-    const hasToolsAndFinalText = lastToolIndex !== -1 && lastTextIndex > lastToolIndex
-    const finalTextIndex = hasToolsAndFinalText ? lastTextIndex : -1
-    const hasFinalText = finalTextIndex !== -1 && (!isStreaming || !isLastMessage)
+    const hasFinalText = hasActivity && lastTextIndex !== -1 && (!isStreaming || !isLastMessage)
 
     // Collapse only when there's final text after tools
     const shouldCollapse = hasFinalText
-    const collapseBeforeIndex = hasFinalText ? finalTextIndex : -1
+    const collapseBeforeIndex = hasFinalText ? lastTextIndex : -1
 
     // Calculate visible steps count for collapsible header
     const stepParts =
-      shouldCollapse && collapseBeforeIndex !== -1 ? messageParts.slice(0, collapseBeforeIndex) : []
+      shouldCollapse && collapseBeforeIndex !== -1
+        ? messageParts.filter((_: any, index: number) => index !== collapseBeforeIndex)
+        : messageParts
     const visibleStepsCount = stepParts.filter((p: any) => {
       if (p.type === "step-start") return false
       if (p.type === "tool-TaskOutput") return false
@@ -711,7 +835,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       return true
     }).length
 
-    return { shouldCollapse, visibleStepsCount, collapseBeforeIndex }
+    return { shouldCollapse, hasActivity, visibleStepsCount, collapseBeforeIndex }
   }, [
     messageParts,
     isStreaming,
@@ -735,14 +859,16 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   }, [hasPlanInCollapsedSteps, planOpsSummary.operations, collapseBeforeIndex])
 
   const stepParts = useMemo(() => {
-    if (!shouldCollapse || collapseBeforeIndex === -1) return []
-    return messageParts.slice(0, collapseBeforeIndex)
-  }, [messageParts, shouldCollapse, collapseBeforeIndex])
+    if (!hasActivity) return []
+    if (!shouldCollapse || collapseBeforeIndex === -1) return messageParts
+    return messageParts.filter((_: any, index: number) => index !== collapseBeforeIndex)
+  }, [messageParts, hasActivity, shouldCollapse, collapseBeforeIndex])
 
   const finalParts = useMemo(() => {
-    if (!shouldCollapse || collapseBeforeIndex === -1) return messageParts
-    return messageParts.slice(collapseBeforeIndex)
-  }, [messageParts, shouldCollapse, collapseBeforeIndex])
+    if (!hasActivity) return messageParts
+    if (!shouldCollapse || collapseBeforeIndex === -1) return []
+    return [messageParts[collapseBeforeIndex]]
+  }, [messageParts, hasActivity, shouldCollapse, collapseBeforeIndex])
 
   const hasTextContent = useMemo(
     () => messageParts.some((p: any) => p.type === "text" && p.text?.trim()),
@@ -820,6 +946,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             chatStatus={status}
             durationMs={msgMetadata?.durationMs}
             startedAt={reasoningStartedAtRef.current}
+            hideHeader
           />
         )
       }
@@ -888,6 +1015,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
         }
       }
 
+      if (part.type === "tool-Edit") if (msgMetadata?.runId && !isStreaming) return null
       if (part.type === "tool-Edit")
         return (
           <AgentEditTool
@@ -898,6 +1026,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
             chatStatus={status}
           />
         )
+      if (part.type === "tool-Write") if (msgMetadata?.runId && !isStreaming) return null
       if (part.type === "tool-Write")
         return (
           <AgentEditTool
@@ -1004,13 +1133,30 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
       <ProducerChips metadata={msgMetadata} />
       <div className="flex flex-col gap-1.5">
-        {shouldCollapse && visibleStepsCount > 0 && (
-          <CollapsibleSteps stepsCount={visibleStepsCount}>
+        {hasActivity && visibleStepsCount > 0 && (
+          <ReasoningTimeline
+            isStreaming={isStreaming && isLastMessage}
+            durationMs={msgMetadata?.durationMs}
+            startedAt={reasoningStartedAtRef.current}
+          >
             {(() => {
-              // Apply both grouping functions: first task tools, then exploring tools
-              const taskGrouped = groupTaskTools(stepParts, nestedToolIds)
+              const activityGrouped = groupToolActivities(stepParts, nestedToolIds)
+              const taskGrouped = groupTaskTools(activityGrouped, nestedToolIds)
               const grouped = groupExploringTools(taskGrouped, nestedToolIds)
               return grouped.map((part: any, idx: number) => {
+                if (part.type === "activity-group") {
+                  return (
+                    <ToolActivityGroup
+                      key={idx}
+                      parts={part.parts}
+                      isStreaming={isStreaming && isLastMessage}
+                    >
+                      {part.parts.map((toolPart: any, toolIdx: number) =>
+                        renderPart(toolPart, idx * 1000 + toolIdx, false),
+                      )}
+                    </ToolActivityGroup>
+                  )
+                }
                 if (part.type === "exploring-group") {
                   const isLast = idx === grouped.length - 1
                   const isGroupStreaming = isStreaming && isLastMessage && isLast
@@ -1039,8 +1185,9 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
                 return renderPart(part, idx, false)
               })
             })()}
-          </CollapsibleSteps>
+          </ReasoningTimeline>
         )}
+        {!isStreaming && <AgentChangedFilesCard runId={msgMetadata?.runId} />}
 
         {(() => {
           // Apply both grouping functions: first task tools, then exploring tools
@@ -1090,7 +1237,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           />
         )}
 
-        {shouldShowWorkingTimer && (
+        {shouldShowWorkingTimer && visibleStepsCount === 0 && (
           <AgentReasoningOutput
             part={{
               type: "tool-ReasoningOutput",

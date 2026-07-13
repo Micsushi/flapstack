@@ -8,6 +8,7 @@ import { TextShimmer } from "../../../components/ui/text-shimmer"
 import { AgentToolInterrupted } from "./agent-tool-interrupted"
 import { areToolPropsEqual } from "./agent-tool-utils"
 import { formatReasoningStatus } from "../lib/reasoning-duration"
+import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 
 interface ReasoningOutputPart {
   type: string
@@ -39,6 +40,7 @@ interface AgentReasoningOutputProps {
   chatStatus?: string
   durationMs?: number
   startedAt?: number
+  hideHeader?: boolean
 }
 
 function areReasoningPropsEqual(
@@ -47,6 +49,7 @@ function areReasoningPropsEqual(
 ): boolean {
   if (prevProps.durationMs !== nextProps.durationMs) return false
   if (prevProps.startedAt !== nextProps.startedAt) return false
+  if (prevProps.hideHeader !== nextProps.hideHeader) return false
   return areToolPropsEqual(prevProps, nextProps)
 }
 
@@ -55,6 +58,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   chatStatus,
   durationMs,
   startedAt,
+  hideHeader = false,
 }: AgentReasoningOutputProps) {
   const isPending = part.state !== "output-available" && part.state !== "output-error"
   const isActivelyStreaming = chatStatus === "streaming" || chatStatus === "submitted"
@@ -119,7 +123,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
     }
   }, [part.input?.text, isStreaming, isExpanded])
 
-  const reasoningOutputText = part.input?.text || ""
+  const reasoningOutputText = sanitizeHarnessEnvelopeEcho(part.input?.text || "")
   const reasoningOutputLabel = part.label || "Reasoning output"
   const tokenLabel = typeof part.tokens === "number" ? `${part.tokens.toLocaleString()} tokens` : ""
 
@@ -138,6 +142,15 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   }
 
   if (!isStreaming && !reasoningOutputText.trim()) return null
+
+  if (hideHeader) {
+    if (!reasoningOutputText.trim()) return null
+    return (
+      <div className="max-h-40 overflow-y-auto px-2 py-1 text-muted-foreground scrollbar-hide">
+        <ChatMarkdownRenderer content={reasoningOutputText} size="sm" isStreaming={isStreaming} />
+      </div>
+    )
+  }
 
   return (
     <div className="mb-3">

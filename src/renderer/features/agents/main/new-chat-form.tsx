@@ -37,12 +37,14 @@ import {
   lastSelectedOpencodeModelsAtom,
   lastSelectedBranchesAtom,
   lastSelectedModelIdAtom,
+  lastSelectedReasoningEnabledAtom,
   lastSelectedRepoAtom,
   lastSelectedWorkModeAtom,
   selectedAgentChatIdAtom,
   selectedChatIsRemoteAtom,
   selectedDraftIdAtom,
   selectedProjectAtom,
+  subChatReasoningEnabledAtomFamily,
   getNextMode,
   type AgentMode,
 } from "../atoms"
@@ -60,7 +62,6 @@ import {
   codexApiKeyAtom,
   codexOnboardingCompletedAtom,
   customClaudeConfigAtom,
-  reasoningOutputEnabledAtom,
   hiddenModelsAtom,
   normalizeCodexApiKey,
   normalizeCustomClaudeConfig,
@@ -71,6 +72,7 @@ import {
 } from "../../../lib/atoms"
 // Desktop uses real tRPC
 import { toast } from "sonner"
+import { appStore } from "../../../lib/jotai-store"
 import { trpc } from "../../../lib/trpc"
 import {
   AgentsSlashCommand,
@@ -83,11 +85,6 @@ import { usePastedTextFiles } from "../hooks/use-pasted-text-files"
 import { useFocusInputOnEnter } from "../hooks/use-focus-input-on-enter"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
-import {
-  useVoiceRecording,
-  blobToBase64,
-  getAudioFormat,
-} from "../../../lib/hooks/use-voice-recording"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import {
   AgentsFileMention,
@@ -108,19 +105,25 @@ import {
   PromptInputContextItems,
 } from "../../../components/ui/prompt-input"
 import { agentsSidebarOpenAtom, agentsUnseenChangesAtom } from "../atoms"
-import { AgentSendButton } from "../components/agent-send-button"
-import { AgentModelSelector, type AgentProviderId } from "../components/agent-model-selector"
+import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
+import {
+  AgentModelSelector,
+  AgentModelTuningSelector,
+  type AgentProviderId,
+} from "../components/agent-model-selector"
 import { CreateBranchDialog } from "../components/create-branch-dialog"
 import { formatTimeAgo } from "../utils/format-time-ago"
 import { handlePasteEvent } from "../utils/paste-text"
 import {
   loadGlobalDrafts,
-  saveGlobalDrafts,
   generateDraftId,
   deleteNewChatDraft,
+  DRAFTS_CHANGE_EVENT,
   markDraftVisible,
+  updateNewChatDraftText,
   type DraftProject,
 } from "../lib/drafts"
+import { useDictationSession } from "../voice/dictation-session"
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
@@ -424,7 +427,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       }))
     }
   }, [enabledOpencodeModels, lastSelectedOpencodeModels, setLastSelectedOpencodeModels])
-  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
+  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(
+    lastSelectedReasoningEnabledAtom,
+  )
+  const pendingReasoningEnabledRef = useRef(reasoningOutputEnabled)
 
   const [selectedModel, setSelectedModel] = useState(
     () =>
@@ -691,97 +697,96 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   // Voice input state
   const customHotkeys = useAtomValue(customHotkeysAtom)
-  const {
-    isRecording: isVoiceRecording,
-    audioLevel: voiceAudioLevel,
-    startRecording,
-    stopRecording,
-    cancelRecording,
-  } = useVoiceRecording()
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const voiceCaptureRequestedRef = useRef(false)
-  const transcribeMutation = trpc.voice.transcribe.useMutation()
+  const dictation = useDictationSession()
+  const currentDictationKey = currentDraftIdRef.current
+    ? `new-chat:${currentDraftIdRef.current}`
+    : null
+  const ownsDictation =
+    currentDictationKey !== null && dictation.activeTargetKey === currentDictationKey
+  const isVoiceRecording = ownsDictation && dictation.isRecording
+  const isVoiceStarting = ownsDictation && dictation.isStarting
+  const isTranscribing = ownsDictation && dictation.isTranscribing
+  const voiceAudioLevel = ownsDictation ? dictation.audioLevel : 0
   const {
     isReady: isVoiceReady,
     statusLabel: voiceStatusLabel,
     showSetup: showVoiceSetup,
   } = useLocalDictationSetup(handleOpenVoiceSettings)
 
+  useEffect(() => {
+    if (!ownsDictation || !currentDraftIdRef.current) return
+    const draftId = currentDraftIdRef.current
+    const syncOriginDraft = () => {
+      const text = loadGlobalDrafts()[draftId]?.text ?? ""
+      editorRef.current?.setValue(text)
+      setHasContent(Boolean(text))
+    }
+    window.addEventListener(DRAFTS_CHANGE_EVENT, syncOriginDraft)
+    return () => window.removeEventListener(DRAFTS_CHANGE_EVENT, syncOriginDraft)
+  }, [ownsDictation])
+
+  useEffect(() => {
+    const insert = (event: Event) => {
+      const text = (event as CustomEvent<string>).detail?.trim()
+      if (!text) return
+      const current = editorRef.current?.getValue() || ""
+      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      setHasContent(true)
+      editorRef.current?.focus()
+    }
+    window.addEventListener("voice-history-insert", insert)
+    return () => window.removeEventListener("voice-history-insert", insert)
+  }, [])
+
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
-    if (isUploading || isTranscribing || isVoiceRecording || voiceCaptureRequestedRef.current)
-      return
+    if (isUploading || isTranscribing || isVoiceStarting || isVoiceRecording) return
     if (!isVoiceReady) {
       showVoiceSetup()
       return
     }
-    voiceCaptureRequestedRef.current = true
-    try {
-      await startRecording()
-    } catch (err) {
-      const shouldReport = voiceCaptureRequestedRef.current
-      voiceCaptureRequestedRef.current = false
-      if (shouldReport) {
-        console.error("[NewChatForm] Failed to start recording:", err)
-        toast.error(err instanceof Error ? err.message : "Failed to start recording")
-      }
-    }
-  }, [isUploading, isTranscribing, isVoiceRecording, isVoiceReady, showVoiceSetup, startRecording])
+    const draftId = currentDraftIdRef.current ?? generateDraftId()
+    currentDraftIdRef.current = draftId
+    setSelectedDraftId(draftId)
+    const project = validatedProject
+      ? {
+          id: validatedProject.id,
+          name: validatedProject.name,
+          path: validatedProject.path,
+          gitOwner: validatedProject.gitOwner,
+          gitRepo: validatedProject.gitRepo,
+          gitProvider: validatedProject.gitProvider,
+        }
+      : undefined
+    await dictation.start({
+      key: `new-chat:${draftId}`,
+      draftId,
+      projectLabel: validatedProject?.name || "Global",
+      chatLabel: "New chat draft",
+      getText: () => editorRef.current?.getValue() || "",
+      commitText: (text) => updateNewChatDraftText(draftId, text, project),
+      showText: (text) => {
+        editorRef.current?.setValue(text)
+        setHasContent(Boolean(text))
+      },
+    })
+  }, [
+    dictation,
+    isUploading,
+    isTranscribing,
+    isVoiceStarting,
+    isVoiceRecording,
+    isVoiceReady,
+    showVoiceSetup,
+    setSelectedDraftId,
+    validatedProject,
+  ])
 
-  const handleVoiceMouseUp = useCallback(async () => {
-    if (!voiceCaptureRequestedRef.current) return
-    voiceCaptureRequestedRef.current = false
-    setIsTranscribing(true)
-    try {
-      const blob = await stopRecording()
-      if (blob.size < 1000) {
-        console.log("[NewChatForm] Recording too short, ignoring")
-        return
-      }
-      const base64 = await blobToBase64(blob)
-      const format = getAudioFormat(blob.type)
-      const result = await transcribeMutation.mutateAsync({ audio: base64, format })
-      if (result.text && result.text.trim()) {
-        const currentValue = editorRef.current?.getValue() || ""
-        // Clean transcribed text - remove any remaining whitespace issues
-        const transcribed = result.text
-          .replace(/[\r\n\t]+/g, " ")
-          .replace(/ +/g, " ")
-          .trim()
-        // Add space separator only if current text exists and doesn't end with whitespace
-        const needsSpace = currentValue.length > 0 && !/\s$/.test(currentValue)
-        const newValue = currentValue + (needsSpace ? " " : "") + transcribed
-        editorRef.current?.setValue(newValue)
-        setHasContent(true)
-      }
-    } catch (err) {
-      console.error("[NewChatForm] Transcription failed:", err)
-      toast.error("Voice transcription failed", {
-        description: err instanceof Error ? err.message : "Local Whisper could not transcribe.",
-      })
-    } finally {
-      setIsTranscribing(false)
-    }
-  }, [stopRecording, transcribeMutation])
+  const handleVoiceMouseUp = useCallback(() => dictation.stop(), [dictation])
 
-  useEffect(() => {
-    const cancelPendingCapture = () => {
-      if (voiceCaptureRequestedRef.current || isVoiceRecording) {
-        voiceCaptureRequestedRef.current = false
-        cancelRecording()
-      }
-    }
-    const handleVisibilityChange = () => {
-      if (document.hidden) cancelPendingCapture()
-    }
-
-    window.addEventListener("blur", cancelPendingCapture)
-    document.addEventListener("visibilitychange", handleVisibilityChange)
-    return () => {
-      window.removeEventListener("blur", cancelPendingCapture)
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
-    }
-  }, [isVoiceRecording, cancelRecording])
+  const finishVoiceBeforeSend = useCallback(async () => {
+    if (ownsDictation) await dictation.stop()
+  }, [dictation, ownsDictation])
 
   // Voice hotkey listener (push-to-talk: hold to record, release to transcribe)
   useEffect(() => {
@@ -856,7 +861,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       e.stopPropagation()
 
       // Start recording on keydown
-      if (!voiceCaptureRequestedRef.current && !isVoiceRecording && !isTranscribing) {
+      if (!isVoiceStarting && !isVoiceRecording && !isTranscribing) {
         handleVoiceMouseDown()
       }
     }
@@ -865,7 +870,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       // Stop recording when the main key (or any modifier for modifier-only hotkeys) is released
       if (!isMainKeyRelease(e)) return
 
-      if (voiceCaptureRequestedRef.current) {
+      if (ownsDictation && (isVoiceStarting || isVoiceRecording)) {
         e.preventDefault()
         e.stopPropagation()
         handleVoiceMouseUp()
@@ -878,7 +883,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       window.removeEventListener("keydown", handleKeyDown, true)
       window.removeEventListener("keyup", handleKeyUp, true)
     }
-  }, [customHotkeys, isVoiceRecording, isTranscribing, handleVoiceMouseDown, handleVoiceMouseUp])
+  }, [
+    customHotkeys,
+    isVoiceRecording,
+    isVoiceStarting,
+    isTranscribing,
+    ownsDictation,
+    handleVoiceMouseDown,
+    handleVoiceMouseUp,
+  ])
 
   // Shift+Tab handler for mode switching (now handled inside input component via onShiftTab prop)
 
@@ -1220,7 +1233,12 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       // Track this chat and its first subchat as just created for typewriter effect
       const ids = [data.id]
       if (data.subChats?.[0]?.id) {
-        ids.push(data.subChats[0].id)
+        const firstSubChatId = data.subChats[0].id
+        ids.push(firstSubChatId)
+        appStore.set(
+          subChatReasoningEnabledAtomFamily(firstSubChatId),
+          pendingReasoningEnabledRef.current,
+        )
       }
       setJustCreatedIds((prev) => new Set([...prev, ...ids]))
     },
@@ -1269,6 +1287,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const trpcUtils = trpc.useUtils()
 
   const handleSend = useCallback(async () => {
+    await finishVoiceBeforeSend()
     // Get value from uncontrolled editor
     let message = editorRef.current?.getValue() || ""
 
@@ -1384,6 +1403,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     }
 
     // Create chat with selected scope, branch, and initial message
+    pendingReasoningEnabledRef.current = reasoningOutputEnabled
     createChatMutation.mutate({
       projectId: chatScope === "global" ? undefined : validatedProject?.id,
       taskId: chatScope === "task" ? selectedTask?.id : undefined,
@@ -1418,7 +1438,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     selectedChatModel,
     selectedAgent.id,
     agentMode,
+    reasoningOutputEnabled,
     trpcUtils,
+    finishVoiceBeforeSend,
   ])
 
   const handleMentionSelect = useCallback((mention: FileMentionOption) => {
@@ -1464,28 +1486,26 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       }
       lastSavedTextRef.current = text
 
-      const globalDrafts = loadGlobalDrafts()
-
-      if (text.trim() && validatedProject) {
+      if (text.trim()) {
         // If no current draft ID, create a new one
         if (!currentDraftIdRef.current) {
           currentDraftIdRef.current = generateDraftId()
         }
 
-        const key = currentDraftIdRef.current
-        globalDrafts[key] = {
+        updateNewChatDraftText(
+          currentDraftIdRef.current,
           text,
-          updatedAt: Date.now(),
-          project: {
-            id: validatedProject.id,
-            name: validatedProject.name,
-            path: validatedProject.path,
-            gitOwner: validatedProject.gitOwner,
-            gitRepo: validatedProject.gitRepo,
-            gitProvider: validatedProject.gitProvider,
-          },
-        }
-        saveGlobalDrafts(globalDrafts)
+          validatedProject
+            ? {
+                id: validatedProject.id,
+                name: validatedProject.name,
+                path: validatedProject.path,
+                gitOwner: validatedProject.gitOwner,
+                gitRepo: validatedProject.gitRepo,
+                gitProvider: validatedProject.gitProvider,
+              }
+            : undefined,
+        )
       } else if (currentDraftIdRef.current) {
         // Text is empty - delete the current draft
         deleteNewChatDraft(currentDraftIdRef.current)
@@ -2240,6 +2260,32 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           },
                         }}
                       />
+                      <AgentModelTuningSelector
+                        selectedAgentId={selectedAgent.id as AgentProviderId}
+                        reasoningEnabled={reasoningOutputEnabled}
+                        onReasoningEnabledChange={setReasoningOutputEnabled}
+                        claude={{
+                          models: availableModels.models.filter(
+                            (model) => !hiddenModels.includes(model.id),
+                          ),
+                          selectedModelId: selectedModel?.id,
+                          hasCustomModelConfig: hasCustomClaudeConfig,
+                          isOffline: availableModels.isOffline && availableModels.hasOllama,
+                          selectedEffort: selectedClaudeEffort,
+                          onSelectEffort: setLastSelectedClaudeEffort,
+                        }}
+                        codex={{
+                          models: codexUiModels,
+                          selectedModelId: selectedCodexModel.id,
+                          selectedReasoning: selectedCodexReasoning,
+                          onSelectReasoning: setLastSelectedCodexReasoning,
+                          fastModeEnabled: codexFastModeEnabled,
+                          onFastModeChange: (enabled) =>
+                            setLastSelectedCodexFastMode(
+                              selectedCodexModel.supportsFastMode ? enabled : false,
+                            ),
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -2273,7 +2319,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         <AttachIcon className="h-4 w-4" />
                       </Button>
                     )}
-                    <div className="ml-1">
+                    <AgentVoiceButton
+                      isRecording={isVoiceRecording}
+                      isStarting={isVoiceStarting}
+                      isTranscribing={isTranscribing}
+                      voiceInputReady={isVoiceReady}
+                      voiceStatusLabel={voiceStatusLabel}
+                      onUnavailableClick={showVoiceSetup}
+                      onStart={() => void handleVoiceMouseDown()}
+                      onStop={() => void handleVoiceMouseUp()}
+                    />
+                    <div className="ml-0.5">
                       <AgentSendButton
                         isStreaming={false}
                         isSubmitting={createChatMutation.isPending || isUploading}
@@ -2287,14 +2343,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         onClick={handleSend}
                         mode={agentMode}
                         hasContent={hasContent}
-                        showVoiceInput
-                        voiceInputReady={isVoiceReady}
-                        voiceStatusLabel={voiceStatusLabel}
-                        onVoiceUnavailableClick={showVoiceSetup}
-                        isRecording={isVoiceRecording}
-                        isTranscribing={isTranscribing}
-                        onVoiceMouseDown={handleVoiceMouseDown}
-                        onVoiceMouseUp={handleVoiceMouseUp}
                       />
                     </div>
                   </div>

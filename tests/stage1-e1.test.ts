@@ -285,6 +285,51 @@ function insertChat(values: Partial<typeof chats.$inferInsert>) {
   return getDatabase().insert(chats).values(values).returning().get()
 }
 
+describe("top-level chat forks", () => {
+  it("creates one new sidebar chat instead of a second internal conversation", async () => {
+    const db = getDatabase()
+    const sourceChat = insertChat({ scope: "global", name: "Fix window drag and layout" })
+    const sourceConversation = db
+      .insert(subChats)
+      .values({
+        chatId: sourceChat.id,
+        mode: "agent",
+        messages: JSON.stringify([
+          { id: "user-1", role: "user", parts: [{ type: "text", text: "Fix it" }] },
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [{ type: "text", text: "Working on it" }],
+            metadata: { sdkMessageUuid: "sdk-1" },
+          },
+        ]),
+      })
+      .returning()
+      .get()
+
+    const result = await chatsRouter.createCaller(ctx).forkSubChat({
+      subChatId: sourceConversation.id,
+      messageId: "assistant-1",
+    })
+
+    expect(result.chat).toMatchObject({ name: "Fix window drag and layout (2)", scope: "global" })
+    expect(result.subChat.chatId).toBe(result.chat.id)
+    expect(db.select().from(subChats).where(eq(subChats.chatId, sourceChat.id)).all()).toHaveLength(
+      1,
+    )
+    expect(
+      db.select().from(subChats).where(eq(subChats.chatId, result.chat.id)).all(),
+    ).toHaveLength(1)
+
+    const forkedMessages = JSON.parse(result.subChat.messages)
+    expect(forkedMessages).toHaveLength(2)
+    expect(forkedMessages[1].metadata).toMatchObject({
+      sdkMessageUuid: "sdk-1",
+      shouldForkResume: true,
+    })
+  })
+})
+
 describe("Stage 1 E1 scope lifecycle", () => {
   it("creates, lists, validates, and moves project/task/global chats", async () => {
     const db = getDatabase()

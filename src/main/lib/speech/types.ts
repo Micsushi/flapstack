@@ -73,7 +73,11 @@ export type TtsAdapterInfo = {
 }
 
 export type VoiceSettings = {
+  voiceSettingsVersion: 2
   sttAdapterId: string
+  parakeetModelId: "parakeet-unified-en-q8"
+  retainDictationAudio: boolean
+  sttModelUnloadMinutes: number
   whisperModelId: WhisperModelId
   whisperCppBinPath: string | null
   ttsAdapterId: string
@@ -86,7 +90,11 @@ export type VoiceSettings = {
 export type WhisperModelId = "tiny" | "base" | "small"
 
 export const defaultVoiceSettings: VoiceSettings = {
-  sttAdapterId: "local-whisper",
+  voiceSettingsVersion: 2,
+  sttAdapterId: "local-parakeet",
+  parakeetModelId: "parakeet-unified-en-q8",
+  retainDictationAudio: true,
+  sttModelUnloadMinutes: 5,
   whisperModelId: "base",
   whisperCppBinPath: null,
   ttsAdapterId: "kokoro",

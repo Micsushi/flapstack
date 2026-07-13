@@ -103,19 +103,11 @@ const MemoizedTextPartInner = memo(
 
     return (
       <div
-        className={cn(
-          "text-foreground px-2",
-          isFinalText && visibleStepsCount > 0 && "pt-3 border-t border-border/50",
-        )}
+        className={cn("text-foreground px-2", isFinalText && visibleStepsCount > 0 && "pt-3")}
         data-message-id={messageId}
         data-part-index={partIndex}
         data-part-type="text"
       >
-        {isFinalText && visibleStepsCount > 0 && (
-          <div className="text-[12px] uppercase tracking-wider text-muted-foreground/60 font-medium mb-1">
-            Response
-          </div>
-        )}
         <MemoizedMarkdown content={text} id={`${messageId}-${partIndex}`} size="sm" />
       </div>
     )

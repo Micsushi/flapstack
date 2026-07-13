@@ -93,6 +93,9 @@ export interface DesktopApi {
 
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
+  onDevMcpChatsChanged: (
+    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  ) => () => void
 
   // Worktree setup failures
   onWorktreeSetupFailed: (callback: (payload: WorktreeSetupFailurePayload) => void) => () => void

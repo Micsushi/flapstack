@@ -7,6 +7,12 @@ interface UseVoiceRecordingReturn {
   startRecording: () => Promise<void>
   stopRecording: () => Promise<Blob>
   cancelRecording: () => void
+  waitForPcm: () => Promise<void>
+}
+
+type VoiceRecordingOptions = {
+  onPcmChunk?: (chunk: Float32Array) => void | Promise<void>
+  normalizeRecording?: boolean
 }
 
 /**
@@ -23,7 +29,7 @@ interface UseVoiceRecordingReturn {
  * const blob = await stopRecording()
  * ```
  */
-export function useVoiceRecording(): UseVoiceRecordingReturn {
+export function useVoiceRecording(options: VoiceRecordingOptions = {}): UseVoiceRecordingReturn {
   const [isRecording, setIsRecording] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [audioLevel, setAudioLevel] = useState(0)
@@ -39,6 +45,32 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const pcmQueueRef = useRef(Promise.resolve())
+  const onPcmChunkRef = useRef(options.onPcmChunk)
+  const pcmPendingRef = useRef(new Float32Array())
+  const pcmErrorRef = useRef<Error | null>(null)
+  onPcmChunkRef.current = options.onPcmChunk
+
+  const queuePcm = useCallback((incoming: Float32Array, flush = false) => {
+    const combined = new Float32Array(pcmPendingRef.current.length + incoming.length)
+    combined.set(pcmPendingRef.current)
+    combined.set(incoming, pcmPendingRef.current.length)
+    const chunkSize = 8_000
+    let offset = 0
+    while (combined.length - offset >= chunkSize || (flush && combined.length > offset)) {
+      const end = flush ? combined.length : offset + chunkSize
+      const chunk = combined.slice(offset, end)
+      offset = end
+      pcmQueueRef.current = pcmQueueRef.current
+        .then(() => onPcmChunkRef.current?.(chunk))
+        .catch((error) => {
+          pcmErrorRef.current = error instanceof Error ? error : new Error(String(error))
+        })
+    }
+    pcmPendingRef.current = combined.slice(offset)
+  }, [])
 
   // Cleanup function to stop all tracks and reset state
   const cleanup = useCallback(() => {
@@ -53,6 +85,10 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
       analyserRef.current.disconnect()
       analyserRef.current = null
     }
+    processorRef.current?.disconnect()
+    processorRef.current = null
+    sourceRef.current?.disconnect()
+    sourceRef.current = null
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
       audioContextRef.current.close().catch(() => {})
       audioContextRef.current = null
@@ -73,6 +109,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
       mediaRecorderRef.current = null
     }
     chunksRef.current = []
+    pcmPendingRef.current = new Float32Array()
     isStartingRef.current = false
     setAudioLevel(0)
   }, [])
@@ -113,6 +150,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     const startPromise = (async () => {
       try {
         setError(null)
+        pcmErrorRef.current = null
 
         // Request microphone access. A pending request cannot be aborted, so
         // cancellation is checked immediately after it resolves.
@@ -139,6 +177,20 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
 
           const source = audioContext.createMediaStreamSource(stream)
           source.connect(analyser)
+          sourceRef.current = source
+
+          if (onPcmChunkRef.current) {
+            const processor = audioContext.createScriptProcessor(4096, 1, 1)
+            processor.onaudioprocess = (event) => {
+              const input = event.inputBuffer.getChannelData(0)
+              const chunk = resampleMono(input, audioContext.sampleRate, 16_000)
+              if (!chunk.length || !onPcmChunkRef.current) return
+              queuePcm(chunk)
+            }
+            source.connect(processor)
+            processor.connect(audioContext.destination)
+            processorRef.current = processor
+          }
 
           audioContextRef.current = audioContext
           analyserRef.current = analyser
@@ -211,7 +263,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     })()
     startPromiseRef.current = startPromise
     return startPromise
-  }, [cleanup])
+  }, [cleanup, queuePcm])
 
   const stopRecording = useCallback(async (): Promise<Blob> => {
     // A hotkey or pointer release can arrive while microphone permission is
@@ -219,6 +271,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     const pendingStart = startPromiseRef.current
     if (pendingStart) await pendingStart
 
+    queuePcm(new Float32Array(), true)
     return new Promise((resolve, reject) => {
       const mediaRecorder = mediaRecorderRef.current
 
@@ -238,7 +291,9 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
         cleanup()
         setIsRecording(false)
         try {
-          resolve(await normalizeRecordingForWhisper(blob))
+          resolve(
+            options.normalizeRecording === false ? blob : await normalizeRecordingForWhisper(blob),
+          )
         } catch (error) {
           const normalized = error instanceof Error ? error : new Error(String(error))
           setError(normalized)
@@ -256,7 +311,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
 
       mediaRecorder.stop()
     })
-  }, [cleanup])
+  }, [cleanup, options.normalizeRecording, queuePcm])
 
   return {
     isRecording,
@@ -265,7 +320,35 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     startRecording,
     stopRecording,
     cancelRecording,
+    waitForPcm: async () => {
+      await pcmQueueRef.current
+      if (pcmErrorRef.current) throw pcmErrorRef.current
+    },
   }
+}
+
+export function resampleMono(input: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) return new Float32Array(input)
+  const length = Math.max(1, Math.round((input.length * targetRate) / sourceRate))
+  const output = new Float32Array(length)
+  const ratio = sourceRate / targetRate
+  for (let index = 0; index < length; index++) {
+    const position = index * ratio
+    const lower = Math.floor(position)
+    const upper = Math.min(input.length - 1, lower + 1)
+    const mix = position - lower
+    output[index] = (input[lower] ?? 0) * (1 - mix) + (input[upper] ?? 0) * mix
+  }
+  return output
+}
+
+export function float32ToBase64(input: Float32Array) {
+  const bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+  let binary = ""
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(binary)
 }
 
 /**

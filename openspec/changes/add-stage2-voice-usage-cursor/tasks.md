@@ -28,6 +28,18 @@ repository carry implementation detail by track.
 - [x] 1.11c V13 optional machine-local vault context across all harnesses
 - [x] 1.11d V14 remove composer/global automatic read-aloud controls and playback
 - [ ] 1.11 V-exit voice tests + manual matrix
+- [ ] 1.12 V11 replace default batch STT with bundled warm Parakeet streaming
+      sidecar, pinned model lifecycle, committed/tentative PCM protocol,
+      cancellation, idle unload, and explicit whisper.cpp fallback
+- [ ] 1.13 V12 stream committed/tentative dictation directly into both chat
+      inputs while preserving the pre-dictation draft and review-before-send
+- [ ] 1.14 V13 persist finalized transcript, metadata, and optional local WAV;
+      add searchable Voice settings history with copy/insert/play/reveal/delete
+- [ ] 1.15 V14 verify streaming/package licenses, focused tests, full gate, model
+      download states, live dev identity, real inline dictation, and history CRUD
+- [x] 1.16 V15 bind typed and dictated drafts to immutable conversation origins;
+      keep one app-level recording alive across app/chat/project navigation; add
+      background recording return/stop capsule and ordered cross-chat handoff
 
 ## 2. Usage (Track B)
 
@@ -88,6 +100,14 @@ repository carry implementation detail by track.
 - [x] 5.6 T5 Cursor reasoning-output stream integration
 - [x] 5.7 T6 OpenRouter/NanoGPT/local-model reasoning adapter contract
 - [ ] 5.8 T7 Reasoning-output fixtures, tests, and manual matrix
+- [x] 5.8a T7a Persist a per-chat Reasoning toggle, default on, beside effort selection
+- [x] 5.8b T7b Map selected effort to the closest supported reasoning depth per provider
+- [x] 5.8c T7c Configure Codex detailed summaries/raw output and preserve App Server commentary phases
+- [x] 5.8d T7d Upgrade Claude Agent SDK and request adaptive summarized thinking
+- [x] 5.8e T7e Request and preserve OpenRouter/NanoGPT reasoning fields and details
+- [x] 5.8f T7f Map Cursor reasoning on/off and effort where its CLI supports them
+- [x] 5.8g T7g Persist timers, token-only/private indicators, summaries, tools, and plans honestly
+- [ ] 5.8h T7h Add capability/fallback tests plus live provider evidence without fabricating reasoning
 
 ## 6. Fixes (Track C)
 

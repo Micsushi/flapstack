@@ -13,7 +13,7 @@ import {
 } from "./lib/packaged-binary.mjs"
 import { whisperResourceFiles } from "./prepare-whisper-binary.mjs"
 
-export const CLAUDE_VERSION = "2.1.45"
+export const CLAUDE_VERSION = "2.1.207"
 export const CODEX_VERSION = "0.144.1"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -64,6 +64,10 @@ function expectedTargetFiles(target) {
     windows ? "claude.exe" : "claude",
     windows ? "codex.exe" : "codex",
     ...whisperResourceFiles(target),
+    windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
+    "flapstack-stt-sidecar-LICENSE",
+    "transcribe.cpp-LICENSE",
+    ".transcribe-version",
   ]
 }
 
@@ -71,7 +75,11 @@ export async function validatePreparedTarget(target, rootDirectory = binDirector
   const directory = path.join(rootDirectory, target)
   const windows = target.startsWith("win32-")
   assertAllowlistedRegularFiles(directory, expectedTargetFiles(target))
-  const binaries = [windows ? "claude.exe" : "claude", windows ? "codex.exe" : "codex"]
+  const binaries = [
+    windows ? "claude.exe" : "claude",
+    windows ? "codex.exe" : "codex",
+    windows ? "flapstack-stt-sidecar.exe" : "flapstack-stt-sidecar",
+  ]
   for (const binary of binaries) assertBundledBinary(path.join(directory, binary), target)
   if (
     !(await verifyCachedBinaryDigest(
@@ -92,6 +100,8 @@ export async function preparePackageResources(targets) {
   const outputArg = `--output-root=${stagingRoot}`
   try {
     runScript("prepare-whisper-binary.mjs", [outputArg, ...platformArgs])
+    for (const target of targets)
+      runScript("prepare-stt-sidecar.mjs", [outputArg, `--platform=${target}`])
     runScript("download-claude-binary.mjs", [
       outputArg,
       `--version=${CLAUDE_VERSION}`,

@@ -44,6 +44,8 @@ export type SidecarLaunchInput = {
   /** Working directory OpenCode operates in (project/worktree checkout). */
   cwd: string
   permissionMode: PermissionMode
+  reasoningEnabled: boolean
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh"
   /** Resume/fork an existing OpenCode session when continuing a chat. */
   resumeSessionId?: string
   /** Extra environment for the child process (never logged raw). */

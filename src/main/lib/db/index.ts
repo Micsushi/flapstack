@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import { eq } from "drizzle-orm"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { app } from "electron"
 import { join } from "path"
@@ -65,6 +66,36 @@ export function initDatabase() {
   try {
     migrate(db, { migrationsFolder: migrationsPath })
     console.log("[DB] Migrations completed")
+
+    // No run can still be live before this process has created a harness.
+    // Reconcile rows left behind by a crash or forced shutdown so the UI does
+    // not display an endless run after restart.
+    const interruptedAt = new Date()
+    const tableExists = (name: string) =>
+      Boolean(
+        sqlite
+          ?.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+          .get(name),
+      )
+    const cancelledRuns = tableExists("agent_runs")
+      ? db
+          .update(schema.agentRuns)
+          .set({ status: "cancelled", completedAt: interruptedAt })
+          .where(eq(schema.agentRuns.status, "running"))
+          .run().changes
+      : 0
+    const cancelledChats = tableExists("sub_chats")
+      ? db
+          .update(schema.subChats)
+          .set({ runStatus: "cancelled", updatedAt: interruptedAt })
+          .where(eq(schema.subChats.runStatus, "running"))
+          .run().changes
+      : 0
+    if (cancelledRuns || cancelledChats) {
+      console.log(
+        `[DB] Reconciled interrupted agent state: ${cancelledRuns} runs, ${cancelledChats} chats`,
+      )
+    }
   } catch (error) {
     console.error("[DB] Migration error:", error)
     throw error

@@ -1,4 +1,4 @@
-import { and, desc, eq, like } from "drizzle-orm"
+import { and, desc, eq, isNotNull, like } from "drizzle-orm"
 import { app } from "electron"
 import { createHash } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
@@ -13,19 +13,22 @@ function historyRoot() {
   return join(app.getPath("userData"), "voice-history")
 }
 
-function requireChat(chatId: string) {
+function requireChat(chatId?: string | null) {
+  if (!chatId) return
   const chat = getDatabase().select().from(chats).where(eq(chats.id, chatId)).get()
   if (!chat) throw new Error("Chat not found")
 }
 
-export function recordTranscription(input: {
-  chatId: string
+export async function recordTranscription(input: {
+  chatId?: string | null
   subChatId?: string | null
   text: string
   adapterId: string
+  audioWav?: Buffer | null
+  durationMs?: number | null
 }) {
   requireChat(input.chatId)
-  return getDatabase()
+  const artifact = getDatabase()
     .insert(voiceArtifacts)
     .values({
       chatId: input.chatId,
@@ -33,9 +36,25 @@ export function recordTranscription(input: {
       kind: "transcription",
       text: input.text,
       adapterId: input.adapterId,
+      durationMs: input.durationMs ?? null,
+      mimeType: input.audioWav ? "audio/wav" : null,
+      byteLength: input.audioWav?.length ?? 0,
     })
     .returning()
     .get()
+  if (!input.audioWav) return artifact
+  const directory = join(historyRoot(), artifact.id)
+  const audioPath = join(directory, "dictation.wav")
+  await mkdir(directory, { recursive: true })
+  await writeFile(audioPath, input.audioWav)
+  const saved = getDatabase()
+    .update(voiceArtifacts)
+    .set({ audioPath })
+    .where(eq(voiceArtifacts.id, artifact.id))
+    .returning()
+    .get()
+  await pruneVoiceHistory()
+  return saved
 }
 
 export async function recordSpeech(input: {
@@ -210,8 +229,7 @@ export async function readSpeechAudio(id: string) {
     .from(voiceArtifacts)
     .where(eq(voiceArtifacts.id, id))
     .get()
-  if (!artifact || artifact.kind !== "speech" || !artifact.audioPath)
-    throw new Error("Speech audio not found")
+  if (!artifact || !artifact.audioPath) throw new Error("Voice audio not found")
   const audio = await readFile(artifact.audioPath)
   getDatabase()
     .update(voiceArtifacts)
@@ -225,11 +243,33 @@ export async function readSpeechAudio(id: string) {
   }
 }
 
+export async function deleteVoiceHistoryEntry(id: string) {
+  const artifact = getDatabase()
+    .select()
+    .from(voiceArtifacts)
+    .where(eq(voiceArtifacts.id, id))
+    .get()
+  if (!artifact) return { deleted: false }
+  if (artifact.audioPath)
+    await rm(join(historyRoot(), basename(id)), { recursive: true, force: true })
+  getDatabase().delete(voiceArtifacts).where(eq(voiceArtifacts.id, id)).run()
+  return { deleted: true }
+}
+
+export function getVoiceHistoryAudioPath(id: string) {
+  const artifact = getDatabase()
+    .select()
+    .from(voiceArtifacts)
+    .where(eq(voiceArtifacts.id, id))
+    .get()
+  return artifact?.audioPath ?? null
+}
+
 async function pruneVoiceHistory() {
   const rows = getDatabase()
     .select()
     .from(voiceArtifacts)
-    .where(eq(voiceArtifacts.kind, "speech"))
+    .where(isNotNull(voiceArtifacts.audioPath))
     .orderBy(desc(voiceArtifacts.createdAt))
     .all()
   let total = 0
@@ -239,7 +279,15 @@ async function pruneVoiceHistory() {
     if ((row.createdAt?.getTime() ?? 0) >= cutoff && total <= AUDIO_MAX_BYTES) continue
     if (row.audioPath)
       await rm(join(historyRoot(), basename(row.id)), { recursive: true, force: true })
-    getDatabase().delete(voiceArtifacts).where(eq(voiceArtifacts.id, row.id)).run()
+    if (row.kind === "transcription") {
+      getDatabase()
+        .update(voiceArtifacts)
+        .set({ audioPath: null, mimeType: null, byteLength: 0 })
+        .where(eq(voiceArtifacts.id, row.id))
+        .run()
+    } else {
+      getDatabase().delete(voiceArtifacts).where(eq(voiceArtifacts.id, row.id)).run()
+    }
   }
 }
 

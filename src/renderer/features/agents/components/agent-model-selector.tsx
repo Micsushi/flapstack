@@ -126,226 +126,154 @@ type ModelGroup = {
   items: FlatModelItem[]
 }
 
-function CodexReasoningSubMenu({
-  reasoningLevels,
-  selectedReasoning,
-  onSelectReasoning,
-}: {
-  reasoningLevels: readonly CodexReasoningLevel[]
-  selectedReasoning: CodexReasoningLevel
-  onSelectReasoning: (reasoning: CodexReasoningLevel) => void
-}) {
-  const triggerRef = useRef<HTMLDivElement>(null)
-  const subMenuRef = useRef<HTMLDivElement>(null)
-  const [showSub, setShowSub] = useState(false)
-  const [subPos, setSubPos] = useState({ top: 0, left: 0 })
-  const closeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const scheduleClose = useCallback(() => {
-    closeTimeout.current = setTimeout(() => setShowSub(false), 150)
-  }, [])
-
-  const cancelClose = useCallback(() => {
-    if (closeTimeout.current) clearTimeout(closeTimeout.current)
-  }, [])
-
-  const handleTriggerEnter = useCallback(() => {
-    cancelClose()
-    if (triggerRef.current) {
-      const triggerRect = triggerRef.current.getBoundingClientRect()
-      const popoverEl = triggerRef.current.closest("[data-radix-popper-content-wrapper] > *")
-      setSubPos({
-        top: triggerRect.top - 4,
-        left: triggerRect.right + 6,
-      })
-    }
-    setShowSub(true)
-  }, [cancelClose])
-
-  const handleTriggerLeave = useCallback(
-    (e: React.MouseEvent) => {
-      const related = e.relatedTarget as Node | null
-      if (subMenuRef.current?.contains(related)) return
-      scheduleClose()
-    },
-    [scheduleClose],
-  )
-
-  const handleSubLeave = useCallback(
-    (e: React.MouseEvent) => {
-      const related = e.relatedTarget as Node | null
-      if (triggerRef.current?.contains(related)) return
-      scheduleClose()
-    },
-    [scheduleClose],
-  )
-
-  useEffect(() => {
-    return () => {
-      if (closeTimeout.current) clearTimeout(closeTimeout.current)
-    }
-  }, [])
-
-  return (
-    <div className="py-1">
-      <div
-        ref={triggerRef}
-        onMouseEnter={handleTriggerEnter}
-        onMouseLeave={handleTriggerLeave}
-        className={cn(
-          "flex items-center justify-between gap-1.5 min-h-[32px] py-[5px] px-1.5 mx-1 rounded-md text-sm cursor-default select-none outline-none transition-colors",
-          showSub
-            ? "dark:bg-neutral-800 bg-accent text-foreground"
-            : "dark:hover:bg-neutral-800 hover:text-foreground",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span>Reasoning</span>
-        </div>
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <span className="text-xs">{formatCodexReasoningLevelLabel(selectedReasoning)}</span>
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-        </div>
-      </div>
-
-      {showSub &&
-        createPortal(
-          <div
-            ref={subMenuRef}
-            onMouseEnter={cancelClose}
-            onMouseLeave={handleSubLeave}
-            className="fixed z-50 min-w-[180px] overflow-auto rounded-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-lg py-1 animate-in fade-in-0 zoom-in-95 slide-in-from-left-2"
-            style={{ top: subPos.top, left: subPos.left }}
-          >
-            {reasoningLevels.map((reasoning) => {
-              const isSelected = selectedReasoning === reasoning
-              return (
-                <button
-                  key={reasoning}
-                  onClick={() => onSelectReasoning(reasoning)}
-                  className="flex items-center justify-between gap-4 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
-                >
-                  <span>{formatCodexReasoningLevelLabel(reasoning)}</span>
-                  {isSelected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
-                </button>
-              )
-            })}
-          </div>,
-          document.body,
-        )}
-    </div>
-  )
+interface AgentModelTuningSelectorProps {
+  selectedAgentId: AgentProviderId
+  reasoningEnabled: boolean
+  onReasoningEnabledChange: (enabled: boolean) => void
+  claude: Pick<
+    AgentModelSelectorProps["claude"],
+    | "models"
+    | "selectedModelId"
+    | "hasCustomModelConfig"
+    | "isOffline"
+    | "selectedEffort"
+    | "onSelectEffort"
+  >
+  codex: Pick<
+    AgentModelSelectorProps["codex"],
+    | "models"
+    | "selectedModelId"
+    | "selectedReasoning"
+    | "onSelectReasoning"
+    | "fastModeEnabled"
+    | "onFastModeChange"
+  >
 }
 
-function ClaudeEffortSubMenu({
-  efforts,
-  selectedEffort,
-  onSelectEffort,
-}: {
-  efforts: readonly ClaudeEffortLevel[]
-  selectedEffort: ClaudeEffortLevel
-  onSelectEffort: (effort: ClaudeEffortLevel) => void
-}) {
-  const triggerRef = useRef<HTMLDivElement>(null)
-  const subMenuRef = useRef<HTMLDivElement>(null)
-  const [showSub, setShowSub] = useState(false)
-  const [subPos, setSubPos] = useState({ top: 0, left: 0 })
-  const closeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+export function AgentModelTuningSelector({
+  selectedAgentId,
+  reasoningEnabled,
+  onReasoningEnabledChange,
+  claude,
+  codex,
+}: AgentModelTuningSelectorProps) {
+  const selectedClaudeModel =
+    claude.models.find((model) => model.id === claude.selectedModelId) || claude.models[0]
+  const claudeEfforts =
+    selectedAgentId === "claude-code" && !claude.isOffline && !claude.hasCustomModelConfig
+      ? selectedClaudeModel?.efforts
+      : undefined
+  const selectedClaudeEffort = claudeEfforts?.includes(claude.selectedEffort)
+    ? claude.selectedEffort
+    : claudeEfforts?.includes("high")
+      ? "high"
+      : claudeEfforts?.[0]
 
-  const scheduleClose = useCallback(() => {
-    closeTimeout.current = setTimeout(() => setShowSub(false), 150)
-  }, [])
+  const selectedCodexModel =
+    codex.models.find((model) => model.id === codex.selectedModelId) || codex.models[0]
+  const codexReasoningLevels =
+    selectedAgentId === "codex" ? selectedCodexModel?.reasoningLevels : undefined
+  const selectedCodexReasoning = codexReasoningLevels?.includes(codex.selectedReasoning)
+    ? codex.selectedReasoning
+    : codexReasoningLevels?.includes("high")
+      ? "high"
+      : codexReasoningLevels?.[0]
+  const fastModeAvailable =
+    selectedAgentId === "codex" && selectedCodexModel?.supportsFastMode === true
+  const fastModeEnabled = fastModeAvailable && codex.fastModeEnabled
 
-  const cancelClose = useCallback(() => {
-    if (closeTimeout.current) clearTimeout(closeTimeout.current)
-  }, [])
+  const selectedValue =
+    selectedAgentId === "claude-code" && selectedClaudeEffort
+      ? formatClaudeEffortLabel(selectedClaudeEffort)
+      : selectedAgentId === "codex" && selectedCodexReasoning
+        ? formatCodexReasoningLevelLabel(selectedCodexReasoning)
+        : null
 
-  const handleTriggerEnter = useCallback(() => {
-    cancelClose()
-    if (triggerRef.current) {
-      const triggerRect = triggerRef.current.getBoundingClientRect()
-      setSubPos({
-        top: triggerRect.top - 4,
-        left: triggerRect.right + 6,
-      })
-    }
-    setShowSub(true)
-  }, [cancelClose])
-
-  const handleTriggerLeave = useCallback(
-    (e: React.MouseEvent) => {
-      const related = e.relatedTarget as Node | null
-      if (subMenuRef.current?.contains(related)) return
-      scheduleClose()
-    },
-    [scheduleClose],
-  )
-
-  const handleSubLeave = useCallback(
-    (e: React.MouseEvent) => {
-      const related = e.relatedTarget as Node | null
-      if (triggerRef.current?.contains(related)) return
-      scheduleClose()
-    },
-    [scheduleClose],
-  )
-
-  useEffect(() => {
-    return () => {
-      if (closeTimeout.current) clearTimeout(closeTimeout.current)
-    }
-  }, [])
+  const options =
+    selectedAgentId === "claude-code" && selectedClaudeEffort
+      ? claudeEfforts?.map((value) => ({
+          value,
+          label: formatClaudeEffortLabel(value),
+          selected: value === selectedClaudeEffort,
+          onSelect: () => claude.onSelectEffort(value),
+        }))
+      : selectedAgentId === "codex" && selectedCodexReasoning
+        ? codexReasoningLevels?.map((value) => ({
+            value,
+            label: formatCodexReasoningLevelLabel(value),
+            selected: value === selectedCodexReasoning,
+            onSelect: () => codex.onSelectReasoning(value),
+          }))
+        : []
 
   return (
-    <div className="py-1">
-      <div
-        ref={triggerRef}
-        onMouseEnter={handleTriggerEnter}
-        onMouseLeave={handleTriggerLeave}
-        className={cn(
-          "flex items-center justify-between gap-1.5 min-h-[32px] py-[5px] px-1.5 mx-1 rounded-md text-sm cursor-default select-none outline-none transition-colors",
-          showSub
-            ? "dark:bg-neutral-800 bg-accent text-foreground"
-            : "dark:hover:bg-neutral-800 hover:text-foreground",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span>Effort</span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Model tuning: reasoning ${reasoningEnabled ? "on" : "off"}${selectedValue ? `, ${selectedValue}` : ""}${fastModeEnabled ? ", Fast" : ""}`}
+          className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-xs text-foreground transition-colors hover:bg-accent outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+        >
+          <Brain className="h-3 w-3 text-muted-foreground" />
+          <span>{reasoningEnabled ? selectedValue || "Reasoning" : "Reasoning off"}</span>
+          {fastModeEnabled && (
+            <span className="flex items-center gap-0.5 text-amber-500">
+              <Zap className="h-3 w-3" />
+              <span>Fast</span>
+            </span>
+          )}
+          <IconChevronDown className="h-2.5 w-2.5 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-48 p-1" align="start">
+        <div className="flex min-h-[32px] items-center justify-between px-2 py-1.5">
+          <span className="flex items-center gap-1.5 text-sm">
+            <Brain className="h-3.5 w-3.5 text-muted-foreground" />
+            Show reasoning
+          </span>
+          <Switch
+            aria-label="Show reasoning"
+            checked={reasoningEnabled}
+            onCheckedChange={onReasoningEnabledChange}
+            className="scale-75"
+          />
         </div>
-        <div className="flex items-center gap-1 text-muted-foreground">
-          <span className="text-xs">{formatClaudeEffortLabel(selectedEffort)}</span>
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-        </div>
-      </div>
-
-      {showSub &&
-        createPortal(
-          <div
-            ref={subMenuRef}
-            onMouseEnter={cancelClose}
-            onMouseLeave={handleSubLeave}
-            className="fixed z-50 min-w-[180px] overflow-auto rounded-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-lg py-1 animate-in fade-in-0 zoom-in-95 slide-in-from-left-2"
-            style={{ top: subPos.top, left: subPos.left }}
+        {options?.length ? <div className="my-1 h-px bg-border" /> : null}
+        {options?.length ? (
+          <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
+            {selectedAgentId === "codex" ? "Reasoning depth" : "Effort"}
+          </div>
+        ) : null}
+        {options?.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={option.onSelect}
+            className="flex min-h-[32px] w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent"
           >
-            {efforts.map((effort) => {
-              const isSelected = selectedEffort === effort
-              return (
-                <button
-                  key={effort}
-                  onClick={() => onSelectEffort(effort)}
-                  className="flex items-center justify-between gap-4 min-h-[32px] py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm cursor-default select-none outline-none dark:hover:bg-neutral-800 hover:text-foreground transition-colors"
-                >
-                  <span>{formatClaudeEffortLabel(effort)}</span>
-                  {isSelected && <CheckIcon className="h-3.5 w-3.5 shrink-0" />}
-                </button>
-              )
-            })}
-          </div>,
-          document.body,
+            <span>{option.label}</span>
+            {option.selected && <CheckIcon className="h-3.5 w-3.5" />}
+          </button>
+        ))}
+        {fastModeAvailable && (
+          <>
+            <div className="my-1 h-px bg-border" />
+            <div className="flex min-h-[32px] items-center justify-between px-2 py-1.5">
+              <span className="flex items-center gap-1.5 text-sm">
+                <Zap className="h-3.5 w-3.5 text-amber-500" />
+                Fast mode
+              </span>
+              <Switch
+                aria-label="Fast mode"
+                checked={fastModeEnabled}
+                onCheckedChange={codex.onFastModeChange}
+                className="scale-75"
+              />
+            </div>
+          </>
         )}
-    </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -598,15 +526,10 @@ export function AgentModelSelector({
     [onOpenChange],
   )
 
-  const selectedCodexModel =
-    codex.models.find((m) => m.id === codex.selectedModelId) || codex.models[0]
-  const codexFastAvailable = selectedCodexModel?.supportsFastMode === true
   const selectedProviderMeta = getHarnessChipMeta(selectedAgentId)
   const triggerIcon =
     selectedAgentId === "claude-code" && claude.isOffline && claude.ollamaModels.length > 0 ? (
       <Zap className="h-3 w-3" />
-    ) : selectedAgentId === "codex" && codex.fastModeEnabled && codexFastAvailable ? (
-      <Zap className="h-3 w-3 text-amber-500" />
     ) : (
       <ProviderChipIcon provider={selectedAgentId} className="h-3 w-3 shrink-0" />
     )
@@ -785,24 +708,6 @@ export function AgentModelSelector({
             !claude.isOffline &&
             !claude.hasCustomModelConfig && (
               <>
-                {(() => {
-                  const selectedClaudeModel =
-                    claude.models.find((m) => m.id === claude.selectedModelId) || claude.models[0]
-                  const efforts = selectedClaudeModel?.efforts
-                  if (!efforts || efforts.length === 0) return null
-                  const selectedEffort = efforts.includes(claude.selectedEffort)
-                    ? claude.selectedEffort
-                    : efforts.includes("high")
-                      ? "high"
-                      : efforts[0]
-                  return (
-                    <ClaudeEffortSubMenu
-                      efforts={efforts}
-                      selectedEffort={selectedEffort}
-                      onSelectEffort={claude.onSelectEffort}
-                    />
-                  )
-                })()}
                 <div
                   className="flex items-center justify-between min-h-[32px] py-[5px] px-1.5 mx-1"
                   onClick={(e) => e.stopPropagation()}
@@ -820,38 +725,6 @@ export function AgentModelSelector({
                 <CommandSeparator />
               </>
             )}
-
-          {/* Codex reasoning level selector with hover sub-menu */}
-          {selectedAgentId === "codex" &&
-            (() => {
-              if (!selectedCodexModel) return null
-              return (
-                <>
-                  {selectedCodexModel.supportsFastMode && (
-                    <div
-                      className="flex items-center justify-between min-h-[32px] py-[5px] px-1.5 mx-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <Zap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                        <span className="text-sm">Fast mode</span>
-                      </div>
-                      <Switch
-                        checked={codex.fastModeEnabled}
-                        onCheckedChange={codex.onFastModeChange}
-                        className="scale-75"
-                      />
-                    </div>
-                  )}
-                  <CodexReasoningSubMenu
-                    reasoningLevels={selectedCodexModel.reasoningLevels}
-                    selectedReasoning={codex.selectedReasoning}
-                    onSelectReasoning={codex.onSelectReasoning}
-                  />
-                  <CommandSeparator />
-                </>
-              )
-            })()}
 
           <CommandList className="max-h-[300px] overflow-y-auto">
             {filteredModelCount > 0 ? (

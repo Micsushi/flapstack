@@ -7,7 +7,6 @@ import {
   type CustomClaudeConfig,
   customClaudeConfigAtom,
   enableTasksAtom,
-  reasoningOutputEnabledAtom,
   historyEnabledAtom,
   normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
@@ -25,6 +24,7 @@ import {
   pendingAuthRetryMessageAtom,
   subChatModelIdAtomFamily,
   subChatClaudeEffortAtomFamily,
+  subChatReasoningEnabledAtomFamily,
 } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
@@ -168,11 +168,9 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const sessionId = metadata?.sessionId
 
     // Read reasoning-output setting dynamically (so toggle applies to existing chats)
-    const reasoningOutputEnabled = appStore.get(reasoningOutputEnabledAtom)
-    // Max provider reasoning tokens for reasoning-output mode
-    // SDK adds +1 internally, so 64000 becomes 64001 which exceeds Opus 4.5 limit
-    // Using 32000 to stay safely under the 64000 max output tokens limit
-    const maxReasoningOutputTokens = reasoningOutputEnabled ? 32_000 : undefined
+    const reasoningOutputEnabled = appStore.get(
+      subChatReasoningEnabledAtomFamily(this.config.subChatId),
+    )
     const historyEnabled = appStore.get(historyEnabledAtom)
     const enableTasks = appStore.get(enableTasksAtom)
 
@@ -216,7 +214,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             projectPath: this.config.projectPath, // Original project path for MCP config lookup
             mode: currentMode,
             sessionId,
-            ...(maxReasoningOutputTokens && { maxReasoningOutputTokens }),
+            reasoningEnabled: reasoningOutputEnabled,
             effort: claudeEffort,
             ...(modelString && { model: modelString }),
             ...(customConfig && { customConfig }),

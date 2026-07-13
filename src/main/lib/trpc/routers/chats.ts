@@ -37,6 +37,7 @@ import {
 import { publicProcedure, router } from "../index"
 import { ensureTaskPrimaryWorktree } from "./tasks"
 import { deleteVoiceHistoryForChat } from "../../speech/history"
+import { getNextChatForkName } from "../../chat-fork-name"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -67,13 +68,10 @@ function sendWorktreeSetupFailure(
   }
 }
 
-// Fallback to truncated user message if AI generation fails
+// Preserve the complete fallback name. The renderer owns visual truncation.
 function getFallbackName(userMessage: string): string {
   const trimmed = userMessage.trim()
-  if (trimmed.length <= 25) {
-    return trimmed || "New Chat"
-  }
-  return trimmed.substring(0, 25) + "..."
+  return trimmed || "New Chat"
 }
 
 /**
@@ -619,12 +617,27 @@ export const chatsRouter = router({
     .input(z.object({ id: z.string(), name: z.string().min(1) }))
     .mutation(({ input }) => {
       const db = getDatabase()
-      return db
-        .update(chats)
-        .set({ name: input.name, updatedAt: new Date() })
-        .where(eq(chats.id, input.id))
-        .returning()
-        .get()
+      return db.transaction((tx) => {
+        const updatedChat = tx
+          .update(chats)
+          .set({ name: input.name, updatedAt: new Date() })
+          .where(eq(chats.id, input.id))
+          .returning()
+          .get()
+        const canonicalSubChat = tx
+          .select({ id: subChats.id })
+          .from(subChats)
+          .where(eq(subChats.chatId, input.id))
+          .orderBy(subChats.createdAt)
+          .get()
+        if (canonicalSubChat) {
+          tx.update(subChats)
+            .set({ name: input.name, updatedAt: new Date() })
+            .where(eq(subChats.id, canonicalSubChat.id))
+            .run()
+        }
+        return updatedChat
+      })
     }),
 
   pin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
@@ -989,9 +1002,8 @@ export const chatsRouter = router({
     }),
 
   /**
-   * Fork a sub-chat from a specific message, preserving SDK session context.
-   * Creates a new sub-chat with messages up to the target message,
-   * copies the .jsonl session file, and marks it for forkSession resume.
+   * Fork a conversation from a specific message into a new sidebar chat.
+   * The internal sub-chat row remains a one-to-one compatibility detail.
    */
   forkSubChat: publicProcedure
     .input(
@@ -1008,6 +1020,8 @@ export const chatsRouter = router({
       // 1. Get the source sub-chat
       const sourceSubChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
       if (!sourceSubChat) throw new Error("Source sub-chat not found")
+      const sourceChat = db.select().from(chats).where(eq(chats.id, sourceSubChat.chatId)).get()
+      if (!sourceChat) throw new Error("Source chat not found")
 
       // 2. Parse messages and find the cutoff point
       const allMessages = JSON.parse(sourceSubChat.messages || "[]")
@@ -1045,43 +1059,64 @@ export const chatsRouter = router({
         },
       }))
 
-      // 6. Generate fork name: [N] originalName
+      // 6. Generate a Codex-style sibling name: Title (2), Title (3), ...
       let forkName = input.name
       if (!forkName) {
-        // Strip existing [N] prefix from source name to get base name
-        const sourceName = sourceSubChat.name || "Chat"
-        const baseName = sourceName.replace(/^\[\d+\]\s*/, "")
-
-        // Find highest [N] among all sibling sub-chats
+        const scopeConditions = [eq(chats.scope, sourceChat.scope)]
+        scopeConditions.push(
+          sourceChat.projectId
+            ? eq(chats.projectId, sourceChat.projectId)
+            : isNull(chats.projectId),
+        )
+        scopeConditions.push(
+          sourceChat.taskId ? eq(chats.taskId, sourceChat.taskId) : isNull(chats.taskId),
+        )
         const siblings = db
-          .select({ name: subChats.name })
-          .from(subChats)
-          .where(eq(subChats.chatId, sourceSubChat.chatId))
+          .select({ name: chats.name })
+          .from(chats)
+          .where(and(...scopeConditions))
           .all()
-
-        let maxN = 0
-        for (const s of siblings) {
-          const match = s.name?.match(/^\[(\d+)\]/)
-          if (match) {
-            maxN = Math.max(maxN, parseInt(match[1], 10))
-          }
-        }
-
-        forkName = `[${maxN + 1}] ${baseName}`
+        forkName = getNextChatForkName(
+          sourceChat.name,
+          siblings.map(({ name }) => name),
+        )
       }
 
-      // 7. Insert new sub-chat with sessionId from original (needed for resume)
-      const newSubChat = db
-        .insert(subChats)
-        .values({
-          chatId: sourceSubChat.chatId,
-          name: forkName,
-          mode: sourceSubChat.mode,
-          messages: JSON.stringify(forkedMessages),
-          sessionId: sourceSubChat.sessionId,
-        })
-        .returning()
-        .get()
+      // 7. Create a new sidebar chat with one internal conversation row.
+      const { newChat, newSubChat } = db.transaction((tx) => {
+        const newChat = tx
+          .insert(chats)
+          .values({
+            name: forkName,
+            projectId: sourceChat.projectId,
+            taskId: sourceChat.taskId,
+            scope: sourceChat.scope,
+            permissionMode: sourceChat.permissionMode,
+            harness: sourceChat.harness,
+            model: sourceChat.model,
+            worktreePath: sourceChat.worktreePath,
+            branch: sourceChat.branch,
+            baseBranch: sourceChat.baseBranch,
+          })
+          .returning()
+          .get()
+        const newSubChat = tx
+          .insert(subChats)
+          .values({
+            chatId: newChat.id,
+            name: forkName,
+            mode: sourceSubChat.mode,
+            harness: sourceSubChat.harness,
+            model: sourceSubChat.model,
+            permissionMode: sourceSubChat.permissionMode,
+            worktreePath: sourceSubChat.worktreePath,
+            messages: JSON.stringify(forkedMessages),
+            sessionId: sourceSubChat.sessionId,
+          })
+          .returning()
+          .get()
+        return { newChat, newSubChat }
+      })
 
       // 8. Copy .jsonl session files to the new isolated config dir
       if (sourceSubChat.sessionId) {
@@ -1121,6 +1156,7 @@ export const chatsRouter = router({
       })
 
       return {
+        chat: newChat,
         subChat: newSubChat,
         messageCount: forkedMessages.length,
         forkAtSdkUuid,
@@ -1261,12 +1297,21 @@ export const chatsRouter = router({
     .input(z.object({ id: z.string(), name: z.string().min(1) }))
     .mutation(({ input }) => {
       const db = getDatabase()
-      return db
-        .update(subChats)
-        .set({ name: input.name })
-        .where(eq(subChats.id, input.id))
-        .returning()
-        .get()
+      return db.transaction((tx) => {
+        const updatedSubChat = tx
+          .update(subChats)
+          .set({ name: input.name, updatedAt: new Date() })
+          .where(eq(subChats.id, input.id))
+          .returning()
+          .get()
+        if (updatedSubChat) {
+          tx.update(chats)
+            .set({ name: input.name, updatedAt: new Date() })
+            .where(eq(chats.id, updatedSubChat.chatId))
+            .run()
+        }
+        return updatedSubChat
+      })
     }),
 
   /**

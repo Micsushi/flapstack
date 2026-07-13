@@ -62,8 +62,12 @@ type PendingApproval = {
   resolve: (decision: SidecarApprovalDecision) => void
 }
 
-const activeStreams = new Map<string, { runId: string; controller: AbortController }>()
+const activeStreams = new Map<
+  string,
+  { runId: string; controller: AbortController; startedAt: number }
+>()
 const pendingApprovals = new Map<string, PendingApproval>()
+const devRunSubscriptions = new Map<string, { unsubscribe?: () => void }>()
 
 export function hasActiveOpencodeStreams(): boolean {
   return activeStreams.size > 0
@@ -71,6 +75,50 @@ export function hasActiveOpencodeStreams(): boolean {
 
 export function abortAllOpencodeStreams(): void {
   for (const active of activeStreams.values()) active.controller.abort()
+}
+
+export function getActiveOpencodeRunStartedAt(runId: string): number | undefined {
+  for (const active of activeStreams.values()) {
+    if (active.runId === runId) return active.startedAt
+  }
+  return undefined
+}
+
+export function listPendingOpencodeApprovals(runId?: string) {
+  return Array.from(pendingApprovals, ([requestId, approval]) => ({
+    requestId,
+    runId: approval.runId,
+    provider: approval.provider,
+    toolCallId: approval.toolCallId,
+    permission: approval.permission,
+    patterns: approval.patterns,
+    ...(approval.command ? { command: approval.command } : {}),
+  })).filter((approval) => !runId || approval.runId === runId)
+}
+
+export function replyPendingOpencodeApproval(input: {
+  requestId: string
+  reply: "once" | "always" | "reject"
+  message?: string
+}): { resolved: boolean } {
+  const pending = pendingApprovals.get(input.requestId)
+  if (!pending) return { resolved: false }
+  pendingApprovals.delete(input.requestId)
+  pending.resolve(
+    input.reply === "reject"
+      ? { reply: "reject", message: input.message || "Denied by Flapstack dev control." }
+      : { reply: input.reply },
+  )
+  return { resolved: true }
+}
+
+export function cancelActiveOpencodeRun(input: { subChatId: string; runId: string }): {
+  cancelled: boolean
+} {
+  const active = activeStreams.get(input.subChatId)
+  if (!active || active.runId !== input.runId) return { cancelled: false }
+  active.controller.abort()
+  return { cancelled: true }
 }
 
 function parseStoredMessages(raw: string | null | undefined): any[] {
@@ -213,6 +261,8 @@ export const opencodeRouter = router({
         cwd: z.string().min(1),
         projectPath: z.string().optional(),
         sessionId: z.string().optional(),
+        reasoningEnabled: z.boolean().default(true),
+        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).default("high"),
         images: z
           .array(
             z.object({
@@ -232,7 +282,7 @@ export const opencodeRouter = router({
         const controller = new AbortController()
         const runId = input.runId || crypto.randomUUID()
         const startedAt = Date.now()
-        activeStreams.set(input.subChatId, { runId, controller })
+        activeStreams.set(input.subChatId, { runId, controller, startedAt })
         const isAuthoritativeRun = () => activeStreams.get(input.subChatId)?.runId === runId
         let active = true
         let completed = false
@@ -363,9 +413,14 @@ export const opencodeRouter = router({
                 worktreePath: input.cwd,
                 promptMessageId: promptMessage.id,
                 status: "running",
+                startedAt: new Date(startedAt),
               })
               .run()
             runPersisted = true
+            safeEmit({
+              type: "message-metadata",
+              messageMetadata: { runId, startedAt },
+            })
             const before = await captureCheckpoint(runId, input.cwd, "before")
             db.update(agentRuns)
               .set({ beforeCheckpointId: before.id })
@@ -411,6 +466,8 @@ export const opencodeRouter = router({
                 })),
                 cwd: input.cwd,
                 permissionMode,
+                reasoningEnabled: input.reasoningEnabled,
+                reasoningEffort: input.reasoningEffort,
                 resumeSessionId: input.sessionId || subChat.sessionId || undefined,
                 signal: controller.signal,
               },
@@ -443,6 +500,14 @@ export const opencodeRouter = router({
                   if (controller.signal.aborted) abortApproval()
                 }),
             )) {
+              if (
+                !input.reasoningEnabled &&
+                (event.kind === "reasoning-delta" ||
+                  event.kind === "reasoning-summary" ||
+                  event.kind === "reasoning-metadata")
+              ) {
+                continue
+              }
               runAudit.apply(event)
               if (event.kind === "session-start") {
                 sidecarSessionId = event.sessionId
@@ -522,6 +587,7 @@ export const opencodeRouter = router({
                   harness: input.provider,
                   model: input.model,
                   runId,
+                  startedAt,
                   durationMs: Date.now() - startedAt,
                   sessionId: sidecarSessionId,
                   permissionMode,
@@ -637,17 +703,9 @@ export const opencodeRouter = router({
       }),
     ),
 
-  listPendingApprovals: publicProcedure.input(z.object({ runId: z.string() })).query(({ input }) =>
-    Array.from(pendingApprovals, ([requestId, approval]) => ({
-      requestId,
-      runId: approval.runId,
-      provider: approval.provider,
-      toolCallId: approval.toolCallId,
-      permission: approval.permission,
-      patterns: approval.patterns,
-      ...(approval.command ? { command: approval.command } : {}),
-    })).filter((approval) => approval.runId === input.runId),
-  ),
+  listPendingApprovals: publicProcedure
+    .input(z.object({ runId: z.string() }))
+    .query(({ input }) => listPendingOpencodeApprovals(input.runId)),
 
   replyApproval: publicProcedure
     .input(
@@ -657,24 +715,64 @@ export const opencodeRouter = router({
         message: z.string().max(2_000).optional(),
       }),
     )
-    .mutation(({ input }) => {
-      const pending = pendingApprovals.get(input.requestId)
-      if (!pending) return { resolved: false }
-      pendingApprovals.delete(input.requestId)
-      pending.resolve(
-        input.reply === "reject"
-          ? { reply: "reject", message: input.message || "Denied by Flapstack." }
-          : { reply: input.reply },
-      )
-      return { resolved: true }
-    }),
+    .mutation(({ input }) => replyPendingOpencodeApproval(input)),
 
   cancel: publicProcedure
     .input(z.object({ subChatId: z.string(), runId: z.string() }))
-    .mutation(({ input }) => {
-      const active = activeStreams.get(input.subChatId)
-      if (!active || active.runId !== input.runId) return { cancelled: false }
-      active.controller.abort()
-      return { cancelled: true }
-    }),
+    .mutation(({ input }) => cancelActiveOpencodeRun(input)),
 })
+
+export async function startOpencodeDevRun(input: {
+  subChatId: string
+  chatId: string
+  provider: (typeof OPENCODE_HARNESSES)[number]
+  model: string
+  prompt: string
+  cwd: string
+  projectPath?: string
+  reasoningEnabled?: boolean
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+}): Promise<{ runId: string }> {
+  const runId = crypto.randomUUID()
+  const stream = (await opencodeRouter.createCaller({ getWindow: () => null }).chat({
+    ...input,
+    runId,
+    reasoningEnabled: input.reasoningEnabled ?? true,
+    reasoningEffort: input.reasoningEffort ?? "high",
+  })) as unknown as {
+    subscribe?: (observer: {
+      next?: (value: unknown) => void
+      error?: (error: unknown) => void
+      complete?: () => void
+    }) => { unsubscribe?: () => void }
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>
+  }
+
+  const finish = () => devRunSubscriptions.delete(runId)
+  if (typeof stream.subscribe === "function") {
+    const subscription = stream.subscribe({
+      error: (error) => {
+        console.error(`[dev-mcp] OpenCode run ${runId} failed`, error)
+        finish()
+      },
+      complete: finish,
+    })
+    devRunSubscriptions.set(runId, subscription)
+  } else if (stream[Symbol.asyncIterator]) {
+    void (async () => {
+      try {
+        for await (const _chunk of stream as AsyncIterable<unknown>) {
+          // Consuming the stream drives the same tRPC subscription lifecycle.
+        }
+      } catch (error) {
+        console.error(`[dev-mcp] OpenCode run ${runId} failed`, error)
+      } finally {
+        finish()
+      }
+    })()
+  } else {
+    throw new Error("OpenCode chat subscription did not return a consumable stream")
+  }
+
+  return { runId }
+}

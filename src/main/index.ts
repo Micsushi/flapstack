@@ -10,6 +10,7 @@ import {
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, initDatabase } from "./lib/db"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
+import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
@@ -43,6 +44,8 @@ import {
 import { windowManager } from "./windows/window-manager"
 
 import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
+
+let devMcpServer: DevMcpServerHandle | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -826,6 +829,12 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      devMcpServer = await startDevMcpServer({
+        enabled: IS_DEV,
+        userDataPath: app.getPath("userData"),
+        checkout: app.getAppPath(),
+        profile: app.getName(),
+      })
       void runStartupCatchUp({
         db: initDatabase(),
         getSecret: getAppUsageSecret,
@@ -888,6 +897,8 @@ if (gotTheLock) {
     console.log("[App] Shutting down...")
     abortAllAgentSessions()
     cancelAllPendingOAuth()
+    await devMcpServer?.stop()
+    devMcpServer = null
     await cleanupGitWatchers()
     await shutdownAnalytics()
     await closeDatabase()

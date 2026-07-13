@@ -69,7 +69,7 @@ Latest automated evidence, recorded without checking the human boxes below:
   same explicit architectures; a fresh allowlisted resource tree atomically
   replaces ignored `resources/bin` so stale files and symlinks cannot leak.
   Both packaged apps contain regular, executable, matching-architecture Claude
-  2.1.45, Codex 0.144.1, and whisper.cpp 1.8.6 binaries plus matching Flapstack
+  2.1.207, Codex 0.144.1, and whisper.cpp 1.8.6 binaries plus matching Flapstack
   and better-sqlite3. Both Claude/Codex version and Whisper help smokes pass.
   A full Node 22 gate passed before and after packaging: builder invalidated the
   shared ABI marker, the post-package probe detected Electron ABI 140, rebuilt

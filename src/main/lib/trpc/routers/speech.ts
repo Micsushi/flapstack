@@ -15,6 +15,11 @@ import { createFallbackSpokenSummary } from "../../speech/spoken-summary"
 import { resolveSpeechText } from "../../speech/speech-text"
 import { SpeechRequestOwnership } from "../../speech/request-ownership"
 import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/stt-whisper-cpp"
+import {
+  ensureParakeetModel,
+  getParakeetModelStatus,
+  PARAKEET_MODEL,
+} from "../../speech/stt-parakeet-streaming"
 import { speakWithTtsFallback } from "../../speech/tts-fallback"
 import { nativeTtsAdapter } from "../../speech/tts-native"
 import {
@@ -25,7 +30,10 @@ import {
   readSpeechAudio,
   recordSpeech,
   searchVoiceHistory,
+  deleteVoiceHistoryEntry,
+  getVoiceHistoryAudioPath,
 } from "../../speech/history"
+import { shell } from "electron"
 import { publicProcedure, router } from "../index"
 
 const speechOwnership = new SpeechRequestOwnership()
@@ -54,7 +62,11 @@ export const speechRouter = router({
   updateSettings: publicProcedure
     .input(
       z.object({
+        voiceSettingsVersion: z.literal(2).optional(),
         sttAdapterId: z.string().optional(),
+        parakeetModelId: z.literal("parakeet-unified-en-q8").optional(),
+        retainDictationAudio: z.boolean().optional(),
+        sttModelUnloadMinutes: z.number().int().min(1).max(60).optional(),
         whisperModelId: z.enum(["tiny", "base", "small"]).optional(),
         whisperCppBinPath: z.string().nullable().optional(),
         ttsAdapterId: z.string().optional(),
@@ -100,7 +112,7 @@ export const speechRouter = router({
         nativeTts: getNativeTtsAvailability(),
         stt: sttAvailability,
         tts: ttsAvailability,
-        localStt: sttAvailability["local-whisper"],
+        localStt: sttAvailability[settings.sttAdapterId],
       },
     }
   }),
@@ -111,7 +123,7 @@ export const speechRouter = router({
     return { adapterId: adapter.id, voices: await adapter.listVoices() }
   }),
 
-  listSttModels: publicProcedure.query(() => listWhisperModels()),
+  listSttModels: publicProcedure.query(() => [PARAKEET_MODEL, ...listWhisperModels()]),
 
   speak: publicProcedure
     .input(
@@ -217,18 +229,30 @@ export const speechRouter = router({
 
   // Local Whisper model status for the settings UI (absent/downloading/present/error).
   getSttModelStatus: publicProcedure.query(async () => {
-    return await getSttModelStatus()
+    return getVoiceSettings().sttAdapterId === "local-parakeet"
+      ? await getParakeetModelStatus()
+      : await getSttModelStatus()
   }),
 
   // Trigger download-on-first-use from the settings UI. Resolves when the model
   // is present; poll getSttModelStatus for live progress while it runs.
   downloadSttModel: publicProcedure.mutation(async () => {
     try {
-      await ensureModel()
-      return { status: await getSttModelStatus() }
+      const settings = getVoiceSettings()
+      if (settings.sttAdapterId === "local-parakeet") await ensureParakeetModel()
+      else await ensureModel()
+      return {
+        status:
+          settings.sttAdapterId === "local-parakeet"
+            ? await getParakeetModelStatus()
+            : await getSttModelStatus(),
+      }
     } catch (error) {
       return {
-        status: await getSttModelStatus(),
+        status:
+          getVoiceSettings().sttAdapterId === "local-parakeet"
+            ? await getParakeetModelStatus()
+            : await getSttModelStatus(),
         error: error instanceof Error ? error.message : String(error),
       }
     }
@@ -241,4 +265,17 @@ export const speechRouter = router({
   getHistoryAudio: publicProcedure
     .input(z.object({ id: z.string().min(1) }))
     .query(({ input }) => readSpeechAudio(input.id)),
+
+  deleteHistoryEntry: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => deleteVoiceHistoryEntry(input.id)),
+
+  revealHistoryAudio: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const audioPath = getVoiceHistoryAudioPath(input.id)
+      if (!audioPath) throw new Error("Voice recording not found")
+      shell.showItemInFolder(audioPath)
+      return { revealed: true as const }
+    }),
 })

@@ -60,6 +60,8 @@ export function buildOpencodeConfig(
   provider: OpencodeProviderId,
   selectedModelId?: string,
   baseUrlOverride?: string,
+  reasoningEnabled = true,
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
 ): GeneratedOpencodeConfig {
   const def = getProviderDefinition(provider)
   const key = getProviderKey(provider)
@@ -87,7 +89,18 @@ export function buildOpencodeConfig(
         ...(selectedModelId
           ? {
               models: {
-                [selectedModelId]: { name: selectedModelId },
+                [selectedModelId]: {
+                  name: selectedModelId,
+                  options: {
+                    reasoning: {
+                      enabled: reasoningEnabled,
+                      effort: reasoningEffort,
+                      exclude: !reasoningEnabled,
+                    },
+                    reasoningEffort: reasoningEnabled ? reasoningEffort : "minimal",
+                    includeReasoning: reasoningEnabled,
+                  },
+                },
               },
             }
           : {}),
@@ -109,11 +122,19 @@ export function writeIsolatedConfig(
   provider: OpencodeProviderId,
   selectedModelId?: string,
   baseUrlOverride?: string,
+  reasoningEnabled = true,
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
 ): {
   configDir: string
   env: Record<string, string>
 } {
-  const { config, env } = buildOpencodeConfig(provider, selectedModelId, baseUrlOverride)
+  const { config, env } = buildOpencodeConfig(
+    provider,
+    selectedModelId,
+    baseUrlOverride,
+    reasoningEnabled,
+    reasoningEffort,
+  )
   const configDir = mkdtempSync(join(tmpdir(), "flapstack-opencode-"))
   const toolGuardPath = join(configDir, TOOL_ENV_GUARD_FILE)
   const secretNames = [

@@ -38,7 +38,6 @@ import {
   codexApiKeyAtom,
   codexOnboardingCompletedAtom,
   customClaudeConfigAtom,
-  reasoningOutputEnabledAtom,
   hiddenModelsAtom,
   normalizeCodexApiKey,
   normalizeCustomClaudeConfig,
@@ -62,6 +61,7 @@ import {
   subChatCodexReasoningAtomFamily,
   subChatCursorModelIdAtomFamily,
   subChatOpencodeModelsAtomFamily,
+  subChatReasoningEnabledAtomFamily,
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
@@ -72,10 +72,20 @@ import {
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
-import { AgentModelSelector, type AgentProviderId } from "../components/agent-model-selector"
-import { AgentSendButton } from "../components/agent-send-button"
+import {
+  AgentModelSelector,
+  AgentModelTuningSelector,
+  type AgentProviderId,
+} from "../components/agent-model-selector"
+import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
-import { clearSubChatDraft, saveSubChatDraftWithAttachments } from "../lib/drafts"
+import {
+  clearSubChatDraft,
+  DRAFTS_CHANGE_EVENT,
+  getSubChatDraft,
+  saveSubChatDraftWithAttachments,
+  updateSubChatDraftText,
+} from "../lib/drafts"
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
@@ -101,15 +111,11 @@ import { VoiceWaveIndicator } from "../ui/voice-wave-indicator"
 import { McpStatusDot } from "../../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { handlePasteEvent } from "../utils/paste-text"
 import type { PastedTextFile } from "../hooks/use-pasted-text-files"
-import {
-  useVoiceRecording,
-  blobToBase64,
-  getAudioFormat,
-} from "../../../lib/hooks/use-voice-recording"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import { customHotkeysAtom } from "../../../lib/atoms"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { toast } from "sonner"
+import { useDictationSession } from "../voice/dictation-session"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
   formatPermissionMode,
@@ -161,7 +167,7 @@ export interface ChatInputAreaProps {
   // File input ref - for attachment button
   fileInputRef: React.RefObject<HTMLInputElement | null>
   // Core callbacks
-  onSend: () => void
+  onSend: (inputValueOverride?: string) => void
   onForceSend: () => void // Opt+Enter: stop stream and send immediately, bypassing queue
   onStop: () => Promise<void>
   onCompact: () => void
@@ -199,6 +205,8 @@ export interface ChatInputAreaProps {
   onTargetWorktreePathChange?: (path: string | null) => void
   teamId?: string
   repository?: string
+  chatName?: string | null
+  projectLabel?: string | null
   sandboxId?: string
   projectPath?: string
   changedFiles: SubChatFileChange[]
@@ -416,6 +424,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   onTargetWorktreePathChange,
   teamId,
   repository,
+  chatName,
+  projectLabel,
   sandboxId,
   projectPath,
   changedFiles,
@@ -724,8 +734,9 @@ export const ChatInputArea = memo(function ChatInputArea({
     }
   }, [selectedOllamaModel, currentOllamaModel, availableModels.isOffline])
 
-  // Claude reasoning-output toggle.
-  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
+  const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(
+    subChatReasoningEnabledAtomFamily(subChatId),
+  )
 
   const selectedModelLabel = useMemo(() => {
     if (provider === "codex") {
@@ -948,17 +959,16 @@ export const ChatInputArea = memo(function ChatInputArea({
     updateMode(getNextMode(subChatMode))
   }, [subChatMode, updateMode])
 
-  // Voice input state
-  const {
-    isRecording: isVoiceRecording,
-    audioLevel: voiceAudioLevel,
-    startRecording: startVoiceRecording,
-    stopRecording: stopVoiceRecording,
-    cancelRecording: cancelVoiceRecording,
-  } = useVoiceRecording()
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const voiceMountedRef = useRef(true)
-  const voiceCaptureRequestedRef = useRef(false)
+  // Voice capture lives above chat navigation. This composer supplies an
+  // immutable origin and remains only a view over that origin-owned draft.
+  const currentDraftTextRef = useRef<string>("")
+  const dictationTargetKey = `chat:${parentChatId}:${subChatId}`
+  const dictation = useDictationSession()
+  const ownsDictation = dictation.activeTargetKey === dictationTargetKey
+  const isVoiceRecording = ownsDictation && dictation.isRecording
+  const isVoiceStarting = ownsDictation && dictation.isStarting
+  const isTranscribing = ownsDictation && dictation.isTranscribing
+  const voiceAudioLevel = ownsDictation ? dictation.audioLevel : 0
   const {
     isReady: isVoiceReady,
     statusLabel: voiceStatusLabel,
@@ -966,14 +976,28 @@ export const ChatInputArea = memo(function ChatInputArea({
   } = useLocalDictationSetup(handleOpenVoiceSettings)
 
   useEffect(() => {
-    voiceMountedRef.current = true
-    return () => {
-      voiceMountedRef.current = false
-      voiceCaptureRequestedRef.current = false
+    if (!ownsDictation) return
+    const syncOriginDraft = () => {
+      const text = getSubChatDraft(parentChatId, subChatId) ?? ""
+      currentDraftTextRef.current = text
+      editorRef.current?.setValue(text)
     }
-  }, [])
+    window.addEventListener(DRAFTS_CHANGE_EVENT, syncOriginDraft)
+    return () => window.removeEventListener(DRAFTS_CHANGE_EVENT, syncOriginDraft)
+  }, [editorRef, ownsDictation, parentChatId, subChatId])
 
-  const transcribeMutation = trpc.voice.transcribe.useMutation()
+  useEffect(() => {
+    if (!isActive) return
+    const insert = (event: Event) => {
+      const text = (event as CustomEvent<string>).detail?.trim()
+      if (!text) return
+      const current = editorRef.current?.getValue() || ""
+      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      editorRef.current?.focus()
+    }
+    window.addEventListener("voice-history-insert", insert)
+    return () => window.removeEventListener("voice-history-insert", insert)
+  }, [editorRef, isActive])
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)
@@ -982,7 +1006,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Refs for draft saving
   const currentSubChatIdRef = useRef<string>(subChatId)
   const currentChatIdRef = useRef<string | null>(parentChatId)
-  const currentDraftTextRef = useRef<string>("")
   currentSubChatIdRef.current = subChatId
   currentChatIdRef.current = parentChatId
 
@@ -1007,108 +1030,53 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
-    if (isStreaming || isTranscribing || isVoiceRecording || voiceCaptureRequestedRef.current)
-      return
+    if (isTranscribing || isVoiceStarting || isVoiceRecording) return
     if (!isVoiceReady) {
       showVoiceSetup()
       return
     }
-    voiceCaptureRequestedRef.current = true
-    try {
-      await startVoiceRecording()
-    } catch (err) {
-      const shouldReport = voiceCaptureRequestedRef.current
-      voiceCaptureRequestedRef.current = false
-      if (shouldReport) {
-        console.error("[VoiceInput] Failed to start recording:", err)
-        toast.error(err instanceof Error ? err.message : "Failed to start recording")
-      }
-    }
+    await dictation.start({
+      key: dictationTargetKey,
+      chatId: parentChatId,
+      subChatId,
+      projectLabel:
+        projectLabel ||
+        repository ||
+        projectPath?.split(/[\\/]/).filter(Boolean).pop() ||
+        "Project",
+      chatLabel: chatName || `Chat ${parentChatId.slice(0, 8)}`,
+      getText: () => editorRef.current?.getValue() || currentDraftTextRef.current,
+      commitText: (text) => {
+        currentDraftTextRef.current = text
+        updateSubChatDraftText(parentChatId, subChatId, text)
+      },
+      showText: (text) => {
+        currentDraftTextRef.current = text
+        editorRef.current?.setValue(text)
+      },
+    })
   }, [
-    isStreaming,
+    dictation,
+    dictationTargetKey,
+    editorRef,
     isTranscribing,
+    isVoiceStarting,
     isVoiceRecording,
     isVoiceReady,
+    parentChatId,
+    projectPath,
+    projectLabel,
+    repository,
+    chatName,
     showVoiceSetup,
-    startVoiceRecording,
+    subChatId,
   ])
 
-  const handleVoiceMouseUp = useCallback(async () => {
-    if (!voiceCaptureRequestedRef.current) return
-    voiceCaptureRequestedRef.current = false
+  const handleVoiceMouseUp = useCallback(() => dictation.stop(), [dictation])
 
-    // Set transcribing immediately to avoid visual flash between recording and transcribing states
-    setIsTranscribing(true)
-
-    try {
-      const blob = await stopVoiceRecording()
-
-      // Don't transcribe very short recordings (likely accidental clicks)
-      if (blob.size < 1000) {
-        console.log("[VoiceInput] Recording too short, ignoring")
-        if (voiceMountedRef.current) setIsTranscribing(false)
-        return
-      }
-
-      if (!voiceMountedRef.current) return
-
-      const base64 = await blobToBase64(blob)
-      const format = getAudioFormat(blob.type)
-
-      const result = await transcribeMutation.mutateAsync({
-        audio: base64,
-        format,
-        chatId: parentChatId ?? undefined,
-        subChatId,
-      })
-
-      if (!voiceMountedRef.current) return
-
-      if (result.text && result.text.trim()) {
-        const current = (editorRef.current?.getValue() || "").trim()
-        const transcribed = result.text.trim()
-        const needsSpace = current.length > 0 && !/\s$/.test(current)
-        const newValue = current + (needsSpace ? " " : "") + transcribed
-        editorRef.current?.setValue(newValue)
-        editorRef.current?.focus()
-        toast.success("Dictated with Local Whisper")
-      } else {
-        toast.info("No speech detected")
-      }
-    } catch (err) {
-      console.error("[VoiceInput] Transcription failed:", err)
-      toast.error("Voice transcription failed", {
-        description: err instanceof Error ? err.message : "Local Whisper could not transcribe.",
-      })
-    } finally {
-      if (voiceMountedRef.current) {
-        setIsTranscribing(false)
-      }
-    }
-  }, [stopVoiceRecording, transcribeMutation, editorRef])
-
-  // Auto-cancel recording when window loses focus (prevents stuck recording if keyup never fires)
-  useEffect(() => {
-    if (!isActive) return
-
-    const handleFocusLoss = () => {
-      if (voiceCaptureRequestedRef.current || isVoiceRecording) {
-        voiceCaptureRequestedRef.current = false
-        cancelVoiceRecording()
-      }
-    }
-
-    const handleVisibilityChange = () => {
-      if (document.hidden) handleFocusLoss()
-    }
-
-    window.addEventListener("blur", handleFocusLoss)
-    document.addEventListener("visibilitychange", handleVisibilityChange)
-    return () => {
-      window.removeEventListener("blur", handleFocusLoss)
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
-    }
-  }, [isActive, isVoiceRecording, cancelVoiceRecording])
+  const finishVoiceBeforeSend = useCallback(async () => {
+    if (ownsDictation) await dictation.stop()
+  }, [dictation, ownsDictation])
 
   // Keyboard shortcut: Voice input hotkey (push-to-talk: hold to record, release to transcribe)
   useEffect(() => {
@@ -1183,12 +1151,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       e.stopPropagation()
 
       // Start recording on keydown
-      if (
-        !voiceCaptureRequestedRef.current &&
-        !isVoiceRecording &&
-        !isTranscribing &&
-        !isStreaming
-      ) {
+      if (!isVoiceStarting && !isVoiceRecording && !isTranscribing) {
         handleVoiceMouseDown()
       }
     }
@@ -1199,7 +1162,7 @@ export const ChatInputArea = memo(function ChatInputArea({
 
       // The release may arrive while getUserMedia is still pending. The stop
       // handler waits for that start instead of trusting delayed React state.
-      if (voiceCaptureRequestedRef.current) {
+      if (ownsDictation && (isVoiceStarting || isVoiceRecording)) {
         e.preventDefault()
         e.stopPropagation()
         handleVoiceMouseUp()
@@ -1215,8 +1178,9 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [
     voiceInputHotkey,
     isVoiceRecording,
+    isVoiceStarting,
     isTranscribing,
-    isStreaming,
+    ownsDictation,
     handleVoiceMouseDown,
     handleVoiceMouseUp,
     isActive,
@@ -1261,8 +1225,9 @@ export const ChatInputArea = memo(function ChatInputArea({
       // Sync the draft text ref for unmount save
       const draft = editorRef.current?.getValue() || ""
       currentDraftTextRef.current = draft
+      updateSubChatDraftText(parentChatId, subChatId, draft)
     },
-    [editorRef, onInputContentChange],
+    [editorRef, onInputContentChange, parentChatId, subChatId],
   )
 
   // Terminal-style input history: ArrowUp recalls previously sent messages,
@@ -1346,7 +1311,11 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
-    const inputValue = editorRef.current?.getValue() || ""
+    // Capture the chat-bound callback before transcription finishes. The input can
+    // unmount while the user navigates, but this send must keep its original target.
+    const sendToCapturedChat = onSend
+    await finishVoiceBeforeSend()
+    const inputValue = editorRef.current?.getValue() || currentDraftTextRef.current
     const hasText = inputValue.trim().length > 0
     const hasAttachments =
       images.length > 0 ||
@@ -1359,7 +1328,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       await onStop()
       onSendFromQueue(firstQueueItemId)
     } else {
-      onSend()
+      sendToCapturedChat(inputValue)
     }
   }, [
     editorRef,
@@ -1372,6 +1341,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     firstQueueItemId,
     onStop,
     onSend,
+    finishVoiceBeforeSend,
   ])
 
   // Mention select handler
@@ -1711,7 +1681,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                   "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.18)]",
               )}
               maxHeight={200}
-              onSubmit={onSend}
+              onSubmit={handleEditorSubmit}
               contextItems={
                 images.length > 0 ||
                 files.length > 0 ||
@@ -2125,6 +2095,39 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                       }}
                     />
+                    <AgentModelTuningSelector
+                      selectedAgentId={provider}
+                      reasoningEnabled={reasoningOutputEnabled}
+                      onReasoningEnabledChange={setReasoningOutputEnabled}
+                      claude={{
+                        models: availableModels.models.filter(
+                          (model) => !hiddenModels.includes(model.id),
+                        ),
+                        selectedModelId: selectedModel?.id,
+                        hasCustomModelConfig: hasCustomClaudeConfig,
+                        isOffline: availableModels.isOffline && availableModels.hasOllama,
+                        selectedEffort: selectedClaudeEffort,
+                        onSelectEffort: (effort) => {
+                          setSelectedSubChatClaudeEffort(effort)
+                          setLastSelectedClaudeEffort(effort)
+                        },
+                      }}
+                      codex={{
+                        models: codexUiModels,
+                        selectedModelId: selectedCodexModel.id,
+                        selectedReasoning: selectedCodexReasoning,
+                        onSelectReasoning: (reasoning) => {
+                          setSelectedSubChatCodexReasoning(reasoning)
+                          setLastSelectedCodexReasoning(reasoning)
+                        },
+                        fastModeEnabled: codexFastModeEnabled,
+                        onFastModeChange: (enabled) => {
+                          const nextEnabled = selectedCodexModel.supportsFastMode ? enabled : false
+                          setSelectedSubChatCodexFastMode(nextEnabled)
+                          setLastSelectedCodexFastMode(nextEnabled)
+                        },
+                      }}
+                    />
                   </div>
 
                   <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
@@ -2424,8 +2427,19 @@ export const ChatInputArea = memo(function ChatInputArea({
                     </>
                   )}
 
-                  {/* Send/Stop/Voice button */}
-                  <div className="ml-1">
+                  <AgentVoiceButton
+                    isRecording={isVoiceRecording}
+                    isStarting={isVoiceStarting}
+                    isTranscribing={isTranscribing}
+                    voiceInputReady={isVoiceReady}
+                    voiceStatusLabel={voiceStatusLabel}
+                    onUnavailableClick={showVoiceSetup}
+                    onStart={() => void handleVoiceMouseDown()}
+                    onStop={() => void handleVoiceMouseUp()}
+                  />
+
+                  {/* Send/Stop button */}
+                  <div className="ml-0.5">
                     <AgentSendButton
                       isStreaming={isStreaming}
                       isSubmitting={false}
@@ -2462,15 +2476,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                       }}
                       onStop={onStop}
                       mode={subChatMode}
-                      // Keep first-use local dictation discoverable; setup happens from the mic.
-                      showVoiceInput
-                      voiceInputReady={isVoiceReady}
-                      voiceStatusLabel={voiceStatusLabel}
-                      onVoiceUnavailableClick={showVoiceSetup}
-                      isRecording={isVoiceRecording}
-                      isTranscribing={isTranscribing}
-                      onVoiceMouseDown={handleVoiceMouseDown}
-                      onVoiceMouseUp={handleVoiceMouseUp}
                     />
                   </div>
                 </div>

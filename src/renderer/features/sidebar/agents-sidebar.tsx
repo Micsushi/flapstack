@@ -1697,6 +1697,8 @@ function chatListSectionPropsAreEqual(
   if (prevProps.dragOverPosition !== nextProps.dragOverPosition) return false
   if (prevProps.dragOverSectionPosition !== nextProps.dragOverSectionPosition) return false
   if (prevProps.projectColor !== nextProps.projectColor) return false
+  if (prevProps.projectColorsById !== nextProps.projectColorsById) return false
+  if (prevProps.showWhenEmpty !== nextProps.showWhenEmpty) return false
   if (prevProps.isMobileFullscreen !== nextProps.isMobileFullscreen) return false
   if (prevProps.isDesktop !== nextProps.isDesktop) return false
   if (prevProps.showIcon !== nextProps.showIcon) return false
@@ -1736,6 +1738,8 @@ interface ChatListSectionProps {
   hideHeader?: boolean
   parentProjectId?: string | null
   projectColor?: string | null
+  projectColorsById?: Record<string, string>
+  showWhenEmpty?: boolean
   isCollapsed?: boolean
   isDraggingSection?: boolean
   isDragOverSection?: boolean
@@ -1850,6 +1854,8 @@ const ChatListSection = React.memo(function ChatListSection({
   hideHeader = false,
   parentProjectId,
   projectColor,
+  projectColorsById,
+  showWhenEmpty = false,
   isCollapsed = false,
   isDraggingSection = false,
   isDragOverSection = false,
@@ -1925,6 +1931,7 @@ const ChatListSection = React.memo(function ChatListSection({
   const isGlobalSection = kind === "global"
   const isProjectSection = kind === "project"
   const isTaskSection = kind === "task"
+  const isReferenceSection = kind === "pinned" || kind === "starred"
   const isTopLevelScopedSection = isGlobalSection || isProjectSection
   const sectionDragKind =
     lifecycleTarget?.type === "project"
@@ -1967,7 +1974,9 @@ const ChatListSection = React.memo(function ChatListSection({
               : kind === "starred"
                 ? "starred-chat"
                 : "global-chat"
-  const scopedTint = getProjectTint(isGlobalSection ? GLOBAL_SECTION_COLOR : projectColor)
+  const scopedTint = getProjectTint(
+    isGlobalSection || isReferenceSection ? GLOBAL_SECTION_COLOR : projectColor,
+  )
   const sectionTint = isTaskSection ? scopedTint.task : scopedTint.base
   const chatTint = isTaskSection
     ? scopedTint.taskChat
@@ -1975,7 +1984,7 @@ const ChatListSection = React.memo(function ChatListSection({
       ? scopedTint.chat
       : null
   const sectionStyle: React.CSSProperties | undefined =
-    isTopLevelScopedSection || isTaskSection
+    isTopLevelScopedSection || isTaskSection || isReferenceSection
       ? {
           backgroundColor: rgbaFromHex(
             sectionTint,
@@ -1991,7 +2000,10 @@ const ChatListSection = React.memo(function ChatListSection({
     return map
   }, [filteredChats])
 
-  const canCollapse = Boolean(sectionId && (isTopLevelScopedSection || isTaskSection))
+  const canCollapse = Boolean(
+    sectionId &&
+    (isTopLevelScopedSection || isTaskSection || kind === "pinned" || kind === "starred"),
+  )
   const headerIcon = isProjectSection ? (
     <FolderGit2 className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
   ) : isGlobalSection ? (
@@ -2001,14 +2013,14 @@ const ChatListSection = React.memo(function ChatListSection({
   ) : kind === "remote" ? (
     <CloudIcon className="h-3.5 w-3.5 flex-shrink-0 text-violet-400" />
   ) : kind === "pinned" ? (
-    <Pin className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
+    <Pin className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
   ) : kind === "starred" ? (
-    <Star className="h-3.5 w-3.5 flex-shrink-0 fill-amber-400 text-amber-400" />
+    <Star className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
   ) : (
     <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
   )
 
-  if (chats.length === 0 && !lifecycleTarget) return null
+  if (chats.length === 0 && !lifecycleTarget && !showWhenEmpty) return null
 
   const showBeforeSectionDrop =
     isDragOverSection && !isMoveIntoSection && dragOverSectionPosition === "before"
@@ -2353,14 +2365,14 @@ const ChatListSection = React.memo(function ChatListSection({
                   "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
                   isTaskSection
                     ? "h-7 mb-0.5 rounded-md pl-2 pr-1"
-                    : isTopLevelScopedSection
+                    : isTopLevelScopedSection || isReferenceSection
                       ? "h-7 mt-1 mb-0.5 rounded-md pl-2 pr-1"
                       : "h-5 mb-0.5",
                   isTaskSection
                     ? isMultiSelectMode
                       ? "pr-3"
                       : ""
-                    : isTopLevelScopedSection
+                    : isTopLevelScopedSection || isReferenceSection
                       ? ""
                       : isMultiSelectMode
                         ? "pl-3 pr-3"
@@ -2389,7 +2401,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     <ChevronDown
                       className={cn(
                         "h-3.5 w-3.5 flex-shrink-0 transition-transform",
-                        isTopLevelScopedSection || isTaskSection
+                        isTopLevelScopedSection || isTaskSection || isReferenceSection
                           ? "text-white/80"
                           : "text-muted-foreground",
                         isCollapsed && "-rotate-90",
@@ -2413,7 +2425,7 @@ const ChatListSection = React.memo(function ChatListSection({
                   <h3
                     className={cn(
                       "whitespace-nowrap truncate flex-1",
-                      isTopLevelScopedSection || isTaskSection
+                      isTopLevelScopedSection || isTaskSection || isReferenceSection
                         ? "text-[11px] font-semibold uppercase tracking-wide text-white"
                         : "text-xs font-medium text-muted-foreground",
                     )}
@@ -2450,6 +2462,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     }}
                     className={cn(
                       "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                      lifecycleTarget && "order-2",
                       isTopLevelScopedSection || isTaskSection
                         ? "text-white/75 hover:bg-white/10 hover:text-white"
                         : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
@@ -2482,6 +2495,7 @@ const ChatListSection = React.memo(function ChatListSection({
                         onClick={(event) => event.stopPropagation()}
                         className={cn(
                           "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                          lifecycleTarget && "order-1",
                           isTopLevelScopedSection || isTaskSection
                             ? "text-white/75 hover:bg-white/10 hover:text-white"
                             : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
@@ -2523,12 +2537,18 @@ const ChatListSection = React.memo(function ChatListSection({
               "list-none p-0 m-0",
               isTaskSection
                 ? "mb-1 ml-3 pl-2"
-                : isTopLevelScopedSection
+                : isTopLevelScopedSection || isReferenceSection
                   ? "mb-1 ml-4 pl-2"
                   : "mb-2",
             )}
           >
             {chats.map((chat) => {
+              const itemChatTint =
+                isReferenceSection && chat.projectId
+                  ? getProjectTint(projectColorsById?.[chat.projectId] ?? DEFAULT_PROJECT_COLOR)[
+                      chat.taskId ? "taskChat" : "chat"
+                    ]
+                  : chatTint
               const isLoading = loadingChatIds.has(chat.id)
               // For remote chats, compare without prefix; for local, compare directly
               // Remote chat IDs in list have "remote_" prefix, but selectedChatId is the original ID
@@ -2671,7 +2691,7 @@ const ChatListSection = React.memo(function ChatListSection({
                         : undefined
                     }
                     isOnlyTaskChat={isTaskSection && chats.length === 1}
-                    tintColor={chatTint}
+                    tintColor={itemChatTint}
                     isDragging={draggingKind === chatDragKind && draggingId === itemDragId}
                     isDragOver={dragOverKind === chatDragKind && dragOverId === itemDragId}
                     isBoundaryHighlighted={
@@ -3315,6 +3335,14 @@ export function AgentsSidebar({
 
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
+
+  useEffect(
+    () =>
+      window.desktopApi.onDevMcpChatsChanged(() => {
+        void Promise.all([utils.chats.list.invalidate(), utils.chats.listArchived.invalidate()])
+      }),
+    [utils.chats.list, utils.chats.listArchived],
+  )
 
   // Unified undo stack for workspaces and sub-chats (Jotai atom)
   const [undoStack, setUndoStack] = useAtom(undoStackAtom)
@@ -4094,6 +4122,21 @@ export function AgentsSidebar({
           if (!old) return old
           return old.map((c) => (c.id === chatId ? { ...c, name: newName } : c))
         })
+        utils.chats.get.setData({ id: chatId }, (old) =>
+          old
+            ? {
+                ...old,
+                name: newName,
+                subChats: old.subChats.map((subChat, index) =>
+                  index === 0 ? { ...subChat, name: newName } : subChat,
+                ),
+              }
+            : old,
+        )
+        const subChatStore = useAgentSubChatStore.getState()
+        if (subChatStore.chatId === chatId && subChatStore.allSubChats[0]) {
+          subChatStore.updateSubChatName(subChatStore.allSubChats[0].id, newName)
+        }
 
         try {
           await renameChatMutation.mutateAsync({
@@ -4106,6 +4149,7 @@ export function AgentsSidebar({
             if (!old) return old
             return old.map((c) => (c.id === chatId ? { ...c, name: oldName } : c))
           })
+          await utils.chats.get.invalidate({ id: chatId })
           throw new Error("Failed to rename local chat")
         }
       }
@@ -4188,269 +4232,282 @@ export function AgentsSidebar({
   const clerkUsername = clerkUser?.username
 
   // Filter and group chats. Pinned chats stay in their parent, then appear again in the reference group.
-  const { pinnedAgents, starredAgents, chatSections, filteredChats } = useMemo(() => {
-    if (!agentChats) {
-      return {
-        pinnedAgents: [],
-        starredAgents: [],
-        chatSections: [],
-        filteredChats: [],
-      }
-    }
-
-    const filtered = searchQuery.trim()
-      ? agentChats.filter((chat) =>
-          (chat.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
-        )
-      : agentChats
-
-    const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
-    const activeTaskIds = new Set((tasks ?? []).map((task) => task.id))
-    const activeFiltered = filtered.filter((chat) => {
-      if (chat.isRemote) return true
-      if (projects && chat.projectId && !activeProjectIds.has(chat.projectId)) return false
-      if (tasks && chat.taskId && !activeTaskIds.has(chat.taskId)) return false
-      return true
-    })
-    const prioritySort = <T extends { id: string; updatedAt: Date | null }>(
-      items: T[],
-      orderKey: string,
-    ) =>
-      [...items].sort((a, b) => {
-        const pinDelta = Number(pinnedChatIds.has(b.id)) - Number(pinnedChatIds.has(a.id))
-        if (pinDelta !== 0) return pinDelta
-        const order = new Map((manualOrderByKey[orderKey] ?? []).map((id, index) => [id, index]))
-        const aOrder = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
-        const bOrder = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
-        if (aOrder !== bOrder) return aOrder - bOrder
-        const aTime = a.updatedAt?.getTime() ?? 0
-        const bTime = b.updatedAt?.getTime() ?? 0
-        return bTime - aTime
-      })
-
-    const pinned = activeFiltered.filter((chat) => pinnedChatIds.has(chat.id))
-    const starred = activeFiltered.filter((chat) => starredChatIds.has(chat.id))
-    const remote = activeFiltered.filter((chat) => chat.isRemote)
-    const local = activeFiltered.filter((chat) => !chat.isRemote)
-    const global = local.filter(
-      (chat) => chat.scope === "global" || (!chat.projectId && !chat.taskId),
-    )
-    const tasksList = tasks ?? []
-    const projectsList = projects ?? []
-    const tasksById = new Map(tasksList.map((task) => [task.id, task]))
-    const taskOrder = new Map(tasksList.map((task, index) => [task.id, index]))
-    const projectOrder = new Map(projectsList.map((project, index) => [project.id, index]))
-    const projectChats = local.filter((chat) => chat.projectId)
-    const chatsByProject = new Map<string, typeof projectChats>()
-
-    for (const chat of projectChats) {
-      const projectId = chat.projectId
-      if (!projectId) continue
-      const chats = chatsByProject.get(projectId) ?? []
-      chats.push(chat)
-      chatsByProject.set(projectId, chats)
-    }
-
-    const projectIds = new Set<string>([
-      ...projectsList.map((project) => project.id),
-      ...Array.from(chatsByProject.keys()),
-    ])
-
-    const groupedProjects = Array.from(projectIds)
-      .map((projectId) => {
-        const chats = chatsByProject.get(projectId) ?? []
-        const directChats = prioritySort(
-          chats.filter((chat) => !chat.taskId),
-          `project:${projectId}:chats`,
-        )
-        const groupedTaskChats = new Map<string, typeof chats>()
-
-        for (const chat of chats) {
-          if (!chat.taskId) continue
-          const taskChats = groupedTaskChats.get(chat.taskId) ?? []
-          taskChats.push(chat)
-          groupedTaskChats.set(chat.taskId, taskChats)
-        }
-
-        const taskIds = new Set<string>([
-          ...tasksList.filter((task) => task.projectId === projectId).map((task) => task.id),
-          ...Array.from(groupedTaskChats.keys()),
-        ])
-
-        const taskGroups = Array.from(taskIds)
-          .map((taskId) => ({
-            taskId,
-            title: tasksById.get(taskId)?.name ?? "Task",
-            isPinned: Boolean(tasksById.get(taskId)?.pinnedAt),
-            isStarred: starredTaskIds.has(taskId),
-            chats: prioritySort(groupedTaskChats.get(taskId) ?? [], `task:${taskId}:chats`),
-          }))
-          .sort((a, b) => {
-            const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-            if (pinDelta !== 0) return pinDelta
-            const aOrder = taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER
-            const bOrder = taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER
-            if (aOrder !== bOrder) return aOrder - bOrder
-            return a.title.localeCompare(b.title)
-          })
-
-        const project = projectsMap.get(projectId)
+  const { pinnedAgents, starredAgents, pinnedTasks, starredTasks, chatSections, filteredChats } =
+    useMemo(() => {
+      if (!agentChats) {
         return {
-          projectId,
-          title: project?.gitRepo || project?.name || "Project",
-          isPinned: Boolean(project?.pinnedAt),
-          isStarred: starredProjectIds.has(projectId),
-          chats: directChats,
-          taskGroups,
+          pinnedAgents: [],
+          starredAgents: [],
+          pinnedTasks: [],
+          starredTasks: [],
+          chatSections: [],
+          filteredChats: [],
         }
-      })
-      .sort((a, b) => {
-        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-        if (pinDelta !== 0) return pinDelta
-        const manualProjectOrder = new Map(
-          (manualOrderByKey.projects ?? []).map((id, index) => [id, index]),
-        )
-        const aManual = manualProjectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
-        const bManual = manualProjectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
-        if (aManual !== bManual) return aManual - bManual
-        const aOrder = projectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
-        const bOrder = projectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
-        if (aOrder !== bOrder) return aOrder - bOrder
-        return a.title.localeCompare(b.title)
-      })
-
-    const sections: Array<{
-      id: string
-      title: string
-      chats: typeof activeFiltered
-      kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
-      lifecycleTarget?: {
-        type: "project" | "task"
-        id: string
-        isPinned: boolean
-        isStarred?: boolean
       }
-      parentProjectId?: string
-      sectionDragId?: string
-      hideHeader?: boolean
-      projectColor?: string | null
-    }> = []
-    if (remote.length > 0)
-      sections.push({
-        id: "remote",
-        title: "Remote sandboxes",
-        chats: prioritySort(remote, "remote:chats"),
-        kind: "remote",
-      })
-    if (global.length > 0)
-      sections.push({
-        id: "global",
-        title: "Global chats",
-        chats: prioritySort(global, "global:chats"),
-        kind: "global",
-      })
-    for (const projectGroup of groupedProjects) {
-      sections.push({
-        id: `project-${projectGroup.projectId}`,
-        title: projectGroup.title,
-        chats: [],
-        kind: "project",
-        lifecycleTarget: {
-          type: "project",
-          id: projectGroup.projectId,
-          isPinned: projectGroup.isPinned,
-          isStarred: projectGroup.isStarred,
-        },
-        projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-      })
-      const childItems = [
-        ...projectGroup.chats.map((chat) => ({
-          id: `chat:${chat.id}`,
-          type: "chat" as const,
-          updatedAt: chat.updatedAt,
-          isPinned: pinnedChatIds.has(chat.id),
-          chat,
-        })),
-        ...projectGroup.taskGroups.map((taskGroup) => ({
-          id: `task:${taskGroup.taskId}`,
-          type: "task" as const,
-          updatedAt:
-            taskGroup.chats.reduce<Date | null>((latest, chat) => {
-              if (!chat.updatedAt) return latest
-              if (!latest || chat.updatedAt.getTime() > latest.getTime()) return chat.updatedAt
-              return latest
-            }, null) ?? null,
-          isPinned: taskGroup.isPinned,
-          taskGroup,
-        })),
-      ].sort((a, b) => {
-        const pinDelta = Number(b.isPinned) - Number(a.isPinned)
-        if (pinDelta !== 0) return pinDelta
 
-        const order = new Map(
-          (manualOrderByKey[`project:${projectGroup.projectId}:children`] ?? []).map(
-            (id, index) => [id, index],
-          ),
-        )
-        const aManual = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
-        const bManual = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
-        if (aManual !== bManual) return aManual - bManual
-        const aTime = a.updatedAt?.getTime() ?? 0
-        const bTime = b.updatedAt?.getTime() ?? 0
-        return bTime - aTime
+      const filtered = searchQuery.trim()
+        ? agentChats.filter((chat) =>
+            (chat.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
+          )
+        : agentChats
+
+      const activeProjectIds = new Set((projects ?? []).map((project) => project.id))
+      const activeTaskIds = new Set((tasks ?? []).map((task) => task.id))
+      const activeFiltered = filtered.filter((chat) => {
+        if (chat.isRemote) return true
+        if (projects && chat.projectId && !activeProjectIds.has(chat.projectId)) return false
+        if (tasks && chat.taskId && !activeTaskIds.has(chat.taskId)) return false
+        return true
       })
-      for (const childItem of childItems) {
-        if (childItem.type === "chat") {
-          sections.push({
-            id: `project-chat-${childItem.chat.id}`,
-            title: "",
-            chats: [childItem.chat],
-            kind: "project",
-            parentProjectId: projectGroup.projectId,
-            sectionDragId: childItem.id,
-            hideHeader: true,
-            projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
-          })
-          continue
+      const prioritySort = <T extends { id: string; updatedAt: Date | null }>(
+        items: T[],
+        orderKey: string,
+      ) =>
+        [...items].sort((a, b) => {
+          const pinDelta = Number(pinnedChatIds.has(b.id)) - Number(pinnedChatIds.has(a.id))
+          if (pinDelta !== 0) return pinDelta
+          const order = new Map((manualOrderByKey[orderKey] ?? []).map((id, index) => [id, index]))
+          const aOrder = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+          const bOrder = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+          if (aOrder !== bOrder) return aOrder - bOrder
+          const aTime = a.updatedAt?.getTime() ?? 0
+          const bTime = b.updatedAt?.getTime() ?? 0
+          return bTime - aTime
+        })
+
+      const pinned = activeFiltered.filter((chat) => pinnedChatIds.has(chat.id))
+      const starred = activeFiltered.filter((chat) => starredChatIds.has(chat.id))
+      const remote = activeFiltered.filter((chat) => chat.isRemote)
+      const local = activeFiltered.filter((chat) => !chat.isRemote)
+      const global = local.filter(
+        (chat) => chat.scope === "global" || (!chat.projectId && !chat.taskId),
+      )
+      const tasksList = tasks ?? []
+      const projectsList = projects ?? []
+      const tasksById = new Map(tasksList.map((task) => [task.id, task]))
+      const taskOrder = new Map(tasksList.map((task, index) => [task.id, index]))
+      const projectOrder = new Map(projectsList.map((project, index) => [project.id, index]))
+      const projectChats = local.filter((chat) => chat.projectId)
+      const chatsByProject = new Map<string, typeof projectChats>()
+
+      for (const chat of projectChats) {
+        const projectId = chat.projectId
+        if (!projectId) continue
+        const chats = chatsByProject.get(projectId) ?? []
+        chats.push(chat)
+        chatsByProject.set(projectId, chats)
+      }
+
+      const projectIds = new Set<string>([
+        ...projectsList.map((project) => project.id),
+        ...Array.from(chatsByProject.keys()),
+      ])
+
+      const groupedProjects = Array.from(projectIds)
+        .map((projectId) => {
+          const chats = chatsByProject.get(projectId) ?? []
+          const directChats = prioritySort(
+            chats.filter((chat) => !chat.taskId),
+            `project:${projectId}:chats`,
+          )
+          const groupedTaskChats = new Map<string, typeof chats>()
+
+          for (const chat of chats) {
+            if (!chat.taskId) continue
+            const taskChats = groupedTaskChats.get(chat.taskId) ?? []
+            taskChats.push(chat)
+            groupedTaskChats.set(chat.taskId, taskChats)
+          }
+
+          const taskIds = new Set<string>([
+            ...tasksList.filter((task) => task.projectId === projectId).map((task) => task.id),
+            ...Array.from(groupedTaskChats.keys()),
+          ])
+
+          const taskGroups = Array.from(taskIds)
+            .map((taskId) => ({
+              taskId,
+              title: tasksById.get(taskId)?.name ?? "Task",
+              isPinned: Boolean(tasksById.get(taskId)?.pinnedAt),
+              isStarred: starredTaskIds.has(taskId),
+              chats: prioritySort(groupedTaskChats.get(taskId) ?? [], `task:${taskId}:chats`),
+            }))
+            .sort((a, b) => {
+              const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+              if (pinDelta !== 0) return pinDelta
+              const aOrder = taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER
+              const bOrder = taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER
+              if (aOrder !== bOrder) return aOrder - bOrder
+              return a.title.localeCompare(b.title)
+            })
+
+          const project = projectsMap.get(projectId)
+          return {
+            projectId,
+            title: project?.gitRepo || project?.name || "Project",
+            isPinned: Boolean(project?.pinnedAt),
+            isStarred: starredProjectIds.has(projectId),
+            chats: directChats,
+            taskGroups,
+          }
+        })
+        .sort((a, b) => {
+          const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+          if (pinDelta !== 0) return pinDelta
+          const manualProjectOrder = new Map(
+            (manualOrderByKey.projects ?? []).map((id, index) => [id, index]),
+          )
+          const aManual = manualProjectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+          const bManual = manualProjectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+          if (aManual !== bManual) return aManual - bManual
+          const aOrder = projectOrder.get(a.projectId) ?? Number.MAX_SAFE_INTEGER
+          const bOrder = projectOrder.get(b.projectId) ?? Number.MAX_SAFE_INTEGER
+          if (aOrder !== bOrder) return aOrder - bOrder
+          return a.title.localeCompare(b.title)
+        })
+
+      const sections: Array<{
+        id: string
+        title: string
+        chats: typeof activeFiltered
+        kind?: "pinned" | "starred" | "remote" | "global" | "project" | "task"
+        lifecycleTarget?: {
+          type: "project" | "task"
+          id: string
+          isPinned: boolean
+          isStarred?: boolean
         }
-        const { taskGroup } = childItem
+        parentProjectId?: string
+        sectionDragId?: string
+        hideHeader?: boolean
+        projectColor?: string | null
+      }> = []
+      if (remote.length > 0)
         sections.push({
-          id: `task-${taskGroup.taskId}`,
-          title: taskGroup.title,
-          chats: taskGroup.chats,
-          kind: "task",
+          id: "remote",
+          title: "Remote sandboxes",
+          chats: prioritySort(remote, "remote:chats"),
+          kind: "remote",
+        })
+      if (global.length > 0)
+        sections.push({
+          id: "global",
+          title: "Global chats",
+          chats: prioritySort(global, "global:chats"),
+          kind: "global",
+        })
+      for (const projectGroup of groupedProjects) {
+        sections.push({
+          id: `project-${projectGroup.projectId}`,
+          title: projectGroup.title,
+          chats: [],
+          kind: "project",
           lifecycleTarget: {
-            type: "task",
-            id: taskGroup.taskId,
-            isPinned: taskGroup.isPinned,
-            isStarred: taskGroup.isStarred,
+            type: "project",
+            id: projectGroup.projectId,
+            isPinned: projectGroup.isPinned,
+            isStarred: projectGroup.isStarred,
           },
-          parentProjectId: projectGroup.projectId,
-          sectionDragId: childItem.id,
           projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
         })
-      }
-    }
+        const childItems = [
+          ...projectGroup.chats.map((chat) => ({
+            id: `chat:${chat.id}`,
+            type: "chat" as const,
+            updatedAt: chat.updatedAt,
+            isPinned: pinnedChatIds.has(chat.id),
+            chat,
+          })),
+          ...projectGroup.taskGroups.map((taskGroup) => ({
+            id: `task:${taskGroup.taskId}`,
+            type: "task" as const,
+            updatedAt:
+              taskGroup.chats.reduce<Date | null>((latest, chat) => {
+                if (!chat.updatedAt) return latest
+                if (!latest || chat.updatedAt.getTime() > latest.getTime()) return chat.updatedAt
+                return latest
+              }, null) ?? null,
+            isPinned: taskGroup.isPinned,
+            taskGroup,
+          })),
+        ].sort((a, b) => {
+          const pinDelta = Number(b.isPinned) - Number(a.isPinned)
+          if (pinDelta !== 0) return pinDelta
 
-    return {
-      pinnedAgents: prioritySort(pinned, "pinned:chats"),
-      starredAgents: prioritySort(starred, "starred:chats"),
-      chatSections: sections,
-      filteredChats: sections.flatMap((section) => section.chats),
-    }
-  }, [
-    searchQuery,
-    agentChats,
-    pinnedChatIds,
-    starredChatIds,
-    tasks,
-    projects,
-    projectsMap,
-    manualOrderByKey,
-    projectColorsById,
-    starredProjectIds,
-    starredTaskIds,
-  ])
+          const order = new Map(
+            (manualOrderByKey[`project:${projectGroup.projectId}:children`] ?? []).map(
+              (id, index) => [id, index],
+            ),
+          )
+          const aManual = order.get(a.id) ?? Number.MAX_SAFE_INTEGER
+          const bManual = order.get(b.id) ?? Number.MAX_SAFE_INTEGER
+          if (aManual !== bManual) return aManual - bManual
+          const aTime = a.updatedAt?.getTime() ?? 0
+          const bTime = b.updatedAt?.getTime() ?? 0
+          return bTime - aTime
+        })
+        for (const childItem of childItems) {
+          if (childItem.type === "chat") {
+            sections.push({
+              id: `project-chat-${childItem.chat.id}`,
+              title: "",
+              chats: [childItem.chat],
+              kind: "project",
+              parentProjectId: projectGroup.projectId,
+              sectionDragId: childItem.id,
+              hideHeader: true,
+              projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+            })
+            continue
+          }
+          const { taskGroup } = childItem
+          sections.push({
+            id: `task-${taskGroup.taskId}`,
+            title: taskGroup.title,
+            chats: taskGroup.chats,
+            kind: "task",
+            lifecycleTarget: {
+              type: "task",
+              id: taskGroup.taskId,
+              isPinned: taskGroup.isPinned,
+              isStarred: taskGroup.isStarred,
+            },
+            parentProjectId: projectGroup.projectId,
+            sectionDragId: childItem.id,
+            projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+          })
+        }
+      }
+
+      const referenceTasks = groupedProjects.flatMap((projectGroup) =>
+        projectGroup.taskGroups.map((taskGroup) => ({
+          ...taskGroup,
+          projectId: projectGroup.projectId,
+          projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+        })),
+      )
+
+      return {
+        pinnedAgents: prioritySort(pinned, "pinned:chats"),
+        starredAgents: prioritySort(starred, "starred:chats"),
+        pinnedTasks: referenceTasks.filter((task) => task.isPinned),
+        starredTasks: referenceTasks.filter((task) => task.isStarred),
+        chatSections: sections,
+        filteredChats: sections.flatMap((section) => section.chats),
+      }
+    }, [
+      searchQuery,
+      agentChats,
+      pinnedChatIds,
+      starredChatIds,
+      tasks,
+      projects,
+      projectsMap,
+      manualOrderByKey,
+      projectColorsById,
+      starredProjectIds,
+      starredTaskIds,
+    ])
 
   const selectedLocalChat = useMemo(() => {
     if (!selectedChatId) return null
@@ -6534,6 +6591,197 @@ export function AgentsSidebar({
             isMultiSelectMode ? "px-0" : "px-2",
           )}
         >
+          {!searchQuery &&
+            [
+              {
+                title: "Pinned",
+                kind: "pinned" as const,
+                chats: pinnedAgents,
+                tasks: pinnedTasks,
+              },
+              {
+                title: "Starred",
+                kind: "starred" as const,
+                chats: starredAgents,
+                tasks: starredTasks,
+              },
+            ]
+              .filter((section) => section.chats.length > 0 || section.tasks.length > 0)
+              .map((section) => (
+                <div
+                  key={section.kind}
+                  className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}
+                >
+                  <ChatListSection
+                    title={section.title}
+                    sectionId={section.kind}
+                    kind={section.kind}
+                    projectColor={null}
+                    projectColorsById={projectColorsById}
+                    showWhenEmpty={section.tasks.length > 0}
+                    isCollapsed={collapsedSectionIds.has(section.kind)}
+                    draggingKind={draggingItem?.kind}
+                    draggingId={draggingItem?.id}
+                    dragOverKind={dragOverItem?.kind}
+                    dragOverId={dragOverItem?.id}
+                    dragOverPosition={dragOverItem?.position}
+                    chats={section.chats}
+                    selectedChatId={selectedChatId}
+                    selectedChatIsRemote={selectedChatIsRemote}
+                    focusedChatIndex={focusedChatIndex}
+                    loadingChatIds={loadingChatIds}
+                    unseenChanges={unseenChanges}
+                    workspacePendingPlans={workspacePendingPlans}
+                    workspacePendingQuestions={workspacePendingQuestions}
+                    isMultiSelectMode={isMultiSelectMode}
+                    selectedChatIds={selectedChatIds}
+                    isMobileFullscreen={isMobileFullscreen}
+                    isDesktop={isDesktop}
+                    pinnedChatIds={pinnedChatIds}
+                    projectsMap={projectsMap}
+                    taskDefaultWorktrees={taskDefaultWorktrees}
+                    workspaceFileStats={workspaceFileStats}
+                    filteredChats={filteredChats}
+                    canShowPinOption={canShowPinOption}
+                    areAllSelectedPinned={areAllSelectedPinned}
+                    showIcon={showWorkspaceIcon}
+                    moveDestinations={moveDestinations}
+                    movePending={moveChatMutation.isPending}
+                    onChatClick={handleChatClick}
+                    onCheckboxClick={handleCheckboxClick}
+                    onMouseEnter={handleAgentMouseEnter}
+                    onMouseLeave={handleAgentMouseLeave}
+                    onArchive={handleArchiveSingle}
+                    onTogglePin={handleTogglePin}
+                    onToggleStar={handleToggleStar}
+                    onRenameClick={handleRenameClick}
+                    onCopyBranch={handleCopyBranch}
+                    onArchiveAllBelow={handleArchiveAllBelow}
+                    onArchiveOthers={handleArchiveOthers}
+                    onOpenLocally={handleOpenLocally}
+                    onMoveChat={handleMoveChat}
+                    onBulkPin={handleBulkPin}
+                    onBulkUnpin={handleBulkUnpin}
+                    onBulkArchive={handleBulkArchive}
+                    onCreateGlobalChat={openNewGlobalChat}
+                    onCreateProjectChat={openNewProjectChat}
+                    onCreateProjectTask={createProjectTask}
+                    onCreateTaskChat={openNewTaskChat}
+                    onChangeProjectColor={handleChangeProjectColor}
+                    onToggleSection={handleToggleSection}
+                    onSelectScope={handleSelectScope}
+                    onDragStartItem={handleDragStartItem}
+                    onDragOverItem={handleDragOverItem}
+                    onDropItem={handleDropItem}
+                    onDragEndItem={handleDragEndItem}
+                    onToggleLifecyclePin={handleToggleLifecyclePin}
+                    onToggleLifecycleStar={handleToggleLifecycleStar}
+                    onArchiveLifecycle={handleArchiveLifecycle}
+                    archivePending={
+                      archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
+                    }
+                    archiveBatchPending={
+                      archiveChatsBatchMutation.isPending ||
+                      archiveRemoteChatsBatchMutation.isPending
+                    }
+                    lifecyclePending={
+                      pinProjectMutation.isPending ||
+                      unpinProjectMutation.isPending ||
+                      archiveProjectMutation.isPending ||
+                      pinTaskMutation.isPending ||
+                      unpinTaskMutation.isPending ||
+                      archiveTaskMutation.isPending
+                    }
+                    nameRefCallback={nameRefCallback}
+                    formatTime={formatTime}
+                    justCreatedIds={justCreatedIds}
+                    starredChatIds={starredChatIds}
+                  />
+                  {!collapsedSectionIds.has(section.kind) &&
+                    section.tasks.map((task) => (
+                      <ChatListSection
+                        key={`${section.kind}-task-${task.taskId}`}
+                        title={task.title}
+                        sectionId={`${section.kind}-task-${task.taskId}`}
+                        kind="task"
+                        projectColor={task.projectColor}
+                        isCollapsed={collapsedSectionIds.has(`${section.kind}-task-${task.taskId}`)}
+                        lifecycleTarget={{
+                          type: "task",
+                          id: task.taskId,
+                          isPinned: task.isPinned,
+                          isStarred: task.isStarred,
+                        }}
+                        parentProjectId={task.projectId}
+                        chats={task.chats}
+                        selectedChatId={selectedChatId}
+                        selectedChatIsRemote={selectedChatIsRemote}
+                        focusedChatIndex={focusedChatIndex}
+                        loadingChatIds={loadingChatIds}
+                        unseenChanges={unseenChanges}
+                        workspacePendingPlans={workspacePendingPlans}
+                        workspacePendingQuestions={workspacePendingQuestions}
+                        isMultiSelectMode={isMultiSelectMode}
+                        selectedChatIds={selectedChatIds}
+                        isMobileFullscreen={isMobileFullscreen}
+                        isDesktop={isDesktop}
+                        pinnedChatIds={pinnedChatIds}
+                        projectsMap={projectsMap}
+                        taskDefaultWorktrees={taskDefaultWorktrees}
+                        workspaceFileStats={workspaceFileStats}
+                        filteredChats={filteredChats}
+                        canShowPinOption={canShowPinOption}
+                        areAllSelectedPinned={areAllSelectedPinned}
+                        showIcon={showWorkspaceIcon}
+                        moveDestinations={moveDestinations}
+                        movePending={moveChatMutation.isPending}
+                        onChatClick={handleChatClick}
+                        onCheckboxClick={handleCheckboxClick}
+                        onMouseEnter={handleAgentMouseEnter}
+                        onMouseLeave={handleAgentMouseLeave}
+                        onArchive={handleArchiveSingle}
+                        onTogglePin={handleTogglePin}
+                        onToggleStar={handleToggleStar}
+                        onRenameClick={handleRenameClick}
+                        onCopyBranch={handleCopyBranch}
+                        onArchiveAllBelow={handleArchiveAllBelow}
+                        onArchiveOthers={handleArchiveOthers}
+                        onOpenLocally={handleOpenLocally}
+                        onMoveChat={handleMoveChat}
+                        onBulkPin={handleBulkPin}
+                        onBulkUnpin={handleBulkUnpin}
+                        onBulkArchive={handleBulkArchive}
+                        onCreateTaskChat={openNewTaskChat}
+                        onToggleSection={handleToggleSection}
+                        onSelectScope={handleSelectScope}
+                        onDragStartItem={handleDragStartItem}
+                        onDragOverItem={handleDragOverItem}
+                        onDropItem={handleDropItem}
+                        onDragEndItem={handleDragEndItem}
+                        onToggleLifecyclePin={handleToggleLifecyclePin}
+                        onToggleLifecycleStar={handleToggleLifecycleStar}
+                        onArchiveLifecycle={handleArchiveLifecycle}
+                        archivePending={
+                          archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
+                        }
+                        archiveBatchPending={
+                          archiveChatsBatchMutation.isPending ||
+                          archiveRemoteChatsBatchMutation.isPending
+                        }
+                        lifecyclePending={
+                          pinTaskMutation.isPending ||
+                          unpinTaskMutation.isPending ||
+                          archiveTaskMutation.isPending
+                        }
+                        nameRefCallback={nameRefCallback}
+                        formatTime={formatTime}
+                        justCreatedIds={justCreatedIds}
+                        starredChatIds={starredChatIds}
+                      />
+                    ))}
+                </div>
+              ))}
+
           {/* Drafts Section - always show regardless of chat source mode */}
           {drafts.length > 0 && !searchQuery && (
             <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
@@ -6734,101 +6982,6 @@ export function AgentsSidebar({
               })}
             </div>
           ) : null}
-
-          {!searchQuery &&
-            [
-              { title: "Pinned", kind: "pinned" as const, chats: pinnedAgents },
-              { title: "Starred", kind: "starred" as const, chats: starredAgents },
-            ]
-              .filter((section) => section.chats.length > 0)
-              .map((section) => (
-                <div
-                  key={section.kind}
-                  className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}
-                >
-                  <ChatListSection
-                    title={section.title}
-                    kind={section.kind}
-                    projectColor={null}
-                    draggingKind={draggingItem?.kind}
-                    draggingId={draggingItem?.id}
-                    dragOverKind={dragOverItem?.kind}
-                    dragOverId={dragOverItem?.id}
-                    dragOverPosition={dragOverItem?.position}
-                    chats={section.chats}
-                    selectedChatId={selectedChatId}
-                    selectedChatIsRemote={selectedChatIsRemote}
-                    focusedChatIndex={focusedChatIndex}
-                    loadingChatIds={loadingChatIds}
-                    unseenChanges={unseenChanges}
-                    workspacePendingPlans={workspacePendingPlans}
-                    workspacePendingQuestions={workspacePendingQuestions}
-                    isMultiSelectMode={isMultiSelectMode}
-                    selectedChatIds={selectedChatIds}
-                    isMobileFullscreen={isMobileFullscreen}
-                    isDesktop={isDesktop}
-                    pinnedChatIds={pinnedChatIds}
-                    projectsMap={projectsMap}
-                    taskDefaultWorktrees={taskDefaultWorktrees}
-                    workspaceFileStats={workspaceFileStats}
-                    filteredChats={filteredChats}
-                    canShowPinOption={canShowPinOption}
-                    areAllSelectedPinned={areAllSelectedPinned}
-                    showIcon={showWorkspaceIcon}
-                    moveDestinations={moveDestinations}
-                    movePending={moveChatMutation.isPending}
-                    onChatClick={handleChatClick}
-                    onCheckboxClick={handleCheckboxClick}
-                    onMouseEnter={handleAgentMouseEnter}
-                    onMouseLeave={handleAgentMouseLeave}
-                    onArchive={handleArchiveSingle}
-                    onTogglePin={handleTogglePin}
-                    onToggleStar={handleToggleStar}
-                    onRenameClick={handleRenameClick}
-                    onCopyBranch={handleCopyBranch}
-                    onArchiveAllBelow={handleArchiveAllBelow}
-                    onArchiveOthers={handleArchiveOthers}
-                    onOpenLocally={handleOpenLocally}
-                    onMoveChat={handleMoveChat}
-                    onBulkPin={handleBulkPin}
-                    onBulkUnpin={handleBulkUnpin}
-                    onBulkArchive={handleBulkArchive}
-                    onCreateGlobalChat={openNewGlobalChat}
-                    onCreateProjectChat={openNewProjectChat}
-                    onCreateProjectTask={createProjectTask}
-                    onCreateTaskChat={openNewTaskChat}
-                    onChangeProjectColor={handleChangeProjectColor}
-                    onToggleSection={handleToggleSection}
-                    onSelectScope={handleSelectScope}
-                    onDragStartItem={handleDragStartItem}
-                    onDragOverItem={handleDragOverItem}
-                    onDropItem={handleDropItem}
-                    onDragEndItem={handleDragEndItem}
-                    onToggleLifecyclePin={handleToggleLifecyclePin}
-                    onToggleLifecycleStar={handleToggleLifecycleStar}
-                    onArchiveLifecycle={handleArchiveLifecycle}
-                    archivePending={
-                      archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                    }
-                    archiveBatchPending={
-                      archiveChatsBatchMutation.isPending ||
-                      archiveRemoteChatsBatchMutation.isPending
-                    }
-                    lifecyclePending={
-                      pinProjectMutation.isPending ||
-                      unpinProjectMutation.isPending ||
-                      archiveProjectMutation.isPending ||
-                      pinTaskMutation.isPending ||
-                      unpinTaskMutation.isPending ||
-                      archiveTaskMutation.isPending
-                    }
-                    nameRefCallback={nameRefCallback}
-                    formatTime={formatTime}
-                    justCreatedIds={justCreatedIds}
-                    starredChatIds={starredChatIds}
-                  />
-                </div>
-              ))}
 
           {archivedLifecycleItems.length > 0 && !searchQuery && (
             <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>

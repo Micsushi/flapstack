@@ -5,6 +5,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "../../../componen
 import { cn } from "../../../lib/utils"
 
 export interface AgentMessageMetadata {
+  runId?: string
   model?: string
   sessionId?: string
   totalCostUsd?: number
@@ -14,6 +15,7 @@ export interface AgentMessageMetadata {
   totalTokens?: number
   finalTextId?: string
   durationMs?: number
+  startedAt?: number
   resultSubtype?: string
 }
 

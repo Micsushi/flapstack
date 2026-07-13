@@ -135,6 +135,16 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.on("shortcut:open-settings", handler)
     return () => ipcRenderer.removeListener("shortcut:open-settings", handler)
   },
+  onDevMcpChatsChanged: (
+    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  ) => {
+    const handler = (
+      _event: unknown,
+      payload: { action: "created" | "archived"; chatId: string },
+    ) => callback(payload)
+    ipcRenderer.on("dev-mcp:chats-changed", handler)
+    return () => ipcRenderer.removeListener("dev-mcp:chats-changed", handler)
+  },
 
   // File change events (from Claude Write/Edit tools)
   onFileChanged: (
@@ -305,6 +315,9 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onDevMcpChatsChanged: (
+    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  ) => () => void
   // File changes
   onFileChanged: (
     callback: (data: { filePath: string; type: string; subChatId: string }) => void,

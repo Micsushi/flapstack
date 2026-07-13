@@ -65,6 +65,8 @@ export async function startSidecar(params: {
   provider: OpencodeProviderId
   /** Native model id to declare in the isolated custom-provider config. */
   modelId?: string
+  reasoningEnabled: boolean
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh"
   cwd: string
   startupTimeoutMs?: number
   signal?: AbortSignal
@@ -82,7 +84,13 @@ export async function startSidecar(params: {
   let generationProxy: GenerationProxyHandle | null = null
   try {
     if (params.provider === "openrouter") generationProxy = await startOpenRouterGenerationProxy()
-    const generated = writeIsolatedConfig(params.provider, params.modelId, generationProxy?.baseUrl)
+    const generated = writeIsolatedConfig(
+      params.provider,
+      params.modelId,
+      generationProxy?.baseUrl,
+      params.reasoningEnabled,
+      params.reasoningEffort,
+    )
     configDir = generated.configDir
     configEnv = generated.env
   } catch (error) {

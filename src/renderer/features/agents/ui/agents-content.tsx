@@ -75,8 +75,10 @@ import {
   ContextMenuTrigger,
 } from "../../../components/ui/context-menu"
 import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
+import { DictationSessionProvider } from "../voice/dictation-session"
 // Desktop mock
 const useIsAdmin = () => false
+const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
 
 function readStoredProjectColors(): Record<string, string> {
   if (typeof window === "undefined") return {}
@@ -91,8 +93,13 @@ function readStoredProjectColors(): Record<string, string> {
 }
 
 // Main Component
-export function AgentsContent() {
+function AgentsContentInner() {
   const openChatTabsRef = useRef<HTMLDivElement>(null)
+  const suppressOpenChatTabClickRef = useRef(false)
+  const [openChatDropTarget, setOpenChatDropTarget] = useState<{
+    chatId: string
+    position: "before" | "after"
+  } | null>(null)
   const [openChatTabsHovered, setOpenChatTabsHovered] = useState(false)
   const [openChatScrollbar, setOpenChatScrollbar] = useState({ left: 0, width: 0 })
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
@@ -405,6 +412,109 @@ export function AgentsContent() {
       setSelectedChatId,
       setSelectedChatIsRemote,
     ],
+  )
+
+  const reorderOpenChatTab = useCallback(
+    (draggedChatId: string, targetChatId: string, position: "before" | "after") => {
+      if (!draggedChatId || draggedChatId === targetChatId) return
+
+      setOpenChatIds((current) => {
+        const fromIndex = current.indexOf(draggedChatId)
+        if (fromIndex < 0 || !current.includes(targetChatId)) return current
+
+        const next = [...current]
+        next.splice(fromIndex, 1)
+        const targetIndex = next.indexOf(targetChatId)
+        next.splice(targetIndex + (position === "after" ? 1 : 0), 0, draggedChatId)
+        return next
+      })
+    },
+    [setOpenChatIds],
+  )
+
+  const handleOpenChatTabPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLElement>, chatId: string) => {
+      if (event.button !== 0) return
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-open-chat-tab-action]")
+      ) {
+        return
+      }
+
+      const sourceElement = event.currentTarget
+      const startX = event.clientX
+      const startY = event.clientY
+      let dragStarted = false
+      let dropTarget: { chatId: string; position: "before" | "after" } | null = null
+
+      const cleanup = () => {
+        document.removeEventListener("pointermove", handlePointerMove, true)
+        document.removeEventListener("pointerup", handlePointerUp, true)
+        document.removeEventListener("pointercancel", handlePointerCancel, true)
+        sourceElement.removeAttribute("data-open-chat-tab-drag-source")
+        delete document.body.dataset.openChatTabPointerDragging
+        document.body.style.cursor = ""
+        setOpenChatDropTarget(null)
+      }
+
+      const startDrag = () => {
+        dragStarted = true
+        suppressOpenChatTabClickRef.current = true
+        sourceElement.setAttribute("data-open-chat-tab-drag-source", "true")
+        document.body.dataset.openChatTabPointerDragging = "true"
+        document.body.style.cursor = "grabbing"
+      }
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        if (!dragStarted) {
+          const movedX = pointerEvent.clientX - startX
+          const movedY = pointerEvent.clientY - startY
+          if (Math.hypot(movedX, movedY) < OPEN_CHAT_TAB_DRAG_THRESHOLD) return
+          startDrag()
+        }
+        pointerEvent.preventDefault()
+
+        const target = document
+          .elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)
+          ?.closest<HTMLElement>("[data-open-chat-tab-id]")
+        const targetChatId = target?.dataset.openChatTabId
+        if (!target || !targetChatId || targetChatId === chatId) {
+          dropTarget = null
+          setOpenChatDropTarget(null)
+          return
+        }
+
+        const bounds = target.getBoundingClientRect()
+        dropTarget = {
+          chatId: targetChatId,
+          position: pointerEvent.clientX < bounds.left + bounds.width / 2 ? "before" : "after",
+        }
+        setOpenChatDropTarget(dropTarget)
+      }
+
+      const finishDrag = (pointerEvent?: PointerEvent) => {
+        cleanup()
+        if (!dragStarted || !pointerEvent) return
+
+        pointerEvent.preventDefault()
+        if (dropTarget) reorderOpenChatTab(chatId, dropTarget.chatId, dropTarget.position)
+        window.setTimeout(() => {
+          suppressOpenChatTabClickRef.current = false
+        }, 0)
+      }
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => finishDrag(pointerEvent)
+      const handlePointerCancel = () => {
+        finishDrag()
+        suppressOpenChatTabClickRef.current = false
+      }
+
+      document.addEventListener("pointermove", handlePointerMove, true)
+      document.addEventListener("pointerup", handlePointerUp, true)
+      document.addEventListener("pointercancel", handlePointerCancel, true)
+    },
+    [reorderOpenChatTab],
   )
 
   // Track previous chat ID for navigation after archive
@@ -1143,6 +1253,7 @@ export function AgentsContent() {
               {!selectedChatIsRemote && openChatTabs.length > 0 && (
                 <div
                   className="relative h-[43px] shrink-0 border-b border-border bg-muted/30"
+                  style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
                   onMouseEnter={() => {
                     setOpenChatTabsHovered(true)
                     updateOpenChatScrollbar()
@@ -1151,7 +1262,7 @@ export function AgentsContent() {
                 >
                   <div
                     ref={openChatTabsRef}
-                    className="scrollbar-hide flex h-full items-start overflow-x-auto px-2 pt-1"
+                    className="scrollbar-hide flex h-full items-start overflow-x-auto px-px pt-1"
                     onScroll={updateOpenChatScrollbar}
                   >
                     {openChatTabs.map((chat, tabIndex) => {
@@ -1168,22 +1279,35 @@ export function AgentsContent() {
                         <ContextMenu key={chat.id}>
                           <ContextMenuTrigger asChild>
                             <div
+                              data-open-chat-tab-id={chat.id}
+                              onPointerDown={(event) =>
+                                handleOpenChatTabPointerDown(event, chat.id)
+                              }
                               className={[
                                 "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 pt-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                 isActive
                                   ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
                                   : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
                               ].join(" ")}
+                              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
                             >
                               <button
                                 type="button"
                                 className="min-w-0 flex-1 truncate text-left"
-                                onClick={() => handleSelectOpenChatTab(chat.id)}
+                                onClick={(event) => {
+                                  if (suppressOpenChatTabClickRef.current) {
+                                    event.preventDefault()
+                                    suppressOpenChatTabClickRef.current = false
+                                    return
+                                  }
+                                  handleSelectOpenChatTab(chat.id)
+                                }}
                               >
                                 {chat.name || "New Chat"}
                               </button>
                               <button
                                 type="button"
+                                data-open-chat-tab-action
                                 aria-label={`Close ${chat.name || "chat"}`}
                                 className={[
                                   "flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100",
@@ -1201,6 +1325,18 @@ export function AgentsContent() {
                                 className="pointer-events-none absolute inset-x-0 top-0 h-0.5 opacity-[0.55]"
                                 style={{ backgroundColor: underlineColor }}
                               />
+                              {openChatDropTarget?.chatId === chat.id && (
+                                <span
+                                  aria-hidden
+                                  data-open-chat-drop-indicator={openChatDropTarget.position}
+                                  className={[
+                                    "pointer-events-none absolute bottom-0 top-1 z-20 w-0.5 rounded-full bg-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.2)]",
+                                    openChatDropTarget.position === "before"
+                                      ? "-left-px"
+                                      : "-right-px",
+                                  ].join(" ")}
+                                />
+                              )}
                             </div>
                           </ContextMenuTrigger>
                           <ContextMenuContent className="w-48">
@@ -1362,5 +1498,13 @@ export function AgentsContent() {
         </a>
       )}
     </>
+  )
+}
+
+export function AgentsContent() {
+  return (
+    <DictationSessionProvider>
+      <AgentsContentInner />
+    </DictationSessionProvider>
   )
 }

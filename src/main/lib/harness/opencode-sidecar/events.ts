@@ -12,6 +12,7 @@
  */
 
 import type { NormalizedSidecarEvent, SidecarUsage } from "./contract"
+import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 
 export type SseEvent = { id?: string; event?: string; data: string }
 
@@ -139,6 +140,8 @@ export class OpencodeEventNormalizer {
   private readonly partKinds = new Map<string, string>()
   private readonly partText = new Map<string, string>()
   private readonly partReasoning = new Map<string, string>()
+  private readonly visiblePartText = new Map<string, string>()
+  private readonly visiblePartReasoning = new Map<string, string>()
   private readonly toolStates = new Map<string, string>()
 
   normalize(event: Record<string, unknown>): NormalizedSidecarEvent[] {
@@ -159,11 +162,14 @@ export class OpencodeEventNormalizer {
         if (!partId || !field || !delta) break
         const kind = this.partKinds.get(partId)
         const isReasoning = kind === "reasoning" || field.startsWith("reasoning")
-        this.partText.set(partId, (this.partText.get(partId) ?? "") + delta)
-        out.push(
-          isReasoning
-            ? { kind: "reasoning-delta", partId, delta }
-            : { kind: "text-delta", partId, delta },
+        const accumulated = (this.partText.get(partId) ?? "") + delta
+        this.partText.set(partId, accumulated)
+        this.pushSanitizedDelta(
+          out,
+          isReasoning ? "reasoning" : "text",
+          partId,
+          accumulated,
+          this.visiblePartText,
         )
         break
       }
@@ -233,13 +239,14 @@ export class OpencodeEventNormalizer {
       const previous = this.partText.get(partId) ?? ""
       const delta = text.startsWith(previous) ? text.slice(previous.length) : text
       this.partText.set(partId, text)
-      if (delta) {
-        out.push(
-          partType === "reasoning"
-            ? { kind: "reasoning-delta", partId, delta }
-            : { kind: "text-delta", partId, delta },
+      if (delta)
+        this.pushSanitizedDelta(
+          out,
+          partType === "reasoning" ? "reasoning" : "text",
+          partId,
+          text,
+          this.visiblePartText,
         )
-      }
     }
 
     // Visible reasoning from OpenRouter/NanoGPT compatibility fields.
@@ -248,7 +255,8 @@ export class OpencodeEventNormalizer {
       const previous = this.partReasoning.get(partId) ?? ""
       const delta = reasoning.startsWith(previous) ? reasoning.slice(previous.length) : reasoning
       this.partReasoning.set(partId, reasoning)
-      if (delta) out.push({ kind: "reasoning-delta", partId, delta })
+      if (delta)
+        this.pushSanitizedDelta(out, "reasoning", partId, reasoning, this.visiblePartReasoning)
     }
 
     if (partType === "reasoning" && part.metadata !== undefined) {
@@ -280,5 +288,24 @@ export class OpencodeEventNormalizer {
       if (state) this.toolStates.set(toolCallId, state)
     }
     return out
+  }
+
+  private pushSanitizedDelta(
+    out: NormalizedSidecarEvent[],
+    kind: "text" | "reasoning",
+    partId: string,
+    rawText: string,
+    visibleByPart: Map<string, string>,
+  ): void {
+    const visible = sanitizeHarnessEnvelopeEcho(rawText)
+    const previous = visibleByPart.get(partId) ?? ""
+    const delta = visible.startsWith(previous) ? visible.slice(previous.length) : visible
+    visibleByPart.set(partId, visible)
+    if (!delta) return
+    out.push(
+      kind === "reasoning"
+        ? { kind: "reasoning-delta", partId, delta }
+        : { kind: "text-delta", partId, delta },
+    )
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
-import { Download, Play, Square } from "lucide-react"
+import { Copy, Download, FolderOpen, Play, Plus, Square, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { trpc } from "../../../lib/trpc"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
 
@@ -22,6 +23,10 @@ export function AgentsVoiceTab() {
   const [previewText, setPreviewText] = useState("Flapstack voice output is ready.")
   const [historySearch, setHistorySearch] = useState("")
   const { data: history } = trpc.speech.searchHistory.useQuery({ query: historySearch })
+  const deleteHistory = trpc.speech.deleteHistoryEntry.useMutation({
+    onSuccess: async () => utils.speech.searchHistory.invalidate(),
+  })
+  const revealHistory = trpc.speech.revealHistoryAudio.useMutation()
 
   useEffect(() => {
     if (!settings) return
@@ -64,6 +69,48 @@ export function AgentsVoiceTab() {
           available={selectedSttAvailability?.available}
           text={selectedSttAvailability?.reason || "Selected STT adapter is available."}
         />
+        {settings.sttAdapterId === "local-parakeet" && (
+          <>
+            <div className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3">
+              <p className="text-sm text-foreground">
+                {sttModels?.find((model) => model.id === "parakeet-unified-en-q8")?.label}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                English live transcription. Committed words stay stable; the tentative ending may
+                revise while you speak. Converted model license: CC-BY-4.0.
+              </p>
+            </div>
+            <WhisperModelStatus
+              model={sttModels?.find((model) => model.id === "parakeet-unified-en-q8")}
+              engineName="Parakeet streaming sidecar"
+              binaryReady={Boolean(
+                selectedSttAvailability && selectedSttAvailability.missingDependency !== "engine",
+              )}
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={settings.retainDictationAudio}
+                onChange={(event) => update({ retainDictationAudio: event.target.checked })}
+              />
+              Keep original dictation recordings in local history
+            </label>
+            <label className="space-y-1.5 block">
+              <span className="text-sm text-foreground">Unload idle model</span>
+              <select
+                value={settings.sttModelUnloadMinutes}
+                onChange={(event) => update({ sttModelUnloadMinutes: Number(event.target.value) })}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+              >
+                {[1, 5, 15, 30, 60].map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    After {minutes} minutes
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         {settings.sttAdapterId === "local-whisper" && (
           <>
             <label className="space-y-1.5 block">
@@ -139,18 +186,62 @@ export function AgentsVoiceTab() {
                   {entry.kind === "transcription" ? "Dictation" : "Speech"}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{entry.text}</span>
-                {entry.kind === "speech" && entry.audioPath && (
+                {entry.audioPath && (
                   <button
                     type="button"
                     className="text-emerald-600 hover:text-emerald-700"
+                    title="Play recording"
                     onClick={async () => {
                       const result = await utils.speech.getHistoryAudio.fetch({ id: entry.id })
                       await playManagedSpeech(result)
                     }}
                   >
-                    Play
+                    <Play className="h-3.5 w-3.5" />
                   </button>
                 )}
+                <button
+                  type="button"
+                  title="Copy transcript"
+                  onClick={async () => {
+                    await window.desktopApi.clipboardWrite(entry.text)
+                    toast.success("Copied voice transcript")
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                {entry.kind === "transcription" && (
+                  <button
+                    type="button"
+                    title="Insert into active chat input"
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new CustomEvent("voice-history-insert", { detail: entry.text }),
+                      )
+                    }
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {entry.audioPath && (
+                  <button
+                    type="button"
+                    title="Reveal recording"
+                    onClick={() => revealHistory.mutate({ id: entry.id })}
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title="Delete history entry"
+                  className="text-destructive"
+                  onClick={() => {
+                    if (window.confirm("Delete this voice history entry and its recording?"))
+                      deleteHistory.mutate({ id: entry.id })
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             ))
           ) : (
@@ -261,9 +352,11 @@ export function AgentsVoiceTab() {
 
 function WhisperModelStatus({
   binaryReady,
+  engineName = "whisper.cpp binary",
   model,
 }: {
   binaryReady: boolean
+  engineName?: string
   model?: { label: string; sizeBytes: number }
 }) {
   const utils = trpc.useUtils()
@@ -282,7 +375,7 @@ function WhisperModelStatus({
   const modelLabel = model?.label ?? "Selected multilingual"
   const modelSize = model ? Math.round(model.sizeBytes / 1024 / 1024) : null
   const label = !binaryReady
-    ? "whisper.cpp binary is not ready. Set its path above or install it, then download the model."
+    ? `${engineName} is not ready. Prepare the bundled engine, then download the model.`
     : status?.status === "present"
       ? `${modelLabel} installed (${Math.round(status.sizeBytes / 1024 / 1024)} MB).`
       : status?.status === "downloading"

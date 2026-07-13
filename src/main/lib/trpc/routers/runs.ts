@@ -3,6 +3,7 @@ import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
 import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "../../db"
 import { permissionModes } from "../../permissions"
+import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
 
 const permissionModeSchema = z.enum(permissionModes)
@@ -102,4 +103,16 @@ export const runsRouter = router({
       .all()
     return { checkpoints: runCheckpoints, manifest }
   }),
+
+  getChangeSet: publicProcedure
+    .input(z.object({ runId: z.string() }))
+    .query(({ input }) => getRunChangeSet(input.runId)),
+
+  getChangeReview: publicProcedure
+    .input(z.object({ runId: z.string(), filePath: z.string().optional() }))
+    .query(({ input }) => getRunChangeReview(input.runId, input.filePath)),
+
+  undoChangeSet: publicProcedure
+    .input(z.object({ runId: z.string() }))
+    .mutation(({ input }) => undoRunChangeSet(input.runId)),
 })

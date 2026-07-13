@@ -11,10 +11,50 @@ import { resolveAvailableSttAdapter, sttAdapterImplementations } from "../../spe
 import { getVoiceSettings } from "../../speech/settings"
 import { clearOpenAIKeyCache, getOpenAIApiKey, setUserOpenAIKey } from "../../speech/stt-cloud"
 import { recordTranscription } from "../../speech/history"
+import { parakeetSidecar } from "../../speech/stt-parakeet-streaming"
 import { publicProcedure, router } from "../index"
 
 // Max audio size: 25MB (Whisper API limit)
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024
+const MAX_STREAM_PCM_BYTES = 10 * 60 * 16_000 * 4
+
+type ActiveDictation = {
+  windowId: number
+  chatId?: string
+  subChatId?: string
+  chunks: Buffer[]
+  bytes: number
+  startedAt: number
+}
+
+let activeDictation: ActiveDictation | null = null
+
+function floatPcmToWav(chunks: Buffer[]) {
+  const floatBytes = Buffer.concat(chunks)
+  const samples = new Float32Array(
+    floatBytes.buffer,
+    floatBytes.byteOffset,
+    Math.floor(floatBytes.byteLength / 4),
+  )
+  const output = Buffer.alloc(44 + samples.length * 2)
+  output.write("RIFF", 0)
+  output.writeUInt32LE(36 + samples.length * 2, 4)
+  output.write("WAVEfmt ", 8)
+  output.writeUInt32LE(16, 16)
+  output.writeUInt16LE(1, 20)
+  output.writeUInt16LE(1, 22)
+  output.writeUInt32LE(16_000, 24)
+  output.writeUInt32LE(32_000, 28)
+  output.writeUInt16LE(2, 32)
+  output.writeUInt16LE(16, 34)
+  output.write("data", 36)
+  output.writeUInt32LE(samples.length * 2, 40)
+  for (let index = 0; index < samples.length; index++) {
+    const sample = Math.max(-1, Math.min(1, samples[index] ?? 0))
+    output.writeInt16LE(Math.round(sample < 0 ? sample * 0x8000 : sample * 0x7fff), 44 + index * 2)
+  }
+  return output
+}
 
 /**
  * Clear plan cache (for testing or when subscription changes)
@@ -63,7 +103,7 @@ export const voiceRouter = router({
         `[Voice] ${result.adapterId} transcription completed (${result.text.length} chars)`,
       )
       if (input.chatId && result.text.trim()) {
-        recordTranscription({
+        await recordTranscription({
           chatId: input.chatId,
           subChatId: input.subChatId,
           text: result.text,
@@ -72,6 +112,78 @@ export const voiceRouter = router({
       }
       return result
     }),
+
+  startStreaming: publicProcedure
+    .input(z.object({ chatId: z.string().optional(), subChatId: z.string().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const windowId = ctx.getWindow()?.id ?? 0
+      if (activeDictation) await parakeetSidecar.cancel()
+      await parakeetSidecar.start()
+      activeDictation = {
+        windowId,
+        chatId: input.chatId,
+        subChatId: input.subChatId,
+        chunks: [],
+        bytes: 0,
+        startedAt: Date.now(),
+      }
+      return { started: true as const, adapterId: "local-parakeet" }
+    }),
+
+  feedStreaming: publicProcedure
+    .input(z.object({ pcmBase64: z.string().max(2_000_000) }))
+    .mutation(async ({ input, ctx }) => {
+      const windowId = ctx.getWindow()?.id ?? 0
+      if (!activeDictation || activeDictation.windowId !== windowId)
+        throw new Error("No active dictation for this window")
+      const chunk = Buffer.from(input.pcmBase64, "base64")
+      if (chunk.length % 4 !== 0) throw new Error("Streaming PCM must be float32-aligned")
+      if (activeDictation.bytes + chunk.length > MAX_STREAM_PCM_BYTES)
+        throw new Error("Dictation is longer than 10 minutes")
+      activeDictation.chunks.push(chunk)
+      activeDictation.bytes += chunk.length
+      const update = await parakeetSidecar.feed(chunk)
+      return {
+        committed: update.committed ?? "",
+        tentative: update.tentative ?? "",
+        adapterId: "local-parakeet" as const,
+      }
+    }),
+
+  finalizeStreaming: publicProcedure.mutation(async ({ ctx }) => {
+    const windowId = ctx.getWindow()?.id ?? 0
+    if (!activeDictation || activeDictation.windowId !== windowId)
+      throw new Error("No active dictation for this window")
+    const dictation = activeDictation
+    activeDictation = null
+    const result = await parakeetSidecar.finalize()
+    const text = (result.final_text ?? "")
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/ +/g, " ")
+      .trim()
+    const durationMs = Math.round((dictation.bytes / 4 / 16_000) * 1_000)
+    if (text) {
+      const settings = getVoiceSettings()
+      await recordTranscription({
+        chatId: dictation.chatId,
+        subChatId: dictation.subChatId,
+        text,
+        adapterId: "local-parakeet",
+        durationMs,
+        audioWav: settings.retainDictationAudio ? floatPcmToWav(dictation.chunks) : null,
+      })
+    }
+    return { text, adapterId: "local-parakeet" as const, durationMs }
+  }),
+
+  cancelStreaming: publicProcedure.mutation(async ({ ctx }) => {
+    const windowId = ctx.getWindow()?.id ?? 0
+    if (activeDictation?.windowId === windowId) {
+      activeDictation = null
+      await parakeetSidecar.cancel()
+    }
+    return { cancelled: true as const }
+  }),
 
   /** Check local-only dictation readiness, including model auto-provisioning. */
   isAvailable: publicProcedure.query(async () => {

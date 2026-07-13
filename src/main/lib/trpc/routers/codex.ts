@@ -51,6 +51,7 @@ type CodexProviderSession = {
   cwd: string
   authFingerprint: string | null
   mcpFingerprint: string
+  reasoningEnabled: boolean
 }
 
 type CodexLoginSessionState = "running" | "success" | "error" | "cancelled"
@@ -1231,7 +1232,10 @@ function getAuthFingerprint(authConfig?: { apiKey: string }): string | null {
   return createHash("sha256").update(apiKey).digest("hex")
 }
 
-function buildCodexProviderEnv(authConfig?: { apiKey: string }): Record<string, string> {
+function buildCodexProviderEnv(
+  authConfig?: { apiKey: string },
+  reasoningEnabled = true,
+): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
   const env: Record<string, string> = {}
@@ -1248,6 +1252,20 @@ function buildCodexProviderEnv(authConfig?: { apiKey: string }): Record<string, 
       env[key] = value
     }
   }
+
+  let existingConfig: Record<string, unknown> = {}
+  try {
+    if (env.CODEX_CONFIG) existingConfig = JSON.parse(env.CODEX_CONFIG)
+  } catch {
+    existingConfig = {}
+  }
+  env.CODEX_CONFIG = JSON.stringify({
+    ...existingConfig,
+    model_reasoning_summary: reasoningEnabled ? "detailed" : "none",
+    model_supports_reasoning_summaries: reasoningEnabled,
+    show_raw_agent_reasoning: reasoningEnabled,
+    hide_agent_reasoning: !reasoningEnabled,
+  })
 
   const apiKey = authConfig?.apiKey?.trim()
   if (!apiKey) {
@@ -1339,6 +1357,7 @@ function getOrCreateProvider(params: {
   authConfig?: {
     apiKey: string
   }
+  reasoningEnabled: boolean
 }): ACPProvider {
   const authFingerprint = getAuthFingerprint(params.authConfig)
   const existing = providerSessions.get(params.subChatId)
@@ -1347,7 +1366,8 @@ function getOrCreateProvider(params: {
     existing &&
     existing.cwd === params.cwd &&
     existing.authFingerprint === authFingerprint &&
-    existing.mcpFingerprint === params.mcpFingerprint
+    existing.mcpFingerprint === params.mcpFingerprint &&
+    existing.reasoningEnabled === params.reasoningEnabled
   ) {
     return existing.provider
   }
@@ -1364,7 +1384,7 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
-    env: buildCodexProviderEnv(params.authConfig),
+    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     session: {
       cwd: params.cwd,
@@ -1379,6 +1399,7 @@ function getOrCreateProvider(params: {
     cwd: params.cwd,
     authFingerprint,
     mcpFingerprint: params.mcpFingerprint,
+    reasoningEnabled: params.reasoningEnabled,
   })
 
   return provider
@@ -1674,6 +1695,7 @@ export const codexRouter = router({
         mode: z.enum(["plan", "agent"]).default("agent"),
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
+        reasoningEnabled: z.boolean().default(true),
         images: z.array(imageAttachmentSchema).optional(),
         authConfig: z
           .object({
@@ -1743,6 +1765,7 @@ export const codexRouter = router({
 
         const safeEmit = (chunk: any) => {
           if (!isActive) return
+          if (!input.reasoningEnabled && String(chunk?.type).startsWith("reasoning-")) return
           try {
             emit.next(chunk)
           } catch {
@@ -1928,6 +1951,7 @@ export const codexRouter = router({
                 ? undefined
                 : (input.sessionId ?? getLastSessionId(existingMessages)),
               authConfig: input.authConfig,
+              reasoningEnabled: input.reasoningEnabled,
             })
 
             const startedAt = Date.now()
@@ -1951,6 +1975,7 @@ export const codexRouter = router({
             }
 
             const resolveReasoningOnce = (): ReturnType<typeof pollCodexReasoning> => {
+              if (!input.reasoningEnabled) return Promise.resolve([])
               if (reasoningPromise) return reasoningPromise
 
               const sessionId = latestSessionId || provider.getSessionId()
@@ -2156,12 +2181,10 @@ export const codexRouter = router({
                   output: part.output,
                 })
               }
-              if (usageMetadata) {
-                safeEmit({
-                  type: "message-metadata",
-                  messageMetadata: usageMetadata,
-                })
-              }
+              safeEmit({
+                type: "message-metadata",
+                messageMetadata: { runId: input.runId, ...(usageMetadata ?? {}) },
+              })
               safeEmit(pendingFinishChunk)
             } else {
               safeEmit({ type: "finish" })

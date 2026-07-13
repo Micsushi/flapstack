@@ -35,8 +35,17 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
     ),
   ) as Record<string, string | null>
   return {
+    voiceSettingsVersion: 2,
     sttAdapterId:
-      typeof raw.sttAdapterId === "string" ? raw.sttAdapterId : defaultVoiceSettings.sttAdapterId,
+      raw.voiceSettingsVersion === 2 && typeof raw.sttAdapterId === "string"
+        ? raw.sttAdapterId
+        : defaultVoiceSettings.sttAdapterId,
+    parakeetModelId: "parakeet-unified-en-q8",
+    retainDictationAudio: raw.retainDictationAudio ?? defaultVoiceSettings.retainDictationAudio,
+    sttModelUnloadMinutes:
+      typeof raw.sttModelUnloadMinutes === "number" && Number.isFinite(raw.sttModelUnloadMinutes)
+        ? clamp(Math.round(raw.sttModelUnloadMinutes), 1, 60)
+        : defaultVoiceSettings.sttModelUnloadMinutes,
     whisperModelId: ["tiny", "base", "small"].includes(raw.whisperModelId ?? "")
       ? (raw.whisperModelId as VoiceSettings["whisperModelId"])
       : defaultVoiceSettings.whisperModelId,

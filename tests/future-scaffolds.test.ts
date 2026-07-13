@@ -47,7 +47,7 @@ describe("future stage scaffolds", () => {
 
   it("resolves offline STT when configured", () => {
     expect(resolveSttAdapter({ sttAdapterId: "missing", preferOffline: true })).toMatchObject({
-      id: "local-whisper",
+      id: "local-parakeet",
     })
   })
 

@@ -2,22 +2,25 @@
 
 ### Requirement: Local Speech-to-Text
 
-The system SHALL provide local-only batch dictation via a bundled whisper.cpp
-`SttAdapter` using a user-selectable pinned `tiny`, `base`, or `small`
-multilingual model downloaded on first use, and SHALL surface that Local Whisper
-transcribed each utterance. Browser microphone audio SHALL be converted to 16
-kHz mono PCM WAV before entering the main process so packaged dictation does not
-depend on a system FFmpeg install.
+The system SHALL provide local-only streaming dictation through a bundled warm
+native sidecar using Parakeet Unified EN by default. Browser microphone audio
+SHALL enter the sidecar as 16 kHz mono PCM chunks. Each update SHALL contain an
+append-only committed prefix and replaceable tentative suffix. The active chat
+input SHALL display their combined text while the user speaks, without a
+separate dictation overlay, and microphone release SHALL finalize the stream.
+The system SHALL retain local whisper.cpp as an explicit selectable multilingual
+fallback and SHALL never upload microphone audio through a silent fallback.
 
 #### Scenario: Offline dictation
 
-- **WHEN** the user dictates
-- **THEN** the whisper.cpp adapter transcribes the audio locally
-- **AND** the resulting transcript is placed in the chat input for review
+- **WHEN** the user dictates with the streaming engine selected
+- **THEN** the warm Parakeet adapter transcribes the audio locally
+- **AND** committed and tentative text fill the active chat input while speech continues
+- **AND** release finalizes the text for review without sending it
 
 #### Scenario: Model not yet downloaded
 
-- **WHEN** the user starts dictation before the whisper.cpp model is present
+- **WHEN** the user starts dictation before the selected model is present
 - **THEN** the system downloads the model with visible progress
 - **AND** shows an actionable state on download failure rather than a silent no-op
 
@@ -25,14 +28,39 @@ depend on a system FFmpeg install.
 
 - **WHEN** a user installs a packaged build on a supported target without Homebrew,
   FFmpeg, or whisper.cpp already installed
-- **THEN** Flapstack uses its bundled checksum-pinned whisper.cpp engine
+- **THEN** Flapstack uses its bundled checksum-pinned streaming sidecar
 - **AND** downloads only the selected model with visible lifecycle state
 
-#### Scenario: User changes model
+#### Scenario: User selects the multilingual fallback
 
-- **WHEN** the user selects tiny, base, or small in Voice settings
+- **WHEN** the user selects Local Whisper and a tiny, base, or small model
 - **THEN** status and download progress apply to that model independently
 - **AND** existing downloads for other model sizes remain available
+
+### Requirement: Dictation History
+
+The system SHALL persist each finalized dictation as searchable local history
+containing final transcript, engine, timestamps, duration, chat association,
+and—when recording retention is enabled—the original WAV recording. Voice
+settings SHALL allow the user to copy or insert text, play or reveal retained
+audio, and delete an entry. Deleting an entry SHALL delete its owned audio file.
+
+#### Scenario: Finalized dictation is saved
+
+- **WHEN** a non-empty dictation is finalized
+- **THEN** its transcript and metadata appear in Voice settings history
+- **AND** its local recording is playable when recording retention is enabled
+
+#### Scenario: Reuse an earlier transcript
+
+- **WHEN** the user chooses copy or insert on a history entry
+- **THEN** the exact finalized transcript is available for reuse
+
+#### Scenario: Delete history safely
+
+- **WHEN** the user confirms deletion of a dictation history entry
+- **THEN** its database row and Flapstack-owned recording file are removed
+- **AND** unrelated history and files remain untouched
 
 ### Requirement: Offline Text-to-Speech
 
@@ -93,6 +121,35 @@ default, even when no external skill or instruction file is installed.
 - **WHEN** a chat runs through Claude, Codex, Cursor, OpenRouter, or NanoGPT
 - **THEN** the same application-owned caveman and ponytail defaults are supplied
 
+### Requirement: Cross-Provider Reasoning Control
+
+The system SHALL provide one per-chat Reasoning toggle beside model effort,
+enabled by default. When enabled, the selected effort SHALL map to the closest
+reasoning depth supported by the active provider/model and Flapstack SHALL
+request every provider-supported visible reasoning channel. When disabled, the
+system SHALL disable provider reasoning where supported and otherwise suppress
+reasoning display while reporting that internal reasoning could not be disabled.
+Encrypted or provider-private reasoning SHALL remain opaque.
+
+#### Scenario: Reasoning enabled
+
+- **WHEN** a chat has Reasoning enabled and the user selects an effort level
+- **THEN** Flapstack sends the closest supported reasoning depth
+- **AND** requests the richest supported visible summaries, text, commentary,
+  plans, tool activity, metadata, and token counts
+
+#### Scenario: Reasoning disabled
+
+- **WHEN** the user disables Reasoning for a chat
+- **THEN** future runs in that chat request disabled or none reasoning where supported
+- **AND** unsupported providers degrade honestly without exposing reasoning UI
+
+#### Scenario: Provider keeps reasoning private
+
+- **WHEN** a provider returns encrypted, signed, omitted, or token-only reasoning
+- **THEN** Flapstack preserves required continuity metadata and accurate usage
+- **AND** does not fabricate or reconstruct visible reasoning text
+
 ### Requirement: Optional Machine-Local Vault Context
 
 The system SHALL support an opt-in machine-local vault configuration outside the
@@ -117,7 +174,10 @@ prompt the user to connect a vault.
 
 The system SHALL provide a mic control in the chat input supporting push-to-talk
 hold and click-to-toggle, and place the transcript in the input for review
-without auto-sending. Speech playback SHALL be requested manually from a message;
+without auto-sending. One application-level recording session SHALL remain bound
+to the project, chat, conversation, and pre-dictation draft where it started,
+including while the user changes chats, projects, or operating-system applications.
+Speech playback SHALL be requested manually from a message;
 the composer SHALL NOT expose automatic or per-chat read-aloud controls.
 
 #### Scenario: Dictate and review before sending
@@ -125,6 +185,31 @@ the composer SHALL NOT expose automatic or per-chat read-aloud controls.
 - **WHEN** the user holds the mic control and speaks
 - **THEN** a recording indicator is shown
 - **AND** on release the transcript appears in the input without being sent
+
+#### Scenario: Continue recording away from the origin chat
+
+- **WHEN** the user starts dictation and then changes applications, chats, or projects
+- **THEN** capture and transcription continue
+- **AND** transcript updates remain in the origin conversation draft
+- **AND** typed text in the newly visible conversation remains independently owned
+
+#### Scenario: Return to or stop background dictation
+
+- **WHEN** the origin conversation is no longer visible during recording
+- **THEN** Flapstack shows a compact recording capsule naming the origin project and chat
+- **AND** the user can return to the origin or stop and finalize its draft
+
+#### Scenario: Start dictation in another conversation
+
+- **WHEN** the user starts dictation in a second conversation while another is recording
+- **THEN** Flapstack stops and fully finalizes the first recording into its origin draft
+- **AND** starts the new recording only after that handoff
+
+#### Scenario: Send while origin dictation is active
+
+- **WHEN** the user sends from the origin conversation during recording
+- **THEN** Flapstack finalizes all remaining origin audio before sending
+- **AND** sends the complete origin-owned draft
 
 #### Scenario: Interrupt read-aloud
 

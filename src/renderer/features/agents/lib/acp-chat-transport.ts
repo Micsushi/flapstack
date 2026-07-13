@@ -15,6 +15,7 @@ import {
   pendingAuthRetryMessageAtom,
   subChatCodexModelIdAtomFamily,
   subChatCodexReasoningAtomFamily,
+  subChatReasoningEnabledAtomFamily,
 } from "../atoms"
 import {
   CODEX_MODELS,
@@ -147,6 +148,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     }
     const codexApiKey = normalizeCodexApiKey(appStore.get(codexApiKeyAtom))
     const selectedModel = getSelectedCodexModel(this.config.subChatId)
+    const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
 
     return new ReadableStream({
       start: (controller) => {
@@ -178,6 +180,7 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
             model: selectedModel,
             mode: currentMode,
+            reasoningEnabled,
             ...(sessionId ? { sessionId } : {}),
             ...(forceNewSession ? { forceNewSession: true } : {}),
             ...(images.length > 0 ? { images } : {}),

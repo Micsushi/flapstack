@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import simpleGit, { type SimpleGit, type StatusResult } from "simple-git"
 import { eq } from "drizzle-orm"
@@ -21,6 +22,7 @@ export type CheckpointStatusSnapshot = {
   available: boolean
   status?: StatusResult
   files: Record<string, FileSnapshot>
+  treeCommit?: string
   error?: string
 }
 
@@ -72,9 +74,13 @@ async function buildStatusSnapshot(
       }
     }
 
-    const [gitCommit, status] = await Promise.all([
+    const [gitCommit, status, treeCommit] = await Promise.all([
       git.revparse(["HEAD"]).then((value) => value.trim()),
       git.status(),
+      captureWorktreeTree(worktreePath).catch((error) => {
+        console.warn("[checkpoints] Recoverable tree capture unavailable", error)
+        return undefined
+      }),
     ])
 
     const files: Record<string, FileSnapshot> = {}
@@ -97,6 +103,7 @@ async function buildStatusSnapshot(
         available: true,
         status,
         files,
+        treeCommit,
       },
     }
   } catch (error) {
@@ -108,6 +115,32 @@ async function buildStatusSnapshot(
         error: errorMessage(error),
       },
     }
+  }
+}
+
+export async function captureWorktreeTree(worktreePath: string): Promise<string> {
+  const tempDir = await mkdtemp(join(tmpdir(), "flapstack-checkpoint-"))
+  try {
+    const tempIndexPath = join(tempDir, "index")
+    const git = simpleGit(worktreePath).env({ GIT_INDEX_FILE: tempIndexPath })
+    await git.raw(["read-tree", "HEAD"])
+    await git.raw(["add", "-A"])
+    const tree = (await git.raw(["write-tree"])).trim()
+    if (!tree) throw new Error("Could not capture worktree tree")
+    return (
+      await git.raw([
+        "-c",
+        "user.name=Flapstack Recovery",
+        "-c",
+        "user.email=recovery@flapstack.local",
+        "commit-tree",
+        tree,
+        "-m",
+        "Flapstack private checkpoint",
+      ])
+    ).trim()
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
   }
 }
 
@@ -124,6 +157,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         available: parsed.available ?? !parsed.unavailable,
         status: parsed.status,
         files: parsed.files,
+        treeCommit: parsed.treeCommit,
         error: parsed.error,
       }
     }
@@ -254,6 +288,38 @@ async function getDiffStats(
   return stats
 }
 
+async function getTreeDiffStats(
+  worktreePath: string | null,
+  beforeTree?: string,
+  afterTree?: string,
+): Promise<Map<string, { additions: number; deletions: number }>> {
+  const stats = new Map<string, { additions: number; deletions: number }>()
+  if (!worktreePath || !beforeTree || !afterTree || !existsSync(worktreePath)) return stats
+
+  try {
+    const output = await simpleGit(worktreePath).raw([
+      "diff",
+      "--numstat",
+      beforeTree,
+      afterTree,
+      "--",
+    ])
+    for (const line of output.split("\n")) {
+      if (!line.trim()) continue
+      const [added, deleted, ...pathParts] = line.split("\t")
+      const filePath = pathParts[pathParts.length - 1]
+      if (!filePath) continue
+      stats.set(filePath, {
+        additions: added === "-" ? 0 : Number(added) || 0,
+        deletions: deleted === "-" ? 0 : Number(deleted) || 0,
+      })
+    }
+  } catch {
+    return stats
+  }
+  return stats
+}
+
 async function getGitObjectHash(
   git: SimpleGit,
   commit: string,
@@ -349,7 +415,7 @@ export async function captureCheckpoint(
   const db = getDatabase()
   const { gitCommit, snapshot } = await buildStatusSnapshot(worktreePath)
 
-  return db
+  const checkpoint = db
     .insert(checkpoints)
     .values({
       runId,
@@ -360,6 +426,20 @@ export async function captureCheckpoint(
     })
     .returning()
     .get()
+
+  if (worktreePath && snapshot.treeCommit) {
+    try {
+      await simpleGit(worktreePath).raw([
+        "update-ref",
+        `refs/flapstack/checkpoints/${checkpoint.id}`,
+        snapshot.treeCommit,
+      ])
+    } catch (error) {
+      console.warn("[checkpoints] Could not retain private checkpoint ref", error)
+    }
+  }
+
+  return checkpoint
 }
 
 export async function captureRunManifest(runId: string) {
@@ -375,20 +455,24 @@ export async function captureRunManifest(runId: string) {
   const changedPaths = Array.from(
     new Set([...Object.keys(beforeSnapshot.files), ...Object.keys(afterSnapshot.files)]),
   )
-  const diffStats = await getDiffStats(
-    after?.worktreePath ?? before?.worktreePath ?? null,
-    changedPaths,
+  const worktreePath = after?.worktreePath ?? before?.worktreePath ?? null
+  const treeDiffStats = await getTreeDiffStats(
+    worktreePath,
+    beforeSnapshot.treeCommit,
+    afterSnapshot.treeCommit,
   )
+  const diffStats =
+    treeDiffStats.size > 0 ? treeDiffStats : await getDiffStats(worktreePath, changedPaths)
   const snapshotEntries = buildManifestEntriesFromSnapshots(
     beforeSnapshot,
     afterSnapshot,
     diffStats,
-    after?.worktreePath ?? before?.worktreePath ?? null,
+    worktreePath,
   )
   const commitEntries = await getCommitManifestEntries({
-    worktreePath: after?.worktreePath ?? before?.worktreePath ?? null,
-    beforeCommit: before?.gitCommit,
-    afterCommit: after?.gitCommit,
+    worktreePath,
+    beforeCommit: beforeSnapshot.treeCommit ?? before?.gitCommit,
+    afterCommit: afterSnapshot.treeCommit ?? after?.gitCommit,
   })
   const entriesByPath = new Map<string, ManifestEntryInput>()
   for (const entry of snapshotEntries) {

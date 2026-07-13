@@ -164,6 +164,12 @@ body[data-sidebar-pointer-dragging="true"][data-sidebar-pointer-drag-cursor="cop
   cursor: copy !important;
 }
 
+body[data-open-chat-tab-pointer-dragging="true"],
+body[data-open-chat-tab-pointer-dragging="true"] * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

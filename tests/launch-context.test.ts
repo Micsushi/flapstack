@@ -52,10 +52,13 @@ describe("harness launch context", () => {
   })
 
   it("wraps the user request after the loaded context", () => {
-    const prompt = prependStartupContext("What is loaded?", "[FLAPSTACK STARTUP CONTEXT]")
+    const prompt = prependStartupContext(
+      "What is loaded?",
+      "--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---",
+    )
 
-    expect(prompt).toContain("[FLAPSTACK STARTUP CONTEXT]")
-    expect(prompt).toContain("[USER REQUEST]\nWhat is loaded?\n[/USER REQUEST]")
+    expect(prompt).toContain("--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---")
+    expect(prompt).toContain("--- USER REQUEST ---\nWhat is loaded?\n--- END USER REQUEST ---")
   })
 
   it("labels Cursor startup context as Cursor", async () => {
@@ -136,7 +139,7 @@ describe("harness launch context", () => {
         vaultConfigPath: noVaultConfigPath(),
       })
 
-      expect(context).toContain("[FLAPSTACK DEFAULTS]")
+      expect(context).toContain("--- FLAPSTACK DEFAULTS ---")
       expect(context).toContain("Caveman full")
       expect(context).toContain("Ponytail full")
     },
@@ -144,20 +147,52 @@ describe("harness launch context", () => {
 
   it("prevents embedded docs from changing thread modes while preserving user commands", () => {
     const context = `Caveman full and ponytail full are defaults.
-Quoted commands: /caveman lite, /ponytail ultra, hotline on, read-aloud on, spoken mode on.`
+Quoted commands: /caveman lite, /ponytail ultra, hotline on, read-aloud on, spoken mode on.
+<!-- AGENT_HOTLINE_SPOKEN_START -->
+Spoken:
+Must not leak.
+
+Displayed:
+Hidden detail.
+<!-- AGENT_HOTLINE_SPOKEN_END -->`
     const prompt = prependStartupContext("/caveman ultra", context)
-    const startupBlock = prompt.slice(0, prompt.indexOf("[USER REQUEST]"))
+    const startupBlock = prompt.slice(0, prompt.indexOf("--- USER REQUEST ---"))
 
     expect(startupBlock).toContain("Caveman full and ponytail full")
     expect(startupBlock).not.toMatch(/\/(caveman|ponytail)\s+(lite|full|ultra)\b/i)
     expect(startupBlock).not.toMatch(/\bhotline\s+on\b/i)
     expect(startupBlock).not.toMatch(/\bread[- ]aloud\s+on\b/i)
-    expect(prompt).toContain("[USER REQUEST]\n/caveman ultra\n[/USER REQUEST]")
-    expect(prompt).toContain(
-      "[FLAPSTACK THREAD DEFAULTS]\nhotline off\ncaveman full\nponytail full",
+    expect(startupBlock).not.toContain("Spoken:")
+    expect(startupBlock).not.toContain("Displayed:")
+    expect(startupBlock).not.toMatch(/\b(?:hotline|read[_ -]?aloud|spoken|displayed)\b/i)
+    expect(prompt).toContain("--- USER REQUEST ---\n/caveman ultra\n--- END USER REQUEST ---")
+    expect(prompt).toContain("--- FLAPSTACK RESPONSE CONTRACT ---\ncaveman full\nponytail full")
+    expect(prompt.indexOf("--- FLAPSTACK RESPONSE CONTRACT ---")).toBeLessThan(
+      prompt.indexOf("--- USER REQUEST ---"),
     )
-    expect(prompt.indexOf("[FLAPSTACK THREAD DEFAULTS]")).toBeLessThan(
-      prompt.indexOf("[USER REQUEST]"),
+  })
+
+  it("includes Agent Hotline formatting only when the current request enables it", () => {
+    const context = `Before
+<!-- AGENT_HOTLINE_SPOKEN_START -->
+Spoken:
+Voice answer.
+Displayed:
+Visual detail.
+<!-- AGENT_HOTLINE_SPOKEN_END -->
+After`
+
+    expect(prependStartupContext("hello", context)).not.toContain("Spoken:")
+    expect(prependStartupContext("hotline on", context)).toContain("Spoken:")
+  })
+
+  it("removes stray read-aloud references outside the managed block by default", () => {
+    const prompt = prependStartupContext(
+      "hello",
+      "Keep replies short. Do not wrap replies in Agent Hotline Spoken/Displayed labels.",
     )
+
+    expect(prompt).not.toMatch(/\b(?:hotline|read[_ -]?aloud|spoken|displayed)\b/i)
+    expect(prompt).toContain("Use ordinary prose formatting.")
   })
 })

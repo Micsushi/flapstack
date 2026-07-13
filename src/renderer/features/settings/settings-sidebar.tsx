@@ -155,11 +155,12 @@ export function SettingsSidebar() {
   const setDesktopView = useSetAtom(desktopViewAtom)
   const isDesktop = useAtomValue(isDesktopAtom)
 
-  // Hide native traffic lights when settings sidebar is shown
+  // Settings has its own full-width drag bar, so keep the native macOS window
+  // controls available for minimize, fullscreen, and window management.
   useEffect(() => {
     if (!isDesktop) return
     if (typeof window === "undefined" || !window.desktopApi?.setTrafficLightVisibility) return
-    window.desktopApi.setTrafficLightVisibility(false)
+    window.desktopApi.setTrafficLightVisibility(true)
   }, [isDesktop])
 
   // Beta tab click counter for unlocking devtools

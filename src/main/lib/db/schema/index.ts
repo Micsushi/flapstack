@@ -273,9 +273,7 @@ export const voiceArtifacts = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => createId()),
-    chatId: text("chat_id")
-      .notNull()
-      .references(() => chats.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").references(() => chats.id, { onDelete: "cascade" }),
     subChatId: text("sub_chat_id").references(() => subChats.id, { onDelete: "set null" }),
     messageId: text("message_id"),
     kind: text("kind").notNull(), // transcription | speech
@@ -287,6 +285,7 @@ export const voiceArtifacts = sqliteTable(
     audioPath: text("audio_path"),
     mimeType: text("mime_type"),
     byteLength: integer("byte_length").notNull().default(0),
+    durationMs: integer("duration_ms"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     lastPlayedAt: integer("last_played_at", { mode: "timestamp" }),
   },

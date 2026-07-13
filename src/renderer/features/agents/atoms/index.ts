@@ -290,6 +290,39 @@ export const lastSelectedCodexFastModeAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 )
 
+// New chats inherit the last choice; each started chat persists its own toggle.
+export const lastSelectedReasoningEnabledAtom = atomWithStorage<boolean>(
+  "agents:lastSelectedReasoningEnabled",
+  true,
+  undefined,
+  { getOnInit: true },
+)
+
+const subChatReasoningEnabledStorageAtom = atomWithStorage<Record<string, boolean>>(
+  "agents:subChatReasoningEnabled",
+  {},
+  undefined,
+  { getOnInit: true },
+)
+
+export const subChatReasoningEnabledAtomFamily = atomFamily((subChatId: string) =>
+  atom(
+    (get) =>
+      (subChatId ? get(subChatReasoningEnabledStorageAtom)[subChatId] : undefined) ??
+      get(lastSelectedReasoningEnabledAtom),
+    (get, set, enabled: boolean) => {
+      if (!subChatId) {
+        set(lastSelectedReasoningEnabledAtom, enabled)
+        return
+      }
+      set(subChatReasoningEnabledStorageAtom, {
+        ...get(subChatReasoningEnabledStorageAtom),
+        [subChatId]: enabled,
+      })
+    },
+  ),
+)
+
 export type OpencodeProviderPreference = "openrouter" | "nanogpt"
 
 export const enabledOpencodeModelsAtom = atomWithStorage<
@@ -1194,6 +1227,15 @@ export const workspaceDiffCacheAtomFamily = atomFamily((chatId: string) =>
 export const showMessageJsonAtom = atomWithStorage<boolean>(
   "agents:showMessageJson",
   false,
+  undefined,
+  { getOnInit: true },
+)
+
+// Keep user prompts pinned above their response while scrolling.
+// This is global so the preference applies to every chat and future session.
+export const floatingUserMessagesAtom = atomWithStorage<boolean>(
+  "agents:floatingUserMessages",
+  true,
   undefined,
   { getOnInit: true },
 )

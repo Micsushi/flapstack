@@ -347,6 +347,7 @@ export const cursorRouter = router({
         projectPath: z.string().optional(),
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
+        reasoningEnabled: z.boolean().default(true),
         images: z.array(imageAttachmentSchema).optional(),
       }),
     )

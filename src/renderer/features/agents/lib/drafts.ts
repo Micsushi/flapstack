@@ -185,6 +185,51 @@ export function saveSubChatDraft(chatId: string, subChatId: string, text: string
   saveGlobalDrafts(globalDrafts)
 }
 
+// Update only the text owned by a chat draft. Background dictation uses this so
+// attachments and selected context survive while the origin composer is hidden.
+export function updateSubChatDraftText(chatId: string, subChatId: string, text: string): void {
+  const globalDrafts = loadGlobalDrafts()
+  const key = getSubChatDraftKey(chatId, subChatId)
+  const existing = globalDrafts[key] as DraftContent | undefined
+  if (
+    text.trim() ||
+    existing?.images?.length ||
+    existing?.files?.length ||
+    existing?.textContexts?.length
+  ) {
+    globalDrafts[key] = { ...existing, text, updatedAt: Date.now() }
+  } else {
+    delete globalDrafts[key]
+  }
+  saveGlobalDrafts(globalDrafts)
+}
+
+export function updateNewChatDraftText(
+  draftId: string,
+  text: string,
+  project?: DraftProject,
+): void {
+  const globalDrafts = loadGlobalDrafts()
+  const existing = globalDrafts[draftId] as NewChatDraft | undefined
+  if (
+    text.trim() ||
+    existing?.images?.length ||
+    existing?.files?.length ||
+    existing?.textContexts?.length
+  ) {
+    globalDrafts[draftId] = {
+      ...existing,
+      text,
+      updatedAt: Date.now(),
+      isVisible: existing?.isVisible ?? false,
+      ...(project && { project }),
+    }
+  } else {
+    delete globalDrafts[draftId]
+  }
+  saveGlobalDrafts(globalDrafts)
+}
+
 // Clear sub-chat draft (also revokes any blob URLs)
 export function clearSubChatDraft(chatId: string, subChatId: string): void {
   const globalDrafts = loadGlobalDrafts()

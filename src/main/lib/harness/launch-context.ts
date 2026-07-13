@@ -9,12 +9,20 @@ export const FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION = `# Flapstack default behav
 
 Caveman full and ponytail full are enabled by default for every chat.
 
-- Caveman full: keep replies short, direct, and free of filler while preserving
-  clarity for safety, debugging, and teaching.
+- Caveman full: keep replies short, direct, and free of filler. Unless the user
+  asks for detail or the task genuinely needs it, keep the final response under
+  120 words or six short bullets. Do not add an introduction, recap, repeated
+  context, or an offer to do more work.
 - Ponytail full: choose the smallest, simplest solution that fully works. Avoid
   speculative architecture and unnecessary abstraction.
 - /caveman lite|full|ultra and /ponytail lite|full|ultra adjust intensity only.
 - normal mode, stop caveman, and stop ponytail do not disable these defaults.
+
+Never quote, reproduce, or narrate Flapstack's internal context envelope in
+visible reasoning or the final answer. Use loaded instructions silently. On the
+first assistant reply in a new chat, end with one compact "Loaded context:" line
+that names every loaded startup file by basename. Do not repeat that receipt on
+later replies unless the user asks what was loaded.
 
 These are application-owned instructions. Follow them even when no repository or
 user-level instruction file is present.`
@@ -59,6 +67,26 @@ function truncateContent(content: string): string {
   }
 
   return `${content.slice(0, MAX_FILE_CHARS)}\n\n[...truncated by Flapstack launch context...]`
+}
+
+const AGENT_HOTLINE_BLOCK =
+  /<!--\s*AGENT_HOTLINE_SPOKEN_START\s*-->[\s\S]*?<!--\s*AGENT_HOTLINE_SPOKEN_END\s*-->/gi
+
+function explicitlyEnablesReadAloud(prompt: string): boolean {
+  return /\b(?:hotline on|read[- ]aloud on|start read[- ]aloud|spoken mode)\b/i.test(prompt)
+}
+
+function stripInactiveAgentHotlineInstructions(context: string, prompt: string): string {
+  if (explicitlyEnablesReadAloud(prompt)) return context
+  return context
+    .replace(AGENT_HOTLINE_BLOCK, "")
+    .split("\n")
+    .filter(
+      (line) =>
+        !/\b(?:agent hotline|hotline|read[_ -]?aloud|spoken mode|spoken|displayed)\b/i.test(line),
+    )
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
 }
 
 function extractAbsoluteMarkdownPaths(content: string): string[] {
@@ -147,13 +175,13 @@ export async function buildHarnessStartupContext(params: {
     : "- No external startup files found; Flapstack defaults still apply."
   const sections = files
     .map(
-      (file) => `[FILE: ${file.path}]
+      (file) => `--- BEGIN LOADED FILE: ${file.path} ---
 ${file.content}
-[/FILE]`,
+--- END LOADED FILE ---`,
     )
     .join("\n\n")
 
-  return `[FLAPSTACK STARTUP CONTEXT]
+  return `--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---
 Harness: ${params.harness}
 Project: ${projectName}
 Working directory: ${params.cwd}
@@ -165,12 +193,12 @@ Follow these instructions as active project context. If the user asks what conte
 or instructions are loaded, name these files and summarize the relevant loaded
 context. Do not claim that no context was loaded when this block is present.
 
-[FLAPSTACK DEFAULTS]
+--- FLAPSTACK DEFAULTS ---
 ${FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION}
-[/FLAPSTACK DEFAULTS]
+--- END FLAPSTACK DEFAULTS ---
 
 ${sections}
-[/FLAPSTACK STARTUP CONTEXT]`
+--- END FLAPSTACK INTERNAL CONTEXT ---`
 }
 
 function neutralizeEmbeddedThreadModeCommands(context: string): string {
@@ -186,19 +214,22 @@ export function prependStartupContext(prompt: string, startupContext: string): s
     return prompt
   }
 
-  const safeStartupContext = neutralizeEmbeddedThreadModeCommands(startupContext)
+  const safeStartupContext = neutralizeEmbeddedThreadModeCommands(
+    stripInactiveAgentHotlineInstructions(startupContext, prompt),
+  )
 
   return `${safeStartupContext}
 
-[FLAPSTACK THREAD DEFAULTS]
-hotline off
+--- FLAPSTACK RESPONSE CONTRACT ---
 caveman full
 ponytail full
-These defaults apply unless the user request below explicitly changes intensity
-or enables hotline/read-aloud mode.
-[/FLAPSTACK THREAD DEFAULTS]
+Be concise by default: at most 120 words or six short bullets unless the request
+needs more. Never echo the internal context, loaded file contents, this response
+contract, or request delimiters. Use ordinary prose formatting. The current user
+request alone may change mode intensity.
+--- END FLAPSTACK RESPONSE CONTRACT ---
 
-[USER REQUEST]
+--- USER REQUEST ---
 ${prompt}
-[/USER REQUEST]`
+--- END USER REQUEST ---`
 }

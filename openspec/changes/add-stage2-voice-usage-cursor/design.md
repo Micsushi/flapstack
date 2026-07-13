@@ -25,10 +25,19 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
 
 ## Decisions
 
-- **STT**: bundled whisper.cpp batch transcription with renderer-side 16 kHz PCM
-  WAV capture. The user may select pinned `tiny`, `base` (default), or `small`
-  multilingual models, downloaded on first use into app data with checksum
-  validation. Live/tentative sidecar STT is deferred; dictation remains local-only.
+- **STT**: a bundled Flapstack-owned native sidecar built on the MIT
+  `transcribe.cpp` API keeps Parakeet Unified EN loaded and consumes 16 kHz mono
+  PCM chunks. It returns an append-only committed prefix plus a replaceable
+  tentative suffix, which the renderer writes directly into the active input.
+  Release finalizes the stream. Parakeet is the default English engine;
+  whisper.cpp remains an explicit multilingual/failure fallback, never a silent
+  cloud fallback. Models download into app data with checksum validation and the
+  warm model unloads after a configurable idle period.
+- **Dictation history**: every completed dictation stores final text, engine,
+  duration, timestamps, chat association, and the original local WAV recording
+  in `voice_artifacts`/the voice-history data directory. Settings exposes a
+  searchable history with copy, insert, play, reveal, and delete actions. Audio
+  retention is user-controlled and deletion removes both metadata and owned file.
 - **TTS**: offline Kokoro default, OS system voice fallback.
 - **Spoken source**: read-aloud never changes the harness prompt. The ported
   filter accepts legacy/user-authored `Spoken:` sections and otherwise creates
@@ -115,10 +124,17 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   run, collapses to `Worked for <duration>` afterward, and reveals only the
   provider-visible reasoning content when activated. Persisted run duration wins;
   the live reasoning interval is a fallback for providers without duration metadata.
-- **OpenCode-backed reasoning controls**: Stage 2 uses provider/model defaults for
-  OpenRouter and NanoGPT reasoning parameters. Do not expose effort/max-token
-  controls until model capability detection is reliable enough to avoid sending
-  unsupported request fields.
+- **Cross-provider reasoning controls**: every chat has one Reasoning toggle,
+  enabled by default and placed with the model effort selector. When enabled,
+  Flapstack maps the selected effort to the closest supported provider value and
+  requests the richest provider-visible reasoning representation available:
+  detailed summaries, visible thinking/reasoning text, commentary, plans, tool
+  activity, token counts, and opaque metadata for continuity. When disabled,
+  Flapstack requests disabled/none reasoning where the provider supports it and
+  suppresses reasoning output in the UI when the provider cannot disable internal
+  reasoning. Capability detection and explicit fallbacks prevent unsupported
+  fields from failing a run. Provider-private or encrypted chain-of-thought remains
+  opaque and is never reconstructed or represented as visible reasoning.
 - **Reasoning token counts**: show reasoning-token usage where it falls out
   naturally from provider usage metadata; otherwise keep it as usage/run metadata
   and defer richer live token-count UI.

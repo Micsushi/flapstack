@@ -10,6 +10,8 @@ import { Folder } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { OpenInButton } from "../../../components/open-in-button"
 
+const MAX_VISIBLE_CHAT_NAME_LENGTH = 40
+
 interface ChatTitleEditorProps {
   name: string
   placeholder?: string
@@ -23,7 +25,9 @@ interface ChatTitleEditorProps {
   provider?: string
   providerName?: string
   providerClassName?: string
-  workspaceLabel?: string
+  projectLabel?: string | null
+  projectColor?: string | null
+  workspaceBranch?: string | null
   localFolderPath?: string
   reserveRestoreSpace?: boolean
 }
@@ -42,7 +46,9 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.provider === next.provider &&
     prev.providerName === next.providerName &&
     prev.providerClassName === next.providerClassName &&
-    prev.workspaceLabel === next.workspaceLabel &&
+    prev.projectLabel === next.projectLabel &&
+    prev.projectColor === next.projectColor &&
+    prev.workspaceBranch === next.workspaceBranch &&
     prev.localFolderPath === next.localFolderPath &&
     prev.reserveRestoreSpace === next.reserveRestoreSpace
   )
@@ -61,7 +67,9 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   provider,
   providerName,
   providerClassName,
-  workspaceLabel,
+  projectLabel,
+  projectColor,
+  workspaceBranch,
   localFolderPath,
   reserveRestoreSpace = false,
 }: ChatTitleEditorProps) {
@@ -155,6 +163,10 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
 
   const isJustCreated = chatId ? justCreatedIds.has(chatId) : false
   const hasRealName = name && name !== placeholder
+  const visibleName =
+    name.length > MAX_VISIBLE_CHAT_NAME_LENGTH
+      ? `${name.slice(0, MAX_VISIBLE_CHAT_NAME_LENGTH)}...`
+      : name
 
   const handleClick = () => {
     // Don't allow editing if disabled or if it's a placeholder (not saved to DB yet)
@@ -192,20 +204,22 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             isMobile ? "text-base" : "text-lg",
             "font-medium text-foreground",
           )}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         />
       ) : (
         <div
           onClick={handleClick}
           className={cn(
-            "flex h-full min-w-0 max-w-[50%] items-center text-left",
+            "flex h-full min-w-0 flex-1 items-center text-left",
             isMobile ? "text-base" : "text-lg",
             "font-medium",
             hasRealName ? "text-foreground cursor-pointer" : "cursor-default",
           )}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <span className="block truncate">
+          <span className="block truncate" title={name}>
             <TypewriterText
-              text={name}
+              text={visibleName}
               placeholder={placeholder}
               id={chatId}
               isJustCreated={isJustCreated}
@@ -213,6 +227,22 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             />
           </span>
         </div>
+      )}
+      {!isMobile && !isEditing && projectLabel && (
+        <span
+          className="inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-medium"
+          style={{
+            color: projectColor ?? undefined,
+            borderColor: projectColor
+              ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
+              : undefined,
+            backgroundColor: projectColor
+              ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
+              : undefined,
+          }}
+        >
+          {projectLabel}
+        </span>
       )}
       {!isMobile && !isEditing && providerName && (
         <span
@@ -225,8 +255,8 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           {providerName}
         </span>
       )}
-      {!isMobile && !isEditing && workspaceLabel && (
-        <span className="min-w-0 truncate text-xs text-foreground/70">{workspaceLabel}</span>
+      {!isMobile && !isEditing && workspaceBranch && (
+        <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>
       )}
       {!isMobile && !isEditing && (
         <div className="ml-auto flex shrink-0 items-center gap-3">

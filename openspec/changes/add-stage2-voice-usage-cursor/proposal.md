@@ -11,9 +11,11 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 
 ## What Changes
 
-- **Voice I/O (`voice-io`)**: bundled local whisper.cpp batch STT (selectable
-  `tiny`, `base`, or `small` multilingual model; `base` default,
-  download-on-first-use; no cloud STT in this stage), offline Kokoro TTS with system
+- **Voice I/O (`voice-io`)**: bundled warm local streaming STT using Parakeet
+  Unified EN by default, with committed/tentative text written directly into
+  the active chat input while the user speaks, persisted transcript and local
+  recording history, and whisper.cpp retained as an explicit multilingual
+  fallback (no cloud STT in this stage); offline Kokoro TTS with system
   voice fallback, model-independent read-aloud derived after reply completion,
   and application-owned caveman full plus ponytail full agent defaults. No
   per-reply summarization LLM call.
@@ -35,6 +37,11 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
   launch/auth/config, model catalog/key storage, event normalization, approval
   bridge, usage capture, run records, checkpoints, and manifests; OpenCode owns
   provider streaming and the model/tool continuation loop.
+- **Cross-provider reasoning controls**: add one per-chat Reasoning toggle,
+  enabled by default. When enabled, map the selected model effort to the closest
+  provider-supported reasoning depth and request the richest provider-supported
+  visible reasoning output. When disabled, disable provider reasoning for that
+  chat where supported and suppress reasoning output where it cannot be disabled.
 - **Track C fixes** (native-module ABI toggle, create-branch dialog, terminal
   actions, sidebar remote-stats, strict-TS debt) are debt/bug work tracked on the
   Stage 2 board; they restore/complete intended behavior and carry no spec deltas
@@ -45,8 +52,9 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 - Affected specs (new capabilities): `voice-io`, `usage-tracking`,
   `cursor-harness`, `direct-api-harness`.
 - Affected code:
-  - `src/main/lib/speech/*`, `src/main/lib/trpc/routers/{speech,voice}.ts`,
-    `chat-input-area.tsx`, new voice settings tab.
+  - `src/main/lib/speech/*`, native streaming STT sidecar and package resources,
+    `src/main/lib/trpc/routers/{speech,voice}.ts`, `chat-input-area.tsx`, voice
+    settings and dictation-history UI, and `voice_artifacts` storage.
   - `src/main/lib/usage/*` (new), `src/main/lib/db/schema` (+ migration), new
     Usage tab + settings, background usage daemon.
   - `src/shared/harness-types.ts`, `src/shared/model-catalog.ts`,
@@ -54,7 +62,8 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
   - `src/main/lib/trpc/routers/opencode.ts` (new),
     `src/main/lib/harness/opencode-sidecar/*` (new), model/key settings, shared
     stream normalizers.
-- New/verified externals: whisper.cpp binary+model, Kokoro model, Cursor usage
+- New/verified externals: MIT transcribe.cpp sidecar, Parakeet Unified EN model,
+  whisper.cpp fallback binary+model, Kokoro model, Cursor usage
   endpoints (undocumented, best-effort), `cursor-agent` CLI (must be installed +
   its surface verified before the adapter - see design/D0), OpenAI usage/cost
   APIs, Anthropic Admin usage/cost APIs, OpenRouter API, NanoGPT API, Discord

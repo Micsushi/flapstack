@@ -284,6 +284,14 @@ export function AgentsLayout() {
       <div className="flex flex-col w-full h-full relative overflow-hidden bg-background select-none">
         {/* Windows Title Bar (only shown on Windows with frameless window) */}
         <WindowsTitleBar />
+        {isSettingsView && isDesktop && (
+          <div
+            className="h-8 flex-shrink-0 border-b border-border/50 bg-background"
+            style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+            aria-hidden="true"
+            data-settings-title-bar
+          />
+        )}
         <div className="flex flex-1 overflow-hidden">
           {/* Left Sidebar - switches between chat list and settings nav */}
           <ResizableSidebar

@@ -24,7 +24,8 @@ import {
   requiresAudioConversion,
   verifyWhisperBinary,
 } from "../src/main/lib/speech/stt-whisper-cpp"
-import { encodePcmWav } from "../src/renderer/lib/hooks/use-voice-recording"
+import { encodePcmWav, resampleMono } from "../src/renderer/lib/hooks/use-voice-recording"
+import { PARAKEET_MODEL } from "../src/main/lib/speech/stt-parakeet-streaming"
 import { speakWithTtsFallback } from "../src/main/lib/speech/tts-fallback"
 import { toMicrophoneError } from "../src/renderer/lib/hooks/use-voice-recording"
 import {
@@ -118,13 +119,13 @@ describe("spoken fallback summary", () => {
 
 describe("adapter registry", () => {
   it("exposes local-first STT and Kokoro-default TTS adapters", () => {
-    expect(sttAdapters.map((a) => a.id)).toEqual(["local-whisper"])
+    expect(sttAdapters.map((a) => a.id)).toEqual(["local-parakeet", "local-whisper"])
     expect(ttsAdapters.map((a) => a.id)).toEqual(["kokoro", "native-os"])
   })
 
   it("falls back to the local adapter for an obsolete cloud selection", () => {
     const adapter = resolveSttAdapter({ sttAdapterId: "openai-whisper", preferOffline: true })
-    expect(adapter.id).toBe("local-whisper")
+    expect(adapter.id).toBe("local-parakeet")
   })
 
   it("never silently falls back from an explicitly selected local STT adapter", async () => {
@@ -148,7 +149,7 @@ describe("adapter registry", () => {
   it("prefers an offline STT adapter when the id is unknown and preferOffline is set", () => {
     const adapter = resolveSttAdapter({ sttAdapterId: "does-not-exist", preferOffline: true })
     expect(adapter.offline).toBe(true)
-    expect(adapter.id).toBe("local-whisper")
+    expect(adapter.id).toBe("local-parakeet")
   })
 
   it("falls back to the first TTS adapter for an unknown id", () => {
@@ -170,7 +171,11 @@ describe("voice settings normalization", () => {
 
   it("applies defaults for missing / invalid fields", () => {
     const settings = normalizeVoiceSettings({})
-    expect(settings.sttAdapterId).toBe("local-whisper")
+    expect(settings.sttAdapterId).toBe("local-parakeet")
+    expect(settings.voiceSettingsVersion).toBe(2)
+    expect(settings.parakeetModelId).toBe("parakeet-unified-en-q8")
+    expect(settings.retainDictationAudio).toBe(true)
+    expect(settings.sttModelUnloadMinutes).toBe(5)
     expect(settings.ttsAdapterId).toBe("kokoro")
     expect(settings.preferOffline).toBe(true)
     expect(settings.whisperModelId).toBe("base")
@@ -214,6 +219,18 @@ describe("native voice helpers", () => {
 })
 
 describe("local Whisper audio preparation", () => {
+  it("pins the Handy-compatible Parakeet streaming model", () => {
+    expect(PARAKEET_MODEL.file).toBe("parakeet-unified-en-0.6b-Q8_0.gguf")
+    expect(PARAKEET_MODEL.sizeBytes).toBe(731_357_568)
+    expect(PARAKEET_MODEL.sha256).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it("resamples live microphone frames to 16 kHz mono PCM", () => {
+    const result = resampleMono(new Float32Array(4_800).fill(0.25), 48_000, 16_000)
+    expect(result).toHaveLength(1_600)
+    expect(result[800]).toBeCloseTo(0.25)
+  })
+
   it("encodes renderer audio as 16 kHz mono PCM WAV", () => {
     const wav = encodePcmWav(new Float32Array([0, 1, -1]))
     const view = new DataView(wav)

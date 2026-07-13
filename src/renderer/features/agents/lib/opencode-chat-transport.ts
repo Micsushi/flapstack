@@ -6,7 +6,7 @@ import { normalizeOpencodeModelId } from "../../../../shared/model-catalog"
 import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
-import { pendingAuthRetryMessageAtom } from "../atoms"
+import { pendingAuthRetryMessageAtom, subChatReasoningEnabledAtomFamily } from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 
@@ -141,6 +141,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
       .reverse()
       .find((message) => message.role === "assistant")
     const sessionId = (lastAssistant?.metadata as AgentMessageMetadata | undefined)?.sessionId
+    const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
 
     return new ReadableStream({
       start: (controller) => {
@@ -153,6 +154,8 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
             provider: this.config.provider,
             model: this.config.model,
             prompt,
+            reasoningEnabled,
+            reasoningEffort: "high",
             cwd: this.config.cwd,
             ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
             ...(images.length ? { images } : {}),

@@ -48,6 +48,78 @@ interface AgentSendButtonProps {
   onVoiceMouseUp?: () => void
 }
 
+interface AgentVoiceButtonProps {
+  isRecording: boolean
+  isStarting?: boolean
+  isTranscribing: boolean
+  voiceInputReady: boolean
+  voiceStatusLabel?: string
+  onUnavailableClick?: () => void
+  onStart: () => void
+  onStop: () => void
+}
+
+export function AgentVoiceButton({
+  isRecording,
+  isStarting = false,
+  isTranscribing,
+  voiceInputReady,
+  voiceStatusLabel,
+  onUnavailableClick,
+  onStart,
+  onStop,
+}: AgentVoiceButtonProps) {
+  const voiceHotkey = useResolvedHotkeyDisplay("voice-input")
+  const label = isTranscribing
+    ? "Finishing dictation"
+    : isStarting
+      ? "Starting dictation"
+      : isRecording
+        ? "Pause dictation"
+        : voiceInputReady
+          ? "Start dictation"
+          : voiceStatusLabel || "Set up local dictation"
+
+  return (
+    <Tooltip delayDuration={1_000} open={isRecording ? false : undefined}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-7 w-7 rounded-full outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+            isRecording && "bg-muted text-foreground",
+          )}
+          disabled={isTranscribing}
+          type="button"
+          onClick={() => {
+            if (!voiceInputReady) onUnavailableClick?.()
+            else if (isRecording || isStarting) onStop()
+            else onStart()
+          }}
+          aria-label={label}
+        >
+          {isTranscribing || isStarting ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : isRecording ? (
+            <div className="h-2.5 w-2.5 rounded-[2px] bg-current" />
+          ) : (
+            <MicrophoneIcon className="size-4" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="left">
+        <div className="flex flex-col items-start gap-0.5">
+          <span>{label}</span>
+          {!isRecording && voiceHotkey && (
+            <span className="text-muted-foreground">Hold {voiceHotkey}</span>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export function AgentSendButton({
   isStreaming = false,
   isSubmitting = false,

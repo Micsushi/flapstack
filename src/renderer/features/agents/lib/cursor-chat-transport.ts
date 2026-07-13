@@ -6,7 +6,11 @@ import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from 
 import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
 import { DEFAULT_CURSOR_MODEL_ID } from "../../../../shared/model-catalog"
-import { pendingAuthRetryMessageAtom, subChatCursorModelIdAtomFamily } from "../atoms"
+import {
+  pendingAuthRetryMessageAtom,
+  subChatCursorModelIdAtomFamily,
+  subChatReasoningEnabledAtomFamily,
+} from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 
@@ -149,6 +153,7 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
     if (forceNewSession) forceFreshSessionSubChats.delete(this.config.subChatId)
 
     const model = getSelectedCursorModel(this.config.subChatId)
+    const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
 
     return new ReadableStream({
       start: (controller) => {
@@ -171,11 +176,13 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
             cwd: this.config.cwd,
             ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
             model,
+            reasoningEnabled,
             ...(sessionId ? { sessionId } : {}),
             ...(forceNewSession ? { forceNewSession: true } : {}),
           },
           {
             onData: (chunk: UIMessageChunk) => {
+              if (!reasoningEnabled && String(chunk.type).startsWith("reasoning-")) return
               if (chunk.type === "auth-error") {
                 forceFreshSessionSubChats.add(this.config.subChatId)
                 appStore.set(pendingAuthRetryMessageAtom, {

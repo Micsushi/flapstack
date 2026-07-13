@@ -16,6 +16,7 @@ export default [
       "release/**",
       "coverage/**",
       "resources/bin/**",
+      "native/**/target/**",
       "package-lock.json",
       "bun.lock",
       "bun.lockb",
