@@ -42,6 +42,7 @@ describe("main-process credential service", () => {
     expect(acknowledgement).toMatchObject({
       acknowledged: true,
       persistence: "encrypted",
+      source: "encrypted-store",
       fingerprint: credentialFingerprint(secret),
     })
     expect(raw).not.toContain(secret)
@@ -77,6 +78,7 @@ describe("main-process credential service", () => {
     expect(result).toMatchObject({
       acknowledged: false,
       persistence: "session",
+      source: "session-memory",
       warning: "Keychain denied; session only",
     })
     expect(service.resolve("openai.voice-api-key")).toBe("sk-session-secret")

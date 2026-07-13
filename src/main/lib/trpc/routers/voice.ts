@@ -345,6 +345,11 @@ export const voiceRouter = router({
    */
   hasOpenAIKey: publicProcedure.query(() => {
     const status = getCredentialService().status("openai.voice-api-key")
-    return { hasKey: !!getOpenAIApiKey(), status }
+    const hasKey = !!getOpenAIApiKey()
+    return {
+      hasKey,
+      status,
+      source: status.source ?? (hasKey ? ("environment-or-shell" as const) : null),
+    }
   }),
 })

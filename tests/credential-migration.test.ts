@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  discardRetainedLegacyCredential,
+  CREDENTIAL_MIGRATION_STATUS_KEY,
   migrateLegacyCredentials,
+  readCredentialMigrationStatus,
   readLegacyCredentialCandidates,
+  recordCredentialMigrationStatus,
 } from "../src/renderer/lib/credential-migration"
 
 describe("legacy renderer credential migration", () => {
@@ -77,5 +81,71 @@ describe("legacy renderer credential migration", () => {
       credentials: { migrateLegacy: { mutate } },
     })
     expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it("records only a non-secret migration acknowledgement for Settings", () => {
+    const status = recordCredentialMigrationStatus(
+      storage,
+      {
+        migrated: ["agents:openai-api-key"],
+        retained: [{ key: "onboarding:codex-api-key", reason: "Secure storage unavailable" }],
+      },
+      () => 1234,
+    )
+
+    expect(status.checkedAt).toBe(1234)
+    expect(readCredentialMigrationStatus(storage)).toEqual(status)
+    expect(storage.getItem(CREDENTIAL_MIGRATION_STATUS_KEY)).not.toContain("sk-")
+  })
+
+  it("discards only an explicitly retained legacy credential", () => {
+    storage.setItem("agents:openai-api-key", JSON.stringify("sk-disposable"))
+    recordCredentialMigrationStatus(
+      storage,
+      {
+        migrated: [],
+        retained: [{ key: "agents:openai-api-key", reason: "Keychain unavailable" }],
+      },
+      () => 10,
+    )
+
+    const next = discardRetainedLegacyCredential(
+      storage,
+      storage,
+      "agents:openai-api-key",
+      () => 11,
+    )
+
+    expect(storage.getItem("agents:openai-api-key")).toBeNull()
+    expect(next).toEqual({ migrated: [], retained: [], checkedAt: 11 })
+  })
+
+  it("refuses to discard an unknown or unretained storage key", () => {
+    storage.setItem("unrelated-secret", "keep-me")
+    recordCredentialMigrationStatus(
+      storage,
+      { migrated: [], retained: [{ key: "unrelated-secret", reason: "unrelated" }] },
+      () => 10,
+    )
+
+    expect(discardRetainedLegacyCredential(storage, storage, "unrelated-secret")).toBeNull()
+    expect(storage.getItem("unrelated-secret")).toBe("keep-me")
+  })
+
+  it("does not expose exception text in a retained migration reason", async () => {
+    storage.setItem("agents:openai-api-key", JSON.stringify("sk-disposable"))
+    const mutate = vi.fn().mockRejectedValue(new Error("backend echoed sk-disposable"))
+
+    const report = await migrateLegacyCredentials(storage, {
+      credentials: { migrateLegacy: { mutate } },
+    })
+
+    expect(report.retained).toEqual([
+      {
+        key: "agents:openai-api-key",
+        reason: "Credential migration failed. The legacy value was retained for retry.",
+      },
+    ])
+    expect(JSON.stringify(report)).not.toContain("sk-disposable")
   })
 })

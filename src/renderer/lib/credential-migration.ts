@@ -17,7 +17,7 @@ type MigrationClient = {
 
 type LegacyCandidate = {
   id: CredentialId
-  legacyKey: "onboarding:codex-api-key" | "agents:openai-api-key" | "agents:claude-custom-config"
+  legacyKey: LegacyCredentialKey
   secret: string
   metadata?: CredentialMetadata
 }
@@ -25,6 +25,68 @@ type LegacyCandidate = {
 export type CredentialMigrationReport = {
   migrated: string[]
   retained: Array<{ key: string; reason: string }>
+}
+
+export type CredentialMigrationStatus = CredentialMigrationReport & {
+  checkedAt: number
+}
+
+export const CREDENTIAL_MIGRATION_STATUS_KEY = "flapstack:credential-migration-status:v1"
+export const CREDENTIAL_MIGRATION_STATUS_EVENT = "flapstack:credential-migration-status"
+export const LEGACY_CREDENTIAL_KEYS = [
+  "onboarding:codex-api-key",
+  "agents:openai-api-key",
+  "agents:claude-custom-config",
+] as const
+export type LegacyCredentialKey = (typeof LEGACY_CREDENTIAL_KEYS)[number]
+
+export function recordCredentialMigrationStatus(
+  storage: Storage,
+  report: CredentialMigrationReport,
+  now = Date.now,
+): CredentialMigrationStatus {
+  const status = { ...report, checkedAt: now() }
+  storage.setItem(CREDENTIAL_MIGRATION_STATUS_KEY, JSON.stringify(status))
+  return status
+}
+
+export function readCredentialMigrationStatus(storage: Storage): CredentialMigrationStatus | null {
+  try {
+    const parsed = JSON.parse(
+      storage.getItem(CREDENTIAL_MIGRATION_STATUS_KEY) || "null",
+    ) as CredentialMigrationStatus | null
+    if (
+      !parsed ||
+      !Number.isFinite(parsed.checkedAt) ||
+      !Array.isArray(parsed.migrated) ||
+      !Array.isArray(parsed.retained)
+    ) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export function discardRetainedLegacyCredential(
+  legacyStorage: Storage,
+  statusStorage: Storage,
+  key: string,
+  now = Date.now,
+): CredentialMigrationStatus | null {
+  if (!LEGACY_CREDENTIAL_KEYS.includes(key as LegacyCredentialKey)) return null
+  const status = readCredentialMigrationStatus(statusStorage)
+  if (!status?.retained.some((item) => item.key === key)) return null
+  legacyStorage.removeItem(key)
+  return recordCredentialMigrationStatus(
+    statusStorage,
+    {
+      migrated: status.migrated,
+      retained: status.retained.filter((item) => item.key !== key),
+    },
+    now,
+  )
 }
 
 function decodeStoredValue(raw: string): unknown {
@@ -111,13 +173,10 @@ export async function migrateLegacyCredentials(
             "Encrypted persistence was not acknowledged. The legacy value was retained for retry.",
         })
       }
-    } catch (error) {
+    } catch {
       report.retained.push({
         key: candidate.legacyKey,
-        reason:
-          error instanceof Error
-            ? error.message
-            : "Credential migration failed. The legacy value was retained for retry.",
+        reason: "Credential migration failed. The legacy value was retained for retry.",
       })
     }
   }

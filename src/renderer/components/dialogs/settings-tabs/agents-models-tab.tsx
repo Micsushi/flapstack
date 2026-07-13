@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
   agentsLoginModalOpenAtom,
+  agentsSettingsDialogActiveTabAtom,
   claudeLoginModalConfigAtom,
   codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
@@ -258,6 +259,7 @@ export function AgentsModelsTab() {
   const setClaudeLoginModalOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginModalOpen = useSetAtom(codexLoginModalOpenAtom)
   const setCodexLoginModalMethod = useSetAtom(codexLoginModalMethodAtom)
+  const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const isNarrowScreen = useIsNarrowScreen()
   const { data: claudeCodeIntegration, isLoading: isClaudeCodeLoading } =
     trpc.claudeCode.getIntegration.useQuery()
@@ -296,22 +298,6 @@ export function AgentsModelsTab() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to disconnect Codex"
       toast.error(message)
-    }
-  }
-
-  const handleRemoveCodexApiKey = async () => {
-    const confirmed = window.confirm("Remove the Codex API key from Flapstack?")
-    if (!confirmed) return
-
-    try {
-      await codexLogoutMutation.mutateAsync()
-      await trpcUtils.codex.getIntegration.invalidate()
-      await trpcUtils.credentials.status.invalidate({ id: "codex.api-key" })
-      toast.success("Codex API key removed")
-    } catch (error) {
-      await trpcUtils.codex.getIntegration.invalidate()
-      const message = error instanceof Error ? error.message : "Failed to disconnect Codex API key"
-      toast.error(`API key removed, but Codex logout failed: ${message}`)
     }
   }
 
@@ -529,19 +515,13 @@ export function AgentsModelsTab() {
                       Active
                     </Badge>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => handleCodexSetup("api_key")}>
-                    {hasAppCodexApiKey ? "Update" : "Add"}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setActiveSettingsTab("api-providers")}
+                  >
+                    Manage
                   </Button>
-                  {hasAppCodexApiKey && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={codexLogoutMutation.isPending}
-                      onClick={() => void handleRemoveCodexApiKey()}
-                    >
-                      Remove
-                    </Button>
-                  )}
                 </div>
               </div>
             </>

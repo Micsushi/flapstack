@@ -27,7 +27,11 @@ import { appStore } from "./lib/jotai-store"
 import { VSCodeThemeProvider } from "./lib/themes/theme-provider"
 import { trpc } from "./lib/trpc"
 import { trpcClient } from "./lib/trpc"
-import { migrateLegacyCredentials } from "./lib/credential-migration"
+import {
+  CREDENTIAL_MIGRATION_STATUS_EVENT,
+  migrateLegacyCredentials,
+  recordCredentialMigrationStatus,
+} from "./lib/credential-migration"
 
 /**
  * Custom Toaster that adapts to theme
@@ -62,6 +66,8 @@ function AppContent() {
 
   useEffect(() => {
     void migrateLegacyCredentials(localStorage, trpcClient).then(async (report) => {
+      recordCredentialMigrationStatus(sessionStorage, report)
+      window.dispatchEvent(new Event(CREDENTIAL_MIGRATION_STATUS_EVENT))
       if (report.migrated.length > 0) {
         await Promise.all([
           trpcUtils.credentials.listStatuses.invalidate(),

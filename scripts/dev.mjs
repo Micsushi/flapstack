@@ -43,6 +43,7 @@ const STALE_PATTERNS = [
   `${ROOT}/node_modules/electron-vite/bin/electron-vite.js`,
   `${ROOT}/node_modules/electron/dist`,
   `${ROOT}/release/.*/Flapstack.app/Contents/MacOS/Flapstack`,
+  `${ROOT}/release-preview/.*/Flapstack Preview.app/Contents/MacOS/Flapstack Preview`,
 ]
 
 // 1) Never let Electron run as a bare Node process.

@@ -407,9 +407,14 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Subscription/API-key priority is accurate per provider.
 - Verification: component and IPC integration tests plus verified live auth
   setup/removal with disposable test values.
-- Remaining verification: provider-scoped management rows, replace/remove
-  confirmation, fingerprint/update-time display, Voice ownership/search, and a
-  live disposable-value setup/removal pass remain for this UI-owned task.
+- Remaining verification: provider-scoped management rows, blank write-only
+  fields, replace/remove confirmation, source/fingerprint/update-time display,
+  unmistakable session-only warnings, Voice/Models ownership routing, migration
+  acknowledgement with confirmed allowlisted legacy discard, search targets,
+  and provider-specific consumer removal now pass focused Node 22 tests. The
+  exact worktree Dev profile passes
+  `npm run dev:verify`. A live disposable-value setup/restart/removal pass remains
+  blocked because the Mac was locked, so this completion box stays unchecked.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F7-T2, S3-F10-T1, S3-F10-T2.
 - Blocks: S3-F10-T4.
@@ -432,12 +437,14 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Migration and removal behave safely in packaged app.
 - Verification: security tests, full check, package smoke and filesystem/log
   inspection.
-- Remaining verification: macOS Preview arm64 packages and launches, and the
-  exact worktree Dev profile passes `npm run dev:verify`; packaged
-  credential migration/restart/removal, this Mac's actual Keychain-backed
-  persistence, Windows/Linux, and rollback evidence remain unavailable. The
-  full Node 22 suite is also blocked by the missing S3-F2-T6 migration artifact,
-  outside this credential scope.
+- Remaining verification: macOS Preview arm64 builds, binary inspection and
+  bundled smoke pass, the corrected `Flapstack Preview` executable launches
+  twice with its separate `0700` profile, and the exact worktree Dev profile
+  passes `npm run dev:verify`. Automated corrupt-store/session-only rollback
+  fixtures pass. Packaged credential migration/restart/removal, packaged
+  restore/re-entry, this Mac's actual Keychain-backed credential persistence,
+  and Windows/Linux evidence remain unavailable. See
+  `docs/credential-security-matrix.md`; this completion box stays unchecked.
 - Estimated effort: 1 day.
 - Blocked by: S3-F10-T2, S3-F10-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.

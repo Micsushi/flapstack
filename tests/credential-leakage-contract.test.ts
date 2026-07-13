@@ -32,4 +32,33 @@ describe("credential leakage contracts", () => {
       'atomWithStorage<CustomClaudeConfig>(\n  "agents:claude-custom-config"',
     )
   })
+
+  it("keeps Voice secret editing in the provider credential manager", () => {
+    const voice = source("../src/renderer/components/dialogs/settings-tabs/agents-voice-tab.tsx")
+    const manager = source(
+      "../src/renderer/components/dialogs/settings-tabs/credential-management.tsx",
+    )
+    expect(voice).not.toContain('placeholder="sk-..."')
+    expect(voice).toContain('setActiveSettingsTab("api-providers")')
+    expect(manager).toContain('autoComplete="new-password"')
+    expect(manager).toContain("stored values are never shown")
+    expect(manager).toContain("window.confirm")
+  })
+
+  it("removes only the app-managed Codex API key without logging out ChatGPT", () => {
+    const codex = source("../src/main/lib/trpc/routers/codex.ts")
+    const procedure = codex.slice(codex.indexOf("removeApiKey:"), codex.indexOf("logout:"))
+    expect(procedure).toContain('service.remove("codex.api-key")')
+    expect(procedure).toContain("cleanupAllCodexProviders()")
+    expect(procedure).not.toContain("runCodexCli")
+  })
+
+  it("matches the Preview bundle executable in stale-process cleanup", () => {
+    const dev = source("../scripts/dev.mjs")
+    const verifier = source("../scripts/verify-dev-instance.mjs")
+    expect(dev).toContain("Flapstack Preview.app/Contents/MacOS/Flapstack Preview")
+    expect(verifier).toContain("realpathSync")
+    expect(verifier).toContain("--app-path=${root}")
+    expect(verifier).toContain("release-preview")
+  })
 })

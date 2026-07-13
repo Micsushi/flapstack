@@ -14,11 +14,13 @@ export type CredentialMetadata = {
 }
 
 export type CredentialPersistence = "encrypted" | "session"
+export type CredentialSource = "encrypted-store" | "session-memory"
 
 export type CredentialStatus = {
   id: CredentialId
   configured: boolean
   persistence: CredentialPersistence | null
+  source: CredentialSource | null
   fingerprint: string | null
   updatedAt: number | null
   encryptionBackend: string | null
