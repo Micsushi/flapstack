@@ -1040,7 +1040,14 @@ export function AgentsUsageTab() {
     : "tokens"
 
   return (
-    <div className="p-6 space-y-6">
+    <div
+      className="p-6 space-y-6"
+      data-dev-carryover-surface="usage"
+      data-provider-state-count={states.length}
+      data-current-sample-count={currentSamples.length}
+      data-refreshing={refresh.isPending ? "true" : "false"}
+      data-daemon-health={daemon?.health ?? "loading"}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col space-y-1.5">
           <h3 className="text-sm font-semibold text-foreground">Usage &amp; Limits</h3>
@@ -1048,6 +1055,7 @@ export function AgentsUsageTab() {
         </div>
         <div>
           <button
+            data-dev-carryover-action="refresh"
             onClick={() => refresh.mutate(selectedProvider ? { providerId: selectedProvider } : {})}
             disabled={refresh.isPending}
             className="text-xs px-2.5 py-1 rounded-md border border-border hover:bg-foreground/5 disabled:opacity-50"

@@ -120,3 +120,14 @@ open until every required provider-live row is either passed or its continuation
 limitation is explicitly accepted for release, and the Node 22 full gate passes
 on the final commit. The current lane gate passed 117 test files with 869 tests
 passed and 3 skipped, plus lint, formatting, TypeScript, and production build.
+
+## 2026-07-13 integrated-candidate continuation
+
+From integration candidate `03ef5bf`, authenticated MCP repeated the complete
+injected lifecycle for Claude, Codex, Cursor, OpenRouter, and NanoGPT. Claude
+reported `native`/`sameRun: true`; the other four reported their honest
+`continuation`/`sameRun: false` limitation. Each request reached the same owner,
+renderer, and dialog state, accepted one terminal reply, and cleared without a
+pending approval. This is adapter/UI contract proof only. The isolated profile
+had no credentialed OpenRouter or NanoGPT provider and no app-scoped Claude
+token, so Q12 and Q13 remain open.

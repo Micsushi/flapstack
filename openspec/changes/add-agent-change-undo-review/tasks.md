@@ -41,3 +41,9 @@
       visually verify collapsed/expanded states, stored Review, successful Undo,
       preservation of a non-overlapping manual edit, and conflict blocking for an
       overlapping manual edit.
+
+2026-07-13 continuation evidence: authenticated MCP created isolated canonical
+Git fixtures, read a stored two-file Review, reversed both files, preserved a
+non-overlapping later edit, and rejected an overlapping edit without writes. It
+also fixed canonical `/private/var` result paths. The fresh provider response and
+visual collapsed/expanded/Review proof remain unverified, so 4.4 stays open.

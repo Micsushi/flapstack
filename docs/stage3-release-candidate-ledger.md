@@ -260,6 +260,22 @@ credentialed provider row is promoted by this addendum. Q12/Q13, `AQ-F4-T2`,
 `AQ-F5-T1`, undo/review `4.4`, `S3-F14-T3`-`T5`, `S3-F15-T2`-`T5`,
 `S3-F16-T3`-`T5`, and `S3-F17-T2`-`T5` remain open.
 
+The continuation from candidate `03ef5bf` adds authenticated bounded controls
+for Voice, Usage, stored run Review/Undo, and renderer carryover disclosures.
+Live MCP proved a two-file stored Review, successful inverse merge preserving a
+non-overlapping later edit, and atomic conflict blocking for an overlapping edit.
+It exposed and fixed macOS canonical-path result names. Synthetic reasoning did
+not mount in the live renderer, so no visual row is claimed. All previously
+listed open IDs remain open; only dev-test-control tasks 2.11 and 3.7 are added
+as completed implementation coverage.
+
+Final continuation gates: Node 22 `npm run check` passed 124 files, 929 tests,
+3 credential-conditional skips, lint, formatting, TypeScript, and production
+build. Ten affected strict OpenSpec changes, the 18-change/350-scenario/17-exit
+ledger, the 31-row/14-scenario Usage matrix, and daemon smoke pass. The unsigned
+macOS arm64 Preview build, binary inspection, and bundled runtime smoke pass;
+zero signing identities remain an explicit release blocker.
+
 Each run uses unique dev instance/profile, port, database, service label, test
 chat/run IDs, provider config, and temporary sidecar path. Cleanup must prove:
 

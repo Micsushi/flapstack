@@ -17,6 +17,8 @@
 - [x] 2.9 Inspect and control provider-neutral question ownership and renderer state.
 - [x] 2.10 Create a read-only Codex/Claude orchestration fixture and expose production-service
       orchestration reads and controls without UI input.
+- [x] 2.11 Expose bounded Voice, Usage, reasoning-disclosure, and run review/undo state and
+      controls so functional closeout does not depend on synthetic desktop input.
 
 ## 3. Verification
 
@@ -26,3 +28,5 @@
 - [x] 3.4 Run the full repository gate and strict OpenSpec validation.
 - [x] 3.5 Cover clean-profile and structured-question controls with focused tests.
 - [x] 3.6 Re-run the exact candidate full gate and authenticated live orchestration proof.
+- [x] 3.7 Cover carryover registry, validation, redaction, and Voice preference control with
+      focused tests.

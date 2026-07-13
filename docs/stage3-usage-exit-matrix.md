@@ -167,3 +167,12 @@ credentials actually available to the tester.
   and migration; credentialed Cursor/OpenRouter/NanoGPT and admin-provider rows;
   Windows/Linux service, secret-store, and package evidence; final commit-bound
   rerun.
+
+## 2026-07-13 integrated-candidate continuation
+
+Authenticated MCP read the bounded live Usage surface and production store. The
+isolated profile reported 50 current local samples, zero provider-state rows,
+unknown daemon state, and no OpenAI, Anthropic, Cursor, OpenRouter, or NanoGPT
+credential. Returned samples excluded `rawPayload` and dedupe material. No
+credentialed refresh, Keychain, real LaunchAgent, visual dashboard, alert,
+Discord, Windows, or Linux claim is added; S3-F14-T3 through S3-F14-T5 stay open.

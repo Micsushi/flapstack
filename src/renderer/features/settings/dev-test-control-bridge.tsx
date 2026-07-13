@@ -12,6 +12,43 @@ import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from ".
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
 
+function boundedCarryoverDataset(
+  element: HTMLElement,
+  surface: "voice" | "usage" | "reasoning" | "run-change",
+) {
+  const data = element.dataset
+  if (surface === "voice") {
+    return {
+      sttAdapter: data.sttAdapter,
+      ttsAdapter: data.ttsAdapter,
+      historyCount: data.historyCount,
+    }
+  }
+  if (surface === "usage") {
+    return {
+      providerStateCount: data.providerStateCount,
+      currentSampleCount: data.currentSampleCount,
+      refreshing: data.refreshing,
+      daemonHealth: data.daemonHealth,
+    }
+  }
+  if (surface === "reasoning") {
+    return {
+      expanded: data.expanded,
+      streaming: data.streaming,
+      label: data.label,
+      status: data.status,
+    }
+  }
+  return {
+    runId: data.runId,
+    expanded: data.expanded,
+    reviewOpen: data.reviewOpen,
+    undone: data.undone,
+    fileCount: data.fileCount,
+  }
+}
+
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
 export function DevTestControlBridge() {
   useEffect(() => {
@@ -90,6 +127,58 @@ export function DevTestControlBridge() {
             selectedProject: request.project,
             settingsOpen: false,
           },
+        })
+        return
+      }
+      if (request.command === "carryover.get") {
+        const selector = `[data-dev-carryover-surface="${request.surface}"]`
+        const elements = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+          (element) => !request.runId || element.dataset.runId === request.runId,
+        )
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: {
+            surface: request.surface,
+            mounted: elements.length > 0,
+            selectedChatId: appStore.get(selectedAgentChatIdAtom),
+            activeSubChatId: useAgentSubChatStore.getState().activeSubChatId,
+            desktopView: appStore.get(desktopViewAtom),
+            items: elements
+              .slice(0, 100)
+              .map((element) => boundedCarryoverDataset(element, request.surface)),
+          },
+        })
+        return
+      }
+      if (request.command === "carryover.control") {
+        const selector = `[data-dev-carryover-surface="${request.surface}"]`
+        const elements = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+          (element) => !request.runId || element.dataset.runId === request.runId,
+        )
+        const element = elements[request.index ?? 0]
+        const action = element?.querySelector<HTMLElement>(
+          `[data-dev-carryover-action="${request.operation}"]`,
+        )
+        if (!element || !action) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error: "Requested carryover surface action is not mounted",
+          })
+          return
+        }
+        action.click()
+        window.requestAnimationFrame(() => {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: {
+              surface: request.surface,
+              operation: request.operation,
+              item: boundedCarryoverDataset(element, request.surface),
+            },
+          })
         })
         return
       }

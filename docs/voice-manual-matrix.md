@@ -49,3 +49,11 @@ Prompt injection and automatic read-aloud are removed behavior, not exit goals.
 - Manual UI rows remain unchecked because the macOS session was locked during
   this run. No microphone, composer, history-action, or playback behavior is
   claimed from the headless evidence above.
+
+## 2026-07-13 integrated-candidate continuation
+
+Authenticated MCP read the bounded live Voice surface and production settings,
+reported the selected local Parakeet/Kokoro adapters, and returned history
+counts without transcript text. A rate mutation used the production setter and
+was restored to `1`. No microphone, native dialog, playback, audio retention,
+or Windows behavior was exercised, so S3-F9-T1 through S3-F9-T5 remain open.

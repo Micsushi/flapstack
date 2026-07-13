@@ -339,6 +339,17 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
   provider rows remain open. Windows and Linux are unavailable. Consequently
   S3-C01 and S3-X01 through S3-X06 remain unchecked.
 
+### Agent UX continuation — 2026-07-13
+
+- Authenticated MCP proved bounded Voice and Usage reads, provider credential
+  absence, all-adapter injected question lifecycle, stored two-file Review,
+  conflict-safe Undo, non-overlap preservation, overlap blocking, and cleanup.
+- Functional setup/assertion/cleanup used MCP. The leased Dev launch was the only
+  real-app interval; no Computer Use, keyboard, mouse, clipboard, microphone,
+  native-dialog, focus, or pixel evidence was added.
+- The exact synthetic chat selection succeeded but its transcript did not mount,
+  so reasoning and run-change visual rows remain open. No S3-X row is promoted.
+
 ## Evidence record
 
 Record one entry per run:

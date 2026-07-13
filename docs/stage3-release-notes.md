@@ -35,3 +35,9 @@ Safe S3-F17 closeout also hardens Usage daemon startup against an early
 SIGTERM/SIGINT race, adds regression coverage, and removes a stale local
 development MCP registration discovered during exact Preview launch. See
 `docs/stage3-release-handoff.md` for remaining release authority and next steps.
+
+The agent-UX continuation adds authenticated development controls for bounded
+Voice/Usage state, stored response Review/Undo, and renderer disclosure state.
+It fixes canonical macOS temp-path reporting after Undo. These controls improve
+repeatable evidence collection; they do not promote credentialed provider,
+microphone, signed package, visual reasoning, or cross-platform acceptance.
