@@ -44,6 +44,13 @@ export class UsageScheduler {
     }
   }
 
+  /** Stop future ticks and wait for an in-flight provider pass before the
+   * daemon closes the shared database. */
+  async stopAndWait(): Promise<void> {
+    this.stop()
+    while (this.running) await new Promise<void>((resolve) => setTimeout(resolve, 10))
+  }
+
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return
     this.timer = setTimeout(() => void this.tick(), delayMs)

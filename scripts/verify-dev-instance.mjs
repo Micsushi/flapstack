@@ -9,7 +9,11 @@ const expectedElectron = realpathSync(
   `${root}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron`,
 )
 const expectedElectronRoot = realpathSync(`${root}/node_modules/electron/dist`)
-const expectedProfile = `--user-data-dir=${homedir()}/Library/Application Support/Flapstack Dev`
+const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
+const profileName = instance
+  ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+  : "Flapstack Dev"
+const expectedProfile = `--user-data-dir=${homedir()}/Library/Application Support/${profileName}`
 const packagedPrefixes = [`${root}/release/`, `${root}/release-preview/`]
 
 if (process.platform !== "darwin") {
@@ -52,5 +56,5 @@ if (!devMain || !devRenderer) {
 
 console.log("[dev:verify] PASS")
 console.log(`[dev:verify] checkout: ${root}`)
-console.log("[dev:verify] profile: ~/Library/Application Support/Flapstack Dev")
+console.log(`[dev:verify] profile: ~/Library/Application Support/${profileName}`)
 console.log(`[dev:verify] main: ${devMain}`)

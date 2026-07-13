@@ -125,9 +125,45 @@ Notes:
 
 ## Current dependency truth
 
-S3-F14-T1 and deterministic S3-F14-T2 are complete. Secure persisted daemon
-credential, closed-app provider, verified dashboard credential, and package
-rows remain blocked by S3-F10-T4 until its credential contract lands in this
-branch. Windows and Linux remain UNAVAILABLE until observed on those targets.
-Paid/admin provider rows remain conditional on credentials actually available
-to the tester.
+S3-F14-T1 and deterministic S3-F14-T2 are complete. S3-F10 credential code is
+integrated, but S3-F10-T4 remains open for this Mac's actual Keychain-backed
+restart/removal proof and Windows/Linux secret stores. Therefore persisted
+credential, real LaunchAgent closed-app provider, and locked-UI credential rows
+remain blocked rather than inferred. Windows and Linux remain UNAVAILABLE until
+observed on those targets. Paid/admin provider rows remain conditional on
+credentials actually available to the tester.
+
+## 2026-07-13 safe headless and package evidence
+
+- Base: `5297ed7`; isolated branch/worktree `codex/s3-f14-usage-exit` at
+  `/Users/michaelshi/.codex/worktrees/e899/flapstack`. The final commit is
+  reported at handoff after verification.
+- Automated: 107 focused Usage/credential tests passed. Matrix coverage passed
+  with 31 rows and 14 scenarios. Production build passed. The daemon smoke
+  proved singleton ownership, duplicate rejection, forced-crash stale-lock
+  recovery, restart, clean stop, cleared PID, and temporary-profile cleanup.
+  Node 22 `npm run check` passed with 102 test files, 745 tests passed, and 3
+  credential-conditional tests skipped.
+- Provider truth: read-only local personal OAuth probes returned one Codex and
+  two Claude provider-reported quota samples. Cursor was `not-logged-in`;
+  OpenRouter and NanoGPT were `not-configured`. No paid generation ran and no
+  credential value was printed or persisted in evidence.
+- Verified dev: port 5173 was owned by another worktree and the launcher failed
+  closed without killing it. Port 5174 with `FLAPSTACK_DEV_INSTANCE=e899`
+  passed `dev:verify` for this checkout and the isolated `Flapstack Dev e899`
+  profile, applied 20 migrations, exposed the Usage tables, and shut down
+  cleanly. The auth callback port was occupied on the first run; the final
+  restart listened successfully.
+- Preview: unsigned macOS arm64 Preview build, binary inspection, bundled
+  Claude 2.1.207, Codex 0.144.1, Whisper, and Parakeet smoke passed. The exact
+  bundle process launched, and its packaged main bundle contains the new daemon
+  singleton guard. The locked Mac prevented main initialization: the process
+  never opened or migrated the Preview database, whose pre-existing profile
+  remained at 19 migrations versus the final dev profile's 20. Cleanup left no
+  Preview process or product Usage LaunchAgent.
+- Still open: visual dashboard/history/alerts/filter/paging/fault evidence on
+  the locked Mac; persisted Keychain credential plus real LaunchAgent
+  closed-app cadence and Discord delivery; packaged Preview main initialization
+  and migration; credentialed Cursor/OpenRouter/NanoGPT and admin-provider rows;
+  Windows/Linux service, secret-store, and package evidence; final commit-bound
+  rerun.

@@ -11,6 +11,7 @@
 // `source-unavailable` - never as zero usage.
 
 import { getUsageProviders } from "./registry"
+import { redactUsageDiagnostic } from "./diagnostics"
 import { runAlerts } from "./alert-runner"
 import { getUsageSettings, resolveCadenceSeconds, type UsageSettings } from "./settings"
 import {
@@ -114,7 +115,11 @@ export class UsageEngine {
     const ctx = this.makeContext(source)
     let knownStatus: Awaited<ReturnType<UsageProvider["getStatus"]>> | null = null
     try {
-      const status = await provider.getStatus(ctx)
+      const providerStatus = await provider.getStatus(ctx)
+      const status = {
+        ...providerStatus,
+        ...(providerStatus.detail ? { detail: redactUsageDiagnostic(providerStatus.detail) } : {}),
+      }
       knownStatus = status
       await upsertProviderState(this.deps.db, status)
       if (!status.configured) {
@@ -166,7 +171,7 @@ export class UsageEngine {
       // Scaffolded/not-implemented paths degrade to an honest status, not zeros.
       const isScaffold = err instanceof UsageNotImplementedError
       const providerError = err instanceof UsageProviderError ? err : null
-      const message = String((err as Error)?.message ?? err)
+      const message = redactUsageDiagnostic(err)
       const configured =
         knownStatus?.configured ?? (await provider.isConfigured(ctx).catch(() => false))
       await upsertProviderState(

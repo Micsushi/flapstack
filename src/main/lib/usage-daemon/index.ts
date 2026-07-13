@@ -14,7 +14,9 @@ import { UsageScheduler } from "../usage/scheduler"
 import { getUsageSettings, resolveSchedulerCadenceSeconds } from "../usage/settings"
 import { getUsageSecret } from "../usage/secrets"
 import { updateDaemonStatus } from "../usage/store"
+import { redactUsageDiagnostic } from "../usage/diagnostics"
 import { openDaemonDb } from "./db"
+import { acquireDaemonInstanceLock } from "./instance-lock"
 
 const HEARTBEAT_INTERVAL_MS = 60_000
 
@@ -25,30 +27,54 @@ async function daemonGetSecret(key: string): Promise<string | null> {
 }
 
 export async function runDaemon(): Promise<void> {
-  const { db, close } = openDaemonDb()
+  const instanceLock = acquireDaemonInstanceLock()
+  let opened: ReturnType<typeof openDaemonDb>
+  try {
+    opened = openDaemonDb()
+  } catch (error) {
+    instanceLock.release()
+    throw error
+  }
+  const { db, close } = opened
   const settings = getUsageSettings()
   if (!settings.daemonEnabled) {
-    await updateDaemonStatus(db, {
-      enabled: false,
-      running: false,
-      lastHeartbeatAt: new Date(),
-      lastError: null,
-    })
-    close()
+    try {
+      await updateDaemonStatus(db, {
+        enabled: false,
+        running: false,
+        lastHeartbeatAt: new Date(),
+        lastError: null,
+      })
+    } finally {
+      try {
+        close()
+      } finally {
+        instanceLock.release()
+      }
+    }
     return
   }
   const engine = new UsageEngine("daemon", { db, getSecret: daemonGetSecret })
 
-  await updateDaemonStatus(db, {
-    host: process.env.HOSTNAME ?? null,
-    pid: process.pid,
-    enabled: settings.daemonEnabled,
-    running: true,
-    cadenceSeconds: settings.cadenceSeconds,
-    startedAt: new Date(),
-    lastHeartbeatAt: new Date(),
-    lastError: null,
-  })
+  try {
+    await updateDaemonStatus(db, {
+      host: process.env.HOSTNAME ?? null,
+      pid: process.pid,
+      enabled: settings.daemonEnabled,
+      running: true,
+      cadenceSeconds: settings.cadenceSeconds,
+      startedAt: new Date(),
+      lastHeartbeatAt: new Date(),
+      lastError: null,
+    })
+  } catch (error) {
+    try {
+      close()
+    } finally {
+      instanceLock.release()
+    }
+    throw error
+  }
 
   const heartbeat = setInterval(() => {
     void updateDaemonStatus(db, { lastHeartbeatAt: new Date(), running: true }).catch(() => {})
@@ -60,22 +86,45 @@ export async function runDaemon(): Promise<void> {
       void updateDaemonStatus(db, { lastPollAt: new Date() }).catch(() => {})
     },
     onTickError: (err) => {
-      void updateDaemonStatus(db, { lastError: String((err as Error)?.message ?? err) }).catch(
-        () => {},
-      )
+      void updateDaemonStatus(db, { lastError: redactUsageDiagnostic(err) }).catch(() => {})
     },
   })
 
-  const shutdown = () => {
+  let shuttingDown = false
+  let finishShutdown: (() => void) | null = null
+  const shutdown = (error?: unknown) => {
+    if (shuttingDown) return
+    shuttingDown = true
     clearInterval(heartbeat)
-    scheduler.stop()
-    void updateDaemonStatus(db, { running: false }).finally(() => {
-      close()
-      process.exit(0)
-    })
+    void scheduler
+      .stopAndWait()
+      .then(() =>
+        updateDaemonStatus(db, {
+          running: false,
+          pid: null,
+          ...(error ? { lastError: redactUsageDiagnostic(error) } : {}),
+        }),
+      )
+      .catch(() => {})
+      .finally(() => {
+        try {
+          close()
+        } catch {}
+        try {
+          instanceLock.release()
+        } catch {}
+        finishShutdown?.()
+      })
   }
-  process.on("SIGTERM", shutdown)
-  process.on("SIGINT", shutdown)
+  const onSignal = () => shutdown()
+  process.on("SIGTERM", onSignal)
+  process.on("SIGINT", onSignal)
 
+  const stopped = new Promise<void>((resolve) => {
+    finishShutdown = resolve
+  })
   scheduler.start()
+  await stopped
+  process.off("SIGTERM", onSignal)
+  process.off("SIGINT", onSignal)
 }

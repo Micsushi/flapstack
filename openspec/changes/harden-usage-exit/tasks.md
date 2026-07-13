@@ -68,6 +68,12 @@ authority for Usage exit work.
   - Evidence contains no credential or webhook value.
 - Verification: `npm run smoke:usage-daemon`; packaged/manual service matrix on
   macOS, Windows, and Linux where supported; sanitized process/service evidence.
+- Verified safe subset (2026-07-13): the built daemon smoke now proves one
+  owner, duplicate rejection, forced-crash stale-lock recovery, restart, clean
+  stop, cleared PID, and isolated database/config cleanup. Provider diagnostics
+  are redacted before SQLite, IPC, or logs. A real macOS LaunchAgent cadence
+  with a persisted credential remains open with S3-F10-T4; Windows/Linux remain
+  unobserved, so this completion box stays unchecked.
 - Blocked by: S3-F14-T1, S3-F10-T4.
 - Blocks: S3-F14-T5.
 - Relevant context: daemon lifecycle/platform modules, usage secrets, package
@@ -94,6 +100,12 @@ authority for Usage exit work.
 - Verification: verified dev profile (`npm run dev`, then
   `npm run dev:verify`), provider matrix, SQLite comparison, screenshots/logs
   with secrets redacted.
+- Verified safe subset (2026-07-13): read-only personal OAuth probes returned
+  one Codex and two Claude provider-reported quota samples. Cursor was not
+  logged in; OpenRouter and NanoGPT were not configured. An isolated
+  `Flapstack Dev e899` profile passed `dev:verify` on port 5174 after port 5173
+  correctly failed closed. The Mac was locked, so visual dashboard/history,
+  alert, filter, paging, and fault-state rows remain open.
 - Blocked by: S3-F14-T1, S3-F14-T2, S3-F10-T4.
 - Blocks: S3-F14-T5.
 - Relevant context: Usage Settings/dashboard, provider adapters, generation
@@ -118,6 +130,17 @@ authority for Usage exit work.
     unintentionally active.
 - Verification: Node 22 `npm run check`; strict validation; verified dev and
   package evidence audit; `git diff --check`.
+- Verified safe subset (2026-07-13): focused Usage/credential suites passed 107
+  tests; matrix coverage, production build, enhanced daemon smoke, isolated
+  verified dev, unsigned arm64 Preview build, binary inspection, bundled
+  Claude/Codex/Whisper/Parakeet smoke, exact Preview process launch, and clean
+  process cleanup passed. The locked Mac prevented Preview main initialization;
+  that process never opened or migrated its database, so packaged startup stays
+  open. Node 22 `npm run check`
+  passed with 102 test files, 745 tests passed, and 3 credential-conditional
+  tests skipped. Required locked-UI, Keychain-backed closed-app, Windows,
+  Linux, and final SHA-bound rows remain open, so this completion box stays
+  unchecked.
 - Blocked by: S3-F14-T2, S3-F14-T3, S3-F14-T4.
 - Blocks: S3-F17-T2.
 - Relevant context: this change, S3-F14 matrix/evidence, root live-dev rules.
