@@ -43,20 +43,16 @@
 
 ## 4. Compatibility and full verification
 
-- [ ] 4.1 Add migration-compatibility coverage for new chats and legacy chats
+- [x] 4.1 Add migration-compatibility coverage for new chats and legacy chats
       with several internal rows. Acceptance: no row or message is lost, one
       stable conversation opens, provider runs still target the canonical row,
       and restart preserves selection. Verification: focused database/router/UI
       tests followed by `npm run check`. Blocked by: 1.2, 2.1, 2.2, 3.1, 3.2.
       Blocks: 4.2.
-      Current verification: focused compatibility tests, lint, style, strict
-      TypeScript, build, strict OpenSpec, Electron ABI, `dev:verify`, and live UI
-      passed. The stale Cursor default-model assertion (`auto` vs
-      `composer-2.5`) was fixed on 2026-07-11; full `npm run check` still needs
-      one clean run on supported Node 22.
-      A 2026-07-13 Node 22 attempt passed lint, then stopped in style checking
-      because upstream migration commit `69f28fe` reintroduced unformatted
-      `drizzle/meta/_journal.json` and `drizzle/meta/0017_snapshot.json`.
+      Current verification: focused compatibility tests, Electron ABI,
+      `dev:verify`, live UI, and strict OpenSpec passed. On integration SHA
+      `73a8347`, Node 22 `npm run check` passed lint, style, TypeScript, 99 test
+      files with 724 passed and 3 skipped, and the production build.
 - [x] 4.2 Update `README.md` and `ui-design.md` to state that one sidebar chat is
       one conversation and that the internal compatibility row is not a product
       concept. Acceptance: no current product-direction text endorses visible
