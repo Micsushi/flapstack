@@ -21,7 +21,9 @@ export function evaluateMcpGate(input: {
     if (!input.customPermissions) {
       return denied("Custom permission mode requires stored capability toggles.")
     }
-    const deniedCapabilities = (input.requiredCapabilities ?? ["mcp"]).filter(
+    const productCapability: McpCapability =
+      input.tier === 0 ? "productMcpRead" : input.tier === 3 ? "productMcpTier3" : "productMcpWrite"
+    const deniedCapabilities = [productCapability, ...(input.requiredCapabilities ?? [])].filter(
       (capability) => !input.customPermissions?.[capability],
     )
     if (deniedCapabilities.length > 0) {

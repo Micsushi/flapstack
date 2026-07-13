@@ -1,4 +1,8 @@
-import { parsePermissionMode, type PermissionMode } from "../permissions"
+import {
+  parsePermissionMode,
+  type CustomPermissionToggles,
+  type PermissionMode,
+} from "../permissions"
 import { FLAPSTACK_MCP_SERVER_NAME } from "./registration"
 import { getMcpControlTool } from "./registry"
 import type { McpControlTool } from "./types"
@@ -27,6 +31,7 @@ export function resolveProviderMcpPermission(input: {
   toolName?: string | null
   metadata?: unknown
   isMcpToolApproval?: boolean
+  customPermissions?: CustomPermissionToggles | null
 }): ProviderMcpPermissionDecision | null {
   const reference =
     explicitReference(input.serverName, input.toolName) ??
@@ -50,6 +55,7 @@ export function resolveProviderMcpPermission(input: {
         { serverName, toolName: "unknown" },
         permissionMode,
         input.correlationId,
+        input.customPermissions,
       )
     }
     return {
@@ -71,7 +77,12 @@ export function resolveProviderMcpPermission(input: {
   }
 
   if (reference.serverName !== FLAPSTACK_MCP_SERVER_NAME) {
-    return resolveThirdParty(reference, permissionMode, input.correlationId)
+    return resolveThirdParty(
+      reference,
+      permissionMode,
+      input.correlationId,
+      input.customPermissions,
+    )
   }
 
   const tool = getMcpControlTool(reference.toolName)
@@ -92,6 +103,14 @@ export function resolveProviderMcpPermission(input: {
       tool,
       "Read-only mode permits only registry-classified Tier 0 product tools.",
     )
+  }
+
+  if (permissionMode === "custom") {
+    const capability =
+      tool.tier === 0 ? "productMcpRead" : tool.tier === 3 ? "productMcpTier3" : "productMcpWrite"
+    if (!input.customPermissions?.[capability]) {
+      return denied(reference, input.correlationId, tool, `Custom permissions deny ${capability}.`)
+    }
   }
 
   return {
@@ -145,8 +164,12 @@ function resolveThirdParty(
   reference: ProviderMcpToolReference,
   permissionMode: PermissionMode,
   correlationId: string,
+  customPermissions?: CustomPermissionToggles | null,
 ): ProviderMcpPermissionDecision {
-  if (permissionMode === "read-only") {
+  if (
+    permissionMode === "read-only" ||
+    (permissionMode === "custom" && !customPermissions?.thirdPartyMcp)
+  ) {
     return denied(
       reference,
       correlationId,

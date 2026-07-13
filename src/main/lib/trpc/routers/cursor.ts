@@ -163,6 +163,7 @@ async function createCursorRun(params: {
   subChatId: string
   model: string
   permissionMode: PermissionMode
+  customPermissions: string | null
   worktreePath: string | null
   promptMessageId?: string
 }) {
@@ -191,6 +192,7 @@ async function createCursorRun(params: {
       harness: HARNESS,
       model: params.model,
       permissionMode: params.permissionMode,
+      customPermissions: params.customPermissions,
       worktreePath: params.worktreePath,
       promptMessageId: params.promptMessageId,
       status: "running",
@@ -424,10 +426,20 @@ export const cursorRouter = router({
             if (!existingChat) throw new Error("Chat not found")
 
             const existingMessages = parseStoredMessages(existingSubChat.messages)
-            const permissionMode = resolveCursorPermissionMode({
-              subChatPermissionMode: existingSubChat.permissionMode,
-              chatPermissionMode: existingChat.permissionMode,
-            })
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, input.runId))
+              .get()
+            const permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveCursorPermissionMode({
+                subChatPermissionMode: existingSubChat.permissionMode,
+                chatPermissionMode: existingChat.permissionMode,
+              })
             const permissionApplication = buildCursorPermissionApplication({
               permissionMode,
               cwd: input.cwd,
@@ -480,6 +492,10 @@ export const cursorRouter = router({
               subChatId: input.subChatId,
               model: metadataModel,
               permissionMode,
+              customPermissions:
+                permissionMode === "custom"
+                  ? (persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions)
+                  : null,
               worktreePath: input.cwd || null,
               promptMessageId,
             })

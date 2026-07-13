@@ -5,6 +5,7 @@ import { copyFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { z } from "zod"
 import { prepareSafeWritePath } from "../path-safety"
+import { getPermissionPreferences } from "../permissions"
 import {
   prepareThreadSpawn,
   threadSpawnRequestSchema,
@@ -313,7 +314,7 @@ function createTask(
     return fail("out-of-scope", "Task project is outside the caller scope.")
   const project = db
     .prepare(
-      "SELECT id, default_permission_mode FROM projects WHERE id = ? AND archived_at IS NULL",
+      "SELECT id, default_permission_mode, default_custom_permissions FROM projects WHERE id = ? AND archived_at IS NULL",
     )
     .get(projectId) as Row | undefined
   if (!project) return fail("stale-target", "Project is missing or archived.")
@@ -323,8 +324,15 @@ function createTask(
   if (existing) return { ok: true, data: { id: existing.id, created: false } }
   const taskId = randomUUID()
   db.prepare(
-    "INSERT INTO tasks (id, project_id, name, description, default_permission_mode) VALUES (?, ?, ?, ?, ?)",
-  ).run(taskId, projectId, input.name, input.description ?? null, project.default_permission_mode)
+    "INSERT INTO tasks (id, project_id, name, description, default_permission_mode, default_custom_permissions) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
+    taskId,
+    projectId,
+    input.name,
+    input.description ?? null,
+    project.default_permission_mode,
+    project.default_custom_permissions ?? null,
+  )
   return { ok: true, data: { id: taskId, created: true } }
 }
 function createChat(
@@ -358,21 +366,47 @@ function createChat(
     )
     .get(input.name, projectId, taskId) as Row | undefined
   if (existing) return { ok: true, data: { id: existing.id, created: false } }
+  const inherited = taskId
+    ? (db
+        .prepare(
+          "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM tasks WHERE id = ?",
+        )
+        .get(taskId) as Row | undefined)
+    : projectId
+      ? (db
+          .prepare(
+            "SELECT default_permission_mode permission_mode, default_custom_permissions custom_permissions FROM projects WHERE id = ?",
+          )
+          .get(projectId) as Row | undefined)
+      : null
+  const preferences = getPermissionPreferences()
+  const permissionMode =
+    typeof inherited?.permission_mode === "string"
+      ? inherited.permission_mode
+      : preferences.globalDefault
+  const customPermissions =
+    permissionMode === "custom"
+      ? typeof inherited?.custom_permissions === "string"
+        ? inherited.custom_permissions
+        : JSON.stringify(preferences.globalCustomPermissions)
+      : null
   const chatId = randomUUID()
   db.prepare(
-    "INSERT INTO chats (id, name, scope, project_id, task_id, harness, model) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     chatId,
     input.name,
     input.scope,
     projectId,
     taskId,
+    permissionMode,
+    customPermissions,
     input.harness ?? null,
     input.model ?? null,
   )
   db.prepare(
-    "INSERT INTO sub_chats (id, chat_id, harness, model, messages) VALUES (?, ?, ?, ?, '[]')",
-  ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null)
+    "INSERT INTO sub_chats (id, chat_id, harness, model, permission_mode, messages) VALUES (?, ?, ?, ?, ?, '[]')",
+  ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null, permissionMode)
   return { ok: true, data: { id: chatId, created: true } }
 }
 
@@ -435,10 +469,10 @@ async function spawnThread(
   const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO chats (
-        id, name, scope, project_id, task_id, permission_mode, harness,
+        id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness,
         worktree_path, branch, base_branch, parent_chat_id, initiator_chat_id,
         parent_run_id, ancestor_chat_ids, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       chatId,
       `${contract.plan.targetHarness} thread`,
@@ -446,6 +480,9 @@ async function spawnThread(
       resolved.projectId,
       resolved.taskId,
       contract.plan.permission.mode,
+      contract.plan.permission.customPermissions
+        ? JSON.stringify(contract.plan.permission.customPermissions)
+        : null,
       contract.plan.targetHarness,
       resolved.worktreePath,
       resolved.branch,
@@ -472,15 +509,18 @@ async function spawnThread(
     if (runId) {
       db.prepare(
         `INSERT INTO agent_runs (
-          id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+          id, chat_id, sub_chat_id, harness, permission_mode, custom_permissions, worktree_path,
           prompt_message_id, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
         subChatId,
         contract.plan.targetHarness,
         contract.plan.permission.mode,
+        contract.plan.permission.customPermissions
+          ? JSON.stringify(contract.plan.permission.customPermissions)
+          : null,
         resolved.worktreePath,
         promptMessageId,
         now,

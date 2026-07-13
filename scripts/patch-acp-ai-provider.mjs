@@ -24,7 +24,42 @@ for (const filename of ["index.cjs", "index.mjs"]) {
     source = source.replace(clientCreation, handlerHook)
   }
 
-  if (source.includes("params.options[0]?.optionId") || !source.includes(handlerHook)) {
+  const staleSessionLoad =
+    /if \(this\.config\.existingSessionId\) \{\s*await this\.connection\.loadSession\(\{\s*sessionId: this\.config\.existingSessionId,\s*cwd: ([^,\n]+),\s*mcpServers\s*\}\);\s*this\.sessionId = this\.config\.existingSessionId;\s*this\.sessionResponse = \{\s*sessionId: this\.config\.existingSessionId\s*\};\s*this\.isFreshSession = false;\s*\} else \{\s*this\.sessionResponse = await this\.connection\.newSession\(\{\s*\.\.\.this\.config\.session,\s*cwd: ([^,\n]+),\s*mcpServers\s*\}\);\s*this\.sessionId = this\.sessionResponse\.sessionId;\s*this\.isFreshSession = true;\s*\}/
+  if (!source.includes("[acp-ai-provider] Stale ACP session; starting fresh.")) {
+    source = source.replace(staleSessionLoad, (_match, cwdExpression) => {
+      return `if (this.config.existingSessionId) {
+        try {
+          await this.connection.loadSession({
+            sessionId: this.config.existingSessionId,
+            cwd: ${cwdExpression},
+            mcpServers
+          });
+          this.sessionId = this.config.existingSessionId;
+          this.sessionResponse = { sessionId: this.config.existingSessionId };
+          this.isFreshSession = false;
+        } catch (error) {
+          this.debug.log("[acp-ai-provider] Stale ACP session; starting fresh.", error);
+          this.config.existingSessionId = undefined;
+        }
+      }
+      if (!this.sessionId) {
+        this.sessionResponse = await this.connection.newSession({
+          ...this.config.session,
+          cwd: ${cwdExpression},
+          mcpServers
+        });
+        this.sessionId = this.sessionResponse.sessionId;
+        this.isFreshSession = true;
+      }`
+    })
+  }
+
+  if (
+    source.includes("params.options[0]?.optionId") ||
+    !source.includes(handlerHook) ||
+    !source.includes("[acp-ai-provider] Stale ACP session; starting fresh.")
+  ) {
     throw new Error(`Could not apply fail-closed ACP permission patch to ${filename}`)
   }
 

@@ -1,17 +1,22 @@
 import { z } from "zod"
-import { permissionModes } from "../permissions"
+import { CUSTOM_PERMISSION_SCHEMA_VERSION, permissionModes } from "../permissions"
 
 const identifierSchema = z.string().trim().min(1).max(200)
 const supportedThreadSpawnHarnessSchema = z.enum(["codex", "claude-code"])
 const customPermissionsSchema = z
   .object({
-    fileWrite: z.boolean(),
+    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
+    projectWrite: z.boolean(),
     shell: z.boolean(),
     network: z.boolean(),
     git: z.boolean(),
     browser: z.boolean(),
-    mcp: z.boolean(),
     secrets: z.boolean(),
+    subagents: z.boolean(),
+    thirdPartyMcp: z.boolean(),
+    productMcpRead: z.boolean(),
+    productMcpWrite: z.boolean(),
+    productMcpTier3: z.boolean(),
   })
   .strict()
 

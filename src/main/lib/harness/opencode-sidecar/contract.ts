@@ -15,6 +15,7 @@ import type {
   OpencodeHarness,
 } from "../../../../shared/harness-types"
 import type { PermissionMode } from "../../permissions"
+import type { CustomPermissionToggles } from "../../permissions"
 
 /** Flapstack-facing provider identity. The runtime engine is always OpenCode. */
 export type OpencodeProviderId = OpencodeHarness
@@ -44,6 +45,7 @@ export type SidecarLaunchInput = {
   /** Working directory OpenCode operates in (project/worktree checkout). */
   cwd: string
   permissionMode: PermissionMode
+  customPermissions?: CustomPermissionToggles | null
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh"
   /** Catalog truth. `null` means the selected model did not declare support. */

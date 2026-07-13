@@ -76,13 +76,16 @@ import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
 import {
   buildClaudePermissionApplication,
   getGlobalDefault,
   isClaudeReadOnlyToolAllowed,
+  isCustomToolAllowed,
   mapClaudeSdkPermissionMode,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   resolveForRun,
   type PermissionMode,
@@ -99,6 +102,15 @@ import {
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
+
+function parseStoredCustomPermissions(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
 
 /**
  * Parse @[agent:name], @[skill:name], and @[tool:servername] mentions from prompt text
@@ -232,6 +244,7 @@ async function createClaudeAgentRun(input: {
   subChatId: string
   model?: string | null
   permissionMode: PermissionMode
+  customPermissions?: string | null
   worktreePath?: string | null
   promptMessageId?: string
 }) {
@@ -249,6 +262,7 @@ async function createClaudeAgentRun(input: {
       harness: HARNESS,
       model: input.model ?? undefined,
       permissionMode: input.permissionMode,
+      customPermissions: input.customPermissions ?? null,
       worktreePath: input.worktreePath ?? null,
       promptMessageId: input.promptMessageId,
       status: "running",
@@ -1641,13 +1655,37 @@ export const claudeRouter = router({
             }
 
             const resolvedModel = finalCustomConfig?.model || input.model
-            const resolvedPermissionMode = resolveClaudeRunPermission(input.chatId)
+            const persistedRunSnapshot = input.runId
+              ? db
+                  .select({
+                    permissionMode: agentRuns.permissionMode,
+                    customPermissions: agentRuns.customPermissions,
+                  })
+                  .from(agentRuns)
+                  .where(eq(agentRuns.id, input.runId))
+                  .get()
+              : null
+            const resolvedPermissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveClaudeRunPermission(input.chatId)
+            const storedCustomPermissions = db
+              .select({ customPermissions: chats.customPermissions })
+              .from(chats)
+              .where(eq(chats.id, input.chatId))
+              .get()?.customPermissions
+            const customPermissions =
+              resolvedPermissionMode === "custom"
+                ? parseStoredCustomPermissions(
+                    persistedRunSnapshot?.customPermissions ?? storedCustomPermissions,
+                  )
+                : null
             const sdkPermission = mapClaudeSdkPermissionMode(resolvedPermissionMode, input.mode)
             const permissionApplication = buildClaudePermissionApplication({
               permissionMode: resolvedPermissionMode,
               cwd: input.cwd,
               sdkPermissionMode: sdkPermission.sdkPermissionMode,
               canUseToolReadOnlyGuard: resolvedPermissionMode === "read-only",
+              customPermissions,
             })
             const run = await createClaudeAgentRun({
               runId: input.runId,
@@ -1657,6 +1695,7 @@ export const claudeRouter = router({
               permissionMode: resolvedPermissionMode,
               worktreePath: input.cwd,
               promptMessageId: userMessage.id,
+              customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
             })
             agentRunId = run.id
             metadata = {
@@ -1941,6 +1980,7 @@ ${prompt}
                     permissionMode: resolvedPermissionMode,
                     correlationId: options.toolUseID,
                     providerToolName: toolName,
+                    customPermissions,
                   })
                   if (providerMcpDecision?.decision === "deny") {
                     return { behavior: "deny", message: providerMcpDecision.reason }
@@ -1962,6 +2002,34 @@ ${prompt}
                     return {
                       behavior: "deny",
                       message: `Tool "${toolName}" blocked by read-only permission mode.`,
+                    }
+                  }
+
+                  if (
+                    resolvedPermissionMode === "custom" &&
+                    !isCustomToolAllowed(customPermissions, toolName)
+                  ) {
+                    return {
+                      behavior: "deny",
+                      message: `Tool "${toolName}" is disabled by custom permissions.`,
+                    }
+                  }
+
+                  if (
+                    resolvedPermissionMode === "custom" &&
+                    /^(Edit|MultiEdit|Write|NotebookEdit)$/i.test(toolName)
+                  ) {
+                    const requestedPath =
+                      typeof toolInput.file_path === "string" ? toolInput.file_path : ""
+                    if (
+                      !requestedPath ||
+                      !(await isWithinProjectBoundary(input.cwd, requestedPath))
+                    ) {
+                      return {
+                        behavior: "deny",
+                        message:
+                          "Custom project edits cannot leave the selected worktree boundary.",
+                      }
                     }
                   }
 

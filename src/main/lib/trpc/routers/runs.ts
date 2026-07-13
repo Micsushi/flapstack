@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
-import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "../../db"
+import { agentRuns, chats, checkpoints, fileChangeManifests, getDatabase } from "../../db"
 import { permissionModes } from "../../permissions"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
@@ -23,6 +23,8 @@ export const runsRouter = router({
     )
     .mutation(async ({ input }) => {
       const db = getDatabase()
+      const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+      if (!chat) throw new Error("Chat not found")
       const run = db
         .insert(agentRuns)
         .values({
@@ -31,6 +33,7 @@ export const runsRouter = router({
           harness: input.harness,
           model: input.model,
           permissionMode: input.permissionMode,
+          customPermissions: input.permissionMode === "custom" ? chat.customPermissions : null,
           worktreePath: input.worktreePath ?? null,
           promptMessageId: input.promptMessageId,
           status: "running",

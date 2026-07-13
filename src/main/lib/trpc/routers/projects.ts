@@ -12,10 +12,19 @@ import { extname } from "node:path"
 import { getGitRemoteInfo } from "../../git"
 import { trackProjectOpened } from "../../analytics"
 import { getLaunchDirectory } from "../../cli"
-import { permissionModes } from "../../permissions"
+import {
+  getPermissionPreferences,
+  parseCustomPermissionToggles,
+  permissionModes,
+  type CustomPermissionToggles,
+} from "../../permissions"
 
 const execAsync = promisify(exec)
 const permissionModeSchema = z.enum(permissionModes)
+const customPermissionsSchema = z.custom<CustomPermissionToggles>(
+  (value) => parseCustomPermissionToggles(value) !== null,
+  "Expected complete versioned custom permission capabilities",
+)
 
 export const projectsRouter = router({
   /**
@@ -93,6 +102,7 @@ export const projectsRouter = router({
     const gitInfo = await getGitRemoteInfo(folderPath)
 
     const db = getDatabase()
+    const permissionPreferences = getPermissionPreferences()
 
     // Check if project already exists
     const existing = db.select().from(projects).where(eq(projects.path, folderPath)).get()
@@ -131,6 +141,11 @@ export const projectsRouter = router({
         gitProvider: gitInfo.provider,
         gitOwner: gitInfo.owner,
         gitRepo: gitInfo.repo,
+        defaultPermissionMode: permissionPreferences.globalDefault,
+        defaultCustomPermissions:
+          permissionPreferences.globalDefault === "custom"
+            ? JSON.stringify(permissionPreferences.globalCustomPermissions)
+            : null,
       })
       .returning()
       .get()
@@ -152,6 +167,7 @@ export const projectsRouter = router({
     .mutation(async ({ input }) => {
       const db = getDatabase()
       const name = input.name || basename(input.path)
+      const permissionPreferences = getPermissionPreferences()
 
       // Check if project already exists
       const existing = db.select().from(projects).where(eq(projects.path, input.path)).get()
@@ -172,6 +188,11 @@ export const projectsRouter = router({
           gitProvider: gitInfo.provider,
           gitOwner: gitInfo.owner,
           gitRepo: gitInfo.repo,
+          defaultPermissionMode: permissionPreferences.globalDefault,
+          defaultCustomPermissions:
+            permissionPreferences.globalDefault === "custom"
+              ? JSON.stringify(permissionPreferences.globalCustomPermissions)
+              : null,
         })
         .returning()
         .get()
@@ -193,12 +214,30 @@ export const projectsRouter = router({
     }),
 
   updateDefaultPermissionMode: publicProcedure
-    .input(z.object({ id: z.string(), permissionMode: permissionModeSchema }))
+    .input(
+      z.object({
+        id: z.string(),
+        permissionMode: permissionModeSchema,
+        customPermissions: customPermissionsSchema.optional(),
+      }),
+    )
     .mutation(({ input }) => {
+      if (input.permissionMode === "custom" && !input.customPermissions) {
+        throw new Error("Custom permission mode requires explicit capability toggles.")
+      }
+      if (input.permissionMode !== "custom" && input.customPermissions) {
+        throw new Error("Custom capability toggles require custom permission mode.")
+      }
       const db = getDatabase()
       return db
         .update(projects)
-        .set({ defaultPermissionMode: input.permissionMode, updatedAt: new Date() })
+        .set({
+          defaultPermissionMode: input.permissionMode,
+          defaultCustomPermissions: input.customPermissions
+            ? JSON.stringify(input.customPermissions)
+            : null,
+          updatedAt: new Date(),
+        })
         .where(eq(projects.id, input.id))
         .returning()
         .get()

@@ -39,6 +39,7 @@ import { ensureTaskPrimaryWorktree } from "./tasks"
 import { deleteVoiceHistoryForChat } from "../../speech/history"
 import { getNextChatForkName } from "../../chat-fork-name"
 import { formatChatHandoff } from "../../chat-handoff"
+import { getPermissionPreferences } from "../../permissions"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -441,6 +442,17 @@ export const chatsRouter = router({
 
       console.log("[chats.create] found project:", project)
       if (input.scope !== "global" && !project) throw new Error("Project not found")
+      const permissionPreferences = getPermissionPreferences()
+      const inheritedMode =
+        task?.defaultPermissionMode ??
+        project?.defaultPermissionMode ??
+        permissionPreferences.globalDefault
+      const inheritedCustomPermissions =
+        task?.defaultCustomPermissions ??
+        project?.defaultCustomPermissions ??
+        (permissionPreferences.globalCustomPermissions
+          ? JSON.stringify(permissionPreferences.globalCustomPermissions)
+          : null)
 
       // Create chat (fast path)
       const chat = db
@@ -450,7 +462,8 @@ export const chatsRouter = router({
           projectId: project?.id ?? null,
           taskId: task?.id ?? null,
           scope: input.scope,
-          permissionMode: task?.defaultPermissionMode ?? project?.defaultPermissionMode,
+          permissionMode: inheritedMode,
+          customPermissions: inheritedMode === "custom" ? inheritedCustomPermissions : null,
           harness: input.harness,
           model: input.model,
         })
@@ -1093,6 +1106,7 @@ export const chatsRouter = router({
             taskId: sourceChat.taskId,
             scope: sourceChat.scope,
             permissionMode: sourceChat.permissionMode,
+            customPermissions: sourceChat.customPermissions,
             harness: sourceChat.harness,
             model: sourceChat.model,
             worktreePath: sourceChat.worktreePath,

@@ -60,7 +60,9 @@ import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
+  isCustomToolAllowed,
   mapCodexAcpModeId,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions"
@@ -72,6 +74,15 @@ const imageAttachmentSchema = z.object({
   mediaType: z.string(),
   filename: z.string().optional(),
 })
+
+function parseCustomPermissionTogglesJson(value: string | null) {
+  if (!value) return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
 
 type CodexProviderSession = {
   provider: ACPProvider
@@ -1130,6 +1141,7 @@ async function createCodexRun(params: {
   subChatId: string
   model: string
   permissionMode: PermissionMode
+  customPermissions: string | null
   worktreePath: string | null
   promptMessageId?: string
 }) {
@@ -1163,6 +1175,7 @@ async function createCodexRun(params: {
       harness: "codex",
       model: params.model,
       permissionMode: params.permissionMode,
+      customPermissions: params.customPermissions,
       worktreePath: params.worktreePath,
       promptMessageId: params.promptMessageId,
       status: "running",
@@ -1907,14 +1920,36 @@ export const codexRouter = router({
             })
             const acpModelId = formatCodexModelForAcp(selectedModelId)
             const metadataModel = selectedModelId
-            const permissionMode = resolveCodexPermissionMode({
-              subChatPermissionMode: existingSubChat.permissionMode,
-              chatPermissionMode: existingChat.permissionMode,
-            })
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, input.runId))
+              .get()
+            const permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveCodexPermissionMode({
+                subChatPermissionMode: existingSubChat.permissionMode,
+                chatPermissionMode: existingChat.permissionMode,
+              })
             const permissionApplication = buildCodexPermissionApplication({
               permissionMode,
               cwd: input.cwd,
+              customPermissions:
+                permissionMode === "custom"
+                  ? parseCustomPermissionTogglesJson(
+                      persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
+                    )
+                  : null,
             })
+            const customPermissions =
+              permissionMode === "custom"
+                ? parseCustomPermissionTogglesJson(
+                    persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
+                  )
+                : null
 
             const lastMessage = existingMessages[existingMessages.length - 1]
             const isDuplicatePrompt =
@@ -2005,6 +2040,7 @@ export const codexRouter = router({
               subChatId: input.subChatId,
               model: metadataModel,
               permissionMode,
+              customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
               worktreePath: input.cwd || null,
               promptMessageId,
             })
@@ -2055,12 +2091,19 @@ export const codexRouter = router({
                 providerToolName: request.toolCall.title,
                 metadata: request.toolCall.rawInput ?? request._meta,
                 isMcpToolApproval: request._meta?.is_mcp_tool_approval === true,
+                customPermissions,
               })
               if (providerMcpDecision?.decision === "deny") {
                 return rejectCodexPermissionRequest(request)
               }
               if (providerMcpDecision?.decision === "allow") {
                 return allowCodexPermissionRequest(request)
+              }
+              if (
+                permissionMode === "custom" &&
+                !isCustomToolAllowed(customPermissions, request.toolCall.title ?? "unknown")
+              ) {
+                return rejectCodexPermissionRequest(request)
               }
               if (permissionMode === "read-only" || abortController.signal.aborted || !isActive) {
                 return rejectCodexPermissionRequest(request)

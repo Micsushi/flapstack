@@ -48,6 +48,7 @@ import { getUsageSettings } from "../../usage/settings"
 import { agentRuns, chats, getDatabase, subChats } from "../../db"
 import {
   getGlobalDefault,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionModes,
   type PermissionMode,
@@ -57,6 +58,14 @@ import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
+
+function parseStoredCustomPermissions(value: string) {
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
 
 type PendingApproval = {
   provider: (typeof OPENCODE_HARNESSES)[number]
@@ -381,7 +390,24 @@ export const opencodeRouter = router({
             if (!subChat) throw new Error("Sub-chat not found")
             if (!chat) throw new Error("Chat not found")
 
-            permissionMode = resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, runId))
+              .get()
+            permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
+            const customPermissions =
+              permissionMode === "custom" &&
+              (persistedRunSnapshot?.customPermissions || chat.customPermissions)
+                ? parseStoredCustomPermissions(
+                    persistedRunSnapshot?.customPermissions ?? chat.customPermissions!,
+                  )
+                : null
             const messages = parseStoredMessages(subChat.messages)
             const last = messages[messages.length - 1]
             const duplicate =
@@ -421,6 +447,7 @@ export const opencodeRouter = router({
                 harness: input.provider,
                 model: input.model,
                 permissionMode,
+                customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
                 worktreePath: input.cwd,
                 promptMessageId: promptMessage.id,
                 status: "running",
