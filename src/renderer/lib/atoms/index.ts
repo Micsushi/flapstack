@@ -245,23 +245,6 @@ export const OFFLINE_PROFILE: ModelProfile = {
   },
 }
 
-// Legacy single config (deprecated, kept for backwards compatibility)
-export const customClaudeConfigAtom = atomWithStorage<CustomClaudeConfig>(
-  "agents:claude-custom-config",
-  {
-    model: "",
-    token: "",
-    baseUrl: "",
-  },
-  undefined,
-  { getOnInit: true },
-)
-
-// OpenAI API key for voice transcription (for users without paid subscription)
-export const openaiApiKeyAtom = atomWithStorage<string>("agents:openai-api-key", "", undefined, {
-  getOnInit: true,
-})
-
 // New: Model profiles storage
 export const modelProfilesAtom = atomWithStorage<ModelProfile[]>(
   "agents:model-profiles",
@@ -305,23 +288,10 @@ export const showOfflineModeFeaturesAtom = atomWithStorage<boolean>(
 // Network status (updated from main process)
 export const networkOnlineAtom = atom<boolean>(true)
 
-export function normalizeCustomClaudeConfig(
-  config: CustomClaudeConfig,
-): CustomClaudeConfig | undefined {
-  const model = config.model.trim()
-  const token = config.token.trim()
-  const baseUrl = config.baseUrl.trim()
-
-  if (!model || !token || !baseUrl) return undefined
-
-  return { model, token, baseUrl }
-}
-
 // Get active config (considering network status and auto-fallback)
 export const activeConfigAtom = atom((get) => {
   const activeProfileId = get(activeProfileIdAtom)
   const profiles = get(modelProfilesAtom)
-  const legacyConfig = get(customClaudeConfigAtom)
   const networkOnline = get(networkOnlineAtom)
   const autoOffline = get(autoOfflineModeAtom)
 
@@ -339,12 +309,6 @@ export const activeConfigAtom = atom((get) => {
     if (profile) {
       return profile.config
     }
-  }
-
-  // Fallback to legacy config if set
-  const normalized = normalizeCustomClaudeConfig(legacyConfig)
-  if (normalized) {
-    return normalized
   }
 
   // No custom config
@@ -802,11 +766,6 @@ export const codexOnboardingAuthMethodAtom = atomWithStorage<CodexOnboardingAuth
   undefined,
   { getOnInit: true },
 )
-
-// App-managed Codex API key (separate from voice OpenAI key)
-export const codexApiKeyAtom = atomWithStorage<string>("onboarding:codex-api-key", "", undefined, {
-  getOnInit: true,
-})
 
 export function normalizeCodexApiKey(apiKey: string): string | null {
   const trimmed = apiKey.trim()

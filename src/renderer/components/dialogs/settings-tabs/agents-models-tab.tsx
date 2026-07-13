@@ -5,13 +5,11 @@ import { toast } from "sonner"
 import {
   agentsLoginModalOpenAtom,
   claudeLoginModalConfigAtom,
-  codexApiKeyAtom,
   codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
   codexOnboardingAuthMethodAtom,
   codexOnboardingCompletedAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
 } from "../../../lib/atoms"
 import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon, SearchIcon } from "../../ui/icons"
@@ -266,7 +264,9 @@ export function AgentsModelsTab() {
   const isClaudeCodeConnected = claudeCodeIntegration?.isConnected
   const { data: codexIntegration, isLoading: isCodexLoading } = trpc.codex.getIntegration.useQuery()
 
-  const [storedCodexApiKey, setStoredCodexApiKey] = useAtom(codexApiKeyAtom)
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const codexOnboardingAuthMethod = useAtomValue(codexOnboardingAuthMethodAtom)
   const codexLogoutMutation = trpc.codex.logout.useMutation()
@@ -304,11 +304,9 @@ export function AgentsModelsTab() {
     if (!confirmed) return
 
     try {
-      setStoredCodexApiKey("")
-      if (codexIntegration?.state === "connected_api_key") {
-        await codexLogoutMutation.mutateAsync()
-      }
+      await codexLogoutMutation.mutateAsync()
       await trpcUtils.codex.getIntegration.invalidate()
+      await trpcUtils.credentials.status.invalidate({ id: "codex.api-key" })
       toast.success("Codex API key removed")
     } catch (error) {
       await trpcUtils.codex.getIntegration.invalidate()
@@ -317,8 +315,7 @@ export function AgentsModelsTab() {
     }
   }
 
-  const normalizedStoredCodexApiKey = normalizeCodexApiKey(storedCodexApiKey)
-  const hasAppCodexApiKey = Boolean(normalizedStoredCodexApiKey)
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hasLocalCodexSubscription =
     codexOnboardingCompleted && codexOnboardingAuthMethod === "chatgpt"
   const isCodexSubscriptionConnected =

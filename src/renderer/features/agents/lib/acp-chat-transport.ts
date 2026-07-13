@@ -4,11 +4,9 @@ import { toast } from "sonner"
 import { normalizeCodexStreamChunk } from "../../../../shared/codex-tool-normalizer"
 import { CODEX_PERMISSION_TIMEOUT_MS } from "../../../../shared/harness-types"
 import {
-  codexApiKeyAtom,
   codexLoginModalOpenAtom,
   codexOnboardingAuthMethodAtom,
   codexOnboardingCompletedAtom,
-  normalizeCodexApiKey,
   sessionInfoAtom,
 } from "../../../lib/atoms"
 import { appStore } from "../../../lib/jotai-store"
@@ -49,12 +47,11 @@ type ImageAttachment = {
 // When a sub-chat hits auth-error, force one fresh Codex ACP session on next send.
 const forceFreshSessionSubChats = new Set<string>()
 const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_WITH_REASONING
-function getStoredCodexCredentials(): {
+function getStoredCodexCredentials(hasApiKey: boolean): {
   hasApiKey: boolean
   hasSubscription: boolean
   hasAny: boolean
 } {
-  const hasApiKey = Boolean(normalizeCodexApiKey(appStore.get(codexApiKeyAtom)))
   const hasSubscription =
     appStore.get(codexOnboardingCompletedAtom) &&
     appStore.get(codexOnboardingAuthMethodAtom) === "chatgpt"
@@ -71,7 +68,13 @@ async function resolveCodexCredentialsForAuthError(): Promise<{
   hasSubscription: boolean
   hasAny: boolean
 }> {
-  const snapshot = getStoredCodexCredentials()
+  let hasApiKey = false
+  try {
+    hasApiKey = (await trpcClient.credentials.status.query({ id: "codex.api-key" })).configured
+  } catch {
+    hasApiKey = false
+  }
+  const snapshot = getStoredCodexCredentials(hasApiKey)
 
   let hasSubscription = false
   try {
@@ -88,12 +91,10 @@ async function resolveCodexCredentialsForAuthError(): Promise<{
   }
 }
 
-function getSelectedCodexModel(subChatId: string): string {
+function getSelectedCodexModel(subChatId: string, hasApiKey: boolean): string {
   const selectedModelId = appStore.get(subChatCodexModelIdAtomFamily(subChatId))
   const selectedReasoning = appStore.get(subChatCodexReasoningAtomFamily(subChatId))
-  const authSurface: CodexAuthSurface = getStoredCodexCredentials().hasApiKey
-    ? "api-key"
-    : "chatgpt"
+  const authSurface: CodexAuthSurface = hasApiKey ? "api-key" : "chatgpt"
   const eligibleModels = CODEX_MODELS.filter((model) => model.authSurfaces.includes(authSurface))
   const defaultModel =
     authSurface === "chatgpt" ? DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING : DEFAULT_CODEX_MODEL
@@ -148,8 +149,9 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
     if (forceNewSession) {
       forceFreshSessionSubChats.delete(this.config.subChatId)
     }
-    const codexApiKey = normalizeCodexApiKey(appStore.get(codexApiKeyAtom))
-    const selectedModel = getSelectedCodexModel(this.config.subChatId)
+    const hasApiKey = (await trpcClient.credentials.status.query({ id: "codex.api-key" }))
+      .configured
+    const selectedModel = getSelectedCodexModel(this.config.subChatId, hasApiKey)
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
 
     return new ReadableStream({
@@ -186,13 +188,6 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
             ...(sessionId ? { sessionId } : {}),
             ...(forceNewSession ? { forceNewSession: true } : {}),
             ...(images.length > 0 ? { images } : {}),
-            ...(codexApiKey
-              ? {
-                  authConfig: {
-                    apiKey: codexApiKey,
-                  },
-                }
-              : {}),
           },
           {
             onData: (chunk: UIMessageChunk) => {

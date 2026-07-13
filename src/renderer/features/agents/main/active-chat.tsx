@@ -48,11 +48,9 @@ import { getQueryClient } from "../../../contexts/TRPCProvider"
 import { trackMessageSent } from "../../../lib/analytics"
 import {
   chatSourceModeAtom,
-  customClaudeConfigAtom,
   defaultAgentModeAtom,
   isDesktopAtom,
   isFullscreenAtom,
-  normalizeCustomClaudeConfig,
   sessionInfoAtom,
   selectedOllamaModelAtom,
   soundNotificationsEnabledAtom,
@@ -5106,10 +5104,11 @@ export function ChatView({
   const isDesktop = useAtomValue(isDesktopAtom)
   const isFullscreen = useAtomValue(isFullscreenAtom)
   const sidebarOpen = useAtomValue(agentsSidebarOpenAtom)
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const setLoadingSubChats = useSetAtom(loadingSubChatsAtom)
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom)

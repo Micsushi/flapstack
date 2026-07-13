@@ -9,7 +9,8 @@
 import { z } from "zod"
 import { resolveAvailableSttAdapter, sttAdapterImplementations } from "../../speech/registry"
 import { getVoiceSettings } from "../../speech/settings"
-import { clearOpenAIKeyCache, getOpenAIApiKey, setUserOpenAIKey } from "../../speech/stt-cloud"
+import { clearOpenAIKeyCache, getOpenAIApiKey } from "../../speech/stt-cloud"
+import { getCredentialService } from "../../credential-service"
 import { recordTranscription } from "../../speech/history"
 import { parakeetSidecar } from "../../speech/stt-parakeet-streaming"
 import { publicProcedure, router } from "../index"
@@ -229,18 +230,21 @@ export const voiceRouter = router({
       throw new Error("Invalid OpenAI API key format. Key should start with 'sk-'")
     }
 
-    setUserOpenAIKey(key || null)
+    const status = key
+      ? getCredentialService().set("openai.voice-api-key", key)
+      : getCredentialService().remove("openai.voice-api-key")
 
     // Clear plan cache so isAvailable re-evaluates
     clearPlanCache()
 
-    return { success: true }
+    return { success: true, status }
   }),
 
   /**
    * Check if user has configured an OpenAI API key
    */
   hasOpenAIKey: publicProcedure.query(() => {
-    return { hasKey: !!getOpenAIApiKey() }
+    const status = getCredentialService().status("openai.voice-api-key")
+    return { hasKey: !!getOpenAIApiKey(), status }
   }),
 })

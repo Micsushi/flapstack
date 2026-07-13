@@ -1,7 +1,6 @@
-import { useAtom } from "jotai"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { codexApiKeyAtom, normalizeCodexApiKey } from "../../../lib/atoms"
+import { normalizeCodexApiKey } from "../../../lib/atoms"
 import { trpc, trpcClient } from "../../../lib/trpc"
 
 export type CodexAuthMethod = "chatgpt" | "api_key"
@@ -51,8 +50,7 @@ export function useCodexLoginFlow() {
   const [output, setOutput] = useState<string>("")
   const [error, setError] = useState<string | null>(null)
   const [method, setMethod] = useState<CodexAuthMethod>("chatgpt")
-  const [storedApiKey, setStoredApiKey] = useAtom(codexApiKeyAtom)
-  const [apiKeyInput, setApiKeyInput] = useState<string>(storedApiKey)
+  const [apiKeyInput, setApiKeyInput] = useState<string>("")
 
   const startRequestIdRef = useRef(0)
   const activeStartRequestRef = useRef<number | null>(null)
@@ -63,6 +61,7 @@ export function useCodexLoginFlow() {
 
   const startLoginMutation = trpc.codex.startLogin.useMutation()
   const cancelLoginMutation = trpc.codex.cancelLogin.useMutation()
+  const setCredentialMutation = trpc.credentials.set.useMutation()
   const openExternalMutation = trpc.external.openExternal.useMutation()
   const trpcUtils = trpc.useUtils()
 
@@ -74,10 +73,6 @@ export function useCodexLoginFlow() {
       retry: false,
     },
   )
-
-  useEffect(() => {
-    setApiKeyInput(storedApiKey)
-  }, [storedApiKey])
 
   const notifyError = useCallback((message: string) => {
     if (lastErrorToastRef.current === message) {
@@ -140,16 +135,28 @@ export function useCodexLoginFlow() {
       return false
     }
 
-    setStoredApiKey(normalized)
+    const status = await setCredentialMutation.mutateAsync({
+      id: "codex.api-key",
+      secret: normalized,
+    })
+    setApiKeyInput("")
     setSessionId(null)
     setUrl(null)
     setOutput("Using app-managed API key")
     setError(null)
     setState("success")
     await trpcUtils.codex.getIntegration.invalidate()
-    toast.success("Codex API key saved", { duration: 10000 })
+    await trpcUtils.credentials.status.invalidate({ id: "codex.api-key" })
+    if (status.persistence === "session") {
+      toast.warning("Codex API key is available for this session only", {
+        description: status.warning,
+        duration: 10000,
+      })
+    } else {
+      toast.success("Codex API key saved", { duration: 10000 })
+    }
     return true
-  }, [apiKeyInput, notifyError, setStoredApiKey, trpcUtils])
+  }, [apiKeyInput, notifyError, setCredentialMutation, trpcUtils])
 
   const start = useCallback(async () => {
     if (method === "api_key") {

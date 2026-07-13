@@ -46,12 +46,8 @@ import {
   agentsSettingsDialogOpenAtom,
   anthropicOnboardingCompletedAtom,
   apiKeyOnboardingCompletedAtom,
-  codexApiKeyAtom,
   codexOnboardingCompletedAtom,
-  customClaudeConfigAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
-  normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
   showOfflineModeFeaturesAtom,
 } from "../../../lib/atoms"
@@ -615,8 +611,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatClaudeEffort(selectedClaudeEffort)
   }, [provider, selectedClaudeEffort, selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort])
 
-  const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
-  const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
 
@@ -734,9 +732,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     if (selectedCursorModel.id) setSelectedSubChatCursorModelId(selectedCursorModel.id)
   }, [provider, selectedCursorModel.id, setSelectedSubChatCursorModelId])
 
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const isClaudeConnected =
     Boolean(claudeCodeIntegration?.isConnected) ||
     anthropicOnboardingCompleted ||
