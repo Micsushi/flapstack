@@ -37,3 +37,12 @@ recovery, and a chat-capable NanoGPT default.
 - Former Stage 2 `4.9` maps to S3-F15-T1, T3, T4, and T5.
 - Former Stage 2 `4.11` maps to S3-F15-T3 and T5.
 - S3-F15 `tasks.md` is the sole completion authority for these open rows.
+
+## Current Status
+
+S3-F15-T1 is complete: the current Cursor and pinned OpenCode CLI surfaces are
+bounded and probed, parser/timeout fixtures pass, and
+`docs/provider-harness-closeout-matrix.md` separates fixture, CLI-live,
+provider-live, UI-live, and package evidence. T2 through T5 remain open behind
+their recorded secure-credential, permission, approval-UI, provider-live, and
+package prerequisites.

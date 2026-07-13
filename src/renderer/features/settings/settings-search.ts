@@ -164,10 +164,20 @@ const entries: SettingsSearchEntry[] = [
     "openai api key",
     "whisper key",
   ]),
-  page("skills", "Skills", "Discover and manage installed agent skills", [
+  page("skills", "Skills", "Discover provider-scoped skills and commands", [
     "skill",
     "commands",
     "slash command",
+    "claude",
+    "codex",
+    "cursor",
+    "opencode",
+  ]),
+  page("agents", "Custom Agents", "Inspect provider-scoped custom agents and runtime support", [
+    "subagent",
+    "extension",
+    "claude",
+    "opencode",
   ]),
   page("mcp", "MCP Servers", "Configure Model Context Protocol servers and tools", [
     "model context protocol",
@@ -175,7 +185,7 @@ const entries: SettingsSearchEntry[] = [
     "tool",
     "approval",
   ]),
-  page("plugins", "Plugins", "Manage plugin-provided commands, skills, agents, and MCP servers", [
+  page("plugins", "Plugins", "Inspect provider-scoped plugins and honest read-only limits", [
     "extension",
     "marketplace",
     "install",

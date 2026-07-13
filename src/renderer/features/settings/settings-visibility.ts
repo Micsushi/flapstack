@@ -3,7 +3,6 @@ import type { SettingsTab } from "../../lib/atoms"
 export const HIDDEN_SETTINGS_TABS = [
   "keyboard",
   "beta",
-  "agents",
   "future",
 ] as const satisfies readonly SettingsTab[]
 

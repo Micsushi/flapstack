@@ -36,6 +36,8 @@ import { importExportRouter } from "./import-export"
 import { hooksManagementRouter } from "./hooks-management"
 import { spawnedAgentsRouter } from "./spawned-agents"
 import { devMcpTestControlRouter } from "./dev-mcp-test-control"
+import { providerExtensionsRouter } from "./provider-extensions"
+import { providerCapabilitiesRouter } from "./provider-capabilities"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 
@@ -84,6 +86,8 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     importExport: importExportRouter,
     hooksManagement: hooksManagementRouter,
     spawnedAgents: spawnedAgentsRouter,
+    providerExtensions: providerExtensionsRouter,
+    providerCapabilities: providerCapabilitiesRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),

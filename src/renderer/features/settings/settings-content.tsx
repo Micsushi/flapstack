@@ -14,8 +14,7 @@ import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-m
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
 import { AgentsPermissionsTab } from "../../components/dialogs/settings-tabs/agents-permissions-tab"
 import { AgentsProjectsTab } from "../../components/dialogs/settings-tabs/agents-project-worktree-tab"
-import { AgentsSkillsTab } from "../../components/dialogs/settings-tabs/agents-skills-tab"
-import { AgentsPluginsTab } from "../../components/dialogs/settings-tabs/agents-plugins-tab"
+import { AgentsProviderExtensionsTab } from "../../components/dialogs/settings-tabs/agents-provider-extensions-tab"
 import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/agents-api-providers-tab"
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
@@ -94,11 +93,13 @@ export function SettingsContent() {
       case "voice":
         return <AgentsVoiceTab />
       case "skills":
-        return <AgentsSkillsTab />
+        return <AgentsProviderExtensionsTab initialKind="skill" />
+      case "agents":
+        return <AgentsProviderExtensionsTab initialKind="custom-agent" />
       case "mcp":
         return <AgentsMcpTab />
       case "plugins":
-        return <AgentsPluginsTab />
+        return <AgentsProviderExtensionsTab initialKind="plugin" />
       case "projects":
         return <AgentsProjectsTab />
       case "usage":
@@ -114,6 +115,7 @@ export function SettingsContent() {
   const isTwoPanelTab =
     activeTab === "mcp" ||
     activeTab === "skills" ||
+    activeTab === "agents" ||
     activeTab === "projects" ||
     activeTab === "plugins"
 

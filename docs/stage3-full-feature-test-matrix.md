@@ -69,6 +69,8 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
 - [ ] **S3-H01 (S3-F15)** migrated Cursor rows `D1-*` through `D5-*` and
       OpenRouter/NanoGPT rows `E1-*` through `E7-*` pass in live UI and package
       contexts; NanoGPT defaults name a currently chat-capable tested model.
+      Capability and evidence-class mapping:
+      `docs/provider-harness-closeout-matrix.md`.
 - [ ] **S3-R01 (S3-F16)** migrated reasoning rows `T1-*` through `T7-*` pass for
       fixtures, streaming, persistence, search, capability fallback, and live
       provider evidence.

@@ -401,7 +401,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F11-T1 - Define provider extension capability and identity contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Skills, commands, plugins, custom agents, and MCP entries have stable
   provider-scoped identities and explicit read/write/runtime capabilities.
@@ -422,7 +422,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F11-T2 - Implement provider discovery adapters
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Claude, Codex, Cursor, and OpenCode-backed sources produce one honest
   inventory without format conflation.
@@ -442,7 +442,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F11-T3 - Rebuild extension Settings around provider scope
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Users can filter by provider and see accurate identity, source,
   availability, read-only status, and limitations.
@@ -462,7 +462,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F11-T4 - Wire supported extension mutations to provider runtimes
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Enable/install/create/edit/delete actions affect the exact provider
   runtime or fail visibly without cross-provider corruption.
@@ -476,6 +476,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Failed validation/write leaves prior state intact.
   - Enabled/created item is consumed by a real provider run before promotion.
 - Verification: fixture mutation/rollback tests and provider live smoke.
+- Evidence: atomic provider-scoped mutation, rollback, frontmatter-preservation,
+  bounded-discovery, and symlink-escape tests pass. Project-scoped items created
+  through the adapter were consumed on 2026-07-13 by Claude Code 2.1.207
+  (skill, command, and custom agent), Codex CLI 0.144.2 (skill), and Cursor Agent
+  2026.07.09-a3815c0 (command) in read-only/no-tool runs. Each emitted its exact
+  proof token; adapter deletion then removed every proof file and empty root.
 - Estimated effort: 2-4 days.
 - Blocked by: S3-F11-T1, S3-F11-T2.
 - Blocks: S3-F11-T5.
@@ -496,6 +502,9 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Unsupported provider/kind combinations remain hidden or read-only.
   - Package contains required provider resources and discovers user-local items.
 - Verification: full check, verified dev and package/provider matrix.
+- Remaining verification: run the SHA-bound full gate, exercise inventory and
+  mutations through the verified `Flapstack Dev` Settings UI, and prove packaged
+  discovery on macOS. Windows/Linux package rows remain explicitly unavailable.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.

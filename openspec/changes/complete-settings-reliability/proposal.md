@@ -87,4 +87,10 @@ validation, and the full Node 22 repository gate are complete in this checkout.
 A verified live Settings smoke remains unchecked. S3-F9 now owns the migrated
 Voice remainder. Per-chat custom MCP toggles exist, but all-chat custom remains
 blocked until S3-F12 adds durable hierarchy defaults. Other feature repairs
-remain planned and unchecked.
+remain planned and unchecked. S3-F11 now has provider-scoped contracts,
+Claude/Codex/Cursor/OpenCode discovery, and provider-filtered Settings coverage.
+Mutation adapters are implemented only for documented provider paths, but
+OpenCode-backed paths remain explicitly read-only because managed sidecars do
+not consume those provider directories. S3-F11-T4 passed exact live consumption
+for every advertised writable provider/kind path. S3-F11-T5 remains open until
+the SHA-bound live Settings and package/platform matrix passes.

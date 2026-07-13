@@ -47,12 +47,18 @@ describe("Settings search", () => {
     for (const query of [
       "keyboard shortcuts",
       "legacy beta ollama",
-      "custom agents subagent",
       "future scaffolds roadmap",
       "quick switch ctrl tab agents",
       "model override",
     ]) {
       expect(searchSettings(query, { showDevelopment: true })).toEqual([])
     }
+  })
+
+  it("routes provider-scoped extension searches to promoted surfaces", () => {
+    expect(searchSettings("codex skills", { showDevelopment: false })[0]?.tab).toBe("skills")
+    expect(searchSettings("custom agents subagent", { showDevelopment: false })[0]?.tab).toBe(
+      "agents",
+    )
   })
 })
