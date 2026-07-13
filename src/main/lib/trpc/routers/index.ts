@@ -18,6 +18,7 @@ import { filesRouter } from "./files"
 import { debugRouter } from "./debug"
 import { skillsRouter } from "./skills"
 import { agentsRouter } from "./agents"
+import { agentInputRouter } from "./agent-input"
 import { worktreeConfigRouter } from "./worktree-config"
 import { sandboxImportRouter } from "./sandbox-import"
 import { commandsRouter } from "./commands"
@@ -51,6 +52,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     !app.isPackaged || process.env.FLAPSTACK_ENABLE_DEV_TEST_CONTROL === "1"
 
   return router({
+    agentInput: agentInputRouter,
     projects: projectsRouter,
     tasks: tasksRouter,
     chats: chatsRouter,

@@ -9,6 +9,7 @@ import { trpcClient } from "../../../lib/trpc"
 import { pendingAuthRetryMessageAtom, subChatReasoningEnabledAtomFamily } from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { handleAgentInputChunk } from "./agent-input-transport"
 
 type Provider = "openrouter" | "nanogpt"
 type UIMessageChunk = any
@@ -163,6 +164,10 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
           },
           {
             onData: (chunk: UIMessageChunk) => {
+              handleAgentInputChunk(chunk, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
               if (chunk.type === "opencode-permission-request") {
                 const command = typeof chunk.command === "string" ? chunk.command : undefined
                 const patterns = Array.isArray(chunk.patterns)

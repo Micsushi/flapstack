@@ -27,6 +27,15 @@ import {
   parseDevMcpSettingsInvalidation,
   parseDevRendererControlRequest,
 } from "../src/shared/dev-renderer-control"
+import {
+  listAgentInputRequests,
+  replyAgentInputRequest,
+} from "../src/main/lib/mcp-test-control/service"
+import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
+import {
+  listDevAgentInputRendererStates,
+  recordDevAgentInputRendererState,
+} from "../src/main/lib/mcp-test-control/renderer-state"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -59,7 +68,12 @@ describe("dev MCP test-control registry", () => {
       "get_product_mcp_state",
       "manage_product_mcp_recovery",
       "cleanup_product_mcp_caller",
+      "list_agent_input_requests",
+      "get_renderer_agent_input_state",
+      "ensure_test_project",
+      "archive_test_project",
       "create_test_chat",
+      "open_test_chat",
       "archive_test_chat",
       "mutate_project_provider_extension",
       "get_permission_state",
@@ -69,6 +83,8 @@ describe("dev MCP test-control registry", () => {
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
+      "inject_agent_input_request",
+      "reply_agent_input_request",
       "reply_approval",
       "cancel_run",
       "wait_for_run",
@@ -210,6 +226,66 @@ describe("dev MCP transport", () => {
       await handle?.stop()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("dev MCP agent input control", () => {
+  it("lists and resolves a provider-neutral live request through the shared owner", async () => {
+    const resolution = agentInputLifecycle.create({
+      requestId: "dev-request-1",
+      chatId: "dev-chat-1",
+      runId: "dev-run-1",
+      origin: { harness: "claude-code", toolName: "request_user_input" },
+      capability: { mode: "native", sameRun: true },
+      questions: [
+        {
+          id: "question-1",
+          question: "Continue?",
+          options: [{ id: "yes", label: "Yes" }],
+          multiSelect: false,
+          allowCustom: true,
+        },
+      ],
+      status: "pending",
+      createdAt: Date.now(),
+    })
+
+    expect(listAgentInputRequests({ chatId: "dev-chat-1" })).toHaveLength(1)
+    expect(
+      replyAgentInputRequest({
+        requestId: "dev-request-1",
+        action: "answer",
+        answers: { "question-1": ["Yes"] },
+      }),
+    ).toEqual({ ok: true })
+    await expect(resolution).resolves.toMatchObject({ status: "answered" })
+    expect(listAgentInputRequests()).toEqual([])
+  })
+
+  it("reports bounded renderer ownership without transcript or secret content", () => {
+    recordDevAgentInputRendererState({
+      parentChatId: "parent-chat",
+      subChatId: "renderer-state-test",
+      pendingRequestIds: ["request-1"],
+      hydratedRequestIds: ["request-1"],
+      expiredRequestIds: [],
+      dialogOpen: true,
+      hydrationError: null,
+      observedAt: 42,
+    })
+
+    expect(
+      listDevAgentInputRendererStates().find((state) => state.subChatId === "renderer-state-test"),
+    ).toEqual({
+      parentChatId: "parent-chat",
+      subChatId: "renderer-state-test",
+      pendingRequestIds: ["request-1"],
+      hydratedRequestIds: ["request-1"],
+      expiredRequestIds: [],
+      dialogOpen: true,
+      hydrationError: null,
+      observedAt: 42,
+    })
   })
 })
 

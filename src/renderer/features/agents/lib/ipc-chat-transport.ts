@@ -1,5 +1,4 @@
 import type { ChatTransport, UIMessage } from "ai"
-import type { AgentInputOption, AgentInputQuestion } from "../../../../shared/agent-input"
 import { toast } from "sonner"
 import {
   agentsLoginModalOpenAtom,
@@ -14,11 +13,8 @@ import {
 import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
 import {
-  askUserQuestionResultsAtom,
   compactingSubChatsAtom,
-  expiredUserQuestionsAtom,
   MODEL_ID_MAP,
-  pendingUserQuestionsAtom,
   pendingAuthRetryMessageAtom,
   subChatModelIdAtomFamily,
   subChatClaudeEffortAtomFamily,
@@ -26,6 +22,7 @@ import {
 } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { handleAgentInputChunk } from "./agent-input-transport"
 
 function openClaudeLoginModal() {
   appStore.set(claudeLoginModalConfigAtom, {
@@ -223,73 +220,10 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
               chunkCount++
               lastChunkType = chunk.type
 
-              // Provider-neutral structured input request. Renderer behavior is
-              // selected from the shared request contract, never provider names.
-              if (chunk.type === "agent-input-request") {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                const newMap = new Map(currentMap)
-                newMap.set(this.config.subChatId, {
-                  subChatId: this.config.subChatId,
-                  parentChatId: this.config.chatId,
-                  toolUseId: chunk.request.requestId,
-                  request: chunk.request,
-                  questions: chunk.request.questions.map((question: AgentInputQuestion) => ({
-                    question: question.question,
-                    header: question.header ?? "Question",
-                    options: question.options.map((option: AgentInputOption) => ({
-                      label: option.label,
-                      description: option.description ?? "",
-                    })),
-                    multiSelect: question.multiSelect,
-                  })),
-                })
-                appStore.set(pendingUserQuestionsAtom, newMap)
-
-                // Clear any expired question (new question replaces it)
-                const currentExpired = appStore.get(expiredUserQuestionsAtom)
-                if (currentExpired.has(this.config.subChatId)) {
-                  const newExpiredMap = new Map(currentExpired)
-                  newExpiredMap.delete(this.config.subChatId)
-                  appStore.set(expiredUserQuestionsAtom, newExpiredMap)
-                }
-              }
-
-              // Expired requests remain answerable through an explicitly labeled
-              // normal continuation. Other terminal outcomes close the request.
-              if (chunk.type === "agent-input-status") {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                const pending = currentMap.get(this.config.subChatId)
-                if (pending && pending.toolUseId === chunk.event.requestId) {
-                  // Remove from pending
-                  const newPendingMap = new Map(currentMap)
-                  newPendingMap.delete(this.config.subChatId)
-                  appStore.set(pendingUserQuestionsAtom, newPendingMap)
-
-                  if (chunk.event.status === "expired") {
-                    const currentExpired = appStore.get(expiredUserQuestionsAtom)
-                    const newExpiredMap = new Map(currentExpired)
-                    newExpiredMap.set(this.config.subChatId, pending)
-                    appStore.set(expiredUserQuestionsAtom, newExpiredMap)
-                  }
-                }
-                if (chunk.event.response || chunk.event.message) {
-                  const currentResults = appStore.get(askUserQuestionResultsAtom)
-                  const newResults = new Map(currentResults)
-                  newResults.set(
-                    chunk.event.requestId,
-                    chunk.event.response
-                      ? {
-                          answers: Object.fromEntries(
-                            Object.entries(
-                              chunk.event.response.answers as Record<string, string[]>,
-                            ).map(([key, values]) => [key, values.join(", ")]),
-                          ),
-                        }
-                      : chunk.event.message,
-                  )
-                  appStore.set(askUserQuestionResultsAtom, newResults)
-                }
-              }
+              handleAgentInputChunk(chunk, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
 
               // Handle compacting status - track in atom for UI display
               if (
@@ -330,29 +264,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                   plugins: chunk.plugins,
                   skills: chunk.skills,
                 })
-              }
-
-              // Clear pending questions ONLY when agent has moved on
-              // Don't clear on tool-input-* chunks (still building the question input)
-              // Clear when we get tool-output-* (answer received) or text-delta (agent moved on)
-              const shouldClearOnChunk =
-                chunk.type !== "agent-input-request" &&
-                chunk.type !== "agent-input-status" &&
-                !chunk.type.startsWith("tool-input") && // Don't clear while input is being built
-                chunk.type !== "start" &&
-                chunk.type !== "start-step"
-
-              if (shouldClearOnChunk) {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                if (currentMap.has(this.config.subChatId)) {
-                  const newMap = new Map(currentMap)
-                  newMap.delete(this.config.subChatId)
-                  appStore.set(pendingUserQuestionsAtom, newMap)
-                }
-                // NOTE: Do NOT clear expired questions here. After a timeout,
-                // the agent continues and emits new chunks - that's expected.
-                // Expired questions should persist until the user answers,
-                // dismisses, or sends a new message.
               }
 
               // Handle authentication errors - show Claude login modal

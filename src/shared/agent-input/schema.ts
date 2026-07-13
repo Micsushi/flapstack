@@ -61,6 +61,14 @@ export const agentInputRequestSchema = z
       }
       questionIds.add(question.id)
 
+      if (question.options.length === 0 && !question.allowCustom) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["questions", questionIndex, "options"],
+          message: "A question requires an option or custom-answer input",
+        })
+      }
+
       const optionIds = new Set<string>()
       for (const [optionIndex, option] of question.options.entries()) {
         if (optionIds.has(option.id)) {

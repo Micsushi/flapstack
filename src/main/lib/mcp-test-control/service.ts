@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { randomUUID } from "node:crypto"
-import { and, desc, eq } from "drizzle-orm"
+import { and, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join, resolve } from "node:path"
 import {
   agentRuns,
   chats,
@@ -17,8 +17,23 @@ import {
   subChats,
 } from "../db"
 import { DEFAULT_CLAUDE_MODEL_ID } from "../../../shared/model-catalog"
-import { OPENCODE_HARNESSES, type OpencodeHarness } from "../../../shared/harness-types"
+import {
+  OPENCODE_HARNESSES,
+  type HarnessProvider,
+  type OpencodeHarness,
+} from "../../../shared/harness-types"
+import { DEV_AGENT_INPUT_CHANNEL, type DevAgentInputPayload } from "../../../shared/dev-agent-input"
+import {
+  DEV_TEST_CONTROL_VIEW_CHANNEL,
+  type DevTestControlViewPayload,
+} from "../../../shared/dev-test-control"
 import { buildReasoningTimerState } from "../../../shared/reasoning-duration"
+import { agentInputLifecycle } from "../agent-input/service"
+import {
+  bindFilesystemRootIdentity,
+  bindRegisteredFilesystemRoot,
+} from "../git/security/path-validation"
+import { getAgentInputCapability } from "../harness/input-capabilities"
 import {
   DEV_RENDERER_CONTROL_REQUEST_CHANNEL,
   DEV_RENDERER_CONTROL_RESPONSE_CHANNEL,
@@ -46,6 +61,7 @@ import {
 import { SAFE_CHATGPT_CODEX_MODEL } from "./codex-status"
 import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
+import { listDevAgentInputRendererStates } from "./renderer-state"
 import {
   authorizeMcpDispatchRetry,
   listMcpAuditRecords,
@@ -77,9 +93,108 @@ import {
 } from "./shell"
 export { getSettingsState, getVisibleCopySearchState } from "./settings"
 
-function notifyChatViewsChanged(payload: { action: "created" | "archived"; chatId: string }) {
+function notifyTestControlView(payload: DevTestControlViewPayload) {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send("dev-mcp:chats-changed", payload)
+    if (!window.isDestroyed()) window.webContents.send(DEV_TEST_CONTROL_VIEW_CHANNEL, payload)
+  }
+}
+
+function notifyAgentInput(payload: DevAgentInputPayload) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(DEV_AGENT_INPUT_CHANNEL, payload)
+  }
+}
+
+export function listAgentInputRequests(input?: { chatId?: string }) {
+  return agentInputLifecycle.list(input?.chatId)
+}
+
+export function getRendererAgentInputState(input?: { subChatId?: string }) {
+  const states = listDevAgentInputRendererStates()
+  return input?.subChatId ? states.filter((state) => state.subChatId === input.subChatId) : states
+}
+
+export function injectAgentInputRequest(input: {
+  subChatId: string
+  harness: HarnessProvider
+  model?: string
+  timeoutMs?: number
+  questions: Array<{
+    question: string
+    header?: string
+    options?: Array<{ label: string; description?: string }>
+    multiSelect?: boolean
+    allowCustom?: boolean
+  }>
+}) {
+  const db = getDatabase()
+  const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
+  if (!subChat) throw new Error("Sub-chat not found")
+  const requestId = `dev-input-${randomUUID()}`
+  const runId = `dev-input-run-${randomUUID()}`
+  const createdAt = Date.now()
+  const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 60_000, 1_000), 300_000)
+  const request = {
+    requestId,
+    chatId: subChat.id,
+    runId,
+    origin: {
+      harness: input.harness,
+      ...(input.model ? { model: input.model } : {}),
+      toolName: "request_user_input",
+    },
+    capability: getAgentInputCapability(input.harness),
+    questions: input.questions.map((question, questionIndex) => ({
+      id: `question-${questionIndex + 1}`,
+      question: question.question,
+      ...(question.header ? { header: question.header } : {}),
+      options: (question.options ?? []).map((option, optionIndex) => ({
+        id: `option-${optionIndex + 1}`,
+        label: option.label,
+        ...(option.description ? { description: option.description } : {}),
+      })),
+      multiSelect: question.multiSelect === true,
+      allowCustom: question.allowCustom !== false,
+    })),
+    status: "pending" as const,
+    createdAt,
+    expiresAt: createdAt + timeoutMs,
+  }
+
+  void agentInputLifecycle.create(request, { timeoutMs }).then((resolution) => {
+    notifyAgentInput({
+      type: "agent-input-status",
+      event: {
+        requestId,
+        chatId: request.chatId,
+        runId,
+        status: resolution.status,
+        at: Date.now(),
+        ...(resolution.status === "answered"
+          ? { response: resolution.response }
+          : { message: resolution.message }),
+      },
+    })
+  })
+  notifyAgentInput({ type: "agent-input-request", request })
+  return request
+}
+
+export function replyAgentInputRequest(input: {
+  requestId: string
+  action: "answer" | "skip" | "cancel"
+  mode?: "structured" | "chat"
+  answers?: Record<string, string[]>
+}) {
+  if (input.action === "skip") return { ok: agentInputLifecycle.skip(input.requestId) }
+  if (input.action === "cancel") return { ok: agentInputLifecycle.cancel(input.requestId) }
+  return {
+    ok: agentInputLifecycle.answer({
+      requestId: input.requestId,
+      mode: input.mode ?? "structured",
+      answers: input.answers ?? {},
+      submittedAt: Date.now(),
+    }),
   }
 }
 
@@ -294,7 +409,7 @@ export function prepareProductMcpCaller(input: {
       .get()
     return { chat, subChat, run }
   })
-  notifyChatViewsChanged({ action: "created", chatId })
+  notifyTestControlView({ action: "chat-created", chatId })
   return {
     chatId: created.chat.id,
     subChatId: created.subChat.id,
@@ -553,7 +668,7 @@ export function cleanupProductMcpCaller(input: { chatId: string }) {
       .where(eq(chats.id, input.chatId))
       .run()
   })
-  notifyChatViewsChanged({ action: "archived", chatId: input.chatId })
+  notifyTestControlView({ action: "chat-archived", chatId: input.chatId })
   const children = db.select().from(chats).where(eq(chats.parentChatId, input.chatId)).all()
   const archivedChildren: string[] = []
   const activeChildren: string[] = []
@@ -577,7 +692,7 @@ export function cleanupProductMcpCaller(input: { chatId: string }) {
     }
     db.update(chats).set({ archivedAt: now, updatedAt: now }).where(eq(chats.id, child.id)).run()
     archivedChildren.push(child.id)
-    notifyChatViewsChanged({ action: "archived", chatId: child.id })
+    notifyTestControlView({ action: "chat-archived", chatId: child.id })
   }
   return { chatId: input.chatId, archived: true, archivedChildren, activeChildren }
 }
@@ -640,6 +755,70 @@ export async function getProviderStatus() {
       }
     }),
   )
+}
+
+export function ensureTestProject(input?: { name?: string }, repoPath = process.cwd()) {
+  const projectPath = resolve(repoPath)
+  if (!existsSync(projectPath) || !statSync(projectPath).isDirectory()) {
+    throw new Error("Active development checkout is not a directory")
+  }
+  const db = getDatabase()
+  const existing = db.select().from(projects).where(eq(projects.path, projectPath)).get()
+  const now = new Date()
+  if (existing) {
+    const project = db
+      .update(projects)
+      .set({
+        archivedAt: null,
+        updatedAt: now,
+        ...(input?.name?.trim() ? { name: input.name.trim() } : {}),
+      })
+      .where(eq(projects.id, existing.id))
+      .returning()
+      .get()
+    bindRegisteredFilesystemRoot(projectPath)
+    notifyTestControlView({ action: "project-created", projectId: project!.id })
+    return { project: project!, created: false, restored: Boolean(existing.archivedAt) }
+  }
+
+  bindFilesystemRootIdentity(projectPath)
+  const project = db
+    .insert(projects)
+    .values({ name: input?.name?.trim() || basename(projectPath), path: projectPath })
+    .returning()
+    .get()
+  notifyTestControlView({ action: "project-created", projectId: project!.id })
+  return { project: project!, created: true, restored: false }
+}
+
+export function archiveTestProject(input: { projectId: string }) {
+  const db = getDatabase()
+  const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
+  if (!project) throw new Error("Project not found")
+  if (resolve(project.path) !== resolve(process.cwd())) {
+    throw new Error("Only the active development checkout can be archived by test control")
+  }
+  const activeChat = db
+    .select({ id: chats.id })
+    .from(chats)
+    .where(and(eq(chats.projectId, project.id), isNull(chats.archivedAt)))
+    .get()
+  if (activeChat) throw new Error(`Project has an active chat: ${activeChat.id}`)
+  if (project.archivedAt) {
+    return { archived: true, alreadyArchived: true, projectId: project.id }
+  }
+  const archivedAt = new Date()
+  db.update(projects)
+    .set({ archivedAt, updatedAt: archivedAt })
+    .where(eq(projects.id, project.id))
+    .run()
+  notifyTestControlView({ action: "project-archived", projectId: project.id })
+  return {
+    archived: true,
+    alreadyArchived: false,
+    projectId: project.id,
+    archivedAt: archivedAt.toISOString(),
+  }
 }
 
 export async function listProviderExtensions(input?: { cwd?: string }) {
@@ -918,7 +1097,7 @@ export function createTestChat(input: {
       .get()
     return { chat, subChat }
   })
-  notifyChatViewsChanged({ action: "created", chatId: created.chat.id })
+  notifyTestControlView({ action: "chat-created", chatId: created.chat.id })
   return {
     chatId: created.chat.id,
     subChatId: created.subChat.id,
@@ -929,6 +1108,25 @@ export function createTestChat(input: {
     permissionMode,
     worktreePath: project.path,
   }
+}
+
+export function openTestChat(input: { chatId: string }) {
+  const db = getDatabase()
+  const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+  if (!chat) throw new Error("Chat not found")
+  if (chat.archivedAt) throw new Error("Archived chats must be restored before opening")
+  const subChat = db
+    .select({ id: subChats.id })
+    .from(subChats)
+    .where(eq(subChats.chatId, chat.id))
+    .orderBy(desc(subChats.updatedAt))
+    .get()
+  notifyTestControlView({
+    action: "chat-opened",
+    chatId: chat.id,
+    subChatId: subChat?.id ?? null,
+  })
+  return { opened: true, chatId: chat.id, subChatId: subChat?.id ?? null }
 }
 
 export function archiveTestChat(input: { chatId: string }) {
@@ -945,7 +1143,7 @@ export function archiveTestChat(input: { chatId: string }) {
 
   const archivedAt = new Date()
   db.update(chats).set({ archivedAt, updatedAt: archivedAt }).where(eq(chats.id, chat.id)).run()
-  notifyChatViewsChanged({ action: "archived", chatId: chat.id })
+  notifyTestControlView({ action: "chat-archived", chatId: chat.id })
   return {
     archived: true,
     alreadyArchived: false,

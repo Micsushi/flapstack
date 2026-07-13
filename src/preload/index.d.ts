@@ -114,8 +114,11 @@ export interface DesktopApi {
     callback: (payload: DevRendererControlRequest) => void,
   ) => () => void
   respondDevRendererControl: (response: DevRendererControlResponse) => void
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  onDevMcpViewChanged: (
+    callback: (payload: import("../shared/dev-test-control").DevTestControlViewPayload) => void,
+  ) => () => void
+  onDevMcpAgentInput: (
+    callback: (payload: import("../shared/dev-agent-input").DevAgentInputPayload) => void,
   ) => () => void
   onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
   onProductMcpInvalidation: (
