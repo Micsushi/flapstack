@@ -106,21 +106,38 @@ the release ledger covers 323 scenarios and 17 feature exits.
 ## MCP-first management closeout
 
 The isolated `93ea` dev instance used authenticated test-control MCP for every
-functional product action. Both caller identities passed default-off,
-enable/connected, `ping`, and `describe`. Claude-to-Codex produced a successful
-real Codex child with exact lineage and response. Codex-to-Claude produced
-honest lineage but the real Claude child failed because the dev checkout lacked
-its bundled Claude binary/provider stream. Two-way denial, pending-call stop,
-stale identity, audit paging/filtering, restart persistence, and cleanup passed.
+functional product action. The ignored bundled Claude 2.1.207 runtime enabled
+the missing reverse proof: Codex-to-Claude child
+`7938cc69-6e29-4c89-93f0-954c8eea0c5c` and Claude-to-Codex child
+`f2af2f7f-d20f-490a-8d85-76c78d255f02` both completed `success` with exact
+expected text, inherited checkout, lineage, permission, approval, and audit
+correlation. Two-way denial created no extra child; worktree-less launch stayed
+durable and failed honestly; a real long-running Claude child reconciled to
+`cancelled` through the caller-scoped stop endpoint.
 
-Computer Use was limited to background-approval accessibility/focus evidence
-while the shared UI lease was held. It did not drive functional actions. The
-lane stopped its app, released the lease, archived all test callers/children,
-and left no pending approvals. S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain open
-for the missing real-provider and complete visual/accessibility matrix.
-Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
-863 passed and 3 conditional skips, and the production build. The three
-affected strict changes and release-ledger coverage pass.
+Persistent test-control stdio sessions now prove lower-tier grants apply only
+inside one caller/run and disappear on restart. Exposure disable cancels its
+session, pending decision, test call, and caller run. Self-archive, self-move,
+and self-launch fail closed; an intentionally allowed caller rename retains
+authenticated dev-control ownership. Audit filters/pages, credential-shaped
+redaction, restart persistence, and isolated cleanup passed.
+
+Computer Use was limited to pixels, accessibility tree, and keyboard focus
+while the shared lease was held. It did not drive functional actions. Live Tab
+testing found focus escaping the approval dialog; the AlertDialog action/cancel
+repair then kept focus cycling among the grant, Deny, and Approve controls.
+Tier 3 exposed no grant option. The lane stopped Dev, released the lease,
+archived all callers/children/mutation chats/project fixture, and left zero
+pending approvals or active runs.
+
+Passed manual IDs: M-01, M-02, M-05, M-06, M-09 through M-14, M-16, M-17, and
+M-20. Open manual IDs: M-03, M-04, M-07, M-08, M-15, M-18, and M-19. The audit
+query passed, but its panel did not render after the temporary project fixture
+left the renderer at its boot loader. S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain
+open for those rows plus task membership, accessible fork navigation,
+orchestration scheduler/queue/usage agreement, and complete renderer evidence.
+Final Node 22 `npm run check` passed 124 files with 931 tests, 3 conditional
+skips, lint, formatting, TypeScript, and all production builds.
 
 ## Remaining human and platform proof
 

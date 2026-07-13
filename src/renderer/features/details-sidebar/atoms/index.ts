@@ -172,6 +172,9 @@ export const detailsSidebarTabAtom = atomWithWindowStorage<DetailsSidebarTab>(
   { getOnInit: true },
 )
 
+// Runtime-only state used by the authenticated dev bridge and the normal widget toggle.
+export const productMcpAuditOpenChatIdsAtom = atom<Set<string>>(new Set<string>())
+
 // Section types for the overview sidebar
 export type OverviewSection = "info" | "plan" | "terminal" | "diff"
 

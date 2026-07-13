@@ -81,17 +81,19 @@ keeps exact non-idempotent unknown outcomes blocked without poisoning different
 input. Continuous namespace races, reparse behavior, cross-resource
 exactly-once, and all live UI/platform rows remain unproved and unchecked.
 
-2026-07-13 MCP-first closeout evidence: the authenticated dev-test MCP drove
-all functional actions through real product stdio children. Default-off,
-enable/connected truth, Codex and Claude `ping`/`describe`, two-way durable
-spawn lineage, approval/denial, stop/invalidation, audit filtering/paging,
-restart persistence, and isolated cleanup were observed. Claude-to-Codex
-launched a real Codex run successfully; Codex-to-Claude created honest lineage
-but the real Claude run failed because the dev checkout lacked its bundled
-Claude binary/provider stream. Computer Use was limited to accessibility/focus
-evidence for the background Review control under the shared UI lease. The full
-provider-session and visual matrix remains unchecked; S3-F5-T3 and S3-F6-T4
-are not complete.
+2026-07-13 MCP-first continuation: authenticated dev control drove every
+functional action. Real Codex-to-Claude and Claude-to-Codex children both
+completed successfully with exact text, lineage, inherited worktree, approval,
+and audit truth. Two-way denial, durable failure, Tier 3 re-prompt, lower-tier
+session grant/restart loss, exposure revocation, real child cancellation,
+self-reference controls, audit filters/pages, redaction, restart, and complete
+fixture cleanup passed. Computer Use was limited to pixels, accessibility tree,
+and keyboard focus under the shared lease; it found and verified the repair for
+a dialog focus-trap defect. Manual rows M-01, M-02, M-05, M-06, M-09 through
+M-14, M-16, M-17, and M-20 pass. M-03, M-04, M-07, M-08, M-15, M-18, and M-19
+remain open, including the audit panel that did not render after the temporary
+project fixture left the renderer at its boot loader. S3-M01 through S3-M12,
+S3-F5-T3, and S3-F6-T1/T2/T3/T5/T4 remain unchecked until each full row passes.
 
 2026-07-13 S3-F5 orchestration implementation evidence: migration 0022 and
 focused service, restart, concurrent-drain, budget/stop, lineage, permission,

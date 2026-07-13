@@ -1,6 +1,6 @@
 "use client"
 
-import { useAtomValue, useSetAtom } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { ChevronDown } from "lucide-react"
 import { memo, useMemo, useState } from "react"
 import { OriginalMCPIcon } from "../../../components/ui/icons"
@@ -15,6 +15,7 @@ import {
 } from "../../agents/atoms"
 import { McpAuditViewer } from "../../mcp-safety/audit-viewer"
 import { exposurePresentation } from "../../mcp-safety/exposure-model"
+import { productMcpAuditOpenChatIdsAtom } from "../atoms"
 
 function formatToolName(toolName: string): string {
   return toolName
@@ -76,7 +77,16 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setOpenChatIds = useSetAtom(openAgentChatIdsAtom)
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
-  const [showAuditHistory, setShowAuditHistory] = useState(false)
+  const [auditOpenChatIds, setAuditOpenChatIds] = useAtom(productMcpAuditOpenChatIdsAtom)
+  const showAuditHistory = auditOpenChatIds.has(chatId)
+  const setShowAuditHistory = (open: boolean) => {
+    setAuditOpenChatIds((current: Set<string>) => {
+      const next = new Set(current)
+      if (open) next.add(chatId)
+      else next.delete(chatId)
+      return next
+    })
+  }
   const exposure = trpc.appControl.getExposure.useQuery(
     { chatId },
     { enabled: !!chatId, refetchInterval: 1_000 },
@@ -140,7 +150,10 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
 
   return (
     <div className="px-2 py-1.5 flex flex-col gap-0.5">
-      <div className="rounded border border-border/60 px-2 py-1.5 mb-1">
+      <div
+        className="rounded border border-border/60 px-2 py-1.5 mb-1"
+        data-product-mcp-exposure-chat-id={chatId}
+      >
         <div className="flex items-center gap-2">
           <OriginalMCPIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <div className="min-w-0 flex-1">
@@ -164,7 +177,7 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
           type="button"
           className="mt-2 text-[10px] text-muted-foreground hover:text-foreground"
           aria-expanded={showAuditHistory}
-          onClick={() => setShowAuditHistory((open) => !open)}
+          onClick={() => setShowAuditHistory(!showAuditHistory)}
         >
           {showAuditHistory ? "Hide audit history" : "View audit history"}
         </button>

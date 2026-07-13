@@ -43,6 +43,15 @@ export type DevRendererControlCommand =
       subChatId: string
       project: { id: string; name: string; path: string }
     }
+  | {
+      command: "mcp.get"
+      chatId: string
+    }
+  | {
+      command: "mcp.control"
+      chatId: string
+      operation: "open-audit" | "close-audit"
+    }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
 
@@ -64,6 +73,8 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "settings.get",
       "settings.control",
       "chat.select",
+      "mcp.get",
+      "mcp.control",
     ].includes(String(value.command))
   ) {
     return null
@@ -141,6 +152,17 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       project.id.length > 200 ||
       project.name.length > 500 ||
       project.path.length > 4_096
+    ) {
+      return null
+    }
+  }
+  if (value.command === "mcp.get" || value.command === "mcp.control") {
+    if (typeof value.chatId !== "string" || value.chatId.length < 1 || value.chatId.length > 200) {
+      return null
+    }
+    if (
+      value.command === "mcp.control" &&
+      !["open-audit", "close-audit"].includes(String(value.operation))
     ) {
       return null
     }

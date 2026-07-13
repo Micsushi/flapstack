@@ -82,26 +82,26 @@ SQLite audit/lineage agree.
 
 | ID   | Action                                                                                      | Expected evidence                                                                                                        | Result |
 | ---- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------ |
-| M-01 | Start with exposure off in a Codex chat; list MCP tools                                     | Flapstack server absent; no caller process or audit row                                                                  | [ ]    |
-| M-02 | Enable exposure; start a new Codex run; call `ping` and `describe`                          | Connected state, trusted Codex chat/run identity, successful correlated audit rows                                       | [ ]    |
+| M-01 | Start with exposure off in a Codex chat; list MCP tools                                     | Flapstack server absent; no caller process or audit row                                                                  | [x]    |
+| M-02 | Enable exposure; start a new Codex run; call `ping` and `describe`                          | Connected state, trusted Codex chat/run identity, successful correlated audit rows                                       | [x]    |
 | M-03 | Disable exposure; start another Codex run                                                   | Flapstack server absent; old child closed or stale caller denied                                                         | [ ]    |
 | M-04 | Repeat M-01 through M-03 with Claude                                                        | Same default-off, enable, identity, disable, and stale behavior                                                          | [ ]    |
-| M-05 | From active chat request a Tier 1 or Tier 2 mutation in ask-before-edits mode; approve once | Dialog shows caller/tool/tier/target/bounded input; mutation runs exactly once; audit shows required, allowed, completed | [ ]    |
-| M-06 | Repeat and deny                                                                             | No mutation; audit shows approval-required then denied                                                                   | [ ]    |
+| M-05 | From active chat request a Tier 1 or Tier 2 mutation in ask-before-edits mode; approve once | Dialog shows caller/tool/tier/target/bounded input; mutation runs exactly once; audit shows required, allowed, completed | [x]    |
+| M-06 | Repeat and deny                                                                             | No mutation; audit shows approval-required then denied                                                                   | [x]    |
 | M-07 | Let approval time out                                                                       | Dialog closes; no mutation; timeout is returned and audited                                                              | [ ]    |
 | M-08 | Request approval from background chat                                                       | Badge/notification appears without focus change; opening caller chat allows decision                                     | [ ]    |
-| M-09 | Approve a lower-tier session grant, repeat same tool, then end run/chat session             | Grant works only in session; new session prompts again; grant use audited                                                | [ ]    |
-| M-10 | Attempt Tier 3 session grant                                                                | Reusable grant unavailable; every Tier 3 call prompts                                                                    | [ ]    |
-| M-11 | Claude caller spawns and launches Codex                                                     | One approval; child chat and first run execute; parent/initiator/ancestor lineage and audit IDs agree                    | [ ]    |
-| M-12 | Codex caller spawns and launches Claude                                                     | Same evidence in reverse direction                                                                                       | [ ]    |
-| M-13 | Deny each spawn direction                                                                   | No chat or run created; denial audited                                                                                   | [ ]    |
-| M-14 | Force target harness launch failure                                                         | Created durable chat remains; run is honest failure, never success; failure audited                                      | [ ]    |
+| M-09 | Approve a lower-tier session grant, repeat same tool, then end run/chat session             | Grant works only in session; new session prompts again; grant use audited                                                | [x]    |
+| M-10 | Attempt Tier 3 session grant                                                                | Reusable grant unavailable; every Tier 3 call prompts                                                                    | [x]    |
+| M-11 | Claude caller spawns and launches Codex                                                     | One approval; child chat and first run execute; parent/initiator/ancestor lineage and audit IDs agree                    | [x]    |
+| M-12 | Codex caller spawns and launches Claude                                                     | Same evidence in reverse direction                                                                                       | [x]    |
+| M-13 | Deny each spawn direction                                                                   | No chat or run created; denial audited                                                                                   | [x]    |
+| M-14 | Force target harness launch failure                                                         | Created durable chat remains; run is honest failure, never success; failure audited                                      | [x]    |
 | M-15 | Attempt same-harness and recursive/duplicate-ancestor spawn                                 | Structured denial; no child created; reason audited                                                                      | [ ]    |
-| M-16 | Attempt own chat archive/move/rename and own run relaunch                                   | Every forbidden self-reference is denied and audited                                                                     | [ ]    |
-| M-17 | Stop spawned run from supported control                                                     | Run reaches stopped terminal state; lineage remains; action audited                                                      | [ ]    |
+| M-16 | Attempt own chat archive/move and own run relaunch; rename the caller once                  | Forbidden self-references are denied; allowed rename preserves authenticated caller ownership; all are audited           | [x]    |
+| M-17 | Stop spawned run from supported control                                                     | Run reaches stopped terminal state; lineage remains; action audited                                                      | [x]    |
 | M-18 | Filter audit by caller, tool, decision, and time; page past first page                      | UI matches DB ordering/cursor; allowed, denied, timed-out, failed, completed visible                                     | [ ]    |
 | M-19 | Submit credential-like and hidden-reasoning fixtures                                        | UI and SQLite contain redaction markers, no recoverable secret/reasoning                                                 | [ ]    |
-| M-20 | Restart Stage 3 app and inspect exposure/audit                                              | Exposure remains accurate; audit persists; session grants do not                                                         | [ ]    |
+| M-20 | Restart Stage 3 app and inspect exposure/audit                                              | Exposure remains accurate; audit persists; session grants do not                                                         | [x]    |
 
 ## Evidence template
 
@@ -128,58 +128,66 @@ Notes or limitation:
 Do not complete S3-F5-T3 or S3-F6-T4 until every required manual row passes on
 real Codex and Claude sessions. Automated fixtures cannot replace those rows.
 
-## 2026-07-13 MCP-first live closeout evidence
+## 2026-07-13 MCP-first live closeout continuation
 
-Branch `codex/stage3-mcp-live-closeout`, based on `d08502e`, ran the final
-renderer/main code in isolated instance `93ea`. `npm run dev:verify` named this
-checkout and `~/Library/Application Support/Flapstack Dev 93ea` after the final
-restart. Real UI access held the shared `s3-mcp-closeout` lease; the app and
-lease were stopped after evidence.
+Branch `codex/stage3-mcp-live-closeout` started from integrated candidate
+`03ef5bf79c3acba30d08b6843ebfbc233e7f67f0`. The ignored bundled Claude
+2.1.207 binary was installed only for runtime proof. Isolated instance `93ea`
+passed `npm run dev:verify` before each evidence interval and after restart,
+naming this checkout and `~/Library/Application Support/Flapstack Dev 93ea`.
+The shared `s3-mcp-closeout` lease covered every Dev and Computer Use interval
+and was released cleanly.
 
 Authenticated development test-control MCP supplied every functional action
-and assertion:
+and assertion. It proved:
 
-- isolated Codex and Claude callers started exposure-disabled and refused
-  product calls while disabled;
-- enabling reported `next-run`; real product stdio children completed `ping`
-  and `describe` for both caller identities, and a waiting approval reported
-  `connected`;
-- Claude-to-Codex spawn approval created child
-  `87d2a404-e22b-4184-b9ee-3c24207babd0`, run
-  `bc61db5d-0b37-479f-8dce-9837754288e5`, exact parent/initiator/ancestor
-  lineage, the inherited `93ea` checkout, terminal `success`, and assistant
-  text `CODEX CHILD READY.`;
-- Codex-to-Claude created the reverse child and inherited checkout, but its real
-  Claude run ended `failure`. Startup logs showed a system Claude token but no
-  bundled Claude binary and a provider stream error. This is failure evidence,
-  not a two-way acceptance pass;
-- denial in both directions resolved once and created no extra child;
-- disabling during a pending spawn cancelled the stdio call, cleared the
-  approval, cancelled the caller run, and kept that run stale after re-enable;
-- audit tool/decision filters and cursor paging returned distinct ordered
-  pages; the isolated recovery view had zero unresolved claims;
-- after restart, exposure remained accurate as `next-run`, audit records
-  persisted, non-MCP fixture runs were cancelled, and no approval/session grant
-  survived;
-- cleanup archived both callers and terminal children with zero active children,
-  zero unarchived MCP test callers, and zero pending approvals.
+- default-off refusal, exact per-caller enable/`next-run`/`connected`/disable
+  state, Codex `ping` plus `describe`, Claude `ping`, and disable-time
+  cancellation of the stdio session, pending approval, and caller run;
+- active Tier 1 approval with caller/tool/tier/target/hashed input, exact-once
+  mutation, denial, audited timeout, a reusable lower-tier grant within one
+  persistent caller/run session, grant loss after restart, and fresh prompting
+  in a new caller;
+- Tier 3 had no session-grant option and prompted again in the same session;
+- Codex-to-Claude child `7938cc69-6e29-4c89-93f0-954c8eea0c5c`, run
+  `a07e9b84-b03e-42a5-8481-f481370dadf3`, completed `success` with exact text
+  `CLAUDE_CHILD_READY`; Claude-to-Codex child
+  `f2af2f7f-d20f-490a-8d85-76c78d255f02`, run
+  `92147600-45cc-4cf0-bcc1-fe9a0b682e74`, completed `success` with exact text
+  `CODEX_CHILD_READY`; both retained exact parent, initiator, ancestor, caller
+  run, inherited worktree, permission, and audit correlation;
+- denial in both directions created no extra child; same-harness spawn failed
+  without a child; a worktree-less real Claude launch retained durable lineage
+  and terminal `failure` instead of false success;
+- caller self-archive, self-move, and self-launch failed closed. Caller rename
+  remains intentionally allowed by the self-reference matrix, so dev-control
+  ownership now survives that legal rename instead of relying on mutable text;
+- child run `58d02fb3-9fce-4b1d-9788-cb3f32a9bded` reached `running`, accepted
+  the authenticated cancel control, then reconciled to `cancelled` while its
+  lineage remained;
+- audit caller/tool/decision/time filters and distinct cursor pages matched
+  durable order. A live credential-shaped marker was absent from the bounded
+  state and replaced by byte length plus SHA-256. Restart preserved audit and
+  exposure truth while clearing the caller session and reusable grant;
+- cleanup archived 11 isolated callers, every terminal child, three mutation
+  chats, and the temporary project fixture. All callers ended exposure-disabled
+  with zero pending approvals and zero active caller or child runs.
 
-Computer Use supplied only irreducible UI evidence. Accessibility inspection
-showed a background `Review MCP approval in Chat ...` button. A prior same-code
-focus observation kept VS Code's message input focused before and after the
-MCP-created background approval. No UI click performed a functional control or
-assertion. Active-chat dialog, full keyboard/screen-reader flow, session grants,
-audit-viewer pixels, and stop-control pixels were not completed.
+Computer Use supplied only irreducible visual, accessibility-tree, and keyboard
+evidence. The active dialog exposed the exact bounded context and Tier 1 grant
+checkbox. Initial Tab testing found focus could escape into background controls;
+using Radix AlertDialog action/cancel primitives repaired the trap, and the live
+order then cycled Deny, Approve, grant checkbox, Deny. Tier 3 exposed no
+checkbox. The background approval exposed its caller-scoped Review action.
+No UI click performed a functional action or assertion.
 
-This evidence advances basic live spawn, exposure, stop, restart, audit, and
-background-notification proof. It does not complete M-01 through M-20,
-S3-F5-T3, or S3-F6-T4 because the documented matrix still requires two real
-provider callers, a successful real Claude target launch, and the remaining
-visual/accessibility rows.
-
-Final automated verification: the focused MCP/management suite passed 54 tests
-across 11 files. Node 22 `npm run check` passed lint, formatting, TypeScript,
-117 test files with 863 passed and 3 conditional skips, and the production
-build. Strict validation passed for `add-stage3-mcp-control`,
-`add-dev-test-control-mcp`, and `validate-stage3-release`; release-ledger
-coverage passed for 18 changes, 323 scenarios, and 17 feature exits.
+Rows M-01, M-02, M-05, M-06, M-09 through M-14, M-16, M-17, and M-20 pass.
+M-03/M-04 remain open for the exact complete Codex/Claude disable-repeat matrix;
+M-07 for post-timeout dialog pixels; M-08 for a fresh external-app OS focus
+observation; M-15 for live recursive/duplicate-ancestor denial; M-18 because the
+audit query passed but its panel did not render after the temporary project
+fixture left the renderer at its boot loader; and M-19 for hidden-reasoning plus
+viewer/SQLite inspection. S3-F5-T3 also remains open for task membership,
+accessible fork navigation, orchestration queue/scheduler/usage agreement, and
+the remaining manual rows. S3-F6-T1/T2/T3/T5/T4 remain open on their listed
+manual dependencies. No Preview, package, Windows, or Linux claim is made.

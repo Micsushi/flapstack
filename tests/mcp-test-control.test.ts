@@ -57,6 +57,9 @@ describe("dev MCP test-control registry", () => {
       "get_visible_copy_search_state",
       "select_test_chat",
       "get_shortcut_state",
+      "get_product_mcp_renderer_state",
+      "cancel_product_mcp_child_run",
+      "control_product_mcp_renderer",
       "mutate_shortcut_binding",
       "list_provider_extensions",
       "list_test_targets",
@@ -154,6 +157,25 @@ describe("dev renderer Settings control boundary", () => {
         chatId: "chat-1",
         subChatId: "sub-chat-1",
         project: { id: "project-1", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only bounded product MCP renderer controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "open-audit",
+      }),
+    ).toMatchObject({ command: "mcp.control", operation: "open-audit" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "delete",
       }),
     ).toBeNull()
   })

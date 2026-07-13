@@ -332,8 +332,8 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: Third-party MCP server management redesign.
 - Acceptance: State is honest after restart and failures; enabling never silently focuses another window.
 - Verification: Renderer state tests and manual reconnect check.
-- Remaining verification: implementation and renderer tests pass; live
-  enable/restart/disable/reconnect rows M-01 through M-04 and M-20 remain.
+- Remaining verification: M-01, M-02, and M-20 pass live. M-03/M-04 remain for
+  the exact complete Codex/Claude disable-repeat matrix.
 - Blocked by: S3-F2-T4
 - Blocks: S3-F6-T4
 - Relevant context: chat settings and existing agents settings surfaces.
@@ -347,8 +347,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: OS activation for background requests.
 - Acceptance: Background calls do not steal focus; keyboard/screen-reader flow works; stale decisions close safely.
 - Verification: Component logic tests and manual active/background checks.
-- Remaining verification: implementation and component tests pass; live active,
-  background, deny, timeout, and session-grant rows M-05 through M-10 remain.
+- Remaining verification: M-05, M-06, M-09, and M-10 pass live. M-07 remains
+  for post-timeout dialog pixels and M-08 for a fresh external-app OS focus
+  observation.
 - Blocked by: S3-F3-T3
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: shared dialog primitives and pending approval service.
@@ -362,8 +363,10 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: Editing or deleting audit records.
 - Acceptance: Filters and paging match queries; no credential or hidden reasoning renders.
 - Verification: Renderer tests and manual allowed/denied/failed review.
-- Remaining verification: implementation and query/component tests pass; live
-  paging, decision, and redaction rows M-18 and M-19 remain.
+- Remaining verification: live query paging, decision/time filters, and one
+  credential-shaped redaction fixture pass through authenticated control.
+  M-18 remains for rendered-panel agreement and M-19 for hidden-reasoning plus
+  viewer/SQLite inspection.
 - Blocked by: S3-F4-T3
 - Blocks: S3-F5-T3, S3-F6-T4, S3-F6-T5
 - Relevant context: audit query DTO and settings/details UI.
@@ -384,9 +387,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   - Failed/rolled-back mutations do not show phantom success.
 - Verification: `tests/mcp-external-mutation-refresh.test.ts` plus verified live
   mutation, approval, run, and audit observations.
-- Remaining verification: the named transport, coalescing, exact-invalidation,
-  and development-boundary regressions pass; live mutation, approval, run, and
-  audit observations remain open.
+- Remaining verification: authenticated renderer truth observed active and
+  background approval invalidation. Live mutation-list, run-list, and rendered
+  audit-panel observations remain open.
 - Blocked by: S3-F2-T5, S3-F3-T4, S3-F4-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: Electron main/preload event bridge, tRPC query invalidation,
@@ -503,12 +506,43 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   bind an optional worktree only when it exactly matches the running checkout,
   drive real product stdio calls, expose bounded truth, restrict approvals and
   recovery to those fixtures, and clean pending/terminal children safely.
-- Live Claude-to-Codex target launch passed. The reverse real Claude target run
-  failed because the dev checkout lacked its bundled Claude binary/provider
-  stream. Full provider-session, active-dialog, keyboard/screen-reader,
+- At this earlier lane point, live Claude-to-Codex passed while the reverse
+  target failed because the checkout lacked its ignored bundled Claude binary.
+  The continuation evidence below supersedes that provider blocker. Full
+  active-dialog, keyboard/screen-reader,
   session-grant, viewer-pixel, and platform rows remain open. Therefore
   S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain unchecked.
 - Final focused MCP/management verification passes 54 tests across 11 files.
   Node 22 `npm run check` passes lint, formatting, TypeScript, 117 test files
   with 863 passed and 3 conditional skips, and the production build. The three
   affected strict changes and release-ledger coverage pass.
+
+## 2026-07-13 MCP-first live continuation evidence
+
+- Real Codex-to-Claude and Claude-to-Codex launches now both pass from verified
+  Dev instance `93ea`, with exact assistant text, inherited worktree, terminal
+  success, lineage, approval, and audit correlation. Two-way denial creates no
+  extra child; worktree-less launch remains a durable honest failure.
+- Authenticated control now keeps one product stdio session per caller/run, so
+  lower-tier session grants are observable and reusable only inside that live
+  session. Restart clears the session/grant. Exposure disable cancels the
+  session, pending approval, test call, and caller run.
+- A real long-running Claude child accepted the caller-scoped cancel endpoint
+  and reconciled to `cancelled` without losing lineage. Caller self-archive,
+  self-move, and self-launch fail closed. The intentionally allowed caller
+  rename no longer breaks dev-control ownership.
+- Active Tier 1 and Tier 3 dialogs passed pixels and accessibility-tree review.
+  A live keyboard check found Tab escaping the dialog; using AlertDialog
+  action/cancel primitives repaired the focus trap and the repeated live check
+  cycled only the grant, Deny, and Approve controls. Tier 3 has no grant option.
+- MCP audit paging, caller/tool/decision/time filters, restart persistence, and
+  a live credential-shaped redaction fixture pass. The audit panel did not
+  render after the temporary project fixture left the renderer at its boot
+  loader, so rendered M-18/M-19 and full S3-F6-T3/T5 acceptance stay open.
+- Passed manual rows: M-01, M-02, M-05, M-06, M-09 through M-14, M-16, M-17,
+  and M-20. Open rows: M-03, M-04, M-07, M-08, M-15, M-18, and M-19.
+  S3-F5-T3 stays open for task membership, accessible fork navigation,
+  orchestration scheduler/queue/usage agreement, and those remaining rows.
+  S3-F6-T1/T2/T3/T5/T4 therefore remain unchecked.
+- Final Node 22 `npm run check` passes lint, formatting, TypeScript, 124 test
+  files with 931 passed and 3 conditional skips, and all production builds.

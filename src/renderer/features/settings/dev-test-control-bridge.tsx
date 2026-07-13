@@ -10,6 +10,12 @@ import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
 import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from "../agents/atoms"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
+import {
+  detailsSidebarOpenAtom,
+  detailsSidebarTabAtom,
+  productMcpAuditOpenChatIdsAtom,
+  widgetVisibilityAtomFamily,
+} from "../details-sidebar/atoms"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
 
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
@@ -89,6 +95,55 @@ export function DevTestControlBridge() {
             subChatId: selectedSubChatId,
             selectedProject: request.project,
             settingsOpen: false,
+          },
+        })
+        return
+      }
+      if (request.command === "mcp.get" || request.command === "mcp.control") {
+        if (request.command === "mcp.control") {
+          const open = request.operation === "open-audit"
+          appStore.set(productMcpAuditOpenChatIdsAtom, (current: Set<string>) => {
+            const next = new Set(current)
+            if (open) next.add(request.chatId)
+            else next.delete(request.chatId)
+            return next
+          })
+          if (open) {
+            appStore.set(detailsSidebarOpenAtom, true)
+            appStore.set(detailsSidebarTabAtom, "details")
+            const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
+            const visible = appStore.get(visibilityAtom)
+            if (!visible.includes("mcp")) appStore.set(visibilityAtom, [...visible, "mcp"])
+          }
+        }
+        const visible = appStore.get(widgetVisibilityAtomFamily(request.chatId))
+        const callerElements = (selector: string) =>
+          Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+            (element) => element.dataset.mcpCallerChatId === request.chatId,
+          )
+        const exposureElement = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-product-mcp-exposure-chat-id]"),
+        ).find((element) => element.dataset.productMcpExposureChatId === request.chatId)
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: {
+            chatId: request.chatId,
+            selectedChatId: appStore.get(selectedAgentChatIdAtom),
+            detailsOpen: appStore.get(detailsSidebarOpenAtom),
+            detailsTab: appStore.get(detailsSidebarTabAtom),
+            mcpVisible: visible.includes("mcp"),
+            auditOpen: appStore.get(productMcpAuditOpenChatIdsAtom).has(request.chatId),
+            auditRendered: Boolean(
+              exposureElement?.querySelector('section[aria-label="MCP audit history"]'),
+            ),
+            exposureRendered: Boolean(exposureElement),
+            exposureText: exposureElement?.textContent?.trim().slice(0, 1_000) ?? null,
+            approvalDialogOpen: callerElements('[data-mcp-approval-dialog="active"]').length > 0,
+            backgroundApprovalVisible:
+              callerElements('[data-mcp-approval-notice="background"] [data-mcp-caller-chat-id]')
+                .length > 0,
+            reviewActionVisible: callerElements("button[data-mcp-caller-chat-id]").length > 0,
           },
         })
         return

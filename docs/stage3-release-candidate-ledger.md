@@ -94,10 +94,10 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                  |
 | Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
-| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
+| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 931 passed, 3 conditional skips, all production builds                                 |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
 | S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
-| MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
+| MCP-first management closeout          | PARTIAL | both real spawn directions pass; 13 manual rows pass, 7 and the complete visual/orchestration matrix remain open            |
 | Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
 | Verified lane Dev profiles             | PASS    | isolated `93ea`, `609c`, `acbf`, and `c8ae` worker checkouts/profiles; integrated profile rerun pending                     |
@@ -108,6 +108,23 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
 | Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
 | Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
+
+### 2026-07-13 MCP live continuation candidate
+
+Authenticated Dev control on isolated profile `93ea` passed real
+Codex-to-Claude and Claude-to-Codex launches, two-way denial, durable launch
+failure, session grant/restart loss, exposure cancellation, self-reference
+controls, real child stop/reconciliation, audit paging/filtering, live
+credential-shaped redaction, and complete fixture cleanup. Computer Use was
+limited to approval pixels, accessibility tree, and keyboard focus under the
+shared lease; it found and verified the approval focus-trap repair.
+
+Manual PASS: M-01, M-02, M-05, M-06, M-09 through M-14, M-16, M-17, M-20.
+Manual open: M-03, M-04, M-07, M-08, M-15, M-18, M-19. The audit query passed,
+but the rendered audit panel remained unavailable after the temporary project
+fixture left the app at its boot loader. S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4
+remain open; no complete orchestration, package, Windows, or Linux result is
+promoted.
 
 ### 2026-07-13 Settings closeout candidate
 

@@ -57,6 +57,8 @@ describe("MCP approval UI", () => {
     })
 
     const dialog = document.querySelector('[role="alertdialog"]')
+    expect(dialog?.getAttribute("data-mcp-approval-dialog")).toBe("active")
+    expect(dialog?.getAttribute("data-mcp-caller-chat-id")).toBe("chat-1")
     expect(dialog?.textContent).toContain("Claude / run-1")
     expect(dialog?.textContent).toContain("archive_item")
     expect(dialog?.textContent).toContain("Tier 2")
@@ -102,6 +104,11 @@ describe("MCP approval UI", () => {
       container.querySelector('[data-mcp-approval-notice="background"]')?.textContent,
     ).toContain("1 approval pending in 1 background chat")
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(
+      container
+        .querySelector('[aria-label="Review MCP approval in Fix parser"]')
+        ?.getAttribute("data-mcp-caller-chat-id"),
+    ).toBe("chat-1")
     await act(async () =>
       (
         container.querySelector(
