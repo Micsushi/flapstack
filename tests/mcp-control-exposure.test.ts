@@ -13,6 +13,7 @@ import {
   renameProductMcpServerCollisions,
 } from "../src/main/lib/mcp-control/registration"
 import {
+  getChatMcpExposureStatus,
   registerActiveProductMcpSession,
   resetActiveProductMcpSessionsForTests,
   revokeActiveProductMcpSessions,
@@ -149,10 +150,21 @@ describe("Flapstack MCP per-chat exposure", () => {
         "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-normal', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
       )
       .run()
+    sqlite
+      .prepare(
+        "INSERT INTO mcp_approval_requests (id, invocation_id, caller_chat_id, caller_run_id, tool_name, tier, target_summary, input_summary, created_at, expires_at) VALUES ('approval-old', 'invocation-old', 'chat-1', 'run-old', 'spawn_thread', 3, 'test target', '{}', ?, ?)",
+      )
+      .run(Date.now(), Date.now() + 60_000)
     sqlite.close()
     process.env.FLAPSTACK_DB_PATH = databasePath
     const revoke = vi.fn()
     registerActiveProductMcpSession({ chatId: "chat-1", runId: "run-old", revoke })
+
+    expect(getChatMcpExposureStatus("chat-1")).toMatchObject({
+      connection: "connected",
+      callerLabel: "Codex / chat-1 / run-old",
+      activeRunIds: ["run-old"],
+    })
 
     expect(setChatMcpExposure("chat-1", false)).toBe(false)
     expect(revoke).toHaveBeenCalledOnce()
@@ -166,6 +178,11 @@ describe("Flapstack MCP per-chat exposure", () => {
     expect(cancelled.prepare("SELECT run_status FROM sub_chats WHERE id = 'sub-1'").get()).toEqual({
       run_status: "running",
     })
+    expect(
+      cancelled
+        .prepare("SELECT decision FROM mcp_approval_requests WHERE id = 'approval-old'")
+        .get(),
+    ).toEqual({ decision: "deny" })
     cancelled.close()
     expect(() =>
       resolveTrustedMcpCaller(

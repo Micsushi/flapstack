@@ -24,6 +24,7 @@ export type McpApprovalSurfaceProps = {
   approvals: readonly McpPendingApprovalView[]
   activeChatId: string | null
   onDecision: (action: McpApprovalAction) => Promise<{ resolved: boolean }>
+  onOpenChat?: (chatId: string) => void
 }
 
 /**
@@ -34,6 +35,7 @@ export function McpApprovalSurface({
   approvals,
   activeChatId,
   onDecision,
+  onOpenChat,
 }: McpApprovalSurfaceProps) {
   const activeApproval = approvals.find(
     (approval) => approvalPresentation(approval, activeChatId) === "dialog",
@@ -44,7 +46,7 @@ export function McpApprovalSurface({
 
   return (
     <>
-      <McpBackgroundApprovalNotice approvals={backgroundApprovals} />
+      <McpBackgroundApprovalNotice approvals={backgroundApprovals} onOpenChat={onOpenChat} />
       {activeApproval && <McpApprovalDialog approval={activeApproval} onDecision={onDecision} />}
     </>
   )
@@ -52,22 +54,41 @@ export function McpApprovalSurface({
 
 export function McpBackgroundApprovalNotice({
   approvals,
+  onOpenChat,
 }: {
   approvals: readonly McpPendingApprovalView[]
+  onOpenChat?: (chatId: string) => void
 }) {
   if (approvals.length === 0) return null
 
-  const chats = new Set(approvals.map((approval) => approval.chatName)).size
+  const chatApprovals = Array.from(
+    new Map(approvals.map((approval) => [approval.chatId, approval])).values(),
+  )
+  const chats = chatApprovals.length
   return (
     <div
-      aria-atomic="true"
-      aria-live="polite"
       className="rounded border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-xs text-foreground"
       data-mcp-approval-notice="background"
-      role="status"
     >
-      {approvals.length} approval{approvals.length === 1 ? "" : "s"} pending in {chats} background
-      {chats === 1 ? " chat" : " chats"}. Open that chat to review.
+      <p aria-atomic="true" aria-live="polite" role="status">
+        {approvals.length} approval{approvals.length === 1 ? "" : "s"} pending in {chats} background
+        {chats === 1 ? " chat" : " chats"}.
+      </p>
+      {onOpenChat && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {chatApprovals.map((approval) => (
+            <Button
+              key={approval.chatId}
+              aria-label={`Review MCP approval in ${approval.chatName}`}
+              size="sm"
+              variant="outline"
+              onClick={() => onOpenChat(approval.chatId)}
+            >
+              Review {approval.chatName}
+            </Button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

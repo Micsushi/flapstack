@@ -84,6 +84,7 @@ describe("MCP approval UI", () => {
     document.body.append(focusTarget)
     focusTarget.focus()
     const onDecision = vi.fn(async () => ({ resolved: true }))
+    const onOpenChat = vi.fn()
 
     await act(async () => {
       root.render(
@@ -91,6 +92,7 @@ describe("MCP approval UI", () => {
           approvals: [approval],
           activeChatId: "chat-2",
           onDecision,
+          onOpenChat,
         }),
       )
     })
@@ -100,6 +102,14 @@ describe("MCP approval UI", () => {
       container.querySelector('[data-mcp-approval-notice="background"]')?.textContent,
     ).toContain("1 approval pending in 1 background chat")
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    await act(async () =>
+      (
+        container.querySelector(
+          '[aria-label="Review MCP approval in Fix parser"]',
+        ) as HTMLButtonElement
+      ).click(),
+    )
+    expect(onOpenChat).toHaveBeenCalledWith("chat-1")
     focusTarget.remove()
   })
 

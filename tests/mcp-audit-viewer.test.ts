@@ -4,13 +4,37 @@ import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }))
+const {
+  useQuery,
+  useRecoveryQuery,
+  useAuthorizeRetryMutation,
+  useReconcileMutation,
+  useUtils,
+  authorizeRetry,
+  reconcile,
+  invalidateRecovery,
+  invalidateAudit,
+} = vi.hoisted(() => ({
+  useQuery: vi.fn(),
+  useRecoveryQuery: vi.fn(),
+  useAuthorizeRetryMutation: vi.fn(),
+  useReconcileMutation: vi.fn(),
+  useUtils: vi.fn(),
+  authorizeRetry: vi.fn(async () => ({ authorized: true })),
+  reconcile: vi.fn(async () => ({ reconciled: true })),
+  invalidateRecovery: vi.fn(async () => undefined),
+  invalidateAudit: vi.fn(async () => undefined),
+}))
 
 vi.mock("../src/renderer/lib/trpc", () => ({
   trpc: {
     appControl: {
       listAuditLog: { useQuery },
+      listAuditRecovery: { useQuery: useRecoveryQuery },
+      authorizeAuditRetry: { useMutation: useAuthorizeRetryMutation },
+      reconcileAuditClaim: { useMutation: useReconcileMutation },
     },
+    useUtils,
   },
 }))
 
@@ -40,6 +64,7 @@ describe("MCP audit viewer", () => {
   let root: Root
 
   beforeEach(() => {
+    vi.clearAllMocks()
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement("div")
     document.body.append(container)
@@ -49,6 +74,23 @@ describe("MCP audit viewer", () => {
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
+    })
+    useRecoveryQuery.mockReturnValue({ data: [], isLoading: false, isError: false })
+    useAuthorizeRetryMutation.mockReturnValue({
+      mutateAsync: authorizeRetry,
+      isPending: false,
+      isError: false,
+    })
+    useReconcileMutation.mockReturnValue({
+      mutateAsync: reconcile,
+      isPending: false,
+      isError: false,
+    })
+    useUtils.mockReturnValue({
+      appControl: {
+        listAuditRecovery: { invalidate: invalidateRecovery },
+        listAuditLog: { invalidate: invalidateAudit },
+      },
     })
   })
 
@@ -119,5 +161,44 @@ describe("MCP audit viewer", () => {
       ).click(),
     )
     expect(refetch).toHaveBeenCalled()
+  })
+
+  it("exposes bounded retry and verified reconciliation actions", async () => {
+    useRecoveryQuery.mockReturnValue({
+      data: [
+        {
+          invocationId: "call-retry",
+          callerChatId: "chat-1",
+          callerRunId: "run-1",
+          toolName: "list_projects",
+          tier: 0,
+          state: "recovery-retryable",
+          retrySafe: true,
+          createdAt: "2026-07-12T10:00:00.000Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    })
+    await act(async () => root.render(createElement(McpAuditViewer, {})))
+
+    expect(container.textContent).toContain("Execution reconciliation")
+    await act(async () =>
+      (
+        container.querySelector(
+          '[aria-label="Authorize one retry for call-retry"]',
+        ) as HTMLButtonElement
+      ).click(),
+    )
+    expect(authorizeRetry).toHaveBeenCalledWith({ invocationId: "call-retry" })
+
+    await act(async () =>
+      (
+        container.querySelector('[aria-label="Mark call-retry completed"]') as HTMLButtonElement
+      ).click(),
+    )
+    expect(reconcile).toHaveBeenCalledWith({ invocationId: "call-retry", outcome: "completed" })
+    expect(invalidateRecovery).toHaveBeenCalled()
+    expect(invalidateAudit).toHaveBeenCalled()
   })
 })

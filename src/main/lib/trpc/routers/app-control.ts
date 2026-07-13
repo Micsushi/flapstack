@@ -92,7 +92,7 @@ export const appControlRouter = router({
   listPendingApprovals: publicProcedure.query(() => listPendingMcpApprovals(getDatabase())),
 
   listAuditRecovery: publicProcedure.query(() => {
-    recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0 })
+    recoverMcpDispatchClaims(getDatabase())
     return listMcpDispatchRecoveryClaims(getDatabase())
   }),
 

@@ -1,6 +1,9 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { randomUUID } from "node:crypto"
 import { and, desc, eq } from "drizzle-orm"
 import { app, BrowserWindow } from "electron"
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -9,6 +12,7 @@ import {
   checkpoints,
   fileChangeManifests,
   getDatabase,
+  getDatabasePath,
   projects,
   subChats,
 } from "../db"
@@ -37,6 +41,21 @@ import { SAFE_CHATGPT_CODEX_MODEL } from "./codex-status"
 import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
 import {
+  authorizeMcpDispatchRetry,
+  listMcpAuditRecords,
+  listMcpDispatchRecoveryClaims,
+  reconcileMcpDispatchClaim,
+  recoverMcpDispatchClaims,
+  type McpAuditStatus,
+} from "../mcp-control/audit-storage"
+import {
+  getChatMcpExposureStatus,
+  registerActiveProductMcpSession,
+  setChatMcpExposure,
+} from "../mcp-control/exposure"
+import { decideMcpApproval, listPendingMcpApprovals } from "../mcp-control/approval-coordinator"
+import { buildMcpStdioRegistration, type McpStdioRegistration } from "../mcp-control/registration"
+import {
   appendUserMessage,
   findLastAssistantMessage,
   getMessageText,
@@ -56,6 +75,21 @@ function notifyChatViewsChanged(payload: { action: "created" | "archived"; chatI
     if (!window.isDestroyed()) window.webContents.send("dev-mcp:chats-changed", payload)
   }
 }
+
+type ProductMcpTestCall = {
+  id: string
+  chatId: string
+  runId: string
+  toolName: string
+  status: "running" | "completed" | "failed" | "cancelled"
+  response: unknown
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+  transport: StdioClientTransport
+}
+
+const productMcpTestCalls = new Map<string, ProductMcpTestCall>()
 
 export function getTestEnvironment(repoPath = process.cwd()) {
   const userDataPath = app.getPath("userData")
@@ -98,7 +132,7 @@ export function listTestTargets() {
       id: project.id,
       name: project.name,
       path: project.path,
-      updatedAt: project.updatedAt?.toISOString() ?? null,
+      updatedAt: compactTimestamp(project.updatedAt),
     })),
     chats: chatRows.map((chat) => ({
       id: chat.id,
@@ -112,7 +146,7 @@ export function listTestTargets() {
       worktreePath: chat.worktreePath,
       branch: chat.branch,
       archived: Boolean(chat.archivedAt),
-      updatedAt: chat.updatedAt?.toISOString() ?? null,
+      updatedAt: compactTimestamp(chat.updatedAt),
     })),
     subChats: subChatRows.map((subChat) => ({
       id: subChat.id,
@@ -127,9 +161,401 @@ export function listTestTargets() {
       sessionId: subChat.sessionId,
       streamId: subChat.streamId,
       messages: summarizeMessages(subChat.messages),
-      updatedAt: subChat.updatedAt?.toISOString() ?? null,
+      updatedAt: compactTimestamp(subChat.updatedAt),
     })),
   }
+}
+
+export function prepareProductMcpCaller(input: {
+  harness: "codex" | "claude"
+  name?: string
+  repoPath?: string
+}) {
+  const db = getDatabase()
+  const chatId = randomUUID()
+  const subChatId = randomUUID()
+  const runId = randomUUID()
+  const harness = input.harness === "claude" ? "claude-code" : "codex"
+  const model = harness === "codex" ? SAFE_CHATGPT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL_ID
+  const worktreePath = resolveProductMcpTestRepoPath(input.repoPath)
+  const name = `MCP live test ${input.harness}${input.name?.trim() ? `: ${input.name.trim()}` : ""}`
+  const created = db.transaction((tx) => {
+    const chat = tx
+      .insert(chats)
+      .values({
+        id: chatId,
+        name,
+        scope: "global",
+        harness,
+        model,
+        permissionMode: "full-access",
+        worktreePath,
+        mcpExposureEnabled: false,
+      })
+      .returning()
+      .get()
+    const subChat = tx
+      .insert(subChats)
+      .values({
+        id: subChatId,
+        chatId,
+        name,
+        mode: "agent",
+        harness,
+        model,
+        permissionMode: "full-access",
+        worktreePath,
+        runStatus: "running",
+        messages: "[]",
+      })
+      .returning()
+      .get()
+    const run = tx
+      .insert(agentRuns)
+      .values({
+        id: runId,
+        chatId,
+        subChatId,
+        harness,
+        model,
+        permissionMode: "full-access",
+        worktreePath,
+        status: "running",
+        startedAt: new Date(),
+      })
+      .returning()
+      .get()
+    return { chat, subChat, run }
+  })
+  notifyChatViewsChanged({ action: "created", chatId })
+  return {
+    chatId: created.chat.id,
+    subChatId: created.subChat.id,
+    runId: created.run.id,
+    harness: created.chat.harness,
+    model: created.chat.model,
+    permissionMode: created.chat.permissionMode,
+    worktreePath: created.chat.worktreePath,
+    exposure: getChatMcpExposureStatus(chatId),
+  }
+}
+
+function resolveProductMcpTestRepoPath(repoPath: string | undefined) {
+  if (!repoPath) return null
+  const requested = realpathSync(repoPath)
+  const checkout = realpathSync(app.getAppPath())
+  if (requested !== checkout || !statSync(requested).isDirectory()) {
+    throw new Error("Product MCP test repo path must match the running dev checkout.")
+  }
+  return requested
+}
+
+export function setProductMcpTestExposure(input: { chatId: string; enabled: boolean }) {
+  requireProductMcpTestCaller(input.chatId)
+  setChatMcpExposure(input.chatId, input.enabled)
+  return getChatMcpExposureStatus(input.chatId)
+}
+
+export function startProductMcpTestCall(
+  input: { chatId: string; runId: string; toolName: string; arguments?: Record<string, unknown> },
+  options: { registration?: McpStdioRegistration } = {},
+) {
+  const db = getDatabase()
+  requireProductMcpTestCaller(input.chatId)
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+  if (!run || run.chatId !== input.chatId || run.status !== "running") {
+    throw new Error("Product MCP test caller run is missing or stale.")
+  }
+  const exposure = getChatMcpExposureStatus(input.chatId)
+  if (!exposure.enabled) throw new Error("Product MCP exposure is disabled for the test caller.")
+
+  pruneProductMcpTestCalls()
+  const registration =
+    options.registration ??
+    buildMcpStdioRegistration(
+      {
+        chatId: input.chatId,
+        runId: input.runId,
+        permissionMode: run.permissionMode ?? "full-access",
+      },
+      {
+        executablePath: process.execPath,
+        mainDirectory: __dirname,
+        databasePath: getDatabasePath(),
+      },
+    )
+  const transport = new StdioClientTransport({
+    command: registration.command,
+    args: registration.args,
+    env: { PATH: process.env.PATH ?? "", ...registration.env },
+    stderr: "pipe",
+  })
+  const id = randomUUID()
+  const call: ProductMcpTestCall = {
+    id,
+    chatId: input.chatId,
+    runId: input.runId,
+    toolName: input.toolName,
+    status: "running",
+    response: null,
+    error: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    transport,
+  }
+  productMcpTestCalls.set(id, call)
+  const release = registerActiveProductMcpSession({
+    chatId: input.chatId,
+    runId: input.runId,
+    revoke: () => {
+      if (call.status === "running") {
+        call.status = "cancelled"
+        call.error = "Product MCP exposure was disabled."
+        call.finishedAt = new Date().toISOString()
+      }
+      void transport.close().catch(() => undefined)
+    },
+  })
+  const client = new Client({ name: "flapstack-dev-test-control", version: "1.0.0" })
+  void (async () => {
+    try {
+      await client.connect(transport)
+      const response = await client.callTool({
+        name: input.toolName,
+        arguments: input.arguments ?? {},
+      })
+      if (call.status !== "cancelled") {
+        call.status = response.isError ? "failed" : "completed"
+        call.response = response.structuredContent ?? { isError: response.isError === true }
+        call.finishedAt = new Date().toISOString()
+      }
+    } catch (error) {
+      if (call.status !== "cancelled") {
+        call.status = "failed"
+        call.error = redactSecretLikeText(
+          error instanceof Error ? error.message : "Product MCP test call failed.",
+        )
+        call.finishedAt = new Date().toISOString()
+      }
+    } finally {
+      release()
+      await client.close().catch(() => undefined)
+    }
+  })()
+  return productMcpTestCallDto(call)
+}
+
+export function getProductMcpTestCall(input: { callId: string }) {
+  const call = productMcpTestCalls.get(input.callId)
+  if (!call) throw new Error("Product MCP test call not found.")
+  return productMcpTestCallDto(call)
+}
+
+export function replyProductMcpApproval(input: {
+  approvalId: string
+  decision: "approve" | "deny"
+  grantSession?: boolean
+}) {
+  const approval = listPendingMcpApprovals(getDatabase()).find(
+    (candidate) => candidate.id === input.approvalId,
+  )
+  if (!approval) throw new Error("Pending product MCP test approval not found.")
+  requireProductMcpTestCaller(approval.chatId)
+  return {
+    resolved: decideMcpApproval(getDatabase(), {
+      id: input.approvalId,
+      decision: input.decision,
+      grantSession: input.grantSession === true,
+    }),
+  }
+}
+
+export function getProductMcpState(input: {
+  chatId: string
+  toolName?: string
+  decision?: McpAuditStatus
+  cursor?: string
+  limit?: number
+}) {
+  const db = getDatabase()
+  const caller = requireProductMcpTestCaller(input.chatId)
+  const runs = db
+    .select()
+    .from(agentRuns)
+    .where(eq(agentRuns.chatId, input.chatId))
+    .orderBy(desc(agentRuns.startedAt))
+    .all()
+  const children = db
+    .select()
+    .from(chats)
+    .where(eq(chats.parentChatId, input.chatId))
+    .orderBy(desc(chats.createdAt))
+    .all()
+    .map((chat) => ({
+      id: chat.id,
+      harness: chat.harness,
+      parentChatId: chat.parentChatId,
+      initiatorChatId: chat.initiatorChatId,
+      parentRunId: chat.parentRunId,
+      ancestorChatIds: chat.ancestorChatIds,
+      archived: Boolean(chat.archivedAt),
+      runs: db
+        .select()
+        .from(agentRuns)
+        .where(eq(agentRuns.chatId, chat.id))
+        .orderBy(desc(agentRuns.startedAt))
+        .all()
+        .map(compactRun),
+    }))
+  return {
+    caller: {
+      id: caller.id,
+      harness: caller.harness,
+      permissionMode: caller.permissionMode,
+      archived: Boolean(caller.archivedAt),
+    },
+    exposure: getChatMcpExposureStatus(input.chatId),
+    runs: runs.map(compactRun),
+    pendingApprovals: listPendingMcpApprovals(db).filter(
+      (approval) => approval.chatId === input.chatId,
+    ),
+    audit: listMcpAuditRecords(db, {
+      callerChatId: input.chatId,
+      toolName: input.toolName,
+      decision: input.decision,
+      cursor: input.cursor,
+      limit: input.limit,
+    }),
+    children,
+    calls: [...productMcpTestCalls.values()]
+      .filter((call) => call.chatId === input.chatId)
+      .map(productMcpTestCallDto),
+  }
+}
+
+export function manageProductMcpRecovery(input: {
+  chatId: string
+  action: "list" | "authorize-retry" | "reconcile-completed" | "reconcile-failed"
+  invocationId?: string
+}) {
+  const db = getDatabase()
+  requireProductMcpTestCaller(input.chatId)
+  recoverMcpDispatchClaims(db)
+  const claims = listMcpDispatchRecoveryClaims(db).filter(
+    (claim) => claim.callerChatId === input.chatId,
+  )
+  let changed: boolean | null = null
+  if (input.action !== "list") {
+    if (!input.invocationId) throw new Error("Recovery action requires an invocation ID.")
+    if (!claims.some((claim) => claim.invocationId === input.invocationId)) {
+      throw new Error("Recovery claim does not belong to this product MCP test caller.")
+    }
+    changed =
+      input.action === "authorize-retry"
+        ? authorizeMcpDispatchRetry(db, input.invocationId)
+        : reconcileMcpDispatchClaim(
+            db,
+            input.invocationId,
+            input.action === "reconcile-completed" ? "completed" : "failed",
+          )
+  }
+  return {
+    changed,
+    claims: listMcpDispatchRecoveryClaims(db).filter(
+      (claim) => claim.callerChatId === input.chatId,
+    ),
+  }
+}
+
+export function cleanupProductMcpCaller(input: { chatId: string }) {
+  const db = getDatabase()
+  requireProductMcpTestCaller(input.chatId)
+  setChatMcpExposure(input.chatId, false)
+  const now = new Date()
+  db.transaction((tx) => {
+    tx.update(agentRuns)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(agentRuns.chatId, input.chatId), eq(agentRuns.status, "running")))
+      .run()
+    tx.update(subChats)
+      .set({ runStatus: "cancelled", updatedAt: now })
+      .where(eq(subChats.chatId, input.chatId))
+      .run()
+    tx.update(chats)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(chats.id, input.chatId))
+      .run()
+  })
+  notifyChatViewsChanged({ action: "archived", chatId: input.chatId })
+  const children = db.select().from(chats).where(eq(chats.parentChatId, input.chatId)).all()
+  const archivedChildren: string[] = []
+  const activeChildren: string[] = []
+  for (const child of children) {
+    db.update(agentRuns)
+      .set({ status: "cancelled", completedAt: now })
+      .where(and(eq(agentRuns.chatId, child.id), eq(agentRuns.status, "pending")))
+      .run()
+    db.update(subChats)
+      .set({ runStatus: "cancelled", updatedAt: now })
+      .where(and(eq(subChats.chatId, child.id), eq(subChats.runStatus, "pending")))
+      .run()
+    const active = db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.chatId, child.id), eq(agentRuns.status, "running")))
+      .get()
+    if (active) {
+      activeChildren.push(child.id)
+      continue
+    }
+    db.update(chats).set({ archivedAt: now, updatedAt: now }).where(eq(chats.id, child.id)).run()
+    archivedChildren.push(child.id)
+    notifyChatViewsChanged({ action: "archived", chatId: child.id })
+  }
+  return { chatId: input.chatId, archived: true, archivedChildren, activeChildren }
+}
+
+function requireProductMcpTestCaller(chatId: string) {
+  const caller = getDatabase().select().from(chats).where(eq(chats.id, chatId)).get()
+  if (
+    !caller ||
+    caller.scope !== "global" ||
+    caller.parentChatId !== null ||
+    typeof caller.name !== "string" ||
+    !caller.name.startsWith("MCP live test ")
+  ) {
+    throw new Error("Refusing an MCP test action for a non-test caller chat.")
+  }
+  return caller
+}
+
+function productMcpTestCallDto(call: ProductMcpTestCall) {
+  return {
+    id: call.id,
+    chatId: call.chatId,
+    runId: call.runId,
+    toolName: call.toolName,
+    status: call.status,
+    response: call.response,
+    error: call.error,
+    startedAt: call.startedAt,
+    finishedAt: call.finishedAt,
+  }
+}
+
+function pruneProductMcpTestCalls() {
+  const terminal = [...productMcpTestCalls.values()]
+    .filter((call) => call.status !== "running")
+    .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
+  for (const call of terminal.slice(0, Math.max(0, productMcpTestCalls.size - 50))) {
+    productMcpTestCalls.delete(call.id)
+  }
+}
+
+export async function resetProductMcpTestCallsForTests() {
+  const calls = [...productMcpTestCalls.values()]
+  productMcpTestCalls.clear()
+  await Promise.all(calls.map((call) => call.transport.close().catch(() => undefined)))
 }
 
 export async function getProviderStatus() {
@@ -250,7 +676,7 @@ export function getChatState(input: { subChatId: string; messageLimit?: number }
       permissionMode: subChat.permissionMode,
       worktreePath: subChat.worktreePath,
       runStatus: subChat.runStatus,
-      updatedAt: subChat.updatedAt?.toISOString() ?? null,
+      updatedAt: compactTimestamp(subChat.updatedAt),
     },
     messages: compactMessages(subChat.messages, input.messageLimit),
     runs: runs.map(compactRun),
@@ -270,11 +696,20 @@ function compactRun(run: typeof agentRuns.$inferSelect) {
     permissionMode: run.permissionMode,
     worktreePath: run.worktreePath,
     status: run.status,
-    startedAt: run.startedAt?.toISOString() ?? null,
-    completedAt: run.completedAt?.toISOString() ?? null,
+    startedAt: compactTimestamp(run.startedAt),
+    completedAt: compactTimestamp(run.completedAt),
     beforeCheckpointId: run.beforeCheckpointId,
     afterCheckpointId: run.afterCheckpointId,
   }
+}
+
+function compactTimestamp(value: Date | null) {
+  if (!value) return null
+  // Some established raw-SQL launch paths store epoch milliseconds while
+  // Drizzle's timestamp mapper expects seconds. Normalize the mapped 1000x
+  // value for truthful dev-control evidence without rewriting durable data.
+  const normalized = value.getUTCFullYear() > 9999 ? new Date(value.getTime() / 1000) : value
+  return normalized.toISOString()
 }
 
 export function getRunState(input: { runId: string }) {
@@ -695,7 +1130,7 @@ export function verifyRunArtifacts(input: {
           worktreePath: latestRun.worktreePath,
           beforeCheckpointId: latestRun.beforeCheckpointId,
           afterCheckpointId: latestRun.afterCheckpointId,
-          completedAt: latestRun.completedAt?.toISOString() ?? null,
+          completedAt: compactTimestamp(latestRun.completedAt),
         }
       : null,
     checkpoints: runCheckpoints.map((checkpoint) => ({
@@ -703,7 +1138,7 @@ export function verifyRunArtifacts(input: {
       kind: checkpoint.kind,
       worktreePath: checkpoint.worktreePath,
       gitCommit: checkpoint.gitCommit,
-      createdAt: checkpoint.createdAt?.toISOString() ?? null,
+      createdAt: compactTimestamp(checkpoint.createdAt),
     })),
     manifest: manifest.map((entry) => ({
       id: entry.id,

@@ -114,6 +114,8 @@ export function McpAuditViewer({
         </Button>
       </div>
 
+      <McpAuditRecoveryPanel />
+
       <div className="grid gap-2 sm:grid-cols-2">
         <Input
           aria-label="Filter audit history by caller chat ID"
@@ -200,6 +202,132 @@ export function McpAuditViewer({
           Next
         </Button>
       </div>
+    </section>
+  )
+}
+
+type McpAuditRecoveryClaim = {
+  invocationId: string
+  callerChatId: string
+  callerRunId: string | null
+  toolName: string
+  tier: 0 | 1 | 2 | 3
+  state:
+    | "dispatch-started"
+    | "recovery-retryable"
+    | "recovery-unknown"
+    | "retry-authorized"
+    | "retry-consumed"
+    | "recovery-exhausted"
+  retrySafe: boolean
+  createdAt: string
+}
+
+function McpAuditRecoveryPanel() {
+  const recovery = trpc.appControl.listAuditRecovery.useQuery(undefined, {
+    refetchInterval: 5_000,
+  })
+  const authorizeRetry = trpc.appControl.authorizeAuditRetry.useMutation()
+  const reconcile = trpc.appControl.reconcileAuditClaim.useMutation()
+  const utils = trpc.useUtils()
+
+  const refresh = async () => {
+    await Promise.all([
+      utils.appControl.listAuditRecovery.invalidate(),
+      utils.appControl.listAuditLog.invalidate(),
+    ])
+  }
+  const authorize = async (invocationId: string) => {
+    await authorizeRetry.mutateAsync({ invocationId })
+    await refresh()
+  }
+  const mark = async (invocationId: string, outcome: "completed" | "failed") => {
+    await reconcile.mutateAsync({ invocationId, outcome })
+    await refresh()
+  }
+  const claims = (recovery.data ?? []) as McpAuditRecoveryClaim[]
+  const error = recovery.isError || authorizeRetry.isError || reconcile.isError
+
+  if (!recovery.isLoading && claims.length === 0 && !error) return null
+
+  return (
+    <section
+      aria-label="MCP audit recovery"
+      className="rounded border border-amber-500/40 bg-amber-500/5 p-3"
+    >
+      <h4 className="text-xs font-semibold text-foreground">Execution reconciliation</h4>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Resolve calls whose handler may have run but whose terminal audit record is missing.
+      </p>
+      {recovery.isLoading ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          Checking recovery claims
+        </p>
+      ) : error ? (
+        <div className="mt-2 text-xs text-destructive" role="alert">
+          Could not update execution reconciliation.
+        </div>
+      ) : (
+        <div className="mt-2 space-y-2">
+          {claims.map((claim) => {
+            const waiting = claim.state === "dispatch-started"
+            return (
+              <article
+                key={claim.invocationId}
+                className="rounded border border-border bg-background p-2"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-medium text-foreground">{claim.toolName}</span>
+                  <span className="text-muted-foreground">Tier {claim.tier}</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                    {claim.state}
+                  </span>
+                </div>
+                <p className="mt-1 break-all text-[11px] text-muted-foreground">
+                  Invocation {claim.invocationId} · caller {claim.callerChatId}
+                </p>
+                {waiting ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Execution is still inside the recovery grace period.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {claim.state === "recovery-retryable" && claim.retrySafe && (
+                      <Button
+                        aria-label={`Authorize one retry for ${claim.invocationId}`}
+                        disabled={authorizeRetry.isPending || reconcile.isPending}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void authorize(claim.invocationId)}
+                      >
+                        Authorize one retry
+                      </Button>
+                    )}
+                    <Button
+                      aria-label={`Mark ${claim.invocationId} completed`}
+                      disabled={authorizeRetry.isPending || reconcile.isPending}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void mark(claim.invocationId, "completed")}
+                    >
+                      Mark completed
+                    </Button>
+                    <Button
+                      aria-label={`Mark ${claim.invocationId} failed`}
+                      disabled={authorizeRetry.isPending || reconcile.isPending}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void mark(claim.invocationId, "failed")}
+                    >
+                      Mark failed
+                    </Button>
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }

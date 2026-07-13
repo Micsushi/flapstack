@@ -77,7 +77,10 @@ export const McpWidget = memo(function McpWidget({ chatId }: { chatId: string })
   const setOpenChatIds = useSetAtom(openAgentChatIdsAtom)
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set())
   const [showAuditHistory, setShowAuditHistory] = useState(false)
-  const exposure = trpc.appControl.getExposure.useQuery({ chatId }, { enabled: !!chatId })
+  const exposure = trpc.appControl.getExposure.useQuery(
+    { chatId },
+    { enabled: !!chatId, refetchInterval: 1_000 },
+  )
   const utils = trpc.useUtils()
   const setExposure = trpc.appControl.setExposure.useMutation({
     onSuccess: () => void utils.appControl.getExposure.invalidate({ chatId }),

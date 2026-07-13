@@ -94,8 +94,9 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | ---------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                  | PASS    | 18 active changes, 323 normative scenarios, 17 feature exits                                                                |
 | Affected OpenSpec strict validation      | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                           |
-| Node 22 `npm run check`                  | PASS    | lint, format, typecheck, 855 passed, 3 conditional skips, production build                                                  |
+| Node 22 `npm run check`                  | PASS    | lint, format, typecheck, 863 passed, 3 conditional skips, production build                                                  |
 | Security round-3 focused suite           | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
+| MCP-first management closeout            | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
 | Production/dev MCP separation            | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                       | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
 | Verified `Flapstack Dev cf53`            | PASS    | isolated ports/profile; exact checkout, Electron main path, API, DB, and clean shutdown                                     |

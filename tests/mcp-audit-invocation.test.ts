@@ -141,14 +141,15 @@ describe("MCP invocation audit", () => {
     ).resolves.toMatchObject({ ok: true })
     grants.shutdown()
 
-    expect(statuses("completed")).toEqual(["dispatch-started", "completed"])
+    expect(statuses("completed")).toEqual(["allowed", "dispatch-started", "completed"])
     expect(statuses("denied")).toEqual(["denied"])
     expect(statuses("approval-denied")).toEqual(["approval-required", "denied"])
     expect(statuses("timed-out")).toEqual(["approval-required", "timed-out"])
     expect(statuses("stale")).toEqual(["approval-required", "stale"])
-    expect(statuses("failed")).toEqual(["dispatch-started", "failed"])
+    expect(statuses("failed")).toEqual(["allowed", "dispatch-started", "failed"])
     expect(statuses("session-grant")).toEqual([
       "approval-required",
+      "allowed",
       "dispatch-started",
       "completed",
     ])
@@ -156,7 +157,7 @@ describe("MCP invocation audit", () => {
     const persisted = sqlite
       .prepare("SELECT invocation_id, duration_ms, input_summary FROM mcp_audit_records")
       .all() as Array<{ invocation_id: string; duration_ms: number; input_summary: string }>
-    expect(persisted).toHaveLength(17)
+    expect(persisted).toHaveLength(21)
     expect(persisted.every((row) => row.invocation_id.length > 0 && row.duration_ms >= 0)).toBe(
       true,
     )
@@ -207,6 +208,7 @@ describe("MCP invocation audit", () => {
     const append = vi
       .fn()
       .mockImplementationOnce((record) => appendMcpAuditRecord(drizzle(sqlite, { schema }), record))
+      .mockImplementationOnce((record) => appendMcpAuditRecord(drizzle(sqlite, { schema }), record))
       .mockImplementationOnce(() => {
         throw new Error("database is locked")
       })
@@ -226,7 +228,7 @@ describe("MCP invocation audit", () => {
         message: expect.stringContaining("outbox"),
       },
     })
-    expect(statuses("outbox")).toEqual(["dispatch-started"])
+    expect(statuses("outbox")).toEqual(["allowed", "dispatch-started"])
 
     const retryExecute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
     await expect(

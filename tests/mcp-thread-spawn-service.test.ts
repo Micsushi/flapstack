@@ -79,7 +79,7 @@ describe("MCP cross-harness thread spawn service", () => {
       ok: true,
       data: { launch: { status: "not-requested" } },
     })
-    expect(statuses).toEqual(["approval-required", "dispatch-started", "completed"])
+    expect(statuses).toEqual(["approval-required", "allowed", "dispatch-started", "completed"])
     approvals.shutdown()
   })
 

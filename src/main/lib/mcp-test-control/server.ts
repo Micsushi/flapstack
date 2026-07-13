@@ -9,10 +9,13 @@ import * as z from "zod/v4"
 import {
   archiveTestChat,
   cancelRun,
+  cleanupProductMcpCaller,
   createTestChat,
   getChatState,
   getHarnessStatusForRepo,
   getOpencodeLogs,
+  getProductMcpState,
+  getProductMcpTestCall,
   getProviderStatus,
   listProviderExtensions,
   getReasoningTimerState,
@@ -22,7 +25,12 @@ import {
   listPendingApprovals,
   listTestTargets,
   mutateProjectProviderExtension,
+  manageProductMcpRecovery,
+  prepareProductMcpCaller,
   replyApproval,
+  replyProductMcpApproval,
+  setProductMcpTestExposure,
+  startProductMcpTestCall,
   waitForRunState,
 } from "./service"
 
@@ -63,6 +71,24 @@ export function hasValidBearerToken(header: string | string[] | undefined, token
   const expected = Buffer.from(token)
   return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
+
+const productMcpAuditDecisionSchema = z.enum([
+  "allowed",
+  "dispatch-started",
+  "denied",
+  "approval-required",
+  "timed-out",
+  "stale",
+  "failed",
+  "completed",
+  "recovery-retryable",
+  "recovery-unknown",
+  "retry-authorized",
+  "retry-consumed",
+  "reconciled-completed",
+  "reconciled-failed",
+  "recovery-exhausted",
+])
 
 function result(data: unknown) {
   const text = JSON.stringify(data, null, 2)
@@ -181,6 +207,143 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (input) => result(getOpencodeLogs(input)),
+  )
+  server.registerTool(
+    "prepare_product_mcp_caller",
+    {
+      description: "Create an isolated global Codex or Claude caller fixture with exposure off.",
+      inputSchema: {
+        harness: z.enum(["codex", "claude"]),
+        name: z.string().trim().min(1).max(200).optional(),
+        repoPath: z.string().min(1).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(prepareProductMcpCaller(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "set_product_mcp_exposure",
+    {
+      description: "Enable or disable product MCP for one isolated test caller chat.",
+      inputSchema: { chatId: z.string().min(1), enabled: z.boolean() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(setProductMcpTestExposure(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "start_product_mcp_call",
+    {
+      description: "Start one real product stdio call and return immediately with a pollable ID.",
+      inputSchema: {
+        chatId: z.string().min(1),
+        runId: z.string().min(1),
+        toolName: z.string().min(1).max(200),
+        arguments: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    },
+    async (input) => {
+      try {
+        return result(startProductMcpTestCall(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_product_mcp_call",
+    {
+      description: "Read one bounded product stdio test-call result.",
+      inputSchema: { callId: z.string().min(1) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getProductMcpTestCall(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "reply_product_mcp_approval",
+    {
+      description: "Resolve one pending product MCP test approval exactly once.",
+      inputSchema: {
+        approvalId: z.string().min(1),
+        decision: z.enum(["approve", "deny"]),
+        grantSession: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => result(replyProductMcpApproval(input)),
+  )
+  server.registerTool(
+    "get_product_mcp_state",
+    {
+      description: "Read exposure, approvals, audit, lineage, and run state for one caller.",
+      inputSchema: {
+        chatId: z.string().min(1),
+        toolName: z.string().trim().min(1).max(200).optional(),
+        decision: productMcpAuditDecisionSchema.optional(),
+        cursor: z.string().min(1).max(512).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getProductMcpState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "manage_product_mcp_recovery",
+    {
+      description: "List or explicitly resolve terminal-audit recovery claims.",
+      inputSchema: {
+        chatId: z.string().min(1),
+        action: z.enum(["list", "authorize-retry", "reconcile-completed", "reconcile-failed"]),
+        invocationId: z.string().min(1).max(256).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(manageProductMcpRecovery(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_product_mcp_caller",
+    {
+      description: "Cancel and archive one isolated product-MCP caller fixture after testing.",
+      inputSchema: { chatId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(cleanupProductMcpCaller(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
   )
   server.registerTool(
     "create_test_chat",

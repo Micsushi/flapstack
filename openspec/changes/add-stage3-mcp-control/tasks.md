@@ -431,3 +431,32 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   format, TypeScript, 855 tests with 3 conditional skips, and production build.
   All 18 active changes strict-validate; the ledger covers 323 scenarios and 17
   feature exits.
+
+## 2026-07-13 MCP-first management closeout evidence
+
+- S3-F6-T1: exposure now distinguishes disabled, next-run, connected, and
+  unsupported states from live launcher sessions. Claude durable harness
+  `claude-code` normalizes to the supported Claude product identity. Disable
+  cancels mapped runs and resolves pending approvals as deny.
+- S3-F6-T2: background approvals expose an accessible Review action without
+  opening/focusing the caller chat. Clicking Review is the only path that
+  selects the caller. Tier 3 exposes no reusable session-grant option.
+- S3-F6-T3: the audit viewer includes filtered/paged history and explicit
+  terminal-dispatch recovery controls for bounded retry or externally verified
+  reconciliation. Successful approved calls now record
+  `approval-required`, `allowed`, `dispatch-started`, and terminal state.
+- S3-F6-T5: the live app observed external approval, audit, run, and exposure
+  changes created through authenticated test-control MCP without reload.
+- Authenticated dev controls now prepare only isolated named caller fixtures,
+  bind an optional worktree only when it exactly matches the running checkout,
+  drive real product stdio calls, expose bounded truth, restrict approvals and
+  recovery to those fixtures, and clean pending/terminal children safely.
+- Live Claude-to-Codex target launch passed. The reverse real Claude target run
+  failed because the dev checkout lacked its bundled Claude binary/provider
+  stream. Full provider-session, active-dialog, keyboard/screen-reader,
+  session-grant, viewer-pixel, and platform rows remain open. Therefore
+  S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain unchecked.
+- Final focused MCP/management verification passes 54 tests across 11 files.
+  Node 22 `npm run check` passes lint, formatting, TypeScript, 117 test files
+  with 863 passed and 3 conditional skips, and the production build. The three
+  affected strict changes and release-ledger coverage pass.

@@ -392,6 +392,17 @@ export async function invokeMcpControlTool(
     )
     if (unresolved.failed) return auditStorageUnavailable(false)
     if (unresolved.block) return reconciliationRequired(unresolved.block)
+    const allowedAuditPersisted = audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "allowed",
+      caller: recheckedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: { decision },
+    })
+    if (!allowedAuditPersisted) return auditStorageUnavailable(false)
     const approvalAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
@@ -437,6 +448,17 @@ export async function invokeMcpControlTool(
   )
   if (unresolved.failed) return auditStorageUnavailable(false)
   if (unresolved.block) return reconciliationRequired(unresolved.block)
+  const allowedAuditPersisted = audit(dependencies, {
+    invocationId,
+    startedAt,
+    status: "allowed",
+    caller: trustedCaller.caller,
+    toolName: tool.name,
+    tier: tool.tier,
+    input,
+    result: { decision: initialGate.decision, reason: initialGate.reason },
+  })
+  if (!allowedAuditPersisted) return auditStorageUnavailable(false)
   const preExecutionAuditPersisted = audit(dependencies, {
     invocationId,
     startedAt,

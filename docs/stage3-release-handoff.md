@@ -87,6 +87,25 @@ Node 22 focused round-3 attacks passed 60/60 across 11 files. The full
 skips, and the production build. All 18 active OpenSpec changes strict-validate;
 the release ledger covers 323 scenarios and 17 feature exits.
 
+## MCP-first management closeout
+
+The isolated `93ea` dev instance used authenticated test-control MCP for every
+functional product action. Both caller identities passed default-off,
+enable/connected, `ping`, and `describe`. Claude-to-Codex produced a successful
+real Codex child with exact lineage and response. Codex-to-Claude produced
+honest lineage but the real Claude child failed because the dev checkout lacked
+its bundled Claude binary/provider stream. Two-way denial, pending-call stop,
+stale identity, audit paging/filtering, restart persistence, and cleanup passed.
+
+Computer Use was limited to background-approval accessibility/focus evidence
+while the shared UI lease was held. It did not drive functional actions. The
+lane stopped its app, released the lease, archived all test callers/children,
+and left no pending approvals. S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain open
+for the missing real-provider and complete visual/accessibility matrix.
+Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
+863 passed and 3 conditional skips, and the production build. The three
+affected strict changes and release-ledger coverage pass.
+
 ## Remaining human and platform proof
 
 - Unlock macOS and complete visual/accessibility, clipboard, microphone,

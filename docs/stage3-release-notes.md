@@ -16,7 +16,10 @@ Status: release candidate under validation; not Stage 3 complete.
 
 ## Required evidence still open
 
-- Real Codex/Claude MCP exposure, approval, audit, spawn, stop, and restart UI.
+- Complete real-provider Codex/Claude MCP exposure, approval, audit, spawn,
+  stop, and restart UI. MCP-first closeout passed a real Claude-to-Codex target
+  launch plus stdio/approval/stop/restart controls, but the reverse Claude
+  target launch failed and remaining visual/provider-caller rows stay open.
 - Visual Settings, Usage, provider, reasoning, accessibility, clipboard, Voice,
   microphone, and Keychain-backed credential lifecycle on unlocked macOS.
 - Same-candidate UI-live provider/reasoning evidence where task boards require

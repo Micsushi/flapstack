@@ -127,3 +127,59 @@ Notes or limitation:
 
 Do not complete S3-F5-T3 or S3-F6-T4 until every required manual row passes on
 real Codex and Claude sessions. Automated fixtures cannot replace those rows.
+
+## 2026-07-13 MCP-first live closeout evidence
+
+Branch `codex/stage3-mcp-live-closeout`, based on `d08502e`, ran the final
+renderer/main code in isolated instance `93ea`. `npm run dev:verify` named this
+checkout and `~/Library/Application Support/Flapstack Dev 93ea` after the final
+restart. Real UI access held the shared `s3-mcp-closeout` lease; the app and
+lease were stopped after evidence.
+
+Authenticated development test-control MCP supplied every functional action
+and assertion:
+
+- isolated Codex and Claude callers started exposure-disabled and refused
+  product calls while disabled;
+- enabling reported `next-run`; real product stdio children completed `ping`
+  and `describe` for both caller identities, and a waiting approval reported
+  `connected`;
+- Claude-to-Codex spawn approval created child
+  `87d2a404-e22b-4184-b9ee-3c24207babd0`, run
+  `bc61db5d-0b37-479f-8dce-9837754288e5`, exact parent/initiator/ancestor
+  lineage, the inherited `93ea` checkout, terminal `success`, and assistant
+  text `CODEX CHILD READY.`;
+- Codex-to-Claude created the reverse child and inherited checkout, but its real
+  Claude run ended `failure`. Startup logs showed a system Claude token but no
+  bundled Claude binary and a provider stream error. This is failure evidence,
+  not a two-way acceptance pass;
+- denial in both directions resolved once and created no extra child;
+- disabling during a pending spawn cancelled the stdio call, cleared the
+  approval, cancelled the caller run, and kept that run stale after re-enable;
+- audit tool/decision filters and cursor paging returned distinct ordered
+  pages; the isolated recovery view had zero unresolved claims;
+- after restart, exposure remained accurate as `next-run`, audit records
+  persisted, non-MCP fixture runs were cancelled, and no approval/session grant
+  survived;
+- cleanup archived both callers and terminal children with zero active children,
+  zero unarchived MCP test callers, and zero pending approvals.
+
+Computer Use supplied only irreducible UI evidence. Accessibility inspection
+showed a background `Review MCP approval in Chat ...` button. A prior same-code
+focus observation kept VS Code's message input focused before and after the
+MCP-created background approval. No UI click performed a functional control or
+assertion. Active-chat dialog, full keyboard/screen-reader flow, session grants,
+audit-viewer pixels, and stop-control pixels were not completed.
+
+This evidence advances basic live spawn, exposure, stop, restart, audit, and
+background-notification proof. It does not complete M-01 through M-20,
+S3-F5-T3, or S3-F6-T4 because the documented matrix still requires two real
+provider callers, a successful real Claude target launch, and the remaining
+visual/accessibility rows.
+
+Final automated verification: the focused MCP/management suite passed 54 tests
+across 11 files. Node 22 `npm run check` passed lint, formatting, TypeScript,
+117 test files with 863 passed and 3 conditional skips, and the production
+build. Strict validation passed for `add-stage3-mcp-control`,
+`add-dev-test-control-mcp`, and `validate-stage3-release`; release-ledger
+coverage passed for 18 changes, 323 scenarios, and 17 feature exits.

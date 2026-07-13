@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm"
-import { agentRuns, chats, getDatabase, subChats } from "../db"
+import { and, eq, inArray, isNull } from "drizzle-orm"
+import { agentRuns, chats, getDatabase, mcpApprovalRequests, subChats } from "../db"
 
 type ActiveProductMcpSession = {
   chatId: string
@@ -9,7 +9,7 @@ type ActiveProductMcpSession = {
 
 const activeProductMcpSessions = new Map<string, ActiveProductMcpSession>()
 
-export type McpExposureConnection = "disabled" | "next-run" | "unsupported"
+export type McpExposureConnection = "disabled" | "next-run" | "connected" | "unsupported"
 
 export type McpExposureStatus = {
   enabled: boolean
@@ -17,6 +17,7 @@ export type McpExposureStatus = {
   harness: "codex" | "claude" | null
   connection: McpExposureConnection
   callerLabel: string | null
+  activeRunIds: string[]
   error: string | null
 }
 
@@ -29,16 +30,36 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
   const chat = getDatabase().select().from(chats).where(eq(chats.id, chatId)).get()
   if (!chat) throw new Error("Chat not found")
 
-  const harness = chat.harness === "codex" || chat.harness === "claude" ? chat.harness : null
+  const harness =
+    chat.harness === "codex"
+      ? "codex"
+      : chat.harness === "claude" || chat.harness === "claude-code"
+        ? "claude"
+        : null
   const supported = harness !== null
   const enabled = chat.mcpExposureEnabled && supported
+  const activeRunIds = activeSessionsForChat(chatId).map(([, session]) => session.runId)
+  const harnessLabel = harness === "codex" ? "Codex" : harness === "claude" ? "Claude" : null
 
   return {
     enabled,
     supported,
     harness,
-    connection: !supported ? "unsupported" : enabled ? "next-run" : "disabled",
-    callerLabel: harness ? `${harness === "codex" ? "Codex" : "Claude"} / ${chat.id}` : null,
+    connection: !supported
+      ? "unsupported"
+      : !enabled
+        ? "disabled"
+        : activeRunIds.length > 0
+          ? "connected"
+          : "next-run",
+    callerLabel: !harnessLabel
+      ? null
+      : activeRunIds.length === 1
+        ? `${harnessLabel} / ${chat.id} / ${activeRunIds[0]}`
+        : activeRunIds.length > 1
+          ? `${harnessLabel} / ${chat.id} / ${activeRunIds.length} active runs`
+          : `${harnessLabel} / ${chat.id}`,
+    activeRunIds,
     error:
       chat.mcpExposureEnabled && !supported
         ? "Choose Codex or Claude before enabling Flapstack MCP."
@@ -61,6 +82,12 @@ export function setChatMcpExposure(chatId: string, enabled: boolean): boolean {
       .get()
     if (!result) return result
     if (!result.enabled) {
+      tx.update(mcpApprovalRequests)
+        .set({ decision: "deny", grantSession: false })
+        .where(
+          and(eq(mcpApprovalRequests.callerChatId, chatId), isNull(mcpApprovalRequests.decision)),
+        )
+        .run()
       // Invalidate launcher-owned child identities in the same durable commit as
       // exposure. A quick disable/re-enable must not revive an old stdio child.
       const running =

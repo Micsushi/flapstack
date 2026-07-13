@@ -65,6 +65,18 @@ keeps exact non-idempotent unknown outcomes blocked without poisoning different
 input. Continuous namespace races, reparse behavior, cross-resource
 exactly-once, and all live UI/platform rows remain unproved and unchecked.
 
+2026-07-13 MCP-first closeout evidence: the authenticated dev-test MCP drove
+all functional actions through real product stdio children. Default-off,
+enable/connected truth, Codex and Claude `ping`/`describe`, two-way durable
+spawn lineage, approval/denial, stop/invalidation, audit filtering/paging,
+restart persistence, and isolated cleanup were observed. Claude-to-Codex
+launched a real Codex run successfully; Codex-to-Claude created honest lineage
+but the real Claude run failed because the dev checkout lacked its bundled
+Claude binary/provider stream. Computer Use was limited to accessibility/focus
+evidence for the background Review control under the shared UI lease. The full
+provider-session and visual matrix remains unchecked; S3-F5-T3 and S3-F6-T4
+are not complete.
+
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
 - [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is
