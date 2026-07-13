@@ -578,6 +578,11 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   GPP-T9, and GPP-T10.
 - Blocks: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Relevant context: active permission proposal/design/tasks and provider adapters.
+- 2026-07-13 implementation evidence: ownership is reconciled in code and the
+  five-mode matrix now distinguishes selectable from exact/conservative/
+  best-effort/unavailable. Project-only stays unselectable for every provider,
+  including Codex, until live outside-boundary proof closes GPP-T4. This task
+  remains open on its stated GPP dependencies and S3-F7-T2.
 
 ### S3-F12-T2 - Add durable custom defaults across the permission hierarchy
 
@@ -601,6 +606,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F12-T1, GPP-T10.
 - Blocks: S3-F12-T3, S3-F12-T5.
 - Relevant context: permission hierarchy, run snapshots, Settings Permissions.
+- 2026-07-13 implementation evidence: schema v1, legacy migration, durable
+  global/project/task/chat defaults, copy-on-create, immutable run snapshots,
+  atomic all-chat custom, fail-closed parsing, and current-chat capability UI
+  are implemented and covered by focused persistence tests. Acceptance remains
+  open because T1 is blocked and live Settings proof is unavailable while the
+  Mac is locked.
 
 ### S3-F12-T3 - Enforce custom capabilities across providers
 
@@ -622,6 +633,11 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F12-T1, S3-F12-T2, GPP-T9, S3-F3-T5.
 - Blocks: S3-F12-T5.
 - Relevant context: provider permission adapters and pending approval UI.
+- 2026-07-13 implementation evidence: provider adapters consume custom state;
+  unknown/disabled capabilities deny conservatively; product read/write/Tier 3
+  and third-party MCP stay separate; Tier 3 still requires the Stage 3 gate.
+  Cursor and OpenCode mappings are explicitly conservative, not parity claims.
+  Acceptance remains open on T1/T2/GPP-T9 and provider-live proof.
 
 ### S3-F12-T4 - Prove exact project-only eligibility per provider
 
@@ -644,6 +660,10 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F12-T1.
 - Blocks: S3-F12-T5.
 - Relevant context: project/worktree roots, provider sandboxes, path safety.
+- 2026-07-13 implementation evidence: canonical path, traversal, symlink escape,
+  and dangling-symlink tests pass. Claude host callbacks use the boundary helper.
+  Codex ACP workspace-write mapping is unit-tested but remains best-effort and
+  unselectable until an unlocked live outside-project attempt proves exactness.
 
 ### S3-F12-T5 - Promote eligible permission modes and close the matrix
 
@@ -664,6 +684,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
 - Relevant context: permission Settings/chat selectors, previews and run records.
+- 2026-07-13 implementation evidence: provider-aware selectors, change-required
+  legacy rendering, custom capability controls, durable run snapshots, and
+  package bridge assertions are implemented. Full Node 22 `npm run check` and
+  unsigned macOS Preview packaging pass; the package includes migration 0019,
+  stale-session recovery, and Codex MCP identity preservation. The row remains
+  open because T2-T4 acceptance and unlocked live UI proof are not complete.
 
 ## S3-F13 - Copy and Search Consistency
 

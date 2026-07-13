@@ -19,6 +19,7 @@ export const projects = sqliteTable("projects", {
   // Custom project icon (absolute path to local image file)
   iconPath: text("icon_path"),
   defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+  defaultCustomPermissions: text("default_custom_permissions"),
   pinnedAt: integer("pinned_at", { mode: "timestamp" }),
   archivedAt: integer("archived_at", { mode: "timestamp" }),
 })
@@ -42,6 +43,7 @@ export const tasks = sqliteTable(
     description: text("description"),
     status: text("status").notNull().default("active"),
     defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+    defaultCustomPermissions: text("default_custom_permissions"),
     primaryWorktreePath: text("primary_worktree_path"),
     primaryBranch: text("primary_branch"),
     pinnedAt: integer("pinned_at", { mode: "timestamp" }),
@@ -162,6 +164,7 @@ export const agentRuns = sqliteTable(
     harness: text("harness").notNull(),
     model: text("model"),
     permissionMode: text("permission_mode").notNull(),
+    customPermissions: text("custom_permissions"),
     worktreePath: text("worktree_path"),
     promptMessageId: text("prompt_message_id"),
     status: text("status").notNull().default("running"),

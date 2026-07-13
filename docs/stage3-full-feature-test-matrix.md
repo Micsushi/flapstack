@@ -51,6 +51,13 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
       mutation, and runtime-consumption behavior.
 - [ ] **S3-S06** permission changes support current/all-chat scope and remembered
       behavior; custom capabilities persist exactly and clear when custom ends.
+      2026-07-13 headless evidence: versioned hierarchy persistence, atomic
+      all-chat custom, immutable run snapshots, provider gates, and path-safety
+      tests pass. Flapstack Dev verified on Node 22; fresh OpenRouter and NanoGPT
+      runs passed and were archived. Visual Settings, Codex project-boundary,
+      and legacy-change workflow remain unchecked because the Mac was locked.
+      Full Node 22 check passed (730 passed, 3 skipped); unsigned macOS Preview
+      packaging contains migration 0019 and both ACP bridge patches.
 - [ ] **S3-S07** copy and Settings search use the same visibility/route registry
       and never expose unavailable destinations or stale provider claims.
 

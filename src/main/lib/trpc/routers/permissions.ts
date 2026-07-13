@@ -7,6 +7,7 @@ import {
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
   buildCursorPermissionApplication,
+  CUSTOM_PERMISSION_SCHEMA_VERSION,
   mapClaudeSdkPermissionMode,
   parseCustomPermissionToggles,
   parsePermissionMode,
@@ -15,7 +16,6 @@ import {
   replacePermissionPreferences,
   resolvePermission,
   setPermissionChangeBehavior,
-  setGlobalDefault,
   type PermissionChangeBehavior,
   type PermissionMode,
   type CustomPermissionToggles,
@@ -28,13 +28,18 @@ const permissionChangeBehaviorSchema = z.enum(permissionChangeBehaviors)
 const permissionChangeScopeSchema = z.enum(["all-chats", "current-chat"])
 const customPermissionsSchema = z
   .object({
-    fileWrite: z.boolean(),
+    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
+    projectWrite: z.boolean(),
     shell: z.boolean(),
     network: z.boolean(),
     git: z.boolean(),
     browser: z.boolean(),
-    mcp: z.boolean(),
     secrets: z.boolean(),
+    subagents: z.boolean(),
+    thirdPartyMcp: z.boolean(),
+    productMcpRead: z.boolean(),
+    productMcpWrite: z.boolean(),
+    productMcpTier3: z.boolean(),
   })
   .strict()
 
@@ -57,9 +62,26 @@ export const permissionsRouter = router({
   }),
 
   setGlobalDefault: publicProcedure
-    .input(z.object({ mode: permissionModeSchema }))
+    .input(
+      z.object({
+        mode: permissionModeSchema,
+        customPermissions: customPermissionsSchema.optional(),
+      }),
+    )
     .mutation(({ input }) => {
-      return { mode: setGlobalDefault(input.mode) }
+      if (input.mode === "custom" && !input.customPermissions) {
+        throw new Error("Custom permission mode requires explicit capability toggles.")
+      }
+      if (input.mode !== "custom" && input.customPermissions) {
+        throw new Error("Custom capability toggles require custom permission mode.")
+      }
+      const preferences = getPermissionPreferences()
+      replacePermissionPreferences({
+        ...preferences,
+        globalDefault: input.mode,
+        globalCustomPermissions: input.customPermissions,
+      })
+      return { mode: input.mode }
     }),
 
   setChangeBehavior: publicProcedure
@@ -79,11 +101,6 @@ export const permissionsRouter = router({
       }),
     )
     .mutation(({ input }) => {
-      if (input.scope === "all-chats" && input.mode === "custom") {
-        throw new Error(
-          "All-chat custom permissions require S3-F12 durable global, project, and task defaults.",
-        )
-      }
       if (input.mode === "custom" && !input.customPermissions) {
         throw new Error("Custom permission mode requires explicit capability toggles.")
       }
@@ -101,6 +118,8 @@ export const permissionsRouter = router({
         name: chats.name,
         scope: chats.scope,
         permissionMode: chats.permissionMode,
+        customPermissions: chats.customPermissions,
+        harness: chats.harness,
         projectId: chats.projectId,
         projectName: projects.name,
         taskId: chats.taskId,
@@ -116,6 +135,10 @@ export const permissionsRouter = router({
       .map((chat) => ({
         ...chat,
         permissionMode: parsePermissionMode(chat.permissionMode) ?? getGlobalDefault(),
+        customPermissions:
+          typeof chat.customPermissions === "string"
+            ? parseStoredCustomPermissions(chat.customPermissions)
+            : null,
       }))
   }),
 
@@ -140,11 +163,16 @@ export const permissionsRouter = router({
         mode: permissionModeSchema,
         chatMode: z.enum(["plan", "agent"]).default("agent"),
         cwd: z.string().nullable().optional(),
+        customPermissions: customPermissionsSchema.nullable().optional(),
       }),
     )
     .query(({ input }) => {
       if (input.harness === "codex") {
-        return buildCodexPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
+        return buildCodexPermissionApplication({
+          permissionMode: input.mode,
+          cwd: input.cwd,
+          customPermissions: input.customPermissions,
+        })
       }
       if (input.harness === "cursor-agent") {
         return buildCursorPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
@@ -179,20 +207,23 @@ function applyScopedPermissionChange(input: {
   updatedSubChats: number
   customPermissions: CustomPermissionToggles | null
 } {
-  if (input.scope === "all-chats" && input.mode === "custom") {
-    throw new Error(
-      "All-chat custom permissions require S3-F12 durable global, project, and task defaults.",
-    )
-  }
   const db = getDatabase()
   const previousPreferences = getPermissionPreferences()
   const nextPreferences = {
     globalDefault: input.scope === "all-chats" ? input.mode : previousPreferences.globalDefault,
     changeBehavior: input.rememberBehavior ?? previousPreferences.changeBehavior,
+    globalCustomPermissions:
+      input.scope === "all-chats"
+        ? input.mode === "custom"
+          ? input.customPermissions
+          : null
+        : previousPreferences.globalCustomPermissions,
   }
   const configChanged =
     nextPreferences.globalDefault !== previousPreferences.globalDefault ||
-    nextPreferences.changeBehavior !== previousPreferences.changeBehavior
+    nextPreferences.changeBehavior !== previousPreferences.changeBehavior ||
+    JSON.stringify(nextPreferences.globalCustomPermissions) !==
+      JSON.stringify(previousPreferences.globalCustomPermissions)
 
   if (configChanged) {
     replacePermissionPreferences(nextPreferences)
@@ -216,8 +247,20 @@ function applyScopedPermissionChange(input: {
         : null
 
       if (input.scope === "all-chats") {
-        tx.update(projects).set({ defaultPermissionMode: input.mode, updatedAt }).run()
-        tx.update(tasks).set({ defaultPermissionMode: input.mode, updatedAt }).run()
+        tx.update(projects)
+          .set({
+            defaultPermissionMode: input.mode,
+            defaultCustomPermissions: customPermissions,
+            updatedAt,
+          })
+          .run()
+        tx.update(tasks)
+          .set({
+            defaultPermissionMode: input.mode,
+            defaultCustomPermissions: customPermissions,
+            updatedAt,
+          })
+          .run()
         const updatedChats = tx
           .update(chats)
           .set({ permissionMode: input.mode, customPermissions, updatedAt })
@@ -273,6 +316,14 @@ function readCustomPermissionsForChat(chatId: string): CustomPermissionToggles |
   if (!row || typeof row.customPermissions !== "string") return null
   try {
     return parseCustomPermissionToggles(JSON.parse(row.customPermissions))
+  } catch {
+    return null
+  }
+}
+
+function parseStoredCustomPermissions(value: string): CustomPermissionToggles | null {
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
   } catch {
     return null
   }

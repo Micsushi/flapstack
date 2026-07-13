@@ -21,13 +21,18 @@ vi.mock("electron", () => ({
 
 const directories: string[] = []
 const toggles = {
-  fileWrite: false,
+  schemaVersion: 1 as const,
+  projectWrite: false,
   shell: true,
   network: false,
   git: true,
   browser: false,
-  mcp: true,
   secrets: false,
+  subagents: false,
+  thirdPartyMcp: true,
+  productMcpRead: true,
+  productMcpWrite: true,
+  productMcpTier3: false,
 }
 
 afterEach(() => {
@@ -87,17 +92,45 @@ describe("durable MCP custom permissions", () => {
     const caller = resolveTrustedMcpCaller({ chatId: "chat-1" }, createSqliteMcpCallerStore(path))
     expect(
       evaluateMcpToolGate({ tool: getMcpControlTool("write_attachment_to_worktree")!, caller }),
-    ).toMatchObject({ decision: "denied", reason: expect.stringContaining("fileWrite") })
+    ).toMatchObject({ decision: "denied", reason: expect.stringContaining("projectWrite") })
   })
 
   it("keeps Tier 3 approval fresh after durable custom capability checks", () => {
     const { path, sqlite } = createDatabase()
+    sqlite
+      .prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-1'")
+      .run(JSON.stringify({ ...toggles, productMcpTier3: true, subagents: true }))
     sqlite.close()
     const caller = resolveTrustedMcpCaller({ chatId: "chat-1" }, createSqliteMcpCallerStore(path))
     const tool = getMcpControlTool("launch_run")!
 
     expect(evaluateMcpToolGate({ tool, caller }).decision).toBe("approval-required")
     expect(evaluateMcpToolGate({ tool, caller, approved: true }).decision).toBe("allowed")
+  })
+
+  it("uses the immutable run capability snapshot after the chat changes", () => {
+    const { path, sqlite } = createDatabase()
+    const runPermissions = { ...toggles, productMcpRead: true }
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runs
+          (id, chat_id, harness, permission_mode, custom_permissions, status)
+         VALUES ('run-1', 'chat-1', 'codex', 'custom', ?, 'running')`,
+      )
+      .run(JSON.stringify(runPermissions))
+    sqlite
+      .prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-1'")
+      .run(JSON.stringify({ ...toggles, productMcpRead: false }))
+    sqlite.close()
+
+    const caller = resolveTrustedMcpCaller(
+      { chatId: "chat-1", runId: "run-1" },
+      createSqliteMcpCallerStore(path),
+    )
+    expect(caller.customPermissions).toEqual(runPermissions)
+    expect(
+      evaluateMcpToolGate({ tool: getMcpControlTool("list_projects")!, caller }).decision,
+    ).toBe("allowed")
   })
 
   it("persists exact custom toggles only for the current chat and clears them on exit", async () => {
@@ -111,7 +144,7 @@ describe("durable MCP custom permissions", () => {
     process.env.FLAPSTACK_DB_PATH = path
     process.env.FLAPSTACK_CONFIG_DIR = join(path, "..")
     const caller = permissionsRouter.createCaller({ getWindow: () => null })
-    const exact = { ...toggles, fileWrite: true, shell: false }
+    const exact = { ...toggles, projectWrite: true, shell: false }
 
     await caller.setChatMode({
       chatId: "chat-1",
@@ -183,8 +216,18 @@ describe("durable MCP custom permissions", () => {
     },
   )
 
-  it("rejects all-chat custom without changing rows or future defaults", async () => {
+  it("applies all-chat custom atomically and persists the future default", async () => {
     const { path, sqlite } = createDatabase()
+    sqlite
+      .prepare(
+        "INSERT INTO projects (id, name, path, default_permission_mode) VALUES ('project-1', 'Project', '/tmp/project', 'read-only')",
+      )
+      .run()
+    sqlite
+      .prepare(
+        "INSERT INTO tasks (id, project_id, name, default_permission_mode) VALUES ('task-1', 'project-1', 'Task', 'read-only')",
+      )
+      .run()
     sqlite
       .prepare(
         "INSERT INTO chats (id, name, scope, permission_mode, custom_permissions) VALUES (?, ?, ?, ?, ?)",
@@ -194,18 +237,18 @@ describe("durable MCP custom permissions", () => {
     process.env.FLAPSTACK_DB_PATH = path
     process.env.FLAPSTACK_CONFIG_DIR = join(path, "..")
     const caller = permissionsRouter.createCaller({ getWindow: () => null })
-    const beforePreferences = await caller.getPreferences()
-
-    await expect(
-      caller.setChatMode({
-        chatId: "chat-1",
-        mode: "custom",
-        scope: "all-chats",
-        rememberBehavior: "all-chats",
-        customPermissions: toggles,
-      }),
-    ).rejects.toThrow(/S3-F12 durable global, project, and task defaults/)
-    expect(await caller.getPreferences()).toEqual(beforePreferences)
+    await caller.setChatMode({
+      chatId: "chat-1",
+      mode: "custom",
+      scope: "all-chats",
+      rememberBehavior: "all-chats",
+      customPermissions: toggles,
+    })
+    expect(await caller.getPreferences()).toEqual({
+      globalDefault: "custom",
+      changeBehavior: "all-chats",
+      globalCustomPermissions: toggles,
+    })
     closeDatabase()
 
     const reloaded = new Database(path)
@@ -215,8 +258,28 @@ describe("durable MCP custom permissions", () => {
         .all(),
     ).toEqual([
       { id: "chat-1", permission_mode: "custom", custom_permissions: JSON.stringify(toggles) },
-      { id: "chat-2", permission_mode: "read-only", custom_permissions: null },
+      { id: "chat-2", permission_mode: "custom", custom_permissions: JSON.stringify(toggles) },
     ])
+    expect(
+      reloaded
+        .prepare(
+          "SELECT default_permission_mode, default_custom_permissions FROM projects WHERE id = 'project-1'",
+        )
+        .get(),
+    ).toEqual({
+      default_permission_mode: "custom",
+      default_custom_permissions: JSON.stringify(toggles),
+    })
+    expect(
+      reloaded
+        .prepare(
+          "SELECT default_permission_mode, default_custom_permissions FROM tasks WHERE id = 'task-1'",
+        )
+        .get(),
+    ).toEqual({
+      default_permission_mode: "custom",
+      default_custom_permissions: JSON.stringify(toggles),
+    })
     reloaded.close()
   })
 })

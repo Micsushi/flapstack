@@ -98,8 +98,12 @@ This is the sole task checklist for the change.
   - The callback remains present after install and in packaged output.
 - Verification: Codex mode/approval unit tests, install-patch verification, and
   one low-risk live Codex permission smoke under the verified dev profile.
-- Remaining verification: The live smoke reached Codex ACP, but the resumed
-  provider session was archived and failed before it could request permission.
+- 2026-07-13 closeout: installed/provider-package patching now treats a stale or
+  archived ACP session as recoverable and starts a fresh session; focused bridge
+  tests pass. The macOS Preview package contains both patched provider bundles
+  and the Codex product-MCP identity patch. `Flapstack Dev` and Codex login were
+  verified, but the Mac was locked before a fresh Codex permission request could
+  be exercised. Live smoke remains open.
 - Blocked by: none
 - Blocks: GPP-T6, GPP-T9
 - Relevant context: Codex ACP provider lifecycle, `@mcpc-tech/acp-ai-provider`,
@@ -204,9 +208,9 @@ This is the sole task checklist for the change.
   - Provider allow cannot skip product Tier 3 approval.
   - Provider/product denial and bridge failure never widen access.
 - Verification: `tests/mcp-provider-permission-integration.test.ts`.
-- Remaining verification: the named provider/product matrix passes, including
-  no-double-prompt and mandatory Tier 3 cases; completion remains blocked by
-  the low-risk live Codex smoke in GPP-T4.
+- 2026-07-13 closeout: the named provider/product matrix passes, including
+  separate product/third-party capabilities, no-double-prompt, fail-closed, and
+  mandatory Tier 3 cases. Completion remains blocked by GPP-T4 live Codex proof.
 - Blocked by: GPP-T3, GPP-T4, S3-F3-T5
 - Blocks: GPP-T6, S3-F12-T3
 - Relevant context: provider permission builders/bridges, product registry tier,
@@ -235,6 +239,9 @@ This is the sole task checklist for the change.
 - Blocks: GPP-T6, S3-F12-T2
 - Relevant context: `chats.custom_permissions`, permission router, custom schema,
   S3-F12 durable-default design.
+- 2026-07-13 ownership note: S3-F12 now owns and implements versioned durable
+  hierarchy defaults plus atomic all-chat custom. The earlier fail-closed
+  all-chat rejection remains valid only for pre-promotion builds.
 
 ### GPP-T6 - Run full and live verification
 
@@ -259,10 +266,13 @@ This is the sole task checklist for the change.
     not fabricated as passed.
 - Verification: strict OpenSpec validation, Node 22 `npm run check`,
   `npm run dev:verify`, and the documented manual matrix.
-- Remaining verification: The live all-chat Apply was not run against the
-  existing 312-chat profile; atomic all-chat behavior is covered by isolated
-  router/service tests. The Codex smoke remains blocked by the archived
-  provider session noted in GPP-T4.
+- 2026-07-13 closeout: `npm run dev:verify` passed for this checkout and
+  `Flapstack Dev` on Node 22. Fresh OpenRouter and NanoGPT runs succeeded through
+  dev-test-control and both test chats were archived. The live all-chat Apply
+  was not run against the existing 312-chat profile; atomic all-chat behavior is
+  covered by isolated router/service tests. The Mac lock blocks visual Settings
+  rows and the fresh Codex smoke in GPP-T4. Full Node 22 `npm run check` passed
+  with 730 tests passed and 3 skipped; macOS Preview packaging passed unsigned.
 - Blocked by: GPP-T2, GPP-T4, GPP-T5, GPP-T7, GPP-T8, GPP-T9, GPP-T10
 - Blocks: none
 - Relevant context: root `AGENTS.md` live-dev rules, run metadata, provider

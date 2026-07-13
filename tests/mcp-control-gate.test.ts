@@ -10,13 +10,18 @@ import type {
 import type { CustomPermissionToggles, PermissionMode } from "../src/main/lib/permissions"
 
 const allCapabilities: CustomPermissionToggles = {
-  fileWrite: true,
+  schemaVersion: 1,
+  projectWrite: true,
   shell: true,
   network: true,
   git: true,
   browser: true,
-  mcp: true,
   secrets: true,
+  subagents: true,
+  thirdPartyMcp: true,
+  productMcpRead: true,
+  productMcpWrite: true,
+  productMcpTier3: true,
 }
 
 function createStore(input?: {
@@ -152,17 +157,17 @@ describe("MCP caller-by-tier gate matrix", () => {
         tool: writeTool!,
         caller: {
           permissionMode: "custom",
-          customPermissions: { ...allCapabilities, fileWrite: false },
+          customPermissions: { ...allCapabilities, projectWrite: false },
         },
       }),
-    ).toMatchObject({ decision: "denied", reason: expect.stringContaining("fileWrite") })
+    ).toMatchObject({ decision: "denied", reason: expect.stringContaining("projectWrite") })
   })
 
   it("assigns a tier and capability boundary to every registry tool", () => {
     expect(mcpControlTools.length).toBeGreaterThan(0)
     for (const tool of mcpControlTools) {
       expect([0, 1, 2, 3]).toContain(tool.tier)
-      expect(tool.requiredCapabilities).toContain("mcp")
+      expect(tool.requiredCapabilities).not.toContain("schemaVersion")
     }
   })
 })

@@ -2,7 +2,7 @@ import type { CustomPermissionToggles, PermissionMode } from "../permissions"
 
 export type McpRiskTier = 0 | 1 | 2 | 3
 export type McpGateDecision = "allowed" | "denied" | "approval-required"
-export type McpCapability = keyof CustomPermissionToggles
+export type McpCapability = Exclude<keyof CustomPermissionToggles, "schemaVersion">
 
 export type McpControlTool = {
   name: string

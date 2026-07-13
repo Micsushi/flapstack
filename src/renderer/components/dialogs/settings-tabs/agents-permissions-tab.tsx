@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react"
 import { Search } from "lucide-react"
 import { toast } from "sonner"
-import type { RunPermissionMode } from "../../../../shared/harness-types"
+import type { AgentHarness, RunPermissionMode } from "../../../../shared/harness-types"
+import { disabledCustomPermissions } from "../../../../shared/permission-capabilities"
 import {
   isSelectableRunPermissionMode,
+  getSelectableRunPermissionModes,
   RUN_PERMISSION_MODE_LABELS,
   RUN_PERMISSION_MODE_OPTIONS,
 } from "../../../features/agents/constants"
@@ -192,21 +194,35 @@ export function AgentsPermissionsTab() {
                 <Select
                   value={chat.permissionMode}
                   onValueChange={(mode: RunPermissionMode) =>
-                    setChatMode.mutate({ chatId: chat.id, mode, scope: "current-chat" })
+                    setChatMode.mutate({
+                      chatId: chat.id,
+                      mode,
+                      scope: "current-chat",
+                      ...(mode === "custom"
+                        ? {
+                            customPermissions: chat.customPermissions ?? disabledCustomPermissions,
+                          }
+                        : {}),
+                    })
                   }
                   disabled={setChatMode.isPending}
                 >
                   <SelectTrigger className="w-[155px] shrink-0 px-2 text-xs">
-                    {isSelectableRunPermissionMode(chat.permissionMode)
+                    {isSelectableRunPermissionMode(
+                      chat.permissionMode,
+                      chat.harness as AgentHarness | null,
+                    )
                       ? RUN_PERMISSION_MODE_LABELS[chat.permissionMode]
                       : "Legacy mode - change required"}
                   </SelectTrigger>
                   <SelectContent>
-                    {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {RUN_PERMISSION_MODE_LABELS[mode]}
-                      </SelectItem>
-                    ))}
+                    {getSelectableRunPermissionModes(chat.harness as AgentHarness | null).map(
+                      (mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {RUN_PERMISSION_MODE_LABELS[mode]}
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectContent>
                 </Select>
               </div>

@@ -104,8 +104,13 @@ export function createSqliteMcpCallerStore(
           }
         : null
     },
-    findCustomPermissions(chatId) {
-      const row = query("SELECT custom_permissions FROM chats WHERE id = ?", [chatId])
+    findCustomPermissions(chatId, runId) {
+      const row = runId
+        ? query("SELECT custom_permissions FROM agent_runs WHERE id = ? AND chat_id = ?", [
+            runId,
+            chatId,
+          ])
+        : query("SELECT custom_permissions FROM chats WHERE id = ?", [chatId])
       if (!row || typeof row.custom_permissions !== "string") return null
       try {
         return parseCustomPermissionToggles(JSON.parse(row.custom_permissions))

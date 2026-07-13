@@ -126,21 +126,30 @@ import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
+  customPermissionCapabilityKeys,
+  disabledCustomPermissions,
+  type CustomPermissionCapabilities,
+} from "../../../../shared/permission-capabilities"
+import {
   formatPermissionMode,
+  getSelectableRunPermissionModes,
   isSelectableRunPermissionMode,
-  RUN_PERMISSION_MODE_OPTIONS,
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
 
-const disabledCustomPermissions = {
-  fileWrite: false,
-  shell: false,
-  network: false,
-  git: false,
-  browser: false,
-  mcp: false,
-  secrets: false,
-} as const
+const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[number], string> = {
+  projectWrite: "Project edits",
+  shell: "Shell",
+  network: "Network",
+  git: "Git",
+  browser: "Browser",
+  secrets: "Secrets",
+  subagents: "Subagents",
+  thirdPartyMcp: "Third-party MCP",
+  productMcpRead: "Product MCP reads",
+  productMcpWrite: "Product MCP writes",
+  productMcpTier3: "Product MCP Tier 3",
+}
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
@@ -812,6 +821,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const resolvedPermissionMode = permissionResolution?.mode ?? "ask-before-edits"
   const [requestedPermissionMode, setRequestedPermissionMode] =
     useState<RunPermissionMode>(resolvedPermissionMode)
+  const selectablePermissionModes = getSelectableRunPermissionModes(provider)
   const [pendingPermissionMode, setPendingPermissionMode] = useState<RunPermissionMode | null>(null)
   const [pendingPermissionScope, setPendingPermissionScope] = useState<
     "all-chats" | "current-chat"
@@ -2230,7 +2240,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       <DropdownMenuTrigger asChild>
                         <button className="flex max-w-[150px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
                           <span className="truncate">
-                            {isSelectableRunPermissionMode(requestedPermissionMode)
+                            {isSelectableRunPermissionMode(requestedPermissionMode, provider)
                               ? RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]
                               : "Legacy mode - change required"}
                           </span>
@@ -2243,7 +2253,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         className="!min-w-[220px]"
                         onCloseAutoFocus={(e) => e.preventDefault()}
                       >
-                        {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
+                        {selectablePermissionModes.map((mode) => (
                           <DropdownMenuItem
                             key={mode}
                             onClick={() => handlePermissionModeChange(mode)}
@@ -2312,25 +2322,44 @@ export const ChatInputArea = memo(function ChatInputArea({
                           onOpenAutoFocus={(e) => e.preventDefault()}
                         >
                           <div className="space-y-2">
-                            <div className="font-medium text-foreground">
-                              Best-effort custom mode
-                            </div>
+                            <div className="font-medium text-foreground">Custom capabilities</div>
                             <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
-                              {[
-                                "file write",
-                                "shell",
-                                "network",
-                                "git",
-                                "browser",
-                                "MCP tools",
-                              ].map((label) => (
-                                <div key={label} className="rounded border bg-muted/20 px-2 py-1">
-                                  {label}
-                                </div>
-                              ))}
+                              {customPermissionCapabilityKeys.map((key) => {
+                                const capabilities =
+                                  permissionResolution?.customPermissions ??
+                                  disabledCustomPermissions
+                                const enabled = capabilities[key]
+                                return (
+                                  <button
+                                    type="button"
+                                    key={key}
+                                    aria-pressed={enabled}
+                                    className={cn(
+                                      "rounded border px-2 py-1 text-left",
+                                      enabled
+                                        ? "border-primary/40 bg-primary/10 text-foreground"
+                                        : "bg-muted/20",
+                                    )}
+                                    onClick={() => {
+                                      const next: CustomPermissionCapabilities = {
+                                        ...capabilities,
+                                        [key]: !enabled,
+                                      }
+                                      void setChatPermissionModeMutation.mutateAsync({
+                                        chatId: parentChatId,
+                                        mode: "custom",
+                                        scope: "current-chat",
+                                        customPermissions: next,
+                                      })
+                                    }}
+                                  >
+                                    {CUSTOM_PERMISSION_LABELS[key]}
+                                  </button>
+                                )
+                              })}
                             </div>
                             <p className="text-muted-foreground">
-                              Harness adapters may not enforce every toggle yet.
+                              Disabled capabilities fail closed. Provider limitations stay visible.
                             </p>
                           </div>
                         </PopoverContent>

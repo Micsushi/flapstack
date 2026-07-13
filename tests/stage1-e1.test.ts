@@ -125,6 +125,7 @@ function createTestSchema() {
       git_repo text,
       icon_path text,
       default_permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      default_custom_permissions text,
       pinned_at integer,
       archived_at integer
     )`,
@@ -135,6 +136,7 @@ function createTestSchema() {
       description text,
       status text DEFAULT 'active' NOT NULL,
       default_permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      default_custom_permissions text,
       primary_worktree_path text,
       primary_branch text,
       pinned_at integer,
@@ -194,6 +196,7 @@ function createTestSchema() {
       harness text NOT NULL,
       model text,
       permission_mode text NOT NULL,
+      custom_permissions text,
       worktree_path text,
       prompt_message_id text,
       status text DEFAULT 'running' NOT NULL,

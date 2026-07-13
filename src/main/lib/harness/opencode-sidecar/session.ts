@@ -56,6 +56,7 @@ export async function* runSidecarSession(
   const permissionApplication = buildOpencodePermissionApplication({
     permissionMode: input.permissionMode,
     cwd: input.cwd,
+    customPermissions: input.customPermissions,
   })
   // Make the applied controls and limitations part of the run stream so every
   // exit path, including runtime-disabled and preflight failure, can persist an honest record.
@@ -111,7 +112,10 @@ export async function* runSidecarSession(
     await client.waitForHealth(20_000, input.signal)
 
     yield { kind: "phase", phase: "creating-session" }
-    const permission = buildOpencodeSessionPermissions(input.permissionMode)
+    const permission = buildOpencodeSessionPermissions(
+      input.permissionMode,
+      input.customPermissions,
+    )
     let sessionId: string | null = null
     if (input.resumeSessionId) {
       try {
@@ -285,6 +289,7 @@ export async function handlePermissionRequest(
     request.permission,
     request.patterns,
     request.requestId,
+    input.customPermissions,
   )
   const resolution: Omit<SidecarPermissionResolution, "replyStatus"> =
     remembered ??
