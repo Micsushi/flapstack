@@ -14,8 +14,9 @@ what evidence is required before each feature can return.
 
 ## What Changes
 
-- Hide Keyboard, Legacy Beta, Custom Agents, and Future Scaffolds from Settings
-  navigation, content routing, and search until their promotion gates pass.
+- Hide Legacy Beta, Future Scaffolds, and retired Profile/Worktree routes from
+  Settings navigation, content routing, and search. Keyboard and Custom Agents
+  are visible only after their S3-F8 and S3-F11 promotion gates pass.
 - Hide the Models API-key/model-override editor, the retired Quick Switch
   preference, and incomplete permission modes while preserving existing data.
 - Add a single release-eligibility contract so navigation, direct tab IDs,

@@ -9,14 +9,18 @@ features. Stage and feature README files are navigation routers only.
 
 - [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Honest Settings Surface
-- Outcome: Keyboard, Legacy Beta, Custom Agents, and Future Scaffolds cannot be
-  reached through release navigation, search, or a stale stored tab ID.
-- Scope: Add typed hidden-tab policy; remove sidebar entries and content routes;
-  remove search entries; normalize hidden IDs to Preferences; remove the retired
-  Beta-click devtools unlock path while retaining normal development Debug.
+- Outcome: One typed release registry prevents Legacy Beta, Future Scaffolds,
+  and retired Profile/Worktree routes from being reached through navigation,
+  search, or stale stored IDs. Keyboard and Custom Agents are now visible only
+  because their S3-F8 and S3-F11 promotion contracts landed.
+- Scope: Add typed release metadata; derive sidebar, direct routing, and search
+  from it; normalize hidden IDs to Preferences; remove the retired Beta-click
+  devtools unlock path while retaining normal development Debug.
 - Out of scope: Delete tab components, atoms, or stored data.
 - Acceptance:
   - Hidden tabs are absent from sidebar and Settings search.
+  - Promoted Keyboard and Custom Agents routes remain visible and searchable
+    without weakening hidden-route normalization.
   - A hidden active tab normalizes to Preferences and updates the active tab.
   - Debug remains visible in development and hidden by the existing production
     gate.
