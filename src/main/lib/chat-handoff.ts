@@ -1,8 +1,11 @@
+import { formatVisiblePartForHandoff } from "../../shared/chat-visible-content"
+
 export type HandoffMessage = {
   id?: string
   role: string
   createdAt?: Date | string
   metadata?: Record<string, unknown>
+  content?: string | Array<Record<string, unknown>>
   parts?: Array<Record<string, unknown> & { type?: string; text?: string; toolName?: string }>
 }
 
@@ -28,18 +31,6 @@ function timestampOf(message: HandoffMessage): number | null {
   }
   const fromId = message.id?.match(/^msg-(\d{13})(?:\D|$)/)?.[1]
   return fromId ? Number(fromId) : null
-}
-
-function textForPart(part: NonNullable<HandoffMessage["parts"]>[number]): string | null {
-  if (part.type === "text" && part.text) return part.text
-  if (part.type === "tool-call" || part.type?.startsWith("tool-")) {
-    const name = part.toolName || part.type.replace(/^tool-/, "") || "tool"
-    const input = part.input as Record<string, unknown> | undefined
-    const target = input?.file_path ?? input?.path ?? input?.command
-    const summary = typeof target === "string" ? `: ${target.split("\n")[0]}` : ""
-    return `> Tool: ${name}${summary}`
-  }
-  return null
 }
 
 export function formatChatHandoff(input: ChatHandoffInput, exportedAt = new Date()): string {
@@ -86,9 +77,10 @@ export function formatChatHandoff(input: ChatHandoffInput, exportedAt = new Date
         : `Legacy recovery: ${item.conversation.subChatName || item.conversation.subChatId}`
     const time = item.timestamp ? new Date(item.timestamp).toISOString() : "Time unavailable"
     lines.push(`## ${role} · ${conversationLabel} · ${time}`, "")
-    const content = (item.message.parts ?? [])
-      .map(textForPart)
-      .filter((value): value is string => Boolean(value))
+    const content =
+      typeof item.message.content === "string"
+        ? [item.message.content]
+        : (item.message.parts ?? item.message.content ?? []).flatMap(formatVisiblePartForHandoff)
     lines.push(content.join("\n\n") || "_(No text content)_", "")
   }
 

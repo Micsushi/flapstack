@@ -139,7 +139,12 @@ function ManagedCredentialRow({
   const updatedAt = formatUpdatedAt(status.updatedAt)
 
   return (
-    <div id={targetId(definition.id)} className="space-y-3 rounded-lg border border-border p-4">
+    <div
+      id={targetId(definition.id)}
+      data-settings-id={targetId(definition.id)}
+      tabIndex={-1}
+      className="space-y-3 rounded-lg border border-border p-4 outline-none"
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex flex-wrap items-center gap-2">

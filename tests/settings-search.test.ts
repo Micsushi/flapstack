@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 import {
+  SETTINGS_SEARCH_ENTRIES,
   normalizeSettingsSearchText,
   searchSettings,
 } from "../src/renderer/features/settings/settings-search"
+import { SETTINGS_CONTROL_REGISTRY } from "../src/renderer/features/settings/settings-visibility"
 
 describe("Settings search", () => {
   it("matches from the first typed character", () => {
@@ -78,6 +80,41 @@ describe("Settings search", () => {
     expect(searchSettings("nanogpt credential", { showDevelopment: false })[0]).toMatchObject({
       tab: "api-providers",
       targetId: "nanogpt-provider-card",
+    })
+  })
+
+  it("derives every control entry from the release registry with a stable target", () => {
+    expect(new Set(SETTINGS_CONTROL_REGISTRY.map((entry) => entry.id)).size).toBe(
+      SETTINGS_CONTROL_REGISTRY.length,
+    )
+    for (const control of SETTINGS_CONTROL_REGISTRY) {
+      expect(SETTINGS_SEARCH_ENTRIES).toContainEqual(expect.objectContaining(control))
+      expect(control.targetId).toBeTruthy()
+    }
+  })
+
+  it("does not expose dynamic provider cards when that provider is unavailable", () => {
+    expect(
+      searchSettings("openrouter", { showDevelopment: false, availableProviders: [] }),
+    ).toEqual([])
+    expect(
+      searchSettings("openrouter", {
+        showDevelopment: false,
+        availableProviders: ["openrouter"],
+      })[0],
+    ).toMatchObject({ id: "openrouter-provider-card", targetId: "openrouter-provider-card" })
+  })
+
+  it("keeps provider extension aliases scoped to supported inventories", () => {
+    expect(searchSettings("cursor commands", { showDevelopment: false })[0]).toMatchObject({
+      id: "skills-provider-extensions",
+      providerScope: expect.arrayContaining(["cursor"]),
+      targetId: "provider-extensions",
+    })
+    expect(searchSettings("opencode plugins", { showDevelopment: false })[0]).toMatchObject({
+      id: "plugins-provider-extensions",
+      providerScope: ["claude", "opencode"],
+      targetId: "provider-extensions",
     })
   })
 })

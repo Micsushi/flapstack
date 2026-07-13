@@ -1,0 +1,121 @@
+export type VisibleMessagePart = {
+  partIndex: number
+  partType: string
+  text: string
+}
+
+type UnknownRecord = Record<string, unknown>
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === "object" ? (value as UnknownRecord) : null
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null
+}
+
+function visibleAnswers(value: unknown): string[] {
+  const record = asRecord(value)
+  if (!record) return []
+  return Object.values(record)
+    .flatMap((answer) => (Array.isArray(answer) ? answer : [answer]))
+    .flatMap((answer) => {
+      const text = nonEmptyString(answer)
+      return text ? [text] : []
+    })
+}
+
+function questionAndAnswerText(part: UnknownRecord): Array<{ partType: string; text: string }> {
+  const input = asRecord(part.input)
+  const questions = Array.isArray(input?.questions) ? input.questions : []
+  const result = asRecord(part.result)
+  const output = asRecord(part.output)
+  const questionText = questions
+    .flatMap((question) => {
+      const text = nonEmptyString(asRecord(question)?.question)
+      return text ? [text] : []
+    })
+    .join("\n")
+  const answerText = visibleAnswers(result?.answers ?? output?.answers).join("\n")
+  return [
+    ...(questionText ? [{ partType: "agent-input-question", text: questionText }] : []),
+    ...(answerText ? [{ partType: "agent-input-answer", text: answerText }] : []),
+  ]
+}
+
+/**
+ * Extract only content rendered as conversation text. Arbitrary tool payloads,
+ * metadata, opaque fields, private prompts, and secret-shaped fields stay out.
+ */
+export function extractVisibleMessageParts(message: unknown): VisibleMessagePart[] {
+  const record = asRecord(message)
+  if (!record || !Array.isArray(record.parts)) return []
+
+  return record.parts.flatMap((unknownPart, partIndex) => {
+    const part = asRecord(unknownPart)
+    if (!part) return []
+    const type = nonEmptyString(part.type)
+    if (!type) return []
+
+    if (type === "text" || type === "reasoning") {
+      const text = nonEmptyString(part.text)
+      return text ? [{ partIndex, partType: type, text }] : []
+    }
+    if (type === "file-content") {
+      const text = nonEmptyString(part.content) ?? nonEmptyString(part.text)
+      return text ? [{ partIndex, partType: "file-content", text }] : []
+    }
+    if (type === "tool-ReasoningOutput" || type === "tool-Thinking") {
+      const text = nonEmptyString(asRecord(part.input)?.text)
+      return text ? [{ partIndex, partType: type, text }] : []
+    }
+    if (type === "tool-AskUserQuestion") {
+      return questionAndAnswerText(part).map((entry) => ({ partIndex, ...entry }))
+    }
+    return []
+  })
+}
+
+/** Format one part for a full-history handoff without dumping private payloads. */
+export function formatVisiblePartForHandoff(partValue: unknown): string[] {
+  const part = asRecord(partValue)
+  if (!part) return []
+  const type = nonEmptyString(part.type)
+  if (!type) return []
+
+  if (type === "text") {
+    const text = nonEmptyString(part.text)
+    return text ? [text] : []
+  }
+  if (type === "reasoning") {
+    const text = nonEmptyString(part.text)
+    return text ? [`> Reasoning: ${text}`] : []
+  }
+  if (type === "file-content") {
+    const text = nonEmptyString(part.content) ?? nonEmptyString(part.text)
+    return text ? [text] : []
+  }
+  if (type === "tool-ReasoningOutput" || type === "tool-Thinking") {
+    const text = nonEmptyString(asRecord(part.input)?.text)
+    return text ? [`> Reasoning: ${text}`] : []
+  }
+  if (type === "tool-AskUserQuestion") {
+    return questionAndAnswerText(part).map((entry) =>
+      entry.partType === "agent-input-question"
+        ? `> Question: ${entry.text}`
+        : `> Answer: ${entry.text}`,
+    )
+  }
+  if (type === "tool-call" || type.startsWith("tool-")) {
+    const name = nonEmptyString(part.toolName) ?? (type.replace(/^tool-/, "") || "tool")
+    const input = asRecord(part.input)
+    const target =
+      nonEmptyString(input?.file_path) ??
+      nonEmptyString(input?.path) ??
+      nonEmptyString(input?.command) ??
+      nonEmptyString(input?.query) ??
+      nonEmptyString(input?.url)
+    return [`> Tool: ${name}${target ? `: ${target.split("\n")[0]}` : ""}`]
+  }
+  return []
+}

@@ -731,6 +731,16 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F8-T4, S3-F9-T5, S3-F10-T4, S3-F11-T5, and S3-F12-T5.
 - Blocks: S3-F13-T2.
 - Relevant context: all visible Settings tabs and provider previews.
+- 2026-07-13 headless closeout: visible Settings copy now uses neutral
+  agent/provider language for shared behavior and exact provider names for
+  Claude commit attribution, Anthropic accounts, provider credentials,
+  provider extensions, and third-party MCP. Product app-control MCP,
+  development test-control MCP, and Claude Code/Codex third-party MCP remain
+  explicitly distinct. Full-history copy includes visible reasoning,
+  structured questions/answers, legacy message content, and allowlisted tool
+  summaries while excluding opaque/private payloads. Source/copy regressions
+  pass. Completion remains open on the blocked F8-F12 live gates and unlocked
+  visual copy review.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 
@@ -751,6 +761,16 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F7-T1 and S3-F13-T1.
 - Blocks: S3-F13-T3.
 - Relevant context: current settings visibility/search/sidebar/content files.
+- 2026-07-13 headless closeout: the release registry now owns every indexed
+  major control, provider scope, dynamic provider availability, search copy,
+  and stable target. Sidebar tabs, direct-route normalization, Settings search,
+  credential rows, and provider-extension targets derive from or are checked
+  against that registry. Unavailable OpenRouter/NanoGPT cards produce no
+  provider search alias. Cross-chat database search and active-chat search use
+  the same visible-content rules for reasoning, structured questions/answers,
+  legacy content, and private/tool exclusions. Registry/search/navigation and
+  full-history regressions pass. Completion remains open because T1 and live
+  target review remain open.
 
 ### S3-F13-T3 - Verify Settings discovery and accessibility
 
@@ -771,6 +791,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Blocked by: S3-F13-T2.
 - Blocks: S3-F13-T4.
 - Relevant context: Settings search input/result list/content focus handling.
+- 2026-07-13 headless closeout: one-character search, deterministic ranking,
+  Cmd/Ctrl+F, arrow/Enter selection, clear-first Escape, accessible listbox
+  state, hidden/development filtering, dynamic provider filtering, and
+  focusable credential/provider-extension targets are covered by focused
+  tests. Verified visual pointer/keyboard discovery remains open because the
+  macOS session was locked.
 
 ### S3-F13-T4 - Run the Settings Hardening release gate
 
@@ -794,3 +820,13 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   S3-F12-T5, and S3-F13-T3.
 - Blocks: archive `complete-settings-reliability`.
 - Relevant context: this task board, stage routers, root live-dev/package rules.
+- 2026-07-13 headless closeout: strict `complete-settings-reliability`
+  validation passed. Node 22.23.1 `npm run check` passed with 101 test files,
+  749 tests passed, 3 credential-conditional tests skipped, and the production
+  build complete. `npm run dev` loaded the final code and `npm run dev:verify`
+  passed for this exact worktree and the `Flapstack Dev` profile. Focused F13
+  coverage passed 43 tests across Settings registry,
+  search/navigation/visibility, current/legacy full-history copy, active-chat
+  reasoning/question search, and cross-chat database search. The task remains
+  open for verified-dev visual search/copy, F8-F12 live acceptance, packaged
+  credential/provider/Voice checks, and Windows/Linux evidence.

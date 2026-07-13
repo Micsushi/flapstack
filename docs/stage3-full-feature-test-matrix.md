@@ -60,6 +60,35 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
       packaging contains migration 0019 and both ACP bridge patches.
 - [ ] **S3-S07** copy and Settings search use the same visibility/route registry
       and never expose unavailable destinations or stale provider claims.
+      2026-07-13 headless evidence: the release registry owns indexed major
+      controls, provider scope, dynamic provider availability, search copy, and
+      stable targets. Hidden/development/provider-ineligible destinations stay
+      unindexed. Credential and provider-extension targets are focusable.
+      Current/legacy full-history copy and active/cross-chat search cover visible
+      reasoning and structured questions/answers while excluding opaque/private
+      fields and arbitrary tool payloads; copy retains allowlisted tool summaries.
+      Focused coverage passed 43 tests. Strict OpenSpec and Node 22.23.1 full
+      check passed with 101 test files, 749 passed, 3 credential-conditional
+      skipped, and the production build complete. Visual search/copy review,
+      F8-F12 live acceptance, package checks, and Windows/Linux stay unchecked.
+
+### S3-F13 copy/search evidence - 2026-07-13 PDT
+
+- Base: `5297ed777d0430f468ef23def55119f51d87795b` in the isolated
+  `codex/s3-f13-copy-search` worktree.
+- Automated: focused Settings/copy/search coverage passed 43 tests. The Node 22
+  canonical gate passed lint, formatting, TypeScript, 101 test files with 749
+  passed and 3 credential-conditional skipped, and the production build.
+- Contract: `complete-settings-reliability` passed strict OpenSpec validation.
+- Dev: `npm run dev` loaded the final code; `npm run dev:verify` passed for this
+  exact worktree and the `Flapstack Dev` profile. Startup completed migrations,
+  created the main window, and shut down cleanly after verification.
+- Preserved boundaries: hidden route normalization, promoted Keyboard and
+  Custom Agents, write-only credentials, Voice ownership, and separate product,
+  development, and third-party MCP identities remain intact.
+- Blocked/unavailable: the Mac was locked, so no visual search, target focus,
+  pointer, clipboard, credential, provider-extension, permission, or Voice UI
+  evidence is claimed. Windows/Linux and final package evidence remain open.
 
 ### S3-F11 provider-extension evidence - 2026-07-13 PDT
 

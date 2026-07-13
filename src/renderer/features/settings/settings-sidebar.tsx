@@ -11,6 +11,7 @@ import {
   type SettingsTab,
 } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
+import { trpc } from "../../lib/trpc"
 import {
   BrainFilledIcon,
   BugFilledIcon,
@@ -22,7 +23,7 @@ import {
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
 import { searchSettings, type SettingsSearchEntry } from "./settings-search"
-import { getVisibleSettingsTabs } from "./settings-visibility"
+import { getVisibleSettingsTabs, type SettingsProviderScope } from "./settings-visibility"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
@@ -89,6 +90,7 @@ export function SettingsSidebar() {
   const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const isDesktop = useAtomValue(isDesktopAtom)
+  const { data: apiProviders = [] } = trpc.opencode.listProviders.useQuery()
 
   // Settings has its own full-width drag bar, so keep the native macOS window
   // controls available for minimize, fullscreen, and window management.
@@ -121,9 +123,24 @@ export function SettingsSidebar() {
     [showDebugTab],
   )
 
+  const availableApiProviders = useMemo(
+    () =>
+      apiProviders
+        .map((provider) => provider.id)
+        .filter(
+          (provider): provider is Extract<SettingsProviderScope, "openrouter" | "nanogpt"> =>
+            provider === "openrouter" || provider === "nanogpt",
+        ),
+    [apiProviders],
+  )
+
   const searchResults = useMemo(
-    () => searchSettings(searchQuery, { showDevelopment: showDebugTab }),
-    [searchQuery, showDebugTab],
+    () =>
+      searchSettings(searchQuery, {
+        showDevelopment: showDebugTab,
+        availableProviders: availableApiProviders,
+      }),
+    [availableApiProviders, searchQuery, showDebugTab],
   )
 
   useEffect(() => {
