@@ -40,7 +40,8 @@ describe("full chat handoff formatter", () => {
 
     expect(result).toContain("# Flapstack Chat Handoff")
     expect(result).toContain("Legacy recovery: Recovered")
-    expect(result).toContain("> Tool: Read: /tmp/a.ts")
+    expect(result).toContain("> Tool: Read")
+    expect(result).not.toContain("/tmp/a.ts")
     expect(result.indexOf("first")).toBeLessThan(result.indexOf("second"))
   })
 
@@ -174,5 +175,40 @@ describe("full chat handoff formatter", () => {
     expect(result).toContain("> Tool: Webhook")
     for (const secret of secrets) expect(result).not.toContain(secret)
     expect(result).not.toMatch(/sk-live|bearer-command|webhook-secret|signed-secret|query-secret/i)
+  })
+
+  it("exports names only for secret-bearing tool path fields", () => {
+    const secrets = [
+      "/tmp/password=hunter2",
+      "https://user:pass@example.com/private",
+      "Basic dXNlcjpwYXNz",
+      "/tmp/sk-proj-1234567890",
+      "/tmp/file?X-Amz-Signature=abc&token=def",
+      "/hooks/webhook/super-secret-value",
+    ]
+    const result = formatChatHandoff({
+      chat: { id: "chat-secret-paths", name: "Secret paths" },
+      conversations: [
+        {
+          subChatId: "visible",
+          subChatName: null,
+          messages: [
+            {
+              role: "assistant",
+              parts: secrets.map((secret, index) => ({
+                type: index % 2 === 0 ? "tool-Read" : "tool-call",
+                toolName: `Tool${index}`,
+                input: index % 2 === 0 ? { file_path: secret } : { path: secret },
+              })),
+            },
+          ],
+        },
+      ],
+    })
+
+    for (let index = 0; index < secrets.length; index += 1) {
+      expect(result).toContain(`> Tool: Tool${index}`)
+      expect(result).not.toContain(secrets[index])
+    }
   })
 })

@@ -1924,6 +1924,7 @@ export const codexRouter = router({
               .select({
                 permissionMode: agentRuns.permissionMode,
                 customPermissions: agentRuns.customPermissions,
+                promptMessageId: agentRuns.promptMessageId,
               })
               .from(agentRuns)
               .where(eq(agentRuns.id, input.runId))
@@ -2016,7 +2017,7 @@ export const codexRouter = router({
 
             if (!isDuplicatePrompt) {
               const userMessage = {
-                id: crypto.randomUUID(),
+                id: persistedRunSnapshot?.promptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts: buildUserParts(input.prompt, input.images),
                 metadata: { model: metadataModel },

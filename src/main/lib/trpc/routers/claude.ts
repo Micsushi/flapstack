@@ -1,5 +1,5 @@
 import { observable } from "@trpc/server/observable"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { app, BrowserWindow, safeStorage } from "electron"
 import * as fs from "fs/promises"
 import * as os from "os"
@@ -22,7 +22,10 @@ import {
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
 import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
-import { mergeMessagesPreservingSpokenText } from "../../speech/history"
+import {
+  clearClaudeStreamIfOwned,
+  persistClaudeMessagesForStream,
+} from "../../claude/message-persistence"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -1052,6 +1055,34 @@ export const claudeRouter = router({
               .get()
             const existingMessages = JSON.parse(existing?.messages || "[]")
             const existingSessionId = existing?.sessionId || null
+            const queuedPromptMessageId = input.runId
+              ? db
+                  .select({ promptMessageId: agentRuns.promptMessageId })
+                  .from(agentRuns)
+                  .where(eq(agentRuns.id, input.runId))
+                  .get()?.promptMessageId
+              : null
+            const isAuthoritativeRun = () => activeSessions.get(input.subChatId) === abortController
+            const persistMessagesForRun = (
+              incomingMessages: any[],
+              sessionId: string | null | undefined,
+            ) => {
+              if (!isAuthoritativeRun()) return false
+              return persistClaudeMessagesForStream(db, {
+                subChatId: input.subChatId,
+                streamId,
+                incomingMessages,
+                sessionId,
+              })
+            }
+            const clearStreamForRun = (sessionId: string | null | undefined) => {
+              if (!isAuthoritativeRun()) return false
+              return clearClaudeStreamIfOwned(db, {
+                subChatId: input.subChatId,
+                streamId,
+                sessionId,
+              })
+            }
 
             // Get resumeSessionAt UUID only if shouldResume flag was set (by rollbackToMessage)
             // or shouldForkResume flag was set (by forkSubChat)
@@ -1092,6 +1123,10 @@ export const claudeRouter = router({
             if (isDuplicate) {
               userMessage = lastMsg
               messagesToSave = existingMessages
+              db.update(subChats)
+                .set({ streamId, updatedAt: new Date() })
+                .where(eq(subChats.id, input.subChatId))
+                .run()
             } else {
               const parts: any[] = [{ type: "text", text: input.prompt }]
               if (input.images && input.images.length > 0) {
@@ -1107,7 +1142,7 @@ export const claudeRouter = router({
                 }
               }
               userMessage = {
-                id: crypto.randomUUID(),
+                id: queuedPromptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts,
               }
@@ -1573,13 +1608,14 @@ export const claudeRouter = router({
 
             const clearMissingSessionAndRetry = async (reason: string) => {
               if (!resumeSessionId) return false
+              if (!isAuthoritativeRun()) return false
 
               console.log(
                 `[claude] ${reason} - clearing missing sessionId ${resumeSessionId} and retrying once without resume`,
               )
               db.update(subChats)
                 .set({ sessionId: null })
-                .where(eq(subChats.id, input.subChatId))
+                .where(and(eq(subChats.id, input.subChatId), eq(subChats.streamId, streamId)))
                 .run()
 
               resumeSessionId = undefined
@@ -1688,6 +1724,7 @@ export const claudeRouter = router({
               canUseToolReadOnlyGuard: resolvedPermissionMode === "read-only",
               customPermissions,
             })
+            if (!isAuthoritativeRun()) return
             const run = await createClaudeAgentRun({
               runId: input.runId,
               chatId: input.chatId,
@@ -2455,12 +2492,15 @@ ${prompt}
                       typeof observedModel === "string" &&
                       observedModel.trim() &&
                       !observedModel.startsWith("<") && // skip "<synthetic>"
-                      observedModel !== metadata.model
+                      observedModel !== metadata.model &&
+                      isAuthoritativeRun()
                     ) {
                       metadata.model = observedModel
                       db.update(subChats)
                         .set({ model: observedModel })
-                        .where(eq(subChats.id, input.subChatId))
+                        .where(
+                          and(eq(subChats.id, input.subChatId), eq(subChats.streamId, streamId)),
+                        )
                         .run()
                       db.update(chats)
                         .set({ model: observedModel })
@@ -2760,19 +2800,12 @@ ${prompt}
                     metadata,
                   }
                   const finalMessages = [...messagesToSave, assistantMessage]
-                  db.update(subChats)
-                    .set({
-                      messages: JSON.stringify(finalMessages),
-                      sessionId: metadata.sessionId,
-                      streamId: null,
-                      updatedAt: new Date(),
-                    })
-                    .where(eq(subChats.id, input.subChatId))
-                    .run()
-                  db.update(chats)
-                    .set({ updatedAt: new Date() })
-                    .where(eq(chats.id, input.chatId))
-                    .run()
+                  if (persistMessagesForRun(finalMessages, metadata.sessionId)) {
+                    db.update(chats)
+                      .set({ updatedAt: new Date() })
+                      .where(eq(chats.id, input.chatId))
+                      .run()
+                  }
 
                   // Create snapshot stash for rollback support (on error)
                   if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
@@ -2838,46 +2871,19 @@ ${prompt}
                 metadata,
               }
 
-              const latestSubChat = db
-                .select({ messages: subChats.messages })
-                .from(subChats)
-                .where(eq(subChats.id, input.subChatId))
-                .get()
-              let latestMessages: any[] = []
-              try {
-                const parsed = JSON.parse(latestSubChat?.messages || "[]")
-                latestMessages = Array.isArray(parsed) ? parsed : []
-              } catch {
-                latestMessages = []
-              }
-              const finalMessages = mergeMessagesPreservingSpokenText(latestMessages, [
-                ...messagesToSave,
-                assistantMessage,
-              ])
-
-              db.update(subChats)
-                .set({
-                  messages: JSON.stringify(finalMessages),
-                  sessionId: savedSessionId,
-                  streamId: null,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subChats.id, input.subChatId))
-                .run()
+              persistMessagesForRun([...messagesToSave, assistantMessage], savedSessionId)
             } else {
               // No assistant response - just clear streamId
-              db.update(subChats)
-                .set({
-                  sessionId: savedSessionId,
-                  streamId: null,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subChats.id, input.subChatId))
-                .run()
+              clearStreamForRun(savedSessionId)
             }
 
             // Update parent chat timestamp
-            db.update(chats).set({ updatedAt: new Date() }).where(eq(chats.id, input.chatId)).run()
+            if (isAuthoritativeRun()) {
+              db.update(chats)
+                .set({ updatedAt: new Date() })
+                .where(eq(chats.id, input.chatId))
+                .run()
+            }
 
             // Create snapshot stash for rollback support
             if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
@@ -2926,7 +2932,8 @@ ${prompt}
           console.log(`[SD] M:CLEANUP sub=${subId} sessionId=${currentSessionId || "none"}`)
           isObservableActive = false // Prevent emit after unsubscribe
           abortController.abort()
-          if (activeSessions.get(input.subChatId) === abortController) {
+          const isCurrentSession = activeSessions.get(input.subChatId) === abortController
+          if (isCurrentSession) {
             activeSessions.delete(input.subChatId)
           }
           clearPendingApprovals("Session ended.", input.subChatId)
@@ -2935,8 +2942,10 @@ ${prompt}
           // sessionId is NOT saved here - the save block in the async function
           // handles it (saves on normal completion, clears on abort). This avoids
           // a redundant DB write that the cancel mutation would then overwrite.
-          const db = getDatabase()
-          db.update(subChats).set({ streamId: null }).where(eq(subChats.id, input.subChatId)).run()
+          if (isCurrentSession) {
+            const db = getDatabase()
+            clearClaudeStreamIfOwned(db, { subChatId: input.subChatId, streamId })
+          }
         }
       })
     }),

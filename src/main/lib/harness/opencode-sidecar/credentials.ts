@@ -17,6 +17,8 @@ const require = createRequire(import.meta.url)
 const legacyCredentialsFileName = "opencode-provider-credentials.json"
 const settingsFileName = "opencode-provider-settings.json"
 const daemonWarnings = new Map<OpencodeProviderId, string>()
+const providerOperations = new Map<OpencodeProviderId, Promise<void>>()
+const providerGenerations = new Map<OpencodeProviderId, number>()
 
 type ProviderSettings = Partial<Record<OpencodeProviderId, { baseUrl?: string }>>
 
@@ -42,6 +44,30 @@ export type ProviderCredentialStatus = {
 
 function credentialId(provider: OpencodeProviderId): CredentialId {
   return `${provider}.api-key` as CredentialId
+}
+
+function generation(provider: OpencodeProviderId): number {
+  return providerGenerations.get(provider) ?? 0
+}
+
+function bumpGeneration(provider: OpencodeProviderId): void {
+  providerGenerations.set(provider, generation(provider) + 1)
+}
+
+function serializeProviderOperation<T>(
+  provider: OpencodeProviderId,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = providerOperations.get(provider) ?? Promise.resolve()
+  const result = previous.catch(() => undefined).then(operation)
+  const tracked = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  providerOperations.set(provider, tracked)
+  return result.finally(() => {
+    if (providerOperations.get(provider) === tracked) providerOperations.delete(provider)
+  })
 }
 
 function legacyProviderSecretKey(provider: OpencodeProviderId): string {
@@ -150,6 +176,7 @@ export function setProviderKey(
   apiKey: string,
   baseUrl?: string,
 ): void {
+  bumpGeneration(provider)
   setMainProviderKey(provider, apiKey, baseUrl)
   if (process.env.NODE_ENV !== "test") {
     try {
@@ -170,19 +197,22 @@ export async function setProviderKeyAsync(
   apiKey: string,
   baseUrl?: string,
 ): Promise<void> {
-  setMainProviderKey(provider, apiKey, baseUrl)
-  if (process.env.NODE_ENV !== "test") {
-    try {
-      await setUsageSecretAsync(usageProviderSecretKey(provider), apiKey.trim())
-      daemonWarnings.delete(provider)
-    } catch {
-      daemonWarnings.set(
-        provider,
-        "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
-      )
-      console.warn(`[Credentials] ${provider} daemon access is unavailable`)
+  return serializeProviderOperation(provider, async () => {
+    bumpGeneration(provider)
+    setMainProviderKey(provider, apiKey, baseUrl)
+    if (process.env.NODE_ENV !== "test") {
+      try {
+        await setUsageSecretAsync(usageProviderSecretKey(provider), apiKey.trim())
+        daemonWarnings.delete(provider)
+      } catch {
+        daemonWarnings.set(
+          provider,
+          "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
+        )
+        console.warn(`[Credentials] ${provider} daemon access is unavailable`)
+      }
     }
-  }
+  })
 }
 
 export function getProviderKey(provider: OpencodeProviderId): string | null {
@@ -204,21 +234,31 @@ export function getProviderKey(provider: OpencodeProviderId): string | null {
 }
 
 export async function getProviderKeyAsync(provider: OpencodeProviderId): Promise<string | null> {
-  const serviceValue = getCredentialService().resolve(credentialId(provider))
-  if (serviceValue) return serviceValue
-  const legacyFileValue = migrateLegacyFile(provider)
-  if (legacyFileValue) return legacyFileValue
-  const legacyKeychainValue = await getUsageSecretAsync(legacyProviderSecretKey(provider))
-  if (legacyKeychainValue) {
-    getCredentialService().set(credentialId(provider), legacyKeychainValue, {
-      metadata: getProviderBaseUrl(provider)
-        ? { baseUrl: getProviderBaseUrl(provider) }
-        : undefined,
-    })
-    return legacyKeychainValue
-  }
-  const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
-  return process.env[envKey]?.trim() || null
+  return serializeProviderOperation(provider, async () => {
+    const serviceValue = getCredentialService().resolve(credentialId(provider))
+    if (serviceValue) return serviceValue
+    const legacyFileValue = migrateLegacyFile(provider)
+    if (legacyFileValue) return legacyFileValue
+    const readGeneration = generation(provider)
+    const legacyKeychainValue = await getUsageSecretAsync(legacyProviderSecretKey(provider))
+    if (generation(provider) !== readGeneration) {
+      return (
+        getCredentialService().resolve(credentialId(provider)) ??
+        process.env[`FLAPSTACK_${provider.toUpperCase()}_API_KEY`]?.trim() ??
+        null
+      )
+    }
+    if (legacyKeychainValue) {
+      getCredentialService().set(credentialId(provider), legacyKeychainValue, {
+        metadata: getProviderBaseUrl(provider)
+          ? { baseUrl: getProviderBaseUrl(provider) }
+          : undefined,
+      })
+      return legacyKeychainValue
+    }
+    const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
+    return process.env[envKey]?.trim() || null
+  })
 }
 
 export function getProviderBaseUrl(provider: OpencodeProviderId): string | undefined {
@@ -226,6 +266,7 @@ export function getProviderBaseUrl(provider: OpencodeProviderId): string | undef
 }
 
 export function clearProviderKey(provider: OpencodeProviderId): void {
+  bumpGeneration(provider)
   // Clear every legacy durable source before the current store. A crash can
   // then leave the credential still configured, but can never resurrect a
   // credential that the current store already removed.
@@ -240,16 +281,19 @@ export function clearProviderKey(provider: OpencodeProviderId): void {
 }
 
 export async function clearProviderKeyAsync(provider: OpencodeProviderId): Promise<void> {
-  clearLegacyFileProvider(provider)
-  if (process.env.NODE_ENV !== "test") {
-    await Promise.all([
-      setUsageSecretAsync(legacyProviderSecretKey(provider), null),
-      setUsageSecretAsync(usageProviderSecretKey(provider), null),
-    ])
-  }
-  setBaseUrl(provider)
-  getCredentialService().remove(credentialId(provider))
-  daemonWarnings.delete(provider)
+  return serializeProviderOperation(provider, async () => {
+    bumpGeneration(provider)
+    clearLegacyFileProvider(provider)
+    if (process.env.NODE_ENV !== "test") {
+      await Promise.all([
+        setUsageSecretAsync(legacyProviderSecretKey(provider), null),
+        setUsageSecretAsync(usageProviderSecretKey(provider), null),
+      ])
+    }
+    setBaseUrl(provider)
+    getCredentialService().remove(credentialId(provider))
+    daemonWarnings.delete(provider)
+  })
 }
 
 export function hasProviderKey(provider: OpencodeProviderId): boolean {

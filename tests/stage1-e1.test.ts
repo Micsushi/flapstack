@@ -199,6 +199,7 @@ function createTestSchema() {
       custom_permissions text,
       worktree_path text,
       prompt_message_id text,
+      initial_prompt text,
       status text DEFAULT 'running' NOT NULL,
       started_at integer,
       completed_at integer,

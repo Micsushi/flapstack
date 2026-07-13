@@ -136,6 +136,78 @@ describe("MCP main run launcher", () => {
     expect(order).toEqual(["shared-first", "shared-second"])
   })
 
+  it.each(["codex", "claude-code"] as const)(
+    "keeps two queued %s turns in exact transcript order",
+    async (harness) => {
+      seedQueuedTurns(harness)
+      const appendTurn = async (run: QueuedAgentRun) => {
+        const row = sqlite
+          .prepare("SELECT messages FROM sub_chats WHERE id = ?")
+          .get(run.subChatId) as { messages: string }
+        const messages = JSON.parse(row.messages)
+        messages.push(
+          {
+            id: `mcp-${run.runId}`,
+            role: "user",
+            parts: [{ type: "text", text: run.prompt }],
+          },
+          {
+            id: `response-${run.runId}`,
+            role: "assistant",
+            parts: [{ type: "text", text: `${run.prompt}-response` }],
+          },
+        )
+        sqlite
+          .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+          .run(JSON.stringify(messages), run.subChatId)
+        sqlite
+          .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
+          .run(Date.now(), run.runId)
+      }
+
+      expect(await drainPendingMcpRuns(path, appendTurn, { waitForCompletion: true })).toBe(1)
+      expect(await drainPendingMcpRuns(path, appendTurn, { waitForCompletion: true })).toBe(1)
+      const row = sqlite
+        .prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'")
+        .get() as {
+        messages: string
+      }
+      const visible = JSON.parse(row.messages).map((message: any) => message.parts[0].text)
+      expect(visible).toEqual(["A", "A-response", "B", "B-response"])
+      expect(visible.filter((text: string) => text === "A")).toHaveLength(1)
+      expect(visible.filter((text: string) => text === "B")).toHaveLength(1)
+    },
+  )
+
+  it("marks Codex auth-error runs and launch audits failed", async () => {
+    seedRun("auth-failure", "pending", "mcp-auth-prompt", "codex")
+    sqlite
+      .prepare(
+        `INSERT INTO mcp_audit_records (
+          id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
+          chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
+        ) VALUES ('auth-source', 'auth-invocation', 'completed', 'chat-auth-failure',
+          'launch_run', 3, '{}', '{}', '{}', '{}', ?, 0, 1)`,
+      )
+      .run(JSON.stringify({ runId: "auth-failure" }))
+    harnessMocks.codex.mockResolvedValue(authErrorStream())
+
+    await drainPendingMcpRuns(path, createMainRunLauncher(), { waitForCompletion: true })
+
+    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'auth-failure'").get()).toEqual(
+      { status: "failure" },
+    )
+    expect(
+      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'sub-auth-failure'").get(),
+    ).toEqual({ run_status: "failure" })
+    const statuses = sqlite
+      .prepare(
+        "SELECT status FROM mcp_audit_records WHERE invocation_id = 'auth-invocation' ORDER BY created_at, id",
+      )
+      .all() as Array<{ status: string }>
+    expect(statuses.map((row) => row.status).sort()).toEqual(["completed", "failed"])
+  })
+
   it("keeps a newer queued or running run authoritative over stale completion", () => {
     seedSharedConversationRuns()
     const database = drizzle(sqlite, { schema })
@@ -210,6 +282,29 @@ function seedSharedConversationRuns(): void {
   insert.run("shared-second", "mcp-second", 2)
 }
 
+function seedQueuedTurns(harness: "codex" | "claude-code"): void {
+  sqlite
+    .prepare(
+      `INSERT INTO chats (id, name, scope, permission_mode, harness, worktree_path)
+       VALUES ('ordered-chat', 'Ordered', 'global', 'full-access', ?, '/tmp/worktree')`,
+    )
+    .run(harness)
+  sqlite
+    .prepare(
+      `INSERT INTO sub_chats (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
+       VALUES ('ordered-sub', 'ordered-chat', ?, 'full-access', '/tmp/worktree', 'pending', '[]')`,
+    )
+    .run(harness)
+  const insert = sqlite.prepare(
+    `INSERT INTO agent_runs (
+      id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+      prompt_message_id, initial_prompt, status, started_at
+    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree', ?, ?, 'pending', ?)`,
+  )
+  insert.run("ordered-first", harness, "mcp-ordered-first", "A", 1)
+  insert.run("ordered-second", harness, "mcp-ordered-second", "B", 2)
+}
+
 function seedRun(
   runId: string,
   status: "running" | "pending",
@@ -254,4 +349,9 @@ function seedRun(
 
 async function* emptyStream(): AsyncGenerator<never> {
   return
+}
+
+async function* authErrorStream() {
+  yield { type: "auth-error", errorText: "Authentication required." }
+  yield { type: "finish" }
 }

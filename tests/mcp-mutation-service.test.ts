@@ -109,7 +109,13 @@ describe("MCP mutation service", () => {
     expect(first).toMatchObject({ ok: true, data: { created: true } })
     expect(second).toMatchObject({ ok: true, data: { created: false } })
     expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
-    expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "pending" })
+    expect(sqlite.prepare("SELECT status, initial_prompt FROM agent_runs").get()).toEqual({
+      status: "pending",
+      initial_prompt: "Run the tests.",
+    })
+    expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'sub-2'").get()).toEqual({
+      messages: "[]",
+    })
   })
 
   it("keeps the queued custom-permission snapshot after the chat changes", async () => {

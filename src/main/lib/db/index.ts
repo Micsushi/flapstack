@@ -52,37 +52,36 @@ export function initDatabase() {
   const dbPath = getDatabasePath()
   console.log(`[DB] Initializing database at: ${dbPath}`)
 
-  // Create SQLite connection
-  sqlite = new Database(dbPath)
-  sqlite.pragma("journal_mode = WAL")
-  sqlite.pragma("foreign_keys = ON")
-  // The background usage daemon can write this same DB while the app is open.
-  sqlite.pragma("busy_timeout = 5000")
-
-  // Create Drizzle instance
-  db = drizzle(sqlite, { schema })
-
-  // The Electron app owns migrations. Headless MCP children receive its already
-  // migrated database explicitly and must not depend on Electron runtime state.
-  if (process.env.FLAPSTACK_DB_PATH) {
-    recoverPendingAllChatPermissionChange(sqlite)
-    return db
-  }
-
-  // Run migrations
-  const migrationsPath = getMigrationsPath()
-  console.log(`[DB] Running migrations from: ${migrationsPath}`)
-
+  // Do not publish either singleton until migrations and recovery succeed.
+  // Callers must never observe a database that has only partially initialized.
+  const nextSqlite = new Database(dbPath)
   try {
-    migrateDatabase(db, sqlite, migrationsPath)
-    recoverPendingAllChatPermissionChange(sqlite)
-    console.log("[DB] Migrations completed")
+    nextSqlite.pragma("journal_mode = WAL")
+    nextSqlite.pragma("foreign_keys = ON")
+    // The background usage daemon can write this same DB while the app is open.
+    nextSqlite.pragma("busy_timeout = 5000")
+
+    const nextDb = drizzle(nextSqlite, { schema })
+    // The Electron app owns migrations. Headless MCP children receive its already
+    // migrated database explicitly and must not depend on Electron runtime state.
+    if (process.env.FLAPSTACK_DB_PATH) {
+      recoverPendingAllChatPermissionChange(nextSqlite)
+    } else {
+      const migrationsPath = getMigrationsPath()
+      console.log(`[DB] Running migrations from: ${migrationsPath}`)
+      migrateDatabase(nextDb, nextSqlite, migrationsPath)
+      recoverPendingAllChatPermissionChange(nextSqlite)
+      console.log("[DB] Migrations completed")
+    }
+
+    sqlite = nextSqlite
+    db = nextDb
+    return db
   } catch (error) {
     console.error("[DB] Migration error:", error)
+    nextSqlite.close()
     throw error
   }
-
-  return db
 }
 
 /**

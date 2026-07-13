@@ -245,11 +245,18 @@ export function mergeMessagesPreservingSpokenText(current: any[], incoming: any[
       typeof message?.id === "string" ? ([[message.id, message]] as const) : [],
     ),
   )
-  return incoming.map((message) => {
+  const incomingIds = new Set(
+    incoming.flatMap((message) => (typeof message?.id === "string" ? [message.id] : [])),
+  )
+  const mergedIncoming = incoming.map((message) => {
     const spokenText = currentById.get(message?.id)?.metadata?.spokenText
     if (typeof spokenText !== "string" || !spokenText.trim()) return message
     return { ...message, metadata: { ...(message.metadata || {}), spokenText } }
   })
+  return [
+    ...mergedIncoming,
+    ...current.filter((message) => typeof message?.id !== "string" || !incomingIds.has(message.id)),
+  ]
 }
 
 export async function deleteVoiceHistoryForChat(chatId: string): Promise<void> {

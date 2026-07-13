@@ -20,6 +20,7 @@ import {
 } from "./lib/mcp-control/invalidation-bridge"
 import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
+import { runRequiredStartup } from "./lib/startup-gate"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -836,53 +837,68 @@ if (gotTheLock) {
     // Track app opened without hosted account identity.
     trackAppOpened()
 
-    // Initialize database
-    try {
-      initDatabase()
-      console.log("[App] Database initialized")
-      await reconcileVoiceHistory().catch((error) =>
-        console.warn("[Voice] Startup history reconciliation failed:", error),
-      )
-      productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
-        onInvalidation: (payload) => {
-          for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) {
-              window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+    const startupReady = await runRequiredStartup({
+      initialize: () => {
+        initDatabase()
+        console.log("[App] Database initialized")
+      },
+      continueStartup: async () => {
+        try {
+          await reconcileVoiceHistory().catch((error) =>
+            console.warn("[Voice] Startup history reconciliation failed:", error),
+          )
+          productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
+            onInvalidation: (payload) => {
+              for (const window of BrowserWindow.getAllWindows()) {
+                if (!window.isDestroyed()) {
+                  window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+                }
+              }
+            },
+          })
+          devMcpServer = await startDevMcpServer({
+            enabled: IS_DEV,
+            userDataPath: app.getPath("userData"),
+            checkout: app.getAppPath(),
+            profile: app.getName(),
+          })
+          recoverInterruptedMcpRuns(getDatabasePath())
+          const pendingRunLauncher = createMainRunLauncher()
+          const launchPendingRuns = async () => {
+            if (pendingRunDrainActive) return
+            pendingRunDrainActive = true
+            try {
+              await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+            } catch (error) {
+              console.error("[App] Pending run launch failed:", error)
+            } finally {
+              pendingRunDrainActive = false
             }
           }
-        },
-      })
-      devMcpServer = await startDevMcpServer({
-        enabled: IS_DEV,
-        userDataPath: app.getPath("userData"),
-        checkout: app.getAppPath(),
-        profile: app.getName(),
-      })
-      recoverInterruptedMcpRuns(getDatabasePath())
-      const pendingRunLauncher = createMainRunLauncher()
-      const launchPendingRuns = async () => {
-        if (pendingRunDrainActive) return
-        pendingRunDrainActive = true
-        try {
-          await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+          pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+          void launchPendingRuns()
+          void runStartupCatchUp({
+            db: initDatabase(),
+            getSecret: getAppUsageSecret,
+          }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
         } catch (error) {
-          console.error("[App] Pending run launch failed:", error)
-        } finally {
-          pendingRunDrainActive = false
+          console.error("[App] Optional startup service failed:", error)
         }
-      }
-      pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
-      void launchPendingRuns()
-      void runStartupCatchUp({
-        db: initDatabase(),
-        getSecret: getAppUsageSecret,
-      }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
-    } catch (error) {
-      console.error("[App] Failed to initialize database:", error)
-    }
-
-    // Create main window
-    createMainWindow()
+        createMainWindow()
+      },
+      cleanup: async () => {
+        if (pendingRunTimer) clearInterval(pendingRunTimer)
+        pendingRunTimer = null
+        await devMcpServer?.stop()
+        devMcpServer = null
+        await productMcpInvalidationBridge?.stop()
+        productMcpInvalidationBridge = null
+        closeDatabase()
+      },
+      exit: (code) => app.exit(code),
+      report: (error) => console.error("[App] Failed required startup:", error),
+    })
+    if (!startupReady) return
 
     // Hosted auto-update is disabled for local-first Flapstack builds.
 

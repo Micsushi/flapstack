@@ -60,7 +60,7 @@ async function drainStream(stream: unknown, run: QueuedAgentRun): Promise<void> 
 function assertNoProviderError(chunk: unknown, run: QueuedAgentRun): void {
   if (!chunk || typeof chunk !== "object") return
   const value = chunk as { type?: unknown; errorText?: unknown }
-  if (value.type === "error")
+  if (value.type === "error" || value.type === "auth-error")
     throw new Error(
       typeof value.errorText === "string" ? value.errorText : `${run.harness} run failed to start.`,
     )

@@ -120,6 +120,18 @@ describe("MCP cross-harness thread spawn service", () => {
       }),
     ).toBe(2)
     expect(launched.sort()).toEqual(["claude-code", "codex"])
+    expect(
+      sqlite
+        .prepare(
+          `SELECT r.initial_prompt, s.messages
+           FROM agent_runs r JOIN sub_chats s ON s.id = r.sub_chat_id
+           ORDER BY r.harness`,
+        )
+        .all(),
+    ).toEqual([
+      { initial_prompt: "Review this change.", messages: "[]" },
+      { initial_prompt: "Implement this change.", messages: "[]" },
+    ])
     const spawned = sqlite
       .prepare(
         "SELECT harness, permission_mode, parent_chat_id, initiator_chat_id, ancestor_chat_ids, worktree_path FROM chats WHERE parent_chat_id IS NOT NULL ORDER BY harness",

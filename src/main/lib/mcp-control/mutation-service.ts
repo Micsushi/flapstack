@@ -195,23 +195,13 @@ function launchRun(
     permissionMode === "custom" && typeof chat.custom_permissions === "string"
       ? chat.custom_permissions
       : null
-  const messages = parseMessages(subChat.messages)
-  messages.push({
-    id: promptMessageId,
-    role: "user",
-    parts: [{ type: "text", text: input.initialPrompt }],
-    metadata: { harness },
-  })
   const transaction = db.transaction(() => {
-    db.prepare("UPDATE sub_chats SET messages = ?, run_status = 'pending' WHERE id = ?").run(
-      JSON.stringify(messages),
-      subChat.id,
-    )
+    db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
     db.prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-        worktree_path, prompt_message_id, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        worktree_path, prompt_message_id, initial_prompt, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
@@ -222,6 +212,7 @@ function launchRun(
       customPermissions,
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
+      input.initialPrompt,
       Date.now(),
     )
   })
@@ -250,16 +241,6 @@ function stableRunId(chatId: string, idempotencyKey: string): string {
     .digest("hex")
     .slice(0, 32)
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-a${value.slice(17, 20)}-${value.slice(20)}`
-}
-
-function parseMessages(value: unknown): Array<Record<string, unknown>> {
-  if (typeof value !== "string") return []
-  try {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
 }
 
 type Scope = { chatId: string; projectId: string | null; taskId: string | null; kind: string }
@@ -461,16 +442,17 @@ async function spawnThread(
   const runId = contract.plan.launch.requested ? randomUUID() : null
   const promptMessageId = `mcp-spawn-${chatId}`
   const now = Date.now()
-  const initialMessages = contract.plan.launch.initialPrompt
-    ? JSON.stringify([
-        {
-          id: promptMessageId,
-          role: "user",
-          parts: [{ type: "text", text: contract.plan.launch.initialPrompt }],
-          metadata: { harness: contract.plan.targetHarness },
-        },
-      ])
-    : "[]"
+  const initialMessages =
+    !runId && contract.plan.launch.initialPrompt
+      ? JSON.stringify([
+          {
+            id: promptMessageId,
+            role: "user",
+            parts: [{ type: "text", text: contract.plan.launch.initialPrompt }],
+            metadata: { harness: contract.plan.targetHarness },
+          },
+        ])
+      : "[]"
 
   const transaction = db.transaction(() => {
     db.prepare(
@@ -516,8 +498,8 @@ async function spawnThread(
       db.prepare(
         `INSERT INTO agent_runs (
           id, chat_id, sub_chat_id, harness, permission_mode, custom_permissions, worktree_path,
-          prompt_message_id, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          prompt_message_id, initial_prompt, status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
@@ -529,6 +511,7 @@ async function spawnThread(
           : null,
         resolved.worktreePath,
         promptMessageId,
+        contract.plan.launch.initialPrompt,
         now,
       )
     }

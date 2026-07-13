@@ -80,7 +80,8 @@ export async function drainPendingMcpRuns(
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions,
-          r.worktree_path, r.prompt_message_id, s.messages, c.project_id, p.path project_path
+          r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages,
+          c.project_id, p.path project_path
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
@@ -204,7 +205,9 @@ function appendLaunchAudit(
 
 function queuedRun(row: Row): QueuedAgentRun | null {
   if (row.harness !== "codex" && row.harness !== "claude-code") return null
-  const prompt = findPrompt(row.messages, row.prompt_message_id)
+  const prompt =
+    (typeof row.initial_prompt === "string" ? row.initial_prompt.trim() : "") ||
+    findPrompt(row.messages, row.prompt_message_id)
   if (!prompt) return null
   return {
     runId: String(row.id),
@@ -220,13 +223,13 @@ function queuedRun(row: Row): QueuedAgentRun | null {
   }
 }
 
-function findPrompt(messagesValue: unknown, promptMessageId: unknown): string | null {
-  if (typeof messagesValue !== "string" || typeof promptMessageId !== "string") return null
+function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
+  if (typeof messagesValue !== "string" || typeof promptMessageId !== "string") return ""
   try {
     const messages = JSON.parse(messagesValue) as Array<Record<string, unknown>>
     const message = messages.find((candidate) => candidate.id === promptMessageId)
-    if (!message || !Array.isArray(message.parts)) return null
-    const prompt = message.parts
+    if (!message || !Array.isArray(message.parts)) return ""
+    return message.parts
       .filter((part): part is { type: string; text: string } => {
         return Boolean(
           part &&
@@ -238,9 +241,8 @@ function findPrompt(messagesValue: unknown, promptMessageId: unknown): string | 
       .map((part) => part.text)
       .join("\n")
       .trim()
-    return prompt || null
   } catch {
-    return null
+    return ""
   }
 }
 

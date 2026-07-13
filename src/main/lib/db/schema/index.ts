@@ -167,6 +167,7 @@ export const agentRuns = sqliteTable(
     customPermissions: text("custom_permissions"),
     worktreePath: text("worktree_path"),
     promptMessageId: text("prompt_message_id"),
+    initialPrompt: text("initial_prompt"),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
