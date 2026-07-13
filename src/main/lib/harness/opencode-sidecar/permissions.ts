@@ -216,7 +216,7 @@ export function buildOpencodePermissionApplication(params: {
   const cwd = params.cwd?.trim() || null
   const rules = buildOpencodePermissionConfig(params.permissionMode, params.customPermissions)
   const catchAll =
-    params.permissionMode === "read-only"
+    params.permissionMode === "read-only" || params.permissionMode === "custom"
       ? "deny"
       : params.permissionMode === "full-access"
         ? "allow"

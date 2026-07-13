@@ -5,6 +5,17 @@ import {
   PRODUCT_MCP_INVALIDATION_CHANNEL,
   type ProductMcpRendererInvalidation,
 } from "../shared/product-mcp-invalidation"
+import {
+  DEV_RENDERER_CONTROL_REQUEST_CHANNEL,
+  DEV_RENDERER_CONTROL_RESPONSE_CHANNEL,
+  DEV_MCP_SETTINGS_INVALIDATION_CHANNEL,
+  parseDevRendererControlRequest,
+  parseDevRendererControlResponse,
+  parseDevMcpSettingsInvalidation,
+  type DevMcpSettingsInvalidation,
+  type DevRendererControlRequest,
+  type DevRendererControlResponse,
+} from "../shared/dev-renderer-control"
 
 // Only initialize Sentry in production to avoid IPC errors in dev mode
 if (process.env.NODE_ENV === "production") {
@@ -149,6 +160,26 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ) => callback(payload)
     ipcRenderer.on("dev-mcp:chats-changed", handler)
     return () => ipcRenderer.removeListener("dev-mcp:chats-changed", handler)
+  },
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseDevMcpSettingsInvalidation(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(DEV_MCP_SETTINGS_INVALIDATION_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_MCP_SETTINGS_INVALIDATION_CHANNEL, handler)
+  },
+  onDevRendererControlRequest: (callback: (payload: DevRendererControlRequest) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseDevRendererControlRequest(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, handler)
+  },
+  respondDevRendererControl: (response: DevRendererControlResponse) => {
+    const safeResponse = parseDevRendererControlResponse(response)
+    if (safeResponse) ipcRenderer.send(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, safeResponse)
   },
   onProductMcpInvalidation: (callback: (payload: ProductMcpRendererInvalidation) => void) => {
     const handler = (_event: unknown, raw: unknown) => {
@@ -328,9 +359,14 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onDevRendererControlRequest: (
+    callback: (payload: DevRendererControlRequest) => void,
+  ) => () => void
+  respondDevRendererControl: (response: DevRendererControlResponse) => void
   onDevMcpChatsChanged: (
     callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
   ) => () => void
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
   onProductMcpInvalidation: (
     callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void

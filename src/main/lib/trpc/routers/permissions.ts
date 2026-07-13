@@ -182,6 +182,7 @@ export const permissionsRouter = router({
         return buildOpencodePermissionApplication({
           permissionMode: input.mode,
           cwd: input.cwd,
+          customPermissions: input.customPermissions,
         })
       }
       const sdk = mapClaudeSdkPermissionMode(input.mode, input.chatMode)
@@ -190,6 +191,7 @@ export const permissionsRouter = router({
         cwd: input.cwd,
         sdkPermissionMode: sdk.sdkPermissionMode,
         canUseToolReadOnlyGuard: input.mode === "read-only",
+        customPermissions: input.customPermissions,
       })
     }),
 })

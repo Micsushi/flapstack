@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
 import matter from "gray-matter"
+import { actOnPathInsideRoot, readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { discoverInstalledPlugins } from "../plugins"
 import {
   createProviderExtensionManifest,
@@ -23,7 +24,10 @@ type ExtensionRoot = {
   shape: "skill-directories" | "markdown-files" | "plugin-files"
   capabilities: ProviderExtensionCapabilities
   limitations: string[]
+  boundaryRoot: string
 }
+
+type ExtensionRootDefinition = Omit<ExtensionRoot, "boundaryRoot">
 
 const MAX_ROOT_ENTRIES = 1_000
 const MAX_EXTENSION_FILE_BYTES = 1_000_000
@@ -43,7 +47,7 @@ const readOnly = (
 
 function roots(home: string, cwd?: string): ExtensionRoot[] {
   const project = cwd ? path.resolve(cwd) : null
-  const list: ExtensionRoot[] = [
+  const list: ExtensionRootDefinition[] = [
     root("claude", "skill", "user", path.join(home, ".claude", "skills"), "skill-directories"),
     root("claude", "command", "user", path.join(home, ".claude", "commands"), "markdown-files"),
     root("claude", "custom-agent", "user", path.join(home, ".claude", "agents"), "markdown-files"),
@@ -188,7 +192,10 @@ function roots(home: string, cwd?: string): ExtensionRoot[] {
       ),
     )
   }
-  return list
+  return list.map((entry) => ({
+    ...entry,
+    boundaryRoot: entry.source === "user" ? home : project!,
+  }))
 }
 
 function root(
@@ -199,7 +206,7 @@ function root(
   shape: ExtensionRoot["shape"],
   capabilities: ProviderExtensionCapabilities = writable(),
   limitations: string[] = [],
-): ExtensionRoot {
+): ExtensionRootDefinition {
   return { provider, kind, source, root: rootPath, shape, capabilities, limitations }
 }
 
@@ -266,6 +273,7 @@ async function discoverClaudePlugins(): Promise<ProviderExtensionManifest[]> {
 }
 
 async function scanSkillRoot(root: ExtensionRoot): Promise<ProviderExtensionManifest[]> {
+  await assertExtensionDirectory(root)
   const entries = await fs.readdir(root.root, { withFileTypes: true })
   const manifests: ProviderExtensionManifest[] = []
   for (const entry of entries.slice(0, MAX_ROOT_ENTRIES)) {
@@ -283,6 +291,7 @@ async function scanSkillRoot(root: ExtensionRoot): Promise<ProviderExtensionMani
 }
 
 async function scanFileRoot(root: ExtensionRoot): Promise<ProviderExtensionManifest[]> {
+  await assertExtensionDirectory(root)
   const entries = await fs.readdir(root.root, { withFileTypes: true })
   const manifests: ProviderExtensionManifest[] = []
   for (const entry of entries.slice(0, MAX_ROOT_ENTRIES)) {
@@ -309,13 +318,15 @@ async function markdownManifest(
   fallbackName: string,
 ): Promise<ProviderExtensionManifest | null> {
   let raw: string
-  let stat: Awaited<ReturnType<typeof fs.stat>>
+  let stat: Awaited<ReturnType<typeof fs.lstat>>
   try {
-    stat = await fs.stat(file)
-    if (stat.size > MAX_EXTENSION_FILE_BYTES) {
-      throw new Error(`File exceeds the ${MAX_EXTENSION_FILE_BYTES}-byte discovery limit`)
-    }
-    raw = await fs.readFile(file, "utf8")
+    raw = (
+      await readFileInsideRoot(root.boundaryRoot, path.relative(root.boundaryRoot, file), {
+        maxBytes: MAX_EXTENSION_FILE_BYTES,
+      })
+    ).toString("utf8")
+    stat = await fs.lstat(file)
+    if (!stat.isFile()) throw new Error("Provider extension target must be a real file")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     throw error
@@ -341,6 +352,19 @@ async function markdownManifest(
     capabilities: root.capabilities,
     limitations: root.limitations,
   })
+}
+
+async function assertExtensionDirectory(root: ExtensionRoot): Promise<void> {
+  await actOnPathInsideRoot(
+    root.boundaryRoot,
+    path.relative(root.boundaryRoot, root.root),
+    async (directory) => {
+      const info = await fs.lstat(directory)
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new Error("Provider extension root must be a real directory")
+      }
+    },
+  )
 }
 
 function fileFailureManifest(
@@ -386,53 +410,67 @@ async function discoverMcpExtensions(options: {
     source: "user" | "project"
     file: string
     format: "json" | "toml"
+    boundaryRoot: string
   }> = [
     {
       provider: "claude",
       source: "user",
       file: path.join(options.homeDir, ".claude.json"),
       format: "json",
+      boundaryRoot: options.homeDir,
     },
     {
       provider: "codex",
       source: "user",
       file: path.join(options.homeDir, ".codex", "config.toml"),
       format: "toml",
+      boundaryRoot: options.homeDir,
     },
     {
       provider: "cursor",
       source: "user",
       file: path.join(options.homeDir, ".cursor", "mcp.json"),
       format: "json",
+      boundaryRoot: options.homeDir,
     },
     {
       provider: "opencode",
       source: "user",
       file: path.join(options.homeDir, ".config", "opencode", "opencode.json"),
       format: "json",
+      boundaryRoot: options.homeDir,
     },
   ]
   if (options.cwd) {
     const cwd = path.resolve(options.cwd)
     configs.push(
-      { provider: "claude", source: "project", file: path.join(cwd, ".mcp.json"), format: "json" },
+      {
+        provider: "claude",
+        source: "project",
+        file: path.join(cwd, ".mcp.json"),
+        format: "json",
+        boundaryRoot: cwd,
+      },
       {
         provider: "cursor",
         source: "project",
         file: path.join(cwd, ".cursor", "mcp.json"),
         format: "json",
+        boundaryRoot: cwd,
       },
       {
         provider: "opencode",
         source: "project",
         file: path.join(cwd, "opencode.json"),
         format: "json",
+        boundaryRoot: cwd,
       },
       {
         provider: "codex",
         source: "project",
         file: path.join(cwd, ".codex", "config.toml"),
         format: "toml",
+        boundaryRoot: cwd,
       },
     )
   }
@@ -445,10 +483,17 @@ async function discoverMcpConfig(config: {
   source: "user" | "project"
   file: string
   format: "json" | "toml"
+  boundaryRoot: string
 }): Promise<ProviderExtensionManifest[]> {
   let raw: string
   try {
-    raw = await fs.readFile(config.file, "utf8")
+    raw = (
+      await readFileInsideRoot(
+        config.boundaryRoot,
+        path.relative(config.boundaryRoot, config.file),
+        { maxBytes: MAX_EXTENSION_FILE_BYTES },
+      )
+    ).toString("utf8")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
     throw error
@@ -521,7 +566,10 @@ function failureManifest(root: ExtensionRoot, error: unknown): ProviderExtension
 
 export async function mutateProviderExtension(
   input: ProviderExtensionMutation,
-  options: { homeDir?: string } = {},
+  options: {
+    homeDir?: string
+    beforeCommit?: (targetPath: string) => void | Promise<void>
+  } = {},
 ): Promise<ProviderExtensionMutationResult> {
   const home = path.resolve(options.homeDir ?? os.homedir())
   const candidateRoots = roots(home, input.cwd).filter(
@@ -538,7 +586,11 @@ export async function mutateProviderExtension(
     )
   }
   const name = normalizeName(input.name)
-  if ((input.kind === "skill" || input.kind === "custom-agent") && !input.description.trim()) {
+  if (
+    input.operation !== "delete" &&
+    (input.kind === "skill" || input.kind === "custom-agent") &&
+    !input.description.trim()
+  ) {
     throw new Error(`${input.kind} description is required by the provider format`)
   }
   const target =
@@ -547,6 +599,8 @@ export async function mutateProviderExtension(
       : path.join(targetRoot.root, `${name}.md`)
   const resolvedTarget = path.resolve(target)
   assertInsideRoot(resolvedTarget, targetRoot.root)
+  const boundaryRoot = targetRoot.boundaryRoot
+  const targetRelative = path.relative(boundaryRoot, resolvedTarget)
   if (input.operation !== "create") {
     if (!input.sourceId || path.resolve(input.sourceId) !== resolvedTarget) {
       throw new Error("Mutation identity does not match the provider-scoped target")
@@ -554,29 +608,24 @@ export async function mutateProviderExtension(
   }
 
   if (input.operation === "delete") {
-    await assertCanonicalInsideRoot(resolvedTarget, targetRoot.root)
-    await atomicDelete(
-      targetRoot.shape === "skill-directories" ? path.dirname(resolvedTarget) : resolvedTarget,
+    const deleteTarget =
+      targetRoot.shape === "skill-directories" ? path.dirname(resolvedTarget) : resolvedTarget
+    await actOnPathInsideRoot(
+      boundaryRoot,
+      path.relative(boundaryRoot, deleteTarget),
+      atomicDelete,
+      { beforeCommit: options.beforeCommit },
     )
   } else {
     let existingMetadata: Record<string, unknown> = {}
-    if (input.operation === "create") {
-      await fs.mkdir(path.dirname(resolvedTarget), { recursive: true, mode: 0o700 })
-    } else {
-      await assertCanonicalInsideRoot(resolvedTarget, targetRoot.root)
-      await fs.access(resolvedTarget)
-      existingMetadata = matter(await fs.readFile(resolvedTarget, "utf8")).data
-    }
-    if (input.operation === "create") {
-      await assertCanonicalInsideRoot(resolvedTarget, targetRoot.root)
-    }
-    if (input.operation === "create") {
-      try {
-        await fs.access(resolvedTarget)
-        throw new Error(`${input.provider} ${input.kind} "${name}" already exists in this scope`)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      }
+    if (input.operation === "update") {
+      existingMetadata = matter(
+        (
+          await readFileInsideRoot(boundaryRoot, targetRelative, {
+            maxBytes: MAX_EXTENSION_FILE_BYTES,
+          })
+        ).toString("utf8"),
+      ).data
     }
     const serialized = serializeMarkdown(
       input.kind,
@@ -585,7 +634,15 @@ export async function mutateProviderExtension(
       input.content,
       existingMetadata,
     )
-    await atomicWrite(resolvedTarget, serialized)
+    await writeFileInsideRoot(
+      boundaryRoot,
+      targetRelative,
+      { data: serialized },
+      {
+        overwrite: input.operation === "update",
+        beforeCommit: options.beforeCommit,
+      },
+    )
   }
 
   return {
@@ -611,17 +668,6 @@ function serializeMarkdown(
     description: description.trim(),
   }
   return matter.stringify(`${content.trim()}\n`, metadata)
-}
-
-async function atomicWrite(file: string, content: string): Promise<void> {
-  const temporary = `${file}.flapstack-${process.pid}-${Date.now()}.tmp`
-  try {
-    await fs.writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "wx" })
-    await fs.rename(temporary, file)
-  } catch (error) {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-    throw error
-  }
 }
 
 async function atomicDelete(file: string): Promise<void> {
@@ -651,17 +697,6 @@ function assertInsideRoot(file: string, rootPath: string): void {
   const relative = path.relative(path.resolve(rootPath), file)
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error("Provider extension target escapes its configured root")
-  }
-}
-
-async function assertCanonicalInsideRoot(file: string, rootPath: string): Promise<void> {
-  const [canonicalRoot, canonicalParent] = await Promise.all([
-    fs.realpath(rootPath),
-    fs.realpath(path.dirname(file)),
-  ])
-  const relative = path.relative(canonicalRoot, canonicalParent)
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Provider extension target crosses a symbolic-link boundary")
   }
 }
 

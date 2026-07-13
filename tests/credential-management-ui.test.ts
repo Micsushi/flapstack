@@ -86,6 +86,7 @@ describe("secure credential management UI", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    localStorage.clear()
     sessionStorage.clear()
     mocks.setCredential.mockResolvedValue({
       persistence: "encrypted",
@@ -121,6 +122,16 @@ describe("secure credential management UI", () => {
   })
 
   it("confirms replacement and clears the write-only field after saving", async () => {
+    localStorage.setItem("onboarding:codex-api-key", JSON.stringify("sk-stale-renderer"))
+    sessionStorage.setItem(
+      "flapstack:credential-migration-status:v1",
+      JSON.stringify({
+        migrated: [],
+        retired: [],
+        retained: [{ key: "onboarding:codex-api-key", reason: "retry later" }],
+        checkedAt: 1,
+      }),
+    )
     const input = container.querySelector<HTMLInputElement>("#credential-codex-api-key-secret")!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
@@ -144,10 +155,15 @@ describe("secure credential management UI", () => {
       metadata: undefined,
     })
     expect(input.value).toBe("")
+    expect(localStorage.getItem("onboarding:codex-api-key")).toBeNull()
+    expect(sessionStorage.getItem("flapstack:credential-migration-status:v1")).not.toContain(
+      "retry later",
+    )
   })
 
   it("keeps the disposable value in the write-only field when saving fails", async () => {
     mocks.setCredential.mockRejectedValueOnce(new Error("fixture persistence failure"))
+    localStorage.setItem("onboarding:codex-api-key", JSON.stringify("sk-retry-renderer"))
     const input = container.querySelector<HTMLInputElement>("#credential-codex-api-key-secret")!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
@@ -163,6 +179,7 @@ describe("secure credential management UI", () => {
     await act(async () => replace.click())
 
     expect(input.value).toBe("sk-disposable-failure")
+    expect(localStorage.getItem("onboarding:codex-api-key")).toContain("sk-retry-renderer")
   })
 
   it("uses the Codex-specific removal path so ChatGPT auth is preserved", async () => {

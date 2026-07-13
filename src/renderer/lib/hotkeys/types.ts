@@ -42,6 +42,16 @@ export interface CustomHotkeysConfig {
   bindings: Record<string, string | null>
 }
 
+export interface HotkeyConfigDiagnostic {
+  actionId: string
+  reason: string
+}
+
+export interface ParsedHotkeysConfig {
+  config: CustomHotkeysConfig
+  diagnostics: HotkeyConfigDiagnostic[]
+}
+
 export interface ShortcutConflict {
   actionId: ShortcutActionId
   conflictingActionIds: ShortcutActionId[]

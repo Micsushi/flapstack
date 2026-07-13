@@ -10,6 +10,7 @@ import { WindowProvider, getInitialWindowParams } from "./contexts/WindowContext
 import { selectedProjectAtom, selectedAgentChatIdAtom } from "./features/agents/atoms"
 import { useAgentSubChatStore } from "./features/agents/stores/sub-chat-store"
 import { AgentsLayout } from "./features/layout/agents-layout"
+import { DevTestControlBridge } from "./features/settings/dev-test-control-bridge"
 import {
   AnthropicOnboardingPage,
   ApiKeyOnboardingPage,
@@ -63,6 +64,30 @@ function AppContent() {
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
+
+  useEffect(() => {
+    if (!window.desktopApi?.onDevMcpSettingsChanged) return
+    return window.desktopApi.onDevMcpSettingsChanged(({ domains }) => {
+      if (domains.includes("credentials")) {
+        void Promise.all([
+          trpcUtils.credentials.listStatuses.invalidate(),
+          trpcUtils.codex.getIntegration.invalidate(),
+          trpcUtils.voice.hasOpenAIKey.invalidate(),
+        ])
+      }
+      if (domains.includes("provider-extensions")) {
+        void trpcUtils.providerExtensions.list.invalidate()
+      }
+      if (domains.includes("permissions")) {
+        void Promise.all([
+          trpcUtils.permissions.getPreferences.invalidate(),
+          trpcUtils.permissions.getGlobalDefault.invalidate(),
+          trpcUtils.permissions.listChatModes.invalidate(),
+          trpcUtils.permissions.resolveForChat.invalidate(),
+        ])
+      }
+    })
+  }, [trpcUtils])
 
   useEffect(() => {
     void migrateLegacyCredentials(localStorage, trpcClient).then(async (report) => {
@@ -230,6 +255,7 @@ export function App() {
                 <ThemedToaster />
                 <McpApprovalBridge />
                 <McpExternalMutationRefreshBridge />
+                <DevTestControlBridge />
               </TRPCProvider>
             </TooltipProvider>
           </VSCodeThemeProvider>

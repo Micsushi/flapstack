@@ -7,6 +7,7 @@ import type {
 } from "../../../../shared/credential-types"
 import {
   CREDENTIAL_MIGRATION_STATUS_EVENT,
+  clearLegacyCredentialAfterReplacement,
   discardRetainedLegacyCredential,
   readCredentialMigrationStatus,
   type CredentialMigrationStatus,
@@ -336,6 +337,12 @@ export function CredentialManagement() {
       definition.id === "openai.voice-api-key"
         ? (await setVoiceKey.mutateAsync({ key: secret.trim() })).status
         : await setCredential.mutateAsync({ id: definition.id, secret: secret.trim(), metadata })
+    const nextMigration = clearLegacyCredentialAfterReplacement(
+      localStorage,
+      sessionStorage,
+      definition.id,
+    )
+    if (nextMigration) setMigration(nextMigration)
     await refresh()
     if (result.persistence === "session") {
       toast.warning(`${definition.label} is available for this session only`, {

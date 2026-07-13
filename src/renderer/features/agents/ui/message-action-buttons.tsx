@@ -11,6 +11,7 @@ import {
   VolumeIcon,
 } from "../../../components/ui/icons"
 import { cn } from "../../../lib/utils"
+import { writeClipboardText } from "../../../lib/clipboard"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { buildMessageSpeechRequest } from "../../../lib/message-speech-request"
 import {
@@ -42,17 +43,22 @@ export const CopyButton = memo(function CopyButton({ text, isMobile = false }: C
   const [copied, setCopied] = useState(false)
   const { trigger: triggerHaptic } = useHaptic()
 
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text)
-    triggerHaptic("medium")
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleCopy = useCallback(async () => {
+    try {
+      await writeClipboardText(text)
+      triggerHaptic("medium")
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      toast.error("Copy failed", {
+        description: error instanceof Error ? error.message : "Clipboard is unavailable",
+      })
+    }
   }, [text, triggerHaptic])
 
   return (
     <button
-      onClick={handleCopy}
-      tabIndex={-1}
+      onClick={() => void handleCopy()}
       aria-label="Copy message"
       title="Copy message"
       className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"

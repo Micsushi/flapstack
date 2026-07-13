@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react"
+import React, { useCallback } from "react"
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -7,11 +7,8 @@ import {
   ContextMenuSubTrigger,
   ContextMenuSubContent,
 } from "../../../components/ui/context-menu"
-import { Kbd } from "../../../components/ui/kbd"
-import { isMac } from "../../../lib/utils"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import type { SubChatMeta } from "../stores/sub-chat-store"
-import { useResolvedHotkeyDisplay } from "../../../lib/hotkeys"
 import { exportChat, copyChat, type ExportFormat } from "../lib/export-chat"
 import { toast } from "sonner"
 
@@ -23,16 +20,6 @@ const openInNewWindow = async (chatId: string, subChatId: string) => {
       duration: 3000,
     })
   }
-}
-
-// Platform-aware keyboard shortcut for close tab
-// Uses custom hotkey from settings if configured
-const useCloseTabShortcut = () => {
-  const archiveAgentHotkey = useResolvedHotkeyDisplay("archive-agent")
-  return useMemo(() => {
-    if (!isMac) return "Alt+Ctrl+W"
-    return archiveAgentHotkey || "⌘W"
-  }, [archiveAgentHotkey])
 }
 
 interface SubChatContextMenuProps {
@@ -95,8 +82,6 @@ export function SubChatContextMenu({
   onRemoveFromSplit,
   splitPaneCount = 0,
 }: SubChatContextMenuProps) {
-  const closeTabShortcut = useCloseTabShortcut()
-
   const handleExport = useCallback(
     (format: ExportFormat) => {
       if (!chatId) return
@@ -169,7 +154,6 @@ export function SubChatContextMenu({
             disabled={isOnlyChat}
           >
             Close chat
-            {!isOnlyChat && <Kbd>{closeTabShortcut}</Kbd>}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => onCloseOtherTabs?.(subChat.id)}
@@ -192,7 +176,6 @@ export function SubChatContextMenu({
             disabled={isOnlyChat}
           >
             Archive chat
-            {!isOnlyChat && <Kbd>{closeTabShortcut}</Kbd>}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => onArchiveAllBelow?.(subChat.id)}

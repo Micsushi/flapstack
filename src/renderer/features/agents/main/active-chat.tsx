@@ -21,7 +21,6 @@ import { PromptInput, PromptInputActions } from "../../../components/ui/prompt-i
 import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 // e2b API routes are used instead of useSandboxManager for agents
-// import { clearSubChatSelectionAtom, isSubChatMultiSelectModeAtom, selectedSubChatIdsAtom } from "@/lib/atoms/agent-subchat-selection"
 import { ResizableBottomPanel } from "@/components/ui/resizable-bottom-panel"
 import { Chat, useChat } from "@ai-sdk/react"
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
@@ -137,7 +136,6 @@ import {
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
   suppressInputFocusAtom,
-  undoStackAtom,
   workspaceDiffCacheAtomFamily,
   type AgentMode,
   type SelectedCommit,
@@ -226,9 +224,6 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection } from "./isolated-messages-section"
-const clearSubChatSelectionAtom = atom(null, () => {})
-const isSubChatMultiSelectModeAtom = atom(false)
-const selectedSubChatIdsAtom = atom(new Set<string>())
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
 // import type { PlanType } from "@/lib/config/subscription-plans"
@@ -409,7 +404,8 @@ function CopyButton({ onCopy, isMobile = false }: { onCopy: () => void; isMobile
   return (
     <button
       onClick={handleCopy}
-      tabIndex={-1}
+      aria-label="Copy message"
+      title="Copy message"
       className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
     >
       <div className="relative w-3.5 h-3.5">
@@ -4801,7 +4797,6 @@ export function ChatView({
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
   const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
-  const setUndoStack = useSetAtom(undoStackAtom)
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtom)
   const { notifyAgentComplete, notifyAgentError } = useDesktopNotifications()
@@ -7092,84 +7087,6 @@ Make sure to preserve all functionality from both branches when resolving confli
   // NOTE: Desktop notifications for pending questions are now triggered directly
   // in ipc-chat-transport.ts when the ask-user-question chunk arrives.
   // This prevents duplicate notifications from multiple ChatView instances.
-
-  // Multi-select state for sub-chats (for Cmd+W bulk close)
-  const selectedSubChatIds = useAtomValue(selectedSubChatIdsAtom)
-  const isSubChatMultiSelectMode = useAtomValue(isSubChatMultiSelectModeAtom)
-  const clearSubChatSelection = useSetAtom(clearSubChatSelectionAtom)
-
-  // Helper to add sub-chat to undo stack
-  const addSubChatToUndoStack = useCallback(
-    (subChatId: string) => {
-      const timeoutId = setTimeout(() => {
-        setUndoStack((prev) =>
-          prev.filter((item) => !(item.type === "subchat" && item.subChatId === subChatId)),
-        )
-      }, 10000)
-
-      setUndoStack((prev) => [
-        ...prev,
-        {
-          type: "subchat",
-          subChatId,
-          chatId,
-          timeoutId,
-        },
-      ])
-    },
-    [chatId, setUndoStack],
-  )
-
-  // Keyboard shortcut: Close active sub-chat (or bulk close if multi-select mode)
-  // Web: Opt+Cmd+W (browser uses Cmd+W to close tab)
-  // Desktop: Cmd+W
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isDesktop = isDesktopApp()
-
-      // Desktop: Cmd+W (without Alt)
-      const isDesktopShortcut =
-        isDesktop && e.metaKey && e.code === "KeyW" && !e.altKey && !e.shiftKey && !e.ctrlKey
-      // Web: Opt+Cmd+W (with Alt)
-      const isWebShortcut = e.altKey && e.metaKey && e.code === "KeyW"
-
-      if (isDesktopShortcut || isWebShortcut) {
-        e.preventDefault()
-
-        const store = useAgentSubChatStore.getState()
-
-        // If multi-select mode, bulk close selected sub-chats
-        if (isSubChatMultiSelectMode && selectedSubChatIds.size > 0) {
-          const idsToClose = Array.from(selectedSubChatIds)
-          const remainingOpenIds = store.openSubChatIds.filter((id) => !idsToClose.includes(id))
-
-          // Don't close all tabs via hotkey - user should use sidebar dialog for last tab
-          if (remainingOpenIds.length > 0) {
-            idsToClose.forEach((id) => {
-              store.removeFromOpenSubChats(id)
-              addSubChatToUndoStack(id)
-            })
-          }
-          clearSubChatSelection()
-          return
-        }
-
-        // Otherwise close active sub-chat
-        const activeId = store.activeSubChatId
-        const openIds = store.openSubChatIds
-
-        // Only close if we have more than one tab open and there's an active tab
-        // removeFromOpenSubChats automatically switches to the last remaining tab
-        if (activeId && openIds.length > 1) {
-          store.removeFromOpenSubChats(activeId)
-          addSubChatToUndoStack(activeId)
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isSubChatMultiSelectMode, selectedSubChatIds, clearSubChatSelection, addSubChatToUndoStack])
 
   // Keyboard shortcut: Navigate between sub-chats
   // Web: Opt+Cmd+[ and Opt+Cmd+] (browser uses Cmd+[ for back)

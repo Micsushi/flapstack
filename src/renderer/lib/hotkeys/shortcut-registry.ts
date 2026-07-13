@@ -4,6 +4,7 @@ import type {
   ShortcutActionId,
   ShortcutCategory,
   ShortcutConflict,
+  ParsedHotkeysConfig,
   ShortcutPlatform,
   ShortcutValidationResult,
 } from "./types"
@@ -77,32 +78,6 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     conflictGroup: "app",
   },
   {
-    id: "new-agent",
-    actionId: "new-agent",
-    label: "New agent",
-    description: "Create another agent in the current chat",
-    category: "agents",
-    defaults: platformDefaults("cmd+t", "ctrl+t"),
-    editable: false,
-    focusPolicy: "workspace",
-    dispatch: "local",
-    conflictGroup: "app",
-    reservedReason: "Handled by the active chat surface",
-  },
-  {
-    id: "archive-agent",
-    actionId: "archive-agent",
-    label: "Archive current agent",
-    description: "Archive the selected agent conversation",
-    category: "agents",
-    defaults: platformDefaults("cmd+w", "ctrl+w"),
-    editable: false,
-    focusPolicy: "workspace",
-    dispatch: "local",
-    conflictGroup: "app",
-    reservedReason: "Handled by the active chat surface",
-  },
-  {
     id: "stop-generation",
     actionId: "stop-generation",
     label: "Stop generation",
@@ -122,7 +97,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     label: "Toggle details",
     description: "Show or hide the details sidebar",
     category: "agents",
-    defaults: platformDefaults("cmd+shift+\\", "ctrl+shift+\\"),
+    defaults: { darwin: "cmd+shift+\\", win32: null, linux: null },
     editable: false,
     focusPolicy: "workspace",
     dispatch: "local",
@@ -135,7 +110,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     label: "Toggle terminal",
     description: "Show or hide the terminal",
     category: "agents",
-    defaults: platformDefaults("cmd+j", "ctrl+j"),
+    defaults: { darwin: "cmd+j", win32: null, linux: null },
     editable: false,
     focusPolicy: "workspace",
     dispatch: "local",
@@ -148,7 +123,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     label: "Open changes",
     description: "Open the current chat diff",
     category: "agents",
-    defaults: platformDefaults("cmd+d", "ctrl+d"),
+    defaults: { darwin: "cmd+d", win32: null, linux: null },
     editable: false,
     focusPolicy: "workspace",
     dispatch: "local",
@@ -166,43 +141,6 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     focusPolicy: "workspace",
     dispatch: "renderer",
     conflictGroup: "app",
-  },
-  {
-    id: "open-in-editor",
-    actionId: "open-in-editor",
-    label: "Open workspace in editor",
-    description: "Open the current worktree in the preferred editor",
-    category: "workspaces",
-    defaults: platformDefaults("cmd+o", "ctrl+o"),
-    editable: true,
-    focusPolicy: "workspace",
-    dispatch: "renderer",
-    conflictGroup: "app",
-  },
-  {
-    id: "open-file-in-editor",
-    actionId: "open-file-in-editor",
-    label: "Open file in editor",
-    description: "Open the previewed file in the preferred editor",
-    category: "agents",
-    defaults: platformDefaults("cmd+shift+o", "ctrl+shift+o"),
-    editable: true,
-    focusPolicy: "workspace",
-    dispatch: "renderer",
-    conflictGroup: "app",
-  },
-  {
-    id: "open-kanban",
-    actionId: "open-kanban",
-    label: "Open Kanban board",
-    description: "Open the Kanban board when enabled",
-    category: "workspaces",
-    defaults: platformDefaults("cmd+shift+k", "ctrl+shift+k"),
-    editable: true,
-    focusPolicy: "workspace",
-    dispatch: "renderer",
-    conflictGroup: "app",
-    availability: "kanban",
   },
   {
     id: "voice-input",
@@ -229,10 +167,11 @@ export function getShortcutPlatform(
 }
 
 export function getShortcutsByCategory(
-  options: { betaKanbanEnabled?: boolean } = {},
+  options: { platform?: ShortcutPlatform } = {},
 ): Record<ShortcutCategory, ShortcutAction[]> {
+  const platform = options.platform ?? getShortcutPlatform()
   const visible = ALL_SHORTCUT_ACTIONS.filter(
-    (action) => action.availability !== "kanban" || options.betaKanbanEnabled,
+    (action) => action.defaults[platform] !== null || action.editable,
   )
   return {
     general: visible.filter((action) => action.category === "general"),
@@ -282,19 +221,39 @@ export function normalizeHotkey(hotkey: string): string {
 
 const RESERVED_HOTKEYS: Record<ShortcutPlatform, Set<string>> = {
   darwin: new Set(["cmd+q", "cmd+tab", "cmd+space", "cmd+opt+esc"]),
-  win32: new Set(["alt+f4", "ctrl+alt+delete", "cmd+l"]),
-  linux: new Set(["alt+f4", "ctrl+alt+delete"]),
+  win32: new Set(["opt+f4", "ctrl+opt+delete", "cmd+l"]),
+  linux: new Set(["opt+f4", "ctrl+opt+delete"]),
 }
 
 export function validateHotkey(
   hotkey: string,
   platform = getShortcutPlatform(),
 ): ShortcutValidationResult {
+  const rawParts = hotkey
+    .toLowerCase()
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const modifierAliases: Record<string, string> = {
+    meta: "cmd",
+    command: "cmd",
+    control: "ctrl",
+    alt: "opt",
+    option: "opt",
+  }
+  const rawModifiers = rawParts
+    .map((part) => modifierAliases[part] ?? part)
+    .filter((part) => ["cmd", "ctrl", "opt", "shift"].includes(part))
+  if (new Set(rawModifiers).size !== rawModifiers.length) {
+    return { valid: false, reason: "Duplicate modifier" }
+  }
   const normalized = normalizeHotkey(hotkey)
   const parts = normalized.split("+").filter(Boolean)
   const keys = parts.filter((part) => !["cmd", "ctrl", "opt", "shift"].includes(part))
   if (keys.length !== 1) return { valid: false, reason: "Use one key with optional modifiers" }
-  if (new Set(parts).size !== parts.length) return { valid: false, reason: "Duplicate modifier" }
+  if (parts.length === 1 && !["?", "/", "esc", "enter", "tab"].includes(keys[0]!)) {
+    return { valid: false, reason: "Use a modifier with this key" }
+  }
   if (RESERVED_HOTKEYS[platform].has(normalized)) {
     return { valid: false, reason: "Reserved by the operating system" }
   }
@@ -303,12 +262,13 @@ export function validateHotkey(
 
 export function getResolvedHotkey(
   actionId: ShortcutActionId,
-  config: CustomHotkeysConfig,
+  config: CustomHotkeysConfig | unknown,
   platform = getShortcutPlatform(),
 ): string | null {
   const action = getShortcutAction(actionId)
   if (!action) return null
-  const override = action.editable ? config.bindings[actionId] : undefined
+  const safeConfig = migrateHotkeysConfig(config, platform)
+  const override = action.editable ? safeConfig.bindings[actionId] : undefined
   if (override === null) return null
   if (typeof override === "string") {
     const validation = validateHotkey(override, platform)
@@ -327,11 +287,21 @@ export function getResolvedKeys(
 }
 
 export function isCustomHotkey(actionId: ShortcutActionId, config: CustomHotkeysConfig): boolean {
-  return getShortcutAction(actionId)?.editable === true && config.bindings[actionId] !== undefined
+  const safeConfig = migrateHotkeysConfig(config)
+  return (
+    getShortcutAction(actionId)?.editable === true && safeConfig.bindings[actionId] !== undefined
+  )
 }
 
-export function migrateHotkeysConfig(value: unknown): CustomHotkeysConfig {
-  if (!value || typeof value !== "object") return { version: 2, bindings: {} }
+export function parseHotkeysConfig(
+  value: unknown,
+  platform = getShortcutPlatform(),
+): ParsedHotkeysConfig {
+  const diagnostics: ParsedHotkeysConfig["diagnostics"] = []
+  if (!value || typeof value !== "object") {
+    if (value != null) diagnostics.push({ actionId: "config", reason: "Invalid stored format" })
+    return { config: { version: 2, bindings: {} }, diagnostics }
+  }
   const raw = value as { bindings?: unknown }
   const bindings: Record<string, string | null> = {}
   if (raw.bindings && typeof raw.bindings === "object") {
@@ -339,24 +309,54 @@ export function migrateHotkeysConfig(value: unknown): CustomHotkeysConfig {
       if (!action.editable) continue
       const candidate = (raw.bindings as Record<string, unknown>)[action.id]
       if (candidate === null) bindings[action.id] = null
-      if (typeof candidate === "string" && validateHotkey(candidate).valid) {
-        bindings[action.id] = normalizeHotkey(candidate)
+      if (typeof candidate === "string") {
+        const validation = validateHotkey(candidate, platform)
+        if (validation.valid) bindings[action.id] = validation.hotkey
+        else diagnostics.push({ actionId: action.id, reason: validation.reason })
+      } else if (candidate !== undefined && candidate !== null) {
+        diagnostics.push({ actionId: action.id, reason: "Invalid stored binding" })
       }
     }
+    for (const actionId of Object.keys(raw.bindings as Record<string, unknown>)) {
+      if (!getShortcutAction(actionId as ShortcutActionId)) {
+        diagnostics.push({ actionId, reason: "Unknown shortcut action" })
+        const candidate = (raw.bindings as Record<string, unknown>)[actionId]
+        if (actionId.length <= 100 && candidate === null) bindings[actionId] = null
+        if (actionId.length <= 100 && typeof candidate === "string" && candidate.length <= 100) {
+          const validation = validateHotkey(candidate, platform)
+          if (validation.valid) bindings[actionId] = validation.hotkey
+        }
+      }
+    }
+  } else if (raw.bindings !== undefined) {
+    diagnostics.push({ actionId: "config", reason: "Invalid bindings map" })
   }
-  return { version: 2, bindings }
+  return { config: { version: 2, bindings }, diagnostics }
+}
+
+export function migrateHotkeysConfig(
+  value: unknown,
+  platform = getShortcutPlatform(),
+): CustomHotkeysConfig {
+  return parseHotkeysConfig(value, platform).config
 }
 
 export function detectConflicts(
-  config: CustomHotkeysConfig,
+  config: CustomHotkeysConfig | unknown,
   platform = getShortcutPlatform(),
 ): Map<ShortcutActionId, ShortcutConflict> {
   const conflicts = new Map<ShortcutActionId, ShortcutConflict>()
   const byHotkey = new Map<string, ShortcutActionId[]>()
+  const safeConfig = migrateHotkeysConfig(config, platform)
   for (const action of ALL_SHORTCUT_ACTIONS) {
-    const hotkey = getResolvedHotkey(action.id, config, platform)
-    if (!hotkey) continue
-    byHotkey.set(hotkey, [...(byHotkey.get(hotkey) ?? []), action.id])
+    const hotkey = getResolvedHotkey(action.id, safeConfig, platform)
+    const activeBindings = [
+      hotkey,
+      action.altKeys ? keysToHotkeyString(action.altKeys) : null,
+    ].filter((binding): binding is string => Boolean(binding))
+    for (const binding of activeBindings) {
+      byHotkey.set(binding, [...(byHotkey.get(binding) ?? []), action.id])
+    }
   }
   for (const [hotkey, actionIds] of byHotkey) {
     if (actionIds.length < 2) continue
@@ -369,6 +369,72 @@ export function detectConflicts(
     }
   }
   return conflicts
+}
+
+export function buildShortcutState(value: unknown, platform = getShortcutPlatform()) {
+  const parsed = parseHotkeysConfig(value, platform)
+  const conflicts = detectConflicts(parsed.config, platform)
+  return {
+    platform,
+    config: parsed.config,
+    diagnostics: parsed.diagnostics,
+    actions: ALL_SHORTCUT_ACTIONS.filter(
+      (action) => action.defaults[platform] !== null || action.editable,
+    ).map((action) => ({
+      id: action.id,
+      label: action.label,
+      editable: action.editable,
+      dispatch: action.dispatch,
+      focusPolicy: action.focusPolicy,
+      defaultBinding: action.defaults[platform],
+      resolvedBinding: getResolvedHotkey(action.id, parsed.config, platform),
+      conflictWith: conflicts.get(action.id)?.conflictingActionIds ?? [],
+    })),
+  }
+}
+
+export function mutateShortcutConfig(
+  value: unknown,
+  input: {
+    operation: "set" | "reset" | "reset-all"
+    actionId?: string
+    hotkey?: string
+  },
+  platform = getShortcutPlatform(),
+):
+  | { ok: true; config: CustomHotkeysConfig }
+  | { ok: false; config: CustomHotkeysConfig; error: string } {
+  const config = migrateHotkeysConfig(value, platform)
+  if (input.operation === "reset-all") return { ok: true, config: { version: 2, bindings: {} } }
+
+  const action = input.actionId ? getShortcutAction(input.actionId as ShortcutActionId) : undefined
+  if (!action) return { ok: false, config, error: "Unknown shortcut action" }
+  if (!action.editable) return { ok: false, config, error: "Shortcut is not editable" }
+
+  if (input.operation === "reset") {
+    const { [action.id]: _removed, ...bindings } = config.bindings
+    return { ok: true, config: { version: 2, bindings } }
+  }
+
+  if (typeof input.hotkey !== "string") {
+    return { ok: false, config, error: "A shortcut binding is required" }
+  }
+  const validation = validateHotkey(input.hotkey, platform)
+  if (!validation.valid) return { ok: false, config, error: validation.reason }
+  const candidate = {
+    version: 2 as const,
+    bindings: { ...config.bindings, [action.id]: validation.hotkey },
+  }
+  const conflict = detectConflicts(candidate, platform).get(action.id)
+  if (conflict) {
+    const other = getShortcutAction(conflict.conflictingActionIds[0])
+    return {
+      ok: false,
+      config,
+      error: `${other?.label ?? "Another action"} already uses this shortcut`,
+    }
+  }
+  return { ok: true, config: candidate }
 }
 
 const KEY_DISPLAY_MAP: Record<string, string> = {
@@ -388,16 +454,32 @@ const KEY_DISPLAY_MAP: Record<string, string> = {
   arrowright: "→",
 }
 
-export function keyToDisplay(key: string): string {
-  return KEY_DISPLAY_MAP[key.toLowerCase()] ?? key.toUpperCase()
+export function keyToDisplay(
+  key: string,
+  platform: ShortcutPlatform = getShortcutPlatform(),
+): string {
+  const normalized = key.toLowerCase()
+  if (platform !== "darwin") {
+    if (normalized === "cmd") return "Win"
+    if (normalized === "ctrl") return "Ctrl"
+    if (normalized === "opt") return "Alt"
+    if (normalized === "shift") return "Shift"
+  }
+  return KEY_DISPLAY_MAP[normalized] ?? key.toUpperCase()
 }
 
-export function hotkeyToDisplay(hotkey: string): string {
-  return hotkeyStringToKeys(hotkey).map(keyToDisplay).join("")
+export function hotkeyToDisplay(
+  hotkey: string,
+  platform: ShortcutPlatform = getShortcutPlatform(),
+): string {
+  return hotkeyStringToKeys(hotkey)
+    .map((key) => keyToDisplay(key, platform))
+    .join(platform === "darwin" ? "" : "+")
 }
 
 export function keysToDisplay(keys: string[]): string {
-  return keys.map(keyToDisplay).join("")
+  const platform = getShortcutPlatform()
+  return keys.map((key) => keyToDisplay(key, platform)).join(platform === "darwin" ? "" : "+")
 }
 
 export const CATEGORY_LABELS: Record<ShortcutCategory, string> = {

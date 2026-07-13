@@ -1,17 +1,33 @@
 # Stage 3 release lane handoff
 
-Status: security repair round 3 complete; Stage 3 release remains blocked.
+Status: Settings closeout implemented and locally verified; Stage 3 release
+remains blocked on recorded package, provider, dependency, and platform rows.
 
 ## Candidate
 
-- Integration baseline: `16210011b81bebeca5837b2b1f1f489efeba9c33`.
+- Starting baseline: `d08502ec16764653df589894c7a1c6ecacc87ce9`.
 - Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
-- Branch: `codex/stage3-security-fix-r3` in the isolated `f0d3` worktree.
-- Runtime: Node 22.23.1 on macOS arm64. No live app or package was launched in
-  this repair lane.
-- Main worktree was read-only. No push, merge, publish, or archive was done.
+- Branch: `codex/stage3-settings-live-closeout` in the isolated `609c` worktree.
+- Runtime: Node 22.23.1 on macOS arm64. Exact `Flapstack Dev 609c` MCP and
+  shared-lease UI proof passed; current Preview build/inspect/smoke passed
+  without launching the packaged UI.
+- Main and integration worktrees were read-only. No push, merge, publish, or
+  OpenSpec archive was done.
 
 ## Safe closeout result
+
+- S3-F8-T4 and S3-F10-T3 are complete. Keyboard runtime/edit/conflict/reset,
+  restart persistence, real key delivery/focus suppression, write-only
+  credential management, exact Dev encrypted-storage evidence, Settings
+  accessibility/search, and actual clipboard behavior pass.
+- Functional live actions and assertions used the authenticated development
+  MCP. Computer Use was limited to pixels, accessibility, focus, keyboard
+  delivery, and clipboard initiation; the clipboard was read from the local OS.
+- Node 22.23.1 `npm run check` passes lint, formatting, TypeScript, 119 test
+  files with 879 passing and 3 skipped tests, and the production build. Four
+  affected strict OpenSpec validations and the 323-scenario release ledger pass.
+- S3-F7-T4, S3-F10-T4, S3-F11-T5, S3-F12-T1 through T5, and S3-F13-T1 through
+  T4 remain open. GPP-T4, GPP-T6, and GPP-T9 remain supporting blockers.
 
 - S3-F17-T1 is complete. The release ledger covers all active scenarios and
   feature exits and rejects coverage/dependency drift automatically.
@@ -119,6 +135,9 @@ affected strict changes and release-ledger coverage pass.
 
 ## Cleanup contract
 
-The lane removes its `cf53` development profile, Preview test profile, package
-output, native staging output, processes, and the stale global `flapstack_dev`
-test registration. It does not remove user credentials or production data.
+The exact `609c` Dev process and descriptor are stopped and the shared UI lease
+is released. Disposable credentials and provider extensions are removed,
+permission defaults are restored, shortcut overrides are reset, and probe chats
+are reversibly archived. The isolated development profile and ignored Preview
+output are retained as local evidence; they are not production data and are not
+tracked by the commit. No user credential or production profile was changed.

@@ -6,10 +6,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import * as z from "zod/v4"
+import { CREDENTIAL_IDS } from "../../../shared/credential-types"
+import { CUSTOM_PERMISSION_SCHEMA_VERSION, permissionModes } from "../permissions"
 import {
   archiveTestChat,
   cancelRun,
   cleanupProductMcpCaller,
+  controlSettings,
   createTestChat,
   getChatState,
   getHarnessStatusForRepo,
@@ -17,7 +20,10 @@ import {
   getProductMcpState,
   getProductMcpTestCall,
   getProviderStatus,
-  listProviderExtensions,
+  getSettingsState,
+  getLiveSettingsState,
+  getVisibleCopySearchState,
+  requestDevRendererControl,
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
@@ -29,10 +35,24 @@ import {
   prepareProductMcpCaller,
   replyApproval,
   replyProductMcpApproval,
+  sendTestPrompt,
   setProductMcpTestExposure,
   startProductMcpTestCall,
   waitForRunState,
 } from "./service"
+import {
+  getCredentialStatus,
+  getPermissionState,
+  listRegisteredProviderExtensions,
+  migrateLegacyCredential,
+  mutateRegisteredProjectProviderExtension,
+  previewPermission,
+  resolveTestChatSelection,
+  removeCredential,
+  setChatPermission,
+  setOrReplaceCredential,
+  setPermissionDefault,
+} from "./settings-release-controls"
 
 export const DEV_MCP_DESCRIPTOR_FILENAME = "dev-test-control-mcp.json"
 
@@ -107,6 +127,32 @@ function failure(error: unknown) {
   }
 }
 
+const credentialIdSchema = z.enum(CREDENTIAL_IDS)
+const credentialMetadataSchema = z
+  .object({
+    model: z.string().trim().min(1).max(200).optional(),
+    baseUrl: z.string().trim().url().max(2_000).optional(),
+  })
+  .strict()
+  .optional()
+const customPermissionsSchema = z
+  .object({
+    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
+    projectWrite: z.boolean(),
+    shell: z.boolean(),
+    network: z.boolean(),
+    git: z.boolean(),
+    browser: z.boolean(),
+    secrets: z.boolean(),
+    subagents: z.boolean(),
+    thirdPartyMcp: z.boolean(),
+    productMcpRead: z.boolean(),
+    productMcpWrite: z.boolean(),
+    productMcpTier3: z.boolean(),
+  })
+  .strict()
+const permissionModeSchema = z.enum(permissionModes)
+
 function registerTools(server: McpServer): void {
   server.registerTool(
     "get_test_environment",
@@ -136,14 +182,233 @@ function registerTools(server: McpServer): void {
     async () => result(await getProviderStatus()),
   )
   server.registerTool(
+    "get_credential_status",
+    {
+      description: "Inspect managed credential status without returning plaintext.",
+      inputSchema: { id: credentialIdSchema.optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(await getCredentialStatus(input)),
+  )
+  server.registerTool(
+    "set_or_replace_credential",
+    {
+      description: "Write one managed credential. Plaintext is accepted but never returned.",
+      inputSchema: {
+        id: credentialIdSchema,
+        secret: z
+          .string()
+          .min(1)
+          .max(64 * 1024),
+        metadata: credentialMetadataSchema,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await setOrReplaceCredential(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "migrate_legacy_credential",
+    {
+      description:
+        "Attempt an acknowledged legacy credential migration. Plaintext is never returned.",
+      inputSchema: {
+        id: credentialIdSchema,
+        legacyKey: z.enum([
+          "onboarding:codex-api-key",
+          "agents:openai-api-key",
+          "agents:claude-custom-config",
+        ]),
+        secret: z
+          .string()
+          .min(1)
+          .max(64 * 1024),
+        expectedFingerprint: z.string().regex(/^[a-f0-9]{12}$/),
+        metadata: credentialMetadataSchema,
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await migrateLegacyCredential(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "remove_credential",
+    {
+      description: "Remove one managed credential and return status only.",
+      inputSchema: { id: credentialIdSchema },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await removeCredential(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_settings_state",
+    {
+      description:
+        "Inspect the Settings release registry, search results, provider scope, and stable targets.",
+      inputSchema: {
+        query: z.string().max(200).optional(),
+        showDevelopment: z.boolean().optional(),
+        availableProviders: z
+          .array(
+            z.enum([
+              "claude",
+              "codex",
+              "cursor",
+              "opencode",
+              "openrouter",
+              "nanogpt",
+              "openai-voice",
+            ]),
+          )
+          .optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      const registry = getSettingsState(input)
+      try {
+        return result({
+          ...registry,
+          renderer: await getLiveSettingsState(),
+          rendererWarning: null,
+        })
+      } catch (error) {
+        return result({
+          ...registry,
+          renderer: null,
+          rendererWarning: error instanceof Error ? error.message : "Live renderer unavailable",
+        })
+      }
+    },
+  )
+  server.registerTool(
+    "control_settings",
+    {
+      description: "Control the production Settings renderer and return its resulting live state.",
+      inputSchema: {
+        operation: z.enum(["open", "close", "navigate", "search", "select-project"]),
+        tab: z.string().max(100).optional(),
+        query: z.string().max(200).optional(),
+        targetId: z.string().max(200).optional(),
+        projectId: z.string().max(200).nullable().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        if (input.operation === "navigate" && !input.tab) {
+          throw new Error("tab is required for navigate")
+        }
+        if (input.operation === "select-project" && input.projectId === undefined) {
+          throw new Error("projectId is required for select-project; use null to clear")
+        }
+        return result(await controlSettings(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_visible_copy_search_state",
+    {
+      description:
+        "Inspect bounded visible chat copy/search text without private tool or attachment payloads.",
+      inputSchema: {
+        subChatId: z.string().min(1),
+        query: z.string().max(200).optional(),
+        messageLimit: z.number().int().min(1).max(100).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getVisibleCopySearchState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "select_test_chat",
+    {
+      description: "Select one active persisted test chat in the live renderer by exact IDs.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        subChatId: z.string().min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const selection = resolveTestChatSelection(input)
+        return result(await requestDevRendererControl({ command: "chat.select", ...selection }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_shortcut_state",
+    {
+      description:
+        "Inspect the live renderer shortcut inventory, resolved bindings, and diagnostics.",
+      inputSchema: { platform: z.enum(["darwin", "win32", "linux"]).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) =>
+      result(await requestDevRendererControl({ command: "shortcuts.get", ...input })),
+  )
+  server.registerTool(
+    "mutate_shortcut_binding",
+    {
+      description: "Set or reset live shortcut preferences through the production renderer store.",
+      inputSchema: {
+        operation: z.enum(["set", "reset", "reset-all"]),
+        actionId: z.string().min(1).max(100).optional(),
+        hotkey: z.string().min(1).max(100).optional(),
+        platform: z.enum(["darwin", "win32", "linux"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "shortcuts.mutate", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "list_provider_extensions",
     {
       description:
         "List provider-scoped extension identities and capabilities without returning extension content.",
-      inputSchema: { cwd: z.string().min(1).optional() },
+      inputSchema: { projectId: z.string().min(1).optional() },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async (input) => result(await listProviderExtensions(input)),
+    async (input) => {
+      try {
+        return result(await listRegisteredProviderExtensions(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
   )
   server.registerTool(
     "list_test_targets",
@@ -390,6 +655,26 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "send_test_prompt",
+    {
+      description:
+        "Append one bounded database-only visible test prompt without launching a provider run.",
+      inputSchema: {
+        subChatId: z.string().min(1),
+        prompt: z.string().trim().min(1).max(20_000),
+        noEdit: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(sendTestPrompt(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "mutate_project_provider_extension",
     {
       description:
@@ -398,7 +683,7 @@ function registerTools(server: McpServer): void {
         operation: z.enum(["create", "update", "delete"]),
         provider: z.enum(["claude", "codex", "cursor", "opencode"]),
         kind: z.enum(["skill", "command", "plugin", "custom-agent", "mcp"]),
-        cwd: z.string().min(1),
+        projectId: z.string().min(1),
         sourceId: z.string().min(1).optional(),
         name: z.string().min(1).max(64),
         description: z.string().max(1_024).optional(),
@@ -408,7 +693,83 @@ function registerTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        return result(await mutateProjectProviderExtension(input))
+        return result(await mutateRegisteredProjectProviderExtension(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_permission_state",
+    {
+      description: "Inspect permission defaults and optional exact chat custom capabilities.",
+      inputSchema: { chatId: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getPermissionState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "set_permission_default",
+    {
+      description: "Set the global permission default with explicit custom capabilities.",
+      inputSchema: {
+        mode: permissionModeSchema,
+        customPermissions: customPermissionsSchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await setPermissionDefault(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "set_chat_permission",
+    {
+      description: "Set one chat or all chats permission state through production persistence.",
+      inputSchema: {
+        chatId: z.string().min(1),
+        mode: permissionModeSchema,
+        scope: z.enum(["all-chats", "current-chat"]).optional(),
+        rememberBehavior: z.enum(["ask", "current-chat", "all-chats"]).optional(),
+        customPermissions: customPermissionsSchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await setChatPermission(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "preview_permission",
+    {
+      description:
+        "Preview an exact harness mapping; cwd derives only from an optional persisted chat.",
+      inputSchema: {
+        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt"]),
+        mode: permissionModeSchema,
+        chatMode: z.enum(["plan", "agent"]).optional(),
+        chatId: z.string().min(1).optional(),
+        customPermissions: customPermissionsSchema.optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await previewPermission(input))
       } catch (error) {
         return failure(error)
       }

@@ -1,27 +1,29 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { useAtom, useAtomValue } from "jotai"
+import { useAtom } from "jotai"
 import { RotateCcw } from "lucide-react"
-import { customHotkeysAtom, betaKanbanEnabledAtom } from "../../../lib/atoms"
+import { customHotkeysAtom, recordingHotkeyForActionAtom } from "../../../lib/atoms"
 import {
   CATEGORY_LABELS,
-  detectConflicts,
   getResolvedHotkey,
-  getShortcutAction,
+  getShortcutPlatform,
   getShortcutsByCategory,
   hotkeyStringToKeys,
-  migrateHotkeysConfig,
-  validateHotkey,
+  keyToDisplay,
+  mutateShortcutConfig,
+  parseHotkeysConfig,
   type ShortcutAction,
   type ShortcutActionId,
   type ShortcutCategory,
+  type CustomHotkeysConfig,
 } from "../../../lib/hotkeys"
 import { useHotkeyRecorder } from "../../../lib/hotkeys/use-hotkey-recorder"
 import { cn } from "../../../lib/utils"
 
 function ShortcutKeys({ hotkey }: { hotkey: string | null }) {
   if (!hotkey) return <span className="text-xs text-muted-foreground">Not set</span>
+  const platform = getShortcutPlatform()
   return (
     <span className="inline-flex gap-1" aria-label={hotkey}>
       {hotkeyStringToKeys(hotkey).map((key, index) => (
@@ -29,15 +31,7 @@ function ShortcutKeys({ hotkey }: { hotkey: string | null }) {
           key={`${key}-${index}`}
           className="inline-flex min-w-6 items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground"
         >
-          {key === "cmd"
-            ? "⌘"
-            : key === "ctrl"
-              ? "⌃"
-              : key === "opt"
-                ? "⌥"
-                : key === "shift"
-                  ? "⇧"
-                  : key}
+          {keyToDisplay(key, platform)}
         </kbd>
       ))}
     </span>
@@ -55,7 +49,7 @@ function ShortcutRow({
   onReset,
 }: {
   action: ShortcutAction
-  config: ReturnType<typeof migrateHotkeysConfig>
+  config: CustomHotkeysConfig
   recording: boolean
   error: string | null
   onStart: () => void
@@ -128,11 +122,16 @@ function ShortcutRow({
 
 export function AgentsKeyboardTab() {
   const [storedConfig, setStoredConfig] = useAtom(customHotkeysAtom)
-  const betaKanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
-  const config = useMemo(() => migrateHotkeysConfig(storedConfig), [storedConfig])
+  const platform = getShortcutPlatform()
+  const parsedConfig = useMemo(
+    () => parseHotkeysConfig(storedConfig, platform),
+    [platform, storedConfig],
+  )
+  const config = parsedConfig.config
   const [query, setQuery] = useState("")
-  const [recordingId, setRecordingId] = useState<ShortcutActionId | null>(null)
+  const [recordingId, setRecordingId] = useAtom(recordingHotkeyForActionAtom)
   const [errors, setErrors] = useState<Partial<Record<ShortcutActionId, string>>>({})
+  const [migrationDiagnostics, setMigrationDiagnostics] = useState<string[]>([])
 
   useEffect(() => {
     if (
@@ -141,10 +140,15 @@ export function AgentsKeyboardTab() {
     ) {
       setStoredConfig(config)
     }
-  }, [config, setStoredConfig, storedConfig])
+    if (parsedConfig.diagnostics.length > 0) {
+      setMigrationDiagnostics(
+        parsedConfig.diagnostics.map((item) => `${item.actionId}: ${item.reason}`),
+      )
+    }
+  }, [config, parsedConfig.diagnostics, setStoredConfig, storedConfig])
 
   const categories = useMemo(() => {
-    const grouped = getShortcutsByCategory({ betaKanbanEnabled })
+    const grouped = getShortcutsByCategory({ platform })
     const normalized = query.trim().toLowerCase()
     if (!normalized) return grouped
     return Object.fromEntries(
@@ -155,44 +159,34 @@ export function AgentsKeyboardTab() {
         ),
       ]),
     ) as Record<ShortcutCategory, ShortcutAction[]>
-  }, [betaKanbanEnabled, query])
+  }, [platform, query])
 
   const saveBinding = useCallback(
     (actionId: ShortcutActionId, hotkey: string) => {
-      const validation = validateHotkey(hotkey)
-      if (!validation.valid) {
-        setErrors((current) => ({ ...current, [actionId]: validation.reason }))
-        setRecordingId(null)
-        return
-      }
-      const candidate = {
-        version: 2 as const,
-        bindings: { ...config.bindings, [actionId]: validation.hotkey },
-      }
-      const conflict = detectConflicts(candidate).get(actionId)
-      if (conflict) {
-        const other = getShortcutAction(conflict.conflictingActionIds[0])
+      const result = mutateShortcutConfig(config, { operation: "set", actionId, hotkey }, platform)
+      if (!result.ok) {
         setErrors((current) => ({
           ...current,
-          [actionId]: `${other?.label ?? "Another action"} already uses this shortcut`,
+          [actionId]: result.error,
         }))
         setRecordingId(null)
         return
       }
-      setStoredConfig(candidate)
+      setStoredConfig(result.config)
       setErrors((current) => ({ ...current, [actionId]: undefined }))
       setRecordingId(null)
     },
-    [config.bindings, setStoredConfig],
+    [config, platform, setRecordingId, setStoredConfig],
   )
 
   const resetBinding = useCallback(
     (actionId: ShortcutActionId) => {
-      const { [actionId]: _removed, ...bindings } = config.bindings
-      setStoredConfig({ version: 2, bindings })
+      const result = mutateShortcutConfig(config, { operation: "reset", actionId }, platform)
+      if (!result.ok) return
+      setStoredConfig(result.config)
       setErrors((current) => ({ ...current, [actionId]: undefined }))
     },
-    [config.bindings, setStoredConfig],
+    [config, platform, setStoredConfig],
   )
 
   const hasOverrides = Object.keys(config.bindings).length > 0
@@ -216,6 +210,12 @@ export function AgentsKeyboardTab() {
           </button>
         )}
       </div>
+
+      {migrationDiagnostics.length > 0 && (
+        <p className="mt-4 text-xs text-muted-foreground" role="status">
+          Invalid saved shortcuts were ignored and restored to safe defaults.
+        </p>
+      )}
 
       <label
         className="mt-5 block text-xs font-medium text-muted-foreground"

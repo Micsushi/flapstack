@@ -102,13 +102,13 @@ features. Stage and feature README files are navigation routers only.
   - Existing stored data remains present and hidden legacy permission values
     show change-required without becoming selectable.
 - Verification: Node 22 full gate plus verified live dev smoke.
-- Remaining verification: Node 22 `npm run check` passes with 61 test files,
-  533 passing tests, 3 skipped tests, and a production build in the prior
-  checkout. Current checkout `npm run dev:verify` identifies the correct
-  worktree/profile and the production build passes, but the visual Settings
-  smoke is blocked by the locked Mac. The current full gate also stops on
-  unchanged Drizzle formatting plus three MCP migration tests owned outside
-  this feature.
+- Remaining verification: this exact `609c` checkout passes Node 22
+  `npm run check` with 119 test files, 879 passing tests, 3 skipped tests, and a
+  production build. `npm run dev:verify` identifies this worktree and isolated
+  profile. Authenticated MCP proved hidden-route/search policy and preserved
+  project selection. Accessibility inspection proved the visible credential
+  search surface. A representative live legacy permission value and the final
+  post-lease visual matrix remain open.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F7-T1, S3-F7-T2, S3-F7-T3.
 - Blocks: S3-F8-T1 unless headless-only work is explicitly accepted;
@@ -186,7 +186,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T4 - Restore Keyboard Settings and verify platforms
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: The Keyboard tab returns only with working, conflict-safe shortcuts.
 - Scope: Rebuild page from registry; show platform notation, availability, and
@@ -199,11 +199,14 @@ features. Stage and feature README files are navigation routers only.
   - Verified dev smoke covers edit, invoke, conflict, reset, input focus, and
     restart persistence.
 - Verification: focused suite, full check, verified dev smoke, platform matrix.
-- Remaining verification: registry/parser/runtime/editor tests, strict
-  TypeScript, scoped lint/style, strict OpenSpec, verified dev identity, and the
-  production build pass. Visual macOS smoke is blocked by the locked Mac;
-  Windows/Linux package checks remain unavailable; the repository full gate is
-  blocked by unchanged Drizzle formatting and three MCP migration tests.
+- Verification: registry/parser/runtime/editor tests, strict TypeScript and
+  OpenSpec, exact dev identity, Node 22 full check, custom binding set/read,
+  conflict rejection, restart persistence, and reset pass. Under the shared UI
+  lease, `cmd+shift+9` was delivered to the exact `609c` renderer: composer
+  focus suppressed it, workspace focus opened Keyboard Settings, and MCP
+  confirmed the resulting route. The Keyboard page passed pixel and
+  accessibility inspection with the reset `?` default. Windows/Linux package
+  checks remain explicitly unavailable and no parity claim is made.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F8-T2, S3-F8-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -406,7 +409,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F10-T3 - Add safe credential management UI
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Users can add, replace, remove, and understand credential state
   without the renderer retrieving stored plaintext.
@@ -422,14 +425,12 @@ secret-store and unlocked Settings proof remain open.
   - Subscription/API-key priority is accurate per provider.
 - Verification: component and IPC integration tests plus verified live auth
   setup/removal with disposable test values.
-- Remaining verification: provider-scoped management rows, blank write-only
-  fields, replace/remove confirmation, source/fingerprint/update-time display,
-  unmistakable session-only warnings, Voice/Models ownership routing, migration
-  acknowledgement with confirmed allowlisted legacy discard, search targets,
-  and provider-specific consumer removal now pass focused Node 22 tests. The
-  exact worktree Dev profile passes
-  `npm run dev:verify`. A live disposable-value setup/restart/removal pass remains
-  blocked because the Mac was locked, so this completion box stays unchecked.
+- Verification: provider-scoped rows, blank write-only fields, confirmations,
+  status/fingerprint/update time, session-only warnings, Voice/Models routing,
+  retained-source handling, search targets, and provider-specific removal pass
+  focused tests. Exact `609c` MCP add/status/migrate/remove used disposable
+  values and returned no plaintext. Accessibility inspection showed blank
+  secure fields and honest provider copy. No UI secret entry was used.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F7-T2, S3-F10-T1, S3-F10-T2.
 - Blocks: S3-F10-T4.
@@ -452,13 +453,13 @@ secret-store and unlocked Settings proof remain open.
   - Migration and removal behave safely in packaged app.
 - Verification: security tests, full check, package smoke and filesystem/log
   inspection.
-- Remaining verification: macOS Preview arm64 builds, binary inspection and
-  bundled smoke pass, the corrected `Flapstack Preview` executable launches
-  twice with its separate `0700` profile, and the exact worktree Dev profile
-  passes `npm run dev:verify`. Automated corrupt-store/session-only rollback
-  fixtures pass. Packaged credential migration/restart/removal, packaged
-  restore/re-entry, this Mac's actual Keychain-backed credential persistence,
-  and Windows/Linux evidence remain unavailable. See
+- Remaining verification: current macOS Preview arm64 build, binary/license
+  inspection, and bundled smoke pass; exact `609c` Dev verification and
+  rollback fixtures pass. A disposable Dev credential was acknowledged as
+  encrypted by the available Keychain backend; the `0600` store contained
+  ciphertext and no plaintext, then removal returned it to unconfigured.
+  Restart consumption, packaged migration/removal/restore, and Windows/Linux
+  evidence remain unavailable. See
   `docs/credential-security-matrix.md`; this completion box stays unchecked.
 - Estimated effort: 1 day.
 - Blocked by: S3-F10-T2, S3-F10-T3.
@@ -579,12 +580,18 @@ secret-store and unlocked Settings proof remain open.
   tokens, cleanup, and macOS arm64 Preview build/launch/binary/resource smoke.
   The package ran from its exact bundle and Preview profile and its absent dev
   descriptor failed closed, preserving the product/dev MCP boundary.
-- Remaining verification: the Mac was locked, so exercise inventory and
-  mutations through the visible `Flapstack Dev` Settings UI and trigger
-  user-local discovery through the packaged Settings surface. The integrated
+- Remaining verification: shared-lease UI proof now covers Settings search,
+  Keyboard, write-only credentials, and copy, but not provider-extension
+  inventory/mutations or packaged user-local discovery. Trigger user-local
+  discovery through the packaged Settings surface. The integrated
   S3-F11-T4 evidence remains the current Claude skill/command/custom-agent
   consumption proof because new budget-bounded Claude attempts did not return a
   token. Windows/Linux package rows remain explicitly unavailable.
+- 2026-07-13 `609c` closeout: authenticated MCP listed 73 content-redacted
+  user/project items and project-ID-rooted Codex skill create/update/delete
+  passed with cleanup. Arbitrary paths are not accepted; nested symlink and
+  parent-swap regressions fail closed. Current Preview build/inspect/smoke pass.
+  Packaged user-local discovery and Windows/Linux remain open.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -830,8 +837,10 @@ secret-store and unlocked Settings proof remain open.
   Cmd/Ctrl+F, arrow/Enter selection, clear-first Escape, accessible listbox
   state, hidden/development filtering, dynamic provider filtering, and
   focusable credential/provider-extension targets are covered by focused
-  tests. Verified visual pointer/keyboard discovery remains open because the
-  macOS session was locked.
+  tests. Shared-lease live proof now covers Cmd+F focus, selected listbox state,
+  Down/Enter delivery, API Providers navigation, and focus transfer into the
+  selected provider card. Completion remains open on T1/T2 dependency truth
+  and the full every-visible-target matrix.
 
 ### S3-F13-T4 - Run the Settings Hardening release gate
 
@@ -865,3 +874,18 @@ secret-store and unlocked Settings proof remain open.
   reasoning/question search, and cross-chat database search. The task remains
   open for verified-dev visual search/copy, F8-F12 live acceptance, packaged
   credential/provider/Voice checks, and Windows/Linux evidence.
+- 2026-07-13 `609c` closeout: authenticated MCP controlled Settings
+  open/close/navigation/search/project selection and returned the live renderer
+  state. Accessibility inspection proved combobox/listbox semantics, keyboard
+  search focus, Enter navigation, and focus into the selected provider card.
+  Bounded visible-message search returned only the seeded visible text. Under
+  the shared UI lease, actual message and full-history clipboard contents
+  contained the visible sentinel and no private payload; Keyboard pixels/AX,
+  focus policy, custom-key delivery, Cmd+F focus, and Down/Enter search
+  navigation passed. Disposable chat state was archived and shortcut state was
+  reset. The task remains open on F7/F9/F10-F12 exits, packaged credential and
+  provider discovery, the every-visible-target sweep, and Windows/Linux.
+- Final candidate automation: Node 22.23.1 `npm run check` passed lint,
+  formatting, TypeScript, 119 test files with 879 passing and 3 skipped tests,
+  and the production build. All four affected strict OpenSpec validations and
+  release-ledger coverage for 18 changes, 323 scenarios, and 17 exits pass.

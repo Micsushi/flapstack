@@ -827,6 +827,9 @@ export const ChatInputArea = memo(function ChatInputArea({
     "all-chats" | "current-chat"
   >("all-chats")
   const [rememberPermissionScope, setRememberPermissionScope] = useState(false)
+  const [pendingCustomPermissions, setPendingCustomPermissions] =
+    useState<CustomPermissionCapabilities>(disabledCustomPermissions)
+  const [pendingCustomReviewed, setPendingCustomReviewed] = useState(false)
   const permissionConfirmationInFlightRef = useRef(false)
   const setChatPermissionModeMutation = trpc.permissions.setChatMode.useMutation({
     onSuccess: (result) => {
@@ -861,6 +864,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       mode: RunPermissionMode,
       scope: "all-chats" | "current-chat",
       rememberBehavior?: "all-chats" | "current-chat",
+      customPermissions?: CustomPermissionCapabilities,
     ) => {
       return setChatPermissionModeMutation.mutateAsync({
         chatId: parentChatId,
@@ -870,7 +874,9 @@ export const ChatInputArea = memo(function ChatInputArea({
         ...(mode === "custom"
           ? {
               customPermissions:
-                permissionResolution?.customPermissions ?? disabledCustomPermissions,
+                customPermissions ??
+                permissionResolution?.customPermissions ??
+                disabledCustomPermissions,
             }
           : {}),
       })
@@ -883,6 +889,16 @@ export const ChatInputArea = memo(function ChatInputArea({
       if (mode === requestedPermissionMode || setChatPermissionModeMutation.isPending) return
 
       const behavior = permissionPreferences?.changeBehavior ?? "ask"
+      if (mode === "custom") {
+        setPendingCustomPermissions(
+          permissionResolution?.customPermissions ?? disabledCustomPermissions,
+        )
+        setPendingCustomReviewed(false)
+        setPendingPermissionMode(mode)
+        setPendingPermissionScope(behavior === "current-chat" ? "current-chat" : "all-chats")
+        setRememberPermissionScope(false)
+        return
+      }
       if (behavior === "ask") {
         setPendingPermissionMode(mode)
         setPendingPermissionScope("all-chats")
@@ -895,6 +911,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     [
       applyPermissionMode,
       permissionPreferences?.changeBehavior,
+      permissionResolution?.customPermissions,
       requestedPermissionMode,
       setChatPermissionModeMutation.isPending,
     ],
@@ -908,13 +925,20 @@ export const ChatInputArea = memo(function ChatInputArea({
         pendingPermissionMode,
         pendingPermissionScope,
         rememberPermissionScope ? pendingPermissionScope : undefined,
+        pendingPermissionMode === "custom" ? pendingCustomPermissions : undefined,
       )
     } catch {
       // The mutation's onError handler restores the selector and reports the failure.
     } finally {
       permissionConfirmationInFlightRef.current = false
     }
-  }, [applyPermissionMode, pendingPermissionMode, pendingPermissionScope, rememberPermissionScope])
+  }, [
+    applyPermissionMode,
+    pendingCustomPermissions,
+    pendingPermissionMode,
+    pendingPermissionScope,
+    rememberPermissionScope,
+  ])
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
     { enabled: !!parentChatId && !sandboxId },
@@ -1043,6 +1067,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     mode: requestedPermissionMode,
     chatMode: subChatMode,
     cwd: selectedWorktreePath ?? null,
+    customPermissions:
+      requestedPermissionMode === "custom"
+        ? (permissionResolution?.customPermissions ?? disabledCustomPermissions)
+        : null,
   })
 
   // Helper to update mode (atomFamily + Zustand store sync)
@@ -2667,6 +2695,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         onOpenChange={(open) => {
           if (!open && !setChatPermissionModeMutation.isPending) {
             setPendingPermissionMode(null)
+            setPendingCustomReviewed(false)
           }
         }}
       >
@@ -2718,6 +2747,51 @@ export const ChatInputArea = memo(function ChatInputArea({
               </div>
             )}
 
+            {pendingPermissionMode === "custom" && (
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div>
+                  <div className="text-sm font-medium">Custom capabilities</div>
+                  <div className="text-xs text-muted-foreground">
+                    Review the exact capabilities before applying Custom. All chats uses this same
+                    set for every current and future chat.
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  {customPermissionCapabilityKeys.map((key) => {
+                    const enabled = pendingCustomPermissions[key]
+                    return (
+                      <button
+                        type="button"
+                        key={key}
+                        aria-pressed={enabled}
+                        onClick={() =>
+                          setPendingCustomPermissions((current) => ({
+                            ...current,
+                            [key]: !current[key],
+                          }))
+                        }
+                        className={cn(
+                          "rounded border px-2 py-1 text-left",
+                          enabled
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "bg-muted/20 text-muted-foreground",
+                        )}
+                      >
+                        {CUSTOM_PERMISSION_LABELS[key]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span>I reviewed this complete capability set.</span>
+                  <Switch
+                    checked={pendingCustomReviewed}
+                    onCheckedChange={setPendingCustomReviewed}
+                  />
+                </label>
+              </div>
+            )}
+
             <label className="flex items-center justify-between gap-4 text-sm">
               <span>
                 <span className="block font-medium">Remember my choice</span>
@@ -2738,7 +2812,10 @@ export const ChatInputArea = memo(function ChatInputArea({
             <Button
               type="button"
               onClick={() => void handleConfirmPermissionModeChange()}
-              disabled={setChatPermissionModeMutation.isPending}
+              disabled={
+                setChatPermissionModeMutation.isPending ||
+                (pendingPermissionMode === "custom" && !pendingCustomReviewed)
+              }
             >
               {setChatPermissionModeMutation.isPending ? "Applying..." : "Apply"}
             </Button>

@@ -20,6 +20,7 @@ import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-us
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
 import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
+import { revealSettingsTarget } from "./settings-target"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
@@ -60,19 +61,7 @@ export function SettingsContent() {
     if (!searchTarget) return
 
     const frame = requestAnimationFrame(() => {
-      const target = document.querySelector<HTMLElement>(`[data-settings-id="${searchTarget}"]`)
-      if (target) {
-        target.scrollIntoView({ block: "center", behavior: "smooth" })
-        target.focus({ preventScroll: true })
-        target.animate(
-          [
-            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-            { boxShadow: "0 0 0 2px rgba(245, 158, 11, 0.65)" },
-            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-          ],
-          { duration: 1200, easing: "ease-out" },
-        )
-      }
+      revealSettingsTarget(searchTarget)
       setSearchTarget(null)
     })
 

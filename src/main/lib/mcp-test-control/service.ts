@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { randomUUID } from "node:crypto"
 import { and, desc, eq } from "drizzle-orm"
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, ipcMain } from "electron"
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -19,6 +19,12 @@ import {
 import { DEFAULT_CLAUDE_MODEL_ID } from "../../../shared/model-catalog"
 import { OPENCODE_HARNESSES, type OpencodeHarness } from "../../../shared/harness-types"
 import { buildReasoningTimerState } from "../../../shared/reasoning-duration"
+import {
+  DEV_RENDERER_CONTROL_REQUEST_CHANNEL,
+  DEV_RENDERER_CONTROL_RESPONSE_CHANNEL,
+  parseDevRendererControlResponse,
+  type DevRendererControlCommand,
+} from "../../../shared/dev-renderer-control"
 import {
   discoverProviderExtensions,
   mutateProviderExtension,
@@ -69,6 +75,7 @@ import {
   runShellCommand,
   withRecommendedNodePath,
 } from "./shell"
+export { getSettingsState, getVisibleCopySearchState } from "./settings"
 
 function notifyChatViewsChanged(payload: { action: "created" | "archived"; chatId: string }) {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -90,6 +97,66 @@ type ProductMcpTestCall = {
 }
 
 const productMcpTestCalls = new Map<string, ProductMcpTestCall>()
+
+export async function requestDevRendererControl(input: DevRendererControlCommand) {
+  const windows = BrowserWindow?.getAllWindows?.() ?? []
+  const window = BrowserWindow?.getFocusedWindow?.() ?? windows.find((item) => !item.isDestroyed())
+  if (!window || window.isDestroyed()) throw new Error("No live renderer is available")
+
+  const requestId = randomUUID()
+  return new Promise<unknown>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
+      reject(new Error("Live renderer control timed out"))
+    }, 5_000)
+    const handleResponse = (event: Electron.IpcMainEvent, raw: unknown) => {
+      if (event.sender.id !== window.webContents.id) return
+      const response = parseDevRendererControlResponse(raw)
+      if (!response || response.requestId !== requestId) return
+      clearTimeout(timeout)
+      ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
+      if (!response.ok) reject(new Error(response.error ?? "Renderer control failed"))
+      else resolve(response.state)
+    }
+    ipcMain.on(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
+    window.webContents.send(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, { ...input, requestId })
+  })
+}
+
+export async function getLiveSettingsState() {
+  return requestDevRendererControl({ command: "settings.get" })
+}
+
+export async function controlSettings(input: {
+  operation: "open" | "close" | "navigate" | "search" | "select-project"
+  tab?: string
+  query?: string
+  targetId?: string
+  projectId?: string | null
+}) {
+  let project: { id: string; name: string; path: string } | null | undefined
+  if (input.operation === "select-project") {
+    if (input.projectId === null) {
+      project = null
+    } else {
+      const row = getDatabase()
+        .select({ id: projects.id, name: projects.name, path: projects.path })
+        .from(projects)
+        .where(eq(projects.id, input.projectId ?? ""))
+        .get()
+      if (!row) throw new Error("Project not found")
+      project = row
+    }
+  }
+  return requestDevRendererControl({
+    command: "settings.control",
+    operation: input.operation,
+    tab: input.tab,
+    query: input.query,
+    targetId: input.targetId,
+    project,
+  })
+}
 
 export function getTestEnvironment(repoPath = process.cwd()) {
   const userDataPath = app.getPath("userData")

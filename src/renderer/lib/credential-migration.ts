@@ -46,6 +46,12 @@ export const LEGACY_CREDENTIAL_KEYS = [
 ] as const
 export type LegacyCredentialKey = (typeof LEGACY_CREDENTIAL_KEYS)[number]
 
+const legacyKeyByCredentialId: Partial<Record<CredentialId, LegacyCredentialKey>> = {
+  "codex.api-key": "onboarding:codex-api-key",
+  "openai.voice-api-key": "agents:openai-api-key",
+  "claude.custom-api-token": "agents:claude-custom-config",
+}
+
 export function recordCredentialMigrationStatus(
   storage: Storage,
   report: CredentialMigrationReport,
@@ -90,6 +96,28 @@ export function discardRetainedLegacyCredential(
     {
       migrated: status.migrated,
       retired: status.retired,
+      retained: status.retained.filter((item) => item.key !== key),
+    },
+    now,
+  )
+}
+
+export function clearLegacyCredentialAfterReplacement(
+  legacyStorage: Storage,
+  statusStorage: Storage,
+  id: CredentialId,
+  now = Date.now,
+): CredentialMigrationStatus | null {
+  const key = legacyKeyByCredentialId[id]
+  if (!key) return null
+  legacyStorage.removeItem(key)
+  const status = readCredentialMigrationStatus(statusStorage)
+  if (!status) return null
+  return recordCredentialMigrationStatus(
+    statusStorage,
+    {
+      migrated: status.migrated,
+      retired: status.retired.includes(key) ? status.retired : [...status.retired, key],
       retained: status.retained.filter((item) => item.key !== key),
     },
     now,

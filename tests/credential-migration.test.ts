@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  clearLegacyCredentialAfterReplacement,
   discardRetainedLegacyCredential,
   CREDENTIAL_MIGRATION_STATUS_KEY,
   migrateLegacyCredentials,
@@ -157,6 +158,35 @@ describe("legacy renderer credential migration", () => {
 
     expect(discardRetainedLegacyCredential(storage, storage, "unrelated-secret")).toBeNull()
     expect(storage.getItem("unrelated-secret")).toBe("keep-me")
+  })
+
+  it("clears exact retained plaintext and status after an accepted replacement", () => {
+    storage.setItem("agents:openai-api-key", JSON.stringify("sk-stale-renderer"))
+    recordCredentialMigrationStatus(
+      storage,
+      {
+        migrated: [],
+        retired: [],
+        retained: [{ key: "agents:openai-api-key", reason: "retry later" }],
+      },
+      () => 10,
+    )
+
+    const next = clearLegacyCredentialAfterReplacement(
+      storage,
+      storage,
+      "openai.voice-api-key",
+      () => 11,
+    )
+
+    expect(storage.getItem("agents:openai-api-key")).toBeNull()
+    expect(next).toEqual({
+      migrated: [],
+      retired: ["agents:openai-api-key"],
+      retained: [],
+      checkedAt: 11,
+    })
+    expect(storage.getItem(CREDENTIAL_MIGRATION_STATUS_KEY)).not.toContain("sk-stale-renderer")
   })
 
   it("does not expose exception text in a retained migration reason", async () => {

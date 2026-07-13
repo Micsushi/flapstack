@@ -58,6 +58,14 @@ describe("Settings navigation", () => {
     expect(SETTINGS_CONTROL_REGISTRY.every((entry) => Boolean(entry.targetId))).toBe(true)
   })
 
+  it("exposes Settings search as a keyboard-navigable combobox", () => {
+    const sidebar = readSource("src/renderer/features/settings/settings-sidebar.tsx")
+    expect(sidebar).toContain('role="combobox"')
+    expect(sidebar).toContain('aria-controls="settings-search-results"')
+    expect(sidebar).toContain('id="settings-search-results"')
+    expect(sidebar).toContain('scrollIntoView({ block: "nearest" })')
+  })
+
   it("names the third-party MCP surface without merging product or dev control", () => {
     const visibility = readSource("src/renderer/features/settings/settings-visibility.ts")
     const mcp = readSource("src/renderer/components/dialogs/settings-tabs/agents-mcp-tab.tsx")

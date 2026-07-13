@@ -7,12 +7,15 @@ completion while required live, UI, credential, or platform rows remain open.
 
 - Candidate source: the exact commit containing this ledger, resolved with
   `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Integration baseline: `16210011b81bebeca5837b2b1f1f489efeba9c33`.
-- Checkout: isolated `f0d3` worktree on
-  `codex/stage3-security-fix-r3`; the main worktree is read-only.
-- Profile isolation: no live app or package was launched in this repair lane.
-  Earlier `Flapstack Dev cf53` and Preview evidence is context only where the
-  changed security paths invalidate it.
+- Starting baseline: `d08502ec16764653df589894c7a1c6ecacc87ce9`.
+- Checkout: isolated `609c` worktree on
+  `codex/stage3-settings-live-closeout`; the main and integration worktrees are
+  read-only and were not modified.
+- Profile isolation: live development proof used port `6093` and
+  `Flapstack Dev 609c`. `npm run dev:verify` matched this checkout, Electron
+  main, renderer app path, and isolated profile. Real UI work held the shared
+  `s3-settings-closeout` lease. Preview was built, inspected, and smoked but not
+  launched on this current candidate.
 - Supported release runtime: Node 22. macOS arm64 is locally available;
   Windows and Linux are unavailable in this lane.
 - Result vocabulary: only PASS satisfies a required row. FAIL, BLOCKED, and
@@ -90,21 +93,45 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 ## Execution evidence
 
-| Gate                                     | Result  | Evidence or blocker                                                                                                         |
-| ---------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                  | PASS    | 18 active changes, 323 normative scenarios, 17 feature exits                                                                |
-| Affected OpenSpec strict validation      | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                           |
-| Node 22 `npm run check`                  | PASS    | lint, format, typecheck, 863 passed, 3 conditional skips, production build                                                  |
-| Security round-3 focused suite           | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
-| MCP-first management closeout            | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
-| Production/dev MCP separation            | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
-| Usage daemon smoke                       | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
-| Verified `Flapstack Dev cf53`            | PASS    | isolated ports/profile; exact checkout, Electron main path, API, DB, and clean shutdown                                     |
-| macOS Preview build/inspect/smoke/launch | PASS    | unsigned arm64 package; ABI/licenses/pinned runtimes; exact executable startup, migration, shutdown                         |
-| Visual Settings/MCP/Usage/reasoning      | BLOCKED | macOS session locked (`CGSSessionScreenIsLocked=Yes`); no headless substitution                                             |
-| Clipboard, microphone, Keychain          | BLOCKED | require unlocked interactive macOS evidence                                                                                 |
-| Windows/Linux                            | BLOCKED | target hosts unavailable                                                                                                    |
-| Independent review rounds                | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
+| Gate                                   | Result  | Evidence or blocker                                                                                                         |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Release-ledger coverage                | PASS    | 18 active changes, 323 normative scenarios, 17 feature exits                                                                |
+| Affected OpenSpec strict validation    | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                           |
+| Node 22 `npm run check`                | PENDING | worker gates passed separately; integrated candidate rerun required                                                         |
+| Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
+| MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
+| Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
+| Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
+| Verified lane Dev profiles             | PASS    | isolated `93ea` MCP and `609c` Settings checkouts/profiles; authenticated MCP, UI lease, clean shutdown                     |
+| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; current executable launch not run                             |
+| Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
+| Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
+| Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
+| Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
+| Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
+
+### 2026-07-13 Settings closeout candidate
+
+The authenticated development MCP now covers every functional action/read used
+for this lane: project selection, Settings state/navigation/search, shortcut
+configuration, credential lifecycle, provider extensions, permission defaults
+and chat modes, bounded visible copy/search, and exact test-chat selection. The
+server is development-only, loopback-bound, bearer-authenticated, and publishes
+a mode-`0600` descriptor. Renderer commands and invalidations use bounded DTOs;
+projects and chats resolve from persisted identities, and credential responses
+remain redacted.
+
+MCP proved the functional state. Real UI under the shared machine lease was
+limited to pixels, accessibility, focus, keyboard delivery, and actual
+clipboard behavior. Keyboard custom binding delivery and composer suppression,
+Settings Cmd+F plus Down/Enter navigation, blank credential fields, and message
+and full-history clipboard passed. Disposable credential, extension, permission,
+shortcut, and chat changes were removed, restored, or reversibly archived.
+
+S3-F8-T4 and S3-F10-T3 close. S3-F7-T4, S3-F10-T4, S3-F11-T5, S3-F12-T1
+through T5, and S3-F13-T1 through T4 remain open on their recorded legacy,
+package, dependency, every-target, and platform evidence. No Preview-launch,
+packaged Keychain, Windows, Linux, or unavailable paid-provider claim is made.
 
 ### 2026-07-13 security repair round
 

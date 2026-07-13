@@ -1,3 +1,9 @@
+import type {
+  DevMcpSettingsInvalidation,
+  DevRendererControlRequest,
+  DevRendererControlResponse,
+} from "../shared/dev-renderer-control"
+
 export interface UpdateInfo {
   version: string
   releaseDate?: string
@@ -103,9 +109,15 @@ export interface DesktopApi {
 
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
+  onShortcutOpenSettings: (callback: () => void) => () => void
+  onDevRendererControlRequest: (
+    callback: (payload: DevRendererControlRequest) => void,
+  ) => () => void
+  respondDevRendererControl: (response: DevRendererControlResponse) => void
   onDevMcpChatsChanged: (
     callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
   ) => () => void
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
   onProductMcpInvalidation: (
     callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void

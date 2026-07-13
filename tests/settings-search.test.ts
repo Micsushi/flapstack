@@ -63,9 +63,11 @@ describe("Settings search", () => {
     )
   })
 
-  it("routes Keyboard search through the released Settings registry", () => {
-    const result = searchSettings("keyboard shortcuts", { showDevelopment: false })[0]
-    expect(result).toMatchObject({ tab: "keyboard", targetId: "settings-tab-keyboard" })
+  it("routes Keyboard search after its promotion gate passes", () => {
+    expect(searchSettings("keyboard shortcuts", { showDevelopment: false })[0]).toMatchObject({
+      tab: "keyboard",
+      targetId: "settings-tab-keyboard",
+    })
   })
 
   it("routes credential aliases to the exact write-only provider rows", () => {

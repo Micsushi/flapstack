@@ -101,6 +101,7 @@ export function SettingsSidebar() {
   }, [isDesktop])
 
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchResultRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
 
   // Show debug tab if in development OR if devtools are unlocked
@@ -146,6 +147,11 @@ export function SettingsSidebar() {
   useEffect(() => {
     setSelectedSearchIndex(0)
   }, [searchQuery])
+
+  useEffect(() => {
+    if (!searchQuery) return
+    searchResultRefs.current[selectedSearchIndex]?.scrollIntoView({ block: "nearest" })
+  }, [searchQuery, selectedSearchIndex])
 
   useEffect(() => {
     const handleFind = (event: KeyboardEvent) => {
@@ -219,6 +225,10 @@ export function SettingsSidebar() {
             onKeyDown={handleSearchKeyDown}
             placeholder="Search settings"
             aria-label="Search settings"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="settings-search-results"
+            aria-expanded={Boolean(searchQuery)}
             aria-activedescendant={
               searchQuery && searchResults[selectedSearchIndex]
                 ? `settings-search-result-${searchResults[selectedSearchIndex].id}`
@@ -245,13 +255,21 @@ export function SettingsSidebar() {
       {/* Tab list */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent px-2 pb-4 space-y-4">
         {searchQuery ? (
-          <div className="space-y-1" role="listbox" aria-label="Settings search results">
+          <div
+            id="settings-search-results"
+            className="space-y-1"
+            role="listbox"
+            aria-label="Settings search results"
+          >
             {searchResults.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted-foreground">No matching settings.</div>
             ) : (
               searchResults.map((result, index) => (
                 <button
                   key={result.id}
+                  ref={(element) => {
+                    searchResultRefs.current[index] = element
+                  }}
                   id={`settings-search-result-${result.id}`}
                   type="button"
                   role="option"

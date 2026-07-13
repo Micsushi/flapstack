@@ -9,6 +9,8 @@ export type {
   ShortcutFocusPolicy,
   ShortcutDispatch,
   ShortcutValidationResult,
+  HotkeyConfigDiagnostic,
+  ParsedHotkeysConfig,
 } from "./types"
 
 // Registry
@@ -30,6 +32,9 @@ export {
   getShortcutPlatform,
   validateHotkey,
   migrateHotkeysConfig,
+  parseHotkeysConfig,
+  buildShortcutState,
+  mutateShortcutConfig,
 } from "./shortcut-registry"
 
 // Hooks

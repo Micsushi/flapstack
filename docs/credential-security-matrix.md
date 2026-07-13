@@ -19,31 +19,38 @@ fixtures. No provider credential is recorded here.
 
 ## Verified development evidence
 
-- `npm run dev` started this worktree with the `Flapstack Dev` profile.
-- `npm run dev:verify` passed for
-  `/Users/michaelshi/.codex/worktrees/e388/flapstack` and required the renderer
-  `--app-path` to match this checkout. The Electron dependency itself resolved
-  through the temporary worktree `node_modules` link.
-- Visual add, replace, restart, and removal remain unavailable because the Mac
-  was locked. No credential was entered through an inaccessible UI.
+- `npm run dev` started
+  `/Users/michaelshi/.codex/worktrees/609c/flapstack` on isolated port `6093`
+  with the `Flapstack Dev 609c` profile. `npm run dev:verify` matched the exact
+  Electron main, renderer `--app-path`, checkout, and profile.
+- Authenticated development test-control MCP used disposable NanoGPT and Voice
+  values through the production write-only service. Add/status/replace,
+  acknowledged legacy migration, fingerprint, redacted status, and removal
+  passed without returning plaintext.
+- The NanoGPT fixture reported encrypted persistence with the available macOS
+  Keychain backend. Its credential store was mode `0600`, contained ciphertext,
+  contained no fixture plaintext, and returned to unconfigured after removal.
+- Shared-lease accessibility inspection showed blank secure fields after the
+  MCP operations plus write-only and provider-specific ownership copy. No
+  stored secret was entered, read, or revealed through the renderer.
+- This proves the current isolated development profile only. Packaged restart
+  consumption and cross-platform secret stores remain open.
 
 ## macOS Preview evidence
 
-- `npm run package:preview:mac` built the unsigned arm64 Preview directory.
+- Current `609c` code passed `npm run package:preview:mac`, producing the
+  unsigned arm64 Preview directory.
 - `npm run package:inspect:preview:mac` verified the arm64 main executable,
   Electron, Claude, Codex, Whisper, Parakeet, `better-sqlite3`, licenses, and
   Electron 39.8.10.
 - `npm run package:smoke:preview:mac` executed the bundled Claude 2.1.207,
   Codex 0.144.1, Whisper, and Parakeet probes.
-- The exact executable
-  `Flapstack Preview.app/Contents/MacOS/Flapstack Preview` launched twice from
-  this worktree. Both launches used the separate
-  `~/Library/Application Support/Flapstack Preview` profile; its directory mode
-  was `0700`.
+- Exact executable launch evidence belongs to an earlier candidate and is
+  context only after the current Settings changes. The current lane did not
+  launch Preview.
 - Packaged credential entry, encrypted-file inspection, credential restart,
-  removal, and restore remain unavailable because the locked UI could not be
-  operated. Therefore this run does not claim macOS Keychain-backed credential
-  persistence.
+  removal, and restore remain unavailable. Therefore this run does not claim
+  packaged macOS Keychain-backed credential persistence.
 
 ## Remaining platform and rollback evidence
 

@@ -22,6 +22,11 @@ import {
 } from "../src/main/lib/mcp-test-control/registry"
 import { redactSecretLikeText, resolveCommandPath } from "../src/main/lib/mcp-test-control/shell"
 import { hasValidBearerToken, startDevMcpServer } from "../src/main/lib/mcp-test-control/server"
+import { buildVisibleCopySearchState } from "../src/main/lib/mcp-test-control/settings"
+import {
+  parseDevMcpSettingsInvalidation,
+  parseDevRendererControlRequest,
+} from "../src/shared/dev-renderer-control"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -29,6 +34,16 @@ describe("dev MCP test-control registry", () => {
       "get_test_environment",
       "get_harness_status",
       "get_provider_status",
+      "get_credential_status",
+      "set_or_replace_credential",
+      "migrate_legacy_credential",
+      "remove_credential",
+      "get_settings_state",
+      "control_settings",
+      "get_visible_copy_search_state",
+      "select_test_chat",
+      "get_shortcut_state",
+      "mutate_shortcut_binding",
       "list_provider_extensions",
       "list_test_targets",
       "get_chat_state",
@@ -47,6 +62,10 @@ describe("dev MCP test-control registry", () => {
       "create_test_chat",
       "archive_test_chat",
       "mutate_project_provider_extension",
+      "get_permission_state",
+      "set_permission_default",
+      "set_chat_permission",
+      "preview_permission",
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
@@ -59,6 +78,59 @@ describe("dev MCP test-control registry", () => {
     ])
     expect(getDevMcpTool("get_harness_status")?.tier).toBe(0)
     expect(getDevMcpTool("run_project_check")?.tier).toBe(2)
+  })
+})
+
+describe("dev renderer Settings control boundary", () => {
+  it("accepts bounded Settings commands and rejects malformed project payloads", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.control",
+        operation: "navigate",
+        tab: "permissions",
+        targetId: "permissions-default",
+      }),
+    ).toMatchObject({ operation: "navigate", tab: "permissions" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.control",
+        operation: "select-project",
+        project: { id: "project-id", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only known Settings invalidation domains", () => {
+    expect(
+      parseDevMcpSettingsInvalidation({
+        domains: ["credentials", "credentials", "permissions"],
+      }),
+    ).toEqual({ domains: ["credentials", "permissions"] })
+    expect(parseDevMcpSettingsInvalidation({ domains: ["credentials", "filesystem"] })).toBeNull()
+    expect(parseDevMcpSettingsInvalidation({ domains: [] })).toBeNull()
+  })
+
+  it("accepts only bounded chat-selection identities from the main process", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: "/registered/project" },
+      }),
+    ).toMatchObject({ command: "chat.select", chatId: "chat-1", subChatId: "sub-chat-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
   })
 })
 
@@ -107,6 +179,32 @@ describe("dev MCP transport", () => {
       await client.connect(transport)
       const tools = await client.listTools()
       expect(tools.tools.map((tool) => tool.name)).toEqual(devMcpExposedToolNames)
+      const settings = await client.callTool({
+        name: "get_settings_state",
+        arguments: { query: "default permission", availableProviders: [] },
+      })
+      expect(settings.structuredContent).toMatchObject({
+        result: {
+          results: expect.arrayContaining([
+            expect.objectContaining({
+              tab: "permissions",
+              targetId: "permissions-default",
+            }),
+          ]),
+        },
+      })
+      const controlWithoutRenderer = await client.callTool({
+        name: "control_settings",
+        arguments: { operation: "open" },
+      })
+      expect(controlWithoutRenderer.isError).toBe(true)
+      expect(JSON.stringify(controlWithoutRenderer.content)).toContain("No live renderer")
+      const malformed = await client.callTool({
+        name: "set_or_replace_credential",
+        arguments: { id: "codex.api-key" },
+      })
+      expect(malformed.isError).toBe(true)
+      expect(JSON.stringify(malformed)).not.toContain('secret":')
       await transport.close()
     } finally {
       await handle?.stop()
@@ -156,6 +254,28 @@ describe("stored message helpers", () => {
 })
 
 describe("secret redaction", () => {
+  it("keeps dev copy/search inspection on the shared visible-content boundary", () => {
+    const state = buildVisibleCopySearchState(
+      JSON.stringify([
+        {
+          id: "message-1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "visible answer" },
+            { type: "reasoning", text: "visible reasoning" },
+            { type: "file-content", content: "never-return-file-secret" },
+            { type: "tool-Bash", input: { command: "never-return-command-secret" } },
+          ],
+        },
+      ]),
+      "reasoning",
+    )
+    expect(state).toMatchObject({ matchCount: 1 })
+    expect(state.messages[0]?.text).toContain("visible answer")
+    expect(state.messages[0]?.text).toContain("visible reasoning")
+    expect(JSON.stringify(state)).not.toContain("never-return")
+  })
+
   it("redacts common token shapes from command output", () => {
     expect(
       redactSecretLikeText(

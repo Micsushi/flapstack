@@ -53,12 +53,12 @@ export function isShortcutFocusAllowed(
 export function resolveRendererShortcut(
   event: KeyboardEvent,
   config: CustomHotkeysConfig,
-  options: { betaKanbanEnabled?: boolean } = {},
+  options: { availableActionIds?: ReadonlySet<string> } = {},
 ): ShortcutAction | null {
   const conflicts = detectConflicts(config)
   for (const action of ALL_SHORTCUT_ACTIONS) {
     if (action.dispatch !== "renderer") continue
-    if (action.availability === "kanban" && !options.betaKanbanEnabled) continue
+    if (options.availableActionIds && !options.availableActionIds.has(action.actionId)) continue
     if (conflicts.has(action.id)) continue
     if (!isShortcutFocusAllowed(action, event.target)) continue
     const hotkey = getResolvedHotkey(action.id, config)
@@ -77,8 +77,9 @@ export interface AgentsHotkeysManagerConfig {
   setFileSearchDialogOpen?: (open: boolean) => void
   toggleChatSearch?: () => void
   selectedChatId?: string | null
+  desktopView?: import("../atoms").DesktopView
+  hasSelectedProject?: boolean
   customHotkeysConfig?: CustomHotkeysConfig
-  betaKanbanEnabled?: boolean
 }
 
 export interface UseAgentsHotkeysOptions {
@@ -102,6 +103,8 @@ export function useAgentsHotkeys(
       setFileSearchDialogOpen: config.setFileSearchDialogOpen,
       toggleChatSearch: config.toggleChatSearch,
       selectedChatId: config.selectedChatId,
+      desktopView: config.desktopView,
+      hasSelectedProject: config.hasSelectedProject,
     }),
     [
       config.setSelectedChatId,
@@ -113,6 +116,8 @@ export function useAgentsHotkeys(
       config.setFileSearchDialogOpen,
       config.toggleChatSearch,
       config.selectedChatId,
+      config.desktopView,
+      config.hasSelectedProject,
     ],
   )
 
@@ -139,9 +144,11 @@ export function useAgentsHotkeys(
     if (!enabled) return
     const shortcutConfig = config.customHotkeysConfig ?? { version: 2, bindings: {} }
     const handleKeyDown = (event: KeyboardEvent) => {
-      const action = resolveRendererShortcut(event, shortcutConfig, {
-        betaKanbanEnabled: config.betaKanbanEnabled,
-      })
+      const context = createActionContext()
+      const availableActionIds = new Set(
+        getAvailableAgentActions(context).map((action) => action.id),
+      )
+      const action = resolveRendererShortcut(event, shortcutConfig, { availableActionIds })
       if (!action) return
       if (preventDefault) {
         event.preventDefault()
@@ -151,13 +158,7 @@ export function useAgentsHotkeys(
     }
     window.addEventListener("keydown", handleKeyDown, true)
     return () => window.removeEventListener("keydown", handleKeyDown, true)
-  }, [
-    config.betaKanbanEnabled,
-    config.customHotkeysConfig,
-    enabled,
-    handleHotkeyAction,
-    preventDefault,
-  ])
+  }, [config.customHotkeysConfig, createActionContext, enabled, handleHotkeyAction, preventDefault])
 
   return {
     executeAction: handleHotkeyAction,

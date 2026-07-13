@@ -112,6 +112,43 @@ are not complete.
       skipped, and the production build complete. Visual search/copy review,
       F8-F12 live acceptance, package checks, and Windows/Linux stay unchecked.
 
+### Settings closeout candidate evidence - 2026-07-13 PDT
+
+- Candidate: isolated `609c` worktree on
+  `codex/stage3-settings-live-closeout`, starting from
+  `d08502ec16764653df589894c7a1c6ecacc87ce9`.
+- Functional control: the loopback development test-control MCP requires its
+  random bearer token and mode-`0600` descriptor. It controls project/Settings
+  selection, shortcut state, credential lifecycle, provider extensions,
+  permissions, bounded visible copy/search, test-chat selection, and reversible
+  fixture cleanup. Renderer DTOs reject malformed commands; project and chat
+  paths resolve from persisted identities instead of caller-supplied paths.
+- Live MCP: exact `Flapstack Dev 609c` state covered Settings open/close,
+  navigation, search, project clear/reselect, hidden destinations, shortcut
+  set/conflict/restart/reset, disposable credential migration/removal,
+  content-redacted extension inventory and rooted project mutation, exact
+  custom permission persistence/preview, and visible-only chat search.
+- Real UI/OS under the shared lease: Keyboard pixels and accessibility,
+  custom-key delivery, composer-focus suppression, Cmd+F focus, Down/Enter
+  Settings search navigation, blank write-only credential fields, message
+  clipboard, and full-history clipboard passed. Functional setup and assertions
+  stayed MCP-first; Computer Use was limited to pixels, accessibility, focus,
+  and keyboard/clipboard delivery.
+- macOS development credential evidence reported the available Keychain backend
+  with a mode-`0600` ciphertext store and no disposable plaintext. This does not
+  promote packaged Keychain behavior.
+- Current unsigned macOS arm64 Preview build, architecture/resource/license
+  inspection, and bundled Claude/Codex/Whisper/Parakeet smoke pass. Current
+  Preview launch, packaged credential/provider discovery, Windows, and Linux
+  remain open.
+- Node 22.23.1 `npm run check` passed lint, formatting, TypeScript, 119 test
+  files with 879 passing and 3 skipped tests, and the production build. Strict
+  validation passed for Settings, global provider permissions, provider
+  harness closeout, and development test-control MCP. Release-ledger coverage
+  passed for 18 active changes, 323 scenarios, and 17 feature exits.
+- Result: S3-F8-T4 and S3-F10-T3 close on this candidate. S3-S01 through S3-S07
+  remain unchecked until their full feature exits and dependency rows close.
+
 2026-07-13 security repair evidence: the generic credential service and direct
 Settings endpoint retire old encrypted values before session-only replacement,
 including restart non-resurrection. Hidden current/legacy `file-content` is

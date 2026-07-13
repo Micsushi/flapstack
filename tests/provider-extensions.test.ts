@@ -203,7 +203,7 @@ describe("provider extension mutations", () => {
         source: "user",
         sourceId: skillPath,
         name: "with-assets",
-        description: "delete all provider-owned files",
+        description: "",
         content: "",
       },
       { homeDir: home },
@@ -297,7 +297,53 @@ describe("provider extension mutations", () => {
         },
         { homeDir: home },
       ),
-    ).rejects.toThrow("symbolic-link boundary")
+    ).rejects.toThrow("real directory")
+  })
+
+  it("revalidates the rooted parent after validation and before commit", async () => {
+    const home = temporaryRoot()
+    const outside = temporaryRoot()
+    const skillRoot = join(home, ".agents", "skills", "raced")
+    const outsideFile = join(outside, "SKILL.md")
+    write(join(skillRoot, "SKILL.md"), skill("raced"))
+    write(outsideFile, skill("outside"))
+
+    await expect(
+      mutateProviderExtension(
+        {
+          operation: "update",
+          provider: "codex",
+          kind: "skill",
+          source: "user",
+          sourceId: join(skillRoot, "SKILL.md"),
+          name: "raced",
+          description: "must stay rooted",
+          content: "must not escape",
+        },
+        {
+          homeDir: home,
+          beforeCommit: () => {
+            rmSync(skillRoot, { recursive: true })
+            symlinkSync(outside, skillRoot)
+          },
+        },
+      ),
+    ).rejects.toThrow("Write parent changed during commit")
+    expect(readFileSync(outsideFile, "utf8")).toBe(skill("outside"))
+  })
+
+  it("does not disclose content through a symlinked discovery file", async () => {
+    const home = temporaryRoot()
+    const outside = temporaryRoot()
+    const secret = "outside-secret-provider-content"
+    const skillRoot = join(home, ".agents", "skills", "linked")
+    mkdirSync(skillRoot, { recursive: true })
+    write(join(outside, "SKILL.md"), skill(secret))
+    symlinkSync(join(outside, "SKILL.md"), join(skillRoot, "SKILL.md"))
+
+    const inventory = await discoverProviderExtensions({ homeDir: home })
+    expect(JSON.stringify(inventory)).not.toContain(secret)
+    expect(inventory.find((item) => item.name === "linked")?.capabilities.discovery).toBe("unknown")
   })
 })
 
