@@ -209,15 +209,20 @@ const legacyEntries: SettingsSearchEntry[] = [
 ]
 
 export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
-  ...SETTINGS_TAB_REGISTRY.filter((entry) => entry.section !== "hidden").map((entry) => ({
-    id: `settings-page-${entry.id}`,
-    tab: entry.id,
-    label: entry.label,
-    description: entry.description,
-    keywords: entry.keywords,
-    targetId: `settings-tab-${entry.id}`,
-    developmentOnly: entry.section === "development" || undefined,
-  })),
+  ...SETTINGS_TAB_REGISTRY.filter((entry) => entry.section !== "hidden").map((entry) => {
+    const legacyPage = legacyEntries.find(
+      (candidate) => candidate.id === `settings-page-${entry.id}`,
+    )
+    return {
+      id: `settings-page-${entry.id}`,
+      tab: entry.id,
+      label: entry.label,
+      description: legacyPage?.description ?? entry.description,
+      keywords: [...new Set([...entry.keywords, ...(legacyPage?.keywords ?? [])])],
+      targetId: `settings-tab-${entry.id}`,
+      developmentOnly: entry.section === "development" || undefined,
+    }
+  }),
   ...legacyEntries.filter((entry) => !entry.id.startsWith("settings-page-")),
 ]
 
