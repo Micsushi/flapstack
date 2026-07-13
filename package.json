@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "node scripts/prepare-stt-sidecar.mjs && node scripts/ensure-native-abi.mjs electron && node scripts/dev.mjs",
     "dev:verify": "node scripts/verify-dev-instance.mjs",
+    "ui:lock": "node scripts/with-ui-lock.mjs",
+    "ui:lock:status": "node scripts/with-ui-lock.mjs --status",
     "build": "NODE_OPTIONS=--max-old-space-size=6144 node scripts/with-heavy-job-lock.mjs build -- electron-vite build",
     "preview": "electron-vite preview",
     "package": "node scripts/package-app.mjs --dir",

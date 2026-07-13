@@ -74,6 +74,12 @@ Every ten minutes while work remains:
    only when acceptance and verification both pass.
 8. Stop launching duplicate heavy gates while another worker owns the repository
    heavy-job lock.
+9. Before launching or controlling the live app, acquire the machine-wide UI
+   lease with `npm run ui:lock -- <lane-name>`. Keep that command running while
+   using Computer Use or other real UI controls, then press Ctrl-C to release
+   it. The command waits when another lane owns the UI and clears dead owners.
+   Use `npm run ui:lock:status` to inspect the current owner. Authenticated
+   test-control MCP/API and other headless checks do not need the UI lease.
 
 ## Review and fix rounds
 
