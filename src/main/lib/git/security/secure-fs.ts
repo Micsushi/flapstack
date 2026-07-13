@@ -1,6 +1,7 @@
 import type { Stats } from "node:fs"
-import { lstat, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, readFile, readlink, realpath, rm, stat } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { writeFileInsideRoot, type RootedWriteOptions } from "../../path-safety"
 import {
   assertRegisteredWorktree,
   PathValidationError,
@@ -282,14 +283,34 @@ export const secureFs = {
    *
    * @throws PathValidationError with code "SYMLINK_ESCAPE" if target escapes worktree
    */
-  async writeFile(worktreePath: string, filePath: string, content: string): Promise<void> {
+  async writeFile(
+    worktreePath: string,
+    filePath: string,
+    content: string,
+    options: Pick<RootedWriteOptions, "beforeCommit"> = {},
+  ): Promise<void> {
     assertRegisteredWorktree(worktreePath)
-    const fullPath = resolvePathInWorktree(worktreePath, filePath)
-
-    // Block writes through symlinks that escape the worktree
-    await assertRealpathInWorktree(worktreePath, fullPath)
-
-    await writeFile(fullPath, content, "utf-8")
+    // Preserve the public PathValidationError contract for lexical attacks.
+    resolvePathInWorktree(worktreePath, filePath)
+    try {
+      await writeFileInsideRoot(
+        worktreePath,
+        filePath,
+        { data: content },
+        {
+          overwrite: true,
+          beforeCommit: options.beforeCommit,
+        },
+      )
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /(symbolic link|escaped root|changed during commit|inode changed)/i.test(error.message)
+      ) {
+        throw new PathValidationError(error.message, "SYMLINK_ESCAPE")
+      }
+      throw error
+    }
   },
 
   /**

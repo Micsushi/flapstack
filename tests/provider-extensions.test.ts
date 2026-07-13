@@ -76,7 +76,7 @@ describe("provider extension contracts", () => {
     })
   })
 
-  it("discovers third-party MCP entries but excludes Flapstack product identities", async () => {
+  it("keeps reserved-name provider entries visible as third-party MCP", async () => {
     const home = temporaryRoot()
     write(
       join(home, ".codex", "config.toml"),
@@ -86,8 +86,13 @@ describe("provider extension contracts", () => {
     const mcp = (await discoverProviderExtensions({ homeDir: home })).filter(
       (item) => item.provider === "codex" && item.kind === "mcp",
     )
-    expect(mcp.map((item) => item.name)).toEqual(["third-party"])
-    expect(mcp[0]?.description).toBe("Third-party provider MCP configuration")
+    expect(mcp.map((item) => item.name)).toEqual(["flapstack", "third-party"])
+    expect(mcp.every((item) => item.description === "Third-party provider MCP configuration")).toBe(
+      true,
+    )
+    expect(mcp.find((item) => item.name === "flapstack")?.limitations).toContain(
+      "A reserved display name does not grant product or development-control privileges.",
+    )
   })
 
   it("refresh removes stale entries without touching provider files", async () => {

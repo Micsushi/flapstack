@@ -67,6 +67,7 @@ describe("legacy renderer credential migration", () => {
     expect(storage.getItem("onboarding:codex-api-key")).toBeNull()
     expect(storage.getItem("agents:openai-api-key")).not.toBeNull()
     expect(report.migrated).toEqual(["onboarding:codex-api-key"])
+    expect(report.retired).toEqual([])
     expect(report.retained).toEqual([
       {
         key: "agents:openai-api-key",
@@ -83,11 +84,36 @@ describe("legacy renderer credential migration", () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ["onboarding:codex-api-key", "sk-codex-stale"],
+    ["agents:openai-api-key", "sk-openai-stale"],
+    [
+      "agents:claude-custom-config",
+      JSON.stringify({ token: "sk-ant-stale", model: "claude-sonnet-5" }),
+    ],
+  ] as const)("retires a stale %s source instead of retrying it", async (key, value) => {
+    storage.setItem(key, key === "agents:claude-custom-config" ? value : JSON.stringify(value))
+    const mutate = vi.fn().mockResolvedValue({
+      acknowledged: false,
+      fingerprint: "111111111111",
+      retireSource: true,
+      warning: "newer replacement wins",
+    })
+
+    const report = await migrateLegacyCredentials(storage, {
+      credentials: { migrateLegacy: { mutate } },
+    })
+
+    expect(storage.getItem(key)).toBeNull()
+    expect(report).toEqual({ migrated: [], retired: [key], retained: [] })
+  })
+
   it("records only a non-secret migration acknowledgement for Settings", () => {
     const status = recordCredentialMigrationStatus(
       storage,
       {
         migrated: ["agents:openai-api-key"],
+        retired: [],
         retained: [{ key: "onboarding:codex-api-key", reason: "Secure storage unavailable" }],
       },
       () => 1234,
@@ -104,6 +130,7 @@ describe("legacy renderer credential migration", () => {
       storage,
       {
         migrated: [],
+        retired: [],
         retained: [{ key: "agents:openai-api-key", reason: "Keychain unavailable" }],
       },
       () => 10,
@@ -117,14 +144,14 @@ describe("legacy renderer credential migration", () => {
     )
 
     expect(storage.getItem("agents:openai-api-key")).toBeNull()
-    expect(next).toEqual({ migrated: [], retained: [], checkedAt: 11 })
+    expect(next).toEqual({ migrated: [], retired: [], retained: [], checkedAt: 11 })
   })
 
   it("refuses to discard an unknown or unretained storage key", () => {
     storage.setItem("unrelated-secret", "keep-me")
     recordCredentialMigrationStatus(
       storage,
-      { migrated: [], retained: [{ key: "unrelated-secret", reason: "unrelated" }] },
+      { migrated: [], retired: [], retained: [{ key: "unrelated-secret", reason: "unrelated" }] },
       () => 10,
     )
 

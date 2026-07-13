@@ -13,6 +13,21 @@ export type RootedWriteOptions = {
   beforeCommit?: (targetPath: string) => void | Promise<void>
 }
 
+export type RootedMutationOptions = {
+  /** Test seam for deterministic root/parent/final swap attacks. */
+  beforeCommit?: (targetPath: string) => void | Promise<void>
+}
+
+type ExistingPathSnapshot = {
+  lexicalRoot: string
+  realRoot: string
+  rootIdentity: FileIdentity
+  parentPath: string
+  parentIdentity: FileIdentity
+  targetPath: string
+  targetIdentity: FileIdentity
+}
+
 export function resolveInsideRoot(rootPath: string, targetRelativePath: string): string {
   if (targetRelativePath.includes("\0")) {
     throw new Error("Path contains invalid characters")
@@ -88,6 +103,7 @@ export async function writeFileInsideRoot(
   const lexicalRoot = resolve(rootPath)
   const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
   const realRoot = await realpath(lexicalRoot)
+  const rootIdentity = identity(await lstat(lexicalRoot))
   const targetPath = await prepareSafeWritePath(realRoot, relative(lexicalRoot, lexicalTarget))
   const parentPath = dirname(targetPath)
   const parentIdentity = identity(await lstat(parentPath))
@@ -99,11 +115,11 @@ export async function writeFileInsideRoot(
 
   if (!options.overwrite) {
     await options.beforeCommit?.(targetPath)
-    await validateRootAndParent(lexicalRoot, realRoot, parentPath, parentIdentity)
+    await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     const handle = await openNoFollowExclusive(targetPath)
     const createdIdentity = identity(await handle.stat())
     try {
-      await validateRootAndParent(lexicalRoot, realRoot, parentPath, parentIdentity)
+      await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
       await writeSource(handle, source)
       await handle.sync()
       const size = (await handle.stat()).size
@@ -111,6 +127,7 @@ export async function writeFileInsideRoot(
       await validateCommittedTarget(
         lexicalRoot,
         realRoot,
+        rootIdentity,
         parentPath,
         parentIdentity,
         targetPath,
@@ -134,13 +151,14 @@ export async function writeFileInsideRoot(
     const size = (await handle.stat()).size
     await handle.close()
     await options.beforeCommit?.(targetPath)
-    await validateRootAndParent(lexicalRoot, realRoot, parentPath, parentIdentity)
+    await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     await validateExpectedTarget(targetPath, initialTarget ? identity(initialTarget) : null)
     await rename(temporaryPath, targetPath)
     committed = true
     await validateCommittedTarget(
       lexicalRoot,
       realRoot,
+      rootIdentity,
       parentPath,
       parentIdentity,
       targetPath,
@@ -154,6 +172,54 @@ export async function writeFileInsideRoot(
     }
     throw error
   }
+}
+
+/** Rename an existing path without allowing the renderer to choose an absolute target. */
+export async function renamePathInsideRoot(
+  rootPath: string,
+  targetRelativePath: string,
+  newName: string,
+  options: RootedMutationOptions = {},
+): Promise<{ targetPath: string; newPath: string }> {
+  validateSinglePathSegment(newName)
+  const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
+  const newPath = resolveInsideRoot(snapshot.parentPath, newName)
+  if (dirname(newPath) !== snapshot.parentPath) throw new Error("Rename target must stay in parent")
+
+  await options.beforeCommit?.(snapshot.targetPath)
+  await validateExistingSnapshot(snapshot)
+  if (newPath === snapshot.targetPath) {
+    return { targetPath: snapshot.targetPath, newPath }
+  }
+  if (await lstatOrNull(newPath)) throw existsError()
+  await rename(snapshot.targetPath, newPath)
+
+  await validateRootAndParent(
+    snapshot.lexicalRoot,
+    snapshot.realRoot,
+    snapshot.rootIdentity,
+    snapshot.parentPath,
+    snapshot.parentIdentity,
+  )
+  await validateTargetIdentity(newPath, snapshot.targetIdentity)
+  return { targetPath: snapshot.targetPath, newPath }
+}
+
+/**
+ * Invoke an operation such as platform trash only after immediate rooted
+ * root/parent/final identity revalidation. The callback receives no
+ * user-controlled absolute path; it receives the verified rooted target.
+ */
+export async function actOnPathInsideRoot<T>(
+  rootPath: string,
+  targetRelativePath: string,
+  action: (targetPath: string) => Promise<T>,
+  options: RootedMutationOptions = {},
+): Promise<T> {
+  const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
+  await options.beforeCommit?.(snapshot.targetPath)
+  await validateExistingSnapshot(snapshot)
+  return action(snapshot.targetPath)
 }
 
 async function openNoFollowExclusive(path: string) {
@@ -172,9 +238,13 @@ async function writeSource(
 async function validateRootAndParent(
   lexicalRoot: string,
   realRoot: string,
+  expectedRoot: FileIdentity,
   parentPath: string,
   expectedParent: FileIdentity,
 ): Promise<void> {
+  if (!sameIdentity(identity(await lstat(lexicalRoot)), expectedRoot)) {
+    throw new Error("Write root inode changed during commit")
+  }
   if ((await realpath(lexicalRoot)) !== realRoot)
     throw new Error("Write root changed during commit")
   const parentInfo = await lstat(parentPath)
@@ -207,12 +277,13 @@ async function validateExpectedTarget(
 async function validateCommittedTarget(
   lexicalRoot: string,
   realRoot: string,
+  rootIdentity: FileIdentity,
   parentPath: string,
   parentIdentity: FileIdentity,
   targetPath: string,
   expectedTarget: FileIdentity,
 ): Promise<void> {
-  await validateRootAndParent(lexicalRoot, realRoot, parentPath, parentIdentity)
+  await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
   const info = await lstat(targetPath)
   if (info.isSymbolicLink() || !info.isFile() || !sameIdentity(identity(info), expectedTarget)) {
     throw new Error("Committed target inode changed")
@@ -220,6 +291,80 @@ async function validateCommittedTarget(
   const resolvedTarget = await realpath(targetPath)
   if (resolvedTarget !== realRoot && !resolvedTarget.startsWith(realRoot + sep)) {
     throw new Error("Committed target escaped root")
+  }
+}
+
+async function snapshotExistingPath(
+  rootPath: string,
+  targetRelativePath: string,
+): Promise<ExistingPathSnapshot> {
+  const lexicalRoot = resolve(rootPath)
+  const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
+  if (lexicalTarget === lexicalRoot) throw new Error("Cannot target root")
+  const rootInfo = await lstat(lexicalRoot)
+  const realRoot = await realpath(lexicalRoot)
+  const relativeTarget = relative(lexicalRoot, lexicalTarget)
+  const parentParts = relativeTarget.split(sep).slice(0, -1)
+  let parentPath = realRoot
+
+  for (const part of parentParts) {
+    parentPath = join(parentPath, part)
+    const info = await lstat(parentPath)
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error("Target parent must be a real directory")
+    }
+    const resolvedParent = await realpath(parentPath)
+    if (resolvedParent !== realRoot && !resolvedParent.startsWith(realRoot + sep)) {
+      throw new Error("Target parent escapes root")
+    }
+  }
+
+  const targetPath = join(parentPath, basename(lexicalTarget))
+  const targetInfo = await lstat(targetPath)
+  if (!targetInfo.isSymbolicLink()) {
+    const resolvedTarget = await realpath(targetPath)
+    if (resolvedTarget !== realRoot && !resolvedTarget.startsWith(realRoot + sep)) {
+      throw new Error("Target escapes root")
+    }
+  }
+
+  return {
+    lexicalRoot,
+    realRoot,
+    rootIdentity: identity(rootInfo),
+    parentPath,
+    parentIdentity: identity(await lstat(parentPath)),
+    targetPath,
+    targetIdentity: identity(targetInfo),
+  }
+}
+
+async function validateExistingSnapshot(snapshot: ExistingPathSnapshot): Promise<void> {
+  await validateRootAndParent(
+    snapshot.lexicalRoot,
+    snapshot.realRoot,
+    snapshot.rootIdentity,
+    snapshot.parentPath,
+    snapshot.parentIdentity,
+  )
+  await validateTargetIdentity(snapshot.targetPath, snapshot.targetIdentity)
+}
+
+async function validateTargetIdentity(path: string, expected: FileIdentity): Promise<void> {
+  const info = await lstat(path)
+  if (!sameIdentity(identity(info), expected)) throw new Error("Target inode changed during commit")
+}
+
+function validateSinglePathSegment(value: string): void {
+  if (
+    !value ||
+    value === "." ||
+    value === ".." ||
+    value.includes("\0") ||
+    value.includes("/") ||
+    value.includes("\\")
+  ) {
+    throw new Error("Name must be one safe path segment")
   }
 }
 

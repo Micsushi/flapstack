@@ -178,10 +178,10 @@ function appendLaunchAudit(
        FROM mcp_audit_records
        WHERE status = 'completed'
          AND tool_name IN ('launch_run', 'spawn_thread')
-         AND result_summary LIKE ?
+         AND (instr(result_summary, ?) > 0 OR instr(result_summary, ?) > 0)
        ORDER BY created_at DESC, id DESC LIMIT 1`,
     )
-    .get(`%${runId}%`) as Row | undefined
+    .get(createHash("sha256").update(runId).digest("hex"), runId) as Row | undefined
   if (!source) return
   db.prepare(
     `INSERT INTO mcp_audit_records (

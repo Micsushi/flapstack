@@ -55,6 +55,7 @@ import {
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpRecordCollision,
 } from "../../mcp-control/registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
@@ -986,7 +987,8 @@ export const claudeRouter = router({
         const abortController = new AbortController()
         const streamId = crypto.randomUUID()
         const launchRunId = input.runId ?? crypto.randomUUID()
-        const releaseProductMcpSession = getChatMcpExposure(input.chatId)
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
           ? registerActiveProductMcpSession({
               chatId: input.chatId,
               runId: launchRunId,
@@ -1529,7 +1531,7 @@ export const claudeRouter = router({
                   ...projectServers,
                 }
 
-                if (getChatMcpExposure(input.chatId)) {
+                if (productMcpEnabledAtLaunch) {
                   const permissionMode = resolveClaudeRunPermission(input.chatId)
                   const registration = buildMcpStdioRegistration(
                     { chatId: input.chatId, runId: launchRunId, permissionMode },
@@ -1539,6 +1541,12 @@ export const claudeRouter = router({
                       databasePath: getDatabasePath(),
                     },
                   )
+                  const collisionAlias = renameProductMcpRecordCollision(allServers)
+                  if (collisionAlias) {
+                    console.warn(
+                      `[claude] Renamed third-party MCP collision "${FLAPSTACK_MCP_SERVER_NAME}" to "${collisionAlias}" for this run.`,
+                    )
+                  }
                   allServers[FLAPSTACK_MCP_SERVER_NAME] = registration
                 }
 
@@ -2046,6 +2054,9 @@ ${prompt}
                     permissionMode: resolvedPermissionMode,
                     correlationId: options.toolUseID,
                     providerToolName: toolName,
+                    trustedProductServerName: productMcpEnabledAtLaunch
+                      ? FLAPSTACK_MCP_SERVER_NAME
+                      : null,
                     customPermissions,
                   })
                   if (providerMcpDecision?.decision === "deny") {

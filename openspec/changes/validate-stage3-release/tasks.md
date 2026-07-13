@@ -132,6 +132,12 @@ feature-local closeout gates.
   security/permissions review were repaired with attack regressions and gates.
   This is pre-completion hardening evidence only; it does not satisfy T4 or
   change the T2/T3 blockers above.
+- 2026-07-13 security repair round-2 note: nine further findings were repaired
+  with 101 focused adversarial tests and the Node 22 full gate (843 passed, 3
+  conditional skips). Five affected strict changes and the 323-scenario ledger
+  pass. No live, UI, package, provider, Keychain, Windows, or Linux row was
+  promoted. Claim-before-dispatch prevents blind retry but leaves
+  cross-resource exactly-once reconciliation as an explicit residual limit.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

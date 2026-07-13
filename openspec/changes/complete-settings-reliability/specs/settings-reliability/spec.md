@@ -161,6 +161,9 @@ main-process boundary.
   session-only replacement
 - **THEN** legacy file and OS-store sources are removed or durably tombstoned
   so restart cannot resurrect the replaced value
+- **AND** any retained failed-migration source for Codex, Voice, custom Claude,
+  or another supported provider is retired before the replacement becomes
+  authoritative
 
 #### Scenario: Concurrent credential mutations have one order
 
@@ -211,6 +214,14 @@ operations supported by that provider adapter.
 - **WHEN** Settings discovers an `mcp` provider extension
 - **THEN** it represents a third-party harness configuration and never merges
   with the product app-control or development test-control MCP identity
+
+#### Scenario: Third-party MCP uses a reserved display name
+
+- **WHEN** a third-party server is named `flapstack`
+- **THEN** its trusted provider origin and registration keep it classified as
+  third-party without product privileges
+- **AND** an ambiguous collision fails closed or requires an explicit rename
+  instead of silently reclassifying or deleting the user entry
 
 ### Requirement: Permission Mode Eligibility
 
@@ -289,3 +300,12 @@ render each control.
   curated alias
 - **THEN** search opens the same visible control and stable target represented
   by the registry
+
+#### Scenario: Hidden attachment content is represented as message JSON
+
+- **WHEN** current or legacy development-message JSON contains a hidden
+  `file-content` part
+- **THEN** visible rendering, Settings search, and clipboard/history export
+  sanitize the part before serialization or display
+- **AND** agent transport may retain the hidden payload only on its private
+  execution path

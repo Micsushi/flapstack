@@ -25,6 +25,11 @@ const require = createRequire(import.meta.url)
 const STORE_SCHEMA_VERSION = 1
 const STORE_FILE_NAME = "credentials.v1.json"
 const WEAK_BACKENDS = new Set(["basic_text", "plaintext", "unknown"])
+const LEGACY_SOURCE_CREDENTIAL_IDS = new Set<CredentialId>([
+  "codex.api-key",
+  "openai.voice-api-key",
+  "claude.custom-api-token",
+])
 
 type StoredCredential = {
   ciphertext: string
@@ -37,6 +42,7 @@ type StoredCredential = {
 type CredentialStoreFile = {
   schemaVersion: typeof STORE_SCHEMA_VERSION
   credentials: Partial<Record<CredentialId, StoredCredential>>
+  retiredLegacySources?: CredentialId[]
 }
 
 type SessionCredential = {
@@ -62,10 +68,11 @@ export type CredentialServiceOptions = {
 export type CredentialSetOptions = {
   metadata?: CredentialMetadata
   requirePersistence?: boolean
+  legacyMigration?: boolean
 }
 
 function emptyStore(): CredentialStoreFile {
-  return { schemaVersion: STORE_SCHEMA_VERSION, credentials: {} }
+  return { schemaVersion: STORE_SCHEMA_VERSION, credentials: {}, retiredLegacySources: [] }
 }
 
 export function credentialFingerprint(secret: string): string {
@@ -121,7 +128,25 @@ function parseStore(raw: string): CredentialStoreFile {
       throw new Error("Invalid credential store entry")
     }
   }
+  if (
+    parsed.retiredLegacySources !== undefined &&
+    (!Array.isArray(parsed.retiredLegacySources) ||
+      parsed.retiredLegacySources.some(
+        (id) => typeof id !== "string" || !(CREDENTIAL_IDS as readonly string[]).includes(id),
+      ))
+  ) {
+    throw new Error("Invalid retired legacy credential source inventory")
+  }
   return parsed as CredentialStoreFile
+}
+
+function retireLegacySourceInStore(store: CredentialStoreFile, id: CredentialId): boolean {
+  if (!LEGACY_SOURCE_CREDENTIAL_IDS.has(id)) return false
+  const retired = new Set(store.retiredLegacySources ?? [])
+  if (retired.has(id)) return false
+  retired.add(id)
+  store.retiredLegacySources = [...retired]
+  return true
 }
 
 function defaultStorageDir(): string {
@@ -221,6 +246,7 @@ export class CredentialService {
     const updatedAt = this.now()
     const metadata = sanitizeMetadata(options.metadata)
     const inspected = this.encryption.inspect()
+    const retireLegacySource = !options.legacyMigration && LEGACY_SOURCE_CREDENTIAL_IDS.has(id)
 
     if (!inspected.available) {
       return this.setSessionOnlyAfterDurableRetirement(
@@ -230,6 +256,7 @@ export class CredentialService {
         updatedAt,
         metadata,
         inspected.warning,
+        retireLegacySource,
       )
     }
 
@@ -238,6 +265,7 @@ export class CredentialService {
       const verified = this.encryption.decrypt(ciphertext)
       if (verified !== secret) throw new Error("Encrypted credential verification failed")
       const store = this.readStoreStrict()
+      if (retireLegacySource) retireLegacySourceInStore(store, id)
       store.credentials[id] = {
         ciphertext: ciphertext.toString("base64"),
         fingerprint,
@@ -270,6 +298,7 @@ export class CredentialService {
         updatedAt,
         metadata,
         warning,
+        retireLegacySource,
       )
       if (options.requirePersistence) return { ...result, acknowledged: false }
       return result
@@ -306,10 +335,15 @@ export class CredentialService {
     updatedAt: number,
     metadata: CredentialMetadata | undefined,
     warning?: string,
+    retireLegacySource = false,
   ): CredentialWriteAcknowledgement {
     const store = this.readStoreStrict()
+    let storeChanged = retireLegacySource ? retireLegacySourceInStore(store, id) : false
     if (store.credentials[id]) {
       delete store.credentials[id]
+      storeChanged = true
+    }
+    if (storeChanged) {
       try {
         this.writeStoreAtomic(store)
       } catch {
@@ -319,6 +353,15 @@ export class CredentialService {
       }
     }
     return this.setSessionOnly(id, secret, fingerprint, updatedAt, metadata, warning)
+  }
+
+  isLegacySourceRetired(id: CredentialId): boolean {
+    return (this.readStoreStrict().retiredLegacySources ?? []).includes(id)
+  }
+
+  retireLegacySource(id: CredentialId): void {
+    const store = this.readStoreStrict()
+    if (retireLegacySourceInStore(store, id)) this.writeStoreAtomic(store)
   }
 
   resolve(id: CredentialId): string | null {

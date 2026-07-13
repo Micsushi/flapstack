@@ -15,6 +15,7 @@ import { trpc } from "../../lib/trpc"
 
 const decisions = [
   "allowed",
+  "dispatch-started",
   "denied",
   "approval-required",
   "timed-out",

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm"
+import { and, eq, inArray } from "drizzle-orm"
 import { agentRuns, chats, getDatabase, subChats } from "../db"
 
 type ActiveProductMcpSession = {
@@ -50,6 +50,8 @@ export function setChatMcpExposure(chatId: string, enabled: boolean): boolean {
   if (enabled && !getChatMcpExposureStatus(chatId).supported) {
     throw new Error("Flapstack MCP is supported only for Codex and Claude chats")
   }
+  const productSessions = enabled ? [] : activeSessionsForChat(chatId)
+  const productRunIds = [...new Set(productSessions.map(([, session]) => session.runId))]
   const updated = getDatabase().transaction((tx) => {
     const result = tx
       .update(chats)
@@ -61,17 +63,44 @@ export function setChatMcpExposure(chatId: string, enabled: boolean): boolean {
     if (!result.enabled) {
       // Invalidate launcher-owned child identities in the same durable commit as
       // exposure. A quick disable/re-enable must not revive an old stdio child.
-      const running = tx
-        .select({ subChatId: agentRuns.subChatId })
-        .from(agentRuns)
-        .where(and(eq(agentRuns.chatId, chatId), eq(agentRuns.status, "running")))
-        .all()
-      tx.update(agentRuns)
-        .set({ status: "cancelled", completedAt: new Date() })
-        .where(and(eq(agentRuns.chatId, chatId), eq(agentRuns.status, "running")))
-        .run()
+      const running =
+        productRunIds.length === 0
+          ? []
+          : tx
+              .select({ subChatId: agentRuns.subChatId })
+              .from(agentRuns)
+              .where(
+                and(
+                  eq(agentRuns.chatId, chatId),
+                  eq(agentRuns.status, "running"),
+                  inArray(agentRuns.id, productRunIds),
+                ),
+              )
+              .all()
+      if (productRunIds.length > 0) {
+        tx.update(agentRuns)
+          .set({ status: "cancelled", completedAt: new Date() })
+          .where(
+            and(
+              eq(agentRuns.chatId, chatId),
+              eq(agentRuns.status, "running"),
+              inArray(agentRuns.id, productRunIds),
+            ),
+          )
+          .run()
+      }
       for (const subChatId of new Set(running.map((run) => run.subChatId).filter(Boolean))) {
-        tx.update(subChats).set({ runStatus: "cancelled" }).where(eq(subChats.id, subChatId!)).run()
+        const stillRunning = tx
+          .select({ id: agentRuns.id })
+          .from(agentRuns)
+          .where(and(eq(agentRuns.subChatId, subChatId!), eq(agentRuns.status, "running")))
+          .get()
+        if (!stillRunning) {
+          tx.update(subChats)
+            .set({ runStatus: "cancelled" })
+            .where(eq(subChats.id, subChatId!))
+            .run()
+        }
       }
     }
     return result
@@ -90,9 +119,7 @@ export function registerActiveProductMcpSession(session: ActiveProductMcpSession
 }
 
 export function revokeActiveProductMcpSessions(chatId: string): number {
-  const matches = [...activeProductMcpSessions.entries()].filter(
-    ([, session]) => session.chatId === chatId,
-  )
+  const matches = activeSessionsForChat(chatId)
   for (const [key, session] of matches) {
     activeProductMcpSessions.delete(key)
     try {
@@ -103,6 +130,10 @@ export function revokeActiveProductMcpSessions(chatId: string): number {
     }
   }
   return matches.length
+}
+
+function activeSessionsForChat(chatId: string): Array<[string, ActiveProductMcpSession]> {
+  return [...activeProductMcpSessions.entries()].filter(([, session]) => session.chatId === chatId)
 }
 
 export function resetActiveProductMcpSessionsForTests(): void {

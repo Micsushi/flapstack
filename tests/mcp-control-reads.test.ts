@@ -8,6 +8,7 @@ import { createMcpReadService, type McpReadStore } from "../src/main/lib/mcp-con
 
 let directory = ""
 let sqlite: Database.Database
+const durableAudit = { append: () => undefined }
 
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "flapstack-mcp-reads-"))
@@ -24,7 +25,9 @@ describe("MCP Tier 0 reads", () => {
   it("returns compact scoped DTOs and bounded pagination", async () => {
     const service = createMcpReadService(store(sqlite))
     const caller = { chatId: "chat-a", runId: "run-a", permissionMode: "read-only" }
-    const projects = await invokeMcpControlTool("list_projects", caller, { limit: 1 }, service)
+    const projects = await invokeMcpControlTool("list_projects", caller, { limit: 1 }, service, {
+      audit: durableAudit,
+    })
     expect(projects).toEqual({
       ok: true,
       data: {
@@ -40,29 +43,39 @@ describe("MCP Tier 0 reads", () => {
       },
     })
 
-    await expect(invokeMcpControlTool("list_tasks", caller, {}, service)).resolves.toMatchObject({
+    await expect(
+      invokeMcpControlTool("list_tasks", caller, {}, service, { audit: durableAudit }),
+    ).resolves.toMatchObject({
       ok: true,
       data: { items: [{ id: "task-a", project: { id: "project-a" } }] },
     })
-    await expect(invokeMcpControlTool("list_chats", caller, {}, service)).resolves.toMatchObject({
+    await expect(
+      invokeMcpControlTool("list_chats", caller, {}, service, { audit: durableAudit }),
+    ).resolves.toMatchObject({
       ok: true,
       data: { items: [{ id: "chat-a", task: { id: "task-a" } }] },
     })
 
-    const runs = await invokeMcpControlTool("list_runs", caller, { limit: 1 }, service)
+    const runs = await invokeMcpControlTool("list_runs", caller, { limit: 1 }, service, {
+      audit: durableAudit,
+    })
     expect(runs).toMatchObject({
       ok: true,
       data: { items: [{ id: "run-a", chat: { id: "chat-a" }, status: "success" }] },
     })
     expect(JSON.stringify(runs)).not.toContain("super-secret")
 
-    const worktrees = await invokeMcpControlTool("list_worktrees", caller, {}, service)
+    const worktrees = await invokeMcpControlTool("list_worktrees", caller, {}, service, {
+      audit: durableAudit,
+    })
     expect(worktrees).toMatchObject({
       ok: true,
       data: { items: [{ path: "/safe/worktree", branch: "feature/a" }] },
     })
 
-    const artifacts = await invokeMcpControlTool("list_artifacts", caller, {}, service)
+    const artifacts = await invokeMcpControlTool("list_artifacts", caller, {}, service, {
+      audit: durableAudit,
+    })
     expect(artifacts).toMatchObject({
       ok: true,
       data: {
@@ -82,19 +95,27 @@ describe("MCP Tier 0 reads", () => {
     const service = createMcpReadService(store(sqlite))
     const caller = { chatId: "chat-a", permissionMode: "read-only" }
     await expect(
-      invokeMcpControlTool("list_chats", caller, { limit: 51 }, service),
+      invokeMcpControlTool("list_chats", caller, { limit: 51 }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toMatchObject({ ok: false, error: { code: "invalid-input" } })
     await expect(
-      invokeMcpControlTool("list_tasks", caller, { projectId: "project-b" }, service),
+      invokeMcpControlTool("list_tasks", caller, { projectId: "project-b" }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toEqual({
       ok: false,
       error: { code: "out-of-scope", message: "Project is outside the caller scope." },
     })
     await expect(
-      invokeMcpControlTool("list_runs", caller, { chatId: "chat-b" }, service),
+      invokeMcpControlTool("list_runs", caller, { chatId: "chat-b" }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toMatchObject({ ok: false, error: { code: "out-of-scope" } })
     await expect(
-      invokeMcpControlTool("search", caller, { query: "   " }, service),
+      invokeMcpControlTool("search", caller, { query: "   " }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toMatchObject({ ok: false, error: { code: "invalid-input" } })
   })
 
@@ -102,10 +123,14 @@ describe("MCP Tier 0 reads", () => {
     const service = createMcpReadService(store(sqlite))
     const caller = { chatId: "chat-a", permissionMode: "read-only" }
     await expect(
-      invokeMcpControlTool("search", caller, { query: "Visible chat" }, service),
+      invokeMcpControlTool("search", caller, { query: "Visible chat" }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toMatchObject({ ok: true, data: { items: [{ id: "chat-a", type: "chat" }] } })
     await expect(
-      invokeMcpControlTool("search", caller, { query: "super-secret" }, service),
+      invokeMcpControlTool("search", caller, { query: "super-secret" }, service, {
+        audit: durableAudit,
+      }),
     ).resolves.toEqual({ ok: true, data: { items: [], nextCursor: null } })
   })
 })

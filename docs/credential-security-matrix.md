@@ -15,7 +15,7 @@ fixtures. No provider credential is recorded here.
 | Migration acknowledgement                                                                   | PASS   | Settings receives only migrated/retained key names and redacted reasons; automatic migration clears a source only after encrypted acknowledgement, while explicit discard is allowlisted and confirmed |
 | Search and ownership                                                                        | PASS   | Credential aliases open exact API Providers rows; Voice and Models route management there and do not own plaintext editors                                                                             |
 | Preview executable helper                                                                   | PASS   | Preview inspection reads `CFBundleExecutable`; stale cleanup matches `Flapstack Preview.app/Contents/MacOS/Flapstack Preview`                                                                          |
-| Session replacement retirement                                                              | PASS   | Generic service and direct Settings endpoint tests remove the old encrypted entry before session-only acceptance; restart cannot resurrect it, and unreadable/unwritable retirement fails closed       |
+| Replacement and retained-source retirement                                                  | PASS   | Generic/direct Settings paths durably tombstone accepted replacements; restart fixtures cover Codex, Voice, and custom Claude, including retained failed migrations and encrypted/session-only values  |
 
 ## Verified development evidence
 
@@ -49,7 +49,7 @@ fixtures. No provider credential is recorded here.
 
 - Automated local fixtures prove prior-store preservation on corrupt writes,
   fail-closed retirement before session-only replacement, restart
-  non-resurrection, and safe removal. Packaged restore/re-entry was not
-  exercised.
+  non-resurrection, retained-source tombstones, and safe removal. Focused Node
+  22 security round-2 tests pass. Packaged restore/re-entry was not exercised.
 - Windows Credential Manager and Linux Secret Service remain untested.
 - No Windows or Linux package claim is inferred from macOS.

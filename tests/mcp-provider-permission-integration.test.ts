@@ -10,6 +10,7 @@ describe("provider and product MCP permission integration", () => {
         permissionMode: "read-only",
         correlationId: "read",
         providerToolName: "mcp__flapstack__list_projects",
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({
       source: "product",
@@ -24,6 +25,7 @@ describe("provider and product MCP permission integration", () => {
         permissionMode: "read-only",
         correlationId: "write",
         providerToolName: "mcp__flapstack__create_chat",
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({ source: "product", decision: "deny", tool: { tier: 1 } })
 
@@ -40,6 +42,7 @@ describe("provider and product MCP permission integration", () => {
         permissionMode: "full-access",
         correlationId: "unknown",
         providerToolName: "mcp__flapstack__invented_tool",
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({ source: "unknown-product", decision: "deny", tool: null })
   })
@@ -51,6 +54,7 @@ describe("provider and product MCP permission integration", () => {
         correlationId: "codex-product-call",
         metadata: { serverName: "flapstack" },
         isMcpToolApproval: true,
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({
       source: "product",
@@ -84,6 +88,7 @@ describe("provider and product MCP permission integration", () => {
       permissionMode: "ask-before-edits",
       correlationId,
       providerToolName: "mcp__flapstack__create_chat",
+      trustedProductServerName: "flapstack",
     })
     expect(providerDecision).toMatchObject({
       decision: "allow",
@@ -126,6 +131,7 @@ describe("provider and product MCP permission integration", () => {
         permissionMode: "full-access",
         correlationId: "tier3-provider",
         providerToolName: "mcp__flapstack__launch_run",
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({
       decision: "allow",
@@ -164,5 +170,32 @@ describe("provider and product MCP permission integration", () => {
       error: { code: "approval-denied" },
     })
     approvals.shutdown()
+  })
+
+  it("treats an untrusted reserved-name server as third-party and fails closed", () => {
+    expect(
+      resolveProviderMcpPermission({
+        permissionMode: "read-only",
+        correlationId: "spoofed-product",
+        providerToolName: "mcp__flapstack__list_projects",
+      }),
+    ).toMatchObject({ source: "third-party", decision: "deny", productGateRequired: false })
+
+    expect(
+      resolveProviderMcpPermission({
+        permissionMode: "full-access",
+        correlationId: "user-third-party",
+        providerToolName: "mcp__flapstack__list_projects",
+      }),
+    ).toMatchObject({ source: "third-party", decision: "allow", productGateRequired: false })
+
+    expect(
+      resolveProviderMcpPermission({
+        permissionMode: "read-only",
+        correlationId: "spoofed-codex-product",
+        metadata: { serverName: "flapstack" },
+        isMcpToolApproval: true,
+      }),
+    ).toMatchObject({ source: "third-party", decision: "deny" })
   })
 })

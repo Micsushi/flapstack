@@ -6,7 +6,7 @@ import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
-import { appendMcpAuditRecord } from "./audit-storage"
+import { appendMcpAuditRecord, findUnresolvedMcpDispatch } from "./audit-storage"
 import { getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
@@ -52,6 +52,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
               appendMcpAuditRecord(getDatabase(), record)
               publish({ version: 1, source: "product-mcp", domains: ["audit"] })
             },
+            findUnresolvedDispatch: (lookup) => findUnresolvedMcpDispatch(getDatabase(), lookup),
           },
           mutations,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),

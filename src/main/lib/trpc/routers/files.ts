@@ -1,10 +1,14 @@
 import { z } from "zod"
 import { router, publicProcedure } from "../index"
-import { readdir, stat, readFile, writeFile, mkdir, rename as fsRename, rm } from "node:fs/promises"
-import { join, relative, basename, extname, dirname, resolve, isAbsolute } from "node:path"
+import { readdir, stat, readFile } from "node:fs/promises"
+import { join, relative, basename, extname } from "node:path"
 import { app, shell } from "electron"
 import { watch } from "node:fs"
 import { observable } from "@trpc/server/observable"
+import { eq } from "drizzle-orm"
+import { getDatabase, subChats } from "../../db"
+import { actOnPathInsideRoot, renamePathInsideRoot, writeFileInsideRoot } from "../../path-safety"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
 
 // Directories to ignore when scanning
 const IGNORED_DIRS = new Set([
@@ -65,26 +69,6 @@ interface FileEntry {
 const MAX_CACHE_ENTRIES = 20
 const fileListCache = new Map<string, { entries: FileEntry[]; timestamp: number }>()
 const CACHE_TTL = 5000 // 5 seconds
-
-/**
- * Validate that a path doesn't contain path traversal attacks.
- * Checks for null bytes and ensures the resolved path stays within the expected parent.
- */
-function validatePathSafe(targetPath: string, allowedParent?: string): void {
-  if (targetPath.includes("\0")) {
-    throw new Error("Path contains invalid characters")
-  }
-  if (!isAbsolute(targetPath)) {
-    throw new Error("Path must be absolute")
-  }
-  const resolved = resolve(targetPath)
-  if (allowedParent) {
-    const resolvedParent = resolve(allowedParent)
-    if (!resolved.startsWith(resolvedParent + "/") && resolved !== resolvedParent) {
-      throw new Error("Path escapes allowed directory")
-    }
-  }
-}
 
 function validateFileName(name: string): void {
   if (name.includes("/") || name.includes("\\")) {
@@ -443,10 +427,17 @@ export const filesRouter = router({
     .mutation(async ({ input }) => {
       const { subChatId, text, filename } = input
 
-      // Create pasted directory in session folder
-      const sessionDir = join(app.getPath("userData"), "claude-sessions", subChatId)
-      const pastedDir = join(sessionDir, "pasted")
-      await mkdir(pastedDir, { recursive: true })
+      // subChatId is both an ownership key and a path component. Require the
+      // durable row first, then constrain it to one path segment.
+      const subChat = getDatabase()
+        .select({ id: subChats.id })
+        .from(subChats)
+        .where(eq(subChats.id, subChatId))
+        .get()
+      if (!subChat) throw new Error("Sub-chat not found")
+      validateFileName(subChat.id)
+
+      const userDataRoot = app.getPath("userData")
 
       // Generate filename with timestamp
       const finalFilename = filename || `pasted_${Date.now()}.txt`
@@ -454,13 +445,12 @@ export const filesRouter = router({
       // Validate filename doesn't contain path separators or null bytes
       validateFileName(finalFilename)
 
-      const filePath = join(pastedDir, finalFilename)
-
-      // Ensure the resolved path stays within the pasted directory
-      validatePathSafe(filePath, pastedDir)
-
-      // Write file
-      await writeFile(filePath, text, "utf-8")
+      const { targetPath: filePath } = await writeFileInsideRoot(
+        userDataRoot,
+        join("claude-sessions", subChat.id, "pasted", finalFilename),
+        { data: text },
+        { overwrite: true },
+      )
 
       console.log(`[files] Wrote pasted text to ${filePath} (${text.length} bytes)`)
 
@@ -477,23 +467,18 @@ export const filesRouter = router({
   renameFile: publicProcedure
     .input(
       z.object({
-        absolutePath: z.string(),
+        worktreePath: z.string(),
+        relativePath: z.string(),
         newName: z.string().min(1),
       }),
     )
     .mutation(async ({ input }) => {
-      const { absolutePath, newName } = input
-
-      validatePathSafe(absolutePath)
-      validateFileName(newName)
-
-      const dir = dirname(absolutePath)
-      const newPath = join(dir, newName)
-
-      // Ensure the new path stays in the same directory
-      validatePathSafe(newPath, dir)
-
-      await fsRename(absolutePath, newPath)
+      assertRegisteredWorktree(input.worktreePath)
+      const { newPath } = await renamePathInsideRoot(
+        input.worktreePath,
+        input.relativePath,
+        input.newName,
+      )
       return { success: true, newPath }
     }),
 
@@ -503,12 +488,15 @@ export const filesRouter = router({
   deleteFile: publicProcedure
     .input(
       z.object({
-        absolutePath: z.string(),
+        worktreePath: z.string(),
+        relativePath: z.string(),
       }),
     )
     .mutation(async ({ input }) => {
-      validatePathSafe(input.absolutePath)
-      await shell.trashItem(input.absolutePath)
+      assertRegisteredWorktree(input.worktreePath)
+      await actOnPathInsideRoot(input.worktreePath, input.relativePath, (targetPath) =>
+        shell.trashItem(targetPath),
+      )
       return { success: true }
     }),
 })

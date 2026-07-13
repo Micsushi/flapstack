@@ -378,3 +378,28 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   re-enable/new identity, audit disk/table/lock failure with zero mutation,
   completion reconciliation, and adversarial parent/final filesystem swaps.
   The Node 22 full gate and strict change validation pass on the repair tree.
+
+## 2026-07-13 security and permissions repair round-2 evidence
+
+- S3-F2-T4/S3-F3-T5: product classification now requires launcher-owned
+  registration identity. A user third-party server named `flapstack` remains
+  third-party and receives an explicit collision alias when product MCP is
+  installed for the same run.
+- S3-F2-T4: disabling exposure cancels and revokes only live runs registered as
+  product-MCP-enabled children. Ordinary provider runs and their durable/live
+  sub-chat state remain running.
+- S3-F4-T1/T2: Tier 0 through Tier 3 all require a durable pre-dispatch
+  `dispatch-started` claim. Terminal append failure returns its invocation ID,
+  and an exact unresolved retry is blocked pending reconciliation. Arbitrary
+  audit strings and unknown keys hash by default; a broad provider, cloud,
+  URL/path, environment, PEM, JWT, and database secret corpus is covered.
+- S3-F2-T5: files-router pasted-text, rename, and trash operations require a
+  durable sub-chat or registered worktree plus relative rooted targets.
+  Renderer secure-fs writes use the shared rooted writer. Traversal,
+  absolute-path, symlink, root/parent/final swap, and identity attacks fail.
+- Node 22 focused attacks passed 101/101 across 17 files. The full gate passed 113
+  files with 843 tests passed and 3 conditional skips, plus lint, formatting,
+  TypeScript, and build. The affected strict changes and 323-scenario ledger
+  pass. S3-F6-T4 remains unchecked because live UI/platform acceptance is open.
+- Claim-before-dispatch blocks blind retry but cannot provide cross-resource
+  exactly-once behavior if the process dies between claim and handler.

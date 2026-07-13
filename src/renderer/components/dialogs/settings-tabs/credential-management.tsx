@@ -274,9 +274,11 @@ function MigrationAcknowledgement({
   return (
     <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
       Legacy credential check complete.
-      {status.migrated.length > 0
-        ? ` ${status.migrated.length} renderer credential${status.migrated.length === 1 ? " was" : "s were"} moved only after encrypted persistence was acknowledged.`
-        : " No legacy renderer credential needed migration."}
+      {status.retired.length > 0
+        ? ` ${status.retired.length} stale legacy source${status.retired.length === 1 ? " was" : "s were"} retired because a newer replacement exists.`
+        : status.migrated.length > 0
+          ? ` ${status.migrated.length} renderer credential${status.migrated.length === 1 ? " was" : "s were"} moved only after encrypted persistence was acknowledged.`
+          : " No legacy renderer credential needed migration."}
     </div>
   )
 }

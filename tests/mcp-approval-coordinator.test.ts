@@ -47,7 +47,7 @@ describe("MCP approval renderer coordination", () => {
         chatId: "chat-1",
         toolName: "archive_chat",
         risk: 2,
-        targetLabel: "chatId: chat-2",
+        targetLabel: expect.stringMatching(/^chatId: sha256:[a-f0-9]{64} bytes:6$/),
         inputSummary: expect.stringContaining("contextHash"),
       },
     ])

@@ -138,6 +138,16 @@ describe("MCP audit storage", () => {
   })
 
   it("redacts credential-like keys, hidden reasoning, and bounded secret-looking strings", () => {
+    const secretCorpus = [
+      "AKIAIOSFODNN7EXAMPLE",
+      "/tmp/client-secret-plain-value",
+      "xoxb-123456789-secret",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature",
+      "AIzaSyD-example-google-key",
+      "-----BEGIN PRIVATE KEY----- secret-material",
+      "postgres://user:password@example.test/database",
+      "https://example.test/callback/client-secret-plain-value",
+    ]
     const summary = redactMcpAuditSummary({
       token: "top-secret",
       hiddenReasoning: "never persist",
@@ -148,6 +158,7 @@ describe("MCP audit storage", () => {
       basic: "Basic dXNlcjpwYXNz",
       url: "https://user:password@example.test/v1?token=query-secret#fragment",
       nested: { arbitrary: ".env SECRET_TOKEN=deep-secret" },
+      corpus: secretCorpus,
     })
     expect(summary).toContain("[REDACTED]")
     expect(summary).not.toContain("top-secret")
@@ -162,9 +173,11 @@ describe("MCP audit storage", () => {
       "password",
       "query-secret",
       "deep-secret",
+      ...secretCorpus,
     ]) {
       expect(summary).not.toContain(secret)
     }
+    expect(summary).toContain("sha256")
   })
 
   it("stores attachment name, size, and hash without durable contentText", () => {
@@ -182,8 +195,24 @@ describe("MCP audit storage", () => {
       .get("attachment-audit") as { input_summary: string }
     expect(row.input_summary).toContain("byteLength")
     expect(row.input_summary).toContain("sha256")
-    expect(row.input_summary).toContain(".env")
+    expect(row.input_summary).not.toContain(".env")
     expect(row.input_summary).not.toContain(contentText)
     expect(row.input_summary).not.toContain("never-persist")
+  })
+
+  it("hashes arbitrary allowlisted-looking strings instead of trusting their shape", () => {
+    const values = {
+      projectId: "AKIAIOSFODNN7EXAMPLE",
+      worktreePath: "/tmp/client-secret-plain-value",
+      targetRelativePath: "oauth/client-secret-plain-value.json",
+      idempotencyKey: "Bearer recoverable-secret",
+    }
+    const summary = redactMcpAuditSummary(values)
+    for (const value of Object.values(values)) expect(summary).not.toContain(value)
+    expect(summary.match(/sha256/g)?.length).toBe(4)
+
+    const secretKeyName = redactMcpAuditSummary({ AKIAIOSFODNN7EXAMPLE: "value" })
+    expect(secretKeyName).not.toContain("AKIAIOSFODNN7EXAMPLE")
+    expect(secretKeyName).toMatch(/field_[a-f0-9]{16}/)
   })
 })

@@ -72,9 +72,25 @@ export const credentialsRouter = router({
           warning: "Legacy migration fingerprint did not match. The source was not cleared.",
         }
       }
-      return getCredentialService().set(input.id, input.secret, {
+      const service = getCredentialService()
+      const current = service.status(input.id)
+      if (service.isLegacySourceRetired(input.id) || current.configured) {
+        service.retireLegacySource(input.id)
+        const alreadyMigrated =
+          current.persistence === "encrypted" && current.fingerprint === actualFingerprint
+        return {
+          ...current,
+          acknowledged: alreadyMigrated,
+          retireSource: true,
+          warning: alreadyMigrated
+            ? undefined
+            : "A newer credential already replaced this legacy source. The stale source was retired without being retried.",
+        }
+      }
+      return service.set(input.id, input.secret, {
         metadata: input.metadata,
         requirePersistence: true,
+        legacyMigration: true,
       })
     }),
 

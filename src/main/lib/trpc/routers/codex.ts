@@ -53,6 +53,7 @@ import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-c
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpServerCollisions,
 } from "../../mcp-control/registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
@@ -1847,7 +1848,8 @@ export const codexRouter = router({
         }
 
         const abortController = new AbortController()
-        const releaseProductMcpSession = getChatMcpExposure(input.chatId)
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
           ? registerActiveProductMcpSession({
               chatId: input.chatId,
               runId: input.runId,
@@ -2087,7 +2089,7 @@ export const codexRouter = router({
               mcpSnapshot = await resolveCodexMcpSnapshot({
                 lookupPath: mcpLookupPath,
               })
-              if (getChatMcpExposure(input.chatId)) {
+              if (productMcpEnabledAtLaunch) {
                 const registration = buildMcpStdioRegistration(
                   { chatId: input.chatId, runId: input.runId, permissionMode },
                   {
@@ -2096,6 +2098,14 @@ export const codexRouter = router({
                     databasePath: getDatabasePath(),
                   },
                 )
+                const collisionAliases = renameProductMcpServerCollisions(
+                  mcpSnapshot.mcpServersForSession,
+                )
+                if (collisionAliases.length > 0) {
+                  console.warn(
+                    `[codex] Renamed third-party MCP collision "${FLAPSTACK_MCP_SERVER_NAME}" to ${collisionAliases.join(", ")} for this run.`,
+                  )
+                }
                 mcpSnapshot.mcpServersForSession.push({
                   name: FLAPSTACK_MCP_SERVER_NAME,
                   type: "stdio",
@@ -2116,6 +2126,9 @@ export const codexRouter = router({
                 providerToolName: request.toolCall.title,
                 metadata: request.toolCall.rawInput ?? request._meta,
                 isMcpToolApproval: request._meta?.is_mcp_tool_approval === true,
+                trustedProductServerName: productMcpEnabledAtLaunch
+                  ? FLAPSTACK_MCP_SERVER_NAME
+                  : null,
                 customPermissions,
               })
               if (providerMcpDecision?.decision === "deny") {

@@ -5,7 +5,10 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
+import {
+  appendMcpAuditRecord,
+  findUnresolvedMcpDispatch,
+} from "../src/main/lib/mcp-control/audit-storage"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { getMcpControlTool, invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
 import * as schema from "../src/main/lib/db/schema"
@@ -37,6 +40,8 @@ function dependencies(invocationId: string) {
     audit: {
       append: (record: Parameters<typeof appendMcpAuditRecord>[1]) =>
         appendMcpAuditRecord(drizzle(sqlite, { schema }), record),
+      findUnresolvedDispatch: (lookup: Parameters<typeof findUnresolvedMcpDispatch>[1]) =>
+        findUnresolvedMcpDispatch(drizzle(sqlite, { schema }), lookup),
     },
   }
 }
@@ -136,13 +141,17 @@ describe("MCP invocation audit", () => {
     ).resolves.toMatchObject({ ok: true })
     grants.shutdown()
 
-    expect(statuses("completed")).toEqual(["allowed", "completed"])
+    expect(statuses("completed")).toEqual(["dispatch-started", "completed"])
     expect(statuses("denied")).toEqual(["denied"])
     expect(statuses("approval-denied")).toEqual(["approval-required", "denied"])
     expect(statuses("timed-out")).toEqual(["approval-required", "timed-out"])
     expect(statuses("stale")).toEqual(["approval-required", "stale"])
-    expect(statuses("failed")).toEqual(["allowed", "failed"])
-    expect(statuses("session-grant")).toEqual(["approval-required", "allowed", "completed"])
+    expect(statuses("failed")).toEqual(["dispatch-started", "failed"])
+    expect(statuses("session-grant")).toEqual([
+      "approval-required",
+      "dispatch-started",
+      "completed",
+    ])
 
     const persisted = sqlite
       .prepare("SELECT invocation_id, duration_ms, input_summary FROM mcp_audit_records")
@@ -152,42 +161,45 @@ describe("MCP invocation audit", () => {
       true,
     )
     expect(JSON.stringify(persisted)).not.toContain("never-store")
-    expect(
+    const grantAudit = JSON.stringify(
       sqlite
         .prepare("SELECT result_summary FROM mcp_audit_records WHERE invocation_id = ?")
         .all("session-grant"),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ result_summary: expect.stringContaining("session-grant") }),
-      ]),
     )
+    expect(grantAudit).not.toContain("session-grant")
+    expect(grantAudit).toContain("sha256")
   })
 
   it.each(["disk full", "no such table", "database is locked"])(
-    "blocks mutation before dispatch when audit persistence fails: %s",
+    "blocks every tier before dispatch when audit persistence fails: %s",
     async (message) => {
-      const execute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
-      await expect(
-        invokeMcpControlTool(
-          "pin_item",
-          { ...caller, permissionMode: "full-access" },
-          { kind: "chat", id: "chat-2", pinned: true },
-          undefined,
-          {
-            audit: {
-              append: () => {
-                throw new Error(message)
+      for (const [toolName, input] of [
+        ["ping", {}],
+        ["pin_item", { kind: "chat", id: "chat-2", pinned: true }],
+      ] as const) {
+        const execute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
+        await expect(
+          invokeMcpControlTool(
+            toolName,
+            { ...caller, permissionMode: "full-access" },
+            input,
+            undefined,
+            {
+              audit: {
+                append: () => {
+                  throw new Error(message)
+                },
               },
+              resolveTarget: () => ({}),
+              execute,
             },
-            resolveTarget: () => ({}),
-            execute,
-          },
-        ),
-      ).resolves.toMatchObject({
-        ok: false,
-        error: { message: expect.stringContaining("mandatory pre-execution audit") },
-      })
-      expect(execute).not.toHaveBeenCalled()
+          ),
+        ).resolves.toMatchObject({
+          ok: false,
+          error: { message: expect.stringContaining("mandatory pre-execution audit") },
+        })
+        expect(execute).not.toHaveBeenCalled()
+      }
     },
   )
 
@@ -209,8 +221,30 @@ describe("MCP invocation audit", () => {
     expect(execute).toHaveBeenCalledOnce()
     expect(result).toMatchObject({
       ok: false,
-      error: { message: expect.stringContaining("requires reconciliation") },
+      error: {
+        code: "reconciliation-required",
+        message: expect.stringContaining("outbox"),
+      },
     })
-    expect(statuses("outbox")).toEqual(["allowed"])
+    expect(statuses("outbox")).toEqual(["dispatch-started"])
+
+    const retryExecute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
+    await expect(
+      invokeMcpControlTool(
+        "pin_item",
+        { ...caller, permissionMode: "full-access" },
+        { kind: "chat", id: "chat-2", pinned: true },
+        undefined,
+        {
+          ...dependencies("blind-retry"),
+          resolveTarget: () => ({}),
+          execute: retryExecute,
+        },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "reconciliation-required", message: expect.stringContaining("outbox") },
+    })
+    expect(retryExecute).not.toHaveBeenCalled()
   })
 })

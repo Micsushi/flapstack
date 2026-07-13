@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 import { formatChatHandoff } from "../src/main/lib/chat-handoff"
-import { omitHiddenFileContentFromMessage } from "../src/shared/chat-visible-content"
+import {
+  omitHiddenFileContentFromMessage,
+  stringifyVisibleMessageJson,
+} from "../src/shared/chat-visible-content"
 
 describe("full chat handoff formatter", () => {
   it("keeps complete cross-conversation history in chronological order", () => {
@@ -240,6 +243,23 @@ describe("full chat handoff formatter", () => {
     expect(result).not.toContain(hidden)
 
     const json = JSON.stringify(messages.map(omitHiddenFileContentFromMessage))
+    expect(json).not.toContain(hidden)
+    expect(json).not.toContain("file-content")
+  })
+
+  it("sanitizes current, legacy, and nested hidden file content for dev JSON", () => {
+    const hidden = "never-render-or-copy-this-file"
+    const json = stringifyVisibleMessageJson({
+      role: "user",
+      parts: [
+        { type: "file-content", content: hidden },
+        { type: "text", text: "visible" },
+      ],
+      content: [{ type: "file-content", text: hidden }],
+      legacyEnvelope: { items: [{ type: "file-content", data: hidden }] },
+    })
+
+    expect(json).toContain("visible")
     expect(json).not.toContain(hidden)
     expect(json).not.toContain("file-content")
   })

@@ -29,7 +29,13 @@ export type McpPendingApprovalView = {
 }
 
 export type McpAuditDecision =
-  "allowed" | "denied" | "approval-required" | "approved" | "failed" | "completed"
+  | "allowed"
+  | "dispatch-started"
+  | "denied"
+  | "approval-required"
+  | "approved"
+  | "failed"
+  | "completed"
 
 export type McpAuditView = {
   id: string

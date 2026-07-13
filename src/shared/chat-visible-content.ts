@@ -107,15 +107,32 @@ export function formatVisiblePartForHandoff(partValue: unknown): string[] {
   return []
 }
 
-/** Remove agent-only file payloads before any visible JSON export. */
+const HIDDEN_FILE_CONTENT = Symbol("hidden-file-content")
+
+function omitHiddenFileContent(value: unknown): unknown | typeof HIDDEN_FILE_CONTENT {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const sanitized = omitHiddenFileContent(item)
+      return sanitized === HIDDEN_FILE_CONTENT ? [] : [sanitized]
+    })
+  }
+  const record = asRecord(value)
+  if (!record) return value
+  if (record.type === "file-content") return HIDDEN_FILE_CONTENT
+  return Object.fromEntries(
+    Object.entries(record).flatMap(([key, item]) => {
+      const sanitized = omitHiddenFileContent(item)
+      return sanitized === HIDDEN_FILE_CONTENT ? [] : [[key, sanitized]]
+    }),
+  )
+}
+
+/** Remove agent-only file payloads before render, clipboard, or JSON export. */
 export function omitHiddenFileContentFromMessage<T>(message: T): T {
-  const record = asRecord(message)
-  if (!record) return message
-  const withoutHidden = (value: unknown) =>
-    Array.isArray(value) ? value.filter((part) => asRecord(part)?.type !== "file-content") : value
-  return {
-    ...record,
-    ...(Array.isArray(record.parts) ? { parts: withoutHidden(record.parts) } : {}),
-    ...(Array.isArray(record.content) ? { content: withoutHidden(record.content) } : {}),
-  } as T
+  const sanitized = omitHiddenFileContent(message)
+  return (sanitized === HIDDEN_FILE_CONTENT ? null : sanitized) as T
+}
+
+export function stringifyVisibleMessageJson(message: unknown): string {
+  return JSON.stringify(omitHiddenFileContentFromMessage(message), null, 2)
 }

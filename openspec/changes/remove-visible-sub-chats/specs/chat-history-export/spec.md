@@ -24,3 +24,13 @@ recovery section so existing data is not lost.
 - **THEN** the export may include those records in a clearly labeled legacy
   recovery section
 - **AND** no stored legacy message is deleted or modified
+
+#### Scenario: Exclude hidden attachment payloads
+
+- **GIVEN** a current or legacy development message contains a hidden
+  `file-content` part
+- **WHEN** the message is rendered or copied as full history or JSON
+- **THEN** the hidden attachment body is removed before renderer or clipboard
+  serialization
+- **AND** visible metadata may identify the attachment without revealing its
+  content
