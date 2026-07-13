@@ -20,7 +20,9 @@ verified commits into the cumulative branch.
 1. **MCP + permission integration — S3-F2 through S3-F6 and F12 edges**
    - Rebased migration compatibility, startup recovery, provider permission
      composition, one approval owner, queued-run identity, renderer refresh,
-     production/dev MCP separation, focused integration tests.
+     production/dev MCP separation, visible fork lineage, named agent-task
+     membership, durable bounded scheduling, budgets/stops, aggregate task UI,
+     lifecycle controls, and focused integration/attack tests.
    - 2026-07-13 closeout lane: custom hierarchy/runtime enforcement and
      stale-ACP-session recovery are implemented. OpenRouter/NanoGPT headless
      smokes, the full Node 22 gate, and unsigned macOS Preview packaging pass.
@@ -53,6 +55,9 @@ verified commits into the cumulative branch.
 
 - MCP permission composition precedes final permission-mode promotion and
   cross-agent live proof.
+- S3-F5 orchestration implementation waits on the completed spawn, permission,
+  and audit cores; its live exit waits on task UI, restart/concurrency/budget
+  evidence, renderer invalidation, and real two-way Codex/Claude proof.
 - Secure credentials precede credentialed provider and closed-app daemon proof.
 - Provider closeout precedes the complete live reasoning matrix.
 - Voice, Usage, provider, reasoning, Settings, MCP, and supporting changes all

@@ -10,6 +10,7 @@ export type QueuedAgentRun = {
   harness: "codex" | "claude-code"
   prompt: string
   model: string | null
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
   permissionMode: string
   customPermissions: string | null
   worktreePath: string | null
@@ -82,11 +83,13 @@ export async function drainPendingMcpRuns(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions,
           r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages,
-          c.project_id, p.path project_path
+          c.project_id, p.path project_path,
+          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
          WHERE r.status = 'pending' AND r.prompt_message_id LIKE 'mcp-%'
            AND NOT EXISTS (
              SELECT 1 FROM agent_runs active
@@ -159,7 +162,7 @@ function recordLaunchOutcome(
   db.pragma("busy_timeout = 5000")
   try {
     if (status === "failed") markFailed(db, run.runId, run.subChatId)
-    appendLaunchAudit(db, run.runId, status, error)
+    appendLaunchAudit(db, run, status, error)
   } finally {
     db.close()
   }
@@ -167,21 +170,11 @@ function recordLaunchOutcome(
 
 function appendLaunchAudit(
   db: Database.Database,
-  runId: string,
+  run: QueuedAgentRun,
   status: "completed" | "failed",
   error?: string,
 ): void {
-  const source = db
-    .prepare(
-      `SELECT invocation_id, caller_chat_id, caller_run_id, tool_name, tier,
-        caller_snapshot, chat_snapshot, input_summary
-       FROM mcp_audit_records
-       WHERE status = 'completed'
-         AND tool_name IN ('launch_run', 'spawn_thread')
-         AND (instr(result_summary, ?) > 0 OR instr(result_summary, ?) > 0)
-       ORDER BY created_at DESC, id DESC LIMIT 1`,
-    )
-    .get(createHash("sha256").update(runId).digest("hex"), runId) as Row | undefined
+  const source = findLaunchAuditSource(db, run.runId)
   if (!source) return
   db.prepare(
     `INSERT INTO mcp_audit_records (
@@ -198,10 +191,10 @@ function appendLaunchAudit(
     source.tier,
     source.caller_snapshot,
     source.chat_snapshot,
-    redactMcpAuditSummary({ runId }),
+    redactMcpAuditSummary({ runId: run.runId }),
     source.input_summary,
     redactMcpAuditSummary({
-      runId,
+      runId: run.runId,
       outcome: status,
       ...(error
         ? {
@@ -213,6 +206,36 @@ function appendLaunchAudit(
         : {}),
     }),
   )
+}
+
+function findLaunchAuditSource(db: Database.Database, runId: string): Row | undefined {
+  const orchestration = db
+    .prepare("SELECT task_id FROM orchestration_agents WHERE run_id = ?")
+    .get(runId) as Row | undefined
+  if (typeof orchestration?.task_id === "string") {
+    const contextHash = createHash("sha256").update(orchestration.task_id).digest("hex")
+    return db
+      .prepare(
+        `SELECT invocation_id, caller_chat_id, caller_run_id, tool_name, tier,
+          caller_snapshot, chat_snapshot, input_summary
+         FROM mcp_audit_records
+         WHERE status = 'completed' AND tool_name = 'orchestrate_task'
+           AND json_extract(run_snapshot, '$.contextHash') = ?
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(contextHash) as Row | undefined
+  }
+  return db
+    .prepare(
+      `SELECT invocation_id, caller_chat_id, caller_run_id, tool_name, tier,
+        caller_snapshot, chat_snapshot, input_summary
+       FROM mcp_audit_records
+       WHERE status = 'completed'
+         AND tool_name IN ('launch_run', 'spawn_thread')
+         AND (instr(result_summary, ?) > 0 OR instr(result_summary, ?) > 0)
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(createHash("sha256").update(runId).digest("hex"), runId) as Row | undefined
 }
 
 function queuedRun(row: Row): QueuedAgentRun | null {
@@ -228,11 +251,18 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     harness: row.harness,
     prompt,
     model: typeof row.model === "string" ? row.model : null,
+    reasoningEffort: isReasoningEffort(row.reasoning_effort) ? row.reasoning_effort : null,
     permissionMode: String(row.permission_mode),
     customPermissions: typeof row.custom_permissions === "string" ? row.custom_permissions : null,
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
   }
+}
+
+function isReasoningEffort(
+  value: unknown,
+): value is "minimal" | "low" | "medium" | "high" | "xhigh" {
+  return ["minimal", "low", "medium", "high", "xhigh"].includes(String(value))
 }
 
 function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {

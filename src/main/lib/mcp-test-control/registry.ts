@@ -176,13 +176,6 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
-    name: "list_agent_input_requests",
-    description: "List provider-neutral input requests currently owned by the live app.",
-    tier: 0,
-    mutates: false,
-    status: "implemented",
-  },
-  {
     name: "reply_product_mcp_approval",
     description: "Approve or deny one pending product MCP test invocation.",
     tier: 1,
@@ -197,13 +190,6 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
-    name: "get_renderer_agent_input_state",
-    description: "Inspect active renderer question ownership and dialog visibility.",
-    tier: 0,
-    mutates: false,
-    status: "implemented",
-  },
-  {
     name: "manage_product_mcp_recovery",
     description: "List or explicitly resolve product MCP terminal-audit recovery claims.",
     tier: 1,
@@ -211,15 +197,29 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
-    name: "ensure_test_project",
-    description: "Register or restore the active development checkout as a local test project.",
+    name: "cleanup_product_mcp_caller",
+    description: "Cancel and archive one isolated product-MCP caller fixture after testing.",
     tier: 1,
     mutates: true,
     status: "implemented",
   },
   {
-    name: "cleanup_product_mcp_caller",
-    description: "Cancel and archive one isolated product-MCP caller fixture after testing.",
+    name: "list_agent_input_requests",
+    description: "List provider-neutral input requests currently owned by the live app.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "get_renderer_agent_input_state",
+    description: "Inspect active renderer question ownership and dialog visibility.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "ensure_test_project",
+    description: "Register or restore the active development checkout as a local test project.",
     tier: 1,
     mutates: true,
     status: "implemented",
@@ -367,6 +367,35 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     mutates: false,
     status: "implemented",
   },
+  {
+    name: "create_test_orchestration_fixture",
+    description:
+      "Create a read-only Codex or Claude project-chat fixture for orchestration testing.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "create_test_orchestration",
+    description: "Create or attach a durable local orchestration through the production service.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "get_test_orchestration",
+    description: "Read a durable orchestration overview and lineage for functional proof.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "mutate_test_orchestration",
+    description: "Tick, control, progress, retry, replace, or add a test orchestration agent.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
 ]
 
 export function getDevMcpTool(name: string): DevMcpToolDefinition | null {
@@ -408,6 +437,10 @@ export const devMcpExposedToolNames = [
   "archive_test_project",
   "create_test_chat",
   "open_test_chat",
+  "create_test_orchestration_fixture",
+  "create_test_orchestration",
+  "get_test_orchestration",
+  "mutate_test_orchestration",
   "archive_test_chat",
   "send_test_prompt",
   "mutate_project_provider_extension",

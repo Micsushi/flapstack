@@ -3,6 +3,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
+import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { describe, expect, it } from "vitest"
 import {
   SAFE_CHATGPT_CODEX_MODEL,
@@ -36,6 +39,8 @@ import {
   listDevAgentInputRendererStates,
   recordDevAgentInputRendererState,
 } from "../src/main/lib/mcp-test-control/renderer-state"
+import * as schema from "../src/main/lib/db/schema"
+import { closeDatabase } from "../src/main/lib/db"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -91,6 +96,10 @@ describe("dev MCP test-control registry", () => {
       "verify_run_artifacts",
       "run_project_check",
       "openspec_validate",
+      "create_test_orchestration_fixture",
+      "create_test_orchestration",
+      "get_test_orchestration",
+      "mutate_test_orchestration",
     ])
     expect(getDevMcpTool("get_harness_status")?.tier).toBe(0)
     expect(getDevMcpTool("run_project_check")?.tier).toBe(2)
@@ -179,6 +188,7 @@ describe("dev MCP transport", () => {
     })
     expect(handle).not.toBeNull()
     try {
+      expect(handle!.descriptor.userDataPath).toBe(dir)
       const unauthorized = await fetch(handle!.descriptor.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -224,6 +234,117 @@ describe("dev MCP transport", () => {
       await transport.close()
     } finally {
       await handle?.stop()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("creates, reads, and controls orchestration through the authenticated live API", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-orchestration-"))
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    const handle = await startDevMcpServer({
+      enabled: true,
+      userDataPath: dir,
+      checkout: "/repo",
+      profile: "Flapstack Dev Orchestration",
+    })
+    const client = new Client({ name: "flapstack-orchestration-test", version: "1.0.0" })
+    const transport = new StreamableHTTPClientTransport(new URL(handle!.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${handle!.descriptor.token}` },
+      },
+    })
+    try {
+      await client.connect(transport)
+      const fixture = await client.callTool({
+        name: "create_test_orchestration_fixture",
+        arguments: {
+          projectPath: dir,
+          projectName: "Project",
+          chatName: "Root",
+          harness: "codex",
+        },
+      })
+      expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
+      const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const created = await client.callTool({
+        name: "create_test_orchestration",
+        arguments: {
+          request: {
+            projectId: fixtureResult.projectId,
+            task: { mode: "create", name: "Live API orchestration" },
+            initiatingChatId: fixtureResult.chatId,
+            maxParallelAgents: 1,
+            maxDepth: 4,
+            stopConditions: { maxTotalTokens: 10_000 },
+            agents: [
+              {
+                role: "worker",
+                prompt: "Perform the live proof.",
+                harness: "codex",
+                permissionMode: "full-access",
+                worktreeStrategy: "none",
+                dependencyAgentIds: [],
+                completionCriteria: "Proof recorded",
+              },
+            ],
+          },
+        },
+      })
+      const createdResult = (created.structuredContent as { result: any }).result
+      const taskId = createdResult.orchestration.taskId as string
+      expect(createdResult.aggregate).toMatchObject({ active: 1, queued: 0 })
+
+      const read = await client.callTool({
+        name: "get_test_orchestration",
+        arguments: { taskId },
+      })
+      expect((read.structuredContent as { result: any }).result).toMatchObject({
+        overview: { orchestration: { taskId, status: "running" } },
+        lineage: { taskId },
+      })
+
+      const paused = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "pause" },
+      })
+      expect((paused.structuredContent as { result: any }).result.orchestration.status).toBe(
+        "paused",
+      )
+      const rejectedArchive = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "archive" },
+      })
+      expect(rejectedArchive.isError).toBe(true)
+
+      await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "stop" },
+      })
+      const archived = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "archive" },
+      })
+      expect((archived.structuredContent as { result: any }).result).toMatchObject({
+        taskId,
+        archived: true,
+      })
+      expect(sqlite.prepare("SELECT archived_at FROM tasks WHERE id = ?").get(taskId)).toEqual({
+        archived_at: expect.any(Number),
+      })
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM chats WHERE task_id = ? AND archived_at IS NULL")
+          .get(taskId),
+      ).toEqual({ count: 0 })
+    } finally {
+      await transport.close().catch(() => undefined)
+      await handle?.stop()
+      closeDatabase()
+      sqlite.close()
+      delete process.env.FLAPSTACK_DB_PATH
       rmSync(dir, { recursive: true, force: true })
     }
   })

@@ -44,6 +44,29 @@ describe("product MCP external mutation refresh", () => {
     ).toMatchObject({ domains: ["runs", "chats"], chatIds: ["chat-2"], runIds: ["run-2"] })
     expect(
       invalidationForProductMcpMutation(
+        "orchestrate_task",
+        {},
+        {
+          ok: true,
+          data: {
+            orchestration: { taskId: "task-1", initiatingChatId: "chat-1" },
+            agents: [
+              { chatId: "chat-2", runId: "run-2" },
+              { chatId: null, runId: null },
+            ],
+          },
+        },
+      ),
+    ).toEqual({
+      version: 1,
+      source: "product-mcp",
+      domains: ["tasks", "chats", "runs", "orchestrations"],
+      taskIds: ["task-1"],
+      chatIds: ["chat-1", "chat-2"],
+      runIds: ["run-2"],
+    })
+    expect(
+      invalidationForProductMcpMutation(
         "archive_item",
         { kind: "chat", id: "chat-2" },
         { ok: true, data: { changed: false } },
@@ -112,6 +135,8 @@ describe("product MCP external mutation refresh", () => {
       attachmentsForChat: (id) => calls.push(`attachments:${id}`),
       approvals: () => calls.push("approvals"),
       audit: () => calls.push("audit"),
+      orchestrationTask: (id) => calls.push(`orchestration:${id}`),
+      chatLineage: (id) => calls.push(`lineage:${id}`),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate, 25)
     coalescer.push({
@@ -127,6 +152,13 @@ describe("product MCP external mutation refresh", () => {
       domains: ["audit", "approvals"],
       chatIds: ["chat-1"],
     })
+    coalescer.push({
+      version: 1,
+      source: "product-mcp",
+      domains: ["orchestrations"],
+      chatIds: ["chat-1"],
+      taskIds: ["task-1"],
+    })
 
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(25)
@@ -138,6 +170,8 @@ describe("product MCP external mutation refresh", () => {
       "run:run-1",
       "approvals",
       "audit",
+      "orchestration:task-1",
+      "lineage:chat-1",
     ])
     coalescer.dispose()
   })

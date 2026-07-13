@@ -124,6 +124,13 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "orchestrate_task",
+    description: "Create or attach a task and launch a bounded, durable multi-agent orchestration.",
+    tier: 3,
+    requiredCapabilities: ["subagents", "shell"],
+    status: "implemented",
+  },
+  {
     name: "create_task",
     description: "Create a new task.",
     tier: 1,

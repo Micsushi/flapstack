@@ -38,7 +38,16 @@ export interface NotificationNavigationPayload {
 export interface ProductMcpRendererInvalidation {
   version: 1
   source: "product-mcp"
-  domains: Array<"projects" | "tasks" | "chats" | "runs" | "attachments" | "approvals" | "audit">
+  domains: Array<
+    | "projects"
+    | "tasks"
+    | "chats"
+    | "runs"
+    | "attachments"
+    | "approvals"
+    | "audit"
+    | "orchestrations"
+  >
   chatIds?: string[]
   runIds?: string[]
   projectIds?: string[]

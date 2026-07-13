@@ -11,6 +11,7 @@ import {
   recoverInterruptedMcpRuns,
   type QueuedAgentRun,
 } from "../src/main/lib/run-launch-service"
+import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
 import { updateSubChatRunStatusIfAuthoritative } from "../src/main/lib/run-status-authority"
 
 const harnessMocks = vi.hoisted(() => ({
@@ -59,6 +60,20 @@ describe("MCP main run launcher", () => {
     expect(harnessMocks.claude).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "queued-claude", chatId: "chat", subChatId: "sub-chat" }),
     )
+  })
+
+  it("passes durable per-worker reasoning effort to supported harness launches", async () => {
+    const launch = createMainRunLauncher()
+    await launch({ ...queuedRun("effort-codex", "codex"), reasoningEffort: "high" })
+    await launch({ ...queuedRun("effort-claude", "claude-code"), reasoningEffort: "minimal" })
+
+    expect(harnessMocks.codex).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEnabled: true, reasoningEffort: "high" }),
+    )
+    expect(harnessMocks.claude).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEnabled: false }),
+    )
+    expect(harnessMocks.claude.mock.calls.at(-1)?.[0]).not.toHaveProperty("effort")
   })
 
   it("has one idempotent startup owner and drains only MCP-origin pending runs", async () => {
@@ -225,6 +240,52 @@ describe("MCP main run launcher", () => {
     expect(statuses.map((row) => row.status).sort()).toEqual(["completed", "failed"])
   })
 
+  it("correlates every orchestration launch audit by durable task context", async () => {
+    seedOrchestrationRun("orchestrated-run", "orchestration-task")
+    appendMcpAuditRecord(drizzle(sqlite, { schema }), {
+      id: "orchestration-source",
+      invocationId: "orchestration-invocation",
+      status: "completed",
+      caller: { chatId: "chat-orchestrated-run" },
+      toolName: "orchestrate_task",
+      tier: 3,
+      input: { task: { mode: "create", name: "Orchestration" } },
+      result: {
+        ok: true,
+        data: { orchestration: { taskId: "orchestration-task" }, aggregate: { active: 1 } },
+      },
+      createdAt: new Date(1),
+    })
+    sqlite
+      .prepare(
+        `INSERT INTO mcp_audit_records (
+          id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
+          chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
+        ) VALUES ('redacted-result-decoy', 'wrong-invocation', 'completed', 'other-chat',
+          'orchestrate_task', 3, '{}', '{}', '{}', '{}', ?, 0, 2)`,
+      )
+      .run(JSON.stringify({ runId: "orchestrated-run" }))
+
+    await drainPendingMcpRuns(path, createMainRunLauncher(), { waitForCompletion: true })
+
+    const correlated = sqlite
+      .prepare(
+        `SELECT status, run_snapshot, result_summary FROM mcp_audit_records
+         WHERE invocation_id = 'orchestration-invocation' ORDER BY created_at, id`,
+      )
+      .all() as Array<{ status: string; run_snapshot: string; result_summary: string }>
+    expect(correlated.map((row) => row.status)).toEqual(["completed", "completed"])
+    expect(correlated.some((row) => row.run_snapshot.includes("contextHash"))).toBe(true)
+    expect(correlated.some((row) => row.result_summary.includes("outcome"))).toBe(true)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) count FROM mcp_audit_records WHERE invocation_id = 'wrong-invocation'",
+        )
+        .get(),
+    ).toEqual({ count: 1 })
+  })
+
   it("keeps a newer queued or running run authoritative over stale completion", () => {
     seedSharedConversationRuns()
     const database = drizzle(sqlite, { schema })
@@ -308,6 +369,7 @@ function queuedRun(runId: string, harness: "codex" | "claude-code"): QueuedAgent
     harness,
     prompt: "Continue queued work.",
     model: null,
+    reasoningEffort: null,
     permissionMode: "full-access",
     customPermissions: null,
     worktreePath: "/tmp/worktree",
@@ -411,6 +473,30 @@ function seedRun(
       ) VALUES (?, ?, ?, ?, 'full-access', '/tmp/worktree', ?, ?, ?)`,
     )
     .run(runId, chatId, subChatId, harness, promptMessageId, status, Date.now())
+}
+
+function seedOrchestrationRun(runId: string, taskId: string): void {
+  seedRun(runId, "pending", `mcp-${runId}`, "codex")
+  sqlite
+    .prepare("INSERT INTO projects (id, name, path) VALUES (?, ?, ?)")
+    .run(`project-${taskId}`, taskId, `/tmp/${taskId}`)
+  sqlite
+    .prepare("INSERT INTO tasks (id, project_id, name) VALUES (?, ?, ?)")
+    .run(taskId, `project-${taskId}`, taskId)
+  sqlite
+    .prepare(
+      `INSERT INTO task_orchestrations (
+        task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions
+      ) VALUES (?, ?, 'running', 1, 4, '{}')`,
+    )
+    .run(taskId, `chat-${runId}`)
+  sqlite
+    .prepare(
+      `INSERT INTO orchestration_agents (
+        id, task_id, run_id, definition, dependency_agent_ids, status
+      ) VALUES (?, ?, ?, '{}', '[]', 'active')`,
+    )
+    .run(`agent-${runId}`, taskId, runId)
 }
 
 async function* emptyStream(): AsyncGenerator<never> {

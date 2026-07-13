@@ -4,8 +4,9 @@ import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
 import type { McpCallerIdentity, McpRiskTier } from "./types"
+import { createOrchestrationInputSchema } from "../../../shared/agent-orchestration"
 
-const MAX_DEPTH = 5
+const MAX_DEPTH = 8
 const MAX_ENTRIES = 50
 const MAX_SUMMARY_LENGTH = 16_384
 const redacted = "[REDACTED]"
@@ -13,42 +14,86 @@ const truncated = "[TRUNCATED]"
 const secretKey =
   /(?:api[-_]?key|authorization|credential|cookie|pass(?:word)?|secret|token|private[-_]?key|session(?:[-_]?id)?|access[-_]?token|refresh[-_]?token)/i
 const reasoningKey = /(?:reasoning|chain[-_]?of[-_]?thought|thinking)/i
+const safeLiteralMarker = Symbol("safe-audit-literal")
+type SafeAuditLiteral = { readonly value: string; readonly [safeLiteralMarker]: true }
 const safeAuditKeys = new Set([
+  "agentCount",
+  "agentId",
+  "agents",
   "archived",
+  "branch",
+  "browser",
   "byteLength",
+  "capabilityFlags",
   "caller",
   "chatId",
+  "completionCriteria",
   "content",
   "contextHash",
   "created",
   "customPermissions",
   "data",
   "decision",
+  "dependencyAgentIds",
+  "dependencyCount",
   "dryRun",
   "error",
+  "git",
   "harness",
   "id",
+  "initiatingChatId",
   "input",
   "itemCount",
   "keys",
   "limit",
+  "maxBlockers",
+  "maxCostUsdMicros",
+  "maxDepth",
+  "maxFailures",
+  "maxParallelAgents",
+  "maxTotalTokens",
+  "maxWallClockMs",
+  "mode",
+  "model",
   "name",
+  "network",
   "ok",
+  "outcome",
   "overwrite",
   "permissionMode",
   "pinned",
+  "productMcpRead",
+  "productMcpTier3",
+  "productMcpWrite",
   "projectId",
+  "projectWrite",
+  "prompt",
+  "provider",
+  "reasoningEffort",
   "result",
+  "role",
   "runId",
+  "schemaVersion",
   "scope",
+  "secrets",
   "sha256",
+  "shell",
   "source",
+  "spec",
   "state",
   "status",
+  "stopConditions",
+  "subagents",
   "summary",
+  "targetCompletedAgents",
+  "targetProgressPercent",
   "taskId",
+  "task",
+  "thirdPartyMcp",
   "tier",
   "type",
+  "worktreePath",
+  "worktreeStrategy",
 ])
 export type McpAuditStatus =
   | "allowed"
@@ -170,6 +215,7 @@ export function redactMcpAuditSummary(value: unknown): string {
  * Snapshot fields are serialized at write time and intentionally have no FKs.
  */
 export function appendMcpAuditRecord(database: AuditDatabase, record: AppendMcpAuditRecord): void {
+  const orchestrationContext = orchestrationAuditContext(record)
   database
     .insert(mcpAuditRecords)
     .values({
@@ -187,13 +233,25 @@ export function appendMcpAuditRecord(database: AuditDatabase, record: AppendMcpA
         customPermissions: record.caller.customPermissions ?? null,
       }),
       chatSnapshot: redactMcpAuditSummary(summarizeSnapshot(record.chatSnapshot)),
-      runSnapshot: redactMcpAuditSummary(summarizeSnapshot(record.runSnapshot)),
+      runSnapshot: redactMcpAuditSummary(
+        orchestrationContext ?? summarizeSnapshot(record.runSnapshot),
+      ),
       inputSummary: redactMcpAuditSummary(summarizeMcpAuditInput(record.toolName, record.input)),
       resultSummary: redactMcpAuditSummary(summarizeMcpAuditResult(record.result)),
       durationMs: Math.max(0, Math.floor(record.durationMs ?? 0)),
       ...(record.createdAt ? { createdAt: record.createdAt } : {}),
     })
     .run()
+}
+
+function orchestrationAuditContext(record: AppendMcpAuditRecord): unknown | null {
+  if (record.toolName !== "orchestrate_task" || record.status !== "completed") return null
+  const result = asRecord(record.result)
+  const data = asRecord(result?.data)
+  const orchestration = asRecord(data?.orchestration)
+  const taskId = orchestration?.taskId
+  if (result?.ok !== true || typeof taskId !== "string" || !taskId) return null
+  return { contextHash: createHash("sha256").update(taskId).digest("hex") }
 }
 
 /** Operation-specific allowlist. Arbitrary content is represented only by size and hash. */
@@ -236,6 +294,8 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
         ...safe("chatId", "idempotencyKey"),
         initialPrompt: textDigest("initialPrompt"),
       }
+    case "orchestrate_task":
+      return summarizeOrchestrationAuthority(value)
     case "create_automation_draft":
       return { ...safe("trigger", "dryRun"), name: textDigest("name") }
     case "search":
@@ -260,6 +320,46 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return null
     default:
       return { keys: Object.keys(input).sort().slice(0, MAX_ENTRIES) }
+  }
+}
+
+function summarizeOrchestrationAuthority(value: unknown): unknown {
+  const parsed = createOrchestrationInputSchema.safeParse(value)
+  if (!parsed.success) {
+    const input = asRecord(value)
+    return { keys: input ? Object.keys(input).sort().slice(0, MAX_ENTRIES) : [] }
+  }
+  const input = parsed.data
+  return {
+    projectId: summarizeText(input.projectId),
+    initiatingChatId: summarizeText(input.initiatingChatId),
+    task:
+      input.task.mode === "create"
+        ? { mode: safeLiteral("create"), name: summarizeText(input.task.name) }
+        : { mode: safeLiteral("existing"), taskId: summarizeText(input.task.taskId) },
+    agentCount: input.agents.length,
+    maxParallelAgents: input.maxParallelAgents,
+    maxDepth: input.maxDepth,
+    stopConditions: input.stopConditions,
+    agents: input.agents.map((agent) => ({
+      ...(agent.agentId ? { agentId: summarizeText(agent.agentId) } : {}),
+      role: summarizeText(agent.role),
+      ...(agent.name ? { name: summarizeText(agent.name) } : {}),
+      prompt: summarizeText(agent.prompt),
+      ...(agent.spec ? { spec: summarizeText(agent.spec) } : {}),
+      completionCriteria: summarizeText(agent.completionCriteria),
+      harness: safeLiteral(agent.harness),
+      provider: safeLiteral(agent.provider ?? (agent.harness === "codex" ? "openai" : "anthropic")),
+      ...(agent.model ? { model: summarizeText(agent.model) } : {}),
+      ...(agent.reasoningEffort ? { reasoningEffort: safeLiteral(agent.reasoningEffort) } : {}),
+      permissionMode: safeLiteral(agent.permissionMode),
+      ...(agent.customPermissions ? { capabilityFlags: agent.customPermissions } : {}),
+      worktreeStrategy: safeLiteral(agent.worktreeStrategy),
+      ...(agent.worktreePath ? { worktreePath: summarizeText(agent.worktreePath) } : {}),
+      ...(agent.branch ? { branch: summarizeText(agent.branch) } : {}),
+      dependencyCount: agent.dependencyAgentIds.length,
+      dependencyAgentIds: agent.dependencyAgentIds.map(summarizeText),
+    })),
   }
 }
 
@@ -424,6 +524,7 @@ function decodeCursor(cursor: string): { occurredAt: Date; id: string } {
 }
 
 function redactValue(value: unknown, depth: number): unknown {
+  if (isSafeAuditLiteral(value)) return value.value
   if (depth >= MAX_DEPTH) return truncated
   if (value === null || typeof value === "boolean" || typeof value === "number") return value
   if (typeof value === "string") return summarizeText(value)
@@ -438,16 +539,72 @@ function redactValue(value: unknown, depth: number): unknown {
       const outputKey = safeAuditKeys.has(key)
         ? key
         : `field_${createHash("sha256").update(key).digest("hex").slice(0, 16)}`
-      output[outputKey] =
-        secretKey.test(key) || reasoningKey.test(key)
-          ? redacted
-          : isSafeDigestField(key, item)
+      output[outputKey] = isSafeAuditLiteral(item)
+        ? item.value
+        : isSafeCapabilityFlag(key, item)
+          ? item
+          : isSafeAuthorityNumber(key, item)
             ? item
-            : redactValue(item, depth + 1)
+            : secretKey.test(key) || reasoningKey.test(key)
+              ? redacted
+              : isSafeDigestField(key, item)
+                ? item
+                : redactValue(item, depth + 1)
     }
     return output
   }
   return String(value)
+}
+
+function safeLiteral(value: string): SafeAuditLiteral {
+  return { value, [safeLiteralMarker]: true }
+}
+
+function isSafeAuditLiteral(value: unknown): value is SafeAuditLiteral {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as Partial<SafeAuditLiteral>)[safeLiteralMarker] === true &&
+    typeof (value as Partial<SafeAuditLiteral>).value === "string",
+  )
+}
+
+function isSafeCapabilityFlag(key: string, value: unknown): value is boolean {
+  return (
+    typeof value === "boolean" &&
+    [
+      "projectWrite",
+      "shell",
+      "network",
+      "git",
+      "browser",
+      "secrets",
+      "subagents",
+      "thirdPartyMcp",
+      "productMcpRead",
+      "productMcpWrite",
+      "productMcpTier3",
+    ].includes(key)
+  )
+}
+
+function isSafeAuthorityNumber(key: string, value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    [
+      "agentCount",
+      "dependencyCount",
+      "maxBlockers",
+      "maxCostUsdMicros",
+      "maxDepth",
+      "maxFailures",
+      "maxParallelAgents",
+      "maxTotalTokens",
+      "maxWallClockMs",
+      "targetCompletedAgents",
+      "targetProgressPercent",
+    ].includes(key)
+  )
 }
 
 function isSafeDigestField(key: string, value: unknown): value is string {

@@ -13,6 +13,7 @@
     "dev:verify": "node scripts/verify-dev-instance.mjs",
     "ui:lock": "node scripts/with-ui-lock.mjs",
     "ui:lock:status": "node scripts/with-ui-lock.mjs --status",
+    "dev:verify-orchestration": "node scripts/verify-live-orchestration.mjs",
     "build": "NODE_OPTIONS=--max-old-space-size=6144 node scripts/with-heavy-job-lock.mjs build -- electron-vite build",
     "preview": "electron-vite preview",
     "package": "node scripts/package-app.mjs --dir",

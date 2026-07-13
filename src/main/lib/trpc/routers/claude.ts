@@ -455,7 +455,13 @@ const getClaudeQuery = async () => {
 
 // Active sessions for cancellation (onAbort handles stash + abort + restore)
 // Active sessions for cancellation
-const activeSessions = new Map<string, AbortController>()
+type ActiveClaudeSession = {
+  runId: string
+  controller: AbortController
+  cancelRequested: boolean
+}
+
+const activeSessions = new Map<string, ActiveClaudeSession>()
 
 /** Check if there are any active Claude streaming sessions */
 export function hasActiveClaudeSessions(): boolean {
@@ -464,9 +470,10 @@ export function hasActiveClaudeSessions(): boolean {
 
 /** Abort all active Claude sessions so their cleanup saves partial state */
 export function abortAllClaudeSessions(): void {
-  for (const [subChatId, controller] of activeSessions) {
+  for (const [subChatId, session] of activeSessions) {
     console.log(`[claude] Aborting session ${subChatId} before reload`)
-    controller.abort()
+    session.cancelRequested = true
+    session.controller.abort()
     agentInputLifecycle.cancelByChat(
       subChatId,
       "Application reload cancelled the pending question.",
@@ -474,6 +481,25 @@ export function abortAllClaudeSessions(): void {
   }
   // Keep ownership until each async finalizer persists cancellation and removes
   // its own entry. App shutdown waits for that durable boundary before DB close.
+}
+
+export function cancelActiveClaudeSession(input: { subChatId: string; runId?: string }): {
+  cancelled: boolean
+  ignoredStale: boolean
+} {
+  const session = activeSessions.get(input.subChatId)
+  if (session && input.runId && session.runId !== input.runId) {
+    return { cancelled: false, ignoredStale: true }
+  }
+  if (session) {
+    session.cancelRequested = true
+    session.controller.abort()
+  }
+  const cancelledQuestions = agentInputLifecycle.cancelByChat(input.subChatId, "Session cancelled.")
+  return {
+    cancelled: Boolean(session || cancelledQuestions),
+    ignoredStale: false,
+  }
 }
 
 // In-memory cache of working MCP server names (resets on app restart)
@@ -979,9 +1005,10 @@ export const claudeRouter = router({
       return observable<UIMessageChunk>((emit) => {
         // Abort any existing session for this subChatId before starting a new one
         // This prevents race conditions if two messages are sent in quick succession
-        const existingController = activeSessions.get(input.subChatId)
-        if (existingController) {
-          existingController.abort()
+        const existingSession = activeSessions.get(input.subChatId)
+        if (existingSession) {
+          existingSession.cancelRequested = true
+          existingSession.controller.abort()
         }
 
         const abortController = new AbortController()
@@ -995,7 +1022,11 @@ export const claudeRouter = router({
               revoke: () => abortController.abort(),
             })
           : () => undefined
-        activeSessions.set(input.subChatId, abortController)
+        activeSessions.set(input.subChatId, {
+          runId: launchRunId,
+          controller: abortController,
+          cancelRequested: false,
+        })
 
         // Stream debug logging
         const subId = input.subChatId.slice(-8) // Short ID for logs
@@ -1064,8 +1095,11 @@ export const claudeRouter = router({
           if (!agentRunId) return Promise.resolve()
           if (!runCompletionPromise) {
             runCompletionPromise = completeClaudeAgentRun(agentRunId, input.subChatId, () => {
-              const isCurrentSession = activeSessions.get(input.subChatId) === abortController
-              return abortController.signal.aborted || !isCurrentSession
+              const activeSession = activeSessions.get(input.subChatId)
+              const isCurrentSession = activeSession?.controller === abortController
+              return abortController.signal.aborted ||
+                activeSession?.cancelRequested ||
+                !isCurrentSession
                 ? "cancelled"
                 : runCompletionStatus
             }).catch((runError) => {
@@ -1094,7 +1128,8 @@ export const claudeRouter = router({
                   .where(eq(agentRuns.id, input.runId))
                   .get()?.promptMessageId
               : null
-            const isAuthoritativeRun = () => activeSessions.get(input.subChatId) === abortController
+            const isAuthoritativeRun = () =>
+              activeSessions.get(input.subChatId)?.controller === abortController
             const persistMessagesForRun = (
               incomingMessages: any[],
               sessionId: string | null | undefined,
@@ -2958,7 +2993,7 @@ ${prompt}
                 streamId,
                 sessionId: currentSessionId,
               })
-              if (activeSessions.get(input.subChatId) === abortController) {
+              if (activeSessions.get(input.subChatId)?.controller === abortController) {
                 activeSessions.delete(input.subChatId)
               }
               safeComplete()
@@ -2972,7 +3007,8 @@ ${prompt}
           isObservableActive = false // Prevent emit after unsubscribe
           abortController.abort()
           releaseProductMcpSession()
-          const isCurrentSession = activeSessions.get(input.subChatId) === abortController
+          const isCurrentSession =
+            activeSessions.get(input.subChatId)?.controller === abortController
           if (isCurrentSession) {
             activeSessions.delete(input.subChatId)
           }
@@ -3083,17 +3119,7 @@ ${prompt}
    * Cancel active session
    */
   cancel: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
-    const controller = activeSessions.get(input.subChatId)
-    if (controller) {
-      controller.abort()
-      activeSessions.delete(input.subChatId)
-    }
-    const cancelledQuestions = agentInputLifecycle.cancelByChat(
-      input.subChatId,
-      "Session cancelled.",
-    )
-
-    return { cancelled: Boolean(controller || cancelledQuestions) }
+    return cancelActiveClaudeSession(input)
   }),
 
   /**

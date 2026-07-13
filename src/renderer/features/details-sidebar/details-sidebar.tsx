@@ -37,8 +37,9 @@ import { ChangesWidget } from "./sections/changes-widget"
 import { McpWidget } from "./sections/mcp-widget"
 import { FilesTab, type FilesTabHandle } from "./sections/files-tab"
 import { RunHistoryWidget } from "./sections/run-history-widget"
+import { OrchestrationTaskCard } from "../agents/ui/orchestration-task-card"
 import type { ParsedDiffFile } from "./types"
-import { fileViewerOpenAtomFamily, type AgentMode } from "../agents/atoms"
+import { fileViewerOpenAtomFamily, selectedAgentChatIdAtom, type AgentMode } from "../agents/atoms"
 import { agentsSettingsDialogOpenAtom, agentsSettingsDialogActiveTabAtom } from "@/lib/atoms"
 
 // ============================================================================
@@ -49,6 +50,8 @@ function getWidgetIcon(widgetId: WidgetId) {
   switch (widgetId) {
     case "info":
       return Box
+    case "orchestration":
+      return WIDGET_REGISTRY.find((widget) => widget.id === "orchestration")!.icon
     case "todo":
       return ListTodo
     case "runs":
@@ -138,6 +141,8 @@ function WidgetCard({
 interface DetailsSidebarProps {
   /** Workspace/chat ID */
   chatId: string
+  taskId?: string | null
+  projectId?: string | null
   /** Worktree path for terminal */
   worktreePath: string | null
   /** Plan path for plan section */
@@ -194,6 +199,8 @@ interface DetailsSidebarProps {
 
 export function DetailsSidebar({
   chatId,
+  taskId,
+  projectId,
   worktreePath,
   planPath,
   mode,
@@ -222,6 +229,7 @@ export function DetailsSidebar({
   remoteInfo,
   isRemoteChat = false,
 }: DetailsSidebarProps) {
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   // Global sidebar open state
   const [isOpen, setIsOpen] = useAtom(detailsSidebarOpenAtom)
 
@@ -402,6 +410,23 @@ export function DetailsSidebar({
             if (!isWidgetVisible(widgetId)) return null
 
             switch (widgetId) {
+              case "orchestration":
+                if (!projectId) return null
+                return (
+                  <WidgetCard
+                    key="orchestration"
+                    widgetId="orchestration"
+                    title="Agent orchestration"
+                  >
+                    <OrchestrationTaskCard
+                      taskId={taskId}
+                      projectId={projectId}
+                      currentChatId={chatId}
+                      onNavigate={setSelectedChatId}
+                    />
+                  </WidgetCard>
+                )
+
               case "info":
                 return (
                   <WidgetCard key="info" widgetId="info" title="Workspace">

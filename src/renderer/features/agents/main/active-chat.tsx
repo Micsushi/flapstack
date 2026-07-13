@@ -136,6 +136,7 @@ import {
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
   suppressInputFocusAtom,
+  undoStackAtom,
   workspaceDiffCacheAtomFamily,
   type AgentMode,
   type SelectedCommit,
@@ -4917,6 +4918,8 @@ export function ChatView({
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
   const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const setUndoStack = useSetAtom(undoStackAtom)
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtom)
   const { notifyAgentComplete, notifyAgentError } = useDesktopNotifications()
@@ -5403,6 +5406,8 @@ export function ChatView({
         updatedAt: new Date(remoteAgentChat.updated_at),
         archivedAt: null,
         projectId: null,
+        taskId: null,
+        parentChatId: null,
         worktreePath: null,
         branch: null,
         baseBranch: null,
@@ -7527,6 +7532,22 @@ Make sure to preserve all functionality from both branches when resolving confli
                             isTerminalOpen={isTerminalSidebarOpen}
                             chatId={chatId}
                           />
+                          {agentChat?.parentChatId && (
+                            <Tooltip delayDuration={300}>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="ml-1 h-6 w-6 text-violet-300"
+                                  onClick={() => setSelectedChatId(agentChat.parentChatId!)}
+                                  aria-label="Open parent agent chat"
+                                >
+                                  <GitFork aria-hidden="true" className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Open parent agent chat</TooltipContent>
+                            </Tooltip>
+                          )}
                           {/* Open Locally button - desktop only, sandbox mode */}
                           {showOpenLocally && (
                             <Tooltip delayDuration={500}>
@@ -8162,45 +8183,49 @@ Make sure to preserve all functionality from both branches when resolving confli
 
             {/* Unified Details Sidebar - combines all right sidebars into one (rightmost) */}
             {/* Show for both local (worktreePath) and remote (sandboxId) chats */}
-            {isUnifiedSidebarEnabled && !isMobileFullscreen && (worktreePath || sandboxId) && (
-              <DetailsSidebar
-                chatId={chatId}
-                worktreePath={worktreePath}
-                planPath={currentPlanPath}
-                mode={currentMode}
-                onBuildPlan={handleApprovePlanFromSidebar}
-                planRefetchTrigger={planEditRefetchTrigger}
-                activeSubChatId={activeSubChatIdForPlan}
-                isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
-                isTerminalSidebarOpen={isTerminalSidebarOpen}
-                isDiffSidebarOpen={isDiffSidebarOpen}
-                diffDisplayMode={diffDisplayMode}
-                canOpenDiff={canOpenDiff}
-                setIsDiffSidebarOpen={setIsDiffSidebarOpen}
-                diffStats={diffStats}
-                parsedFileDiffs={parsedFileDiffs}
-                onCommit={worktreePath ? handleCommitChanges : undefined}
-                onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
-                isCommitting={isCommittingCombined}
-                gitStatus={gitStatus}
-                isGitStatusLoading={isGitStatusLoading}
-                currentBranch={branchData?.current}
-                onExpandTerminal={() => setIsTerminalSidebarOpen(true)}
-                onExpandPlan={() => setIsPlanSidebarOpen(true)}
-                onExpandDiff={() => setIsDiffSidebarOpen(true)}
-                onFileSelect={(filePath) => {
-                  // Set the selected file path
-                  setSelectedFilePath(filePath)
-                  // Set filtered files to just this file
-                  setFilteredDiffFiles([filePath])
-                  // Open the diff sidebar
-                  setIsDiffSidebarOpen(true)
-                }}
-                onOpenFile={setFileViewerPath}
-                remoteInfo={remoteInfo}
-                isRemoteChat={!!remoteInfo}
-              />
-            )}
+            {isUnifiedSidebarEnabled &&
+              !isMobileFullscreen &&
+              (worktreePath || sandboxId || agentChat?.projectId || agentChat?.taskId) && (
+                <DetailsSidebar
+                  chatId={chatId}
+                  taskId={agentChat?.taskId}
+                  projectId={agentChat?.projectId}
+                  worktreePath={worktreePath}
+                  planPath={currentPlanPath}
+                  mode={currentMode}
+                  onBuildPlan={handleApprovePlanFromSidebar}
+                  planRefetchTrigger={planEditRefetchTrigger}
+                  activeSubChatId={activeSubChatIdForPlan}
+                  isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
+                  isTerminalSidebarOpen={isTerminalSidebarOpen}
+                  isDiffSidebarOpen={isDiffSidebarOpen}
+                  diffDisplayMode={diffDisplayMode}
+                  canOpenDiff={canOpenDiff}
+                  setIsDiffSidebarOpen={setIsDiffSidebarOpen}
+                  diffStats={diffStats}
+                  parsedFileDiffs={parsedFileDiffs}
+                  onCommit={worktreePath ? handleCommitChanges : undefined}
+                  onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
+                  isCommitting={isCommittingCombined}
+                  gitStatus={gitStatus}
+                  isGitStatusLoading={isGitStatusLoading}
+                  currentBranch={branchData?.current}
+                  onExpandTerminal={() => setIsTerminalSidebarOpen(true)}
+                  onExpandPlan={() => setIsPlanSidebarOpen(true)}
+                  onExpandDiff={() => setIsDiffSidebarOpen(true)}
+                  onFileSelect={(filePath) => {
+                    // Set the selected file path
+                    setSelectedFilePath(filePath)
+                    // Set filtered files to just this file
+                    setFilteredDiffFiles([filePath])
+                    // Open the diff sidebar
+                    setIsDiffSidebarOpen(true)
+                  }}
+                  onOpenFile={setFileViewerPath}
+                  remoteInfo={remoteInfo}
+                  isRemoteChat={!!remoteInfo}
+                />
+              )}
           </div>
 
           {/* Terminal Bottom Panel - renders below the main row when displayMode is "bottom" */}

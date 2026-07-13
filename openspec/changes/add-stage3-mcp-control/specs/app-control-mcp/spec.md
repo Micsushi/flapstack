@@ -144,17 +144,166 @@ approval-required, failed, and completed MCP call.
 ### Requirement: Safe cross-agent spawning
 
 Flapstack SHALL allow approved supported callers to create a thread for another
-harness while preserving parent and initiator lineage.
+harness while preserving parent and initiator lineage and exposing it in the UI.
 
 #### Scenario: Claude spawns Codex
 
 - **WHEN** a Claude caller receives approval to create and launch a Codex thread
 - **THEN** Flapstack creates it with resolved scope, permissions, worktree, and lineage
 
+#### Scenario: Spawned chat is visible as a fork
+
+- **WHEN** a spawned chat is displayed anywhere the user can select a chat
+- **THEN** it shows an accessible fork symbol and its parent identity
+- **AND** parent-to-child and child-to-parent links navigate both directions
+
 #### Scenario: Recursive spawn attempt
 
 - **WHEN** a spawn would violate self-reference or loop rules
 - **THEN** Flapstack denies it and records the reason
+
+### Requirement: Agent task orchestration membership
+
+Flapstack SHALL organize an orchestration request into one durable user-visible
+task containing the initiating chat and all spawned worker chats.
+
+#### Scenario: Create a named orchestration task
+
+- **WHEN** the user starts an orchestration such as `Finish Stage 4` without an
+  existing task
+- **THEN** Flapstack creates one task with that name and attaches the initiating
+  chat and every descendant worker chat
+
+#### Scenario: Attach orchestration to an existing task
+
+- **WHEN** an authorized UI or product MCP caller supplies an eligible task
+- **THEN** Flapstack attaches the orchestration and all descendant chats to that
+  task without creating a duplicate task
+
+#### Scenario: Shared create-or-attach contract
+
+- **WHEN** the UI or product MCP creates an orchestration
+- **THEN** both surfaces use the same validated create-or-attach DTO and service
+- **AND** required approvals, audit records, and renderer invalidation remain
+  consistent across both surfaces
+
+### Requirement: Configurable heterogeneous workers
+
+Flapstack SHALL persist provider-neutral worker definitions that may use
+different supported harnesses, providers, models, and execution strategies in
+one orchestration.
+
+#### Scenario: Define a worker
+
+- **WHEN** the user or an authorized caller adds a worker
+- **THEN** the definition may specify role/name, prompt/spec, harness/provider,
+  model, reasoning effort, permissions, worktree/branch strategy, dependencies,
+  and completion criteria
+
+#### Scenario: Mix worker types
+
+- **WHEN** one task includes workers with different supported definitions
+- **THEN** each worker launches with its own resolved immutable execution
+  snapshot while sharing task budgets, queue state, and lineage
+
+### Requirement: Durable bounded scheduler
+
+Flapstack SHALL use a durable scheduler to enforce per-task parallelism,
+dependencies, pause state, and exactly one launch claim per worker attempt.
+
+#### Scenario: Parallel limit reached
+
+- **WHEN** a task has reached its configured maximum parallel subagents
+- **THEN** additional ready workers remain queued until a slot is durably released
+
+#### Scenario: Concurrent scheduler drains
+
+- **WHEN** multiple scheduler drains race for the same task or worker
+- **THEN** transactional claims prevent exceeding the task limit or launching a
+  worker attempt twice
+
+#### Scenario: Dependency is incomplete
+
+- **WHEN** a queued worker depends on incomplete or failed work
+- **THEN** it does not launch and reports the blocking dependency
+
+#### Scenario: Application restarts
+
+- **WHEN** Flapstack restarts with queued, active, paused, budgeted, or stopped
+  orchestration state
+- **THEN** task membership, queue position, budgets, lineage, attempts, and stop
+  state are reconstructed without duplicating completed work
+
+### Requirement: Enforceable orchestration stop conditions
+
+Flapstack SHALL enforce durable completion/progress, wall-clock, token/cost,
+failure/blocker, and manual stop conditions before every launch and after every
+worker state or usage update.
+
+#### Scenario: Completion or progress target is reached
+
+- **WHEN** the configured completion criteria or progress target is satisfied
+- **THEN** no additional worker launches and the task records the matching stop reason
+
+#### Scenario: Time or usage ceiling is reached
+
+- **WHEN** elapsed wall-clock time, authoritative tokens/cost, or configured
+  honest fallback token/time limits reach the task ceiling
+- **THEN** the scheduler stops new launches and records the measured source and
+  stop reason
+
+#### Scenario: Exact cost is unavailable
+
+- **WHEN** a provider does not report authoritative cost
+- **THEN** Flapstack labels displayed cost as estimated, never presents it as exact,
+  and enforces configured token and time ceilings rather than invented cost
+
+#### Scenario: Failure or blocker threshold is reached
+
+- **WHEN** failed or blocked worker attempts reach the configured threshold
+- **THEN** the task stops according to policy and preserves each failure result
+
+#### Scenario: Manual stop
+
+- **WHEN** an authorized user manually stops a task
+- **THEN** queued launches are cancelled, active attempts receive the supported
+  stop action, lineage remains queryable, and the manual stop is audited
+
+### Requirement: Orchestration status and controls
+
+The task UI SHALL show aggregate orchestration state and provide safe lifecycle
+controls without rewriting history or duplicating completed work.
+
+#### Scenario: Review orchestration status
+
+- **WHEN** the user opens an orchestration task
+- **THEN** the UI shows aggregate progress; active, queued, completed, failed,
+  and stopped workers; usage and cost provenance; dependencies; lineage;
+  results; and the current stop reason
+
+#### Scenario: Pause and resume
+
+- **WHEN** an authorized user pauses and later resumes an orchestration
+- **THEN** no new work launches while paused and only eligible queued work
+  resumes afterward
+
+#### Scenario: Retry or replace a worker
+
+- **WHEN** an authorized user retries or replaces a failed or stopped worker
+- **THEN** Flapstack creates a linked attempt or replacement, preserves immutable
+  lineage and results, and does not rerun completed dependencies
+
+#### Scenario: Add a worker
+
+- **WHEN** an authorized user adds a worker to a running or paused orchestration
+- **THEN** the worker joins the durable queue with validated dependencies and is
+  subject to the existing limits, stop conditions, permissions, and audit rules
+
+#### Scenario: Unsafe orchestration mutation
+
+- **WHEN** a mutation contains a loop, excessive depth, duplicate ancestor,
+  stale identity, invalid permission/worktree scope, or unauditable action
+- **THEN** Flapstack fails closed without changing queue, budget, or lineage state
 
 ### Requirement: Startup recovery after migrations
 

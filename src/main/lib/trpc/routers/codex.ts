@@ -92,6 +92,7 @@ type CodexProviderSession = {
   authFingerprint: string | null
   mcpFingerprint: string
   reasoningEnabled: boolean
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
 }
 
 type CodexLoginSessionState = "running" | "success" | "error" | "cancelled"
@@ -179,6 +180,19 @@ export function abortAllCodexStreams(): void {
   }
   // Keep ownership until each async finalizer persists cancellation and removes
   // its own entry. App shutdown waits for that durable boundary before DB close.
+}
+
+export function cancelActiveCodexRun(input: { subChatId: string; runId: string }): {
+  cancelled: boolean
+  ignoredStale: boolean
+} {
+  const activeStream = activeStreams.get(input.subChatId)
+  if (!activeStream) return { cancelled: false, ignoredStale: false }
+  if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
+  activeStream.cancelRequested = true
+  activeStream.controller.abort()
+  rejectPendingCodexApprovals(input.subChatId, input.runId)
+  return { cancelled: true, ignoredStale: false }
 }
 
 function replyPendingCodexApproval(input: { requestId: string; optionId: string }): {
@@ -1324,6 +1338,7 @@ function getAuthFingerprint(authConfig?: { apiKey: string }): string | null {
 function buildCodexProviderEnv(
   authConfig?: { apiKey: string },
   reasoningEnabled = true,
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
 ): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
@@ -1354,6 +1369,7 @@ function buildCodexProviderEnv(
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: reasoningEnabled,
     hide_agent_reasoning: !reasoningEnabled,
+    ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
   })
 
   const apiKey = authConfig?.apiKey?.trim()
@@ -1447,6 +1463,7 @@ function getOrCreateProvider(params: {
     apiKey: string
   }
   reasoningEnabled: boolean
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
 }): ACPProvider {
   const authFingerprint = getAuthFingerprint(params.authConfig)
   const existing = providerSessions.get(params.subChatId)
@@ -1456,7 +1473,8 @@ function getOrCreateProvider(params: {
     existing.cwd === params.cwd &&
     existing.authFingerprint === authFingerprint &&
     existing.mcpFingerprint === params.mcpFingerprint &&
-    existing.reasoningEnabled === params.reasoningEnabled
+    existing.reasoningEnabled === params.reasoningEnabled &&
+    existing.reasoningEffort === (params.reasoningEffort ?? null)
   ) {
     return existing.provider
   }
@@ -1473,7 +1491,7 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
-    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled),
+    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled, params.reasoningEffort),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     permissionRequestHandler: async (request) => {
       const active = codexPermissionHandlers.get(params.subChatId)
@@ -1493,6 +1511,7 @@ function getOrCreateProvider(params: {
     authFingerprint,
     mcpFingerprint: params.mcpFingerprint,
     reasoningEnabled: params.reasoningEnabled,
+    reasoningEffort: params.reasoningEffort ?? null,
   })
 
   return provider
@@ -1810,6 +1829,7 @@ export const codexRouter = router({
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
         reasoningEnabled: z.boolean().default(true),
+        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
         images: z.array(imageAttachmentSchema).optional(),
       }),
     )
@@ -2190,6 +2210,7 @@ export const codexRouter = router({
               existingSessionId: ownedSessionId,
               authConfig,
               reasoningEnabled: input.reasoningEnabled,
+              reasoningEffort: input.reasoningEffort,
             })
 
             const startedAt = Date.now()
@@ -2458,7 +2479,13 @@ export const codexRouter = router({
               safeEmit({ type: "finish" })
             }
 
-            runCompletionStatus = terminalProviderFailure ? "failure" : "success"
+            const activeStream = activeStreams.get(input.subChatId)
+            runCompletionStatus =
+              abortController.signal.aborted || activeStream?.cancelRequested
+                ? "cancelled"
+                : terminalProviderFailure
+                  ? "failure"
+                  : "success"
             await completeRunOnce(runCompletionStatus)
             safeComplete()
           } catch (error) {
@@ -2528,22 +2555,7 @@ export const codexRouter = router({
         runId: z.string(),
       }),
     )
-    .mutation(({ input }) => {
-      const activeStream = activeStreams.get(input.subChatId)
-      if (!activeStream) {
-        return { cancelled: false, ignoredStale: false }
-      }
-
-      if (activeStream.runId !== input.runId) {
-        return { cancelled: false, ignoredStale: true }
-      }
-
-      activeStream.cancelRequested = true
-      activeStream.controller.abort()
-      rejectPendingCodexApprovals(input.subChatId, input.runId)
-
-      return { cancelled: true, ignoredStale: false }
-    }),
+    .mutation(({ input }) => cancelActiveCodexRun(input)),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     codexPermissionHandlers.delete(input.subChatId)

@@ -109,4 +109,121 @@ describe("MCP approval renderer coordination", () => {
     })
     replay.shutdown()
   })
+
+  it("shows bounded orchestration authority while hashing worker prose", () => {
+    const database = drizzle(sqlite, { schema })
+    const lifecycle = new McpApprovalLifecycle(createSqliteMcpApprovalCoordinator(database))
+    lifecycle.request({
+      id: "orchestration-approval",
+      invocationId: "orchestration-invocation",
+      caller: { chatId: "root-chat" },
+      toolName: "orchestrate_task",
+      tier: 3,
+      timeoutMs: 2_000,
+      input: orchestrationApprovalInput(),
+    })
+
+    const pending = listPendingMcpApprovals(database)[0]!
+    const stored = JSON.parse(pending.inputSummary) as any
+    expect(stored.summary).toMatchObject({
+      task: { mode: "create", name: { byteLength: 14, sha256: expect.any(String) } },
+      agentCount: 1,
+      maxParallelAgents: 3,
+      maxDepth: 5,
+      stopConditions: {
+        maxWallClockMs: 60_000,
+        maxTotalTokens: 50_000,
+        maxCostUsdMicros: 2_000_000,
+        maxFailures: 2,
+        maxBlockers: 3,
+      },
+      agents: [
+        {
+          role: { byteLength: 12, sha256: expect.any(String) },
+          prompt: { byteLength: expect.any(Number), sha256: expect.any(String) },
+          spec: { byteLength: expect.any(Number), sha256: expect.any(String) },
+          completionCriteria: { byteLength: expect.any(Number), sha256: expect.any(String) },
+          harness: "codex",
+          provider: "openai",
+          model: { byteLength: 11, sha256: expect.any(String) },
+          reasoningEffort: "high",
+          permissionMode: "custom",
+          capabilityFlags: {
+            projectWrite: true,
+            shell: true,
+            network: false,
+            git: true,
+            browser: false,
+            secrets: false,
+            subagents: true,
+            thirdPartyMcp: false,
+            productMcpRead: true,
+            productMcpWrite: true,
+            productMcpTier3: false,
+          },
+          worktreeStrategy: "attached-branch",
+        },
+      ],
+    })
+    for (const secret of [
+      "Finish secrets",
+      "release-lead",
+      "Bearer prompt-secret",
+      "spec-secret",
+      "criteria-secret",
+      "codex-secret-branch",
+    ]) {
+      expect(pending.inputSummary).not.toContain(secret)
+    }
+    lifecycle.shutdown()
+  })
 })
+
+function orchestrationApprovalInput() {
+  return {
+    projectId: "project-1",
+    task: { mode: "create" as const, name: "Finish secrets" },
+    initiatingChatId: "root-chat",
+    maxParallelAgents: 3,
+    maxDepth: 5,
+    stopConditions: {
+      maxWallClockMs: 60_000,
+      maxTotalTokens: 50_000,
+      maxCostUsdMicros: 2_000_000,
+      maxFailures: 2,
+      maxBlockers: 3,
+    },
+    agents: [
+      {
+        agentId: "worker-1",
+        role: "release-lead",
+        name: "Release lead",
+        prompt: "Bearer prompt-secret",
+        spec: "spec-secret",
+        harness: "codex" as const,
+        provider: "openai",
+        model: "gpt-5-codex",
+        reasoningEffort: "high" as const,
+        permissionMode: "custom" as const,
+        customPermissions: {
+          schemaVersion: 1 as const,
+          projectWrite: true,
+          shell: true,
+          network: false,
+          git: true,
+          browser: false,
+          secrets: false,
+          subagents: true,
+          thirdPartyMcp: false,
+          productMcpRead: true,
+          productMcpWrite: true,
+          productMcpTier3: false,
+        },
+        worktreeStrategy: "attached-branch" as const,
+        branch: "codex-secret-branch",
+        dependencyAgentIds: [],
+        completionCriteria: "criteria-secret",
+      },
+    ],
+  }
+}

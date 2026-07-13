@@ -18,6 +18,8 @@ export type ProductMcpRendererInvalidators = {
   attachmentsForChat: (chatId: string) => unknown | Promise<unknown>
   approvals: Invalidate
   audit: Invalidate
+  orchestrationTask: (taskId: string) => unknown | Promise<unknown>
+  chatLineage: (chatId: string) => unknown | Promise<unknown>
 }
 
 export function createProductMcpRendererInvalidator(
@@ -45,6 +47,10 @@ export function createProductMcpRendererInvalidator(
     }
     if (domains.has("approvals")) pending.push(invalidators.approvals())
     if (domains.has("audit")) pending.push(invalidators.audit())
+    if (domains.has("orchestrations")) {
+      pending.push(...(event.taskIds ?? []).map((id) => invalidators.orchestrationTask(id)))
+      pending.push(...(event.chatIds ?? []).map((id) => invalidators.chatLineage(id)))
+    }
     await Promise.all(pending)
   }
 }

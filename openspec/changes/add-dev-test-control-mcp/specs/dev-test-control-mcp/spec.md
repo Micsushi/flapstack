@@ -99,3 +99,22 @@ question requests through the same lifecycle owner used by production adapters.
 - **THEN** the lifecycle owner reports the pending request
 - **AND** renderer test state reports whether the matching dialog is open
 - **AND** an MCP answer, skip, or cancel produces one terminal resolution
+
+### Requirement: Reversible orchestration control
+
+The development MCP SHALL create a bounded read-only Codex or Claude fixture and
+exercise orchestration through the same durable service used by the product,
+without requiring UI input or a provider launch.
+
+#### Scenario: Prepare an orchestration fixture
+
+- **WHEN** an authenticated development client supplies an existing local project path
+- **THEN** Flapstack creates or reuses that project and creates one read-only initiating
+  chat with no credential, prompt, or provider result fabrication
+
+#### Scenario: Control an orchestration without UI input
+
+- **WHEN** an authenticated development client creates, reads, pauses, resumes, stops,
+  retries, replaces, adds, reports progress, or archives an orchestration fixture
+- **THEN** the action uses the production orchestration service and returns durable state
+  suitable for functional assertions

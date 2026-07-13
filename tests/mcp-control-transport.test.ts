@@ -76,6 +76,7 @@ describe("Flapstack MCP stdio transport", () => {
       "search",
       "create_chat",
       "spawn_thread",
+      "orchestrate_task",
       "create_task",
       "rename_item",
       "archive_item",

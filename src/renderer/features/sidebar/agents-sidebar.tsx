@@ -51,6 +51,7 @@ import {
   FolderPlus,
   FolderOpen,
   GitBranch,
+  GitFork,
   MessageSquare,
   ClipboardList,
   Activity,
@@ -879,6 +880,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatUpdatedAt,
   chatProjectId,
   chatTaskId,
+  parentChatId,
   chatScope,
   globalIndex,
   isSelected,
@@ -945,6 +947,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatUpdatedAt: Date | null
   chatProjectId: string
   chatTaskId: string | null
+  parentChatId?: string | null
   chatScope?: "global" | "project" | "task" | null
   globalIndex: number
   isSelected: boolean
@@ -1176,6 +1179,20 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 {isPinned && <Pin className="h-3 w-3 flex-shrink-0 text-sky-400" />}
                 {isStarred && (
                   <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
+                )}
+                {parentChatId && (
+                  <button
+                    type="button"
+                    className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-violet-300 hover:bg-violet-500/15 hover:text-violet-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                    title="Open parent agent chat"
+                    aria-label="Open parent agent chat"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onChatClick(parentChatId, event)
+                    }}
+                  >
+                    <GitFork aria-hidden="true" className="h-3 w-3" />
+                  </button>
                 )}
                 <span
                   ref={(el) => nameRefCallback(chatId, el)}
@@ -1805,6 +1822,7 @@ interface ChatListSectionProps {
     updatedAt: Date | null
     projectId: string | null
     taskId: string | null
+    parentChatId?: string | null
     scope?: "global" | "project" | "task" | null
     isRemote: boolean
     harness?: string | null
@@ -2674,6 +2692,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     chatUpdatedAt={chat.updatedAt}
                     chatProjectId={chat.projectId ?? ""}
                     chatTaskId={chat.taskId}
+                    parentChatId={chat.parentChatId}
                     chatScope={chat.scope}
                     globalIndex={globalIndex}
                     isSelected={isSelected}
@@ -3204,6 +3223,7 @@ export function AgentsSidebar({
       archivedAt: Date | null
       projectId: string | null
       taskId: string | null
+      parentChatId: string | null
       scope?: "global" | "project" | "task" | null
       harness?: string | null
       model?: string | null
@@ -3229,6 +3249,7 @@ export function AgentsSidebar({
           archivedAt: chat.archivedAt,
           projectId: chat.projectId,
           taskId: chat.taskId,
+          parentChatId: chat.parentChatId,
           scope: chat.scope as "global" | "project" | "task" | null,
           harness: chat.harness,
           model: chat.model,
@@ -3254,6 +3275,7 @@ export function AgentsSidebar({
           archivedAt: null,
           projectId: null,
           taskId: null,
+          parentChatId: null,
           scope: null,
           harness: null,
           model: null,

@@ -205,6 +205,19 @@ function expectStage3Schema(sqlite: Database.Database, chatId: string): void {
       "filesystem_root_registrations",
       "mcp_approval_requests",
       "mcp_audit_records",
+      "task_orchestrations",
+      "orchestration_agents",
+    ]),
+  )
+  expect(columns(sqlite, "task_orchestrations")).toEqual(
+    expect.arrayContaining(["max_parallel_agents", "stop_conditions", "blocker_count"]),
+  )
+  expect(columns(sqlite, "orchestration_agents")).toEqual(
+    expect.arrayContaining([
+      "ancestor_agent_ids",
+      "dependency_agent_ids",
+      "cost_quality",
+      "blocker_count",
     ]),
   )
   expect(triggerNames(sqlite)).toEqual(

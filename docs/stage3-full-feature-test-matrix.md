@@ -36,6 +36,22 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
       restart; dev-test MCP remains a separate authenticated test boundary.
 - [ ] **S3-M07** audit filtering, pagination, approval UI, exposure controls,
       connection state, and self-reference diagnostics pass in the live dev app.
+- [ ] **S3-M08** every spawned chat shows an accessible fork marker and durable
+      two-way parent/child navigation; one named task contains the initiating chat
+      and all descendants whether created from UI or product MCP.
+- [ ] **S3-M09** one orchestration runs heterogeneous worker definitions with
+      resolved role/spec, harness/provider, model/effort, permissions,
+      worktree/branch strategy, dependencies, and completion criteria.
+- [ ] **S3-M10** the durable scheduler enforces per-task parallelism and
+      dependencies across concurrent drains, pause/resume, retry/replace/add,
+      crashes, and restart without duplicate launches or completed-work replay.
+- [ ] **S3-M11** completion/progress, wall-clock, token/cost, failure/blocker,
+      and manual stops prevent new launches and record honest stop reasons; exact
+      cost is used only from authoritative provider data and estimates are labeled.
+- [ ] **S3-M12** the task UI and product MCP agree on aggregate progress, worker
+      states, usage/cost provenance, dependencies, lineage, results, controls,
+      audit, and post-commit renderer invalidation; loop, depth,
+      duplicate-ancestor, stale-identity, permission, and audit attacks fail closed.
 
 2026-07-13 security repair evidence: fresh per-call invocation UUIDs and
 context-bound durable approvals reject replay; product-MCP disable atomically
@@ -76,6 +92,21 @@ Claude binary/provider stream. Computer Use was limited to accessibility/focus
 evidence for the background Review control under the shared UI lease. The full
 provider-session and visual matrix remains unchecked; S3-F5-T3 and S3-F6-T4
 are not complete.
+
+2026-07-13 S3-F5 orchestration implementation evidence: migration 0022 and
+focused service, restart, concurrent-drain, budget/stop, lineage, permission,
+approval/audit, invalidation, and component/accessibility suites pass. The Node
+22 canonical gate passed 115 files with 866 tests passed and 3
+credential-conditional skips plus lint, formatting, TypeScript, and production
+build. Both affected OpenSpec changes strict-validate. `Flapstack Dev c8ae`
+passed exact checkout/profile verification after restart. Authenticated
+dev-test MCP created and controlled task
+`28947dc5-88a7-4150-a2b9-6e06d8566a1a` using read-only deferred workers and
+create/read/pause/replace/retry/add/progress/stop/archive; no provider
+launched and estimated cost stayed labeled. Computer Use only read the live
+shell pixels and accessibility tree. No live orchestration task-screen,
+real-provider, exact-cost, package, Windows, or Linux claim is promoted, so
+integrated S3-M08 through S3-M12 remain unchecked.
 
 ## 2. Settings reliability (S3-F7 through S3-F13)
 

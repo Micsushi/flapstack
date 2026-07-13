@@ -16,6 +16,7 @@ import {
   projects,
   subChats,
 } from "../db"
+import { createAgentOrchestrationService } from "../agent-orchestration/service"
 import { DEFAULT_CLAUDE_MODEL_ID } from "../../../shared/model-catalog"
 import {
   OPENCODE_HARNESSES,
@@ -94,6 +95,7 @@ import {
 export { getSettingsState, getVisibleCopySearchState } from "./settings"
 
 function notifyTestControlView(payload: DevTestControlViewPayload) {
+  if (!BrowserWindow || typeof BrowserWindow.getAllWindows !== "function") return
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(DEV_TEST_CONTROL_VIEW_CHANNEL, payload)
   }
@@ -271,6 +273,129 @@ export async function controlSettings(input: {
     targetId: input.targetId,
     project,
   })
+}
+
+export function createTestOrchestration(
+  input: unknown,
+  options: { deferScheduling?: boolean } = {},
+) {
+  return createAgentOrchestrationService(getDatabasePath()).create(input, undefined, options)
+}
+
+export function createTestOrchestrationFixture(input: {
+  projectPath: string
+  projectName?: string
+  chatName?: string
+  harness?: "codex" | "claude-code"
+}) {
+  const requestedPath = resolve(input.projectPath)
+  if (!existsSync(requestedPath) || !statSync(requestedPath).isDirectory()) {
+    throw new Error("Orchestration fixture project path must be an existing directory")
+  }
+  const projectPath = realpathSync(requestedPath)
+  const db = getDatabase()
+  const existingProject = db.select().from(projects).where(eq(projects.path, projectPath)).get()
+  if (existingProject?.archivedAt) throw new Error("Orchestration fixture project is archived")
+  const harness = input.harness ?? "codex"
+  const permissionMode = "read-only"
+  const created = db.transaction((tx) => {
+    const project =
+      existingProject ??
+      tx
+        .insert(projects)
+        .values({
+          name: input.projectName?.trim() || "Orchestration MCP fixture",
+          path: projectPath,
+        })
+        .returning()
+        .get()
+    const chat = tx
+      .insert(chats)
+      .values({
+        name: input.chatName?.trim() || "Orchestration MCP fixture",
+        projectId: project.id,
+        scope: "project",
+        harness,
+        permissionMode,
+        worktreePath: project.path,
+        ancestorChatIds: "[]",
+      })
+      .returning()
+      .get()
+    tx.update(chats).set({ initiatorChatId: chat.id }).where(eq(chats.id, chat.id)).run()
+    const subChat = tx
+      .insert(subChats)
+      .values({
+        chatId: chat.id,
+        name: chat.name,
+        mode: "agent",
+        harness,
+        permissionMode,
+        worktreePath: project.path,
+        messages: "[]",
+      })
+      .returning()
+      .get()
+    return { project, chat, subChat }
+  })
+  notifyTestControlView({ action: "chat-created", chatId: created.chat.id })
+  return {
+    projectId: created.project.id,
+    projectCreated: !existingProject,
+    chatId: created.chat.id,
+    subChatId: created.subChat.id,
+    projectPath,
+    harness,
+    permissionMode,
+  }
+}
+
+export function getTestOrchestration(input: { taskId: string }) {
+  const service = createAgentOrchestrationService(getDatabasePath())
+  return {
+    overview: service.getOverview(input.taskId),
+    lineage: service.getLineage(input.taskId),
+  }
+}
+
+export function mutateTestOrchestration(input: {
+  taskId: string
+  action:
+    "tick" | "pause" | "resume" | "stop" | "retry" | "replace" | "add" | "progress" | "archive"
+  agentId?: string
+  payload?: unknown
+}) {
+  const service = createAgentOrchestrationService(getDatabasePath())
+  switch (input.action) {
+    case "tick":
+      service.tickAll()
+      return service.getOverview(input.taskId)
+    case "pause":
+    case "resume":
+    case "stop":
+      return service.control(input.taskId, input.action)
+    case "retry":
+      if (!input.agentId) throw new Error("retry requires agentId")
+      return service.retryAgent(input.taskId, input.agentId)
+    case "replace": {
+      if (!input.agentId) throw new Error("replace requires agentId")
+      const payload = objectPayload(input.payload)
+      return service.replaceAgent(input.taskId, input.agentId, payload.agent)
+    }
+    case "add":
+      return service.addAgent({ ...objectPayload(input.payload), taskId: input.taskId })
+    case "progress":
+      return service.reportProgress({ ...objectPayload(input.payload), taskId: input.taskId })
+    case "archive":
+      return service.archiveTerminal(input.taskId)
+  }
+}
+
+function objectPayload(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("orchestration action requires an object payload")
+  }
+  return value as Record<string, unknown>
 }
 
 export function getTestEnvironment(repoPath = process.cwd()) {

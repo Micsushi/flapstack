@@ -16,6 +16,8 @@ import {
   controlSettings,
   createTestChat,
   ensureTestProject,
+  createTestOrchestration,
+  createTestOrchestrationFixture,
   getChatState,
   getHarnessStatusForRepo,
   getOpencodeLogs,
@@ -31,6 +33,7 @@ import {
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
+  getTestOrchestration,
   launchTestRun,
   injectAgentInputRequest,
   listAgentInputRequests,
@@ -39,6 +42,7 @@ import {
   mutateProjectProviderExtension,
   manageProductMcpRecovery,
   prepareProductMcpCaller,
+  mutateTestOrchestration,
   replyApproval,
   replyProductMcpApproval,
   sendTestPrompt,
@@ -70,6 +74,7 @@ export type DevMcpDescriptor = {
   pid: number
   checkout: string
   profile: string
+  userDataPath: string
   startedAt: string
 }
 
@@ -604,6 +609,21 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "cleanup_product_mcp_caller",
+    {
+      description: "Cancel and archive one isolated product-MCP caller fixture after testing.",
+      inputSchema: { chatId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(cleanupProductMcpCaller(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "list_agent_input_requests",
     {
       description: "List live provider-neutral input requests without hidden provider data.",
@@ -631,21 +651,6 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(ensureTestProject(input))
-      } catch (error) {
-        return failure(error)
-      }
-    },
-  )
-  server.registerTool(
-    "cleanup_product_mcp_caller",
-    {
-      description: "Cancel and archive one isolated product-MCP caller fixture after testing.",
-      inputSchema: { chatId: z.string().min(1) },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      try {
-        return result(cleanupProductMcpCaller(input))
       } catch (error) {
         return failure(error)
       }
@@ -705,6 +710,90 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(openTestChat(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "create_test_orchestration_fixture",
+    {
+      description:
+        "Create a read-only Codex or Claude project-chat fixture for orchestration testing.",
+      inputSchema: {
+        projectPath: z.string().min(1),
+        projectName: z.string().min(1).max(200).optional(),
+        chatName: z.string().min(1).max(200).optional(),
+        harness: z.enum(["codex", "claude-code"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(createTestOrchestrationFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "create_test_orchestration",
+    {
+      description: "Create or attach a durable test orchestration through production services.",
+      inputSchema: {
+        request: z.record(z.string(), z.unknown()),
+        deferScheduling: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ request, deferScheduling }) => {
+      try {
+        return result(createTestOrchestration(request, { deferScheduling }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_test_orchestration",
+    {
+      description: "Read one durable test orchestration overview and lineage.",
+      inputSchema: { taskId: z.string().min(1) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getTestOrchestration(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_test_orchestration",
+    {
+      description: "Tick, control, progress, retry, replace, or add a test orchestration worker.",
+      inputSchema: {
+        taskId: z.string().min(1),
+        action: z.enum([
+          "tick",
+          "pause",
+          "resume",
+          "stop",
+          "retry",
+          "replace",
+          "add",
+          "progress",
+          "archive",
+        ]),
+        agentId: z.string().min(1).optional(),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(mutateTestOrchestration(input))
       } catch (error) {
         return failure(error)
       }
@@ -1044,6 +1133,7 @@ export async function startDevMcpServer(input: {
     pid: input.pid ?? process.pid,
     checkout: input.checkout,
     profile: input.profile,
+    userDataPath: input.userDataPath,
     startedAt: new Date().toISOString(),
   }
   const descriptorPath = join(input.userDataPath, DEV_MCP_DESCRIPTOR_FILENAME)

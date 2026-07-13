@@ -133,7 +133,8 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Agents cannot invalidate or recursively relaunch their own execution context.
 - Scope: Define and test own chat/run/task/project rules for rename, move, archive, write, launch, and spawn.
-- Out of scope: General orchestration limits.
+- Scope boundary: S3-F5-T4 reuses this matrix and adds scheduler-specific
+  concurrency, depth, ancestor, identity, permission, and audit enforcement.
 - Acceptance: Every operation/target combination is explicit; blocked calls explain and audit the reason.
 - Verification: Exhaustive self-reference unit matrix.
 - Blocked by: S3-F3-T1
@@ -227,7 +228,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Blocks: S3-F6-T3
 - Relevant context: app-control router and audit storage.
 
-## S3-F5 — Cross-Agent Spawning
+## S3-F5 — Cross-Agent Spawning and Task Orchestration
 
 ### S3-F5-T1 — Define safe thread-spawn contract
 
@@ -235,7 +236,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: One provider-neutral contract defines target harness, scope, lineage, permission, worktree, and optional launch.
 - Scope: Inputs, outputs, validation, approval summary, lineage fields, and loop rules.
-- Out of scope: Rich graph, budgets, depth limits, or swarm policy.
+- Out of scope: Durable task scheduling and aggregate UI, owned by S3-F5-T4.
 - Acceptance: Contract supports Codex and Claude both directions without provider logic in renderer.
 - Verification: Schema and forbidden-loop fixtures.
 - Blocked by: S3-F3-T2
@@ -252,20 +253,71 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: Claude-to-Codex and Codex-to-Claude work; failed launch leaves honest durable state; loops are blocked.
 - Verification: Service integration tests with both directions.
 - Blocked by: S3-F2-T4, S3-F2-T5, S3-F4-T2, S3-F5-T1
-- Blocks: S3-F2-T7, S3-F5-T3, S3-F6-T4
+- Blocks: S3-F2-T7, S3-F5-T3, S3-F5-T4, S3-F6-T4
 - Relevant context: shared chat/run services and supported harness adapters.
+
+### S3-F5-T4 — Implement agent task orchestration
+
+- [x] Completion: acceptance and verification passed
+- Readiness: pickup-ready; every listed prerequisite is complete on this baseline.
+- Parent: Project Flapstack / Stage S3 / Feature S3-F5
+- Outcome: One named task durably coordinates a bounded, heterogeneous set of
+  parent and worker chats with enforceable limits, honest usage, visible lineage,
+  aggregate status, and safe lifecycle controls.
+- Scope:
+  - Backward-safe migrations for orchestration, worker/attempt, task membership,
+    queue, budget/usage, stop state, and immutable parent/ancestor lineage.
+  - Shared UI/product-MCP DTOs and services to create a named task or attach an
+    orchestration to an eligible existing task.
+  - Accessible fork markers and two-way parent/child navigation for every
+    agent-spawned chat.
+  - Per-worker role/name, prompt/spec, harness/provider, model, reasoning effort,
+    permissions, worktree/branch strategy, dependencies, and completion criteria.
+  - Durable dependency-aware scheduler with configurable per-task parallelism,
+    transactional launch claims, restart recovery, and heterogeneous workers.
+  - Completion/progress, wall-clock, token/cost, failure/blocker, and manual
+    stop conditions with exact-versus-estimated cost provenance.
+  - Aggregate task UI for progress, worker states, usage/cost, dependencies,
+    lineage, results, stop reason, and pause/resume/stop/retry/replace/add controls.
+  - Product-MCP and renderer invalidation parity; permission, approval, audit,
+    loop, depth, duplicate-ancestor, stale-identity, and worktree protections.
+- Out of scope: Hosted/cloud scheduling, unbounded hidden delegation, or
+  presenting estimated provider cost as exact.
+- Acceptance:
+  - A request such as `Finish Stage 4` creates or reuses exactly one task and
+    contains the initiating chat plus all descendants with navigable fork lineage.
+  - Parallelism, dependencies, every stop condition, and pause/resume survive
+    restart and concurrent drains without duplicate launches or completed-work replay.
+  - Mixed Codex/Claude worker definitions retain their own immutable execution
+    settings while sharing task state, budgets, queue, results, and controls.
+  - Retry, replace, and add preserve prior attempts and lineage; unsafe or stale
+    mutations fail closed and required mutations remain approved and audited.
+  - Exact provider cost is used only when authoritative; otherwise the UI labels
+    estimates and the scheduler enforces honest token/time ceilings.
+- Verification: focused migration, DTO/service, scheduler concurrency/restart,
+  budget/stop attack, MCP integration, renderer component/accessibility, lineage,
+  permission/audit, and invalidation tests; Node 22 full check; strict OpenSpec;
+  verified dev restart and safe live UI proof where available.
+- Blocked by: S3-F3-T2, S3-F3-T4, S3-F3-T5, S3-F4-T2, S3-F5-T1, S3-F5-T2
+- Blocks: S3-F5-T3, S3-F6-T4
+- Relevant context: task/chat/run schema and services, spawn service, approval and
+  audit gates, harness adapters, provider usage/cost contracts, Electron
+  invalidation bridge, agent/task renderer surfaces.
 
 ### S3-F5-T3 — Prove cross-agent behavior live
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: Real Codex and Claude sessions prove both spawn directions and safety failures.
-- Scope: Approval, denial, launch, lineage inspection, self-loop denial, stop, and audit evidence.
+- Scope: Approval, denial, launch, fork navigation, task membership, bounded
+  queue/stop behavior, restart, controls, self-loop denial, usage provenance,
+  renderer invalidation, and audit evidence.
 - Out of scope: Simulated provider sessions as a substitute for live evidence.
 - Acceptance: Both directions pass in the verified `Flapstack Dev` profile with
-  real Codex and Claude sessions; lineage, run state, approval, and audit agree.
+  real Codex and Claude sessions; task membership, lineage, scheduler/run state,
+  usage provenance, approval, audit, and renderer state agree.
 - Verification: Documented manual matrix evidence.
-- Blocked by: S3-F2-T7, S3-F3-T5, S3-F5-T2, S3-F6-T2, S3-F6-T3
+- Blocked by: S3-F2-T7, S3-F3-T5, S3-F5-T2, S3-F5-T4, S3-F6-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: isolated Stage 3 worktree/app instance and manual matrix.
 
@@ -346,7 +398,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
 - Outcome: Automated and manual evidence proves the complete safe-control workflow.
 - Scope: Full check, strict OpenSpec, MCP SDK smoke, DB tests, tool matrix, Codex/Claude manual matrix, docs, and limitation reconciliation.
-- Out of scope: Stage 4 orchestration or Stage 2 exit evidence.
+- Out of scope: Hosted orchestration or Stage 2 exit evidence.
 - Acceptance: Every Stage 3 requirement and task passes; no required manual row is blocked; docs match shipped behavior.
 - Verification: `npm run check`; strict OpenSpec validation; documented Stage 3 manual matrix.
 - Blocked by: S3-F2-T5, S3-F2-T7, S3-F3-T5, S3-F5-T3, S3-F6-T1,

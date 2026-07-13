@@ -6,6 +6,11 @@ import { z } from "zod"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getPermissionPreferences } from "../permissions"
+import { createOrchestrationInputSchema } from "../../../shared/agent-orchestration"
+import {
+  AgentOrchestrationError,
+  createAgentOrchestrationService,
+} from "../agent-orchestration/service"
 import {
   prepareThreadSpawn,
   threadSpawnRequestSchema,
@@ -24,6 +29,7 @@ const id = z.string().trim().min(1).max(128)
 
 const schemas = {
   spawn_thread: threadSpawnRequestSchema,
+  orchestrate_task: createOrchestrationInputSchema,
   create_chat: z
     .object({
       name,
@@ -116,6 +122,12 @@ export function createMcpMutationService(
               caller,
               input.data as z.infer<typeof threadSpawnRequestSchema>,
             )
+          case "orchestrate_task":
+            return orchestrateTask(
+              databasePath,
+              caller,
+              input.data as z.infer<typeof createOrchestrationInputSchema>,
+            )
           case "create_chat":
             return createChat(db, scope, input.data as z.infer<typeof schemas.create_chat>)
           case "add_attachment":
@@ -155,11 +167,23 @@ export function createMcpMutationService(
           return { ok: false, error: { code: "stale-caller", message } }
         if (message === "Target is missing or stale.") return fail("stale-target", message)
         if (message === "Target is outside the caller scope.") return fail("out-of-scope", message)
+        if (error instanceof AgentOrchestrationError) return fail(error.code, error.message)
         return fail("internal-error", message)
       } finally {
         db.close()
       }
     },
+  }
+}
+
+function orchestrateTask(
+  databasePath: string,
+  caller: McpCallerIdentity,
+  input: z.infer<typeof createOrchestrationInputSchema>,
+): McpControlResponse {
+  return {
+    ok: true,
+    data: createAgentOrchestrationService(databasePath).create(input, caller.chatId),
   }
 }
 

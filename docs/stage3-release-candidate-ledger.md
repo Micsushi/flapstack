@@ -1,21 +1,18 @@
 # Stage 3 release candidate ledger
 
-Status: safe closeout in progress. This ledger does not claim Stage 3 release
-completion while required live, UI, credential, or platform rows remain open.
+Status: S3-F5 task-orchestration implementation verified. This ledger does not
+claim Stage 3 release completion while real-provider, complete live UI,
+credential, package, or platform rows remain open.
 
 ## Candidate header
 
 - Candidate source: the exact commit containing this ledger, resolved with
   `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Starting baseline: `d08502ec16764653df589894c7a1c6ecacc87ce9`.
-- Checkout: isolated `609c` worktree on
-  `codex/stage3-settings-live-closeout`; the main and integration worktrees are
-  read-only and were not modified.
-- Profile isolation: live development proof used port `6093` and
-  `Flapstack Dev 609c`. `npm run dev:verify` matched this checkout, Electron
-  main, renderer app path, and isolated profile. Real UI work held the shared
-  `s3-settings-closeout` lease. Preview was built, inspected, and smoked but not
-  launched on this current candidate.
+- Integration baseline: `1a1d7d8c357ba8c1719bbea8aaf78473b089e0f8`.
+- Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
+  on `codex/stage3-integration`; `main` remains untouched.
+- Profile isolation: worker-lane Dev and Preview evidence remains historical
+  until the integrated candidate reruns its exact checkout/profile gates.
 - Supported release runtime: Node 22. macOS arm64 is locally available;
   Windows and Linux are unavailable in this lane.
 - Result vocabulary: only PASS satisfies a required row. FAIL, BLOCKED, and
@@ -27,17 +24,17 @@ different SHA is context only.
 
 ## Stable release rows
 
-| Row family                                          | Scope                                                                      | Evidence source                      |
-| --------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------ |
-| `S3-P01`-`S3-P06`                                   | identity, full gate, strict validation, migrations, dev identity, packages | this ledger and full-feature matrix  |
-| `S3-M01`-`S3-M07`, `M-01`-`M-20`                    | production MCP, approvals, audit, spawn, restart                           | headless integration audit           |
-| `S3-S01`-`S3-S07`                                   | Settings, credentials, extensions, permissions, copy/search                | full-feature and credential matrices |
-| `S3-V01`-`S3-V02`                                   | Voice automation and manual macOS/Windows behavior                         | Voice matrix                         |
-| `S3-U01`, `U1-01`-`U11-05`                          | Usage, daemon, provider, alert, dashboard                                  | Usage exit matrix                    |
-| `S3-H01`, `D0-01`-`D5-02`, `E1-01`-`E7-03`          | Cursor, OpenRouter, NanoGPT                                                | provider closeout matrix             |
-| `S3-R01`, `R-FIXTURE`, `R-LIVE`, `R-UI`, `R-RELOAD` | reasoning classification, controls, persistence, live providers            | reasoning capability matrix          |
-| `S3-C01`, `S3-A01`-`S3-A07`                         | Stage 1/2 carryover and supporting active changes                          | full gate plus focused live rows     |
-| `S3-X01`-`S3-X06`                                   | integrated walkthrough, review, docs, cleanup                              | this ledger and full-feature matrix  |
+| Row family                                          | Scope                                                                      | Evidence source                        |
+| --------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------- |
+| `S3-P01`-`S3-P06`                                   | identity, full gate, strict validation, migrations, dev identity, packages | this ledger and full-feature matrix    |
+| `S3-M01`-`S3-M12`, `M-01`-`M-20`                    | production MCP, approvals, audit, spawn, orchestration, restart            | full-feature matrix and headless audit |
+| `S3-S01`-`S3-S07`                                   | Settings, credentials, extensions, permissions, copy/search                | full-feature and credential matrices   |
+| `S3-V01`-`S3-V02`                                   | Voice automation and manual macOS/Windows behavior                         | Voice matrix                           |
+| `S3-U01`, `U1-01`-`U11-05`                          | Usage, daemon, provider, alert, dashboard                                  | Usage exit matrix                      |
+| `S3-H01`, `D0-01`-`D5-02`, `E1-01`-`E7-03`          | Cursor, OpenRouter, NanoGPT                                                | provider closeout matrix               |
+| `S3-R01`, `R-FIXTURE`, `R-LIVE`, `R-UI`, `R-RELOAD` | reasoning classification, controls, persistence, live providers            | reasoning capability matrix            |
+| `S3-C01`, `S3-A01`-`S3-A07`                         | Stage 1/2 carryover and supporting active changes                          | full gate plus focused live rows       |
+| `S3-X01`-`S3-X06`                                   | integrated walkthrough, review, docs, cleanup                              | this ledger and full-feature matrix    |
 
 ## Active normative-scenario crosswalk
 
@@ -53,7 +50,7 @@ non-archive change and scenario and fails when a mapping disappears.
 <!-- stage3-release-change: add-message-timestamps | rows=S3-A07,S3-X01 -->
 <!-- stage3-release-change: add-model-tuning-dropdown | rows=S3-R01,R-FIXTURE,R-UI -->
 <!-- stage3-release-change: add-stage2-voice-usage-cursor | rows=S3-V01,S3-U01,S3-H01,S3-R01 -->
-<!-- stage3-release-change: add-stage3-mcp-control | rows=S3-M01,S3-M02,S3-M03,S3-M04,S3-M05,S3-M06,S3-M07 -->
+<!-- stage3-release-change: add-stage3-mcp-control | rows=S3-M01,S3-M02,S3-M03,S3-M04,S3-M05,S3-M06,S3-M07,S3-M08,S3-M09,S3-M10,S3-M11,S3-M12 -->
 <!-- stage3-release-change: close-provider-harnesses | rows=S3-H01,D0-01,D5-02,E1-01,E7-03 -->
 <!-- stage3-release-change: complete-settings-reliability | rows=S3-S01,S3-S02,S3-S03,S3-S04,S3-S05,S3-S06,S3-S07,S3-V01,S3-V02 -->
 <!-- stage3-release-change: harden-usage-exit | rows=S3-U01,U1-01,U11-05 -->
@@ -99,13 +96,15 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | Affected OpenSpec strict validation    | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                           |
 | Node 22 `npm run check`                | PENDING | worker gates passed separately; integrated candidate rerun required                                                         |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
+| S3-F5 focused and attack suites        | PASS    | worker lane passed 9 integrated files/61 tests plus transport coverage; integrated rerun pending                            |
 | MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
 | Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
-| Verified lane Dev profiles             | PASS    | isolated `93ea` MCP and `609c` Settings checkouts/profiles; authenticated MCP, UI lease, clean shutdown                     |
+| Verified lane Dev profiles             | PASS    | isolated `93ea`, `609c`, `acbf`, and `c8ae` worker checkouts/profiles; integrated profile rerun pending                     |
 | macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; current executable launch not run                             |
 | Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
 | Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
+| Visual orchestration and MCP UI        | PENDING | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
 | Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
 | Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
 | Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
@@ -169,7 +168,7 @@ mandatory pre-dispatch audit storage is unavailable.
 Node 22 focused attacks passed 101/101 across 17 files. The canonical Node 22 gate
 passed 113 files with 843 tests passed and 3 credential-conditional skips, plus
 lint, formatting, TypeScript, and production build. Five affected OpenSpec
-changes strict-validate, and ledger coverage passes with 323 scenarios. No live
+changes strict-validate, and ledger coverage passed with 323 scenarios. No live
 UI, OS secret-store, package, provider-paid, Windows, or Linux row was promoted.
 
 The durable dispatch claim proves that execution may have started and prevents
@@ -209,6 +208,27 @@ files; `npm run check` passed lint, format, TypeScript, 855 tests with 3
 conditional skips, and the production build. All 18 active OpenSpec changes
 strict-validate, and release-ledger coverage passes for 323 scenarios and 17
 feature exits.
+
+### 2026-07-13 S3-F5 task orchestration
+
+The local-first vertical slice adds migration `0022_agent_task_orchestration.sql`, durable
+task and worker state, bounded dependency scheduling, restart recovery,
+completion/time/token/cost/failure/blocker/manual stops, mixed Codex and Claude
+definitions, task membership and fork lineage, task controls, product-MCP
+approval/audit/invalidation, and authenticated dev-test control.
+
+The live proof used only authenticated dev-test MCP for functional actions:
+create, read, pause, replace, retry, add, progress, stop, and archive.
+It deferred scheduling, launched no provider, used read-only workers, preserved
+five lineage nodes, and labeled cost as estimated rather than exact. Computer
+Use only read pixels and the accessibility tree. It did not click, type, or
+substitute for MCP coverage. The live task card itself remains visually unproved.
+
+No paid-provider, exact provider-cost, package, Windows, or Linux evidence is
+claimed. Attached-branch mode validates an existing Git-registered worktree and
+branch; it does not provision branches or worktrees. Security round 3 must
+remain preserved across schema, startup scheduler, product MCP, launch, usage,
+invalidation, and renderer integration; the integrated rerun is authoritative.
 
 ## Cleanup and evidence invalidation
 

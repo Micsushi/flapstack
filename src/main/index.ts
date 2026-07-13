@@ -10,6 +10,7 @@ import {
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
+import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
@@ -36,11 +37,13 @@ import {
   getAllMcpConfigHandler,
   hasActiveClaudeSessions,
   abortAllClaudeSessions,
+  cancelActiveClaudeSession,
 } from "./lib/trpc/routers/claude"
 import {
   getAllCodexMcpConfigHandler,
   hasActiveCodexStreams,
   abortAllCodexStreams,
+  cancelActiveCodexRun,
 } from "./lib/trpc/routers/codex"
 import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
 import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
@@ -877,10 +880,17 @@ if (gotTheLock) {
           })
           recoverInterruptedMcpRuns(getDatabasePath())
           const pendingRunLauncher = createMainRunLauncher()
+          const orchestrationService = createAgentOrchestrationService(getDatabasePath())
           const launchPendingRuns = async () => {
             if (pendingRunDrainActive) return
             pendingRunDrainActive = true
             try {
+              orchestrationService.tickAll()
+              for (const request of orchestrationService.listCancellationRequests()) {
+                if (request.harness === "codex") cancelActiveCodexRun(request)
+                else cancelActiveClaudeSession(request)
+                orchestrationService.acknowledgeCancellationRequest(request.runId)
+              }
               await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
             } catch (error) {
               console.error("[App] Pending run launch failed:", error)

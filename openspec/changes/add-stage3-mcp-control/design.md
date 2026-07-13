@@ -7,10 +7,12 @@ its own local tools. The S3-F1 reconciliation decides which scaffold survives.
 ## Goals / Non-Goals
 
 - Goals: local MCP transport; stable tool contracts; default-off exposure;
-  caller-aware permissions; explicit approvals; redacted audit; safe spawning.
-- Non-goals: hosted relay, unrestricted automation, swarm orchestration, a
-  redesign of third-party MCP client configuration, or reuse of the
-  development-only HTTP test-control MCP as a product transport.
+  caller-aware permissions; explicit approvals; redacted audit; safe spawning;
+  visible lineage; durable, bounded, local-first agent task orchestration.
+- Non-goals: hosted relay or scheduler, unbounded or hidden delegation, claiming
+  exact provider cost when only estimated usage is available, a redesign of
+  third-party MCP client configuration, or reuse of the development-only HTTP
+  test-control MCP as a product transport.
 
 ## Decisions
 
@@ -32,10 +34,34 @@ its own local tools. The S3-F1 reconciliation decides which scaffold survives.
   Tier 3 always keeps the Stage 3 approval even when the provider would allow it.
 - Store session grants in memory only and audit their use.
 - Persist redacted summaries, never credentials, tokens, or hidden reasoning.
-- Cross-agent spawning stores parent and initiator lineage and blocks loops.
+- Cross-agent spawning stores immutable parent, initiator, and ancestor lineage,
+  displays a fork marker on every spawned chat, and exposes safe parent-to-child
+  and child-to-parent navigation.
+- One orchestration owns or attaches to one user-visible task. The initiating
+  chat and every descendant worker chat share durable task membership. The UI
+  and product MCP use the same create-or-attach DTO and task service.
+- Each worker definition stores role/name, prompt/spec, harness/provider, model,
+  reasoning effort, permissions, worktree/branch strategy, dependencies, and
+  completion criteria. Different worker definitions may run in one task.
+- A durable scheduler is the only path from queued worker to launch. It enforces
+  per-task parallelism, dependency readiness, pause/stop state, and a lease or
+  compare-and-set launch claim so concurrent drains cannot exceed the limit or
+  duplicate a worker. Restart reconstructs runnable state from SQLite.
+- Stop evaluation is deterministic and durable. Completion/progress, wall-clock,
+  token/cost, failure/blocker, and manual conditions stop new launches and move
+  active work according to the recorded policy. Exact cost is enforced only
+  from provider-authoritative values; otherwise the UI labels estimates and the
+  scheduler enforces honest token and time ceilings.
+- Retry and replacement create a new attempt linked to the prior worker; they do
+  not rewrite lineage or rerun completed dependency work. Pause, resume, stop,
+  retry, replace, and add-agent mutations pass the same permission, approval,
+  audit, stale-identity, and scope checks as other product mutations.
+- Task summaries are derived from durable worker/attempt state and expose
+  progress, active/queued/completed/failed/stopped counts, usage/cost provenance,
+  dependencies, lineage, results, and stop reason.
 - Child-process mutations publish a main-process invalidation event after commit;
-  the renderer refetches affected chat, run, audit, and approval queries instead
-  of waiting for a manual refresh.
+  the renderer refetches affected task, orchestration, chat, run, audit, and
+  approval queries instead of waiting for a manual refresh.
 
 ## Risks / Trade-offs
 
@@ -53,6 +79,13 @@ storage in one post-Stage-2 migration. A migration fixture must build a real
 Stage 2 schema, apply the current chain, and prove safe defaults and append-only
 audit behavior. Rollback disables registration while preserving readable audit
 records.
+
+Agent task orchestration uses additive, backward-safe tables and nullable chat
+lineage/task-membership fields. Existing tasks and chats remain valid and are
+not inferred into orchestration runs. New scheduler, worker, attempt, budget,
+usage, and stop-state rows default to inert values until explicitly created.
+Migration fixtures prove upgrade from the supported prior schema, restart
+recovery, foreign-key integrity, and safe handling of stale worker identities.
 
 Startup recovery runs after database initialization and migrations. It
 reclassifies only interrupted MCP-origin runs, identified by an MCP-owned

@@ -18,6 +18,8 @@ export function createMainRunLauncher(): AgentRunLauncher {
             ...(run.projectPath ? { projectPath: run.projectPath } : {}),
             ...(run.model ? { model: run.model } : {}),
             mode: "agent",
+            reasoningEnabled: run.reasoningEffort !== "minimal",
+            ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
           })
         : await caller.claude.chat({
             runId: run.runId,
@@ -28,6 +30,10 @@ export function createMainRunLauncher(): AgentRunLauncher {
             ...(run.projectPath ? { projectPath: run.projectPath } : {}),
             ...(run.model ? { model: run.model } : {}),
             mode: "agent",
+            reasoningEnabled: run.reasoningEffort !== "minimal",
+            ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
+              ? { effort: run.reasoningEffort }
+              : {}),
           })
     await drainStream(stream, run)
   }

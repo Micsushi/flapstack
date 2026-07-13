@@ -11,6 +11,7 @@ export const productMcpInvalidationDomains = [
   "attachments",
   "approvals",
   "audit",
+  "orchestrations",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -100,6 +101,19 @@ export function invalidationForProductMcpMutation(
       })
     case "create_task":
       return event(["tasks"], { taskIds: compactIds(resultId) })
+    case "orchestrate_task": {
+      const orchestration = objectValue(result.orchestration)
+      const taskId = stringValue(orchestration.taskId)
+      const agents = Array.isArray(result.agents) ? result.agents.map(objectValue) : []
+      return event(["tasks", "chats", "runs", "orchestrations"], {
+        taskIds: compactIds(taskId),
+        chatIds: compactIds(
+          stringValue(orchestration.initiatingChatId),
+          ...agents.map((agent) => stringValue(agent.chatId)),
+        ),
+        runIds: compactIds(...agents.map((agent) => stringValue(agent.runId))),
+      })
+    }
     case "add_attachment":
       return event(["attachments"], { chatIds: compactIds(chatId) })
     case "launch_run":

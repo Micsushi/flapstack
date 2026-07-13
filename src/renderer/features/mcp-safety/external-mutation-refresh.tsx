@@ -23,6 +23,12 @@ export function McpExternalMutationRefreshBridge() {
       attachmentsForChat: (chatId) => utils.attachments.listByChat.invalidate({ chatId }),
       approvals: () => utils.appControl.listPendingApprovals.invalidate(),
       audit: () => utils.appControl.listAuditLog.invalidate(),
+      orchestrationTask: (taskId) =>
+        Promise.all([
+          utils.spawnedAgents.getTaskOverview.invalidate({ taskId }),
+          utils.spawnedAgents.getLineage.invalidate({ taskId }),
+        ]),
+      chatLineage: (chatId) => utils.spawnedAgents.previewLineage.invalidate({ chatId }),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate)
     const unsubscribe = window.desktopApi.onProductMcpInvalidation(coalescer.push)

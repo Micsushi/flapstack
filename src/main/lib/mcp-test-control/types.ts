@@ -52,6 +52,10 @@ export type DevMcpToolName =
   | "verify_run_artifacts"
   | "run_project_check"
   | "openspec_validate"
+  | "create_test_orchestration"
+  | "create_test_orchestration_fixture"
+  | "get_test_orchestration"
+  | "mutate_test_orchestration"
 
 export type DevMcpToolDefinition = {
   name: DevMcpToolName
