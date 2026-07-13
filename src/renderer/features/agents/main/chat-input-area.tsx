@@ -127,6 +127,7 @@ import { customHotkeysAtom } from "../../../lib/atoms"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { toast } from "sonner"
 import { useDictationSession } from "../voice/dictation-session"
+import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
   formatPermissionMode,
@@ -1082,16 +1083,17 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   useEffect(() => {
     if (!isActive) return
-    const insert = (event: Event) => {
-      const text = (event as CustomEvent<string>).detail?.trim()
+    return registerVoiceHistoryInsertTarget(dictationTargetKey, (value) => {
+      const text = value.trim()
       if (!text) return
       const current = editorRef.current?.getValue() || ""
-      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      const next = `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`
+      currentDraftTextRef.current = next
+      updateSubChatDraftText(parentChatId, subChatId, next)
+      editorRef.current?.setValue(next)
       editorRef.current?.focus()
-    }
-    window.addEventListener("voice-history-insert", insert)
-    return () => window.removeEventListener("voice-history-insert", insert)
-  }, [editorRef, isActive])
+    })
+  }, [dictationTargetKey, editorRef, isActive, parentChatId, subChatId])
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)

@@ -1,6 +1,7 @@
-import { and, desc, eq, isNotNull, like } from "drizzle-orm"
+import { and, desc, eq, isNotNull, like, or } from "drizzle-orm"
 import { app } from "electron"
 import { createHash } from "node:crypto"
+import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { chats, getDatabase, subChats, voiceArtifacts } from "../db"
@@ -24,6 +25,10 @@ export async function recordTranscription(input: {
   subChatId?: string | null
   text: string
   adapterId: string
+  modelId?: string | null
+  originKind?: "chat" | "new-chat" | null
+  originId?: string | null
+  originLabel?: string | null
   audioWav?: Buffer | null
   durationMs?: number | null
 }) {
@@ -36,6 +41,10 @@ export async function recordTranscription(input: {
       kind: "transcription",
       text: input.text,
       adapterId: input.adapterId,
+      modelId: input.modelId ?? null,
+      originKind: input.originKind ?? null,
+      originId: input.originId ?? null,
+      originLabel: input.originLabel ?? null,
       durationMs: input.durationMs ?? null,
       mimeType: input.audioWav ? "audio/wav" : null,
       byteLength: input.audioWav?.length ?? 0,
@@ -45,16 +54,22 @@ export async function recordTranscription(input: {
   if (!input.audioWav) return artifact
   const directory = join(historyRoot(), artifact.id)
   const audioPath = join(directory, "dictation.wav")
-  await mkdir(directory, { recursive: true })
-  await writeFile(audioPath, input.audioWav)
-  const saved = getDatabase()
-    .update(voiceArtifacts)
-    .set({ audioPath })
-    .where(eq(voiceArtifacts.id, artifact.id))
-    .returning()
-    .get()
-  await pruneVoiceHistory()
-  return saved
+  try {
+    await mkdir(directory, { recursive: true })
+    await writeFile(audioPath, input.audioWav)
+    const saved = getDatabase()
+      .update(voiceArtifacts)
+      .set({ audioPath })
+      .where(eq(voiceArtifacts.id, artifact.id))
+      .returning()
+      .get()
+    await pruneVoiceHistory()
+    return saved
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {})
+    getDatabase().delete(voiceArtifacts).where(eq(voiceArtifacts.id, artifact.id)).run()
+    throw error
+  }
 }
 
 export async function recordSpeech(input: {
@@ -89,16 +104,22 @@ export async function recordSpeech(input: {
     .get()
   const directory = join(historyRoot(), artifact.id)
   const audioPath = join(directory, `speech.${extension}`)
-  await mkdir(directory, { recursive: true })
-  await writeFile(audioPath, bytes)
-  const saved = getDatabase()
-    .update(voiceArtifacts)
-    .set({ audioPath })
-    .where(eq(voiceArtifacts.id, artifact.id))
-    .returning()
-    .get()
-  await pruneVoiceHistory()
-  return saved
+  try {
+    await mkdir(directory, { recursive: true })
+    await writeFile(audioPath, bytes)
+    const saved = getDatabase()
+      .update(voiceArtifacts)
+      .set({ audioPath })
+      .where(eq(voiceArtifacts.id, artifact.id))
+      .returning()
+      .get()
+    await pruneVoiceHistory()
+    return saved
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {})
+    getDatabase().delete(voiceArtifacts).where(eq(voiceArtifacts.id, artifact.id)).run()
+    throw error
+  }
 }
 
 export function createSpeechSynthesisKey(input: {
@@ -206,13 +227,19 @@ export function persistSpokenText(input: {
 
 export function searchVoiceHistory(query: string, chatId?: string) {
   const needle = `%${query.trim()}%`
+  const matchesQuery = query.trim()
+    ? or(
+        like(voiceArtifacts.text, needle),
+        like(voiceArtifacts.originLabel, needle),
+        like(voiceArtifacts.adapterId, needle),
+        like(voiceArtifacts.modelId, needle),
+      )
+    : undefined
   const where = chatId
-    ? query.trim()
-      ? and(eq(voiceArtifacts.chatId, chatId), like(voiceArtifacts.text, needle))
+    ? matchesQuery
+      ? and(eq(voiceArtifacts.chatId, chatId), matchesQuery)
       : eq(voiceArtifacts.chatId, chatId)
-    : query.trim()
-      ? like(voiceArtifacts.text, needle)
-      : undefined
+    : matchesQuery
   const rows = getDatabase()
     .select()
     .from(voiceArtifacts)
@@ -262,7 +289,7 @@ export function getVoiceHistoryAudioPath(id: string) {
     .from(voiceArtifacts)
     .where(eq(voiceArtifacts.id, id))
     .get()
-  return artifact?.audioPath ?? null
+  return artifact?.audioPath && existsSync(artifact.audioPath) ? artifact.audioPath : null
 }
 
 async function pruneVoiceHistory() {

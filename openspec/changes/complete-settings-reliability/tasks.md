@@ -216,6 +216,10 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - The selected adapter/model matches runtime metadata.
   - Missing binary/model states are visible; whisper fallback is explicit.
 - Verification: sidecar protocol/model lifecycle tests and real local dictation.
+- Remaining verification: Node protocol tests and Rust sidecar tests pass; a real
+  pinned-model load/start/chunked-speech/finalize/unload smoke passes with ordered
+  committed output. Microphone speech, visible tentative revision, and timed
+  idle-unload remain manual.
 - Estimated effort: 2-3 days.
 - Blocked by: none.
 - Blocks: S3-F9-T2, S3-F9-T5.
@@ -236,6 +240,8 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Existing draft text survives start, cancel, and completion.
   - Navigation never inserts into a different conversation.
 - Verification: streaming draft/origin tests and live navigation dictation smoke.
+- Remaining verification: focused draft/origin ownership tests pass. Live speech
+  in both composers and navigation/background handoff remain manual.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F9-T1.
 - Blocks: S3-F9-T3, S3-F9-T5.
@@ -256,6 +262,9 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Insert appends exactly once without replacing draft text.
   - Failed/missing targets preserve transcript; CRUD never reports false success.
 - Verification: history store/component/CRUD tests and verified live history flow.
+- Remaining verification: schema migration, target-bound insertion, missing-target
+  preservation, search metadata, and focused tests pass. Live restart and all UI
+  actions remain manual.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F9-T2.
 - Blocks: S3-F9-T5.
@@ -277,6 +286,8 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Invalid persisted values resolve visibly and safely.
 - Verification: resolver, preference migration, playback controller tests, and
   manual message/history playback.
+- Remaining verification: resolver, invalid-value, legacy-rate migration, and
+  canonical playback tests pass. Manual message/history/preview playback remains.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F9-T1.
 - Blocks: S3-F9-T5.
@@ -299,6 +310,14 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Unavailable platform/provider rows remain explicitly unchecked.
 - Verification: Voice suites, `npm run check`, `npm run dev:verify`, packaged
   matrix, and recorded manual evidence.
+- Remaining verification: focused suites, Rust tests, strict OpenSpec, real
+  sidecar smoke, database migration, and verified dev identity pass. The Node 22
+  full gate reaches 79 passing test files and 629 passing tests, then fails three
+  unrelated MCP migration/append-only assertions because this base has
+  `0016_glamorous_deathbird.sql` while the tests require
+  `0016_massive_ravenous.sql`. Packaged-app launch, live Voice UI, and unavailable
+  OS rows remain open until actually observed; the arm64 Preview package
+  binary/license inspection passes.
 - Estimated effort: 1 day.
 - Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3, S3-F9-T4.
 - Blocks: S3-F13-T1, S3-F13-T4, and Stage 3 exit.

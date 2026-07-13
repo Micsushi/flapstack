@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "297e111f-427e-4bc4-9e6b-f3684f943c89",
-  "prevId": "bd2854df-497a-4320-8448-b4cd63b87bbe",
+  "id": "6c5ac9ab-5745-4e7b-88a5-bb0094c6e77c",
+  "prevId": "297e111f-427e-4bc4-9e6b-f3684f943c89",
   "tables": {
     "agent_runs": {
       "name": "agent_runs",
@@ -2199,6 +2199,34 @@
           "notNull": true,
           "autoincrement": false
         },
+        "model_id": {
+          "name": "model_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "origin_kind": {
+          "name": "origin_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "origin_id": {
+          "name": "origin_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "origin_label": {
+          "name": "origin_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "synthesis_key": {
           "name": "synthesis_key",
           "type": "text",
@@ -2283,6 +2311,11 @@
         "voice_artifacts_kind_created_idx": {
           "name": "voice_artifacts_kind_created_idx",
           "columns": ["kind", "created_at"],
+          "isUnique": false
+        },
+        "voice_artifacts_origin_idx": {
+          "name": "voice_artifacts_origin_idx",
+          "columns": ["origin_kind", "origin_id"],
           "isUnique": false
         }
       },

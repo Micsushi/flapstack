@@ -3,6 +3,7 @@ import {
   resolveSttAdapter,
   resolveAvailableSttAdapter,
   resolveTtsAdapter,
+  resolveSupportedTtsVoiceId,
   resolveTtsVoiceId,
   sttAdapterImplementations,
   sttAdapters,
@@ -161,6 +162,11 @@ describe("adapter registry", () => {
     expect(resolveTtsVoiceId("kokoro", "native-os", "af_heart")).toBeNull()
     expect(resolveTtsVoiceId("native-os", "native-os", "Samantha")).toBe("Samantha")
   })
+
+  it("drops a persisted voice that the active adapter does not expose", () => {
+    expect(resolveSupportedTtsVoiceId("missing", [{ id: "available" }])).toBeNull()
+    expect(resolveSupportedTtsVoiceId("available", [{ id: "available" }])).toBe("available")
+  })
 })
 
 describe("voice settings normalization", () => {
@@ -180,6 +186,16 @@ describe("voice settings normalization", () => {
     expect(settings.preferOffline).toBe(true)
     expect(settings.whisperModelId).toBe("base")
     expect(settings.whisperCppBinPath).toBeNull()
+  })
+
+  it("normalizes obsolete adapter ids to visible supported defaults", () => {
+    const settings = normalizeVoiceSettings({
+      voiceSettingsVersion: 2,
+      sttAdapterId: "openai-whisper",
+      ttsAdapterId: "cloud-tts",
+    })
+    expect(settings.sttAdapterId).toBe("local-parakeet")
+    expect(settings.ttsAdapterId).toBe("kokoro")
   })
 
   it("keeps a configured whisper.cpp binary path", () => {
@@ -223,6 +239,7 @@ describe("local Whisper audio preparation", () => {
     expect(PARAKEET_MODEL.file).toBe("parakeet-unified-en-0.6b-Q8_0.gguf")
     expect(PARAKEET_MODEL.sizeBytes).toBe(731_357_568)
     expect(PARAKEET_MODEL.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(PARAKEET_MODEL.license).toBe("NVIDIA-Open-Model-License")
   })
 
   it("resamples live microphone frames to 16 kHz mono PCM", () => {

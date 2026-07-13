@@ -61,6 +61,15 @@ export function resolveTtsVoiceId(
   return configuredAdapterId === resolvedAdapterId ? (requestedVoiceId ?? null) : null
 }
 
+export function resolveSupportedTtsVoiceId(
+  requestedVoiceId: string | null,
+  voices: Array<{ id: string }>,
+): string | null {
+  return requestedVoiceId && voices.some((voice) => voice.id === requestedVoiceId)
+    ? requestedVoiceId
+    : null
+}
+
 export function getNativeTtsAvailability() {
   const platform = os.platform()
   if (platform === "darwin" || platform === "win32" || platform === "linux") {

@@ -1092,36 +1092,3 @@ export function clearAllCaches() {
   }
   textPartCache.clear()
 }
-
-// ============================================================================
-// TTS PLAYBACK RATE - For PlayButton
-// ============================================================================
-// Stored in localStorage and accessible via Jotai atom.
-// This allows PlayButton to manage its own state without passing callbacks
-// through props (which would break memoization).
-
-export const MIN_PLAYBACK_SPEED = 0.5
-export const MAX_PLAYBACK_SPEED = 3
-export type PlaybackSpeed = number
-
-// Atom with localStorage persistence
-export const ttsPlaybackRateAtom = atom<PlaybackSpeed>(
-  // Initial value from localStorage
-  (() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("tts-playback-rate")
-      if (saved && Number(saved) >= MIN_PLAYBACK_SPEED && Number(saved) <= MAX_PLAYBACK_SPEED) {
-        return Number(saved)
-      }
-    }
-    return 1
-  })(),
-)
-
-// Write atom that also persists to localStorage
-export const setTtsPlaybackRateAtom = atom(null, (_get, set, rate: PlaybackSpeed) => {
-  set(ttsPlaybackRateAtom, rate)
-  if (typeof window !== "undefined") {
-    localStorage.setItem("tts-playback-rate", String(rate))
-  }
-})

@@ -1,7 +1,9 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Lines, StdinLock, Write};
-use transcribe_cpp::{init_backends_default, CommitPolicy, Model, RunOptions, Session, StreamOptions};
+use transcribe_cpp::{
+    init_backends_default, CommitPolicy, Model, RunOptions, Session, StreamOptions,
+};
 
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -18,8 +20,12 @@ enum Command {
 impl Command {
     fn id(&self) -> u64 {
         match self {
-            Self::Load { id, .. } | Self::Start { id } | Self::Feed { id, .. }
-            | Self::Finalize { id } | Self::Cancel { id } | Self::Unload { id }
+            Self::Load { id, .. }
+            | Self::Start { id }
+            | Self::Feed { id, .. }
+            | Self::Finalize { id }
+            | Self::Cancel { id }
+            | Self::Unload { id }
             | Self::Ping { id } => *id,
         }
     }
@@ -40,11 +46,22 @@ struct Response {
 }
 
 fn response(id: u64) -> Response {
-    Response { id, ok: true, committed: None, tentative: None, final_text: None, error: None }
+    Response {
+        id,
+        ok: true,
+        committed: None,
+        tentative: None,
+        final_text: None,
+        error: None,
+    }
 }
 
 fn failure(id: u64, error: impl ToString) -> Response {
-    Response { error: Some(error.to_string()), ok: false, ..response(id) }
+    Response {
+        error: Some(error.to_string()),
+        ok: false,
+        ..response(id)
+    }
 }
 
 fn emit(stdout: &mut impl Write, value: Response) {
@@ -61,8 +78,13 @@ fn next_command(lines: &mut Lines<StdinLock<'_>>) -> Option<Result<Command, Stri
 
 fn decode_pcm(value: &str) -> Result<Vec<f32>, String> {
     let bytes = STANDARD.decode(value).map_err(|error| error.to_string())?;
-    if bytes.len() % 4 != 0 { return Err("PCM payload is not float32-aligned".into()); }
-    Ok(bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap())).collect())
+    if bytes.len() % 4 != 0 {
+        return Err("PCM payload is not float32-aligned".into());
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+        .collect())
 }
 
 fn run_stream(
@@ -71,16 +93,25 @@ fn run_stream(
     lines: &mut Lines<StdinLock<'_>>,
     stdout: &mut impl Write,
 ) {
-    let options = StreamOptions { commit_policy: CommitPolicy::Auto, ..Default::default() };
+    let options = StreamOptions {
+        commit_policy: CommitPolicy::Auto,
+        ..Default::default()
+    };
     let mut stream = match session.stream(&RunOptions::default(), &options) {
         Ok(stream) => stream,
-        Err(error) => { emit(stdout, failure(start_id, error)); return; }
+        Err(error) => {
+            emit(stdout, failure(start_id, error));
+            return;
+        }
     };
     emit(stdout, response(start_id));
     while let Some(command) = next_command(lines) {
         let command = match command {
             Ok(command) => command,
-            Err(error) => { emit(stdout, failure(0, error)); continue; }
+            Err(error) => {
+                emit(stdout, failure(0, error));
+                continue;
+            }
         };
         match command {
             Command::Feed { id, pcm_base64 } => {
@@ -89,27 +120,40 @@ fn run_stream(
                 match result {
                     Ok(_) => {
                         let text = stream.text();
-                        emit(stdout, Response {
-                            committed: Some(text.committed),
-                            tentative: Some(text.tentative),
-                            ..response(id)
-                        });
+                        emit(
+                            stdout,
+                            Response {
+                                committed: Some(text.committed),
+                                tentative: Some(text.tentative),
+                                ..response(id)
+                            },
+                        );
                     }
                     Err(error) => emit(stdout, failure(id, error)),
                 }
             }
             Command::Finalize { id } => {
                 match stream.finalize() {
-                    Ok(_) => emit(stdout, Response {
-                        final_text: Some(stream.text().display()),
-                        ..response(id)
-                    }),
+                    Ok(_) => emit(
+                        stdout,
+                        Response {
+                            final_text: Some(stream.text().display()),
+                            ..response(id)
+                        },
+                    ),
                     Err(error) => emit(stdout, failure(id, error)),
                 }
                 return;
             }
-            Command::Cancel { id } => { stream.reset(); emit(stdout, response(id)); return; }
-            other => emit(stdout, failure(other.id(), "Command is not valid during a stream")),
+            Command::Cancel { id } => {
+                stream.reset();
+                emit(stdout, response(id));
+                return;
+            }
+            other => emit(
+                stdout,
+                failure(other.id(), "Command is not valid during a stream"),
+            ),
         }
     }
 }
@@ -126,7 +170,10 @@ fn main() {
     while let Some(command) = next_command(&mut lines) {
         let command = match command {
             Ok(command) => command,
-            Err(error) => { emit(&mut stdout, failure(0, error)); continue; }
+            Err(error) => {
+                emit(&mut stdout, failure(0, error));
+                continue;
+            }
         };
         match command {
             Command::Ping { id } => emit(&mut stdout, response(id)),
@@ -139,17 +186,52 @@ fn main() {
                     }
                     Err(error) => emit(&mut stdout, failure(id, error)),
                 },
-                Ok(_) => emit(&mut stdout, failure(id, "Selected model does not support streaming")),
+                Ok(_) => emit(
+                    &mut stdout,
+                    failure(id, "Selected model does not support streaming"),
+                ),
                 Err(error) => emit(&mut stdout, failure(id, error)),
             },
             Command::Start { id } => match session.as_mut() {
                 Some(session) => run_stream(id, session, &mut lines, &mut stdout),
                 None => emit(&mut stdout, failure(id, "Model is not loaded")),
             },
-            Command::Unload { id } => { session = None; model = None; emit(&mut stdout, response(id)); }
-            other => emit(&mut stdout, failure(other.id(), "Start a stream before sending audio")),
+            Command::Unload { id } => {
+                session = None;
+                model = None;
+                emit(&mut stdout, response(id));
+            }
+            other => emit(
+                &mut stdout,
+                failure(other.id(), "Start a stream before sending audio"),
+            ),
         }
     }
     drop(session);
     drop(model);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_session_commands_with_request_ids() {
+        let start: Command = serde_json::from_str(r#"{"command":"start","id":42}"#).unwrap();
+        let cancel: Command = serde_json::from_str(r#"{"command":"cancel","id":43}"#).unwrap();
+        assert_eq!(start.id(), 42);
+        assert_eq!(cancel.id(), 43);
+    }
+
+    #[test]
+    fn decodes_little_endian_float_pcm() {
+        let bytes = [0.25_f32.to_le_bytes(), (-0.5_f32).to_le_bytes()].concat();
+        let decoded = decode_pcm(&STANDARD.encode(bytes)).unwrap();
+        assert_eq!(decoded, vec![0.25, -0.5]);
+    }
+
+    #[test]
+    fn rejects_unaligned_pcm() {
+        assert!(decode_pcm(&STANDARD.encode([1_u8, 2, 3])).is_err());
+    }
 }
