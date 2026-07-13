@@ -198,88 +198,111 @@ features. Stage and feature README files are navigation routers only.
 
 ## S3-F9 - Voice Settings
 
-### S3-F9-T1 - Make adapter, model, and offline preference truthful
+S3-F9 now owns the unfinished Voice exit and streaming work formerly numbered
+Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
+
+### S3-F9-T1 - Replace default batch STT with warm Parakeet streaming
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Voice selectors resolve the labeled adapter/model and Prefer offline
-  changes actual adapter priority.
-- Scope: Trace Voice tab values through resolver and sidecar; separate Whisper
-  and Parakeet identities; expose installed/download/error states; wire Prefer
-  offline into canonical resolution; preserve compatible stored selections.
-- Out of scope: Replace the active streaming STT architecture.
+- Outcome: Local dictation uses a bundled warm Parakeet streaming sidecar with an
+  explicit whisper.cpp fallback.
+- Scope: Pinned model lifecycle; bundled native sidecar; committed/tentative PCM
+  protocol; cancellation; idle unload; download/install/error states; adapter
+  identity and fallback policy.
+- Out of scope: Silent engine substitution or cloud-only dictation.
 - Acceptance:
-  - Selected labels match the runtime adapter/model metadata.
-  - Prefer offline chooses an available local adapter and falls back visibly.
-  - Missing model/binary states never report ready.
-- Verification: resolver/model lifecycle tests and real dictation smoke.
-- Estimated effort: 1-1.5 days.
-- Blocked by: coordinate with `add-stage2-voice-usage-cursor` tasks 1.11-1.15.
-- Blocks: S3-F9-T4.
-- Relevant context: Voice tab, speech registry/resolver, STT sidecar/model store.
+  - Tentative and committed segments are ordered and cancellation-safe.
+  - The selected adapter/model matches runtime metadata.
+  - Missing binary/model states are visible; whisper fallback is explicit.
+- Verification: sidecar protocol/model lifecycle tests and real local dictation.
+- Estimated effort: 2-3 days.
+- Blocked by: none.
+- Blocks: S3-F9-T2, S3-F9-T5.
+- Relevant context: speech registry/resolver, STT sidecars, model store, package resources.
 
-### S3-F9-T2 - Unify voice and playback-rate consumption
+### S3-F9-T2 - Stream dictation into both immutable conversation drafts
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: One voice/rate preference controls assistant messages and Voice
-  History playback.
-- Scope: Define canonical preference service; migrate duplicate renderer/main
-  values; update ordinary message, history, and active playback consumers;
-  define restart/update policy when voice or rate changes.
+- Outcome: Tentative and committed speech updates the intended new-chat or active
+  chat draft without losing pre-dictation text or crossing conversation origin.
+- Scope: Wire streaming segments into both composers; preserve initial draft;
+  replace tentative text with committed text; review-before-send; cancellation;
+  navigation-safe immutable origin and background recording handoff.
+- Out of scope: Automatic send or cross-device dictation.
+- Acceptance:
+  - Both composers show ordered tentative/committed updates.
+  - Existing draft text survives start, cancel, and completion.
+  - Navigation never inserts into a different conversation.
+- Verification: streaming draft/origin tests and live navigation dictation smoke.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T1.
+- Blocks: S3-F9-T3, S3-F9-T5.
+- Relevant context: draft atoms, immutable dictation origins, recording capsule.
+
+### S3-F9-T3 - Persist searchable Voice History and reliable mutations
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
+- Outcome: Final transcripts, metadata, and optional local WAV files are
+  searchable and support reliable copy, insert, play, reveal, and delete.
+- Scope: Stable history IDs; transcript/origin/adapter/model/timing metadata;
+  optional WAV lifecycle; search; insertion after composer mount; missing-target
+  copy-and-warning fallback; atomic CRUD and error state.
+- Out of scope: Cloud or cross-device history sync.
+- Acceptance:
+  - Finalized records survive restart and search by transcript/context.
+  - Insert appends exactly once without replacing draft text.
+  - Failed/missing targets preserve transcript; CRUD never reports false success.
+- Verification: history store/component/CRUD tests and verified live history flow.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T2.
+- Blocks: S3-F9-T5.
+- Relevant context: Voice History, desktop navigation, draft atoms, local WAV storage.
+
+### S3-F9-T4 - Make Voice settings control canonical runtime state
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
+- Outcome: Adapter, model, offline preference, playback voice, and playback rate
+  control the runtime behavior named by Settings.
+- Scope: One canonical preference service; adapter/model availability; Prefer
+  offline resolution; shared message/history playback voice and rate; migration
+  of duplicate values; active-playback update/restart policy.
 - Out of scope: Automatic read-aloud reintroduction.
 - Acceptance:
-  - New playback uses the same selected voice and rate from all entry points.
-  - Changing active voice/rate stops stale output and follows the documented
-    restart policy.
-  - Invalid persisted values resolve to supported defaults visibly.
-- Verification: playback controller tests, preference migration tests, manual
-  message/history playback.
-- Estimated effort: 1-1.5 days.
-- Blocked by: none; coordinate with active Voice ownership.
-- Blocks: S3-F9-T4.
-- Relevant context: message speech controls, Voice History player, speech atoms
-  and main speech services.
+  - Prefer offline changes adapter priority with a visible fallback.
+  - Message and history playback consume the same supported voice/rate.
+  - Invalid persisted values resolve visibly and safely.
+- Verification: resolver, preference migration, playback controller tests, and
+  manual message/history playback.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T1.
+- Blocks: S3-F9-T5.
+- Relevant context: Voice tab, speech settings service, message/history players.
 
-### S3-F9-T3 - Make Voice History insertion and mutation reliable
+### S3-F9-T5 - Run the complete Voice release matrix
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Insert closes Settings and changes one intended draft exactly once;
-  history CRUD reports real persistence results.
-- Scope: Capture chat/draft target; navigate out of Settings; append after
-  composer mount; handle missing target via copy-and-warning fallback; use stable
-  history IDs; verify copy/play/reveal/delete and origin metadata.
-- Out of scope: Cross-device history sync.
+- Outcome: Voice remains visible only when streaming, Settings, history, native
+  packaging, licenses, and manual behavior are proven together.
+- Scope: Focused/full tests; strict OpenSpec; dev identity; model download states;
+  real inline dictation in both composers; navigation/background recording;
+  playback; history CRUD; dependency/license review; packaged macOS sidecar/model
+  inspection; truthful Windows/Linux/provider gaps.
+- Out of scope: Fabricate unavailable cloud keys or platform evidence.
 - Acceptance:
-  - Insert appends once without replacing existing draft text.
-  - Missing/deleted target never silently drops transcript.
-  - CRUD failure leaves UI/storage consistent and shows an error.
-- Verification: history utility/store/component tests and verified live flow.
-- Estimated effort: 1-1.5 days.
-- Blocked by: active Voice history storage contract.
-- Blocks: S3-F9-T4.
-- Relevant context: Voice tab history, desktop view navigation, draft atoms,
-  immutable dictation origins.
-
-### S3-F9-T4 - Run Voice Settings release matrix
-
-- [ ] Completion: acceptance and verification passed
-- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Voice remains visible only with proven Settings-to-runtime behavior.
-- Scope: Focused/full tests; dev identity; real microphone dictation; local/cloud
-  adapter states; message/history playback and rate; history insert/CRUD;
-  packaged macOS native binary/model checks; record Windows evidence honestly.
-- Out of scope: Fabricate unavailable cloud keys or Windows machines.
-- Acceptance:
-  - All F3 scenarios pass in the verified dev profile.
-  - Native sidecars/models are present in the package under test.
-  - Missing platform/provider evidence remains explicitly unchecked.
-- Verification: Voice suites, full check, dev and packaged matrix.
+  - All S3-F9 scenarios pass in the verified `Flapstack Dev` profile.
+  - Native binaries/models and license notices exist in the package under test.
+  - Unavailable platform/provider rows remain explicitly unchecked.
+- Verification: Voice suites, `npm run check`, `npm run dev:verify`, packaged
+  matrix, and recorded manual evidence.
 - Estimated effort: 1 day.
-- Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3.
-- Blocks: S3-F13-T1, S3-F13-T4, and Voice stage exit.
-- Relevant context: Voice active change, live-dev rules, package inspection.
+- Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3, S3-F9-T4.
+- Blocks: S3-F13-T1, S3-F13-T4, and Stage 3 exit.
+- Relevant context: live-dev rules, package resources/licenses, Voice manual matrix.
 
 ## S3-F10 - Secure Credentials
 
@@ -383,12 +406,14 @@ features. Stage and feature README files are navigation routers only.
 - Outcome: Skills, commands, plugins, custom agents, and MCP entries have stable
   provider-scoped identities and explicit read/write/runtime capabilities.
 - Scope: Shared manifest, compound identity, capability states, limitations,
-  source metadata, schema versioning, and duplicate-name fixtures.
+  source metadata, schema versioning, duplicate-name fixtures, and an explicit
+  third-party MCP kind that cannot collide with product/dev-control MCP identity.
 - Out of scope: Implement every provider adapter.
 - Acceptance:
   - Same-name cross-provider items remain distinct.
   - Unknown capability fails closed.
   - Schema supports read-only discovery and provider-specific mutation.
+  - Product app-control and development test-control MCPs are excluded.
 - Verification: contract/schema/identity tests.
 - Estimated effort: 1-1.5 days.
 - Blocked by: none.
@@ -484,7 +509,7 @@ features. Stage and feature README files are navigation routers only.
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The follow-on begins from the closed provider synchronization change
   and an evidence-backed provider/mode eligibility matrix.
-- Scope: Finish or explicitly hand off GPP-T4/GPP-T6; verify current five-mode
+- Scope: Finish or explicitly hand off GPP-T4/GPP-T6/GPP-T9/GPP-T10; verify current five-mode
   mappings; classify exact, conservative, best-effort, and unavailable controls;
   define global-default versus selected-chat eligibility.
 - Out of scope: Change provider enforcement before matrix approval.
@@ -494,28 +519,31 @@ features. Stage and feature README files are navigation routers only.
   - Exact project boundary evidence is distinguished from cwd/classifier hints.
 - Verification: strict spec review and existing provider permission suites.
 - Estimated effort: 0.5-1 day after dependency closeout.
-- Blocked by: S3-F7-T2 and `sync-provider-permissions-globally` GPP-T4 and
-  GPP-T6.
+- Blocked by: S3-F7-T2 and `sync-provider-permissions-globally` GPP-T4, GPP-T6,
+  GPP-T9, and GPP-T10.
 - Blocks: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Relevant context: active permission proposal/design/tasks and provider adapters.
 
-### S3-F12-T2 - Define and persist custom permission capabilities
+### S3-F12-T2 - Add durable custom defaults across the permission hierarchy
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
-- Outcome: `custom` has explicit stored capabilities instead of a conservative
-  placeholder.
-- Scope: Capability schema for project edits, shell, network, external paths,
-  subagents, and MCP tiers; global/project/task/chat resolution; immutable run
-  snapshot; migration/defaults; Settings editor and previews.
+- Outcome: The existing exact per-chat custom schema gains coherent global,
+  project, and task defaults without changing future-chat behavior accidentally.
+- Scope: Versioned schema for project edits, shell, network, git, browser,
+  secrets, subagents, third-party MCP, and product MCP tiers; durable
+  global/project/task storage; copy-on-create resolution; immutable run snapshot;
+  migration/defaults; atomic all-chat custom; Settings editor and previews.
 - Out of scope: Mid-run permission mutation.
 - Acceptance:
   - Every custom selection stores a complete schema version.
+  - All-chat custom updates every default/chat atomically and future chats copy
+    the same resolved toggles.
   - Run metadata captures resolved capabilities.
   - Missing/invalid fields fail to ask/deny defaults.
 - Verification: schema/resolution/persistence/UI tests.
 - Estimated effort: 1.5-2 days.
-- Blocked by: S3-F12-T1.
+- Blocked by: S3-F12-T1, GPP-T10.
 - Blocks: S3-F12-T3, S3-F12-T5.
 - Relevant context: permission hierarchy, run snapshots, Settings Permissions.
 
@@ -526,16 +554,17 @@ features. Stage and feature README files are navigation routers only.
 - Outcome: Claude, Codex, Cursor, OpenRouter, and NanoGPT consume each custom
   capability through native controls or conservative Flapstack approvals.
 - Scope: Provider builders/bridges; unknown tool catch-all; network/external
-  path handling; subagents and MCP risk; preview and run metadata; fail-closed
-  missing bridge behavior.
+  path handling; subagents; separate third-party/product MCP policy; preview and
+  run metadata; fail-closed missing bridge behavior; one-prompt correlation.
 - Out of scope: Claim exact native parity where Flapstack must ask/deny.
 - Acceptance:
   - Full provider/capability matrix has allow/ask/deny tests.
   - Unknown tools cannot bypass a disabled capability.
+  - Product Tier 0, product Tier 3, and third-party MCP remain distinct.
   - Preview matches captured runtime application.
 - Verification: provider matrix, approval bridge, and run metadata tests.
 - Estimated effort: 2-3 days.
-- Blocked by: S3-F12-T1, S3-F12-T2.
+- Blocked by: S3-F12-T1, S3-F12-T2, GPP-T9, S3-F3-T5.
 - Blocks: S3-F12-T5.
 - Relevant context: provider permission adapters and pending approval UI.
 
@@ -599,7 +628,7 @@ features. Stage and feature README files are navigation routers only.
   - No visible copy claims exact permission/security behavior without evidence.
 - Verification: copy/source contract tests and UI review.
 - Estimated effort: 0.5-1 day.
-- Blocked by: S3-F8-T4, S3-F9-T4, S3-F10-T4, S3-F11-T5, and S3-F12-T5.
+- Blocked by: S3-F8-T4, S3-F9-T5, S3-F10-T4, S3-F11-T5, and S3-F12-T5.
 - Blocks: S3-F13-T2.
 - Relevant context: all visible Settings tabs and provider previews.
 
@@ -661,7 +690,7 @@ features. Stage and feature README files are navigation routers only.
   - Rollback and recovery paths are documented and exercised proportionally.
 - Verification: all task-specific evidence plus final release checklist.
 - Estimated effort: 1-2 days after feature work.
-- Blocked by: S3-F7-T4, S3-F8-T4, S3-F9-T4, S3-F10-T4, S3-F11-T5,
+- Blocked by: S3-F7-T4, S3-F8-T4, S3-F9-T5, S3-F10-T4, S3-F11-T5,
   S3-F12-T5, and S3-F13-T3.
 - Blocks: archive `complete-settings-reliability`.
 - Relevant context: this task board, stage routers, root live-dev/package rules.

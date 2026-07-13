@@ -1,5 +1,9 @@
 # Stage 2 Review Follow-ups
 
+Historical as of 2026-07-13. Remaining follow-ups are migrated without being
+marked complete: Voice to S3-F9, Usage to S3-F14, provider harnesses to S3-F15,
+reasoning to S3-F16, and integrated closeout to S3-F17.
+
 Current review: `docs/stage2-readiness-review-2026-07-10.md`
 
 Executable matrix: `docs/stage2-full-feature-test-matrix.md`

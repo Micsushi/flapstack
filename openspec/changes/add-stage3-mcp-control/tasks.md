@@ -68,8 +68,49 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: Inputs are idempotent where required; stale targets fail safely; Tier 3 path and run protections hold.
 - Verification: Per-tool service tests and rollback/error cases.
 - Blocked by: S3-F2-T3, S3-F3-T3, S3-F3-T4, S3-F4-T2
-- Blocks: S3-F5-T2, S3-F6-T4
+- Blocks: S3-F5-T2, S3-F6-T4, S3-F6-T5
 - Relevant context: existing mutations, attachments, worktrees, and run launch services.
+
+### S3-F2-T6 — Rebase Stage 3 storage onto the current migration chain
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S3 / Feature S3-F2
+- Outcome: Stage 3 storage upgrades cleanly from the rebased Stage 2 schema.
+- Scope: Consolidate exposure, approval, audit, and custom-capability storage into
+  the current post-Stage-2 migration; align snapshot and journal metadata.
+- Out of scope: Rewrite historical application data.
+- Acceptance:
+  - A real Stage 2 migration state upgrades without a duplicate column or table.
+  - Exposure defaults off; custom capabilities default null; approval/audit
+    tables and append-only audit protection exist.
+- Verification: `tests/stage3-migration-rebase.test.ts` and migration-chain tests.
+- Remaining verification: the rebased migration and existing upgrade fixture
+  pass; the dedicated named regression above must land before completion.
+- Blocked by: S3-F4-T1
+- Blocks: S3-F2-T7, S3-F6-T4
+- Relevant context: `drizzle/0017_third_molecule_man.sql`, journal, snapshot,
+  database initialization order.
+
+### S3-F2-T7 — Recover only interrupted MCP-origin runs after startup
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S3 / Feature S3-F2
+- Outcome: Startup never queries pre-migration tables or relaunches ordinary
+  interrupted runs as MCP work.
+- Scope: Initialize and migrate first; classify MCP-origin rows by MCP-owned
+  prompt-message identity; move those rows to `pending`; cancel other `running`
+  rows; drain only MCP pending rows; make repeated recovery idempotent.
+- Out of scope: Resume arbitrary provider runs after a crash.
+- Acceptance:
+  - Fresh and upgraded profiles start without a recovery-before-migration error.
+  - MCP-origin interrupted runs launch once after recovery.
+  - Non-MCP interrupted runs become cancelled and never enter the MCP drain.
+- Verification: `tests/mcp-main-run-launcher.test.ts` and
+  `tests/stage3-migration-rebase.test.ts`.
+- Blocked by: S3-F2-T6, S3-F5-T2
+- Blocks: S3-F5-T3, S3-F6-T4
+- Relevant context: database initialization, `recoverInterruptedMcpRuns`,
+  `drainPendingMcpRuns`, `agent_runs.prompt_message_id`.
 
 ## S3-F3 — Permissions and Approvals
 
@@ -101,7 +142,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T3 — Implement approval lifecycle and session grants
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Required operations wait for one durable user decision and finish exactly once.
 - Scope: Pending state, approve, deny, timeout, cancellation, app shutdown, and in-memory session grants.
@@ -114,7 +155,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T4 — Integrate approvals with tool execution
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: No mutation runs before its final gate and approval decision.
 - Scope: Gate all handlers, revalidate target/context after approval, and return structured denial or timeout results.
@@ -122,8 +163,28 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: Time-of-check changes fail closed; no alternate invocation path bypasses the gate.
 - Verification: Allowed, denied, timeout, stale-target, and bypass regression tests.
 - Blocked by: S3-F3-T3
-- Blocks: S3-F2-T5, S3-F4-T2
+- Blocks: S3-F2-T5, S3-F4-T2, S3-F6-T5
 - Relevant context: registry invoker and handler dispatch.
+
+### S3-F3-T5 — Enforce provider and product MCP gates once
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S3 / Feature S3-F3
+- Outcome: Product MCP tools receive the intended combined authority without a
+  bypass or duplicate approval prompt.
+- Scope: Allow only registry Tier 0 product reads in read-only mode; keep
+  third-party MCP denied; correlate ask-mode provider and app-control decisions;
+  preserve mandatory fresh Stage 3 approval for Tier 3.
+- Out of scope: Redefine provider-native permissions for non-MCP tools.
+- Acceptance:
+  - Read-only allows product Tier 0 and denies third-party MCP and product writes.
+  - Ask mode shows one user decision for one product invocation.
+  - Provider allow cannot bypass Tier 3 approval; denial remains fail-closed.
+- Verification: `tests/mcp-provider-permission-integration.test.ts`.
+- Blocked by: S3-F3-T3, S3-F3-T4
+- Blocks: GPP-T9, S3-F5-T3, S3-F6-T4, S3-F12-T3
+- Relevant context: provider permission builders, MCP registry tiers, approval
+  coordinator and invocation IDs.
 
 ## S3-F4 — Audit History
 
@@ -137,12 +198,12 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: Upgrade works from Stage 2 DB; migration artifacts agree; redaction fixtures pass.
 - Verification: Temporary-SQLite migration and insert/list tests.
 - Blocked by: S3-F3-T1
-- Blocks: S3-F4-T2, S3-F4-T3
+- Blocks: S3-F2-T6, S3-F4-T2, S3-F4-T3
 - Relevant context: Drizzle schema/journal and secret-redaction utilities.
 
 ### S3-F4-T2 — Audit every invocation and decision
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F4
 - Outcome: Allowed, denied, approval-required, failed, and completed calls have correlated records.
 - Scope: Instrument one invoker path, approval decisions, grants, errors, results, and durations.
@@ -150,7 +211,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: No registered execution path lacks audit coverage; failed writes remain distinguishable from success.
 - Verification: DB-backed end-to-end invoker tests.
 - Blocked by: S3-F2-T3, S3-F3-T4, S3-F4-T1
-- Blocks: S3-F2-T5, S3-F4-T3, S3-F5-T2
+- Blocks: S3-F2-T5, S3-F4-T3, S3-F5-T2, S3-F6-T5
 - Relevant context: invoker, gate, approval service, audit table.
 
 ### S3-F4-T3 — Expose filtered audit queries
@@ -191,7 +252,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Acceptance: Claude-to-Codex and Codex-to-Claude work; failed launch leaves honest durable state; loops are blocked.
 - Verification: Service integration tests with both directions.
 - Blocked by: S3-F2-T4, S3-F2-T5, S3-F4-T2, S3-F5-T1
-- Blocks: S3-F5-T3, S3-F6-T4
+- Blocks: S3-F2-T7, S3-F5-T3, S3-F6-T4
 - Relevant context: shared chat/run services and supported harness adapters.
 
 ### S3-F5-T3 — Prove cross-agent behavior live
@@ -200,10 +261,11 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: Real Codex and Claude sessions prove both spawn directions and safety failures.
 - Scope: Approval, denial, launch, lineage inspection, self-loop denial, stop, and audit evidence.
-- Out of scope: Stage 2 test app or automated UI focus control.
-- Acceptance: Both directions pass in isolated Stage 3 app data; no test steals focus from Stage 2 testing.
+- Out of scope: Simulated provider sessions as a substitute for live evidence.
+- Acceptance: Both directions pass in the verified `Flapstack Dev` profile with
+  real Codex and Claude sessions; lineage, run state, approval, and audit agree.
 - Verification: Documented manual matrix evidence.
-- Blocked by: S3-F5-T2, S3-F6-T2, S3-F6-T3
+- Blocked by: S3-F2-T7, S3-F3-T5, S3-F5-T2, S3-F6-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: isolated Stage 3 worktree/app instance and manual matrix.
 
@@ -218,6 +280,8 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: Third-party MCP server management redesign.
 - Acceptance: State is honest after restart and failures; enabling never silently focuses another window.
 - Verification: Renderer state tests and manual reconnect check.
+- Remaining verification: implementation and renderer tests pass; live
+  enable/restart/disable/reconnect rows M-01 through M-04 and M-20 remain.
 - Blocked by: S3-F2-T4
 - Blocks: S3-F6-T4
 - Relevant context: chat settings and existing agents settings surfaces.
@@ -231,6 +295,8 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: OS activation for background requests.
 - Acceptance: Background calls do not steal focus; keyboard/screen-reader flow works; stale decisions close safely.
 - Verification: Component logic tests and manual active/background checks.
+- Remaining verification: implementation and component tests pass; live active,
+  background, deny, timeout, and session-grant rows M-05 through M-10 remain.
 - Blocked by: S3-F3-T3
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: shared dialog primitives and pending approval service.
@@ -244,9 +310,32 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: Editing or deleting audit records.
 - Acceptance: Filters and paging match queries; no credential or hidden reasoning renders.
 - Verification: Renderer tests and manual allowed/denied/failed review.
+- Remaining verification: implementation and query/component tests pass; live
+  paging, decision, and redaction rows M-18 and M-19 remain.
 - Blocked by: S3-F4-T3
-- Blocks: S3-F5-T3, S3-F6-T4
+- Blocks: S3-F5-T3, S3-F6-T4, S3-F6-T5
 - Relevant context: audit query DTO and settings/details UI.
+
+### S3-F6-T5 — Refresh renderer state after MCP child mutations
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S3 / Feature S3-F6
+- Outcome: Chat, run, approval, and audit changes made outside renderer tRPC
+  appear in the open app without manual reload.
+- Scope: Publish typed main-process invalidation events after committed MCP child
+  mutations; bridge through preload; invalidate exact tRPC queries; coalesce
+  bursts; ignore pre-commit and failed mutations.
+- Out of scope: Poll every query or expose the development test-control token.
+- Acceptance:
+  - Created/archived chats and launched/stopped runs update visible lists/state.
+  - Approval and audit panels refresh after external decisions and records.
+  - Failed/rolled-back mutations do not show phantom success.
+- Verification: `tests/mcp-external-mutation-refresh.test.ts` plus verified live
+  mutation, approval, run, and audit observations.
+- Blocked by: S3-F2-T5, S3-F3-T4, S3-F4-T2, S3-F6-T3
+- Blocks: S3-F6-T4
+- Relevant context: Electron main/preload event bridge, tRPC query invalidation,
+  mutation service commit boundaries.
 
 ### S3-F6-T4 — Run integrated Stage 3 verification and closeout
 
@@ -257,6 +346,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 - Out of scope: Stage 4 orchestration or Stage 2 exit evidence.
 - Acceptance: Every Stage 3 requirement and task passes; no required manual row is blocked; docs match shipped behavior.
 - Verification: `npm run check`; strict OpenSpec validation; documented Stage 3 manual matrix.
-- Blocked by: S3-F2-T5, S3-F5-T3, S3-F6-T1, S3-F6-T2, S3-F6-T3
+- Blocked by: S3-F2-T5, S3-F2-T7, S3-F3-T5, S3-F5-T3, S3-F6-T1,
+  S3-F6-T2, S3-F6-T3, S3-F6-T5
 - Blocks: Stage 3 exit
 - Relevant context: all Stage 3 changes, tests, and manual evidence.

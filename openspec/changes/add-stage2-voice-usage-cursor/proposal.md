@@ -1,5 +1,13 @@
 # Change: Stage 2 - Voice, Usage Tracking, Cursor, OpenRouter, and NanoGPT
 
+## Migration status
+
+Stage 2 testing closed as a separate gate on 2026-07-13. Shipped behavior stays
+recorded here. Unfinished Voice, Usage, Cursor/OpenCode, NanoGPT, reasoning, and
+archive work moved to Stage 3 S3-F9 and S3-F14 through S3-F17. Before this
+change is archived, unshipped delta requirements MUST be carved into their new
+Stage 3 changes so archive does not claim behavior that never passed acceptance.
+
 ## Why
 
 Stage 1 (workspace core) is complete and archived. Stage 2 adds the next

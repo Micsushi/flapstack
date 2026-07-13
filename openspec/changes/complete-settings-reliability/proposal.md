@@ -22,11 +22,13 @@ what evidence is required before each feature can return.
   search, and runtime behavior cannot disagree about visibility.
 - Rebuild editable keyboard shortcuts around one action/binding registry.
 - Repair Voice settings so adapter/model selection, offline preference, history
-  insertion, and playback speed affect the real runtime paths.
+  insertion, and playback speed affect the real runtime paths; absorb the
+  unfinished streaming, history, license, and Voice exit work into S3-F9.
 - Move renderer-stored credentials behind a main-process encrypted credential
   service with acknowledged migration and an honest session-only fallback.
 - Make skills, commands, plugins, and custom agents provider-scoped and prevent
-  duplicate or mislabeled identities.
+  duplicate or mislabeled identities. Third-party provider MCP entries remain
+  separate from Flapstack's product app-control and development test MCPs.
 - Promote `custom` and `auto-edit-project-only` permission modes only when their
   provider enforcement and limitations meet the specified eligibility gates.
 - Make visible copy and Settings search derive from the same provider and
@@ -52,7 +54,7 @@ when credentials or machines are unavailable.
 | ------------------------------------------ | -------------------------------------------: | -------------------------------------------------------- |
 | Honest Settings surface and release gating |                          0.5-1 day remaining | Verified live Settings evidence                          |
 | Working keyboard shortcut editor           |                                     3-5 days | OS-reserved keys and input-focus conflicts               |
-| Voice Settings reliability                 |                                     4-6 days | Streaming/history integration and packaged audio paths   |
+| Voice Settings reliability                 |                                     5-9 days | Streaming/history integration and packaged audio paths   |
 | Secure credential management               |                                     5-8 days | Cross-platform keychain behavior and legacy migration    |
 | Provider-scoped extensions                 |                                    7-12 days | Provider discovery/runtime parity and identity migration |
 | Complete permission modes                  | 6-10 days after the active permission change | Exact provider enforcement, especially Cursor            |
@@ -74,13 +76,15 @@ lanes after shared registries land: about 3-5 elapsed weeks.
 - Data: the hiding phase does not delete or rewrite persisted values. The later
   credential phase removes legacy plaintext only after encrypted persistence is
   acknowledged and verified.
-- Dependencies: voice work coordinates with
-  `add-stage2-voice-usage-cursor`; permission-mode promotion follows unfinished
-  closeout in `sync-provider-permissions-globally`.
+- Dependencies: S3-F9 is the sole authority for unfinished Voice streaming and
+  exit work; permission-mode promotion follows unfinished closeout and exact
+  scoped-custom semantics in `sync-provider-permissions-globally`.
 
 ## Current Status
 
 The hiding implementation, focused regression tests, strict OpenSpec
 validation, and the full Node 22 repository gate are complete in this checkout.
-A verified live Settings smoke remains unchecked. All feature repairs remain
-planned and unchecked.
+A verified live Settings smoke remains unchecked. S3-F9 now owns the migrated
+Voice remainder. Per-chat custom MCP toggles exist, but all-chat custom remains
+blocked until S3-F12 adds durable hierarchy defaults. Other feature repairs
+remain planned and unchecked.

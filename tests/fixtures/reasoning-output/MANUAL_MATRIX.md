@@ -1,4 +1,4 @@
-# Reasoning output manual matrix (Stage 2 Track T - T7)
+# Reasoning output manual matrix (Stage 3 S3-F16)
 
 Run this matrix in the dev app after the provider/harness branch is wired. The
 fixtures are the repeatable gate; a fixture replay is not a claim that the
@@ -15,6 +15,7 @@ provider was live-tested.
 | Local/open adapter           | `local.json` fixture replay                                                                                | Fixture-tested  | AI SDK/opencode `reasoning` parts render; provider-private state does not.                        |
 
 Pending app checks: Claude, Codex ACP, Cursor UI, OpenRouter, NanoGPT, and a
-local model require a running dev app. OpenRouter and NanoGPT additionally need
-Track E's sidecar runtime and provider credentials. Do not mark them UI-tested
-until panel behavior and persisted history are observed manually.
+local model require the verified Stage 3 dev app. OpenRouter and NanoGPT also
+require the pinned sidecar and low-value provider credentials. S3-F16 owns
+capability/fallback tests plus live panel, timer, tool, search, and persisted-
+history evidence. Never infer visible reasoning from token counts or fixtures.

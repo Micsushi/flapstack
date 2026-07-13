@@ -8,12 +8,13 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. The approved Stage 2
-implementation scope is complete and in manual/package validation; it is **not**
-at full exit yet. Voice, usage, Cursor, OpenRouter/NanoGPT through an OpenCode
-sidecar, reasoning output, and the smaller-fix surfaces all have runnable
-implementation, but the remaining evidence gates and exact human test steps are tracked in the
-[Stage 2 full-feature matrix](docs/stage2-full-feature-test-matrix.md).
+Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 testing is
+closed as a separate release gate. Its unfinished implementation and evidence
+rows are migrated into Stage 3 so one integration branch owns the next runnable
+product increment. The active exit contract is the
+[Stage 3 full-feature matrix](docs/stage3-full-feature-test-matrix.md); the
+[Stage 2 matrix](docs/stage2-full-feature-test-matrix.md) is retained as a
+historical criteria record and crosswalk.
 The research-only dynamic-vocabulary architecture is explicitly deferred: it is
 not an approved Stage 2 requirement and is not claimed as implemented.
 
@@ -24,10 +25,11 @@ not an approved Stage 2 requirement and is not claimed as implemented.
   runs, permission modes with copy-on-create inheritance, worktree defaults,
   file/pasted-text attachments, scoped search, pin/archive, and before/after
   checkpoints with per-run file-change manifests
-- Stage 2 validation: the supported Node gate is green, including strict
-  TypeScript. Electron 39.8.10 and electron-builder 26.15.3 are package-validated
-  on unsigned arm64/x64 macOS artifacts. Human macOS/Windows, credentialed
-  provider, reasoning, daemon, and deep-count matrix evidence remains open.
+- Stage 3 integration is based on current `main` and combines production MCP
+  control, Settings reliability, the remaining Stage 2 voice/usage/provider/
+  reasoning closeout, and one final regression/release gate. Human macOS/
+  Windows, credentialed-provider, daemon, reasoning, and deep-count evidence
+  remains open until recorded in the Stage 3 matrix.
 - Each chat item in the left sidebar is one visible conversation. The inherited
   sub-chat tabs, nested-chat creation, history switcher, and split view are not
   part of the Flapstack product model. Existing `sub_chats` rows remain only as
@@ -77,7 +79,9 @@ harnesses, permissions, and worktrees.
 
 ### Stage 2: Voice, Usage, Cursor, OpenRouter, NanoGPT, and Fixes
 
-Five tracks plus fixes.
+Implementation baseline complete; unfinished exit work is now routed into Stage
+3 features F9 and F14-F17. This section describes the delivered foundation, not
+an active release gate.
 
 Voice (reuses Agent Hotline):
 
@@ -131,7 +135,10 @@ Smaller fixes (Stage 1 carryover plus backlog):
   drag/toggle paths.
 - Keep repo docs in sync with shipped status and remaining carryover work.
 
-### Stage 3: MCP Control
+### Stage 3: Safe Agent Control and Product Closeout
+
+Execution lanes, dependencies, coordinator behavior, and review rounds are in
+the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 
 - Clear and prove all TypeScript and Stage 3-blocking engineering debt before
   expanding the MCP surface; keep strict TypeScript and the full gate green.
@@ -147,6 +154,12 @@ Smaller fixes (Stage 1 carryover plus backlog):
 - User-facing MCP exposure, approval, connection status, and audit controls.
 - Default-off exposure, self-reference guards, worktree write safety, launch
   loop protection, and no background focus theft.
+- Repair and verify Settings surfaces for honest visibility, shortcuts, voice,
+  credentials, provider extensions, permission modes, copy, and search.
+- Finish Parakeet-first dictation, Voice History, usage/daemon evidence, Cursor/
+  OpenRouter/NanoGPT closeout, and reasoning-output parity migrated from Stage 2.
+- End with one integrated automated, live-dev, packaged, cross-platform, and
+  documentation gate on `codex/stage3-integration`.
 
 ### Stage 4: Knowledge, Workspaces, And Multi-Agent Operations
 

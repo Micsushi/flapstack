@@ -100,6 +100,24 @@ assistant-message playback, and Voice History.
 - **THEN** the transcript is copied or otherwise preserved and the UI reports
   that it was not inserted
 
+#### Scenario: Stream tentative and committed dictation
+
+- **WHEN** the warm local streaming sidecar emits tentative and committed text
+- **THEN** both new-chat and active-chat composers replace tentative text in
+  order, preserve the pre-dictation draft, and never auto-send
+
+#### Scenario: Dictation origin survives navigation
+
+- **WHEN** recording continues while the user changes chat, project, or Settings
+- **THEN** committed text remains bound to the immutable origin and the app shows
+  a return/stop handoff instead of inserting into the newly visible composer
+
+#### Scenario: Final transcript enters history
+
+- **WHEN** dictation finalizes
+- **THEN** searchable transcript, origin, adapter/model, timing, and optional
+  local WAV metadata persist for copy, insert, play, reveal, and delete
+
 ### Requirement: Encrypted Main-Process Credential Storage
 
 The system SHALL keep provider credentials out of renderer-readable persistent
@@ -167,6 +185,12 @@ operations supported by that provider adapter.
 - **THEN** Settings fails closed, reports the limitation, and does not expose a
   mutation control
 
+#### Scenario: MCP extension kind is listed
+
+- **WHEN** Settings discovers an `mcp` provider extension
+- **THEN** it represents a third-party harness configuration and never merges
+  with the product app-control or development test-control MCP identity
+
 ### Requirement: Permission Mode Eligibility
 
 The system SHALL offer a permission mode as a new selection only when the
@@ -186,6 +210,22 @@ offers a conservative ask/deny mapping allowed by that mode's specification.
 - **THEN** Settings exposes explicit project-edit, shell, network,
   external-path, subagent, and MCP-risk capabilities whose stored values are
   consumed by every supported provider mapping
+
+#### Scenario: Current-chat custom storage
+
+- **WHEN** the user selects custom for one chat with a complete capability set
+- **THEN** only that chat stores the exact toggles and subsequent runs reload
+  them from durable state
+
+#### Scenario: All-chat custom lacks hierarchy defaults
+
+- **WHEN** global, project, and task defaults cannot persist the custom schema
+- **THEN** all-chat custom remains unavailable and no chat/default is changed
+
+#### Scenario: Leave custom mode
+
+- **WHEN** the user selects a non-custom mode
+- **THEN** stale custom JSON for the affected chat scope is cleared
 
 #### Scenario: Exact project-only provider
 

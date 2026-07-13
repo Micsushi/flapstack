@@ -3,8 +3,11 @@
 Audit date: 2026-07-12. Branch baseline: `codex/stage3-integration` at
 `6174aeacf03b30ae24587ab243ec9c4924c4bb60`.
 
-This document records headless evidence only. It does not complete live or
-manual rows. Stage 2 app data and processes were not touched.
+This document preserves the pre-rebase headless evidence and the detailed MCP
+manual rows. It does not complete live/manual rows. Stage 2 protection was
+lifted on 2026-07-13; current work may use the verified `Flapstack Dev` app and
+UI. The active integrated exit ledger is
+`docs/stage3-full-feature-test-matrix.md`.
 
 ## Verified headless baseline
 
@@ -17,9 +20,10 @@ manual rows. Stage 2 app data and processes were not touched.
 - The build emitted `out/main/mcp-control-stdio.js`.
 - The real MCP SDK stdio test listed the implemented catalog and called
   `ping`, `describe`, and `list_projects` through a child process.
-- A migration test now constructs the database at migration 0015, inserts a
-  Stage 2 chat, applies migrations 0016 through 0021, and verifies default-off
-  exposure, null-safe custom permissions, plus audit and approval storage.
+- Historical migration evidence constructed the database at migration 0015 and
+  applied the old Stage 3 0016-0021 chain. After rebasing onto main's new 0016,
+  Stage 3 now uses one regenerated 0017. Fresh, main-era, and explicitly
+  supported legacy upgrade tests remain open in S3-F2-T6.
 - Per-chat custom capability toggles now persist in SQLite, reload after a
   database restart, and are revalidated on every call. Missing, malformed,
   partial, extra-key, stale, and unsupported permission state fails closed;
@@ -50,9 +54,10 @@ S3-F5-T3 remains open for real Codex and Claude evidence.
 
 ## Exact manual matrix
 
-Run only after Stage 2 protection is explicitly cleared. Use an isolated Stage
-3 data directory and a Stage 3 build. Do not use the Stage 2 dev profile. Do
-not let the test launcher activate or focus another app window.
+Stage 2 protection is cleared. Start only with `npm run dev`, then run
+`npm run dev:verify` before evidence. The result must name this checkout and the
+`Flapstack Dev` profile. UI automation, app focus, restart, and real provider
+testing are allowed. Do not target a production or generic packaged app.
 
 Record this header before testing:
 
@@ -63,11 +68,11 @@ OS and architecture:
 Git branch and exact SHA:
 Node/npm versions:
 Executable path:
-Stage 3 data directory:
+Flapstack Dev data directory:
 Database path:
 Codex version/auth status:
 Claude version/auth status:
-Stage 2 process/profile untouched evidence:
+dev:verify checkout/profile evidence:
 ```
 
 For each row, record request timestamp, caller chat/run IDs, target IDs,
@@ -114,8 +119,7 @@ Lineage fields:
 UI evidence path:
 SQLite query/evidence path:
 Logs/evidence path:
-Focus before/after:
-Stage 2 protection check:
+Checkout/profile evidence:
 Notes or limitation:
 ```
 
