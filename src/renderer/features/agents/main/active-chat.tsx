@@ -212,7 +212,7 @@ import { AgentToolRegistry } from "../ui/agent-tool-registry"
 import { AttachmentTray } from "../ui/attachment-tray"
 import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
-import { AgentUserQuestion, type AgentUserQuestionHandle } from "../ui/agent-user-question"
+import { AgentInputDialog } from "../ui/agent-input-dialog"
 import { AgentsHeaderControls } from "../ui/agents-header-controls"
 import { ChatTitleEditor } from "../ui/chat-title-editor"
 import { getHarnessChipMeta } from "../constants"
@@ -2109,7 +2109,6 @@ const ChatViewInner = memo(function ChatViewInner({
 
   const editorRef = useRef<AgentsMentionsEditorHandle>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const questionRef = useRef<AgentUserQuestionHandle>(null)
   const prevChatKeyRef = useRef<string | null>(null)
   const prevSubChatIdRef = useRef<string | null>(null)
 
@@ -2884,6 +2883,18 @@ const ChatViewInner = memo(function ChatViewInner({
   // Unified display questions: prefer pending (live), fall back to expired
   const displayQuestions = pendingQuestions ?? expiredQuestions
   const isQuestionExpired = !pendingQuestions && !!expiredQuestions
+  const [questionDialogOpen, setQuestionDialogOpen] = useState(false)
+  const autoOpenedQuestionIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!displayQuestions) {
+      setQuestionDialogOpen(false)
+      return
+    }
+    if (!isActive || autoOpenedQuestionIdRef.current === displayQuestions.toolUseId) return
+    autoOpenedQuestionIdRef.current = displayQuestions.toolUseId
+    setQuestionDialogOpen(true)
+  }, [displayQuestions, isActive])
 
   useEffect(() => {
     if (!pendingQuestions) return
@@ -2901,7 +2912,7 @@ const ChatViewInner = memo(function ChatViewInner({
   }, [notifyAgentNeedsInput, parentChatId, pendingQuestions, subChatId, workspaceName])
 
   // Track whether chat input has content (for custom text with questions)
-  const [inputHasContent, setInputHasContent] = useState(false)
+  const [, setInputHasContent] = useState(false)
 
   // Memoize the last assistant message to avoid unnecessary recalculations
   const lastAssistantMessage = useMemo(
@@ -3199,7 +3210,8 @@ const ChatViewInner = memo(function ChatViewInner({
   // Ref to prevent double submit of question answer
   const isSubmittingQuestionAnswerRef = useRef(false)
 
-  // Handle answering questions with custom text from input (called on Enter in input)
+  // Answer-in-chat uses the normal composer without starting a second turn when
+  // the originating native request is still pending.
   const handleSubmitWithQuestionAnswer = useCallback(async () => {
     if (!displayQuestions) return
     if (isSubmittingQuestionAnswerRef.current) return
@@ -3213,49 +3225,32 @@ const ChatViewInner = memo(function ChatViewInner({
         return
       }
 
-      // 2. Get already selected answers from question component
-      const selectedAnswers = questionRef.current?.getAnswers() || {}
-      const formattedAnswers: Record<string, string> = { ...selectedAnswers }
-
-      // 3. Add custom text to the last question as "Other"
-      const lastQuestion = displayQuestions.questions[displayQuestions.questions.length - 1]
-      if (lastQuestion) {
-        const existingAnswer = formattedAnswers[lastQuestion.question]
-        if (existingAnswer) {
-          // Append to existing answer
-          formattedAnswers[lastQuestion.question] = `${existingAnswer}, Other: ${customText}`
-        } else {
-          formattedAnswers[lastQuestion.question] = `Other: ${customText}`
-        }
-      }
+      const formattedAnswers = Object.fromEntries(
+        displayQuestions.questions.map((question) => [question.question, customText]),
+      )
 
       if (isQuestionExpired) {
-        // Expired: send user's custom text as-is (don't format)
+        // Expired/continuation: send a normal linked user turn and disclose it
+        // in the visible text instead of claiming same-run continuation.
         clearPendingQuestionCallback()
         clearInputAndDraft()
-        // await sendUserMessage(formatAnswersAsText(formattedAnswers))
-        await sendUserMessage(customText)
+        await sendUserMessage(
+          `${displayQuestions.questions.map((question, index) => `${index + 1}. ${question.question}`).join("\n")}\n\nAnswer (continued after structured request expired):\n${customText}`,
+        )
       } else {
-        // Live: use existing tool approval flow
+        // Native request is still live: return the free-text response to the
+        // same paused run. Do not abort it or create a second user message.
         await trpcClient.claude.respondToolApproval.mutate({
           toolUseId: displayQuestions.toolUseId,
           approved: true,
           updatedInput: {
             questions: displayQuestions.questions,
             answers: formattedAnswers,
+            responseMode: "chat",
           },
         })
         clearPendingQuestionCallback()
-
-        // Stop stream if currently streaming
-        if (isStreamingRef.current) {
-          agentChatStore.setManuallyAborted(subChatId, true)
-          await stopRef.current()
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-
         clearInputAndDraft()
-        await sendUserMessage(customText)
       }
     } finally {
       isSubmittingQuestionAnswerRef.current = false
@@ -3266,8 +3261,6 @@ const ChatViewInner = memo(function ChatViewInner({
     clearPendingQuestionCallback,
     clearInputAndDraft,
     sendUserMessage,
-    formatAnswersAsText,
-    subChatId,
   ])
 
   // Memoize the callback to prevent ChatInputArea re-renders
@@ -4948,19 +4941,48 @@ const ChatViewInner = memo(function ChatViewInner({
           </div>
         </div>
 
-        {/* User questions panel - shows for both live (pending) and expired (timed out) questions */}
+        {/* Shared question dialog. Background chats never open it automatically. */}
         {displayQuestions && (
-          <div className="px-4 relative z-20">
-            <div className="w-full px-2 max-w-2xl mx-auto">
-              <AgentUserQuestion
-                ref={questionRef}
-                pendingQuestions={displayQuestions}
-                onAnswer={handleQuestionsAnswer}
-                onSkip={handleQuestionsSkip}
-                hasCustomText={inputHasContent}
-              />
-            </div>
-          </div>
+          <>
+            <AgentInputDialog
+              request={displayQuestions}
+              open={isActive && questionDialogOpen}
+              onOpenChange={setQuestionDialogOpen}
+              onAnswer={handleQuestionsAnswer}
+              onSkip={handleQuestionsSkip}
+              onAnswerInChat={() => {
+                setQuestionDialogOpen(false)
+                queueMicrotask(() => editorRef.current?.focus())
+              }}
+            />
+            {!questionDialogOpen && (
+              <div className="relative z-20 px-4">
+                <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">Agent questions</div>
+                    {displayQuestions.questions.map((question, index) => (
+                      <div key={`${displayQuestions.toolUseId}-${index}`} className="truncate">
+                        {index + 1}. {question.question}
+                      </div>
+                    ))}
+                    {isQuestionExpired && (
+                      <div className="mt-1 text-amber-600 dark:text-amber-400">
+                        Native wait expired. Your reply will continue as a normal chat turn.
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setQuestionDialogOpen(true)}
+                  >
+                    Reopen questions
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Stacked cards container - queue + status */}

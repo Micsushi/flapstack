@@ -1,4 +1,5 @@
 import type { HarnessContextMetadata } from "../harness/launch-context"
+import type { AgentInputRequest, AgentInputStatusEvent } from "../../../shared/agent-input"
 
 // AI SDK UIMessageChunk format
 export type UIMessageChunk =
@@ -33,17 +34,10 @@ export type UIMessageChunk =
   | { type: "auth-error"; errorText: string }
   | { type: "retry-notification"; message: string }
   | {
-      type: "ask-user-question"
-      toolUseId: string
-      questions: Array<{
-        question: string
-        header: string
-        options: Array<{ label: string; description: string }>
-        multiSelect: boolean
-      }>
+      type: "agent-input-request"
+      request: AgentInputRequest
     }
-  | { type: "ask-user-question-timeout"; toolUseId: string }
-  | { type: "ask-user-question-result"; toolUseId: string; result: unknown }
+  | { type: "agent-input-status"; event: AgentInputStatusEvent }
   | { type: "message-metadata"; messageMetadata: MessageMetadata }
   // Session initialization (MCP servers, plugins, tools)
   | {

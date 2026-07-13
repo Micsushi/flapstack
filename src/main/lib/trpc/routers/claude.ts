@@ -6,6 +6,11 @@ import * as os from "os"
 import path from "path"
 import { z } from "zod"
 import { setConnectionMethod } from "../../analytics"
+import { agentInputLifecycle } from "../../agent-input/service"
+import {
+  formatClaudeInputAnswers,
+  normalizeClaudeInputQuestions,
+} from "../../agent-input/claude-adapter"
 import {
   buildClaudeEnv,
   checkOfflineFallback,
@@ -57,6 +62,8 @@ import {
   getLastHarnessContextFingerprint,
   prependStartupContext,
 } from "../../harness/launch-context"
+import { getAgentInputCapability } from "../../harness/input-capabilities"
+import type { AgentInputRequest } from "../../../../shared/agent-input"
 import {
   ensureMcpTokensFresh,
   fetchMcpTools,
@@ -435,6 +442,10 @@ export function abortAllClaudeSessions(): void {
   for (const [subChatId, controller] of activeSessions) {
     console.log(`[claude] Aborting session ${subChatId} before reload`)
     controller.abort()
+    agentInputLifecycle.cancelByChat(
+      subChatId,
+      "Application reload cancelled the pending question.",
+    )
   }
   activeSessions.clear()
 }
@@ -498,22 +509,11 @@ async function readProjectMcpJsonCached(
   }
 }
 
-const pendingToolApprovals = new Map<
-  string,
-  {
-    subChatId: string
-    resolve: (decision: { approved: boolean; message?: string; updatedInput?: unknown }) => void
-  }
->()
-
 const PLAN_MODE_BLOCKED_TOOLS = new Set(["Bash", "NotebookEdit"])
 
 const clearPendingApprovals = (message: string, subChatId?: string) => {
-  for (const [toolUseId, pending] of pendingToolApprovals) {
-    if (subChatId && pending.subChatId !== subChatId) continue
-    pending.resolve({ approved: false, message })
-    pendingToolApprovals.delete(toolUseId)
-  }
+  if (subChatId) agentInputLifecycle.cancelByChat(subChatId, message)
+  else agentInputLifecycle.dispose(message)
 }
 
 // Image attachment schema
@@ -1983,57 +1983,61 @@ ${prompt}
                   }
                   if (toolName === "AskUserQuestion") {
                     const { toolUseID } = options
-                    // Emit to UI (safely in case observer is closed)
+                    const createdAt = Date.now()
+                    const questions = normalizeClaudeInputQuestions((toolInput as any).questions)
+                    const request: AgentInputRequest = {
+                      requestId: toolUseID,
+                      chatId: input.subChatId,
+                      runId: agentRunId ?? input.runId ?? streamId,
+                      origin: {
+                        harness: HARNESS,
+                        provider: "anthropic",
+                        ...(resolvedModel ? { model: resolvedModel } : {}),
+                        toolName,
+                      },
+                      capability: getAgentInputCapability(HARNESS),
+                      questions,
+                      status: "pending",
+                      createdAt,
+                      expiresAt: createdAt + 15 * 60_000,
+                    }
+
                     safeEmit({
-                      type: "ask-user-question",
-                      toolUseId: toolUseID,
-                      questions: (toolInput as any).questions,
+                      type: "agent-input-request",
+                      request,
                     } as UIMessageChunk)
 
-                    // Wait for response (60s timeout)
-                    const response = await new Promise<{
-                      approved: boolean
-                      message?: string
-                      updatedInput?: unknown
-                    }>((resolve) => {
-                      const timeoutId = setTimeout(() => {
-                        pendingToolApprovals.delete(toolUseID)
-                        // Emit chunk to notify UI that the question has timed out
-                        // This ensures the pending question dialog is cleared
-                        safeEmit({
-                          type: "ask-user-question-timeout",
-                          toolUseId: toolUseID,
-                        } as UIMessageChunk)
-                        resolve({ approved: false, message: "Timed out" })
-                      }, 60000)
-
-                      pendingToolApprovals.set(toolUseID, {
-                        subChatId: input.subChatId,
-                        resolve: (d) => {
-                          clearTimeout(timeoutId)
-                          resolve(d)
-                        },
-                      })
+                    const resolution = await agentInputLifecycle.create(request, {
+                      timeoutMs: 15 * 60_000,
+                      signal: abortController.signal,
                     })
+
+                    safeEmit({
+                      type: "agent-input-status",
+                      event: {
+                        requestId: request.requestId,
+                        chatId: request.chatId,
+                        runId: request.runId,
+                        status: resolution.status,
+                        at: Date.now(),
+                        ...(resolution.status === "answered"
+                          ? { response: resolution.response }
+                          : { message: resolution.message }),
+                      },
+                    } as UIMessageChunk)
 
                     // Find the tool part in accumulated parts
                     const askToolPart = parts.find(
                       (p) => p.toolCallId === toolUseID && p.type === "tool-AskUserQuestion",
                     )
 
-                    if (!response.approved) {
+                    if (resolution.status !== "answered") {
                       // Update the tool part with error result for skipped/denied
-                      const errorMessage = response.message || "Skipped"
+                      const errorMessage = resolution.message
                       if (askToolPart) {
                         askToolPart.result = errorMessage
                         askToolPart.state = "result"
                       }
-                      // Emit result to frontend so it updates in real-time
-                      safeEmit({
-                        type: "ask-user-question-result",
-                        toolUseId: toolUseID,
-                        result: errorMessage,
-                      } as UIMessageChunk)
                       return {
                         behavior: "deny",
                         message: errorMessage,
@@ -2041,21 +2045,15 @@ ${prompt}
                     }
 
                     // Update the tool part with answers result for approved
-                    const answers = (response.updatedInput as any)?.answers
+                    const answers = formatClaudeInputAnswers(questions, resolution.response.answers)
                     const answerResult = { answers }
                     if (askToolPart) {
                       askToolPart.result = answerResult
                       askToolPart.state = "result"
                     }
-                    // Emit result to frontend so it updates in real-time
-                    safeEmit({
-                      type: "ask-user-question-result",
-                      toolUseId: toolUseID,
-                      result: answerResult,
-                    } as UIMessageChunk)
                     return {
                       behavior: "allow",
-                      updatedInput: response.updatedInput,
+                      updatedInput: { questions: (toolInput as any).questions, answers },
                     }
                   }
                   return {
@@ -2961,10 +2959,13 @@ ${prompt}
     if (controller) {
       controller.abort()
       activeSessions.delete(input.subChatId)
-      clearPendingApprovals("Session cancelled.", input.subChatId)
     }
+    const cancelledQuestions = agentInputLifecycle.cancelByChat(
+      input.subChatId,
+      "Session cancelled.",
+    )
 
-    return { cancelled: !!controller }
+    return { cancelled: Boolean(controller || cancelledQuestions) }
   }),
 
   /**
@@ -2983,17 +2984,39 @@ ${prompt}
       }),
     )
     .mutation(({ input }) => {
-      const pending = pendingToolApprovals.get(input.toolUseId)
-      if (!pending) {
-        return { ok: false }
+      const request = agentInputLifecycle.get(input.toolUseId)
+      if (!request) return { ok: false }
+      if (!input.approved) {
+        return {
+          ok: agentInputLifecycle.skip(
+            input.toolUseId,
+            input.message || "User skipped questions - proceed with defaults",
+          ),
+        }
       }
-      pending.resolve({
-        approved: input.approved,
-        message: input.message,
-        updatedInput: input.updatedInput,
-      })
-      pendingToolApprovals.delete(input.toolUseId)
-      return { ok: true }
+
+      const legacyAnswers = (input.updatedInput as any)?.answers ?? {}
+      const answers = Object.fromEntries(
+        request.questions.map((question) => {
+          const value = legacyAnswers[question.question] ?? legacyAnswers[question.id]
+          return [
+            question.id,
+            Array.isArray(value)
+              ? value.map(String).filter(Boolean)
+              : typeof value === "string" && value.trim()
+                ? [value.trim()]
+                : [],
+          ]
+        }),
+      )
+      return {
+        ok: agentInputLifecycle.answer({
+          requestId: input.toolUseId,
+          mode: (input.updatedInput as any)?.responseMode === "chat" ? "chat" : "structured",
+          answers,
+          submittedAt: Date.now(),
+        }),
+      }
     }),
 
   /**

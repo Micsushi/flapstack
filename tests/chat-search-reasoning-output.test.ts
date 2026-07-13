@@ -58,4 +58,28 @@ describe("chat search visible reasoning output", () => {
       text: "needle inside attachment",
     })
   })
+
+  it("indexes visible structured questions and answers without arbitrary tool input", () => {
+    const results = extractSearchableText([
+      {
+        id: "assistant-question",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-AskUserQuestion",
+            input: {
+              questions: [{ question: "Which branch should I use?", secret: "hidden" }],
+              privatePrompt: "do not index",
+            },
+            result: { answers: { branch: "codex/feature" } },
+          },
+        ],
+      },
+    ] as any)
+
+    expect(results.map((result) => result.text)).toEqual([
+      "Which branch should I use?",
+      "codex/feature",
+    ])
+  })
 })

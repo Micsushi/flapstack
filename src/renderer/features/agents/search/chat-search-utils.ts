@@ -49,6 +49,37 @@ function extractTextFromPart(
   ) {
     results.push({ messageId, partIndex, partType: part.type, text: part.input.text })
   }
+  if (part.type === "tool-AskUserQuestion" && Array.isArray(part.input?.questions)) {
+    const visibleQuestionText = part.input.questions
+      .map((question: any) =>
+        typeof question?.question === "string" ? question.question.trim() : "",
+      )
+      .filter(Boolean)
+      .join("\n")
+    if (visibleQuestionText) {
+      results.push({
+        messageId,
+        partIndex,
+        partType: "agent-input-question",
+        text: visibleQuestionText,
+      })
+    }
+    const answers = part.result?.answers ?? part.output?.answers
+    if (answers && typeof answers === "object") {
+      const visibleAnswerText = Object.values(answers)
+        .flatMap((answer) => (Array.isArray(answer) ? answer : [answer]))
+        .filter((answer): answer is string => typeof answer === "string" && Boolean(answer.trim()))
+        .join("\n")
+      if (visibleAnswerText) {
+        results.push({
+          messageId,
+          partIndex,
+          partType: "agent-input-answer",
+          text: visibleAnswerText,
+        })
+      }
+    }
+  }
 
   return results
 }
