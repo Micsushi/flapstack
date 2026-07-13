@@ -5,3 +5,4 @@
 
 export * from "./reasoning-output-contract"
 export * from "./reasoning-output-normalizers"
+export * from "./reasoning-controls"

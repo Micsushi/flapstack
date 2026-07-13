@@ -53,6 +53,7 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
+import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
@@ -468,9 +469,21 @@ export const opencodeRouter = router({
               previousSourceFingerprint: getLastHarnessContextFingerprint(messages),
             })
             contextMetadata = contextBundle.metadata
+            const nativeModelId = input.model.slice(input.model.indexOf("/") + 1)
+            const selectedModel = getAvailableProviderModels(input.provider).models.find(
+              (model) => model.id === nativeModelId,
+            )
+            const reasoningSupported = selectedModel?.supportsReasoning ?? null
+            const reasoningControl = resolveReasoningControls(
+              reasoningSupported === true
+                ? { toggle: true, efforts: ["minimal", "low", "medium", "high", "xhigh"] }
+                : { toggle: false },
+              { enabled: input.reasoningEnabled, effort: input.reasoningEffort },
+            )
+            const messageMetadata = { runId, context: contextMetadata, reasoningControl }
             safeEmit({
               type: "message-metadata",
-              messageMetadata: { runId, context: contextMetadata },
+              messageMetadata,
             })
             const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
 
@@ -488,6 +501,7 @@ export const opencodeRouter = router({
                 permissionMode,
                 reasoningEnabled: input.reasoningEnabled,
                 reasoningEffort: input.reasoningEffort,
+                reasoningSupported,
                 resumeSessionId: ownedSessionId,
                 signal: controller.signal,
               },

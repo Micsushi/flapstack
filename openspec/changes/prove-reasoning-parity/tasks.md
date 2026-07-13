@@ -5,7 +5,7 @@ completion authority for remaining reasoning parity work.
 
 ### S3-F16-T1 — Freeze the reasoning capability and evidence matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F16 Reasoning Parity and Evidence
 - Outcome: One current provider matrix defines visible, summary, token-only,
   opaque, absent, control, fallback, persistence, and evidence expectations.
@@ -27,7 +27,7 @@ completion authority for remaining reasoning parity work.
 
 ### S3-F16-T2 — Close normalization, classification, and fallback tests
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F16 Reasoning Parity and Evidence
 - Outcome: Deterministic fixtures prove every supported output class and
   provider-aware control fallback without duplication or fabricated text.
