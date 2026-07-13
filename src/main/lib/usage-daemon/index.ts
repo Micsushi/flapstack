@@ -20,6 +20,28 @@ import { acquireDaemonInstanceLock } from "./instance-lock"
 
 const HEARTBEAT_INTERVAL_MS = 60_000
 
+export function createDaemonSignalGate(shutdown: () => void): {
+  onSignal: () => void
+  markReady: () => void
+} {
+  let ready = false
+  let pending = false
+  return {
+    onSignal() {
+      if (!ready) {
+        pending = true
+        return
+      }
+      shutdown()
+    },
+    markReady() {
+      if (ready) return
+      ready = true
+      if (pending) shutdown()
+    },
+  }
+}
+
 /** Keychain-backed on macOS; file/safeStorage fallback remains available for
  * development and future platform adapters. */
 async function daemonGetSecret(key: string): Promise<string | null> {
@@ -56,29 +78,7 @@ export async function runDaemon(): Promise<void> {
   }
   const engine = new UsageEngine("daemon", { db, getSecret: daemonGetSecret })
 
-  try {
-    await updateDaemonStatus(db, {
-      host: process.env.HOSTNAME ?? null,
-      pid: process.pid,
-      enabled: settings.daemonEnabled,
-      running: true,
-      cadenceSeconds: settings.cadenceSeconds,
-      startedAt: new Date(),
-      lastHeartbeatAt: new Date(),
-      lastError: null,
-    })
-  } catch (error) {
-    try {
-      close()
-    } finally {
-      instanceLock.release()
-    }
-    throw error
-  }
-
-  const heartbeat = setInterval(() => {
-    void updateDaemonStatus(db, { lastHeartbeatAt: new Date(), running: true }).catch(() => {})
-  }, HEARTBEAT_INTERVAL_MS)
+  let heartbeat: ReturnType<typeof setInterval> | null = null
 
   const scheduler = new UsageScheduler(engine, {
     getCadenceSeconds: () => resolveSchedulerCadenceSeconds(getUsageSettings()),
@@ -95,7 +95,7 @@ export async function runDaemon(): Promise<void> {
   const shutdown = (error?: unknown) => {
     if (shuttingDown) return
     shuttingDown = true
-    clearInterval(heartbeat)
+    if (heartbeat) clearInterval(heartbeat)
     void scheduler
       .stopAndWait()
       .then(() =>
@@ -116,15 +116,41 @@ export async function runDaemon(): Promise<void> {
         finishShutdown?.()
       })
   }
-  const onSignal = () => shutdown()
-  process.on("SIGTERM", onSignal)
-  process.on("SIGINT", onSignal)
+  const signalGate = createDaemonSignalGate(shutdown)
+  process.on("SIGTERM", signalGate.onSignal)
+  process.on("SIGINT", signalGate.onSignal)
 
   const stopped = new Promise<void>((resolve) => {
     finishShutdown = resolve
   })
-  scheduler.start()
+  try {
+    await updateDaemonStatus(db, {
+      host: process.env.HOSTNAME ?? null,
+      pid: process.pid,
+      enabled: settings.daemonEnabled,
+      running: true,
+      cadenceSeconds: settings.cadenceSeconds,
+      startedAt: new Date(),
+      lastHeartbeatAt: new Date(),
+      lastError: null,
+    })
+  } catch (error) {
+    shutdown(error)
+    signalGate.markReady()
+    await stopped
+    process.off("SIGTERM", signalGate.onSignal)
+    process.off("SIGINT", signalGate.onSignal)
+    throw error
+  }
+
+  signalGate.markReady()
+  if (!shuttingDown) {
+    heartbeat = setInterval(() => {
+      void updateDaemonStatus(db, { lastHeartbeatAt: new Date(), running: true }).catch(() => {})
+    }, HEARTBEAT_INTERVAL_MS)
+    scheduler.start()
+  }
   await stopped
-  process.off("SIGTERM", onSignal)
-  process.off("SIGINT", onSignal)
+  process.off("SIGTERM", signalGate.onSignal)
+  process.off("SIGINT", signalGate.onSignal)
 }

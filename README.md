@@ -13,6 +13,10 @@ closed as a separate release gate. Its unfinished implementation and evidence
 rows are migrated into Stage 3 so one integration branch owns the next runnable
 product increment. The active exit contract is the
 [Stage 3 full-feature matrix](docs/stage3-full-feature-test-matrix.md); the
+[release candidate ledger](docs/stage3-release-candidate-ledger.md) and
+[integrated candidate release notes](docs/stage3-release-notes.md) record the
+current gate truth; the [release lane handoff](docs/stage3-release-handoff.md)
+records remaining release authority and cleanup.
 [Stage 2 matrix](docs/stage2-full-feature-test-matrix.md) is retained as a
 historical criteria record and crosswalk.
 The research-only dynamic-vocabulary architecture is explicitly deferred: it is

@@ -184,6 +184,30 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
       stage routers, test matrices, and handoff all describe the same shipped
       behavior and remaining limitations.
 
+### S3-F17 safe closeout evidence — 2026-07-13 PDT
+
+- Candidate: isolated `cf53` worktree from integration baseline
+  `fba7e32bec5db21233d17b82a8745e974de90293`; exact resulting commit is in the
+  final handoff.
+- Automated: release-ledger coverage maps 18 active changes, 311 scenarios, and
+  17 feature exits; all active strict validation, Node 22 full/focused suites,
+  migrations, MCP security/redaction, Usage daemon smoke, and production build
+  pass. The daemon smoke exposed an early-signal startup race; the fixed gate
+  has regression coverage and passes repeated lifecycle smoke.
+- Dev: `Flapstack Dev cf53` used an isolated profile and ports. `dev:verify`,
+  authenticated test-control status calls, 20-migration SQLite inspection, and
+  zero chat/run/approval/audit/exposure/usage/Voice-artifact cleanup queries
+  pass.
+- Preview: unsigned macOS arm64 build, architecture/resource/license inspection,
+  pinned Claude/Codex/Whisper/Parakeet runtime smoke, exact executable startup,
+  20 migrations, and clean shutdown pass. A stale global `flapstack_dev` test
+  registration was removed, then the exact executable relaunched without the
+  prior MCP registration error.
+- Blocked: `CGSSessionScreenIsLocked=Yes`; visual/accessibility, clipboard,
+  microphone, Keychain, approval-dialog, Voice, Usage, reasoning, and live
+  provider rows remain open. Windows and Linux are unavailable. Consequently
+  S3-C01 and S3-X01 through S3-X06 remain unchecked.
+
 ## Evidence record
 
 Record one entry per run:

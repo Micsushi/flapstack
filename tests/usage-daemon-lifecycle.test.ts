@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { redactUsageDiagnostic } from "../src/main/lib/usage/diagnostics"
+import { createDaemonSignalGate } from "../src/main/lib/usage-daemon"
 import { acquireDaemonInstanceLock } from "../src/main/lib/usage-daemon/instance-lock"
 
 const dirs: string[] = []
@@ -19,6 +20,20 @@ function tempDir(): string {
 }
 
 describe("usage daemon lifecycle", () => {
+  it("defers an early shutdown signal until startup is ready", () => {
+    const shutdown = vi.fn()
+    const signalGate = createDaemonSignalGate(shutdown)
+
+    signalGate.onSignal()
+    expect(shutdown).not.toHaveBeenCalled()
+
+    signalGate.markReady()
+    expect(shutdown).toHaveBeenCalledTimes(1)
+
+    signalGate.markReady()
+    expect(shutdown).toHaveBeenCalledTimes(1)
+  })
+
   it("allows one owner and releases only its own lock", () => {
     const dir = tempDir()
     const first = acquireDaemonInstanceLock(dir, () => 100)

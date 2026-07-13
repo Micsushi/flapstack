@@ -6,7 +6,7 @@ feature-local closeout gates.
 
 ### S3-F17-T1 — Freeze the release manifest and unified evidence ledger
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F17 Integrated Regression and Release
 - Outcome: One dependency-complete ledger maps every active requirement, feature
   exit, integrated regression, platform, and archive action to exact evidence.
@@ -27,6 +27,12 @@ feature-local closeout gates.
 - Blocks: S3-F17-T2, S3-F17-T3, S3-F17-T4, S3-F17-T5.
 - Relevant context: all active `openspec/changes/**`, Stage 3 feature routers,
   existing Stage 2/3 test matrices and package/live-dev rules.
+- 2026-07-13 evidence: `docs/stage3-release-candidate-ledger.md` maps all 18
+  active non-archive changes, 311 normative scenarios, 17 feature exits, the
+  required prerequisite graph, stable evidence rows, candidate identity,
+  invalidation rules, and cleanup/reversal requirements. The automated
+  coverage/dependency audit and strict validation pass. Existing feature
+  matrices remain evidence inputs and retain their open rows.
 
 ### S3-F17-T2 — Pass automated, migration, MCP, daemon, and package gates
 
@@ -53,6 +59,13 @@ feature-local closeout gates.
 - Blocks: S3-F17-T3, S3-F17-T4, S3-F17-T5.
 - Relevant context: package scripts, migration journal/snapshots, all feature
   focused suites, production/dev MCP boundaries.
+- 2026-07-13 safe evidence: Node 22 full/focused suites, all-change strict
+  validation, the dev-test-control SDK/API and clean SQLite inspection, Usage
+  daemon lifecycle smoke, and unsigned macOS arm64 Preview build/ABI/license/
+  runtime smoke pass. An early-SIGTERM Usage daemon startup race found by the
+  smoke was fixed with a regression. This task remains open because its listed
+  prerequisite exits remain open and automation does not satisfy their live,
+  credential, UI, or cross-platform acceptance.
 
 ### S3-F17-T3 — Pass isolated live-dev and packaged regression matrices
 
@@ -81,6 +94,12 @@ feature-local closeout gates.
 - Blocks: S3-F17-T4, S3-F17-T5.
 - Relevant context: feature exit evidence, `docs/stage3-headless-integration-audit.md`,
   provider/Usage/reasoning/Voice matrices, root live-dev rules.
+- 2026-07-13 safe evidence: isolated `Flapstack Dev cf53` startup and
+  `npm run dev:verify` prove this checkout/profile; authenticated test-control
+  status calls, database cleanup queries, and exact unsigned Preview executable
+  launch pass. The screen was locked, so visual, accessibility, clipboard,
+  microphone, Keychain, approval-dialog, and live provider rows remain open.
+  Windows and Linux were unavailable. This task remains open.
 
 ### S3-F17-T4 — Run up to three independent review and repair rounds
 
@@ -107,6 +126,8 @@ feature-local closeout gates.
 - Blocks: S3-F17-T5.
 - Relevant context: final candidate diff, all active specs/tasks, security and
   migration boundaries, unified evidence ledger.
+- 2026-07-13 status: not started. T2 and T3 are not complete, so independent
+  completion review rounds cannot truthfully begin.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 
