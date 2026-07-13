@@ -190,6 +190,11 @@ function launchRun(
     }
 
   const runId = stableRunId(input.chatId, input.idempotencyKey)
+  const permissionMode = String(subChat.permission_mode ?? chat.permission_mode)
+  const customPermissions =
+    permissionMode === "custom" && typeof chat.custom_permissions === "string"
+      ? chat.custom_permissions
+      : null
   const messages = parseMessages(subChat.messages)
   messages.push({
     id: promptMessageId,
@@ -204,16 +209,17 @@ function launchRun(
     )
     db.prepare(
       `INSERT INTO agent_runs (
-        id, chat_id, sub_chat_id, harness, model, permission_mode, worktree_path,
-        prompt_message_id, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
+        worktree_path, prompt_message_id, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
       subChat.id,
       harness,
       subChat.model ?? chat.model ?? null,
-      subChat.permission_mode ?? chat.permission_mode,
+      permissionMode,
+      customPermissions,
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
       Date.now(),

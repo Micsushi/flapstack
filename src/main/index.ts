@@ -11,6 +11,7 @@ import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
+import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
 import {
@@ -839,6 +840,9 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      await reconcileVoiceHistory().catch((error) =>
+        console.warn("[Voice] Startup history reconciliation failed:", error),
+      )
       productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
         onInvalidation: (payload) => {
           for (const window of BrowserWindow.getAllWindows()) {

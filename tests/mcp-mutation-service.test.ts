@@ -112,6 +112,59 @@ describe("MCP mutation service", () => {
     expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "pending" })
   })
 
+  it("keeps the queued custom-permission snapshot after the chat changes", async () => {
+    const original = {
+      schemaVersion: 1,
+      projectWrite: true,
+      shell: true,
+      network: false,
+      git: true,
+      browser: false,
+      secrets: false,
+      subagents: false,
+      thirdPartyMcp: false,
+      productMcpRead: true,
+      productMcpWrite: true,
+      productMcpTier3: true,
+    }
+    sqlite
+      .prepare(
+        "UPDATE chats SET harness = 'codex', permission_mode = 'custom', custom_permissions = ? WHERE id = 'chat-2'",
+      )
+      .run(JSON.stringify(original))
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-2', 'chat-2', 'codex', 'custom', '[]')",
+      )
+      .run()
+    await createMcpMutationService(path).invoke(
+      "launch_run",
+      { chatId: "chat-1" },
+      {
+        chatId: "chat-2",
+        initialPrompt: "Keep approved permissions.",
+        idempotencyKey: "custom-snapshot",
+      },
+    )
+    sqlite
+      .prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-2'")
+      .run(JSON.stringify({ ...original, shell: false, productMcpTier3: false }))
+
+    const launched: Array<{ customPermissions: string | null }> = []
+    await drainPendingAgentRuns(
+      path,
+      async (run) => {
+        launched.push(run)
+      },
+      { waitForCompletion: true },
+    )
+
+    expect(JSON.parse(launched[0]!.customPermissions!)).toEqual(original)
+    expect(sqlite.prepare("SELECT custom_permissions FROM agent_runs").get()).toEqual({
+      custom_permissions: JSON.stringify(original),
+    })
+  })
+
   it("gates launch_run and correlates execution failure to its audit invocation", async () => {
     sqlite.prepare("UPDATE chats SET harness = 'claude-code' WHERE id = 'chat-2'").run()
     sqlite

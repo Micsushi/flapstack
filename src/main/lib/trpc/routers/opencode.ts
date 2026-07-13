@@ -339,51 +339,43 @@ export const opencodeRouter = router({
           const reasoningMetadata: Array<{ partId: string; metadata: unknown }> = []
           let sawSidecarError = false
           let sidecarErrorText = ""
-          const providerKey = await getProviderKeyAsync(input.provider)
-          if (!providerKey) {
-            if (activeStreams.get(input.subChatId)?.runId === runId) {
-              activeStreams.delete(input.subChatId)
-            }
-            safeEmit({
-              type: "error",
-              errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
-            })
-            safeEmit({ type: "finish" })
-            complete()
-            return
-          }
-          let availableModels = getAvailableProviderModels(input.provider)
-          if (availableModels.source === "seed") {
-            try {
-              await refreshProviderModels(input.provider)
-              availableModels = getAvailableProviderModels(input.provider)
-            } catch (error) {
-              safeEmit({
-                type: "error",
-                errorText: `Could not load current ${OPENCODE_PROVIDERS[input.provider].label} models: ${sanitizeProviderErrorText(error)}`,
-              })
-              safeEmit({ type: "finish" })
-              complete()
-              return
-            }
-          }
-          const modelId = input.model.startsWith(`${input.provider}/`)
-            ? input.model.slice(input.provider.length + 1)
-            : input.model
-          if (!availableModels.models.some((model) => model.id === modelId)) {
-            safeEmit({
-              type: "error",
-              errorText: `${modelId} is no longer available from ${OPENCODE_PROVIDERS[input.provider].label}. Select a refreshed model and retry.`,
-            })
-            safeEmit({ type: "finish" })
-            complete()
-            return
-          }
-          const auditSecrets = [providerKey]
-          const runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
+          let runAudit = new OpencodeRunAuditAccumulator([])
           let finalMessageMetadata: Record<string, unknown> | undefined
           let reasoningControl: ReturnType<typeof resolveReasoningControls> | undefined
           try {
+            const providerKey = await getProviderKeyAsync(input.provider)
+            if (!providerKey) {
+              safeEmit({
+                type: "error",
+                errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
+              })
+              return
+            }
+            let availableModels = getAvailableProviderModels(input.provider)
+            if (availableModels.source === "seed") {
+              try {
+                await refreshProviderModels(input.provider)
+                availableModels = getAvailableProviderModels(input.provider)
+              } catch (error) {
+                safeEmit({
+                  type: "error",
+                  errorText: `Could not load current ${OPENCODE_PROVIDERS[input.provider].label} models: ${sanitizeProviderErrorText(error)}`,
+                })
+                return
+              }
+            }
+            const modelId = input.model.startsWith(`${input.provider}/`)
+              ? input.model.slice(input.provider.length + 1)
+              : input.model
+            if (!availableModels.models.some((model) => model.id === modelId)) {
+              safeEmit({
+                type: "error",
+                errorText: `${modelId} is no longer available from ${OPENCODE_PROVIDERS[input.provider].label}. Select a refreshed model and retry.`,
+              })
+              return
+            }
+            const auditSecrets = [providerKey]
+            runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
             db = getDatabase()
             if (!isAuthoritativeRun()) return
             const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()

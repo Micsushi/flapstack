@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import type {
@@ -70,6 +78,7 @@ type PermissionConfig = {
   globalDefault?: PermissionMode
   changeBehavior?: PermissionChangeBehavior
   globalCustomPermissions?: CustomPermissionCapabilities | null
+  pendingAllChatsSync?: boolean
 }
 
 export const defaultPermissionMode: PermissionMode = "ask-before-edits"
@@ -171,6 +180,17 @@ export function setPermissionChangeBehavior(
 }
 
 export function replacePermissionPreferences(preferences: PermissionPreferences): void {
+  writePermissionConfig(normalizePermissionPreferences(preferences))
+}
+
+export function stageAllChatPermissionPreferences(preferences: PermissionPreferences): void {
+  writePermissionConfig({
+    ...normalizePermissionPreferences(preferences),
+    pendingAllChatsSync: true,
+  })
+}
+
+function normalizePermissionPreferences(preferences: PermissionPreferences): PermissionConfig {
   const globalDefault = parsePermissionMode(preferences.globalDefault)
   const changeBehavior = parsePermissionChangeBehavior(preferences.changeBehavior)
 
@@ -186,7 +206,47 @@ export function replacePermissionPreferences(preferences: PermissionPreferences)
     throw new Error("Custom global permission requires a complete versioned capability set")
   }
 
-  writePermissionConfig({ globalDefault, changeBehavior, globalCustomPermissions })
+  return { globalDefault, changeBehavior, globalCustomPermissions }
+}
+
+type PermissionRecoveryDatabase = {
+  transaction<T>(operation: () => T): () => T
+  prepare(sql: string): { run(...params: unknown[]): unknown }
+}
+
+/** Complete an interrupted all-chat promotion before the app creates new rows. */
+export function recoverPendingAllChatPermissionChange(sqlite: PermissionRecoveryDatabase): boolean {
+  const config = readPermissionConfig()
+  if (!config.pendingAllChatsSync) return false
+  const preferences = normalizePermissionPreferences({
+    globalDefault: config.globalDefault ?? defaultPermissionMode,
+    changeBehavior: config.changeBehavior ?? "ask",
+    globalCustomPermissions: config.globalCustomPermissions ?? null,
+  })
+  const customPermissions =
+    preferences.globalDefault === "custom"
+      ? JSON.stringify(preferences.globalCustomPermissions)
+      : null
+  sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        "UPDATE projects SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
+      )
+      .run(preferences.globalDefault, customPermissions, Date.now())
+    sqlite
+      .prepare(
+        "UPDATE tasks SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
+      )
+      .run(preferences.globalDefault, customPermissions, Date.now())
+    sqlite
+      .prepare("UPDATE chats SET permission_mode = ?, custom_permissions = ?, updated_at = ?")
+      .run(preferences.globalDefault, customPermissions, Date.now())
+    sqlite
+      .prepare("UPDATE sub_chats SET permission_mode = ?, updated_at = ?")
+      .run(preferences.globalDefault, Date.now())
+  })()
+  writePermissionConfig(preferences)
+  return true
 }
 
 export function buildCodexPermissionApplication(params: {
@@ -686,6 +746,7 @@ function readPermissionConfig(): PermissionConfig {
       globalDefault: parsePermissionMode(data.globalDefault) ?? undefined,
       changeBehavior: parsePermissionChangeBehavior(data.changeBehavior) ?? undefined,
       globalCustomPermissions: parseCustomPermissionToggles(data.globalCustomPermissions),
+      pendingAllChatsSync: data.pendingAllChatsSync === true,
     }
   } catch (error) {
     console.warn("[Permissions] Failed to read permission config:", error)
@@ -695,8 +756,16 @@ function readPermissionConfig(): PermissionConfig {
 
 function writePermissionConfig(config: PermissionConfig): void {
   const configPath = getPermissionConfigPath()
-  mkdirSync(dirname(configPath), { recursive: true })
-  writeFileSync(configPath, JSON.stringify(config, null, 2))
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 })
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+    chmodSync(tempPath, 0o600)
+    renameSync(tempPath, configPath)
+    chmodSync(configPath, 0o600)
+  } finally {
+    rmSync(tempPath, { force: true })
+  }
 }
 
 function getPermissionConfigPath(): string {

@@ -66,6 +66,7 @@ import {
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions"
+import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
 
@@ -1233,13 +1234,12 @@ async function completeCodexRun(params: {
     .returning()
     .get()
 
-  db.update(subChats)
-    .set({
-      runStatus: params.status,
-      updatedAt: new Date(),
-    })
-    .where(eq(subChats.id, params.subChatId))
-    .run()
+  updateSubChatRunStatusIfAuthoritative(db, {
+    runId: params.runId,
+    subChatId: params.subChatId,
+    status: params.status,
+    updatedAt: new Date(),
+  })
 
   return completedRun
 }
@@ -1961,7 +1961,7 @@ export const codexRouter = router({
               isDuplicatePrompt && typeof lastMessage?.id === "string" ? lastMessage.id : undefined
             const isAuthoritativeRun = () => {
               const currentStream = activeStreams.get(input.subChatId)
-              return !currentStream || currentStream.runId === input.runId
+              return currentStream?.runId === input.runId
             }
 
             const persistSubChatMessages = (messages: any[]) => {

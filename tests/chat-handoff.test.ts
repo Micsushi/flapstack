@@ -125,7 +125,8 @@ describe("full chat handoff formatter", () => {
     expect(result).toContain("> Reasoning: Visible provider reasoning")
     expect(result).toContain("> Question: Which branch?")
     expect(result).toContain("> Answer: codex/f13")
-    expect(result).toContain("> Tool: Bash: npm test")
+    expect(result).toContain("> Tool: Bash")
+    expect(result).not.toContain("npm test")
     expect(result).toContain("Legacy visible content")
     for (const excluded of [
       "never-copy-metadata",
@@ -139,5 +140,39 @@ describe("full chat handoff formatter", () => {
     ]) {
       expect(result).not.toContain(excluded)
     }
+  })
+
+  it("never copies secrets from tool commands, queries, or URLs", () => {
+    const secrets = [
+      "API_KEY=sk-live-command-secret",
+      "Bearer bearer-command-secret",
+      "https://hooks.example.test/services/webhook-secret",
+      "https://example.test/file?X-Amz-Signature=signed-secret&token=query-secret",
+    ]
+    const result = formatChatHandoff({
+      chat: { id: "chat-secret", name: "Secret tools" },
+      conversations: [
+        {
+          subChatId: "visible",
+          subChatName: null,
+          messages: [
+            {
+              role: "assistant",
+              parts: [
+                { type: "tool-Bash", input: { command: secrets[0] } },
+                { type: "tool-curl", input: { command: `curl -H '${secrets[1]}' /` } },
+                { type: "tool-Webhook", input: { url: secrets[2] } },
+                { type: "tool-WebFetch", input: { query: secrets[3] } },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(result).toContain("> Tool: Bash")
+    expect(result).toContain("> Tool: Webhook")
+    for (const secret of secrets) expect(result).not.toContain(secret)
+    expect(result).not.toMatch(/sk-live|bearer-command|webhook-secret|signed-secret|query-secret/i)
   })
 })

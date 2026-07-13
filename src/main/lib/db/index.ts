@@ -4,6 +4,7 @@ import { app } from "electron"
 import { join } from "path"
 import { existsSync, mkdirSync } from "fs"
 import { migrateDatabase } from "./migrate"
+import { recoverPendingAllChatPermissionChange } from "../permissions"
 import * as schema from "./schema"
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
@@ -63,7 +64,10 @@ export function initDatabase() {
 
   // The Electron app owns migrations. Headless MCP children receive its already
   // migrated database explicitly and must not depend on Electron runtime state.
-  if (process.env.FLAPSTACK_DB_PATH) return db
+  if (process.env.FLAPSTACK_DB_PATH) {
+    recoverPendingAllChatPermissionChange(sqlite)
+    return db
+  }
 
   // Run migrations
   const migrationsPath = getMigrationsPath()
@@ -71,6 +75,7 @@ export function initDatabase() {
 
   try {
     migrateDatabase(db, sqlite, migrationsPath)
+    recoverPendingAllChatPermissionChange(sqlite)
     console.log("[DB] Migrations completed")
   } catch (error) {
     console.error("[DB] Migration error:", error)

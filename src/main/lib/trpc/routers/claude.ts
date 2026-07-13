@@ -90,6 +90,7 @@ import {
   resolveForRun,
   type PermissionMode,
 } from "../../permissions"
+import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import {
   findMissingClaudeSessionMessage,
   isMissingClaudeSessionError,
@@ -330,7 +331,7 @@ async function completeClaudeAgentRun(
     .where(eq(agentRuns.id, runId))
     .run()
 
-  db.update(subChats).set({ runStatus: status }).where(eq(subChats.id, subChatId)).run()
+  updateSubChatRunStatusIfAuthoritative(db, { runId, subChatId, status })
 }
 
 /**
@@ -2914,7 +2915,9 @@ ${prompt}
             safeEmit({ type: "finish" } as UIMessageChunk)
             safeComplete()
           } finally {
-            activeSessions.delete(input.subChatId)
+            if (activeSessions.get(input.subChatId) === abortController) {
+              activeSessions.delete(input.subChatId)
+            }
           }
         })()
 
@@ -2923,7 +2926,9 @@ ${prompt}
           console.log(`[SD] M:CLEANUP sub=${subId} sessionId=${currentSessionId || "none"}`)
           isObservableActive = false // Prevent emit after unsubscribe
           abortController.abort()
-          activeSessions.delete(input.subChatId)
+          if (activeSessions.get(input.subChatId) === abortController) {
+            activeSessions.delete(input.subChatId)
+          }
           clearPendingApprovals("Session ended.", input.subChatId)
 
           // Clear streamId since we're no longer streaming.

@@ -120,6 +120,23 @@ function migrateLegacyFile(provider: OpencodeProviderId): string | null {
   return secret
 }
 
+function clearLegacyFileProvider(provider: OpencodeProviderId): void {
+  const path = join(getOpencodeStorageDir(), legacyCredentialsFileName)
+  if (!existsSync(path)) return
+  let file: LegacyCredentialsFile
+  try {
+    chmodSync(path, 0o600)
+    file = JSON.parse(readFileSync(path, "utf8")) as LegacyCredentialsFile
+  } catch (error) {
+    throw new Error(
+      `Could not clear the legacy ${provider} credential store: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  if (!file[provider]) return
+  delete file[provider]
+  writeJsonAtomic(path, file)
+}
+
 function setMainProviderKey(provider: OpencodeProviderId, apiKey: string, baseUrl?: string): void {
   const result = getCredentialService().set(credentialId(provider), apiKey, {
     metadata: baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : undefined,
@@ -209,24 +226,29 @@ export function getProviderBaseUrl(provider: OpencodeProviderId): string | undef
 }
 
 export function clearProviderKey(provider: OpencodeProviderId): void {
-  getCredentialService().remove(credentialId(provider))
-  setBaseUrl(provider)
+  // Clear every legacy durable source before the current store. A crash can
+  // then leave the credential still configured, but can never resurrect a
+  // credential that the current store already removed.
+  clearLegacyFileProvider(provider)
   if (process.env.NODE_ENV !== "test") {
     setUsageSecret(legacyProviderSecretKey(provider), null)
     setUsageSecret(usageProviderSecretKey(provider), null)
   }
+  setBaseUrl(provider)
+  getCredentialService().remove(credentialId(provider))
   daemonWarnings.delete(provider)
 }
 
 export async function clearProviderKeyAsync(provider: OpencodeProviderId): Promise<void> {
-  getCredentialService().remove(credentialId(provider))
-  setBaseUrl(provider)
+  clearLegacyFileProvider(provider)
   if (process.env.NODE_ENV !== "test") {
     await Promise.all([
       setUsageSecretAsync(legacyProviderSecretKey(provider), null),
       setUsageSecretAsync(usageProviderSecretKey(provider), null),
     ])
   }
+  setBaseUrl(provider)
+  getCredentialService().remove(credentialId(provider))
   daemonWarnings.delete(provider)
 }
 

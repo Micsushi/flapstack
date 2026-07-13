@@ -10,6 +10,7 @@ export type QueuedAgentRun = {
   prompt: string
   model: string | null
   permissionMode: string
+  customPermissions: string | null
   worktreePath: string | null
   projectPath: string | null
 }
@@ -78,19 +79,42 @@ export async function drainPendingMcpRuns(
     const pending = db
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
+          r.custom_permissions,
           r.worktree_path, r.prompt_message_id, s.messages, c.project_id, p.path project_path
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE r.status = 'pending' AND r.prompt_message_id LIKE 'mcp-%'
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_runs active
+             WHERE active.sub_chat_id = r.sub_chat_id
+               AND active.status = 'running'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM agent_runs earlier
+             WHERE earlier.sub_chat_id = r.sub_chat_id
+               AND earlier.status = 'pending'
+               AND earlier.prompt_message_id LIKE 'mcp-%'
+               AND (earlier.started_at < r.started_at OR
+                    (earlier.started_at = r.started_at AND earlier.id < r.id))
+           )
          ORDER BY r.started_at, r.id`,
       )
       .all() as Row[]
 
     for (const row of pending) {
       const claimed = db
-        .prepare("UPDATE agent_runs SET status = 'running' WHERE id = ? AND status = 'pending'")
+        .prepare(
+          `UPDATE agent_runs SET status = 'running'
+           WHERE id = ? AND status = 'pending'
+             AND NOT EXISTS (
+               SELECT 1 FROM agent_runs active
+               WHERE active.sub_chat_id = agent_runs.sub_chat_id
+                 AND active.status = 'running'
+                 AND active.id <> agent_runs.id
+             )`,
+        )
         .run(row.id)
       if (claimed.changes !== 1) continue
       db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
@@ -190,6 +214,7 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     prompt,
     model: typeof row.model === "string" ? row.model : null,
     permissionMode: String(row.permission_mode),
+    customPermissions: typeof row.custom_permissions === "string" ? row.custom_permissions : null,
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
   }
@@ -224,5 +249,14 @@ function markFailed(db: Database.Database, runId: string, subChatId: string): vo
   db.prepare(
     "UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ? AND completed_at IS NULL",
   ).run(now, runId)
-  db.prepare("UPDATE sub_chats SET run_status = 'failure' WHERE id = ?").run(subChatId)
+  db.prepare(
+    `UPDATE sub_chats
+     SET run_status = COALESCE((
+       SELECT status FROM agent_runs
+       WHERE sub_chat_id = ? AND id <> ? AND status IN ('pending', 'running')
+       ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
+       LIMIT 1
+     ), 'failure')
+     WHERE id = ?`,
+  ).run(subChatId, runId, subChatId)
 }

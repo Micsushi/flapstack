@@ -14,6 +14,7 @@ import {
   permissionChangeBehaviors,
   permissionModes,
   replacePermissionPreferences,
+  stageAllChatPermissionPreferences,
   resolvePermission,
   setPermissionChangeBehavior,
   type PermissionChangeBehavior,
@@ -208,6 +209,8 @@ function applyScopedPermissionChange(input: {
   customPermissions: CustomPermissionToggles | null
 } {
   const db = getDatabase()
+  const targetChat = db.select({ id: chats.id }).from(chats).where(eq(chats.id, input.chatId)).get()
+  if (!targetChat) throw new Error(`Chat not found: ${input.chatId}`)
   const previousPreferences = getPermissionPreferences()
   const nextPreferences = {
     globalDefault: input.scope === "all-chats" ? input.mode : previousPreferences.globalDefault,
@@ -225,10 +228,11 @@ function applyScopedPermissionChange(input: {
     JSON.stringify(nextPreferences.globalCustomPermissions) !==
       JSON.stringify(previousPreferences.globalCustomPermissions)
 
-  if (configChanged) {
-    replacePermissionPreferences(nextPreferences)
-  }
+  const stagedAllChats = configChanged && input.scope === "all-chats"
+  if (stagedAllChats) stageAllChatPermissionPreferences(nextPreferences)
+  else if (configChanged) replacePermissionPreferences(nextPreferences)
 
+  let databaseCommitted = false
   try {
     const result = db.transaction((tx) => {
       const existing = tx
@@ -286,6 +290,8 @@ function applyScopedPermissionChange(input: {
 
       return { updatedChats, updatedSubChats }
     })
+    databaseCommitted = true
+    if (stagedAllChats) replacePermissionPreferences(nextPreferences)
 
     return {
       mode: input.mode,
@@ -295,7 +301,7 @@ function applyScopedPermissionChange(input: {
       ...result,
     }
   } catch (error) {
-    if (configChanged) {
+    if (configChanged && !databaseCommitted) {
       try {
         replacePermissionPreferences(previousPreferences)
       } catch (restoreError) {

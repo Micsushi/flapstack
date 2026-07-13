@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
@@ -1287,6 +1287,52 @@ describe("credentials + config", () => {
     expect(getCredentialStatus("openrouter").configured).toBe(true)
     clearProviderKey("openrouter")
     expect(hasProviderKey("openrouter")).toBe(false)
+  })
+
+  it("removes an unacknowledged legacy-file key before it can migrate later", () => {
+    const legacyPath = join(dir, "opencode-provider-credentials.json")
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        openrouter: { value: "legacy-openrouter-secret", encrypted: false },
+        nanogpt: { value: "legacy-nanogpt-secret", encrypted: false },
+      }),
+      { mode: 0o600 },
+    )
+
+    clearProviderKey("openrouter")
+
+    expect(getProviderKey("openrouter")).toBeNull()
+    expect(JSON.parse(readFileSync(legacyPath, "utf8"))).toEqual({
+      nanogpt: { value: "legacy-nanogpt-secret", encrypted: false },
+    })
+    clearProviderKey("nanogpt")
+  })
+
+  it("keeps async removal from resurrecting a legacy-file key", async () => {
+    const legacyPath = join(dir, "opencode-provider-credentials.json")
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({ openrouter: { value: "legacy-async-secret", encrypted: false } }),
+      { mode: 0o600 },
+    )
+
+    await clearProviderKeyAsync("openrouter")
+
+    expect(await getProviderKeyAsync("openrouter")).toBeNull()
+    expect(JSON.parse(readFileSync(legacyPath, "utf8"))).toEqual({})
+  })
+
+  it("fails closed without clearing the current store when the legacy file is unreadable", () => {
+    const legacyPath = join(dir, "opencode-provider-credentials.json")
+    setProviderKey("openrouter", "current-store-secret")
+    writeFileSync(legacyPath, "{broken-json", { mode: 0o600 })
+
+    expect(() => clearProviderKey("openrouter")).toThrow(/Could not clear the legacy openrouter/)
+    expect(getProviderKey("openrouter")).toBe("current-store-secret")
+
+    rmSync(legacyPath, { force: true })
+    clearProviderKey("openrouter")
   })
 
   it("adds, reads, and clears multiple provider keys concurrently", async () => {

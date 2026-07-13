@@ -14,6 +14,14 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null
 }
 
+function safeFileTarget(value: unknown): string | null {
+  const target = nonEmptyString(value)?.split("\n")[0]
+  if (!target) return null
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) return null
+  if (/[?&]|bearer|api[_-]?key|token|secret|signature|webhook/i.test(target)) return null
+  return target
+}
+
 function visibleAnswers(value: unknown): string[] {
   const record = asRecord(value)
   if (!record) return []
@@ -109,13 +117,11 @@ export function formatVisiblePartForHandoff(partValue: unknown): string[] {
   if (type === "tool-call" || type.startsWith("tool-")) {
     const name = nonEmptyString(part.toolName) ?? (type.replace(/^tool-/, "") || "tool")
     const input = asRecord(part.input)
-    const target =
-      nonEmptyString(input?.file_path) ??
-      nonEmptyString(input?.path) ??
-      nonEmptyString(input?.command) ??
-      nonEmptyString(input?.query) ??
-      nonEmptyString(input?.url)
-    return [`> Tool: ${name}${target ? `: ${target.split("\n")[0]}` : ""}`]
+    // Commands, search queries, and URLs routinely carry inline credentials,
+    // webhook secrets, or signed query parameters. Keep the useful tool name
+    // and allowlisted file target, never those raw values.
+    const target = safeFileTarget(input?.file_path) ?? safeFileTarget(input?.path)
+    return [`> Tool: ${name}${target ? `: ${target}` : ""}`]
   }
   return []
 }
