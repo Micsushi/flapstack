@@ -397,6 +397,13 @@ restart prove that the old value cannot reappear. This is automated fixture
 evidence only; it does not claim actual Keychain, Windows Credential Manager, or
 Linux Secret Service proof.
 
+2026-07-13 security repair round-2 evidence: accepted encrypted and session-only
+replacements durably retire any retained failed-migration source. Restart
+fixtures cover Codex, Voice, and custom Claude, including an existing encrypted
+replacement winning over stale renderer localStorage. The tombstone is
+non-secret and intentionally survives later credential removal. Actual OS
+secret-store and unlocked Settings proof remain open.
+
 ### S3-F10-T3 - Add safe credential management UI
 
 - [ ] Completion: acceptance and verification passed
@@ -759,6 +766,11 @@ Linux Secret Service proof.
   excluded from current and legacy visible extraction, active/cross-chat search,
   handoff, full-history clipboard/export, and JSON export. Attachment search is
   filename-only. Agent transport still receives hidden file content as intended.
+- 2026-07-13 security repair round-2 evidence: current, legacy, and nested dev
+  message JSON now uses the same recursive visible-content sanitizer before
+  syntax highlighting or clipboard copy. Reserved third-party MCP names remain
+  third-party and receive no product authority. Visual clipboard/UI and
+  cross-platform acceptance remain unchecked.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 

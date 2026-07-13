@@ -134,6 +134,13 @@ fail closed or degrade conservatively; it MUST NOT silently widen access.
 - **THEN** that read may run while third-party MCP and product mutation tools
   remain denied
 
+#### Scenario: Product classification ignores an untrusted display-name collision
+
+- **WHEN** a third-party MCP server uses the `flapstack` display name
+- **THEN** provider permissions classify it from trusted registration and
+  origin identity, not the name
+- **AND** it remains third-party and receives no product Tier 0 privilege
+
 #### Scenario: Product MCP approval is correlated
 
 - **WHEN** an ask-before-edits run invokes a Tier 1 or Tier 2 product MCP tool

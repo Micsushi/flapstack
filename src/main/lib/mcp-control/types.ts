@@ -55,6 +55,7 @@ export type McpControlErrorCode =
   | "forbidden-loop"
   | "forbidden-target"
   | "not-found"
+  | "reconciliation-required"
   | "internal-error"
 
 export type McpMutationService = {

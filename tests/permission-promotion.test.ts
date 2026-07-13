@@ -68,6 +68,7 @@ describe("permission promotion", () => {
         customPermissions: permissions,
         correlationId: "read",
         providerToolName: "mcp__flapstack__list_projects",
+        trustedProductServerName: "flapstack",
       }),
     ).toMatchObject({ source: "product", decision: "allow", productGateRequired: true })
     expect(

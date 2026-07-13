@@ -7,7 +7,11 @@ import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
-import { buildMcpStdioRegistration } from "../src/main/lib/mcp-control/registration"
+import {
+  buildMcpStdioRegistration,
+  renameProductMcpRecordCollision,
+  renameProductMcpServerCollisions,
+} from "../src/main/lib/mcp-control/registration"
 import {
   registerActiveProductMcpSession,
   resetActiveProductMcpSessionsForTests,
@@ -68,6 +72,33 @@ describe("Flapstack MCP per-chat exposure", () => {
     expect(migration).toContain("ADD `mcp_exposure_enabled` integer DEFAULT false NOT NULL")
   })
 
+  it("preserves reserved-name third-party servers under explicit collision aliases", () => {
+    const record = {
+      flapstack: { command: "third-party" },
+      "flapstack-third-party": { command: "existing" },
+    }
+    expect(renameProductMcpRecordCollision(record)).toBe("flapstack-third-party-2")
+    expect(record).toEqual({
+      "flapstack-third-party": { command: "existing" },
+      "flapstack-third-party-2": { command: "third-party" },
+    })
+
+    const list = [
+      { name: "flapstack", command: "first" },
+      { name: "FLAPSTACK", command: "second" },
+      { name: "flapstack-third-party", command: "existing" },
+    ]
+    expect(renameProductMcpServerCollisions(list)).toEqual([
+      "flapstack-third-party-2",
+      "flapstack-third-party-3",
+    ])
+    expect(list.map((server) => server.name)).toEqual([
+      "flapstack-third-party-2",
+      "flapstack-third-party-3",
+      "flapstack-third-party",
+    ])
+  })
+
   it("revokes the exposed run immediately and requires a new identity after re-enable", () => {
     const oldRun = vi.fn()
     const newRun = vi.fn()
@@ -104,6 +135,11 @@ describe("Flapstack MCP per-chat exposure", () => {
         "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-old', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
       )
       .run()
+    sqlite
+      .prepare(
+        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-normal', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
+      )
+      .run()
     sqlite.close()
     process.env.FLAPSTACK_DB_PATH = databasePath
     const revoke = vi.fn()
@@ -115,8 +151,11 @@ describe("Flapstack MCP per-chat exposure", () => {
     expect(cancelled.prepare("SELECT status FROM agent_runs WHERE id = 'run-old'").get()).toEqual({
       status: "cancelled",
     })
+    expect(
+      cancelled.prepare("SELECT status FROM agent_runs WHERE id = 'run-normal'").get(),
+    ).toEqual({ status: "running" })
     expect(cancelled.prepare("SELECT run_status FROM sub_chats WHERE id = 'sub-1'").get()).toEqual({
-      run_status: "cancelled",
+      run_status: "running",
     })
     cancelled.close()
     expect(() =>

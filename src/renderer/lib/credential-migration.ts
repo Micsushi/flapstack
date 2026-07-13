@@ -10,7 +10,12 @@ type MigrationClient = {
         secret: string
         expectedFingerprint: string
         metadata?: CredentialMetadata
-      }): Promise<{ acknowledged: boolean; fingerprint: string | null; warning?: string }>
+      }): Promise<{
+        acknowledged: boolean
+        fingerprint: string | null
+        retireSource?: boolean
+        warning?: string
+      }>
     }
   }
 }
@@ -24,6 +29,7 @@ type LegacyCandidate = {
 
 export type CredentialMigrationReport = {
   migrated: string[]
+  retired: string[]
   retained: Array<{ key: string; reason: string }>
 }
 
@@ -63,7 +69,7 @@ export function readCredentialMigrationStatus(storage: Storage): CredentialMigra
     ) {
       return null
     }
-    return parsed
+    return { ...parsed, retired: Array.isArray(parsed.retired) ? parsed.retired : [] }
   } catch {
     return null
   }
@@ -83,6 +89,7 @@ export function discardRetainedLegacyCredential(
     statusStorage,
     {
       migrated: status.migrated,
+      retired: status.retired,
       retained: status.retained.filter((item) => item.key !== key),
     },
     now,
@@ -154,7 +161,7 @@ export async function migrateLegacyCredentials(
   storage: Storage,
   client: MigrationClient,
 ): Promise<CredentialMigrationReport> {
-  const report: CredentialMigrationReport = { migrated: [], retained: [] }
+  const report: CredentialMigrationReport = { migrated: [], retired: [], retained: [] }
   for (const candidate of readLegacyCredentialCandidates(storage)) {
     try {
       const expectedFingerprint = await rendererFingerprint(candidate.secret)
@@ -165,6 +172,9 @@ export async function migrateLegacyCredentials(
       if (result.acknowledged && result.fingerprint === expectedFingerprint) {
         storage.removeItem(candidate.legacyKey)
         report.migrated.push(candidate.legacyKey)
+      } else if (result.retireSource) {
+        storage.removeItem(candidate.legacyKey)
+        report.retired.push(candidate.legacyKey)
       } else {
         report.retained.push({
           key: candidate.legacyKey,

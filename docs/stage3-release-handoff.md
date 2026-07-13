@@ -4,10 +4,11 @@ Status: safe S3-F17 closeout complete; Stage 3 release remains blocked.
 
 ## Candidate
 
-- Integration baseline: `fba7e32bec5db21233d17b82a8745e974de90293`.
+- Integration baseline: `5a3cebd548acaa10a73fccdee9d97dabcbdd9a2e`.
 - Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
-- Branch: `codex/s3-f17-release-closeout-cf53` in the isolated `cf53` worktree.
-- Runtime: Node 22 on macOS arm64; unsigned Preview package.
+- Branch: `codex/stage3-security-fix-r2` in the isolated `426d` worktree.
+- Runtime: Node 22.23.1 on macOS arm64. No live app or package was launched in
+  this repair lane.
 - Main worktree was read-only. No push, merge, publish, or archive was done.
 
 ## Safe closeout result
@@ -37,6 +38,25 @@ The portable rooted writer cannot claim an exact filesystem transaction against
 a continuously racing namespace or untested Windows reparse behavior. Locked
 UI, actual macOS Keychain, Windows Credential Manager, Linux Secret Service,
 package/platform, and paid-provider proof remain open and unclaimed.
+
+## Security repair round 2
+
+Nine adversarial findings were repaired from exact integration baseline
+`5a3cebd`. Files-router and renderer writes now use rooted identity validation;
+product MCP classification requires trusted launch registration; reserved-name
+third-party servers keep third-party authority under explicit aliases; stale
+Codex, Voice, and custom-Claude migration sources are durably retired;
+post-dispatch terminal-audit failure leaves a retry-blocking reconciliation ID;
+exposure disable cancels only product-enabled children; audit strings hash by
+default; current and legacy dev JSON remove hidden file content before render
+or clipboard; and Tier 0 through Tier 3 all require durable pre-dispatch audit.
+
+Node 22 focused attacks passed 101/101. The full gate passed 113 files with 843
+tests passed and 3 conditional skips, lint, formatting, TypeScript, and build.
+The five affected OpenSpec changes and the 323-scenario release ledger pass.
+All locked, live UI, package, provider, Keychain, Windows, and Linux rows remain
+open. Claim-before-dispatch prevents blind retry but cannot guarantee
+cross-resource exactly-once behavior after process death.
 
 ## Remaining human and platform proof
 

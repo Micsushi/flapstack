@@ -9,11 +9,23 @@ supported chats and SHALL stop it cleanly with the application.
 
 - **WHEN** Flapstack MCP exposure is disabled for a chat
 - **THEN** that chat cannot discover or call Flapstack app-control tools
+- **AND** only child runs and sessions launched with that product-MCP exposure
+  are revoked; ordinary provider runs remain active
+- **AND** durable exposure state and live child identity agree before the
+  disable operation reports success
 
 #### Scenario: Enabled supported chat
 
 - **WHEN** the user enables exposure for a supported chat
 - **THEN** its harness can list and call tools through authenticated local transport
+
+#### Scenario: Third-party server uses the reserved product name
+
+- **WHEN** a user-managed third-party MCP entry is named `flapstack`
+- **THEN** product classification requires trusted launcher registration,
+  origin, and caller identity rather than the display name
+- **AND** the collision fails closed without granting product privileges or
+  silently deleting the third-party entry
 
 #### Scenario: Development test control is present
 
@@ -35,6 +47,14 @@ controlling supported Flapstack objects without returning raw database rows.
 
 - **WHEN** a caller submits malformed, stale, or out-of-scope input
 - **THEN** the operation fails with a structured error and changes nothing
+
+#### Scenario: File mutation targets a rooted object
+
+- **WHEN** a caller writes, renames, moves, or trashes a file-backed object
+- **THEN** every caller-supplied identifier and path is resolved beneath its
+  trusted root and revalidated against the intended parent and final identity
+- **AND** traversal, absolute-path, symlink, and namespace-swap attempts fail
+  before replacement or deletion
 
 #### Scenario: External mutation refreshes the live UI
 
@@ -82,6 +102,12 @@ execution. Tier 3 operations MUST receive explicit user approval.
 - **WHEN** a background chat needs approval
 - **THEN** Flapstack signals the pending decision without stealing application focus
 
+#### Scenario: Mandatory pre-dispatch audit is unavailable
+
+- **WHEN** the required pre-dispatch audit record cannot be durably stored for
+  any Tier 0 through Tier 3 call
+- **THEN** the call fails closed with zero handler dispatch or mutation
+
 ### Requirement: Auditable actions
 
 Flapstack SHALL persist a redacted audit record for every allowed, denied,
@@ -90,7 +116,18 @@ approval-required, failed, and completed MCP call.
 #### Scenario: Secret-bearing input
 
 - **WHEN** an MCP input or result contains credential-like data
-- **THEN** the audit record stores a redacted summary and no recoverable secret
+- **THEN** arbitrary strings are omitted or irreversibly hashed by default
+- **AND** only operation-specific safe fields are stored in clear text
+- **AND** the audit record contains no recoverable secret, including a secret
+  embedded in a path, URL, environment assignment, or provider identifier
+
+#### Scenario: Terminal audit append fails after dispatch
+
+- **WHEN** a handler has executed but its completed or failed terminal audit
+  record cannot be durably appended
+- **THEN** durable invocation state records that execution occurred and that
+  terminal reconciliation is required
+- **AND** a retry cannot blindly dispatch the operation again
 
 ### Requirement: Safe cross-agent spawning
 

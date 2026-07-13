@@ -86,7 +86,9 @@ describe("main-process credential service", () => {
       warning: "Keychain denied; session only",
     })
     expect(service.resolve("openai.voice-api-key")).toBe("sk-session-secret")
-    expect(() => readFileSync(service.storePath)).toThrow()
+    const retirement = readFileSync(service.storePath, "utf8")
+    expect(retirement).not.toContain("sk-session-secret")
+    expect(retirement).toContain('"openai.voice-api-key"')
   })
 
   it("rejects session replacement when an unreadable store cannot prove retirement", () => {
@@ -152,6 +154,74 @@ describe("main-process credential service", () => {
     expect(restarted.resolve("codex.api-key")).toBeNull()
     expect(restarted.status("codex.api-key").configured).toBe(false)
   })
+
+  it.each([
+    ["codex.api-key", "onboarding:codex-api-key"],
+    ["openai.voice-api-key", "agents:openai-api-key"],
+    ["claude.custom-api-token", "agents:claude-custom-config"],
+  ] as const)(
+    "keeps a session replacement tombstone across restart for %s",
+    async (id, legacyKey) => {
+      const dir = tempDir()
+      const unavailable: CredentialEncryption = {
+        inspect: () => ({ available: false, backend: "unavailable" }),
+        encrypt: () => {
+          throw new Error("must not encrypt")
+        },
+        decrypt: encryptedBackend.decrypt,
+      }
+      const session = new CredentialService({ storageDir: dir, encryption: unavailable })
+      session.set(id, `replacement-${id}`)
+      expect(session.isLegacySourceRetired(id)).toBe(true)
+
+      const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+      setCredentialServiceForTests(restarted)
+      const caller = credentialsRouter.createCaller({ getWindow: () => null })
+      const stale = `stale-${id}`
+      const result = await caller.migrateLegacy({
+        id,
+        legacyKey,
+        secret: stale,
+        expectedFingerprint: credentialFingerprint(stale),
+      })
+
+      expect(result).toMatchObject({ acknowledged: false, retireSource: true })
+      expect(restarted.resolve(id)).toBeNull()
+      expect(readFileSync(restarted.storePath, "utf8")).not.toContain(stale)
+    },
+  )
+
+  it.each([
+    ["codex.api-key", "onboarding:codex-api-key"],
+    ["openai.voice-api-key", "agents:openai-api-key"],
+    ["claude.custom-api-token", "agents:claude-custom-config"],
+  ] as const)(
+    "does not overwrite an encrypted %s replacement when upgrading a pre-tombstone store",
+    async (id, legacyKey) => {
+      const dir = tempDir()
+      const replacement = `replacement-${id}`
+      const beforeRestart = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+      beforeRestart.set(id, replacement)
+      const oldStore = JSON.parse(readFileSync(beforeRestart.storePath, "utf8"))
+      delete oldStore.retiredLegacySources
+      writeFileSync(beforeRestart.storePath, `${JSON.stringify(oldStore)}\n`, { mode: 0o600 })
+
+      const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+      setCredentialServiceForTests(restarted)
+      const caller = credentialsRouter.createCaller({ getWindow: () => null })
+      const stale = `stale-${id}`
+      const result = await caller.migrateLegacy({
+        id,
+        legacyKey,
+        secret: stale,
+        expectedFingerprint: credentialFingerprint(stale),
+      })
+
+      expect(result).toMatchObject({ acknowledged: false, retireSource: true })
+      expect(restarted.resolve(id)).toBe(replacement)
+      expect(restarted.isLegacySourceRetired(id)).toBe(true)
+    },
+  )
 
   it("rejects metadata URLs that could leak embedded credentials", () => {
     const service = new CredentialService({ storageDir: tempDir(), encryption: encryptedBackend })

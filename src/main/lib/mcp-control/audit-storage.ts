@@ -1,28 +1,64 @@
 import { mcpAuditRecords } from "../db/schema"
 import { createHash, randomUUID } from "node:crypto"
-import { and, desc, eq, gte, lt, lte, or } from "drizzle-orm"
+import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
 import type { McpCallerIdentity, McpRiskTier } from "./types"
 
 const MAX_DEPTH = 5
 const MAX_ENTRIES = 50
-const MAX_STRING_LENGTH = 1_024
 const MAX_SUMMARY_LENGTH = 16_384
 const redacted = "[REDACTED]"
 const truncated = "[TRUNCATED]"
 const secretKey =
   /(?:api[-_]?key|authorization|credential|cookie|pass(?:word)?|secret|token|private[-_]?key|session(?:[-_]?id)?|access[-_]?token|refresh[-_]?token)/i
 const reasoningKey = /(?:reasoning|chain[-_]?of[-_]?thought|thinking)/i
-const bearerValue = /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+/gi
-const tokenValue = /\b(?:sk(?:-proj|-ant)?|rk|pk|ghp|gho|github_pat)[-_][a-z0-9_-]+\b/gi
-const envAssignment = /\b([a-z][a-z0-9_]{2,})\s*=\s*(?:"[^"]*"|'[^']*'|[^\s;&]+)/gi
-const queryCredential =
-  /([?&](?:api[-_]?key|authorization|credential|password|secret|token|access[-_]?token|refresh[-_]?token)=)[^&#\s]*/gi
-const urlValue = /https?:\/\/[^\s"'<>]+/gi
-
+const safeAuditKeys = new Set([
+  "archived",
+  "byteLength",
+  "caller",
+  "chatId",
+  "content",
+  "contextHash",
+  "created",
+  "customPermissions",
+  "data",
+  "decision",
+  "dryRun",
+  "error",
+  "harness",
+  "id",
+  "input",
+  "itemCount",
+  "keys",
+  "limit",
+  "name",
+  "ok",
+  "overwrite",
+  "permissionMode",
+  "pinned",
+  "projectId",
+  "result",
+  "runId",
+  "scope",
+  "sha256",
+  "source",
+  "state",
+  "status",
+  "summary",
+  "taskId",
+  "tier",
+  "type",
+])
 export type McpAuditStatus =
-  "allowed" | "denied" | "approval-required" | "timed-out" | "stale" | "failed" | "completed"
+  | "allowed"
+  | "dispatch-started"
+  | "denied"
+  | "approval-required"
+  | "timed-out"
+  | "stale"
+  | "failed"
+  | "completed"
 
 export type McpAuditSnapshot = Record<string, unknown> | null
 
@@ -85,6 +121,12 @@ export type McpAuditPage = {
 
 type QueryDatabase = Pick<BetterSQLite3Database<typeof schema>, "select">
 
+export type McpDispatchLookup = {
+  caller: Pick<McpCallerIdentity, "chatId" | "runId">
+  toolName: string
+  input: unknown
+}
+
 const DEFAULT_PAGE_SIZE = 25
 const MAX_PAGE_SIZE = 100
 
@@ -131,11 +173,11 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
   if (!input) return null
   const textDigest = (key: string) => summarizeText(input[key])
   const safe = (...keys: string[]) => {
-    const entries: Array<[string, string | number | boolean]> = []
+    const entries: Array<[string, unknown]> = []
     for (const key of keys) {
       const item = input[key]
       if (typeof item === "boolean" || typeof item === "number") entries.push([key, item])
-      if (typeof item === "string" && item.trim()) entries.push([key, redactString(item)])
+      if (typeof item === "string" && item.trim()) entries.push([key, summarizeText(item)])
     }
     return Object.fromEntries(entries)
   }
@@ -155,7 +197,7 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
     case "add_attachment":
       return {
         ...safe("chatId", "kind"),
-        name: typeof input.name === "string" ? redactString(input.name) : null,
+        name: summarizeText(input.name),
         content: textDigest("contentText"),
       }
     case "write_attachment_to_worktree":
@@ -204,7 +246,7 @@ function summarizeMcpAuditResult(value: unknown): unknown {
       ? {
           decision: Object.fromEntries(
             ["id", "state", "source"].flatMap((key) =>
-              typeof decision[key] === "string" ? [[key, redactString(decision[key])]] : [],
+              typeof decision[key] === "string" ? [[key, summarizeText(decision[key])]] : [],
             ),
           ),
         }
@@ -212,7 +254,7 @@ function summarizeMcpAuditResult(value: unknown): unknown {
     ...(error
       ? {
           error: {
-            ...(typeof error.code === "string" ? { code: redactString(error.code) } : {}),
+            ...(typeof error.code === "string" ? { code: summarizeText(error.code) } : {}),
             ...(typeof error.message === "string" ? { message: summarizeText(error.message) } : {}),
           },
         }
@@ -221,8 +263,8 @@ function summarizeMcpAuditResult(value: unknown): unknown {
       ? {
           data: {
             keys: Object.keys(data).sort().slice(0, MAX_ENTRIES),
-            ...(typeof data.id === "string" ? { id: redactString(data.id) } : {}),
-            ...(typeof data.runId === "string" ? { runId: redactString(data.runId) } : {}),
+            ...(typeof data.id === "string" ? { id: summarizeText(data.id) } : {}),
+            ...(typeof data.runId === "string" ? { runId: summarizeText(data.runId) } : {}),
             ...(Array.isArray(data.items) ? { itemCount: data.items.length } : {}),
           },
         }
@@ -355,7 +397,7 @@ function decodeCursor(cursor: string): { occurredAt: Date; id: string } {
 function redactValue(value: unknown, depth: number): unknown {
   if (depth >= MAX_DEPTH) return truncated
   if (value === null || typeof value === "boolean" || typeof value === "number") return value
-  if (typeof value === "string") return redactString(value)
+  if (typeof value === "string") return summarizeText(value)
   if (typeof value === "bigint") return value.toString()
   if (typeof value === "undefined") return "[UNDEFINED]"
   if (value instanceof Date) return value.toISOString()
@@ -364,34 +406,68 @@ function redactValue(value: unknown, depth: number): unknown {
   if (typeof value === "object") {
     const output: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value).slice(0, MAX_ENTRIES)) {
-      output[key] =
-        secretKey.test(key) || reasoningKey.test(key) ? redacted : redactValue(item, depth + 1)
+      const outputKey = safeAuditKeys.has(key)
+        ? key
+        : `field_${createHash("sha256").update(key).digest("hex").slice(0, 16)}`
+      output[outputKey] =
+        secretKey.test(key) || reasoningKey.test(key)
+          ? redacted
+          : isSafeDigestField(key, item)
+            ? item
+            : redactValue(item, depth + 1)
     }
     return output
   }
   return String(value)
 }
 
-function redactString(value: string): string {
-  const bounded =
-    value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}${truncated}` : value
-  return bounded
-    .replace(urlValue, redactUrl)
-    .replace(bearerValue, redacted)
-    .replace(tokenValue, redacted)
-    .replace(envAssignment, (_match, key: string) => `${key}=${redacted}`)
-    .replace(queryCredential, `$1${redacted}`)
+function isSafeDigestField(key: string, value: unknown): value is string {
+  return (
+    (key === "sha256" || key === "contextHash") &&
+    typeof value === "string" &&
+    /^[a-f0-9]{64}$/i.test(value)
+  )
 }
 
-function redactUrl(raw: string): string {
-  try {
-    const url = new URL(raw)
-    url.username = ""
-    url.password = ""
-    if (url.search) url.search = `?${redacted}`
-    if (url.hash) url.hash = `#${redacted}`
-    return url.toString()
-  } catch {
-    return redacted
-  }
+/**
+ * Returns a durable claim with no terminal audit for the same caller, tool,
+ * and redacted input. Callers must reconcile it instead of blindly retrying.
+ */
+export function findUnresolvedMcpDispatch(
+  database: QueryDatabase,
+  lookup: McpDispatchLookup,
+): string | null {
+  const rows = database
+    .select({
+      invocationId: mcpAuditRecords.invocationId,
+      status: mcpAuditRecords.status,
+      inputSummary: mcpAuditRecords.inputSummary,
+      createdAt: mcpAuditRecords.createdAt,
+    })
+    .from(mcpAuditRecords)
+    .where(
+      and(
+        eq(mcpAuditRecords.callerChatId, lookup.caller.chatId),
+        lookup.caller.runId
+          ? eq(mcpAuditRecords.callerRunId, lookup.caller.runId)
+          : isNull(mcpAuditRecords.callerRunId),
+        eq(mcpAuditRecords.toolName, lookup.toolName),
+      ),
+    )
+    .orderBy(desc(mcpAuditRecords.createdAt), desc(mcpAuditRecords.id))
+    .all()
+  const terminal = new Set(
+    rows
+      .filter((row) => row.status === "completed" || row.status === "failed")
+      .map((row) => row.invocationId),
+  )
+  const inputSummary = redactMcpAuditSummary(summarizeMcpAuditInput(lookup.toolName, lookup.input))
+  return (
+    rows.find(
+      (row) =>
+        row.status === "dispatch-started" &&
+        row.inputSummary === inputSummary &&
+        !terminal.has(row.invocationId),
+    )?.invocationId ?? null
+  )
 }

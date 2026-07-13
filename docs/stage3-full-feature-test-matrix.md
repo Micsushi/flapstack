@@ -45,6 +45,15 @@ durable reconciliation trail; redaction fixtures exclude credentials, URLs,
 environment assignments, nested arbitrary text, and attachment content; rooted
 write swap attacks fail closed. Live approval/exposure UI remains unchecked.
 
+2026-07-13 security repair round-2 evidence: product MCP authority now requires
+launcher-owned registration identity, and a reserved third-party name is
+preserved under an explicit non-product alias. Exposure disable revokes only
+mapped product-enabled child runs. Every tier requires a durable pre-dispatch
+audit claim; terminal append failure exposes a reconciliation ID and blocks the
+same blind retry. Arbitrary strings hash by default, including AWS-style and
+path-embedded secrets. Files-router traversal, absolute-path, symlink, and
+namespace-swap attacks fail closed. Live UI and platform rows stay unchecked.
+
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
 - [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is
@@ -86,6 +95,13 @@ including restart non-resurrection. Hidden current/legacy `file-content` is
 excluded from visible search, handoff, clipboard/full-history export, and JSON;
 attachment search uses filenames only. Actual OS stores and unlocked UI remain
 unchecked.
+
+2026-07-13 security repair round-2 evidence: retained failed-migration sources
+for Codex, Voice, and custom Claude are durably tombstoned when the user accepts
+an encrypted or session-only replacement, so restart cannot retry stale values.
+Current, legacy, and nested dev-message JSON removes `file-content` before both
+render and clipboard serialization. Fixture proof does not promote Keychain,
+visual, clipboard-interaction, Windows, or Linux rows.
 
 ### S3-F13 copy/search evidence - 2026-07-13 PDT
 

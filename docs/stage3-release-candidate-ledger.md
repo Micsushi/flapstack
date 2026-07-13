@@ -7,11 +7,12 @@ completion while required live, UI, credential, or platform rows remain open.
 
 - Candidate source: the exact commit containing this ledger, resolved with
   `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Integration baseline: `fba7e32bec5db21233d17b82a8745e974de90293`.
-- Checkout: isolated `cf53` worktree on
-  `codex/s3-f17-release-closeout-cf53`; the main worktree is read-only.
-- Profile isolation: `Flapstack Dev cf53` for development and
-  `Flapstack Preview` for the unsigned macOS package.
+- Integration baseline: `5a3cebd548acaa10a73fccdee9d97dabcbdd9a2e`.
+- Checkout: isolated `426d` worktree on
+  `codex/stage3-security-fix-r2`; the main worktree is read-only.
+- Profile isolation: no live app or package was launched in this repair lane.
+  Earlier `Flapstack Dev cf53` and Preview evidence is context only where the
+  changed security paths invalidate it.
 - Supported release runtime: Node 22. macOS arm64 is locally available;
   Windows and Linux are unavailable in this lane.
 - Result vocabulary: only PASS satisfies a required row. FAIL, BLOCKED, and
@@ -89,20 +90,20 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 ## Execution evidence
 
-| Gate                                          | Result  | Evidence or blocker                                                                                 |
-| --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                       | PASS    | 18 active changes, 315 normative scenarios, 17 feature exits                                        |
-| All active OpenSpec strict validation         | PASS    | all 18 non-archive changes; final-commit rerun is required for handoff                              |
-| Node 22 `npm run check`                       | PASS    | lint, format, typecheck, unit/integration tests, production build; final-commit rerun is required   |
-| Migration/security/concurrency/focused suites | PASS    | 52 focused files, 461 passed, 3 intentionally skipped; full migration chain has 20 entries          |
-| Production/dev MCP separation                 | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                        |
-| Usage daemon smoke                            | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                  |
-| Verified `Flapstack Dev cf53`                 | PASS    | isolated ports/profile; exact checkout, Electron main path, API, DB, and clean shutdown             |
-| macOS Preview build/inspect/smoke/launch      | PASS    | unsigned arm64 package; ABI/licenses/pinned runtimes; exact executable startup, migration, shutdown |
-| Visual Settings/MCP/Usage/reasoning           | BLOCKED | macOS session locked (`CGSSessionScreenIsLocked=Yes`); no headless substitution                     |
-| Clipboard, microphone, Keychain               | BLOCKED | require unlocked interactive macOS evidence                                                         |
-| Windows/Linux                                 | BLOCKED | target hosts unavailable                                                                            |
-| Independent review rounds                     | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                              |
+| Gate                                     | Result  | Evidence or blocker                                                                                                        |
+| ---------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Release-ledger coverage                  | PASS    | 18 active changes, 323 normative scenarios, 17 feature exits                                                               |
+| Affected OpenSpec strict validation      | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                          |
+| Node 22 `npm run check`                  | PASS    | lint, format, typecheck, 843 passed, 3 conditional skips, production build                                                 |
+| Security round-2 focused suite           | PASS    | 17 focused files, 101 passed; traversal, identity, retry, classification, redaction, migration, and hidden-content attacks |
+| Production/dev MCP separation            | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                               |
+| Usage daemon smoke                       | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                         |
+| Verified `Flapstack Dev cf53`            | PASS    | isolated ports/profile; exact checkout, Electron main path, API, DB, and clean shutdown                                    |
+| macOS Preview build/inspect/smoke/launch | PASS    | unsigned arm64 package; ABI/licenses/pinned runtimes; exact executable startup, migration, shutdown                        |
+| Visual Settings/MCP/Usage/reasoning      | BLOCKED | macOS session locked (`CGSSessionScreenIsLocked=Yes`); no headless substitution                                            |
+| Clipboard, microphone, Keychain          | BLOCKED | require unlocked interactive macOS evidence                                                                                |
+| Windows/Linux                            | BLOCKED | target hosts unavailable                                                                                                   |
+| Independent review rounds                | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                     |
 
 ### 2026-07-13 security repair round
 
@@ -122,6 +123,31 @@ checks immediately around commit. Node has no portable cross-platform
 directory-handle `openat`/`renameat` transaction, so continuous namespace races
 and Windows reparse-point behavior remain unproved. No locked-UI, Keychain,
 Windows, Linux, or paid-provider evidence is claimed.
+
+### 2026-07-13 security repair round 2
+
+The adversarial re-review found nine more required defects. The repair tree now
+roots files-router writes, rename, and trash in a registered worktree or durable
+sub-chat identity; routes renderer secure-fs writes through the shared rooted
+writer; classifies product MCP only from launcher-owned registration identity;
+preserves reserved-name third-party servers under an explicit collision alias;
+retires retained Codex, Voice, and custom-Claude legacy credential sources;
+records a durable `dispatch-started` claim and blocks unresolved duplicate
+retry; cancels only product-MCP-enabled child runs on exposure disable; hashes
+arbitrary audit strings by default; recursively removes hidden `file-content`
+from dev JSON before render and clipboard; and fails closed for every tier when
+mandatory pre-dispatch audit storage is unavailable.
+
+Node 22 focused attacks passed 101/101 across 17 files. The canonical Node 22 gate
+passed 113 files with 843 tests passed and 3 credential-conditional skips, plus
+lint, formatting, TypeScript, and production build. Five affected OpenSpec
+changes strict-validate, and ledger coverage passes with 323 scenarios. No live
+UI, OS secret-store, package, provider-paid, Windows, or Linux row was promoted.
+
+The durable dispatch claim proves that execution may have started and prevents
+a blind duplicate after terminal-audit failure. It cannot provide cross-resource
+exactly-once semantics or prove whether a process died between the claim and the
+handler. Such an invocation remains explicitly reconciliation-required.
 
 ## Cleanup and evidence invalidation
 

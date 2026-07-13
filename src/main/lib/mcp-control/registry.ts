@@ -25,7 +25,7 @@ export type McpInvocationDependencies = {
   approvalId?: () => string
   /** Stable ID joining all append-only audit events for one tool call. */
   invocationId?: () => string
-  audit?: Pick<McpAuditWriter, "append">
+  audit?: McpAuditWriter
   mutations?: McpMutationService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
@@ -37,6 +37,11 @@ export type McpInvocationDependencies = {
 
 export type McpAuditWriter = {
   append: (record: AppendMcpAuditRecord) => void
+  findUnresolvedDispatch?: (input: {
+    caller: Pick<McpCallerIdentity, "chatId" | "runId">
+    toolName: string
+    input: unknown
+  }) => string | null
 }
 
 export const mcpControlTools: McpControlTool[] = [
@@ -377,17 +382,20 @@ export async function invokeMcpControlTool(
       })
       return target.response
     }
+    const unresolved = unresolvedDispatch(dependencies, recheckedCaller.caller, tool, input)
+    if (unresolved.failed) return auditStorageUnavailable(false)
+    if (unresolved.invocationId) return reconciliationRequired(unresolved.invocationId)
     const approvalAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
-      status: "allowed",
+      status: "dispatch-started",
       caller: recheckedCaller.caller,
       toolName: tool.name,
       tier: tool.tier,
       input,
       result: { decision },
     })
-    if (!approvalAuditPersisted && tool.tier > 0) return auditStorageUnavailable(false)
+    if (!approvalAuditPersisted) return auditStorageUnavailable(false)
     return auditedDispatch(
       tool,
       recheckedCaller.caller,
@@ -413,17 +421,20 @@ export async function invokeMcpControlTool(
     })
     return target.response
   }
+  const unresolved = unresolvedDispatch(dependencies, trustedCaller.caller, tool, input)
+  if (unresolved.failed) return auditStorageUnavailable(false)
+  if (unresolved.invocationId) return reconciliationRequired(unresolved.invocationId)
   const preExecutionAuditPersisted = audit(dependencies, {
     invocationId,
     startedAt,
-    status: "allowed",
+    status: "dispatch-started",
     caller: trustedCaller.caller,
     toolName: tool.name,
     tier: tool.tier,
     input,
     result: { decision: initialGate.decision, reason: initialGate.reason },
   })
-  if (!preExecutionAuditPersisted && tool.tier > 0) return auditStorageUnavailable(false)
+  if (!preExecutionAuditPersisted) return auditStorageUnavailable(false)
   return auditedDispatch(
     tool,
     trustedCaller.caller,
@@ -456,7 +467,7 @@ async function auditedDispatch(
       input,
       result: response,
     })
-    if (!terminalAuditPersisted && tool.tier > 0) return auditStorageUnavailable(true)
+    if (!terminalAuditPersisted) return reconciliationRequired(invocationId)
     return response
   } catch (error) {
     const response: McpControlResponse = {
@@ -473,7 +484,7 @@ async function auditedDispatch(
       input,
       result: { response, error: error instanceof Error ? error.message : String(error) },
     })
-    if (!failureAuditPersisted && tool.tier > 0) return auditStorageUnavailable(true)
+    if (!failureAuditPersisted) return reconciliationRequired(invocationId)
     return response
   }
 }
@@ -497,8 +508,36 @@ function auditStorageUnavailable(afterDispatch: boolean): McpControlResponse {
     error: {
       code: "internal-error",
       message: afterDispatch
-        ? "Tool execution reached a terminal state, but its completion audit could not be persisted. The durable pre-execution record requires reconciliation."
-        : "Mutation blocked because its mandatory pre-execution audit could not be persisted.",
+        ? "Tool execution reached a terminal state, but its completion audit could not be persisted. Reconciliation is required."
+        : "Tool blocked because its mandatory pre-execution audit could not be persisted.",
+    },
+  }
+}
+
+function unresolvedDispatch(
+  dependencies: McpInvocationDependencies,
+  caller: McpCallerIdentity,
+  tool: McpControlTool,
+  input: unknown,
+): { failed: boolean; invocationId: string | null } {
+  try {
+    return {
+      failed: false,
+      invocationId:
+        dependencies.audit?.findUnresolvedDispatch?.({ caller, toolName: tool.name, input }) ??
+        null,
+    }
+  } catch {
+    return { failed: true, invocationId: null }
+  }
+}
+
+function reconciliationRequired(invocationId: string): McpControlResponse {
+  return {
+    ok: false,
+    error: {
+      code: "reconciliation-required",
+      message: `Execution may have completed, but terminal audit persistence failed. Reconcile invocation ${invocationId} before retrying.`,
     },
   }
 }

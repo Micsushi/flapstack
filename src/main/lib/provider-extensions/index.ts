@@ -469,28 +469,22 @@ async function discoverMcpConfig(config: {
       (match) => (match[1] ?? match[2])!,
     )
   }
-  const reservedProductMcpNames = new Set([
-    "flapstack",
-    "flapstack-app-control",
-    "flapstack-dev-test-control",
-  ])
-  return names
-    .filter((name) => !reservedProductMcpNames.has(name))
-    .map((name) =>
-      createProviderExtensionManifest({
-        provider: config.provider,
-        kind: "mcp",
-        source: config.source,
-        sourceId: `${path.resolve(config.file)}#${name}`,
-        name,
-        description: "Third-party provider MCP configuration",
-        path: displayPath(path.resolve(config.file), config.source, path.dirname(config.file)),
-        capabilities: readOnly(),
-        limitations: [
-          "Inventory-only in Provider Extensions. Product app-control and development test-control MCPs are separate identities.",
-        ],
-      }),
-    )
+  return names.map((name) =>
+    createProviderExtensionManifest({
+      provider: config.provider,
+      kind: "mcp",
+      source: config.source,
+      sourceId: `${path.resolve(config.file)}#${name}`,
+      name,
+      description: "Third-party provider MCP configuration",
+      path: displayPath(path.resolve(config.file), config.source, path.dirname(config.file)),
+      capabilities: readOnly(),
+      limitations: [
+        "Inventory-only in Provider Extensions. Product app-control and development test-control MCPs are separate identities.",
+        "A reserved display name does not grant product or development-control privileges.",
+      ],
+    }),
+  )
 }
 
 function mcpFailure(

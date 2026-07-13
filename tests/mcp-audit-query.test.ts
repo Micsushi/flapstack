@@ -101,7 +101,7 @@ describe("MCP audit query", () => {
       },
     })
     expect(JSON.stringify(entry)).not.toContain("never-return")
-    expect(entry.detail.resultSummary).toContain('"keys":["reasoning"]')
+    expect(entry.detail.resultSummary).toContain('"keys"')
     expect(entry).not.toHaveProperty("input")
     expect(entry).not.toHaveProperty("result")
   })

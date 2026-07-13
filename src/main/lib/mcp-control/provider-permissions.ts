@@ -31,6 +31,8 @@ export function resolveProviderMcpPermission(input: {
   toolName?: string | null
   metadata?: unknown
   isMcpToolApproval?: boolean
+  /** Product identity copied from the launcher-owned MCP registration snapshot. */
+  trustedProductServerName?: string | null
   customPermissions?: CustomPermissionToggles | null
 }): ProviderMcpPermissionDecision | null {
   const reference =
@@ -41,16 +43,17 @@ export function resolveProviderMcpPermission(input: {
   if (!reference && input.isMcpToolApproval) {
     const serverName = mcpApprovalServerName(input.metadata)
     if (!serverName) return null
+    const trustedProduct = isTrustedProductServer(serverName, input.trustedProductServerName)
     if (!permissionMode) {
       return denied(
         { serverName, toolName: "unknown" },
         input.correlationId,
         null,
         "Provider permission mode is missing.",
-        serverName === FLAPSTACK_MCP_SERVER_NAME ? "product" : "third-party",
+        trustedProduct ? "product" : "third-party",
       )
     }
-    if (serverName !== FLAPSTACK_MCP_SERVER_NAME) {
+    if (!trustedProduct) {
       return resolveThirdParty(
         { serverName, toolName: "unknown" },
         permissionMode,
@@ -76,7 +79,7 @@ export function resolveProviderMcpPermission(input: {
     return denied(reference, input.correlationId, null, "Provider permission mode is missing.")
   }
 
-  if (reference.serverName !== FLAPSTACK_MCP_SERVER_NAME) {
+  if (!isTrustedProductServer(reference.serverName, input.trustedProductServerName)) {
     return resolveThirdParty(
       reference,
       permissionMode,
@@ -127,6 +130,16 @@ export function resolveProviderMcpPermission(input: {
         ? "Registry-classified Tier 0 product read may reach the product gate."
         : "Known product call bypasses a duplicate provider prompt and remains subject to the product gate.",
   }
+}
+
+function isTrustedProductServer(
+  serverName: string,
+  trustedProductServerName: string | null | undefined,
+): boolean {
+  return (
+    trustedProductServerName === FLAPSTACK_MCP_SERVER_NAME &&
+    serverName === trustedProductServerName
+  )
 }
 
 export function parseProviderMcpToolName(

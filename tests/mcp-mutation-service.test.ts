@@ -208,7 +208,7 @@ describe("MCP mutation service", () => {
       )
       .all() as Array<{ invocation_id: string; status: string }>
     expect(audit.map((row) => row.status)).toEqual(
-      expect.arrayContaining(["approval-required", "allowed", "completed", "failed"]),
+      expect.arrayContaining(["approval-required", "dispatch-started", "completed", "failed"]),
     )
     expect(new Set(audit.map((row) => row.invocation_id)).size).toBe(1)
     approvals.shutdown()

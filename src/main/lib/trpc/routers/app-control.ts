@@ -10,6 +10,7 @@ import { decideMcpApproval, listPendingMcpApprovals } from "../../mcp-control/ap
 const riskTierSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)])
 const auditDecisionSchema = z.enum([
   "allowed",
+  "dispatch-started",
   "denied",
   "approval-required",
   "timed-out",

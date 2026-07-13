@@ -137,8 +137,11 @@ function summarizeTarget(input: unknown): string {
   for (const key of ["target", "chatId", "taskId", "projectId", "runId", "worktreeId", "path"]) {
     const value = record[key]
     if (typeof value === "string" && value.trim()) {
-      const safe = JSON.parse(redactMcpAuditSummary(value)) as string
-      return `${key}: ${safe.slice(0, 256)}`
+      const safe = JSON.parse(redactMcpAuditSummary(value)) as {
+        byteLength?: number
+        sha256?: string
+      }
+      return `${key}: sha256:${safe.sha256 ?? "unavailable"} bytes:${safe.byteLength ?? 0}`
     }
   }
   return "Target described by bounded input"
