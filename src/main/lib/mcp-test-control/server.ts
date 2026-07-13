@@ -14,12 +14,14 @@ import {
   getHarnessStatusForRepo,
   getOpencodeLogs,
   getProviderStatus,
+  listProviderExtensions,
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
   launchTestRun,
   listPendingApprovals,
   listTestTargets,
+  mutateProjectProviderExtension,
   replyApproval,
   waitForRunState,
 } from "./service"
@@ -106,6 +108,16 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => result(await getProviderStatus()),
+  )
+  server.registerTool(
+    "list_provider_extensions",
+    {
+      description:
+        "List provider-scoped extension identities and capabilities without returning extension content.",
+      inputSchema: { cwd: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(await listProviderExtensions(input)),
   )
   server.registerTool(
     "list_test_targets",
@@ -209,6 +221,31 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(archiveTestChat(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_project_provider_extension",
+    {
+      description:
+        "Create, update, or delete one project-scoped provider extension through the production adapter.",
+      inputSchema: {
+        operation: z.enum(["create", "update", "delete"]),
+        provider: z.enum(["claude", "codex", "cursor", "opencode"]),
+        kind: z.enum(["skill", "command", "plugin", "custom-agent", "mcp"]),
+        cwd: z.string().min(1),
+        sourceId: z.string().min(1).optional(),
+        name: z.string().min(1).max(64),
+        description: z.string().max(1_024).optional(),
+        content: z.string().max(1_000_000).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await mutateProjectProviderExtension(input))
       } catch (error) {
         return failure(error)
       }

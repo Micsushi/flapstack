@@ -23,6 +23,14 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "list_provider_extensions",
+    description:
+      "List provider-scoped extension identities and capabilities without returning extension content.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
     name: "list_test_targets",
     description: "List projects, chats, sub-chats, worktree paths, and recent message counts.",
     tier: 0,
@@ -75,6 +83,14 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
   {
     name: "archive_test_chat",
     description: "Reversibly archive one idle test chat without deleting its history.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "mutate_project_provider_extension",
+    description:
+      "Create, update, or delete one project-scoped provider extension through the production adapter.",
     tier: 1,
     mutates: true,
     status: "implemented",
@@ -153,6 +169,7 @@ export const devMcpExposedToolNames = [
   "get_test_environment",
   "get_harness_status",
   "get_provider_status",
+  "list_provider_extensions",
   "list_test_targets",
   "get_chat_state",
   "get_run_state",
@@ -161,6 +178,7 @@ export const devMcpExposedToolNames = [
   "get_opencode_logs",
   "create_test_chat",
   "archive_test_chat",
+  "mutate_project_provider_extension",
   "launch_test_run",
   "reply_approval",
   "cancel_run",
