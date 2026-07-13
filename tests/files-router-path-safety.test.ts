@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 const state = vi.hoisted(() => ({
   userDataPath: "/tmp/flapstack-files-router-initial",
   subChatId: null as string | null,
+  chatId: "chat-1",
+  registeredRoots: new Set<string>(),
   trashed: [] as string[],
 }))
 
@@ -40,7 +42,8 @@ vi.mock("../src/main/lib/db", () => ({
     select: () => ({
       from: () => ({
         where: () => ({
-          get: () => (state.subChatId === null ? undefined : { id: state.subChatId }),
+          get: () =>
+            state.subChatId === null ? undefined : { id: state.subChatId, chatId: state.chatId },
         }),
       }),
     }),
@@ -60,8 +63,18 @@ beforeEach(() => {
   vi.clearAllMocks()
   state.trashed = []
   state.subChatId = null
+  state.registeredRoots.clear()
   state.userDataPath = mkdtempSync(join(tmpdir(), "flapstack-files-router-"))
   roots.push(state.userDataPath)
+  assertRegisteredWorktree.mockImplementation((path: string) => {
+    if (!state.registeredRoots.has(path)) throw new Error("unregistered root")
+    return {
+      path,
+      canonicalPath: realpathSync(path),
+      deviceId: null,
+      inodeId: null,
+    }
+  })
 })
 
 afterEach(() => {
@@ -117,6 +130,7 @@ describe("files router mutation path safety", () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-files-root-"))
     const outside = mkdtempSync(join(tmpdir(), "flapstack-files-outside-"))
     roots.push(root, outside)
+    state.registeredRoots.add(root)
     mkdirSync(join(root, "nested"))
     writeFileSync(join(root, "nested", "file.txt"), "inside")
     symlinkSync(outside, join(root, "escape"))
@@ -141,6 +155,7 @@ describe("files router mutation path safety", () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-files-root-"))
     const outside = mkdtempSync(join(tmpdir(), "flapstack-files-outside-"))
     roots.push(root, outside)
+    state.registeredRoots.add(root)
     writeFileSync(join(outside, "victim.txt"), "outside")
     symlinkSync(outside, join(root, "escape"))
 
@@ -157,6 +172,7 @@ describe("files router mutation path safety", () => {
   it("preserves safe rename and trash behavior inside a registered worktree", async () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-files-root-"))
     roots.push(root)
+    state.registeredRoots.add(root)
     writeFileSync(join(root, "file.txt"), "inside")
 
     const renamed = await caller.renameFile({
@@ -169,5 +185,50 @@ describe("files router mutation path safety", () => {
 
     await caller.deleteFile({ worktreePath: root, relativePath: "renamed.txt" })
     expect(state.trashed).toEqual([join(realpathSync(root), "renamed.txt")])
+  })
+
+  it("reads only registered rooted relative files and rejects traversal and symlink escape", async () => {
+    const root = mkdtempSync(join(tmpdir(), "flapstack-files-root-"))
+    const outside = mkdtempSync(join(tmpdir(), "flapstack-files-outside-"))
+    roots.push(root, outside)
+    state.registeredRoots.add(root)
+    writeFileSync(join(root, "safe.txt"), "inside")
+    writeFileSync(join(outside, "secret.txt"), "secret")
+    symlinkSync(join(outside, "secret.txt"), join(root, "linked.txt"))
+
+    await expect(caller.readFile({ rootPath: root, relativePath: "safe.txt" })).resolves.toBe(
+      "inside",
+    )
+    await expect(
+      caller.readFile({ rootPath: outside, relativePath: "secret.txt" }),
+    ).rejects.toThrow("unregistered root")
+    await expect(
+      caller.readFile({ rootPath: root, relativePath: "../secret.txt" }),
+    ).rejects.toThrow("escapes root")
+    await expect(caller.readFile({ rootPath: root, relativePath: "linked.txt" })).rejects.toThrow(
+      "real file",
+    )
+  })
+
+  it("reads an absolute plan path only through its durable sub-chat namespace", async () => {
+    state.subChatId = "sub-chat-1"
+    const sessionRoot = join(state.userDataPath, "claude-sessions", state.subChatId)
+    mkdirSync(sessionRoot, { recursive: true })
+    const planPath = join(sessionRoot, "plan.md")
+    writeFileSync(planPath, "durable plan")
+    const outside = mkdtempSync(join(tmpdir(), "flapstack-files-outside-"))
+    roots.push(outside)
+    const outsidePath = join(outside, "plan.md")
+    writeFileSync(outsidePath, "secret")
+
+    await expect(caller.readFile({ subChatId: state.subChatId, filePath: planPath })).resolves.toBe(
+      "durable plan",
+    )
+    await expect(
+      caller.readFile({ subChatId: state.subChatId, filePath: realpathSync(planPath) }),
+    ).resolves.toBe("durable plan")
+    await expect(
+      caller.readFile({ subChatId: state.subChatId, filePath: outsidePath }),
+    ).rejects.toThrow("outside the durable sub-chat namespace")
   })
 })

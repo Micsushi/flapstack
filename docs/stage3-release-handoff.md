@@ -1,12 +1,12 @@
 # Stage 3 release lane handoff
 
-Status: safe S3-F17 closeout complete; Stage 3 release remains blocked.
+Status: security repair round 3 complete; Stage 3 release remains blocked.
 
 ## Candidate
 
-- Integration baseline: `5a3cebd548acaa10a73fccdee9d97dabcbdd9a2e`.
+- Integration baseline: `16210011b81bebeca5837b2b1f1f489efeba9c33`.
 - Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
-- Branch: `codex/stage3-security-fix-r2` in the isolated `426d` worktree.
+- Branch: `codex/stage3-security-fix-r3` in the isolated `f0d3` worktree.
 - Runtime: Node 22.23.1 on macOS arm64. No live app or package was launched in
   this repair lane.
 - Main worktree was read-only. No push, merge, publish, or archive was done.
@@ -57,6 +57,35 @@ The five affected OpenSpec changes and the 323-scenario release ledger pass.
 All locked, live UI, package, provider, Keychain, Windows, and Linux rows remain
 open. Claim-before-dispatch prevents blind retry but cannot guarantee
 cross-resource exactly-once behavior after process death.
+
+## Security repair round 3
+
+Six adversarial findings were repaired from exact integration baseline
+`1621001`. Files read/list/watch and adjacent attachment/project filesystem
+procedures now require registered-root relative targets or durable sub-chat
+attachment/plan ownership. Root registration is migration-safe and binds
+canonical realpath plus device/inode where supported. Replaced/symlinked roots
+fail before read, write, rename, or trash. Every Claude case-insensitive reserved
+collision is renamed, and permission classification accepts only exact trusted
+registration metadata.
+
+Failed namespace-swap tests search original, moved, and replacement parents and
+prove no secret payload or temporary file survives the deterministic attack.
+Terminal audit claims now recover durably across restart into retry-safe,
+unknown, reconciled, or exhausted states without blind redispatch. Retry-safe
+fingerprints get one explicit bounded retry; exact non-idempotent unknown
+outcomes remain blocked without poisoning different input.
+
+No exact continuous namespace-race, Windows reparse, or cross-resource
+exactly-once guarantee is claimed. Live/UI/package/credential/macOS interactive,
+Windows, and Linux rows remain unchecked. Legacy rows have no historical inode
+to reconstruct; migration binds only the current real non-symlink directory and
+leaves missing or symlinked roots unbound.
+
+Node 22 focused round-3 attacks passed 60/60 across 11 files. The full
+`npm run check` passed lint, format, TypeScript, 855 tests with 3 conditional
+skips, and the production build. All 18 active OpenSpec changes strict-validate;
+the release ledger covers 323 scenarios and 17 feature exits.
 
 ## Remaining human and platform proof
 

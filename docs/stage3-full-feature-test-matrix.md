@@ -54,6 +54,17 @@ same blind retry. Arbitrary strings hash by default, including AWS-style and
 path-embedded secrets. Files-router traversal, absolute-path, symlink, and
 namespace-swap attacks fail closed. Live UI and platform rows stay unchecked.
 
+2026-07-13 security repair round-3 evidence: all file reads, recursive listing,
+watches, attachment persistence, and adjacent project-root procedures require
+durable rooted contracts. Registered roots bind canonical realpath and
+filesystem identity where available; moved, replaced, symlinked, traversal, and
+arbitrary absolute targets fail closed. All case-insensitive reserved MCP name
+collisions are renamed without product elevation. Terminal-audit recovery is
+durable, restart-safe, bounded to one explicit retry for retry-safe input, and
+keeps exact non-idempotent unknown outcomes blocked without poisoning different
+input. Continuous namespace races, reparse behavior, cross-resource
+exactly-once, and all live UI/platform rows remain unproved and unchecked.
+
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
 - [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is

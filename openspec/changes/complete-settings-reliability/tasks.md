@@ -771,6 +771,11 @@ secret-store and unlocked Settings proof remain open.
   syntax highlighting or clipboard copy. Reserved third-party MCP names remain
   third-party and receive no product authority. Visual clipboard/UI and
   cross-platform acceptance remain unchecked.
+- 2026-07-13 security repair round-3 evidence: every case-insensitive reserved
+  Claude MCP record collision receives a distinct third-party alias. Exact
+  launcher-owned registration metadata is required for product authority, so
+  duplicate case variants cannot elevate. Live Settings and provider UI rows
+  remain unchecked.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 

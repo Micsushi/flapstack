@@ -1852,7 +1852,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
           // Read and cache content (will be added to prompt on send)
           try {
-            const content = await trpcUtils.files.readFile.fetch({ filePath })
+            const content = await file.text()
             fileContentsRef.current.set(mentionId, content)
           } catch (err) {
             // If reading fails, chip is still there - agent can try to read via path

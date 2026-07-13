@@ -21,11 +21,12 @@ supported chats and SHALL stop it cleanly with the application.
 
 #### Scenario: Third-party server uses the reserved product name
 
-- **WHEN** a user-managed third-party MCP entry is named `flapstack`
+- **WHEN** one or more user-managed third-party MCP entries use any
+  case-insensitive spelling of the reserved `flapstack` name
 - **THEN** product classification requires trusted launcher registration,
   origin, and caller identity rather than the display name
-- **AND** the collision fails closed without granting product privileges or
-  silently deleting the third-party entry
+- **AND** every collision receives a distinct non-product alias without being
+  silently deleted or gaining product privileges
 
 #### Scenario: Development test control is present
 
@@ -48,13 +49,19 @@ controlling supported Flapstack objects without returning raw database rows.
 - **WHEN** a caller submits malformed, stale, or out-of-scope input
 - **THEN** the operation fails with a structured error and changes nothing
 
-#### Scenario: File mutation targets a rooted object
+#### Scenario: File access targets a rooted object
 
-- **WHEN** a caller writes, renames, moves, or trashes a file-backed object
-- **THEN** every caller-supplied identifier and path is resolved beneath its
-  trusted root and revalidated against the intended parent and final identity
-- **AND** traversal, absolute-path, symlink, and namespace-swap attempts fail
-  before replacement or deletion
+- **WHEN** a renderer or product MCP caller reads, recursively lists, watches,
+  writes, renames, moves, or trashes a file-backed object
+- **THEN** it uses an explicit relative target beneath a registered project or
+  worktree root, or an absolute attachment/plan path proven to belong to the
+  durable chat record that requested it
+- **AND** registration binds the lexical path to a canonical real path and,
+  where supported, device/inode identity before use
+- **AND** traversal, arbitrary absolute targets, symlink/reparse escapes, and
+  observed root/parent/final replacement fail before the operation dispatches
+- **AND** no portable continuous-race or cross-platform `openat`/`renameat`
+  guarantee is implied
 
 #### Scenario: External mutation refreshes the live UI
 
@@ -127,7 +134,12 @@ approval-required, failed, and completed MCP call.
   record cannot be durably appended
 - **THEN** durable invocation state records that execution occurred and that
   terminal reconciliation is required
-- **AND** a retry cannot blindly dispatch the operation again
+- **AND** startup/runtime recovery exposes a durable retry-safe, unknown,
+  reconciled, or exhausted state without redispatching the handler
+- **AND** an exact non-idempotent unknown outcome remains blocked while a
+  different input fingerprint is not poisoned by that claim
+- **AND** retry-safe work requires an explicit bounded retry authorization and
+  cannot consume more than one recovery retry
 
 ### Requirement: Safe cross-agent spawning
 

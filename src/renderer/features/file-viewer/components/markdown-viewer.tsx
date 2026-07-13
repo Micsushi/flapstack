@@ -39,6 +39,7 @@ const FILE_VIEWER_MODES = [
 ]
 import { defaultEditorOptions, getMonacoTheme } from "./monaco-config"
 import { getFileName } from "../utils/file-utils"
+import { toRootedFileTarget } from "../../../lib/file-target"
 
 interface MarkdownViewerProps {
   filePath: string
@@ -58,13 +59,14 @@ export function MarkdownViewer({ filePath, projectPath, onClose }: MarkdownViewe
     setShowPreview((prev) => !prev)
   }, [])
 
-  const absolutePath = useMemo(() => {
-    return filePath.startsWith("/") ? filePath : `${projectPath}/${filePath}`
-  }, [filePath, projectPath])
+  const fileTarget = useMemo(
+    () => toRootedFileTarget(projectPath, filePath),
+    [filePath, projectPath],
+  )
 
   const { data, isLoading, error, refetch } = trpc.files.readTextFile.useQuery(
-    { filePath: absolutePath },
-    { staleTime: 30000 },
+    fileTarget ?? { rootPath: projectPath, relativePath: "invalid" },
+    { enabled: !!fileTarget, staleTime: 30000 },
   )
 
   const refetchRef = useRef(refetch)

@@ -18,6 +18,19 @@ export type RootedMutationOptions = {
   beforeCommit?: (targetPath: string) => void | Promise<void>
 }
 
+export type RootedReadOptions = {
+  /** Test seam for deterministic root/parent/final swap attacks. */
+  beforeOpen?: (targetPath: string) => void | Promise<void>
+  maxBytes?: number
+}
+
+export class RootedReadTooLargeError extends Error {
+  constructor(public readonly byteLength: number) {
+    super("Read target exceeds the allowed size")
+    this.name = "RootedReadTooLargeError"
+  }
+}
+
 type ExistingPathSnapshot = {
   lexicalRoot: string
   realRoot: string
@@ -102,8 +115,12 @@ export async function writeFileInsideRoot(
 ): Promise<{ targetPath: string; byteLength: number }> {
   const lexicalRoot = resolve(rootPath)
   const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
+  const rootInfo = await lstat(lexicalRoot)
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error("Write root must be a real directory")
+  }
   const realRoot = await realpath(lexicalRoot)
-  const rootIdentity = identity(await lstat(lexicalRoot))
+  const rootIdentity = identity(rootInfo)
   const targetPath = await prepareSafeWritePath(realRoot, relative(lexicalRoot, lexicalTarget))
   const parentPath = dirname(targetPath)
   const parentIdentity = identity(await lstat(parentPath))
@@ -141,6 +158,13 @@ export async function writeFileInsideRoot(
     }
   }
 
+  // Run the caller-controlled/test seam and revalidate the namespace before a
+  // secret-bearing temporary file exists. If the root or parent moved, fail
+  // without materializing the payload in either the old or replacement tree.
+  await options.beforeCommit?.(targetPath)
+  await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
+  await validateExpectedTarget(targetPath, initialTarget ? identity(initialTarget) : null)
+
   const temporaryPath = join(parentPath, `.flapstack-${randomUUID()}.tmp`)
   const handle = await openNoFollowExclusive(temporaryPath)
   const temporaryIdentity = identity(await handle.stat())
@@ -150,7 +174,6 @@ export async function writeFileInsideRoot(
     await handle.sync()
     const size = (await handle.stat()).size
     await handle.close()
-    await options.beforeCommit?.(targetPath)
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
     await validateExpectedTarget(targetPath, initialTarget ? identity(initialTarget) : null)
     await rename(temporaryPath, targetPath)
@@ -171,6 +194,40 @@ export async function writeFileInsideRoot(
       await removeIfStillOwned(temporaryPath, parentPath, parentIdentity, temporaryIdentity)
     }
     throw error
+  }
+}
+
+/**
+ * Read one regular file through a pinned descriptor after validating every
+ * namespace component. Final symlinks and symlinked parents are rejected.
+ */
+export async function readFileInsideRoot(
+  rootPath: string,
+  targetRelativePath: string,
+  options: RootedReadOptions = {},
+): Promise<Buffer> {
+  const snapshot = await snapshotExistingPath(rootPath, targetRelativePath)
+  const targetInfo = await lstat(snapshot.targetPath)
+  if (targetInfo.isSymbolicLink() || !targetInfo.isFile()) {
+    throw new Error("Read target must be a real file")
+  }
+
+  await options.beforeOpen?.(snapshot.targetPath)
+  await validateExistingSnapshot(snapshot)
+  const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
+  const handle = await open(snapshot.targetPath, constants.O_RDONLY | noFollow)
+  try {
+    const opened = await handle.stat()
+    if (!opened.isFile() || !sameIdentity(identity(opened), snapshot.targetIdentity)) {
+      throw new Error("Read target inode changed during open")
+    }
+    if (options.maxBytes !== undefined && opened.size > options.maxBytes) {
+      throw new RootedReadTooLargeError(opened.size)
+    }
+    await validateExistingSnapshot(snapshot)
+    return await handle.readFile()
+  } finally {
+    await handle.close().catch(() => undefined)
   }
 }
 
@@ -302,6 +359,9 @@ async function snapshotExistingPath(
   const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
   if (lexicalTarget === lexicalRoot) throw new Error("Cannot target root")
   const rootInfo = await lstat(lexicalRoot)
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error("Operation root must be a real directory")
+  }
   const realRoot = await realpath(lexicalRoot)
   const relativeTarget = relative(lexicalRoot, lexicalTarget)
   const parentParts = relativeTarget.split(sep).slice(0, -1)

@@ -1,6 +1,13 @@
 import { z } from "zod"
 import { getDatabase } from "../../db"
-import { listMcpAuditRecords, type McpAuditStatus } from "../../mcp-control/audit-storage"
+import {
+  authorizeMcpDispatchRetry,
+  listMcpAuditRecords,
+  listMcpDispatchRecoveryClaims,
+  reconcileMcpDispatchClaim,
+  recoverMcpDispatchClaims,
+  type McpAuditStatus,
+} from "../../mcp-control/audit-storage"
 import { evaluateMcpGate } from "../../mcp-control/gate"
 import { getChatMcpExposureStatus, setChatMcpExposure } from "../../mcp-control/exposure"
 import { mcpControlTools } from "../../mcp-control/registry"
@@ -17,6 +24,13 @@ const auditDecisionSchema = z.enum([
   "stale",
   "failed",
   "completed",
+  "recovery-retryable",
+  "recovery-unknown",
+  "retry-authorized",
+  "retry-consumed",
+  "reconciled-completed",
+  "reconciled-failed",
+  "recovery-exhausted",
 ]) satisfies z.ZodType<McpAuditStatus>
 const auditQuerySchema = z
   .object({
@@ -76,6 +90,28 @@ export const appControlRouter = router({
   ),
 
   listPendingApprovals: publicProcedure.query(() => listPendingMcpApprovals(getDatabase())),
+
+  listAuditRecovery: publicProcedure.query(() => {
+    recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0 })
+    return listMcpDispatchRecoveryClaims(getDatabase())
+  }),
+
+  authorizeAuditRetry: publicProcedure
+    .input(z.object({ invocationId: z.string().min(1).max(256) }))
+    .mutation(({ input }) => ({
+      authorized: authorizeMcpDispatchRetry(getDatabase(), input.invocationId),
+    })),
+
+  reconcileAuditClaim: publicProcedure
+    .input(
+      z.object({
+        invocationId: z.string().min(1).max(256),
+        outcome: z.enum(["completed", "failed"]),
+      }),
+    )
+    .mutation(({ input }) => ({
+      reconciled: reconcileMcpDispatchClaim(getDatabase(), input.invocationId, input.outcome),
+    })),
 
   decideApproval: publicProcedure
     .input(

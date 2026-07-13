@@ -2,7 +2,7 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { app } from "electron"
 import { join } from "path"
-import { existsSync, mkdirSync } from "fs"
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
 import { migrateDatabase } from "./migrate"
 import { recoverPendingAllChatPermissionChange } from "../permissions"
 import * as schema from "./schema"
@@ -70,6 +70,7 @@ export function initDatabase() {
       const migrationsPath = getMigrationsPath()
       console.log(`[DB] Running migrations from: ${migrationsPath}`)
       migrateDatabase(nextDb, nextSqlite, migrationsPath)
+      backfillFilesystemRootRegistrations(nextSqlite)
       recoverPendingAllChatPermissionChange(nextSqlite)
       console.log("[DB] Migrations completed")
     }
@@ -82,6 +83,54 @@ export function initDatabase() {
     nextSqlite.close()
     throw error
   }
+}
+
+function backfillFilesystemRootRegistrations(database: Database.Database): void {
+  const tableExists = database.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  )
+  if (
+    !tableExists.get("projects") ||
+    !tableExists.get("chats") ||
+    !tableExists.get("filesystem_root_registrations")
+  ) {
+    return
+  }
+  const paths = database
+    .prepare(
+      `SELECT path FROM projects
+       UNION
+       SELECT worktree_path AS path FROM chats WHERE worktree_path IS NOT NULL`,
+    )
+    .all() as Array<{ path: string }>
+  const exists = database.prepare(
+    "SELECT 1 FROM filesystem_root_registrations WHERE path = ? LIMIT 1",
+  )
+  const insert = database.prepare(
+    `INSERT INTO filesystem_root_registrations
+       (path, canonical_path, device_id, inode_id, bound_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+  const transaction = database.transaction(() => {
+    for (const { path } of paths) {
+      if (exists.get(path)) continue
+      try {
+        const info = lstatSync(path, { bigint: true })
+        if (info.isSymbolicLink() || !info.isDirectory()) continue
+        const hasIdentity = info.dev !== 0n || info.ino !== 0n
+        insert.run(
+          path,
+          realpathSync(path),
+          hasIdentity ? info.dev.toString() : null,
+          hasIdentity ? info.ino.toString() : null,
+          Date.now(),
+        )
+      } catch {
+        // Missing/inaccessible legacy roots stay unbound and fail closed.
+      }
+    }
+  })
+  transaction.immediate()
 }
 
 /**

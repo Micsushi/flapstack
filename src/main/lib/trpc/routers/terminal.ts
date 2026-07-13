@@ -6,6 +6,8 @@ import { observable } from "@trpc/server/observable"
 import { terminalManager } from "../../terminal/manager"
 import type { TerminalEvent } from "../../terminal/types"
 import { TRPCError } from "@trpc/server"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
+import { resolveInsideRoot } from "../../path-safety"
 
 export const terminalRouter = router({
   /**
@@ -152,12 +154,23 @@ export const terminalRouter = router({
    * List directory contents for navigation
    */
   listDirectory: publicProcedure
-    .input(z.object({ dirPath: z.string() }))
+    .input(z.object({ rootPath: z.string(), relativePath: z.string().default(".") }))
     .query(async ({ input }) => {
-      const { dirPath } = input
+      const registeredRoot = assertRegisteredWorktree(input.rootPath)
+      const dirPath = resolveInsideRoot(registeredRoot.canonicalPath, input.relativePath)
 
       try {
+        const info = await fs.lstat(dirPath)
+        if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Unsafe directory")
+        const resolvedDirectory = await fs.realpath(dirPath)
+        if (
+          resolvedDirectory !== registeredRoot.canonicalPath &&
+          !resolvedDirectory.startsWith(registeredRoot.canonicalPath + path.sep)
+        ) {
+          throw new Error("Directory escapes registered root")
+        }
         const entries = await fs.readdir(dirPath, { withFileTypes: true })
+        assertRegisteredWorktree(input.rootPath)
 
         const items = entries
           .filter((entry) => !entry.name.startsWith("."))

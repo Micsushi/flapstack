@@ -197,5 +197,25 @@ describe("provider and product MCP permission integration", () => {
         isMcpToolApproval: true,
       }),
     ).toMatchObject({ source: "third-party", decision: "deny" })
+
+    for (const serverName of ["Flapstack", "FLAPSTACK"]) {
+      expect(
+        resolveProviderMcpPermission({
+          permissionMode: "read-only",
+          correlationId: `case-collision-${serverName}`,
+          providerToolName: `mcp__${serverName}__list_projects`,
+          trustedProductServerName: "flapstack",
+        }),
+      ).toMatchObject({ source: "third-party", decision: "deny", productGateRequired: false })
+      expect(
+        resolveProviderMcpPermission({
+          permissionMode: "read-only",
+          correlationId: `case-metadata-${serverName}`,
+          metadata: { serverName },
+          isMcpToolApproval: true,
+          trustedProductServerName: "flapstack",
+        }),
+      ).toMatchObject({ source: "third-party", decision: "deny", productGateRequired: false })
+    }
   })
 })

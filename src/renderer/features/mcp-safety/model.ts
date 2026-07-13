@@ -36,6 +36,13 @@ export type McpAuditDecision =
   | "approved"
   | "failed"
   | "completed"
+  | "recovery-retryable"
+  | "recovery-unknown"
+  | "retry-authorized"
+  | "retry-consumed"
+  | "reconciled-completed"
+  | "reconciled-failed"
+  | "recovery-exhausted"
 
 export type McpAuditView = {
   id: string

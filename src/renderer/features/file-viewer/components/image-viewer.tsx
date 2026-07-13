@@ -24,6 +24,7 @@ import {
 import { fileViewerDisplayModeAtom } from "../../agents/atoms"
 import { getFileIconByExtension } from "../../agents/mentions/agents-file-mention"
 import { getFileName } from "../utils/file-utils"
+import { toRootedFileTarget } from "../../../lib/file-target"
 
 const FILE_VIEWER_MODES = [
   { value: "side-peek" as const, label: "Sidebar", Icon: IconSidePeek },
@@ -48,6 +49,10 @@ export function ImageViewer({ filePath, projectPath, onClose }: ImageViewerProps
   const absolutePath = useMemo(() => {
     return filePath.startsWith("/") ? filePath : `${projectPath}/${filePath}`
   }, [filePath, projectPath])
+  const fileTarget = useMemo(
+    () => toRootedFileTarget(projectPath, filePath),
+    [filePath, projectPath],
+  )
 
   const handleOpenInEditor = useCallback(() => {
     if (absolutePath) {
@@ -56,8 +61,8 @@ export function ImageViewer({ filePath, projectPath, onClose }: ImageViewerProps
   }, [absolutePath, preferredEditor, openInAppMutation])
 
   const { data, isLoading, error } = trpc.files.readBinaryFile.useQuery(
-    { filePath: absolutePath },
-    { staleTime: 60000 },
+    fileTarget ?? { rootPath: projectPath, relativePath: "invalid" },
+    { enabled: !!fileTarget, staleTime: 60000 },
   )
 
   return (

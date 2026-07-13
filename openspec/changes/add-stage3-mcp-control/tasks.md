@@ -403,3 +403,31 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   pass. S3-F6-T4 remains unchecked because live UI/platform acceptance is open.
 - Claim-before-dispatch blocks blind retry but cannot provide cross-resource
   exactly-once behavior if the process dies between claim and handler.
+
+## 2026-07-13 security and permissions repair round-3 evidence
+
+- S3-F2-T4/S3-F2-T5: every case-insensitive Claude reserved-name collision is
+  renamed, and product permission classification accepts only the exact
+  launcher-owned registration name. Files read/list/watch plus adjacent
+  attachment, command, skill, agent, and directory contracts no longer accept
+  arbitrary renderer absolute paths.
+- Registered project/worktree paths are migration-backfilled to immutable
+  canonical realpath and filesystem identity records. New projects/worktrees
+  bind before use; missing, symlinked, moved, or replaced roots fail closed
+  before read/write/rename/trash dispatch. Legacy rows have no historical
+  identity to reconstruct, so migration can bind only the current real,
+  non-symlink directory; missing or symlinked legacy roots remain unbound.
+- Rooted replacement validates the namespace before creating a secret-bearing
+  temporary file. Deterministic moved/original/replacement-parent attacks prove
+  no payload or temporary survives; portable continuous namespace races and
+  Windows reparse semantics remain explicit limitations.
+- Terminal-audit claims now have durable recovery states, startup/runtime
+  reconciliation, one explicit bounded retry for retry-safe fingerprints, and
+  operator reconciliation for unknown outcomes. Exact non-idempotent unknown
+  outcomes remain blocked; different invocation input is not globally poisoned.
+- This repair does not claim cross-resource exactly-once behavior, portable
+  directory-handle transactions, or any live UI/package/platform result.
+- Node 22 focused attacks pass 60/60 across 11 files. The full gate passes lint,
+  format, TypeScript, 855 tests with 3 conditional skips, and production build.
+  All 18 active changes strict-validate; the ledger covers 323 scenarios and 17
+  feature exits.

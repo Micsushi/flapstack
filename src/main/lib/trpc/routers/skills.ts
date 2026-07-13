@@ -7,6 +7,8 @@ import matter from "gray-matter"
 import { discoverInstalledPlugins, getPluginComponentPaths } from "../../plugins"
 import { isDirentDirectory } from "../../fs/dirent"
 import { getEnabledPlugins } from "./claude-settings"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
+import { resolveInsideRoot } from "../../path-safety"
 
 export interface FileSkill {
   name: string
@@ -126,12 +128,13 @@ const listSkillsProcedure = publicProcedure
 
     let projectSkillsPromise = Promise.resolve<FileSkill[]>([])
     if (input?.cwd) {
+      const projectRoot = assertRegisteredWorktree(input.cwd).canonicalPath
       const projectSkillsDirs = [
-        path.join(input.cwd, ".claude", "skills"),
-        path.join(input.cwd, ".codex", "skills"),
+        path.join(projectRoot, ".claude", "skills"),
+        path.join(projectRoot, ".codex", "skills"),
       ]
       projectSkillsPromise = Promise.all(
-        projectSkillsDirs.map((dir) => scanSkillsDirectory(dir, "project", input.cwd)),
+        projectSkillsDirs.map((dir) => scanSkillsDirectory(dir, "project", projectRoot)),
       ).then((groups) => dedupeSkills(groups.flat()))
     }
 
@@ -194,6 +197,27 @@ function resolveSkillPath(displayPath: string): string {
   return displayPath
 }
 
+function resolveWritableSkillPath(displayPath: string, cwd?: string): string {
+  if (cwd) {
+    const root = assertRegisteredWorktree(cwd).canonicalPath
+    const target = resolveInsideRoot(root, displayPath)
+    const allowed = [path.join(root, ".claude", "skills"), path.join(root, ".codex", "skills")]
+    if (!allowed.some((dir) => target === dir || target.startsWith(dir + path.sep))) {
+      throw new Error("Skill path is outside registered skill roots")
+    }
+    return target
+  }
+  const target = resolveSkillPath(displayPath)
+  const allowed = [
+    path.join(os.homedir(), ".claude", "skills"),
+    path.join(os.homedir(), ".codex", "skills"),
+  ]
+  if (!allowed.some((dir) => target === dir || target.startsWith(dir + path.sep))) {
+    throw new Error("Skill path is outside user skill roots")
+  }
+  return target
+}
+
 export const skillsRouter = router({
   /**
    * List all skills from filesystem
@@ -235,7 +259,11 @@ export const skillsRouter = router({
         if (!input.cwd) {
           throw new Error("Project path (cwd) required for project skills")
         }
-        targetDir = path.join(input.cwd, ".claude", "skills")
+        targetDir = path.join(
+          assertRegisteredWorktree(input.cwd).canonicalPath,
+          ".claude",
+          "skills",
+        )
       } else {
         targetDir = path.join(os.homedir(), ".claude", "skills")
       }
@@ -285,10 +313,7 @@ export const skillsRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const absolutePath =
-        input.cwd && !input.path.startsWith("~") && !input.path.startsWith("/")
-          ? path.join(input.cwd, input.path)
-          : resolveSkillPath(input.path)
+      const absolutePath = resolveWritableSkillPath(input.path, input.cwd)
 
       // Verify file exists before writing
       await fs.access(absolutePath)
@@ -319,10 +344,7 @@ export const skillsRouter = router({
         throw new Error("Invalid path")
       }
 
-      const absolutePath =
-        input.cwd && !input.path.startsWith("~") && !input.path.startsWith("/")
-          ? path.join(input.cwd, input.path)
-          : resolveSkillPath(input.path)
+      const absolutePath = resolveWritableSkillPath(input.path, input.cwd)
 
       // Skills are directories containing SKILL.md - delete the parent directory
       const skillDir = path.dirname(absolutePath)

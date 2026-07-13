@@ -2115,35 +2115,31 @@ const ChatViewInner = memo(function ChatViewInner({
     },
   })
 
-  const getPathForBrowserFile = useCallback((file: File) => {
-    return (
-      window.webUtils?.getPathForFile?.(file) ||
-      (file as File & { path?: string }).path ||
-      undefined
-    )
-  }, [])
-
   const persistAttachments = useCallback(
-    (inputFiles: File[]) => {
+    async (inputFiles: File[]) => {
       for (const file of inputFiles) {
-        const sourcePath = getPathForBrowserFile(file)
-        if (!sourcePath) continue
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ""
+        for (let offset = 0; offset < bytes.length; offset += 32_768) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+        }
+        const dataBase64 = btoa(binary)
         attachmentImportMutation.mutate({
           chatId: parentChatId,
           taskId: taskId ?? undefined,
-          sourcePath,
-          kind: file.type.startsWith("image/") ? "image" : "file",
+          dataBase64,
           name: file.name,
+          kind: file.type.startsWith("image/") ? "image" : "file",
         })
       }
     },
-    [attachmentImportMutation, getPathForBrowserFile, parentChatId, taskId],
+    [attachmentImportMutation, parentChatId, taskId],
   )
 
   const handleAddAttachments = useCallback(
     async (inputFiles: File[]) => {
       await handleAddPreviewAttachments(inputFiles)
-      persistAttachments(inputFiles)
+      await persistAttachments(inputFiles)
     },
     [handleAddPreviewAttachments, persistAttachments],
   )
@@ -7920,6 +7916,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <AgentPlanSidebar
                   chatId={activeSubChatIdForPlan}
                   planPath={currentPlanPath}
+                  worktreePath={worktreePath}
                   onClose={() => setIsPlanSidebarOpen(false)}
                   onBuildPlan={handleApprovePlanFromSidebar}
                   refetchTrigger={planEditRefetchTrigger}
