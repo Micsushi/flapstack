@@ -83,6 +83,13 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "get_renderer_orchestration_state",
+    description: "Inspect bounded visible orchestration task-card, lineage, and selection state.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
     name: "get_shortcut_state",
     description:
       "Inspect live resolved shortcut bindings and diagnostics without renderer secrets.",
@@ -414,6 +421,7 @@ export const devMcpExposedToolNames = [
   "control_settings",
   "get_visible_copy_search_state",
   "select_test_chat",
+  "get_renderer_orchestration_state",
   "get_shortcut_state",
   "mutate_shortcut_binding",
   "list_provider_extensions",

@@ -51,6 +51,16 @@ async function call(name, args = {}) {
   return toolResult(await client.callTool({ name, arguments: args }))
 }
 
+async function waitForRendererTask(taskId, predicate = () => true) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    const state = await call("get_renderer_orchestration_state", { taskId })
+    if (state.card?.taskId === taskId && predicate(state.card)) return state
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(`Renderer did not expose orchestration task ${taskId}`)
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
@@ -118,14 +128,32 @@ try {
   })
   taskId = created.orchestration.taskId
   assert(
-    created.aggregate.queued === 2 && created.aggregate.active === 0,
+    created.orchestration.status === "paused" &&
+      created.aggregate.queued === 2 &&
+      created.aggregate.active === 0,
     "Deferred queue mismatch",
+  )
+  const selected = await call("select_test_chat", {
+    chatId: fixture.chatId,
+    subChatId: fixture.subChatId,
+    showOrchestration: true,
+  })
+  assert(selected.detailsOpen === true && selected.detailsTab === "details", "Task screen not open")
+  const initialRenderer = await waitForRendererTask(taskId)
+  assert(initialRenderer.selectedChatId === fixture.chatId, "Renderer selected chat mismatch")
+  assert(
+    initialRenderer.card.accessibleName.includes(created.orchestration.name),
+    "Task card accessible name mismatch",
+  )
+  assert(
+    initialRenderer.card.enabledControlLabels.includes("Resume orchestration") &&
+      initialRenderer.card.enabledControlLabels.includes("Stop orchestration") &&
+      initialRenderer.card.enabledControlLabels.includes("Add orchestration agent"),
+    "Task card controls are not accessible",
   )
 
   const initialRead = await call("get_test_orchestration", { taskId })
   assert(initialRead.lineage.nodes.length === 2, "Initial lineage mismatch")
-  const paused = await call("mutate_test_orchestration", { taskId, action: "pause" })
-  assert(paused.orchestration.status === "paused", "Pause did not persist")
 
   const replacement = await call("mutate_test_orchestration", {
     taskId,
@@ -190,6 +218,16 @@ try {
   })
   assert(progressed.aggregate.estimatedCostUsdMicros === 456, "Estimated cost label mismatch")
   assert(progressed.aggregate.exactCostUsdMicros === 0, "Estimated cost became exact")
+  const progressedRenderer = await waitForRendererTask(
+    taskId,
+    (card) => card.costQuality === "estimated" && card.text.includes("est. $0.00"),
+  )
+  assert(
+    progressedRenderer.card.agentStatuses.some(
+      (agent) => agent.agentId === replacement.id && agent.status === "completed",
+    ),
+    "Renderer worker status mismatch",
+  )
 
   const finalRead = await call("get_test_orchestration", { taskId })
   assert(
@@ -227,6 +265,14 @@ try {
             "stop",
             "archive",
           ],
+          renderer: {
+            selectedChatId: progressedRenderer.selectedChatId,
+            taskId: progressedRenderer.card.taskId,
+            accessibleName: progressedRenderer.card.accessibleName,
+            status: progressedRenderer.card.status,
+            costQuality: progressedRenderer.card.costQuality,
+            enabledControls: progressedRenderer.card.enabledControlLabels,
+          },
           cost: "estimated-only",
         },
       },

@@ -205,7 +205,14 @@ export function OrchestrationOverviewCard({
   const stopConditions = stopConditionSummary(orchestration.stopConditions)
 
   return (
-    <section aria-label={`Agent orchestration ${orchestration.name}`} className="p-3 space-y-3">
+    <section
+      aria-label={`Agent orchestration ${orchestration.name}`}
+      className="p-3 space-y-3"
+      data-orchestration-task-id={orchestration.taskId}
+      data-orchestration-chat-id={currentChatId}
+      data-orchestration-status={orchestration.status}
+      data-orchestration-cost-quality={aggregate.costQuality}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -341,7 +348,12 @@ export function OrchestrationOverviewCard({
 
       <ul aria-label="Orchestration agents" className="space-y-1.5">
         {agents.map((agent) => (
-          <li key={agent.id} className="rounded-md border border-border/60 p-2 text-[11px]">
+          <li
+            key={agent.id}
+            className="rounded-md border border-border/60 p-2 text-[11px]"
+            data-orchestration-agent-id={agent.id}
+            data-orchestration-agent-status={agent.status}
+          >
             <div className="flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate font-medium">
                 {agent.definition.name ?? agent.definition.role}

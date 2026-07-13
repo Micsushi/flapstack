@@ -279,7 +279,23 @@ export function createTestOrchestration(
   input: unknown,
   options: { deferScheduling?: boolean } = {},
 ) {
-  return createAgentOrchestrationService(getDatabasePath()).create(input, undefined, options)
+  const service = createAgentOrchestrationService(getDatabasePath())
+  // deferScheduling persists paused in the same transaction as task creation.
+  // The independent scheduler can never observe this fixture as launchable.
+  const created = service.create(input, undefined, options)
+  notifyTestOrchestrationChanged(created.orchestration.taskId)
+  return created
+}
+
+function notifyTestOrchestrationChanged(taskId: string) {
+  const chatIds = getDatabase()
+    .select({ id: chats.id })
+    .from(chats)
+    .where(eq(chats.taskId, taskId))
+    .all()
+    .map((chat) => chat.id)
+    .slice(0, 100)
+  notifyTestControlView({ action: "orchestration-changed", taskId, chatIds })
 }
 
 export function createTestOrchestrationFixture(input: {
@@ -366,29 +382,39 @@ export function mutateTestOrchestration(input: {
   payload?: unknown
 }) {
   const service = createAgentOrchestrationService(getDatabasePath())
+  let result: unknown
   switch (input.action) {
     case "tick":
       service.tickAll()
-      return service.getOverview(input.taskId)
+      result = service.getOverview(input.taskId)
+      break
     case "pause":
     case "resume":
     case "stop":
-      return service.control(input.taskId, input.action)
+      result = service.control(input.taskId, input.action)
+      break
     case "retry":
       if (!input.agentId) throw new Error("retry requires agentId")
-      return service.retryAgent(input.taskId, input.agentId)
+      result = service.retryAgent(input.taskId, input.agentId)
+      break
     case "replace": {
       if (!input.agentId) throw new Error("replace requires agentId")
       const payload = objectPayload(input.payload)
-      return service.replaceAgent(input.taskId, input.agentId, payload.agent)
+      result = service.replaceAgent(input.taskId, input.agentId, payload.agent)
+      break
     }
     case "add":
-      return service.addAgent({ ...objectPayload(input.payload), taskId: input.taskId })
+      result = service.addAgent({ ...objectPayload(input.payload), taskId: input.taskId })
+      break
     case "progress":
-      return service.reportProgress({ ...objectPayload(input.payload), taskId: input.taskId })
+      result = service.reportProgress({ ...objectPayload(input.payload), taskId: input.taskId })
+      break
     case "archive":
-      return service.archiveTerminal(input.taskId)
+      result = service.archiveTerminal(input.taskId)
+      break
   }
+  notifyTestOrchestrationChanged(input.taskId)
+  return result
 }
 
 function objectPayload(value: unknown): Record<string, unknown> {

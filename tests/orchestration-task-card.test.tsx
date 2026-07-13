@@ -13,6 +13,7 @@ import {
   getLineageNavigation,
   OrchestrationOverviewCard,
 } from "../src/renderer/features/agents/ui/orchestration-task-card"
+import { readRendererOrchestrationCard } from "../src/renderer/features/agents/lib/orchestration-test-state"
 
 vi.mock("../src/renderer/lib/trpc", () => ({ trpc: {} }))
 
@@ -145,6 +146,41 @@ describe("orchestration task card", () => {
       "$0.10 exact + $0.05 reported + est. $0.03",
     )
     expect(formatOrchestrationCost(0, 0, 0, "unknown")).toBeNull()
+  })
+
+  it("exposes a bounded renderer snapshot for authenticated MCP proof", async () => {
+    await act(async () => {
+      root.render(
+        <OrchestrationOverviewCard
+          overview={overview}
+          lineage={lineage}
+          currentChatId="chat-parent"
+          onNavigate={() => undefined}
+          onControl={() => undefined}
+          onRetry={() => undefined}
+          onReplace={() => undefined}
+          onAdd={() => undefined}
+        />,
+      )
+    })
+
+    expect(readRendererOrchestrationCard(container, "task-1", "chat-parent")).toMatchObject({
+      taskId: "task-1",
+      chatId: "chat-parent",
+      accessibleName: "Agent orchestration Finish Stage 4",
+      status: "running",
+      costQuality: "estimated",
+      lineageLabels: ["Open child agent chat UI worker", "Open agent chat UI worker"],
+      agentStatuses: [
+        { agentId: "agent-1", status: "active" },
+        { agentId: "agent-2", status: "queued" },
+      ],
+    })
+    expect(readRendererOrchestrationCard(container, "missing-task", "chat-parent")).toBeNull()
+    expect(readRendererOrchestrationCard(container, "task-1", "other-chat")).toBeNull()
+
+    container.classList.add("hidden")
+    expect(readRendererOrchestrationCard(container, "task-1", "chat-parent")).toBeNull()
   })
 
   it("resolves parent and child navigation without losing the initiating chat", () => {

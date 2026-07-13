@@ -12,6 +12,7 @@ export type DevMcpToolName =
   | "control_settings"
   | "get_visible_copy_search_state"
   | "select_test_chat"
+  | "get_renderer_orchestration_state"
   | "get_shortcut_state"
   | "mutate_shortcut_binding"
   | "list_provider_extensions"

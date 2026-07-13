@@ -42,6 +42,11 @@ export type DevRendererControlCommand =
       chatId: string
       subChatId: string
       project: { id: string; name: string; path: string }
+      showOrchestration?: boolean
+    }
+  | {
+      command: "orchestration.get"
+      taskId: string
     }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
@@ -64,6 +69,7 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "settings.get",
       "settings.control",
       "chat.select",
+      "orchestration.get",
     ].includes(String(value.command))
   ) {
     return null
@@ -144,6 +150,15 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
     ) {
       return null
     }
+    if (value.showOrchestration !== undefined && typeof value.showOrchestration !== "boolean") {
+      return null
+    }
+  }
+  if (
+    value.command === "orchestration.get" &&
+    (typeof value.taskId !== "string" || value.taskId.length < 1 || value.taskId.length > 200)
+  ) {
+    return null
   }
   return value as DevRendererControlRequest
 }

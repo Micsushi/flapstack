@@ -90,24 +90,24 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 ## Execution evidence
 
-| Gate                                   | Result  | Evidence or blocker                                                                                                         |
-| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                  |
-| Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
-| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
-| Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
-| S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
-| MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
-| Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
-| Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
-| Verified lane Dev profiles             | PASS    | isolated `93ea`, `609c`, `acbf`, and `c8ae` worker checkouts/profiles; integrated profile rerun pending                     |
-| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; current executable launch not run                             |
-| Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
-| Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
-| Visual orchestration and MCP UI        | PENDING | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
-| Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
-| Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
-| Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
+| Gate                                   | Result  | Evidence or blocker                                                                                                            |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                     |
+| Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                   |
+| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 927 passed, 3 conditional skips, all production builds                                    |
+| Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks    |
+| S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                            |
+| MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open      |
+| Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                   |
+| Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                             |
+| Verified lane Dev profiles             | PARTIAL | isolated `93ea`, `609c`, `acbf`, `c8ae`; earlier `c8ae-orchestration` passed, post-repair restart waits on the shared UI lease |
+| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 rebuild; ABI/licenses/pinned runtimes; earlier exact executable opened renderer without error           |
+| Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                             |
+| Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                        |
+| Visual orchestration and MCP UI        | PARTIAL | MCP task/lineage truth plus task-screen pixels, AX, focus, and Add-dialog keyboard proof; full visual/product-MCP matrix open  |
+| Remaining live/package feature rows    | BLOCKED | signing, provider-extension discovery, packaged credential restart, other feature exits, microphone, paid-provider proof       |
+| Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                       |
+| Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                         |
 
 ### 2026-07-13 Settings closeout candidate
 
@@ -229,6 +229,43 @@ claimed. Attached-branch mode validates an existing Git-registered worktree and
 branch; it does not provision branches or worktrees. Security round 3 must
 remain preserved across schema, startup scheduler, product MCP, launch, usage,
 invalidation, and renderer integration; the integrated rerun is authoritative.
+
+Continuation supersedes only the earlier live/package limitations, not its
+historical task evidence. Authenticated dev-test MCP task
+`a0f473d1-2f78-4d6b-a6f2-37923e5039ed` proved deferred zero-provider controls,
+exact renderer state, invalidation, and cleanup. Task
+`6bd5b45d-38cb-4b2f-b358-fbdcebc39f38` launched real read-only Codex run
+`2f977ce9-2552-4389-aef6-a534ab39454e`; child chat
+`938649f4-70fb-4cff-bda0-560ff1bc9a5b` returned
+`ORCHESTRATION_FORK_OK`, and MCP renderer reads proved both lineage directions.
+The token stop recorded 17,199 authoritative tokens after the first turn and
+stopped the task; it could not preempt that in-flight turn against the configured
+4,000-token limit, and this one-worker proof did not exercise a later queued
+launch. Cost remained unavailable with no exact,
+reported, or estimated value.
+
+Real UI under the shared lease proved the named task screen, fork/task/lineage
+accessibility, Cost Unavailable and stop-reason pixels, keyboard focus through
+lineage and worker controls, and Space activation of Add agent. It did not
+replace MCP functional control, and lineage keyboard activation remains open.
+Before the final continuation repairs, `Flapstack Dev c8ae-orchestration` passed
+exact restart verification. After a fresh production build, the unsigned macOS
+arm64 Preview passed inspect/smoke for pinned runtimes and native ABIs, and its
+exact executable opened the repository chooser without renderer error.
+Attached-branch mode still validates
+only an existing Git-registered worktree with its exact registered branch; it
+does not provision either. Reverse real Claude, product-MCP approval/audit
+agreement, signing, paid/exact cost, Windows, Linux, and the complete visual
+matrix remain open, so S3-F5-T3 stays unchecked.
+
+After the continuation repairs, the final Node 22 gate passed lint, formatting,
+TypeScript, 124 test files with 927 passed and 3 credential-conditional skips,
+and the production build. Both affected OpenSpec changes strict-validate, and
+release-ledger plus Usage-exit coverage pass. The unsigned macOS arm64 Preview
+was rebuilt again from that exact production output; inspect/smoke passed for
+all pinned/native components. Its earlier executable launch remains valid visual
+evidence, but the final rebuilt executable has not been relaunched while another
+lane owns the shared UI lease. The final Dev restart row remains unchecked.
 
 ## Cleanup and evidence invalidation
 

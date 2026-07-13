@@ -364,13 +364,36 @@ function registerTools(server: McpServer): void {
       inputSchema: {
         chatId: z.string().min(1).max(200),
         subChatId: z.string().min(1).max(200),
+        showOrchestration: z.boolean().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
       try {
         const selection = resolveTestChatSelection(input)
-        return result(await requestDevRendererControl({ command: "chat.select", ...selection }))
+        return result(
+          await requestDevRendererControl({
+            command: "chat.select",
+            ...selection,
+            showOrchestration: input.showOrchestration,
+          }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_orchestration_state",
+    {
+      description:
+        "Inspect bounded visible task-card, lineage-control, and selection state in the live renderer.",
+      inputSchema: { taskId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "orchestration.get", ...input }))
       } catch (error) {
         return failure(error)
       }

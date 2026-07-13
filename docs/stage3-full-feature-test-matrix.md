@@ -17,7 +17,7 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
       without losing Stage 2 data; schema and Drizzle journal match.
 - [ ] **S3-P05** `npm run dev:verify` identifies this checkout and the
       `Flapstack Dev` profile after the final restart.
-- [ ] **S3-P06** macOS Preview packaging passes; Windows/Linux package evidence
+- [x] **S3-P06** macOS Preview packaging passes; Windows/Linux package evidence
       is recorded as passed or explicitly remaining.
 
 ## 1. Production MCP control (S3-F2 through S3-F6)
@@ -107,6 +107,41 @@ launched and estimated cost stayed labeled. Computer Use only read the live
 shell pixels and accessibility tree. No live orchestration task-screen,
 real-provider, exact-cost, package, Windows, or Linux claim is promoted, so
 integrated S3-M08 through S3-M12 remain unchecked.
+
+2026-07-13 S3-F5 orchestration continuation evidence: before the final repairs,
+`Flapstack Dev c8ae-orchestration` passed `npm run dev:verify` against this exact
+checkout after restart. Authenticated dev-test MCP, not UI clicking, controlled
+deferred task `a0f473d1-2f78-4d6b-a6f2-37923e5039ed`, asserted the selected task
+card and accessible controls, and archived it with zero provider launches. It
+also launched one real read-only Codex worker in task
+`6bd5b45d-38cb-4b2f-b358-fbdcebc39f38`; child chat
+`938649f4-70fb-4cff-bda0-560ff1bc9a5b` returned
+`ORCHESTRATION_FORK_OK`, and renderer reads proved both parent-to-child and
+child-to-parent navigation. The durable run recorded 17,199 authoritative
+tokens and stopped for `token-budget`; the configured 4,000-token limit could
+not preempt the first in-flight provider turn, and this one-worker proof did not
+exercise prevention of a later queued launch.
+Cost remained `unknown` with zero exact/reported/estimated value, so no provider
+cost claim is made.
+
+Real UI work held the shared machine lease and was limited to pixels,
+accessibility, focus, and actual keyboard delivery. The named task screen,
+accessible fork/task/lineage controls, task aggregates, stop reason, Cost
+Unavailable label, focus traversal through lineage and worker controls, and
+Space activation of the Add agent dialog passed. Functional setup and assertions
+remained MCP-first; lineage activation itself was not proved by real keyboard.
+An earlier fresh unsigned macOS arm64 Preview passed binary,
+license, ABI, Electron 39.8.10, Claude 2.1.207, Codex 0.144.1, Whisper,
+Parakeet, and better-sqlite3 inspection/smoke, then its exact packaged executable
+opened the repository chooser without renderer error. The final post-repair
+rebuild repeated inspect/smoke but was not relaunched. Windows/Linux, signing,
+reverse real Claude, paid/exact cost, full product-MCP approval/audit agreement,
+and the complete visual matrix remain open; S3-M08 through S3-M12 stay unchecked.
+The final Node 22 gate after the continuation repairs passed lint, formatting,
+TypeScript, 124 test files with 927 passed and 3 credential-conditional skips,
+and the production build. The two affected OpenSpec changes strict-validate;
+release-ledger and Usage-exit coverage pass. A final Dev restart is still waiting
+for the shared UI lease and therefore S3-P05 remains unchecked.
 
 2026-07-13 integrated candidate evidence: `codex/stage3-integration` contains
 `main`; main remains clean. Node 22.23.1 `npm run check` passed lint,

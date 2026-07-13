@@ -317,6 +317,22 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   real Codex and Claude sessions; task membership, lineage, scheduler/run state,
   usage provenance, approval, audit, and renderer state agree.
 - Verification: Documented manual matrix evidence.
+- Evidence: authenticated dev-test MCP proved durable task creation and controls,
+  exact renderer task state, two-way fork lineage, invalidation, and one real
+  read-only Codex worker. The worker returned `ORCHESTRATION_FORK_OK`; 17,199
+  authoritative tokens and the durable `token-budget` stop were recorded, and
+  cost remained honestly unavailable rather than inferred. Real UI evidence
+  under the shared lease covered task pixels, accessibility names, keyboard
+  focus through lineage and worker controls, and Space activation of Add agent.
+  An earlier rebuilt unsigned macOS arm64 Preview opened its repository chooser;
+  the final post-repair rebuild passed inspect/smoke but was not relaunched while
+  another lane held the shared UI lease.
+- Remaining verification: a real Claude target in the reverse direction; full
+  product-MCP approval/audit/renderer agreement; lineage keyboard activation;
+  signed package, Windows, and Linux evidence. One provider turn exceeded the
+  configured 4,000-token ceiling before authoritative usage arrived, so the
+  ceiling is evaluated between launches but cannot preempt an in-flight turn;
+  this one-worker proof did not exercise prevention of a later queued launch.
 - Blocked by: S3-F2-T7, S3-F3-T5, S3-F5-T2, S3-F5-T4, S3-F6-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: isolated Stage 3 worktree/app instance and manual matrix.

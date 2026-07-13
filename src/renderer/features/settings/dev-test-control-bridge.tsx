@@ -9,7 +9,13 @@ import {
 import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
 import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from "../agents/atoms"
+import { readRendererOrchestrationCard } from "../agents/lib/orchestration-test-state"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
+import {
+  detailsSidebarOpenAtom,
+  detailsSidebarTabAtom,
+  widgetVisibilityAtomFamily,
+} from "../details-sidebar/atoms"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
 
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
@@ -79,6 +85,15 @@ export function DevTestControlBridge() {
         appStore.set(selectedProjectAtom, request.project)
         appStore.set(selectedAgentChatIdAtom, request.chatId)
         appStore.set(agentsSettingsDialogOpenAtom, false)
+        if (request.showOrchestration) {
+          appStore.set(detailsSidebarOpenAtom, true)
+          appStore.set(detailsSidebarTabAtom, "details")
+          const visibilityAtom = widgetVisibilityAtomFamily(request.chatId)
+          const visibleWidgets = appStore.get(visibilityAtom)
+          if (!visibleWidgets.includes("orchestration")) {
+            appStore.set(visibilityAtom, ["orchestration", ...visibleWidgets])
+          }
+        }
         store.setChatId(request.chatId)
         const selectedSubChatId = useAgentSubChatStore.getState().activeSubChatId
         window.desktopApi.respondDevRendererControl({
@@ -89,6 +104,30 @@ export function DevTestControlBridge() {
             subChatId: selectedSubChatId,
             selectedProject: request.project,
             settingsOpen: false,
+            detailsOpen: appStore.get(detailsSidebarOpenAtom),
+            detailsTab: appStore.get(detailsSidebarTabAtom),
+          },
+        })
+        return
+      }
+      if (request.command === "orchestration.get") {
+        const subChatState = useAgentSubChatStore.getState()
+        const selectedChatId = appStore.get(selectedAgentChatIdAtom)
+        const detailsOpen = appStore.get(detailsSidebarOpenAtom)
+        const detailsTab = appStore.get(detailsSidebarTabAtom)
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: {
+            selectedChatId,
+            activeSubChatId: subChatState.activeSubChatId,
+            selectedProjectId: appStore.get(selectedProjectAtom)?.id ?? null,
+            detailsOpen,
+            detailsTab,
+            card:
+              selectedChatId && detailsOpen && detailsTab === "details"
+                ? readRendererOrchestrationCard(document, request.taskId, selectedChatId)
+                : null,
           },
         })
         return
