@@ -193,6 +193,7 @@ function safeMessageMetadata(metadata: Record<string, unknown> | undefined) {
     "resultSubtype",
     "permissionMode",
     "permissionApplication",
+    "reasoningControl",
     "limitations",
     "toolActivity",
     "approvalActivity",

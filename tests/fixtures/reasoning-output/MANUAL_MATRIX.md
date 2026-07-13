@@ -57,12 +57,52 @@ For each required provider, record:
 ## Current block truth
 
 - Fixture/classification/control/UI/search work is unblocked and automated.
-- Claude provider-live work is blocked by the saved OAuth credential returning
-  401 until S3-F10 restores a valid credential path.
-- Codex, OpenRouter, NanoGPT, and remaining Cursor provider/UI/reload rows stay
-  gated by S3-F15 provider closeout and applicable S3-F10 credentials.
-- Dev-test-control MCP tasks 2.5 and 3.4 are complete. S3-F16-T3 still needs a
-  visual disclosure smoke. On 2026-07-13, `dev:verify` passed for this checkout
-  and the freshly restarted app returned persisted completed timer state for
-  Codex, Cursor, OpenRouter, and NanoGPT through `get_reasoning_timer_state`.
-  macOS was locked, so visual disclosure/reopen evidence was not claimed.
+- Dev-test-control MCP tasks 2.5 and 3.4 are complete. The current F16 tree adds
+  explicit disclosure names, remount coverage, and persisted OpenRouter/NanoGPT
+  request resolution.
+- `dev:verify` passed before and after restart for this checkout and the
+  `Flapstack Dev` profile. Authoritative completed timers, persisted message
+  identities, visible/absent classes, and sanitized metadata reloaded.
+- Fresh OpenRouter and NanoGPT provider-live/headless runs passed on the current
+  F16 tree. Prior Claude, Codex, and Cursor provider-live records also reloaded
+  correctly, but their source commit was not recorded, so same-SHA live
+  recapture remains open.
+- macOS was locked. Visual disclosure, keyboard, screen-reader, search, and
+  screenshot rows remain open; headless/runtime proof is not relabeled UI-live.
+
+## 2026-07-13 safe closeout evidence
+
+- Evidence tree: this commit; parent `51444e2`. Environment: macOS arm64,
+  verified `Flapstack Dev`, Electron 39.8.10, runtime Node 22.22.1. Provider
+  versions remain the pinned versions in the frozen matrix.
+- Claude reload: `mriu431y6d964b61`, `claude-opus-4-8`, two visible reasoning
+  parts, terminal success, message `484d6f7a...`, persisted 21.969-second
+  duration. Absent case `mrilkgqjpng7tm2h` completed with text only.
+- Codex reload: `5737cd20...`, `gpt-5.6-sol/high`, visible thought/summary parts,
+  terminal success, message `93fb638e...`, persisted 23.467-second duration.
+  Absent case `b4360a7d...` completed with text only and restored its
+  run-derived 3-second timer without creating a reasoning row.
+- Cursor reload: `f645af95...`, `auto`, four ordered visible reasoning parts
+  interleaved with tool events, terminal success, message `09363ab6...`,
+  persisted 31.584-second duration.
+- OpenRouter current provider-live: enabled `51630464...` persisted visible
+  reasoning plus text and exact `high` resolution; disabled `1428f4fa...`
+  persisted text only and resolved `{enabled:false}`; unsupported
+  `openai/gpt-4.1-nano` run `6aada2e7...` omitted both requested fields,
+  persisted the two exact limitations, and completed with text only.
+- NanoGPT current provider-live: enabled `a20ddc1f...` and disabled
+  `7e5415f6...` both completed with text only, preserved exact request
+  resolution, and did not fabricate a reasoning row. Prior visible run
+  `2da31d4d...` reloaded one reasoning part and its 46.506-second duration.
+- Database comparison found no credential-shaped key/value in the selected
+  assistant records. No hidden reasoning was captured. Eleven probe chats were
+  archived, zero approvals remained pending, and zero isolated sidecar
+  directories remained.
+- Verification: focused reasoning/provider suites passed 142 tests with 3
+  credential-conditional skips; all three related OpenSpec changes passed
+  strict validation; Node 22.23.1 `npm run check` passed 101 files, 754 tests,
+  3 skips, and production build. Unsigned macOS arm64 Preview package, binary
+  inspection, and bundled Claude/Codex/Whisper/Parakeet smoke passed.
+- Result: T3 automation/headless persistence and the safe provider subset of T4
+  pass. T3/T4/T5 remain unchecked for unlocked visual accessibility/search and
+  same-SHA Claude/Codex/Cursor provider plus UI-live recapture.

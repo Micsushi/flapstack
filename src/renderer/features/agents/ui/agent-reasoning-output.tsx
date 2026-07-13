@@ -159,6 +159,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
         aria-expanded={isExpanded}
+        aria-label={`${statusLabel}. ${reasoningOutputLabel}`}
         className="group flex w-full items-center gap-2 border-b border-border/60 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <span className="min-w-0 flex-1 truncate tabular-nums">

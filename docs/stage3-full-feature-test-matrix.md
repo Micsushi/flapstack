@@ -144,6 +144,19 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
 - [ ] **S3-R01 (S3-F16)** migrated reasoning rows `T1-*` through `T7-*` pass for
       fixtures, streaming, persistence, search, capability fallback, and live
       provider evidence.
+      2026-07-13 safe closeout: the current F16 tree persists and exposes exact
+      OpenRouter/NanoGPT request resolution. Fresh OpenRouter visible, disabled,
+      and unsupported-fallback runs and NanoGPT absent/disabled runs passed,
+      then restored exact message IDs, controls, and completed timers after a
+      verified dev restart. Prior Claude, Codex, Cursor, and NanoGPT visible or
+      absent records also restored without fabricated rows. Database inspection
+      found no credential pattern; all probes were archived, approvals and
+      sidecar temp state are empty. This row stays open because the locked Mac
+      prevented visual accessibility/search/screenshot proof and prior
+      Claude/Codex/Cursor calls lack a recorded same-tree SHA. Focused suites,
+      three related strict OpenSpec validations, Node 22.23.1 full check (101
+      files, 754 passed, 3 skipped), production build, and unsigned macOS arm64
+      Preview inspect/smoke pass.
 - [ ] **S3-C01 (S3-F17)** migrated preflight rows `P-01` through `P-10` and MVP
       carryover rows `F3-*` through `F11-*` pass without regressing Stage 1/2.
 
