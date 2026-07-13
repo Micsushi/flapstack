@@ -12,8 +12,14 @@ import {
   type CursorAssistantPart,
 } from "../src/main/lib/cursor/stream"
 import { normalizeCursorStatus, parseCursorModels } from "../src/main/lib/cursor/integration"
-import { CursorCliTimeoutError, runCursorCli } from "../src/main/lib/cursor/binary"
+import {
+  CursorCliTimeoutError,
+  DEFAULT_CURSOR_RUN_TIMEOUT_MS,
+  resolveCursorRunTimeoutMs,
+  runCursorCli,
+} from "../src/main/lib/cursor/binary"
 import { buildCursorArgs } from "../src/main/lib/cursor/args"
+import { findReusableCursorPromptMessage } from "../src/main/lib/cursor/turn"
 import {
   CURSOR_MODELS,
   DEFAULT_CURSOR_MODEL_ID,
@@ -45,8 +51,8 @@ describe("cursor harness contract (D1)", () => {
     expect(AGENT_HARNESSES).toContain("cursor-agent")
   })
 
-  it("keeps composer-2.5 as the default model and labels catalog ids", () => {
-    expect(DEFAULT_CURSOR_MODEL_ID).toBe("composer-2.5")
+  it("keeps the current Cursor auto model as the default and labels catalog ids", () => {
+    expect(DEFAULT_CURSOR_MODEL_ID).toBe("auto")
     expect(CURSOR_MODELS.some((m) => m.id === "auto")).toBe(true)
     expect(formatModelDisplayName("auto")).toBe("Auto")
   })
@@ -441,5 +447,32 @@ describe("cursor integration status (D3)", () => {
       if (previous === undefined) delete process.env.FLAPSTACK_CURSOR_AGENT_PATH
       else process.env.FLAPSTACK_CURSOR_AGENT_PATH = previous
     }
+  })
+
+  it("bounds chat runs while rejecting invalid deadline overrides", () => {
+    expect(resolveCursorRunTimeoutMs("5000")).toBe(5_000)
+    expect(resolveCursorRunTimeoutMs("100")).toBe(DEFAULT_CURSOR_RUN_TIMEOUT_MS)
+    expect(resolveCursorRunTimeoutMs("not-a-number")).toBe(DEFAULT_CURSOR_RUN_TIMEOUT_MS)
+  })
+})
+
+describe("cursor auth retry persistence (D3)", () => {
+  const user = { id: "user-1", role: "user", parts: [{ type: "text", text: "retry me" }] }
+  const partialAssistant = {
+    id: "assistant-1",
+    role: "assistant",
+    parts: [{ type: "text", text: "partial" }],
+  }
+
+  it("reuses the existing user turn after partial output during auth recovery", () => {
+    expect(findReusableCursorPromptMessage([user, partialAssistant], "retry me", true)?.id).toBe(
+      "user-1",
+    )
+  })
+
+  it("does not collapse an intentional repeated prompt outside auth recovery", () => {
+    expect(findReusableCursorPromptMessage([user, partialAssistant], "retry me", false)).toBe(
+      undefined,
+    )
   })
 })

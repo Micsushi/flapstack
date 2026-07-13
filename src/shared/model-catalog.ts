@@ -106,8 +106,8 @@ export const CODEX_MODELS = [
 // `cursor-agent --model <id>` accepts a bare model id, `auto`, or an id with
 // parameterized overrides, e.g. `claude-opus-4-8[context=1m,effort=high,fast=false]`.
 // Cursor iterates quickly and gates many named models behind paid plans, so this
-// catalog stays intentionally small and honest. `auto` is always available and
-// is the default; named ids are best-effort and validated at launch, not assumed.
+// catalog stays intentionally small and honest. `auto` is the current CLI
+// default; named ids are best-effort and validated at launch, not assumed.
 // Live ids can be enumerated with `cursor-agent models` / `--list-models`.
 // ---------------------------------------------------------------------------
 
@@ -255,4 +255,4 @@ export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
 export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
-export const DEFAULT_CURSOR_MODEL_ID = "composer-2.5"
+export const DEFAULT_CURSOR_MODEL_ID = "auto"
