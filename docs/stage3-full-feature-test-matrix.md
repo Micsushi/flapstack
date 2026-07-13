@@ -54,6 +54,34 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
 - [ ] **S3-S07** copy and Settings search use the same visibility/route registry
       and never expose unavailable destinations or stale provider claims.
 
+### S3-F11 provider-extension evidence - 2026-07-13 PDT
+
+- Commit: `b02055c56ac7a1c79fa49be49a2ba01730f66d5e`.
+- Environment: macOS 26.5.2 arm64; Node 22.23.1; Electron 39.8.10.
+- Automated: Node 22 `npm run check` passed with 99 test files, 724 tests
+  passed, and 3 credential-conditional tests skipped. Both
+  `complete-settings-reliability` and `close-provider-harnesses` passed strict
+  OpenSpec validation.
+- Dev: `npm run dev` and `npm run dev:verify` identified this checkout and the
+  `Flapstack Dev` profile. Authenticated dev test-control inventory returned 74
+  user-local items: 51 read-only Claude plugins, 11 writable Claude skills, 5
+  read-only third-party Codex MCP entries, and 7 Codex skills, including 6
+  compatibility/read-only entries and 1 documented writable entry.
+- Mutation: project-scoped create/update/delete passed through the production
+  adapter for Claude skill/command/custom-agent, Codex skill, and Cursor
+  command. OpenCode skill creation failed closed as read-only. Exact Codex and
+  Cursor runtime tokens passed; integrated S3-F11-T4 remains the current Claude
+  runtime proof. All temporary files and empty local agent roots were removed.
+- Preview: macOS arm64 `Flapstack Preview.app` built, launched from the exact
+  worktree bundle, initialized the Preview profile/database/migrations, and
+  shut down cleanly. Electron, Claude 2.1.207, Codex 0.144.1, Whisper,
+  Parakeet, SQLite, native binaries, and licenses passed package inspection and
+  smoke. The packaged main bundle contains the provider discovery/mutation
+  implementation. A missing dev descriptor failed closed in Preview.
+- Blocked/unavailable: the Mac was locked, so no visual Settings evidence or
+  packaged user-local discovery invocation is claimed. Windows/Linux remain
+  untested. Therefore S3-S05 and S3-F11-T5 stay unchecked.
+
 ## 3. Migrated Stage 2 closeout
 
 The historical row text remains in `docs/stage2-full-feature-test-matrix.md`.

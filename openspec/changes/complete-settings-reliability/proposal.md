@@ -94,4 +94,9 @@ Mutation adapters are implemented only for documented provider paths, but
 OpenCode-backed paths remain explicitly read-only because managed sidecars do
 not consume those provider directories. S3-F11-T4 passed exact live consumption
 for every advertised writable provider/kind path. S3-F11-T5 remains open until
-the SHA-bound live Settings and package/platform matrix passes.
+the live Settings and package/platform matrix passes. Commit
+`b02055c56ac7a1c79fa49be49a2ba01730f66d5e` passes the Node 22 full gate,
+strict validation, verified dev inventory/mutation controls, and macOS arm64
+Preview build/launch/resource smoke. The Mac was locked, so visual Settings
+interaction and packaged user-local discovery remain unclaimed; Windows/Linux
+remain unavailable.
