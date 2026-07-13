@@ -54,6 +54,7 @@ export async function withWriteRetry<T>(fn: () => T, attempts = 5): Promise<T> {
       lastErr = err
       const msg = String((err as Error)?.message ?? err)
       if (!/SQLITE_BUSY|database is locked/i.test(msg)) throw err
+      if (i === attempts - 1) break
       await new Promise((r) => setTimeout(r, 50 * 2 ** i))
     }
   }
@@ -98,6 +99,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       dedupeKey,
     }
     const incomingQualityRank = costQualityRank(sample.costQuality)
+    const hasIncomingCost = row.costUsd != null || row.costUsdEstimated != null
     const currentQualityRank = sql<number>`CASE ${schema.usageSamples.costQuality}
       WHEN 'exact' THEN 3
       WHEN 'provider-reported' THEN 2
@@ -131,16 +133,22 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       // A retry or later estimate may add token/raw metadata, but it must never
       // replace stronger provider-reported/exact cost data already stored.
       costQuality: sql<string>`CASE
+        WHEN ${hasIncomingCost ? 0 : 1} = 1
+          THEN ${schema.usageSamples.costQuality}
         WHEN ${currentQualityRank} > ${incomingQualityRank}
           THEN ${schema.usageSamples.costQuality}
         ELSE ${sample.costQuality}
       END`,
       costUsd: sql<number | null>`CASE
+        WHEN ${hasIncomingCost ? 0 : 1} = 1
+          THEN ${schema.usageSamples.costUsd}
         WHEN ${currentQualityRank} > ${incomingQualityRank}
           THEN ${schema.usageSamples.costUsd}
         ELSE ${row.costUsd}
       END`,
       costUsdEstimated: sql<number | null>`CASE
+        WHEN ${hasIncomingCost ? 0 : 1} = 1
+          THEN ${schema.usageSamples.costUsdEstimated}
         WHEN ${currentQualityRank} > ${incomingQualityRank}
           THEN ${schema.usageSamples.costUsdEstimated}
         ELSE ${row.costUsdEstimated}
@@ -198,32 +206,25 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
     ELSE 0
   END`
   const incomingQualityRank = costQualityRank(sample.costQuality)
+  const hasIncomingCost = values.totalCostUsd != null || values.totalCostUsdEstimated != null
   const set = {
     cycleStart,
     cycleEnd,
     resetAt: sample.resetAt ?? null,
     rawPayload: serializeRawPayload(sample.rawPayload),
     updatedAt: new Date(),
-    ...(sample.costUsd != null
+    ...(hasIncomingCost
       ? {
           totalCostUsd: sql<number | null>`CASE
             WHEN ${currentQualityRank} > ${incomingQualityRank}
               THEN ${schema.usageCycles.totalCostUsd}
-            ELSE ${usdToMicros(sample.costUsd)}
+            ELSE ${values.totalCostUsd}
           END`,
-        }
-      : {}),
-    ...(sample.costUsdEstimated != null
-      ? {
           totalCostUsdEstimated: sql<number | null>`CASE
             WHEN ${currentQualityRank} > ${incomingQualityRank}
               THEN ${schema.usageCycles.totalCostUsdEstimated}
-            ELSE ${usdToMicros(sample.costUsdEstimated)}
+            ELSE ${values.totalCostUsdEstimated}
           END`,
-        }
-      : {}),
-    ...(sample.costUsd != null || sample.costUsdEstimated != null
-      ? {
           costQuality: sql<string>`CASE
             WHEN ${currentQualityRank} > ${incomingQualityRank}
               THEN ${schema.usageCycles.costQuality}
@@ -265,7 +266,8 @@ export async function listPendingGenerationIds(
   providerId: UsageProviderId,
   limit = 100,
 ): Promise<string[]> {
-  const now = new Date()
+  // Schema uses SQLite timestamp seconds, not JavaScript milliseconds.
+  const nowSeconds = Math.floor(Date.now() / 1_000)
   const rows = await db
     .selectDistinct({ generationId: schema.usageSamples.generationId })
     .from(schema.usageSamples)
@@ -281,7 +283,7 @@ export async function listPendingGenerationIds(
             AND (
               ${schema.usageGenerationReconciliation.state} IN ('unavailable', 'resolved')
               OR (${schema.usageGenerationReconciliation.state} = 'retry'
-                AND ${schema.usageGenerationReconciliation.nextAttemptAt} > ${now.getTime()})
+                AND ${schema.usageGenerationReconciliation.nextAttemptAt} > ${nowSeconds})
             )
         )`,
       ),

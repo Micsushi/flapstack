@@ -52,6 +52,10 @@ export class UsageScheduler {
   /** Run one poll pass, then schedule the next. Public so callers can force a tick. */
   async tick(): Promise<void> {
     if (this.running || this.stopped) return
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
     this.running = true
     try {
       await this.engine.runOnce("poll")

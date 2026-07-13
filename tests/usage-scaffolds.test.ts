@@ -27,10 +27,13 @@ import { selectNewestCredentials } from "../src/main/lib/usage/providers/cursor/
 import { getProviderJson } from "../src/main/lib/usage/providers/http"
 import { credentialAccountTag } from "../src/main/lib/usage/provider-identity"
 import { elapsedWindowHours } from "../src/main/lib/usage/alert-runner"
+import { UsageScheduler } from "../src/main/lib/usage/scheduler"
+import type { UsageEngine } from "../src/main/lib/usage/engine"
 import { pollCodexPersonal } from "../src/main/lib/usage/providers/codex-personal"
 import { pollAnthropicPersonal } from "../src/main/lib/usage/providers/anthropic-personal"
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
 })
@@ -360,6 +363,55 @@ describe("usage Track B scaffolds", () => {
       "unavailable",
       "OpenRouter returned HTTP 404",
     )
+  })
+
+  it("continues OpenRouter reconciliation after malformed generation responses", async () => {
+    const mark = vi.fn().mockResolvedValue(undefined)
+    const log = vi.fn()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        const parsed = new URL(url)
+        if (parsed.pathname.endsWith("/models"))
+          return Promise.resolve(new Response(JSON.stringify({ data: [] })))
+        if (parsed.pathname.endsWith("/key"))
+          return Promise.resolve(new Response(JSON.stringify({ data: { usage: 1 } })))
+        const id = parsed.searchParams.get("id")
+        if (id === "gen-missing-data")
+          return Promise.resolve(new Response(JSON.stringify({ data: null })))
+        if (id === "gen-mismatch")
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: { id: "different-generation", total_cost: 9 } })),
+          )
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: { id, total_cost: 0.25, tokens_prompt: 3 } })),
+        )
+      }),
+    )
+
+    const samples = await getUsageProvider("openrouter")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "startup-reconcile",
+      getSecret: async () => "sk-or-test",
+      getPendingGenerationIds: async () => ["gen-missing-data", "gen-mismatch", "gen-valid"],
+      markGenerationReconciliation: mark,
+      log,
+    })
+
+    expect(samples.map((sample) => sample.generationId).filter(Boolean)).toEqual(["gen-valid"])
+    expect(mark).toHaveBeenCalledWith(
+      "openrouter",
+      "gen-missing-data",
+      "retry",
+      "OpenRouter generation response omitted data",
+    )
+    expect(mark).toHaveBeenCalledWith(
+      "openrouter",
+      "gen-mismatch",
+      "retry",
+      "OpenRouter generation response id did not match the requested generation",
+    )
+    expect(log).toHaveBeenCalledTimes(2)
   })
 
   it("times out provider HTTP requests with a sanitized source error", async () => {
@@ -788,6 +840,25 @@ describe("usage Track B scaffolds", () => {
         new Date("2026-07-10T06:00:00Z"),
       ),
     ).toBe(6)
+  })
+
+  it("keeps one cadence timer after a forced scheduler tick", async () => {
+    vi.useFakeTimers()
+    const runOnce = vi.fn().mockResolvedValue([])
+    const scheduler = new UsageScheduler({ runOnce } as unknown as UsageEngine, {
+      getCadenceSeconds: () => 30,
+    })
+
+    scheduler.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runOnce).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+
+    await scheduler.tick()
+    expect(runOnce).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(1)
+    scheduler.stop()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it("normalizes Cursor epoch seconds and prefers the newer Cursor login", () => {
