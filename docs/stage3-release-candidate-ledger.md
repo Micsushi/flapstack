@@ -1,8 +1,8 @@
 # Stage 3 release candidate ledger
 
-Status: S3-F5 task-orchestration implementation verified. This ledger does not
-claim Stage 3 release completion while real-provider, complete live UI,
-credential, package, or platform rows remain open.
+Status: integrated Stage 3 automation verified. This ledger does not claim
+Stage 3 release completion while real-provider, complete live UI, credential,
+package, or platform rows remain open.
 
 ## Candidate header
 
@@ -92,11 +92,11 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 | Gate                                   | Result  | Evidence or blocker                                                                                                         |
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                | PASS    | 18 active changes, 323 normative scenarios, 17 feature exits                                                                |
-| Affected OpenSpec strict validation    | PASS    | MCP control, Settings, visible-history, provider-permissions, and release changes                                           |
-| Node 22 `npm run check`                | PENDING | worker gates passed separately; integrated candidate rerun required                                                         |
+| Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                  |
+| Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
+| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
-| S3-F5 focused and attack suites        | PASS    | worker lane passed 9 integrated files/61 tests plus transport coverage; integrated rerun pending                            |
+| S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
 | MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
 | Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |

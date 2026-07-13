@@ -9,11 +9,11 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
 
 ## 0. Identity and automated gate
 
-- [ ] **S3-P01** `codex/stage3-integration` contains current `main`; `main` is
+- [x] **S3-P01** `codex/stage3-integration` contains current `main`; `main` is
       clean and unchanged by Stage 3 development.
-- [ ] **S3-P02** Node 22 `npm run check` passes after the final code change.
-- [ ] **S3-P03** every active Stage 3 OpenSpec change passes strict validation.
-- [ ] **S3-P04** fresh, `main`-era, and supported legacy databases migrate
+- [x] **S3-P02** Node 22 `npm run check` passes after the final code change.
+- [x] **S3-P03** every active Stage 3 OpenSpec change passes strict validation.
+- [x] **S3-P04** fresh, `main`-era, and supported legacy databases migrate
       without losing Stage 2 data; schema and Drizzle journal match.
 - [ ] **S3-P05** `npm run dev:verify` identifies this checkout and the
       `Flapstack Dev` profile after the final restart.
@@ -107,6 +107,15 @@ launched and estimated cost stayed labeled. Computer Use only read the live
 shell pixels and accessibility tree. No live orchestration task-screen,
 real-provider, exact-cost, package, Windows, or Linux claim is promoted, so
 integrated S3-M08 through S3-M12 remain unchecked.
+
+2026-07-13 integrated candidate evidence: `codex/stage3-integration` contains
+`main`; main remains clean. Node 22.23.1 `npm run check` passed lint,
+formatting, TypeScript, 124 test files with 926 passed and 3 conditional skips,
+and all production builds. All 18 active OpenSpec changes strict-validate; the
+release ledger covers 347 scenarios and 17 feature exits. Fresh and supported
+legacy migration coverage passes with security migration 0021 followed by
+orchestration migration 0022. Final integrated Dev, Preview, UI, provider, and
+cross-platform rows remain unchecked.
 
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
