@@ -1034,6 +1034,32 @@ describe("Stage 1 E1 search archive and scope filters", () => {
       })
       .returning()
       .get()
+    const structuredQuestionMatch = db
+      .insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify([
+          {
+            id: "message-structured-question",
+            role: "assistant",
+            metadata: { privateValue: "private-jsonneedle" },
+            parts: [
+              {
+                type: "tool-AskUserQuestion",
+                input: {
+                  questions: [
+                    { question: "Which jsonneedle branch?", secret: "private-jsonneedle" },
+                  ],
+                  privatePrompt: "private-jsonneedle",
+                },
+                result: { answers: { branch: "codex/jsonneedle" } },
+              },
+            ],
+          },
+        ]),
+      })
+      .returning()
+      .get()
 
     const results = await searchRouter.createCaller(ctx).query({ query: "jsonneedle" })
 
@@ -1053,9 +1079,16 @@ describe("Stage 1 E1 search archive and scope filters", () => {
           messageId: "message-legacy-reasoning",
           snippet: "legacy jsonneedle reasoning",
         }),
+        expect.objectContaining({
+          type: "message",
+          chatId: chat.id,
+          subChatId: structuredQuestionMatch.id,
+          messageId: "message-structured-question",
+          snippet: expect.stringContaining("Which jsonneedle branch?"),
+        }),
       ]),
     )
-    expect(results).toHaveLength(2)
+    expect(results).toHaveLength(3)
     expect(results).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ subChatId: falsePositive.id }),
@@ -1069,6 +1102,7 @@ describe("Stage 1 E1 search archive and scope filters", () => {
         }),
       ]),
     )
+    expect(await searchRouter.createCaller(ctx).query({ query: "private-jsonneedle" })).toEqual([])
   })
 })
 

@@ -439,7 +439,9 @@ export function AgentsModelsTab() {
         <div className="pb-2 flex items-center justify-between">
           <div>
             <h4 className="text-sm font-medium text-foreground">Anthropic Accounts</h4>
-            <p className="text-xs text-muted-foreground">Manage your Claude API accounts</p>
+            <p className="text-xs text-muted-foreground">
+              Manage Anthropic accounts used by Claude Code
+            </p>
           </div>
           <Button
             size="sm"

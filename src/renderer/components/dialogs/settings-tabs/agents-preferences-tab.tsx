@@ -178,7 +178,9 @@ export function AgentsPreferencesTab() {
       {!isNarrowScreen && (
         <div className="flex flex-col space-y-1.5 text-center sm:text-left">
           <h3 className="text-sm font-semibold text-foreground">Preferences</h3>
-          <p className="text-xs text-muted-foreground">Configure Claude's behavior and features</p>
+          <p className="text-xs text-muted-foreground">
+            Configure shared agent behavior and app preferences
+          </p>
         </div>
       )}
 
@@ -228,9 +230,9 @@ export function AgentsPreferencesTab() {
           tabIndex={-1}
         >
           <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Include Co-Authored-By</span>
+            <span className="text-sm font-medium text-foreground">Claude commit attribution</span>
             <span className="text-xs text-muted-foreground">
-              Add "Co-authored-by: Claude" to git commits made by Claude
+              Add a Claude Co-authored-by trailer to commits made by Claude Code
             </span>
           </div>
           <Switch

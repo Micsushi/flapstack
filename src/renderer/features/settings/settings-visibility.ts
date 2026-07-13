@@ -9,6 +9,20 @@ export type SettingsTabMetadata = {
   released: boolean
 }
 
+export type SettingsProviderScope =
+  "claude" | "codex" | "cursor" | "opencode" | "openrouter" | "nanogpt" | "openai-voice"
+
+export type SettingsControlMetadata = {
+  id: string
+  tab: SettingsTab
+  label: string
+  description: string
+  keywords: string[]
+  targetId: string
+  providerScope?: readonly SettingsProviderScope[]
+  requiresAvailableProvider?: boolean
+}
+
 export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
   {
     id: "preferences",
@@ -54,7 +68,7 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     id: "api-providers",
     label: "API Providers",
     description: "Configure direct model API providers",
-    keywords: ["openrouter", "nanogpt", "provider", "api key", "credentials"],
+    keywords: ["provider", "api key", "credentials"],
     section: "advanced",
     released: true,
   },
@@ -93,8 +107,8 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
   {
     id: "mcp",
     label: "MCP Servers",
-    description: "Configure Model Context Protocol servers and tools",
-    keywords: ["model context protocol", "server", "tool"],
+    description: "Configure third-party MCP servers for Claude Code and Codex",
+    keywords: ["model context protocol", "server", "tool", "third party"],
     section: "advanced",
     released: true,
   },
@@ -156,6 +170,180 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
   },
 ] as const
 
+export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "preferences-reasoning",
+    "preferences",
+    "Reasoning output",
+    "Show provider-visible model reasoning",
+    ["thinking", "streaming", "credits"],
+  ),
+  control(
+    "preferences-default-mode",
+    "preferences",
+    "Default mode",
+    "Plan or Agent for new chats",
+    ["plan", "agent", "read only"],
+  ),
+  control(
+    "preferences-coauthor",
+    "preferences",
+    "Claude commit attribution",
+    "Add a Claude Co-authored-by trailer to commits made by Claude Code",
+    ["git", "commit", "claude", "author"],
+    ["claude"],
+  ),
+  control(
+    "preferences-desktop-notifications",
+    "preferences",
+    "Desktop notifications",
+    "Notify when an agent needs input or completes",
+    ["alerts", "system notification"],
+  ),
+  control(
+    "preferences-sound-notifications",
+    "preferences",
+    "Sound notifications",
+    "Play completion sounds",
+    ["audio", "alerts"],
+  ),
+  control(
+    "preferences-focused-notifications",
+    "preferences",
+    "Notify when focused",
+    "Show notifications while Flapstack is active",
+    ["alerts", "foreground"],
+  ),
+  control(
+    "preferences-drag-chats",
+    "preferences",
+    "Drag chats between sections",
+    "Allow moving chats between Global, project, and task sections",
+    ["sidebar", "move chats", "drag and drop", "global", "project", "task"],
+  ),
+  control(
+    "preferences-auto-advance",
+    "preferences",
+    "Auto-advance",
+    "Choose where to go after archiving",
+    ["archive", "next chat"],
+  ),
+  control(
+    "preferences-editor",
+    "preferences",
+    "Preferred editor",
+    "Default app for opening project folders",
+    ["vscode", "cursor", "terminal", "ide"],
+  ),
+  control(
+    "preferences-analytics",
+    "preferences",
+    "Share usage analytics",
+    "Anonymous product usage and performance data",
+    ["privacy", "telemetry", "tracking"],
+  ),
+  control(
+    "permissions-change-behavior",
+    "permissions",
+    "Permission change behavior",
+    "Ask every time or remember all chats or this chat",
+    [
+      "remember my choice",
+      "undo remember",
+      "ask every time",
+      "always all chats",
+      "always this chat",
+      "approval",
+    ],
+  ),
+  control(
+    "permissions-default",
+    "permissions",
+    "Default permission",
+    "Choose the Global and fallback permission for new chats",
+    ["default", "new chats", "global", "fallback", "access", "read only"],
+  ),
+  control(
+    "permissions-chat-list",
+    "permissions",
+    "Chat permissions",
+    "Inspect and edit active or archived chat permissions",
+    ["different chats", "per chat", "archived", "all chats", "manage"],
+  ),
+  control(
+    "credential-codex-api-key",
+    "api-providers",
+    "Codex API key",
+    "Manage the write-only Codex API credential and authentication priority",
+    ["openai", "codex", "credential", "chatgpt subscription", "remove", "replace"],
+    ["codex"],
+  ),
+  control(
+    "credential-openai-voice-api-key",
+    "api-providers",
+    "OpenAI transcription API key",
+    "Manage the write-only OpenAI Whisper credential",
+    ["voice", "whisper", "speech", "stt", "openai api key", "remove", "replace"],
+    ["openai-voice"],
+  ),
+  control(
+    "credential-claude-custom-api-token",
+    "api-providers",
+    "Claude API key or custom endpoint token",
+    "Manage the write-only Anthropic or custom Claude credential",
+    ["anthropic", "claude", "custom model", "base url", "remove", "replace"],
+    ["claude"],
+  ),
+  control(
+    "openrouter-provider-card",
+    "api-providers",
+    "OpenRouter API key",
+    "Manage the write-only OpenRouter provider credential",
+    ["openrouter", "credential", "remove", "replace"],
+    ["openrouter"],
+    true,
+  ),
+  control(
+    "nanogpt-provider-card",
+    "api-providers",
+    "NanoGPT API key",
+    "Manage the write-only NanoGPT provider credential",
+    ["nanogpt", "credential", "remove", "replace"],
+    ["nanogpt"],
+    true,
+  ),
+  control(
+    "skills-provider-extensions",
+    "skills",
+    "Provider skills and commands",
+    "Discover provider-scoped skills and commands with honest runtime limits",
+    ["claude skills", "codex skills", "cursor commands", "opencode skills", "slash command"],
+    ["claude", "codex", "cursor", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+  control(
+    "agents-provider-extensions",
+    "agents",
+    "Provider custom agents",
+    "Inspect Claude and read-only OpenCode custom agents",
+    ["custom agents", "subagent", "claude agents", "opencode agents"],
+    ["claude", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+  control(
+    "plugins-provider-extensions",
+    "plugins",
+    "Provider plugins",
+    "Inspect read-only Claude and OpenCode plugin inventories",
+    ["claude plugins", "opencode plugins", "extension", "marketplace"],
+    ["claude", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+] as const
+
 export const HIDDEN_SETTINGS_TABS = SETTINGS_TAB_REGISTRY.filter((entry) => !entry.released).map(
   (entry) => entry.id,
 )
@@ -187,4 +375,41 @@ export function normalizeVisibleSettingsTab(
   options: { showDevelopment?: boolean } = {},
 ): SettingsTab {
   return isVisibleSettingsTab(tab, options) ? tab : "preferences"
+}
+
+export function isVisibleSettingsControl(
+  control: SettingsControlMetadata,
+  options: {
+    showDevelopment?: boolean
+    availableProviders?: readonly SettingsProviderScope[]
+  } = {},
+): boolean {
+  if (!isVisibleSettingsTab(control.tab, options)) return false
+  if (!control.requiresAvailableProvider || !options.availableProviders) return true
+  return (
+    control.providerScope?.some((provider) => options.availableProviders?.includes(provider)) ===
+    true
+  )
+}
+
+function control(
+  id: string,
+  tab: SettingsTab,
+  label: string,
+  description: string,
+  keywords: string[],
+  providerScope?: readonly SettingsProviderScope[],
+  requiresAvailableProvider = false,
+  targetId = id,
+): SettingsControlMetadata {
+  return {
+    id,
+    tab,
+    label,
+    description,
+    keywords,
+    targetId,
+    providerScope,
+    requiresAvailableProvider,
+  }
 }

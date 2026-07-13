@@ -1,6 +1,7 @@
 import { trpcClient } from "../../../lib/trpc"
 import { remoteApi } from "../../../lib/remote-api"
 import { toast } from "sonner"
+import { formatVisiblePartForHandoff } from "../../../../shared/chat-visible-content"
 
 const MAX_HISTORY_CHARS = 50_000
 
@@ -131,10 +132,9 @@ function formatRemoteHandoff(chat: any): { content: string; filename: string } {
       const content =
         typeof message.content === "string"
           ? message.content
-          : (message.content || [])
-              .filter((part: any) => part.type === "text")
-              .map((part: any) => part.text)
-              .join("\n")
+          : (message.parts || message.content || [])
+              .flatMap(formatVisiblePartForHandoff)
+              .join("\n\n")
       lines.push(content || "_(No text content)_", "")
     }
   }

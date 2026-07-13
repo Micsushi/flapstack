@@ -99,4 +99,10 @@ the live Settings and package/platform matrix passes. Commit
 strict validation, verified dev inventory/mutation controls, and macOS arm64
 Preview build/launch/resource smoke. The Mac was locked, so visual Settings
 interaction and packaged user-local discovery remain unclaimed; Windows/Linux
-remain unavailable.
+remain unavailable. S3-F13 headless closeout now derives indexed major controls,
+provider scope, provider availability, search copy, and stable targets from the
+release registry. Current and legacy full-history copy/search share visible
+reasoning and structured-question rules while excluding opaque/private payloads
+and arbitrary tool data. Focused regressions, strict validation, and the Node 22
+full gate pass. S3-F13 remains open for unlocked visual Settings review and the
+blocked F8-F12/package/platform acceptance rows.

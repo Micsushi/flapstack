@@ -83,4 +83,61 @@ describe("full chat handoff formatter", () => {
     })
     expect(result.indexOf("unknown-time")).toBeLessThan(result.indexOf("known-time"))
   })
+
+  it("copies visible reasoning, questions, answers, and safe tool summaries only", () => {
+    const result = formatChatHandoff({
+      chat: { id: "chat-4", name: "Visible content" },
+      conversations: [
+        {
+          subChatId: "visible",
+          subChatName: null,
+          messages: [
+            {
+              role: "assistant",
+              metadata: { privateChain: "never-copy-metadata" },
+              parts: [
+                {
+                  type: "reasoning",
+                  text: "Visible provider reasoning",
+                  opaque: "never-copy-opaque",
+                },
+                {
+                  type: "tool-AskUserQuestion",
+                  input: {
+                    questions: [{ question: "Which branch?", secret: "never-copy-secret" }],
+                    privatePrompt: "never-copy-private-prompt",
+                  },
+                  result: { answers: { branch: "codex/f13" }, internal: "never-copy-internal" },
+                },
+                {
+                  type: "tool-Bash",
+                  input: { command: "npm test\n--hidden", privateToken: "never-copy-tool-token" },
+                  output: { stdout: "never-copy-tool-output" },
+                },
+              ],
+            },
+            { role: "user", content: "Legacy visible content" },
+          ],
+        },
+      ],
+    })
+
+    expect(result).toContain("> Reasoning: Visible provider reasoning")
+    expect(result).toContain("> Question: Which branch?")
+    expect(result).toContain("> Answer: codex/f13")
+    expect(result).toContain("> Tool: Bash: npm test")
+    expect(result).toContain("Legacy visible content")
+    for (const excluded of [
+      "never-copy-metadata",
+      "never-copy-opaque",
+      "never-copy-secret",
+      "never-copy-private-prompt",
+      "never-copy-internal",
+      "never-copy-tool-token",
+      "never-copy-tool-output",
+      "--hidden",
+    ]) {
+      expect(result).not.toContain(excluded)
+    }
+  })
 })

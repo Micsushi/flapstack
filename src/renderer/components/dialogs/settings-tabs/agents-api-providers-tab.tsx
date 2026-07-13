@@ -125,7 +125,12 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
   }
 
   return (
-    <div id={`${providerId}-provider-card`} className="rounded-lg border border-border p-4">
+    <div
+      id={`${providerId}-provider-card`}
+      data-settings-id={`${providerId}-provider-card`}
+      tabIndex={-1}
+      className="rounded-lg border border-border p-4 outline-none"
+    >
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-medium">{provider.label}</span>
