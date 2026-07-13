@@ -466,6 +466,7 @@ function ReasoningTimeline({
         className="group flex w-full items-center gap-2 border-b border-border/60 px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
         onClick={() => setIsExpanded((expanded) => !expanded)}
         aria-expanded={isExpanded}
+        aria-label={`${label}. Reasoning and tool activity`}
       >
         <span className="min-w-0 flex-1 truncate tabular-nums">
           {isStreaming ? (

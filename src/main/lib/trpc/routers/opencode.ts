@@ -382,6 +382,7 @@ export const opencodeRouter = router({
           const auditSecrets = [providerKey]
           const runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
           let finalMessageMetadata: Record<string, unknown> | undefined
+          let reasoningControl: ReturnType<typeof resolveReasoningControls> | undefined
           try {
             db = getDatabase()
             if (!isAuthoritativeRun()) return
@@ -505,7 +506,7 @@ export const opencodeRouter = router({
               (model) => model.id === nativeModelId,
             )
             const reasoningSupported = selectedModel?.supportsReasoning ?? null
-            const reasoningControl = resolveReasoningControls(
+            reasoningControl = resolveReasoningControls(
               reasoningSupported === true
                 ? { toggle: true, efforts: ["minimal", "low", "medium", "high", "xhigh"] }
                 : { toggle: false },
@@ -656,6 +657,7 @@ export const opencodeRouter = router({
                   durationMs: Date.now() - startedAt,
                   sessionId: sidecarSessionId,
                   permissionMode,
+                  reasoningControl,
                   engine: audit.engine,
                   permissionApplication: audit.permissionApplication,
                   limitations: audit.limitations,

@@ -2,7 +2,7 @@
 
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { AgentReasoningOutput } from "../src/renderer/features/agents/ui/agent-reasoning-output"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -23,6 +23,7 @@ afterEach(() => {
   act(() => root?.unmount())
   root = null
   document.body.innerHTML = ""
+  vi.useRealTimers()
 })
 
 describe("AgentReasoningOutput", () => {
@@ -39,6 +40,7 @@ describe("AgentReasoningOutput", () => {
 
     const disclosure = document.body.querySelector('button[aria-expanded="false"]') as HTMLElement
     expect(disclosure).not.toBeNull()
+    expect(disclosure.getAttribute("aria-label")).toBe("Worked for 5s. Reasoning summary")
     expect(disclosure.textContent).toContain("Worked for 5s")
     expect(disclosure.textContent).toContain("Reasoning summary")
     expect(document.body.textContent).not.toContain("Checked the persisted response.")
@@ -61,5 +63,30 @@ describe("AgentReasoningOutput", () => {
     )
     expect(container.textContent).toBe("")
     expect(document.body.querySelector("button")).toBeNull()
+  })
+
+  it("keeps the authoritative live timer after the disclosure remounts", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(6_900)
+    const part = {
+      type: "tool-ReasoningOutput",
+      state: "input-streaming",
+      input: { text: "Inspecting provider-visible output." },
+    }
+
+    const first = renderReasoning(part, { chatStatus: "streaming", startedAt: 1_000 })
+    expect(first.querySelector("button")?.getAttribute("aria-label")).toBe(
+      "Working for 5s. Reasoning output",
+    )
+
+    act(() => root?.unmount())
+    root = null
+    document.body.innerHTML = ""
+    vi.setSystemTime(9_100)
+
+    const remounted = renderReasoning(part, { chatStatus: "streaming", startedAt: 1_000 })
+    const disclosure = remounted.querySelector("button")
+    expect(disclosure?.getAttribute("aria-expanded")).toBe("true")
+    expect(disclosure?.getAttribute("aria-label")).toBe("Working for 8s. Reasoning output")
   })
 })

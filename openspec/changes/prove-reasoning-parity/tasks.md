@@ -72,6 +72,10 @@ completion authority for remaining reasoning parity work.
 - Blocks: S3-F16-T5.
 - Relevant context: reasoning UI, duration service, message persistence/search,
   dev MCP authoritative reasoning timer state.
+- 2026-07-13 safe closeout: disclosure names and live-remount coverage pass;
+  current and legacy search/private-exclusion suites pass; verified dev restart
+  restores authoritative completed timers and message identities. The Mac is
+  locked, so visual keyboard/screen-reader/disclosure/search proof remains open.
 
 ### S3-F16-T4 — Capture live provider reasoning and no-fabrication evidence
 
@@ -98,6 +102,12 @@ completion authority for remaining reasoning parity work.
 - Blocks: S3-F16-T5.
 - Relevant context: S3-F15 provider evidence, reasoning manual matrix, exact
   run/message IDs and provider versions.
+- 2026-07-13 safe closeout: fresh current-tree OpenRouter enabled, disabled,
+  and unsupported-fallback runs plus NanoGPT enabled/disabled runs passed and
+  reloaded with exact persisted request resolution. Current runtime also
+  restored prior Claude/Codex/Cursor visible and absent records, but those
+  provider calls lack a recorded same-tree SHA. UI-live and same-SHA
+  Claude/Codex/Cursor recapture remain open. Probe chats and approvals are clean.
 
 ### S3-F16-T5 — Publish and pass the reasoning parity gate
 
@@ -121,3 +131,9 @@ completion authority for remaining reasoning parity work.
 - Blocks: S3-F17-T2.
 - Relevant context: this change, final capability/evidence matrix, root live-dev
   rules, exact provider/run evidence.
+- 2026-07-13 safe closeout: focused reasoning/provider suites, strict contract,
+  verified dev identity/restart, database comparison, and sanitized evidence
+  reconciliation pass. Node 22.23.1 `npm run check` passed 754 tests with 3
+  credential-conditional skips and the production build. Unsigned macOS arm64
+  Preview package inspection and bundled-runtime smoke passed. This task remains
+  open while T3/T4 visual and same-SHA live blockers remain.
