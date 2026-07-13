@@ -39,6 +39,19 @@ function runSmoke(label, binary, args, expected) {
   console.log(`${label} smoke: ${output.split("\n")[0]}`)
 }
 
+function runSidecarSmoke(binary) {
+  const result = spawnSync(binary, [], {
+    encoding: "utf8",
+    timeout: 10_000,
+    input: `${JSON.stringify({ command: "ping", id: 1 })}\n`,
+  })
+  if (result.error) throw new Error(`Parakeet sidecar smoke failed: ${result.error.message}`)
+  const response = JSON.parse(String(result.stdout || "").trim())
+  if (result.status !== 0 || response.id !== 1 || response.ok !== true)
+    throw new Error(`Parakeet sidecar smoke returned an invalid response: ${result.stdout}`)
+  console.log("Parakeet sidecar smoke: ping ok")
+}
+
 function readElectronVersion(appPath) {
   const plist = path.join(
     appPath,
@@ -57,14 +70,24 @@ function readElectronVersion(appPath) {
   throw new Error(`Unable to read packaged Electron version from ${plist}`)
 }
 
+function readBundleExecutable(appPath) {
+  const plist = path.join(appPath, "Contents", "Info.plist")
+  const result = spawnSync("/usr/bin/plutil", ["-extract", "CFBundleExecutable", "raw", plist], {
+    encoding: "utf8",
+  })
+  if (result.status === 0 && result.stdout.trim()) return result.stdout.trim()
+  throw new Error(`Unable to read CFBundleExecutable from ${plist}`)
+}
+
 export function inspectMacApp(appPath, platformKey, options = {}) {
   if (!/^darwin-(arm64|x64)$/.test(platformKey)) {
     throw new Error(`Unsupported macOS package platform: ${platformKey}`)
   }
   const contents = path.join(appPath, "Contents")
   const resources = path.join(contents, "Resources")
+  const bundleExecutable = readBundleExecutable(appPath)
   const binaries = {
-    Flapstack: path.join(contents, "MacOS", "Flapstack"),
+    Flapstack: path.join(contents, "MacOS", bundleExecutable),
     Electron: path.join(
       contents,
       "Frameworks",
@@ -76,6 +99,7 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
     Claude: path.join(resources, "bin", "claude"),
     Codex: path.join(resources, "bin", "codex"),
     Whisper: path.join(resources, "bin", "whisper-cli"),
+    Parakeet: path.join(resources, "bin", "flapstack-stt-sidecar"),
     "better-sqlite3": path.join(
       resources,
       "app.asar.unpacked",
@@ -92,6 +116,18 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
       requireExecutable: label !== "better-sqlite3",
     })
     console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
+  }
+
+  for (const license of [
+    "flapstack-stt-sidecar-LICENSE",
+    "transcribe.cpp-LICENSE",
+    "whisper.cpp-LICENSE",
+  ]) {
+    const licensePath = path.join(resources, "bin", license)
+    const stat = fs.lstatSync(licensePath)
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error(`${licensePath}: expected a regular license file`)
+    console.log(`${license}: regular file`)
   }
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
@@ -121,6 +157,7 @@ export function inspectMacApp(appPath, platformKey, options = {}) {
       new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
     )
     runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
+    runSidecarSmoke(binaries.Parakeet)
   }
   return { appPath, platformKey, electronVersion, binaries }
 }

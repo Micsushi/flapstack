@@ -1,8 +1,8 @@
 "use client"
 
 import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react"
-import { useAtom, useSetAtom } from "jotai"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { toast } from "sonner"
 import {
   CheckIcon,
   CopyIcon,
@@ -11,7 +11,7 @@ import {
   VolumeIcon,
 } from "../../../components/ui/icons"
 import { cn } from "../../../lib/utils"
-import { trpcClient } from "../../../lib/trpc"
+import { trpc, trpcClient } from "../../../lib/trpc"
 import { buildMessageSpeechRequest } from "../../../lib/message-speech-request"
 import {
   getSpeechCursor,
@@ -25,13 +25,9 @@ import {
   stopManagedSpeech,
 } from "../../../lib/speech-playback"
 import { useHaptic } from "../hooks/use-haptic"
-import {
-  ttsPlaybackRateAtom,
-  setTtsPlaybackRateAtom,
-  MIN_PLAYBACK_SPEED,
-  MAX_PLAYBACK_SPEED,
-  type PlaybackSpeed,
-} from "../stores/message-store"
+
+const MIN_PLAYBACK_SPEED = 0.5
+const MAX_PLAYBACK_SPEED = 2
 
 // ============================================================================
 // COPY BUTTON - Memoized component for copying text
@@ -111,8 +107,22 @@ export const PlayButton = memo(function PlayButton({
   const [duration, setDuration] = useState(savedPosition.duration)
   const [spokenText, setSpokenText] = useState(savedPosition.spokenText)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [playbackRate] = useAtom(ttsPlaybackRateAtom)
-  const setPlaybackRate = useSetAtom(setTtsPlaybackRateAtom)
+  const utils = trpc.useUtils()
+  const { data: voiceSettings } = trpc.speech.getSettings.useQuery()
+  const playbackRate = voiceSettings?.rate ?? 1
+  const updateVoiceSettings = trpc.speech.updateSettings.useMutation({
+    onMutate: async (patch) => {
+      await utils.speech.getSettings.cancel()
+      const previous = utils.speech.getSettings.getData()
+      if (previous) utils.speech.getSettings.setData(undefined, { ...previous, ...patch })
+      return { previous }
+    },
+    onError: (_error, _patch, context) => {
+      if (context?.previous) utils.speech.getSettings.setData(undefined, context.previous)
+    },
+    onSettled: async () => utils.speech.getSettings.invalidate(),
+  })
+  const setPlaybackRate = (rate: number) => updateVoiceSettings.mutate({ rate })
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const mediaSourceRef = useRef<MediaSource | null>(null)
@@ -198,6 +208,10 @@ export const PlayButton = memo(function PlayButton({
       setState("idle")
       return
     }
+    if (!result.historySaved)
+      toast.warning("Speech played but Voice History could not save", {
+        description: result.historyError || undefined,
+      })
     const exactSpokenText = result.spokenText
     setSpokenText(exactSpokenText)
     setSpeechPlaybackPosition(playbackKey, { spokenText: exactSpokenText })

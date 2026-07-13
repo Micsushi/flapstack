@@ -345,6 +345,10 @@ export const voiceArtifacts = sqliteTable(
     kind: text("kind").notNull(), // transcription | speech
     text: text("text").notNull(),
     adapterId: text("adapter_id").notNull(),
+    modelId: text("model_id"),
+    originKind: text("origin_kind"),
+    originId: text("origin_id"),
+    originLabel: text("origin_label"),
     synthesisKey: text("synthesis_key"),
     voiceId: text("voice_id"),
     rate: integer("rate_milli"),
@@ -360,6 +364,7 @@ export const voiceArtifacts = sqliteTable(
     index("voice_artifacts_message_idx").on(table.messageId),
     index("voice_artifacts_synthesis_idx").on(table.messageId, table.synthesisKey),
     index("voice_artifacts_kind_created_idx").on(table.kind, table.createdAt),
+    index("voice_artifacts_origin_idx").on(table.originKind, table.originId),
   ],
 )
 

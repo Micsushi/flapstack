@@ -125,6 +125,7 @@ import {
   type NewChatDraft,
 } from "../lib/drafts"
 import { useDictationSession } from "../voice/dictation-session"
+import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
@@ -730,17 +731,31 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [ownsDictation])
 
   useEffect(() => {
-    const insert = (event: Event) => {
-      const text = (event as CustomEvent<string>).detail?.trim()
+    return registerVoiceHistoryInsertTarget("new-chat:composer", (value) => {
+      const text = value.trim()
       if (!text) return
+      const draftId = currentDraftIdRef.current ?? generateDraftId()
+      currentDraftIdRef.current = draftId
+      setSelectedDraftId(draftId)
       const current = editorRef.current?.getValue() || ""
-      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      const next = `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`
+      const project =
+        chatScope !== "global" && validatedProject
+          ? {
+              id: validatedProject.id,
+              name: validatedProject.name,
+              path: validatedProject.path,
+              gitOwner: validatedProject.gitOwner,
+              gitRepo: validatedProject.gitRepo,
+              gitProvider: validatedProject.gitProvider,
+            }
+          : undefined
+      updateNewChatDraftText(draftId, next, project)
+      editorRef.current?.setValue(next)
       setHasContent(true)
       editorRef.current?.focus()
-    }
-    window.addEventListener("voice-history-insert", insert)
-    return () => window.removeEventListener("voice-history-insert", insert)
-  }, [])
+    })
+  }, [chatScope, setSelectedDraftId, validatedProject])
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {

@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react"
+import { useSetAtom } from "jotai"
 import { Copy, Download, FolderOpen, Play, Plus, Square, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { trpc } from "../../../lib/trpc"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
+import { agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
+import {
+  captureVoiceHistoryInsertTarget,
+  insertVoiceHistoryIntoTarget,
+} from "../../../lib/voice-history-insert"
 
 export function AgentsVoiceTab() {
+  const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const utils = trpc.useUtils()
   const { data: settings } = trpc.speech.getSettings.useQuery()
   const { data: adapters } = trpc.speech.listAdapters.useQuery()
@@ -35,9 +42,21 @@ export function AgentsVoiceTab() {
   const [historySearch, setHistorySearch] = useState("")
   const { data: history } = trpc.speech.searchHistory.useQuery({ query: historySearch })
   const deleteHistory = trpc.speech.deleteHistoryEntry.useMutation({
-    onSuccess: async () => utils.speech.searchHistory.invalidate(),
+    onSuccess: async (result) => {
+      if (!result.deleted) {
+        toast.error("Voice history entry no longer exists")
+        return
+      }
+      await utils.speech.searchHistory.invalidate()
+      toast.success("Voice history entry deleted")
+    },
+    onError: (error) =>
+      toast.error("Could not delete voice history", { description: error.message }),
   })
-  const revealHistory = trpc.speech.revealHistoryAudio.useMutation()
+  const revealHistory = trpc.speech.revealHistoryAudio.useMutation({
+    onError: (error) =>
+      toast.error("Could not reveal voice recording", { description: error.message }),
+  })
 
   useEffect(() => {
     if (!settings) return
@@ -48,7 +67,11 @@ export function AgentsVoiceTab() {
     return <div className="p-6 text-sm text-muted-foreground">Loading voice settings</div>
   }
 
-  const update = (patch: Partial<typeof settings>) => updateSettings.mutate(patch)
+  const update = (patch: Partial<typeof settings>) => {
+    if (patch.rate !== undefined || patch.voiceId !== undefined || patch.ttsAdapterId !== undefined)
+      stopManagedSpeech()
+    updateSettings.mutate(patch)
+  }
   const selectedTtsAvailability = adapters.availability.tts?.[settings.ttsAdapterId]
   const selectedSttAvailability = adapters.availability.stt?.[settings.sttAdapterId]
 
@@ -125,7 +148,7 @@ export function AgentsVoiceTab() {
               </p>
               <p className="text-xs text-muted-foreground">
                 English live transcription. Committed words stay stable; the tentative ending may
-                revise while you speak. Converted model license: CC-BY-4.0.
+                revise while you speak. Model license: NVIDIA Open Model License.
               </p>
             </div>
             <WhisperModelStatus
@@ -234,14 +257,29 @@ export function AgentsVoiceTab() {
                   {entry.kind === "transcription" ? "Dictation" : "Speech"}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{entry.text}</span>
+                <span className="hidden max-w-40 truncate text-muted-foreground xl:inline">
+                  {entry.originLabel || entry.modelId || entry.adapterId}
+                </span>
                 {entry.audioPath && (
                   <button
                     type="button"
                     className="text-emerald-600 hover:text-emerald-700"
                     title="Play recording"
                     onClick={async () => {
-                      const result = await utils.speech.getHistoryAudio.fetch({ id: entry.id })
-                      await playManagedSpeech(result)
+                      try {
+                        const result = await utils.speech.getHistoryAudio.fetch({ id: entry.id })
+                        const synthesizedRate =
+                          entry.kind === "speech" && result.artifact.rate
+                            ? result.artifact.rate / 1_000
+                            : 1
+                        await playManagedSpeech(result, {
+                          rate: settings.rate / synthesizedRate,
+                        })
+                      } catch (error) {
+                        toast.error("Could not play voice history", {
+                          description: error instanceof Error ? error.message : String(error),
+                        })
+                      }
                     }}
                   >
                     <Play className="h-3.5 w-3.5" />
@@ -251,8 +289,14 @@ export function AgentsVoiceTab() {
                   type="button"
                   title="Copy transcript"
                   onClick={async () => {
-                    await window.desktopApi.clipboardWrite(entry.text)
-                    toast.success("Copied voice transcript")
+                    try {
+                      await window.desktopApi.clipboardWrite(entry.text)
+                      toast.success("Copied voice transcript")
+                    } catch (error) {
+                      toast.error("Could not copy voice transcript", {
+                        description: error instanceof Error ? error.message : String(error),
+                      })
+                    }
                   }}
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -261,11 +305,22 @@ export function AgentsVoiceTab() {
                   <button
                     type="button"
                     title="Insert into active chat input"
-                    onClick={() =>
-                      window.dispatchEvent(
-                        new CustomEvent("voice-history-insert", { detail: entry.text }),
-                      )
-                    }
+                    onClick={() => {
+                      const target = captureVoiceHistoryInsertTarget()
+                      setSettingsOpen(false)
+                      window.setTimeout(async () => {
+                        if (target && insertVoiceHistoryIntoTarget(target, entry.text)) {
+                          toast.success("Inserted voice transcript")
+                          return
+                        }
+                        try {
+                          await window.desktopApi.clipboardWrite(entry.text)
+                          toast.warning("Draft target is unavailable; transcript copied instead")
+                        } catch {
+                          toast.error("Draft target is unavailable; transcript remains in history")
+                        }
+                      }, 0)
+                    }}
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -325,7 +380,7 @@ export function AgentsVoiceTab() {
         />
 
         <select
-          value={settings.voiceId || ""}
+          value={voices?.resolvedVoiceId || ""}
           onChange={(event) => {
             const voiceId = event.target.value || null
             update({
@@ -346,7 +401,9 @@ export function AgentsVoiceTab() {
           ))}
         </select>
         <span className="text-xs text-muted-foreground">
-          Voice choice is remembered separately for each TTS provider.
+          {voices?.invalidVoiceId
+            ? `Saved voice “${voices.invalidVoiceId}” is unavailable; the default voice is active.`
+            : "Voice choice is remembered separately for each TTS provider."}
         </span>
 
         <label className="space-y-1.5 block">
@@ -372,9 +429,13 @@ export function AgentsVoiceTab() {
             type="button"
             onClick={async () => {
               stopManagedSpeech()
-              const result = await speak.mutateAsync({ text: previewText })
+              const result = await speak.mutateAsync({ text: previewText, rate: 1 })
               if (result.skipped) return
-              await playManagedSpeech(result)
+              if (!result.historySaved)
+                toast.warning("Speech played but Voice History could not save", {
+                  description: result.historyError || undefined,
+                })
+              await playManagedSpeech(result, { rate: settings.rate })
             }}
             className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border hover:bg-accent"
             title="Preview voice"

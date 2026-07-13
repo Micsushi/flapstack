@@ -3,6 +3,7 @@ import {
   getNativeTtsAvailability,
   resolveAvailableTtsAdapter,
   resolveSttAdapter,
+  resolveSupportedTtsVoiceId,
   resolveTtsVoiceId,
   resolveTtsAdapter,
   sttAdapterImplementations,
@@ -18,6 +19,7 @@ import { ensureModel, getSttModelStatus, listWhisperModels } from "../../speech/
 import {
   ensureParakeetModel,
   getParakeetModelStatus,
+  parakeetSidecar,
   PARAKEET_MODEL,
 } from "../../speech/stt-parakeet-streaming"
 import { speakWithTtsFallback } from "../../speech/tts-fallback"
@@ -77,7 +79,11 @@ export const speechRouter = router({
       }),
     )
     .mutation(({ input }) => {
-      return setVoiceSettings(input)
+      const previous = getVoiceSettings()
+      const next = setVoiceSettings(input)
+      if (previous.sttModelUnloadMinutes !== next.sttModelUnloadMinutes)
+        parakeetSidecar.rescheduleIdleUnload()
+      return next
     }),
 
   listAdapters: publicProcedure.query(async () => {
@@ -120,7 +126,18 @@ export const speechRouter = router({
   listVoices: publicProcedure.query(async () => {
     const settings = getVoiceSettings()
     const adapter = resolveTtsAdapter(settings)
-    return { adapterId: adapter.id, voices: await adapter.listVoices() }
+    const voices = await adapter.listVoices()
+    const configuredVoiceId =
+      settings.voiceByTtsAdapterId[settings.ttsAdapterId] ?? settings.voiceId
+    return {
+      adapterId: adapter.id,
+      voices,
+      resolvedVoiceId: resolveSupportedTtsVoiceId(configuredVoiceId, voices),
+      invalidVoiceId:
+        configuredVoiceId && !voices.some((voice) => voice.id === configuredVoiceId)
+          ? configuredVoiceId
+          : null,
+    }
   }),
 
   listSttModels: publicProcedure.query(() => [PARAKEET_MODEL, ...listWhisperModels()]),
@@ -147,7 +164,14 @@ export const speechRouter = router({
       const settings = getVoiceSettings()
       const storedText = getStoredSpokenText(input.subChatId, input.messageId)
       const text = resolveSpeechText(input.text, storedText)
-      if (!text) return { skipped: true as const, reason: "no-speakable-text", artifactId: null }
+      if (!text)
+        return {
+          skipped: true as const,
+          reason: "no-speakable-text",
+          artifactId: null,
+          historySaved: true as const,
+          historyError: null,
+        }
       persistSpokenText({
         subChatId: input.subChatId,
         messageId: input.messageId,
@@ -156,10 +180,14 @@ export const speechRouter = router({
       const adapter = await resolveAvailableTtsAdapter(settings)
       if (!isSpeechRequestActive(windowId, requestId))
         throw new Error("Speech request was cancelled.")
-      const resolvedVoiceId = resolveTtsVoiceId(
+      const requestedVoiceId = resolveTtsVoiceId(
         settings.ttsAdapterId,
         adapter.id,
         input.voiceId ?? settings.voiceByTtsAdapterId[settings.ttsAdapterId] ?? settings.voiceId,
+      )
+      const resolvedVoiceId = resolveSupportedTtsVoiceId(
+        requestedVoiceId,
+        await adapter.listVoices(),
       )
       const rate = input.rate ?? settings.rate
       const synthesisKey = createSpeechSynthesisKey({
@@ -181,6 +209,8 @@ export const speechRouter = router({
           spokenText: text,
           skipped: false as const,
           artifactId: reusable.id,
+          historySaved: true as const,
+          historyError: null,
         }
       const ttsInput = {
         text,
@@ -194,8 +224,11 @@ export const speechRouter = router({
       })
       if (!isSpeechRequestActive(windowId, requestId))
         throw new Error("Speech request was cancelled.")
-      const artifact = input.chatId
-        ? await recordSpeech({
+      let artifact = null
+      let historyError: string | null = null
+      if (input.chatId) {
+        try {
+          artifact = await recordSpeech({
             chatId: input.chatId,
             subChatId: input.subChatId,
             messageId: input.messageId,
@@ -205,12 +238,18 @@ export const speechRouter = router({
             voiceId: resolvedVoiceId,
             rate,
           })
-        : null
+        } catch (error) {
+          historyError = error instanceof Error ? error.message : String(error)
+          console.error("[Speech] Playback succeeded but history persistence failed:", error)
+        }
+      }
       return {
         ...result,
         spokenText: text,
         skipped: false as const,
         artifactId: artifact?.id ?? null,
+        historySaved: historyError === null,
+        historyError,
       }
     }),
 

@@ -23,3 +23,29 @@ Automated coverage must include adapter resolution, Parakeet protocol/lifecycle,
 Whisper fallback, origin-bound composer updates, history CRUD, settings
 migration, Kokoro WAV helpers, native voice parsing, and playback interruption.
 Prompt injection and automatic read-aloud are removed behavior, not exit goals.
+
+## 2026-07-13 lane evidence
+
+- Node 22 focused Voice suite: 7 files, 82 tests passed.
+- Rust sidecar suite: 3 protocol/PCM tests passed.
+- Pinned model SHA-256 matched
+  `4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795`.
+- Real release sidecar with that model passed load, start, one second of 16 kHz
+  float PCM feed, finalize, and unload.
+- Real chunked synthetic speech produced ordered committed updates and finalized
+  as `Flapstack voice streaming works with committed and tentative text`; the
+  sidecar emitted no tentative suffix for this short sample.
+- Strict OpenSpec validation passed for `complete-settings-reliability`.
+- The Node 22 full gate passed lint, formatting, and TypeScript, then reached 79
+  passing test files and 629 passing tests. It remains blocked by three unrelated
+  MCP tests: the base has `0016_glamorous_deathbird.sql`, while those tests expect
+  `0016_massive_ravenous.sql` and its append-only audit triggers.
+- `npm run dev:verify` passed for this checkout and the `Flapstack Dev` profile;
+  startup completed migrations and loaded the main window.
+- The arm64 `Flapstack Preview.app` package built successfully. Inspection and
+  smoke passed for arm64 Electron, Claude `2.1.207`, Codex `0.144.1`, Whisper,
+  the Parakeet sidecar ping protocol, better-sqlite3, and all three native speech
+  license files.
+- Manual UI rows remain unchecked because the macOS session was locked during
+  this run. No microphone, composer, history-action, or playback behavior is
+  claimed from the headless evidence above.
