@@ -46,6 +46,12 @@ sole completion authority for their remaining provider-harness work.
 - Blocks: S3-F15-T5.
 - Relevant context: `src/main/lib/cursor/**`, Cursor renderer transport,
   provider error normalization, reasoning fixtures.
+- 2026-07-13 safe closeout: current Cursor CLI `2026.07.09-a3815c0` reports
+  `auto` as default; an authenticated low-risk CLI turn and same-session
+  continuation passed. The adapter now uses that default, bounds chat runs, and
+  reuses the existing logical user turn during auth recovery. Completion stays
+  open because the locked Mac prevented Flapstack UI/database auth-retry,
+  stop/restart, exact-model persistence, and S3-F12 live enforcement proof.
 
 ### S3-F15-T3 — Close OpenRouter and NanoGPT runtime and model defaults
 
@@ -72,6 +78,13 @@ sole completion authority for their remaining provider-harness work.
 - Blocks: S3-F15-T4, S3-F15-T5.
 - Relevant context: `src/main/lib/harness/opencode-sidecar/**`, OpenCode tRPC
   router and renderer transport, model provider settings.
+- 2026-07-13 safe closeout: fresh persisted dev-headless OpenRouter and NanoGPT
+  turns passed with exact provider/model, checkpoints, session, usage, and
+  terminal state. `zai-org/glm-latest` is proven chat-capable. The OpenRouter
+  probe exposed conflicting duplicate reasoning fields; the corrected config
+  passed a fresh run. SSE idle lifetime is now bounded. Preview arm64 package
+  inspection and bundled binary smoke pass. Completion stays open for verified
+  renderer behavior.
 
 ### S3-F15-T4 — Prove provider permissions, approvals, and run integrity
 
@@ -96,6 +109,12 @@ sole completion authority for their remaining provider-harness work.
 - Blocks: S3-F15-T5.
 - Relevant context: OpenCode permissions/events/session/persistence, S3-F12
   capability contract, production MCP approval/audit services.
+- 2026-07-13 safe closeout: dev-headless allow-once, deny, and active-run cancel
+  smokes persisted exact command/pattern, user decision source, coherent
+  terminal state, and before/after checkpoints. Product/dev/third-party MCP
+  identity and fail-closed matrices pass in focused tests. Completion stays open
+  for S3-F12/S3-F6 visual permission and approval evidence plus UI/audit
+  correlation; no exact project-boundary claim is made.
 
 ### S3-F15-T5 — Publish and pass provider harness exit
 
@@ -120,3 +139,13 @@ sole completion authority for their remaining provider-harness work.
 - Blocks: S3-F16-T4, S3-F17-T2.
 - Relevant context: this change, provider evidence matrix, live-dev/package
   identity rules, low-value credential policy.
+- 2026-07-13 safe closeout: `npm run dev` and `npm run dev:verify` passed for
+  this exact worktree and `Flapstack Dev`; focused provider/permission suites
+  and strict OpenSpec passed. Implementation SHA
+  `99672b7fc3607e84cc478f981e35b8c69c9343b8` passed the full Node 22 gate (746
+  passed, 3 skipped), unsigned Preview arm64 packaging, package inspection, and
+  bundled Claude/Codex/Whisper/Parakeet smoke. Packaged ACP stale-session
+  fallback and product-MCP server identity were inspected. All test chats were
+  archived, no approval remained pending, no temporary sidecar directory
+  remained, and artifacts contain no credential. Required visual rows remain
+  open while the Mac is locked.

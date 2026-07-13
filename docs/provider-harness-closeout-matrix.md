@@ -13,6 +13,8 @@ must not appear in commands, logs, screenshots, generated config, or evidence.
 - **Fixture:** deterministic parser, event, failure, persistence, and cleanup tests.
 - **CLI-live:** current local CLI/binary output without a paid provider turn.
 - **Provider-live:** authenticated low-cost provider request and response.
+- **Dev-headless:** verified `Flapstack Dev` runtime, API, and database evidence
+  collected without claiming that the renderer was visually exercised.
 - **UI-live:** verified `Flapstack Dev` chat/run behavior with persisted database evidence.
 - **Package:** Preview/package binary, PATH, credential, config, and cleanup behavior.
 
@@ -62,6 +64,9 @@ rejects or labels the capability before launch.
 
 - Cursor local CLI: `2026.07.09-a3815c0` on macOS arm64. Re-run the bounded
   probe after any CLI update and bind output to the tested commit.
+- Cursor `auto` is the current CLI-reported default. A low-risk authenticated
+  CLI turn and continuation passed with one stable session on 2026-07-13; this
+  is CLI/provider evidence, not Flapstack UI or database evidence.
 - OpenCode sidecar fallback: pinned `opencode-ai@1.17.18`. Standalone `opencode`
   is absent on this machine; package/runtime evidence must exercise the npx or
   packaged resolution actually used.
@@ -70,23 +75,77 @@ rejects or labels the capability before launch.
 - OpenCode model truth comes from authenticated OpenRouter/NanoGPT catalogs.
   CLI help and static seeds are never provider-live model evidence.
 - Current NanoGPT seeds are `deepseek/deepseek-latest` and
-  `zai-org/glm-latest`; neither may close E4-02 until a minimal live completion
-  proves current chat compatibility.
+  `zai-org/glm-latest`. A fresh persisted dev-headless turn proved
+  `zai-org/glm-latest` chat-compatible on 2026-07-13; the UI-live row remains
+  open.
 
-## Exact blockers and wake conditions
+## Current closeout evidence and blockers
 
-S3-F11 commit `b02055c56ac7a1c79fa49be49a2ba01730f66d5e` adds
-authenticated dev-only extension inventory/mutation probes and macOS Preview
-resource smoke. That evidence is not provider-live or UI-live D/E evidence and
-does not close any S3-F15-T2 through T5 row.
+Credential and permission/custom-capability code prerequisites are integrated
+at base `5297ed777d0430f468ef23def55119f51d87795b`. Their acceptance rows remain
+open: S3-F10-T4 still lacks packaged credential migration/restart/removal,
+actual Keychain-backed persistence, and Windows/Linux proof; S3-F12-T5 still
+lacks its prerequisite acceptance and unlocked live UI proof. S3-F6-T2 still
+lacks active/background approval UI rows.
 
-- S3-F15-T2 wakes after S3-F10-T4 and S3-F12-T5 pass and S3-F15-T1 is integrated.
-- S3-F15-T3 wakes after S3-F10-T4 passes; dev-test-control MCP 3.3/3.4 already pass.
-- S3-F15-T4 wakes after S3-F15-T3, S3-F12-T5, S3-F3-T4, S3-F4-T2, and S3-F6-T2 pass.
-- S3-F15-T5 wakes after T2, T3, and T4 pass.
+Safe 2026-07-13 evidence from this worktree:
 
-At this snapshot S3-F3-T4, S3-F4-T2, and dev-test-control MCP 3.3/3.4 are
-complete. S3-F10-T4, S3-F12-T5, and S3-F6-T2 remain open.
+- Cursor CLI-live: authenticated `auto` turn and same-session continuation
+  passed. The adapter now uses `auto`, bounds chat lifetime, and reuses one
+  logical user turn during auth recovery. Flapstack UI/database, restart, and
+  cancellation rows remain open.
+- OpenRouter dev-headless: run
+  `c0300c51-0604-4554-b5b3-887c1a1292d2` persisted exact provider/model,
+  before/after checkpoints, usage, session identity, and terminal success. A
+  first probe exposed conflicting duplicate reasoning options; the runtime
+  config was corrected and the fresh run passed.
+- NanoGPT dev-headless: run
+  `e19a8846-c0ee-4378-ba01-89b7f0bd0b1e` proved the current
+  `zai-org/glm-latest` seed and persisted terminal success.
+- Provider approvals: OpenRouter deny run
+  `8084e7f3-8f84-4656-85c2-a4820ca82f9f`, NanoGPT allow-once run
+  `826b47d5-b830-43f3-8e17-3d9db7489271`, and NanoGPT cancellation run
+  `da4a0da4-5cc6-4e82-b85f-33fbd0fdee3d` persisted exact command/pattern,
+  user decision, terminal state, and checkpoints. This proves the headless
+  provider bridge, not visual approval UI or exact project-boundary behavior.
+- All six probe chats were archived, no approvals remained pending, and no
+  isolated sidecar directory remained under `/tmp`.
+
+S3-F15-T2 stays open for Flapstack UI/database auth-retry, stop, continuation,
+restart, exact-model, and S3-F12 live enforcement evidence. T3 stays open for
+verified renderer evidence; Preview arm64 package resolution/inspection passes.
+T4 stays open for S3-F12/S3-F6 visual permission/approval evidence and UI/audit
+correlation. T5 stays open until T2-T4 and every required UI/cross-platform row
+passes.
+
+## 2026-07-13 SHA-bound evidence record
+
+```text
+Date/time: 2026-07-13 America/Vancouver
+Implementation commit: 99672b7fc3607e84cc478f981e35b8c69c9343b8
+OS + architecture: macOS arm64
+Node/Electron version: Node 22.23.1; Electron 39.8.10
+Dev or Preview/package: Flapstack Dev + unsigned Flapstack Preview arm64
+Evidence class: Fixture, CLI-live, provider-live, dev-headless, package
+Passed: focused provider/permission suites; strict close-provider-harnesses;
+  npm run dev; npm run dev:verify; Node 22 npm run check (746 passed, 3 skipped);
+  Preview package; package inspect; bundled Claude/Codex/Whisper/Parakeet smoke;
+  packaged ACP stale-session fallback and product-MCP server identity
+Failed then fixed: first OpenRouter probe rejected duplicate conflicting
+  reasoning fields; corrected config passed a fresh run
+Blocked/unavailable: locked visual Cursor/provider/approval/permission rows;
+  S3-F10-T4 packaged credential lifecycle, actual Keychain, Windows/Linux;
+  S3-F12-T5 prerequisite acceptance and live UI; S3-F6-T2 visual approval UI
+Provider/CLI versions: Cursor 2026.07.09-a3815c0; OpenCode fallback 1.17.18;
+  Claude Code 2.1.207; Codex CLI 0.144.1
+Sanitized chat/run IDs: archived chats only; OpenRouter success c0300c51...;
+  NanoGPT success e19a8846...; deny 8084e7f3...; allow 826b47d5...;
+  cancel da4a0da4...
+Cleanup proof: six probe chats archived; zero pending approvals; no
+  /tmp/flapstack-opencode-* directories; dev stopped; no credential emitted
+Notes: headless evidence does not prove renderer visuals, provider parity, or
+  exact project-boundary enforcement
+```
 
 ## Evidence record
 

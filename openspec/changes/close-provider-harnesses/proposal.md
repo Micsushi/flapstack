@@ -40,9 +40,10 @@ recovery, and a chat-capable NanoGPT default.
 
 ## Current Status
 
-S3-F15-T1 is complete: the current Cursor and pinned OpenCode CLI surfaces are
-bounded and probed, parser/timeout fixtures pass, and
+S3-F15-T1 is complete. Safe T2-T4 implementation and headless evidence now
+cover the current Cursor default and continuation, persisted OpenRouter and
+NanoGPT turns, bounded sidecar lifetime, and allow/deny/cancel run integrity.
 `docs/provider-harness-closeout-matrix.md` separates fixture, CLI-live,
-provider-live, UI-live, and package evidence. T2 through T5 remain open behind
-their recorded secure-credential, permission, approval-UI, provider-live, and
-package prerequisites.
+provider-live, dev-headless, UI-live, and package evidence. T2 through T5 remain
+open for their recorded locked visual, package, cross-platform credential, and
+permission-promotion acceptance gaps.

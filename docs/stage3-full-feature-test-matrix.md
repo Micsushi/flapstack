@@ -106,6 +106,12 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
       contexts; NanoGPT defaults name a currently chat-capable tested model.
       Capability and evidence-class mapping:
       `docs/provider-harness-closeout-matrix.md`.
+      2026-07-13 headless evidence proves Cursor CLI `auto` continuation,
+      persisted OpenRouter/NanoGPT success, NanoGPT `zai-org/glm-latest`, and
+      provider allow/deny/cancel integrity. Implementation SHA `99672b7` passes
+      Node 22 full check and unsigned Preview arm64 package inspection/smoke.
+      This row stays open for verified renderer, locked approval/permission UI,
+      cross-platform, and remaining F10-T4/F12-T5 acceptance evidence.
 - [ ] **S3-R01 (S3-F16)** migrated reasoning rows `T1-*` through `T7-*` pass for
       fixtures, streaming, persistence, search, capability fallback, and live
       provider evidence.
