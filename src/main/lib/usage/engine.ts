@@ -41,6 +41,8 @@ export interface EngineDeps {
   log?: UsageProviderContext["log"]
   /** Settings loader override (tests). Defaults to file-based settings. */
   loadSettings?: () => UsageSettings
+  /** Provider loader override for deterministic engine tests. */
+  loadProviders?: () => UsageProvider[]
 }
 
 export interface ProviderRunResult {
@@ -80,7 +82,7 @@ export class UsageEngine {
   async runOnce(intent: "poll" | "reconcile" = "poll"): Promise<ProviderRunResult[]> {
     const settings = (this.deps.loadSettings ?? getUsageSettings)()
     const results: ProviderRunResult[] = []
-    for (const provider of getUsageProviders()) {
+    for (const provider of (this.deps.loadProviders ?? getUsageProviders)()) {
       if (!settings.providers[provider.id]?.enabled) continue
       if (this.mode === "daemon" && !provider.supportsDaemon()) continue
       if (this.mode === "daemon" && intent === "poll") {
@@ -98,7 +100,7 @@ export class UsageEngine {
     id: UsageProviderId,
     intent: "poll" | "reconcile" = "poll",
   ): Promise<ProviderRunResult | null> {
-    const provider = getUsageProviders().find((p) => p.id === id)
+    const provider = (this.deps.loadProviders ?? getUsageProviders)().find((p) => p.id === id)
     if (!provider) return null
     return this.runProvider(provider, intent, (this.deps.loadSettings ?? getUsageSettings)())
   }
@@ -123,19 +125,17 @@ export class UsageEngine {
           ? await provider.reconcileSince(ctx, await getLatestSampleAt(this.deps.db, provider.id))
           : await provider.pollLatest(ctx)
       const inserted = await insertSamples(this.deps.db, samples)
-      // Only exact generation costs are terminal. Mark them after the durable
-      // sample write; a crash before this point leaves the id safely retryable.
+      // Mark reconciliation only after the durable sample write. Exact cost is
+      // terminal; weaker observations use persisted backoff instead of being
+      // hammered on every poll.
       for (const sample of samples) {
-        if (
-          sample.providerId === "openrouter" &&
-          sample.generationId &&
-          sample.costQuality === "exact"
-        ) {
+        if (sample.providerId === "openrouter" && sample.generationId) {
           await markGenerationReconciliation(
             this.deps.db,
             sample.providerId,
             sample.generationId,
-            "resolved",
+            sample.costQuality === "exact" ? "resolved" : "retry",
+            sample.costQuality === "exact" ? undefined : "Exact provider cost is not available yet",
           )
         }
       }

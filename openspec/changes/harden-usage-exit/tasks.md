@@ -5,7 +5,7 @@ authority for Usage exit work.
 
 ### S3-F14-T1 — Freeze the Usage exit contract and evidence matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F14 Usage Hardening and Exit
 - Outcome: One executable matrix maps every Usage requirement to automated,
   live-provider, daemon, package, or platform evidence.
@@ -28,7 +28,7 @@ authority for Usage exit work.
 
 ### S3-F14-T2 — Close deterministic engine, store, and alert regressions
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F14 Usage Hardening and Exit
 - Outcome: Automated tests prove overlap, provenance, failure, retry, locking,
   reconciliation, and alert invariants before live testing.

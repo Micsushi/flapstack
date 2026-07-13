@@ -40,6 +40,7 @@
     "style:check": "node scripts/with-heavy-job-lock.mjs style:check -- prettier --check .",
     "test": "node scripts/ensure-native-abi.mjs node && node scripts/with-heavy-job-lock.mjs test -- vitest run",
     "smoke:usage-daemon": "node scripts/ensure-native-abi.mjs electron && node scripts/smoke-usage-daemon.mjs",
+    "check:usage-exit-matrix": "node scripts/check-usage-exit-matrix.mjs",
     "test:model-catalog": "vitest run tests/model-catalog.test.ts",
     "test:codex-model-catalog": "node scripts/check-codex-model-catalog.mjs",
     "check": "node scripts/with-heavy-job-lock.mjs check -- sh -c \"npm run lint && npm run style:check && npm run ts:check && npm run test && npm run build\"",
