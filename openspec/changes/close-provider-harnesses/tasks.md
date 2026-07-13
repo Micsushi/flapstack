@@ -5,7 +5,7 @@ sole completion authority for their remaining provider-harness work.
 
 ### S3-F15-T1 — Reconcile provider contracts and freeze the closeout matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
 - Outcome: Current Cursor, OpenCode, OpenRouter, and NanoGPT surfaces map to one
   exact fixture/live/package evidence matrix.

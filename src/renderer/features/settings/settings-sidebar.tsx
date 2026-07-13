@@ -17,6 +17,7 @@ import {
   FolderFilledIcon,
   OriginalMCPIcon,
   PluginFilledIcon,
+  CustomAgentIconFilled,
   SkillIconFilled,
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
@@ -70,6 +71,11 @@ const ADVANCED_TABS_BASE = [
     id: "skills" as SettingsTab,
     label: "Skills",
     icon: SkillIconFilled,
+  },
+  {
+    id: "agents" as SettingsTab,
+    label: "Custom Agents",
+    icon: CustomAgentIconFilled,
   },
   {
     id: "mcp" as SettingsTab,
