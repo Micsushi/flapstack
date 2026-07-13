@@ -5,6 +5,10 @@ export type {
   ShortcutAction,
   CustomHotkeysConfig,
   ShortcutConflict,
+  ShortcutPlatform,
+  ShortcutFocusPolicy,
+  ShortcutDispatch,
+  ShortcutValidationResult,
 } from "./types"
 
 // Registry
@@ -23,6 +27,9 @@ export {
   hotkeyToDisplay,
   keysToDisplay,
   CATEGORY_LABELS,
+  getShortcutPlatform,
+  validateHotkey,
+  migrateHotkeysConfig,
 } from "./shortcut-registry"
 
 // Hooks

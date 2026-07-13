@@ -18,6 +18,7 @@ import { AgentsProviderExtensionsTab } from "../../components/dialogs/settings-t
 import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/agents-api-providers-tab"
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
+import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
 
 // Check if we're in development mode
@@ -92,6 +93,8 @@ export function SettingsContent() {
         return <AgentsApiProvidersTab />
       case "voice":
         return <AgentsVoiceTab />
+      case "keyboard":
+        return <AgentsKeyboardTab />
       case "skills":
         return <AgentsProviderExtensionsTab initialKind="skill" />
       case "agents":

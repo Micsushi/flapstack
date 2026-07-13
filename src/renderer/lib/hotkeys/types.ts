@@ -1,77 +1,52 @@
-/**
- * Unique identifier for each configurable shortcut action
- */
 export type ShortcutActionId =
-  // General
   | "show-shortcuts"
   | "open-settings"
   | "toggle-sidebar"
-  | "toggle-details"
-  | "undo-archive"
-  // Workspaces
   | "new-workspace"
-  | "search-workspaces"
-  | "archive-workspace"
-  | "quick-switch-workspaces"
-  | "open-kanban"
-  // Agents
   | "new-agent"
-  | "new-agent-split"
-  | "search-chats"
-  | "search-in-chat"
   | "archive-agent"
-  | "quick-switch-agents"
-  | "prev-agent"
-  | "next-agent"
-  | "focus-input"
-  | "toggle-focus"
   | "stop-generation"
-  | "switch-model"
+  | "toggle-details"
   | "toggle-terminal"
   | "open-diff"
-  | "create-pr"
+  | "search-in-chat"
+  | "open-kanban"
   | "file-search"
-  | "voice-input"
   | "open-in-editor"
   | "open-file-in-editor"
+  | "voice-input"
 
-/**
- * Category for organizing shortcuts in the UI
- */
 export type ShortcutCategory = "general" | "workspaces" | "agents"
+export type ShortcutPlatform = "darwin" | "win32" | "linux"
+export type ShortcutFocusPolicy = "global" | "workspace"
+export type ShortcutDispatch = "renderer" | "native" | "local"
 
-/**
- * Definition of a configurable shortcut action
- */
 export interface ShortcutAction {
   id: ShortcutActionId
+  actionId: string
   label: string
+  description: string
   category: ShortcutCategory
-  /** Default key combination, e.g., ["cmd", "N"] or ["?"] */
-  defaultKeys: string[]
-  /** Alternative key combination shown with "or", e.g., ["cmd", "]"] */
+  defaults: Record<ShortcutPlatform, string | null>
+  editable: boolean
+  focusPolicy: ShortcutFocusPolicy
+  dispatch: ShortcutDispatch
+  conflictGroup: "app"
+  availability?: "always" | "kanban"
+  reservedReason?: string
   altKeys?: string[]
-  /** If true, this shortcut's keys are dynamic based on preferences */
-  isDynamic?: boolean
-  /** Description for dynamic shortcuts explaining what controls them */
-  dynamicDescription?: string
 }
 
-/**
- * Storage structure for custom hotkey overrides
- * Stored in localStorage
- */
 export interface CustomHotkeysConfig {
-  version: 1
-  /** Map of actionId to custom hotkey string (e.g., "cmd+shift+n") or null for default */
+  version: 1 | 2
   bindings: Record<string, string | null>
 }
 
-/**
- * Conflict information for a shortcut
- */
 export interface ShortcutConflict {
   actionId: ShortcutActionId
   conflictingActionIds: ShortcutActionId[]
   hotkey: string
 }
+
+export type ShortcutValidationResult =
+  { valid: true; hotkey: string } | { valid: false; reason: string }

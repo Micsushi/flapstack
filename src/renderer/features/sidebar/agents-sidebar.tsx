@@ -57,6 +57,7 @@ import {
   Star,
   Plus,
   ArrowRightLeft,
+  Copy,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -1359,6 +1360,19 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             Copy branch name
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuItem
+                          className="gap-2"
+                          onSelect={() =>
+                            copyChat({
+                              chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                              format: "handoff",
+                              isRemote,
+                            })
+                          }
+                        >
+                          <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                          Copy full chat history
+                        </DropdownMenuItem>
                         <DropdownMenuSub>
                           <DropdownMenuSubTrigger>Export chat</DropdownMenuSubTrigger>
                           <DropdownMenuSubContent sideOffset={6} alignOffset={-4}>
@@ -1578,6 +1592,19 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 Copy branch name
               </ContextMenuItem>
             )}
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() =>
+                copyChat({
+                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                  format: "handoff",
+                  isRemote,
+                })
+              }
+            >
+              <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+              Copy full chat history
+            </ContextMenuItem>
             <ContextMenuSub>
               <ContextMenuSubTrigger>Export chat</ContextMenuSubTrigger>
               <ContextMenuSubContent sideOffset={6} alignOffset={-4}>

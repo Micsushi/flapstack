@@ -13,12 +13,13 @@ const readSource = (path: string) => readFileSync(path, "utf8")
 
 describe("Settings release visibility", () => {
   it("redirects hidden tabs without removing their stored identifiers", () => {
-    expect(HIDDEN_SETTINGS_TABS).toEqual(["keyboard", "beta", "future"])
+    expect(HIDDEN_SETTINGS_TABS).toEqual(["profile", "worktrees", "beta", "future"])
     for (const tab of HIDDEN_SETTINGS_TABS) {
       expect(normalizeVisibleSettingsTab(tab)).toBe("preferences")
     }
     expect(normalizeVisibleSettingsTab("voice")).toBe("voice")
     expect(normalizeVisibleSettingsTab("agents")).toBe("agents")
+    expect(normalizeVisibleSettingsTab("keyboard")).toBe("keyboard")
     expect(normalizeVisibleSettingsTab("debug")).toBe("preferences")
     expect(normalizeVisibleSettingsTab("debug", { showDevelopment: true })).toBe("debug")
   })

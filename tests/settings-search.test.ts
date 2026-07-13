@@ -45,7 +45,6 @@ describe("Settings search", () => {
 
   it("does not rediscover hidden or retired settings", () => {
     for (const query of [
-      "keyboard shortcuts",
       "legacy beta ollama",
       "future scaffolds roadmap",
       "quick switch ctrl tab agents",
@@ -60,5 +59,10 @@ describe("Settings search", () => {
     expect(searchSettings("custom agents subagent", { showDevelopment: false })[0]?.tab).toBe(
       "agents",
     )
+  })
+
+  it("routes Keyboard search through the released Settings registry", () => {
+    const result = searchSettings("keyboard shortcuts", { showDevelopment: false })[0]
+    expect(result).toMatchObject({ tab: "keyboard", targetId: "settings-tab-keyboard" })
   })
 })

@@ -662,7 +662,7 @@ export type { CustomHotkeysConfig }
  */
 export const customHotkeysAtom = atomWithStorage<CustomHotkeysConfig>(
   "preferences:custom-hotkeys",
-  { version: 1, bindings: {} },
+  { version: 2, bindings: {} },
   undefined,
   { getOnInit: true },
 )
