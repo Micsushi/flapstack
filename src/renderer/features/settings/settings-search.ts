@@ -1,4 +1,5 @@
 import type { SettingsTab } from "../../lib/atoms"
+import { isVisibleSettingsTab, SETTINGS_TAB_REGISTRY } from "./settings-visibility"
 
 export type SettingsSearchEntry = {
   id: string
@@ -10,7 +11,7 @@ export type SettingsSearchEntry = {
   developmentOnly?: boolean
 }
 
-const entries: SettingsSearchEntry[] = [
+const legacyEntries: SettingsSearchEntry[] = [
   page(
     "preferences",
     "Preferences",
@@ -197,6 +198,19 @@ const entries: SettingsSearchEntry[] = [
   },
 ]
 
+export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...SETTINGS_TAB_REGISTRY.filter((entry) => entry.section !== "hidden").map((entry) => ({
+    id: `settings-page-${entry.id}`,
+    tab: entry.id,
+    label: entry.label,
+    description: entry.description,
+    keywords: entry.keywords,
+    targetId: `settings-tab-${entry.id}`,
+    developmentOnly: entry.section === "development" || undefined,
+  })),
+  ...legacyEntries.filter((entry) => !entry.id.startsWith("settings-page-")),
+]
+
 export function searchSettings(
   query: string,
   options: { showDevelopment: boolean },
@@ -206,8 +220,11 @@ export function searchSettings(
 
   const queryTokens = normalizedQuery.split(" ").filter(Boolean)
 
-  return entries
-    .filter((entry) => options.showDevelopment || !entry.developmentOnly)
+  return SETTINGS_SEARCH_ENTRIES.filter(
+    (entry) =>
+      (options.showDevelopment || !entry.developmentOnly) &&
+      isVisibleSettingsTab(entry.tab, { showDevelopment: options.showDevelopment }),
+  )
     .map((entry, index) => ({
       entry,
       index,

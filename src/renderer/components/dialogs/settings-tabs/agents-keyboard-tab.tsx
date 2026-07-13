@@ -1,614 +1,269 @@
 "use client"
 
-import { useCallback, useMemo, useState, useRef, useEffect } from "react"
-import { useListKeyboardNav } from "./use-list-keyboard-nav"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAtom, useAtomValue } from "jotai"
-import { RotateCcw, Settings2 } from "lucide-react"
-import { cn } from "../../../lib/utils"
-import { CmdIcon, OptionIcon, ShiftIcon, ControlIcon } from "../../ui/icons"
-import { ResizableSidebar } from "../../ui/resizable-sidebar"
-import { settingsKeyboardSidebarWidthAtom } from "../../../features/agents/atoms"
-import { customHotkeysAtom, ctrlTabTargetAtom, betaKanbanEnabledAtom } from "../../../lib/atoms"
+import { RotateCcw } from "lucide-react"
+import { customHotkeysAtom, betaKanbanEnabledAtom } from "../../../lib/atoms"
 import {
-  ALL_SHORTCUT_ACTIONS,
+  CATEGORY_LABELS,
+  detectConflicts,
+  getResolvedHotkey,
+  getShortcutAction,
   getShortcutsByCategory,
   hotkeyStringToKeys,
-  getResolvedHotkey,
-  isCustomHotkey,
-  detectConflicts,
-  normalizeHotkey,
-  CATEGORY_LABELS,
-  getShortcutAction,
+  migrateHotkeysConfig,
+  validateHotkey,
   type ShortcutAction,
   type ShortcutActionId,
   type ShortcutCategory,
-  type CustomHotkeysConfig,
 } from "../../../lib/hotkeys"
 import { useHotkeyRecorder } from "../../../lib/hotkeys/use-hotkey-recorder"
+import { cn } from "../../../lib/utils"
 
-/**
- * Display a single key in a keyboard shortcut
- */
-function ShortcutKey({
-  keyName,
-  size = "md",
-  isSelected = false,
-}: {
-  keyName: string
-  size?: "sm" | "md" | "lg"
-  isSelected?: boolean
-}) {
-  const sizeClasses = {
-    sm: "h-5 min-w-5 text-[10px] px-1",
-    md: "h-6 min-w-6 text-xs px-1.5",
-    lg: "h-8 min-w-8 text-sm px-2",
-  }
-
-  const iconSizes = {
-    sm: "h-2.5 w-2.5",
-    md: "h-3 w-3",
-    lg: "h-4 w-4",
-  }
-
-  const baseClasses = cn(
-    "inline-flex items-center justify-center rounded border font-[inherit] font-normal",
-    sizeClasses[size],
-    isSelected
-      ? "bg-primary-foreground/20 text-primary-foreground border-primary-foreground/30"
-      : "bg-secondary text-secondary-foreground border-muted",
-  )
-
-  const lower = keyName.toLowerCase()
-
-  // Modifier keys with icons
-  if (lower === "cmd" || lower === "meta") {
-    return (
-      <kbd className={baseClasses}>
-        <CmdIcon className={iconSizes[size]} />
-      </kbd>
-    )
-  }
-
-  if (lower === "opt" || lower === "alt") {
-    return (
-      <kbd className={baseClasses}>
-        <OptionIcon className={iconSizes[size]} />
-      </kbd>
-    )
-  }
-
-  if (lower === "shift") {
-    return (
-      <kbd className={baseClasses}>
-        <ShiftIcon className={iconSizes[size]} />
-      </kbd>
-    )
-  }
-
-  if (lower === "ctrl") {
-    return (
-      <kbd className={baseClasses}>
-        <ControlIcon className={iconSizes[size]} />
-      </kbd>
-    )
-  }
-
-  // Text-based keys
-  const displayMap: Record<string, string> = {
-    enter: "↵",
-    esc: "Esc",
-    escape: "Esc",
-    backspace: "⌫",
-    delete: "⌦",
-    tab: "Tab",
-    space: "Space",
-  }
-
-  const display = displayMap[lower] || keyName.toUpperCase()
-
-  return <kbd className={baseClasses}>{display}</kbd>
-}
-
-/**
- * Shortcut item in the left list
- */
-function ShortcutListItem({
-  action,
-  config,
-  isSelected,
-  hasConflict,
-  onClick,
-  ctrlTabTarget,
-}: {
-  action: ShortcutAction
-  config: CustomHotkeysConfig
-  isSelected: boolean
-  hasConflict: boolean
-  onClick: () => void
-  ctrlTabTarget: "workspaces" | "agents"
-}) {
-  const isCustom = isCustomHotkey(action.id, config)
-  let currentHotkey = getResolvedHotkey(action.id, config)
-
-  // Handle dynamic shortcuts for ctrl+tab
-  if (action.isDynamic && !isCustom) {
-    if (action.id === "quick-switch-workspaces") {
-      currentHotkey = ctrlTabTarget === "workspaces" ? "ctrl+tab" : "opt+ctrl+tab"
-    } else if (action.id === "quick-switch-agents") {
-      currentHotkey = ctrlTabTarget === "workspaces" ? "opt+ctrl+tab" : "ctrl+tab"
-    }
-  }
-
-  const keys = currentHotkey ? hotkeyStringToKeys(currentHotkey) : []
-
+function ShortcutKeys({ hotkey }: { hotkey: string | null }) {
+  if (!hotkey) return <span className="text-xs text-muted-foreground">Not set</span>
   return (
-    <button
-      type="button"
-      data-item-id={action.id}
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center justify-between px-2 py-1.5 rounded-md text-left transition-colors duration-150 cursor-pointer outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70 focus-visible:-outline-offset-2",
-        isSelected
-          ? "bg-foreground/5 text-foreground"
-          : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
-        hasConflict && !isSelected && "bg-red-500/10",
-      )}
-    >
-      <span className="text-sm truncate">{action.label}</span>
-      <div className="flex items-center gap-0.5 ml-2 flex-shrink-0">
-        {keys.map((key, index) => (
-          <ShortcutKey key={index} keyName={key} size="sm" />
-        ))}
-      </div>
-    </button>
+    <span className="inline-flex gap-1" aria-label={hotkey}>
+      {hotkeyStringToKeys(hotkey).map((key, index) => (
+        <kbd
+          key={`${key}-${index}`}
+          className="inline-flex min-w-6 items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground"
+        >
+          {key === "cmd"
+            ? "⌘"
+            : key === "ctrl"
+              ? "⌃"
+              : key === "opt"
+                ? "⌥"
+                : key === "shift"
+                  ? "⇧"
+                  : key}
+        </kbd>
+      ))}
+    </span>
   )
 }
 
-/**
- * Right panel showing selected shortcut details
- */
-function ShortcutDetailPanel({
+function ShortcutRow({
   action,
   config,
-  isRecording,
-  onStartRecording,
-  onRecord,
+  recording,
+  error,
+  onStart,
+  onSave,
   onCancel,
   onReset,
-  ctrlTabTarget,
-  conflictMessage,
 }: {
   action: ShortcutAction
-  config: CustomHotkeysConfig
-  isRecording: boolean
-  onStartRecording: () => void
-  onRecord: (hotkey: string) => void
+  config: ReturnType<typeof migrateHotkeysConfig>
+  recording: boolean
+  error: string | null
+  onStart: () => void
+  onSave: (hotkey: string) => void
   onCancel: () => void
   onReset: () => void
-  ctrlTabTarget: "workspaces" | "agents"
-  conflictMessage: string | null
 }) {
-  const isCustom = isCustomHotkey(action.id, config)
-  let currentHotkey = getResolvedHotkey(action.id, config)
-  const recorderButtonRef = useRef<HTMLButtonElement>(null)
-
-  // Handle dynamic shortcuts for ctrl+tab
-  if (action.isDynamic && !isCustom) {
-    if (action.id === "quick-switch-workspaces") {
-      currentHotkey = ctrlTabTarget === "workspaces" ? "ctrl+tab" : "opt+ctrl+tab"
-    } else if (action.id === "quick-switch-agents") {
-      currentHotkey = ctrlTabTarget === "workspaces" ? "opt+ctrl+tab" : "ctrl+tab"
-    }
-  }
-
-  const keys = currentHotkey ? hotkeyStringToKeys(currentHotkey) : []
-  const defaultAction = getShortcutAction(action.id)
-  const defaultKeys = defaultAction?.defaultKeys || []
-
-  const { currentKeys } = useHotkeyRecorder({
-    onRecord,
+  const { currentDisplay } = useHotkeyRecorder({
+    onRecord: onSave,
     onCancel,
-    isRecording,
+    isRecording: recording,
   })
-
-  // Click outside to cancel recording
-  useEffect(() => {
-    if (!isRecording) return
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (recorderButtonRef.current && !recorderButtonRef.current.contains(e.target as Node)) {
-        onCancel()
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [isRecording, onCancel])
+  const hotkey = getResolvedHotkey(action.id, config)
+  const customized = action.editable && config.bindings[action.id] !== undefined
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
-      {/* Title */}
-      <h3 className="text-base font-medium text-foreground mb-1">{action.label}</h3>
-      <p className="text-sm text-muted-foreground mb-8">
-        {action.isDynamic
-          ? action.dynamicDescription
-          : `${CATEGORY_LABELS[action.category]} shortcut`}
-      </p>
-
-      {/* Hotkey display / recorder */}
-      <button
-        ref={recorderButtonRef}
-        type="button"
-        onClick={onStartRecording}
-        className={cn(
-          "flex items-center justify-center gap-1 px-6 py-3 h-[52px] rounded-lg border-2 transition-shadow",
-          isRecording
-            ? "border-primary bg-secondary ring-[3px] ring-primary/20"
-            : conflictMessage
-              ? "border-red-500 bg-red-500/10"
-              : "border-border bg-background hover:border-muted-foreground/50 hover:bg-secondary/50",
-        )}
-      >
-        {(() => {
-          // During recording, show currentKeys or "Press keys..."
-          if (isRecording) {
-            if (currentKeys.length > 0) {
-              return (
-                <div className="flex items-center gap-1">
-                  {currentKeys.map((key, index) => (
-                    <ShortcutKey key={index} keyName={key} size="lg" />
-                  ))}
-                </div>
-              )
-            }
-            return (
-              <span className="text-sm text-muted-foreground animate-pulse">Press keys...</span>
-            )
-          }
-          // Not recording - always show saved keys (they update immediately now)
-          if (keys.length > 0) {
-            return (
-              <div className="flex items-center gap-1">
-                {keys.map((key, index) => (
-                  <ShortcutKey key={index} keyName={key} size="lg" />
-                ))}
-              </div>
-            )
-          }
-          return <span className="text-sm text-muted-foreground">Not set</span>
-        })()}
-      </button>
-
-      {/* Conflict warning - shown temporarily when trying to set conflicting hotkey */}
-      {conflictMessage && (
-        <p className="text-xs text-red-500 mt-3 animate-pulse">{conflictMessage}</p>
-      )}
-
-      {/* Reset to default / Instructions - always reserve space to prevent layout shift */}
-      <div className="mt-6 h-8 flex items-center justify-center">
-        {isCustom ? (
-          <button
-            type="button"
-            onClick={onReset}
-            className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground bg-secondary/50 hover:bg-secondary border border-border rounded-lg transition-colors"
-          >
-            <RotateCcw className="h-3 w-3" />
-            <span>Reset to</span>
-            <div className="flex items-center gap-0.5">
-              {defaultKeys.map((key, index) => (
-                <ShortcutKey key={index} keyName={key} size="sm" />
-              ))}
-            </div>
-          </button>
-        ) : (
-          <p className="text-xs text-muted-foreground text-center">
-            Click to record a new shortcut
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/**
- * Empty state when no shortcut is selected
- */
-function EmptyDetailPanel() {
-  return (
-    <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-      <Settings2 className="h-10 w-10 text-muted-foreground/20 mb-3" />
-      <p className="text-sm text-muted-foreground">Select a shortcut to customize</p>
-    </div>
-  )
-}
-
-/**
- * Main keyboard settings tab component
- */
-export function AgentsKeyboardTab() {
-  const [customHotkeys, setCustomHotkeys] = useAtom(customHotkeysAtom)
-  const [ctrlTabTarget] = useAtom(ctrlTabTargetAtom)
-  const betaKanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
-  // Default to first shortcut
-  const [selectedActionId, setSelectedActionId] = useState<ShortcutActionId>("show-shortcuts")
-  const [isRecording, setIsRecording] = useState(false)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // Focus search on "/" hotkey
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const tag = (e.target as HTMLElement)?.tagName
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
-        e.preventDefault()
-        searchInputRef.current?.focus()
-      }
-    }
-    document.addEventListener("keydown", handler)
-    return () => document.removeEventListener("keydown", handler)
-  }, [])
-
-  // Get shortcuts by category, filtering out disabled features
-  const shortcutsByCategory = useMemo(() => {
-    const all = getShortcutsByCategory()
-    // Filter out kanban shortcut if feature is disabled
-    if (!betaKanbanEnabled) {
-      return {
-        ...all,
-        workspaces: all.workspaces.filter((action) => action.id !== "open-kanban"),
-      }
-    }
-    return all
-  }, [betaKanbanEnabled])
-
-  // Detect conflicts
-  const conflicts = useMemo(() => detectConflicts(customHotkeys), [customHotkeys])
-
-  // Filter shortcuts by search query
-  const filteredShortcuts = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return shortcutsByCategory
-    }
-    const query = searchQuery.toLowerCase()
-    const result: Record<ShortcutCategory, ShortcutAction[]> = {
-      general: [],
-      workspaces: [],
-      agents: [],
-    }
-    for (const category of Object.keys(shortcutsByCategory) as ShortcutCategory[]) {
-      result[category] = shortcutsByCategory[category].filter((action) =>
-        action.label.toLowerCase().includes(query),
-      )
-    }
-    return result
-  }, [shortcutsByCategory, searchQuery])
-
-  // Flat list of all action IDs for keyboard navigation
-  const allActionIds = useMemo(
-    () =>
-      (["general", "workspaces", "agents"] as ShortcutCategory[]).flatMap((cat) =>
-        filteredShortcuts[cat].map((a) => a.id),
-      ),
-    [filteredShortcuts],
-  )
-
-  const { containerRef: listRef, onKeyDown: listKeyDown } = useListKeyboardNav({
-    items: allActionIds,
-    selectedItem: selectedActionId,
-    onSelect: (id) => {
-      setSelectedActionId(id)
-      setIsRecording(false)
-    },
-  })
-
-  // Get selected action
-  const selectedAction = useMemo(
-    () => (selectedActionId ? getShortcutAction(selectedActionId) : null),
-    [selectedActionId],
-  )
-
-  // Has any custom hotkeys
-  const hasCustomHotkeys = useMemo(
-    () => Object.keys(customHotkeys.bindings).length > 0,
-    [customHotkeys],
-  )
-
-  // Start recording
-  const handleStartRecording = useCallback(() => {
-    setIsRecording(true)
-  }, [])
-
-  // Cancel recording
-  const handleCancel = useCallback(() => {
-    setIsRecording(false)
-  }, [])
-
-  // Check if a hotkey would conflict with another action
-  const checkConflict = useCallback(
-    (hotkey: string, currentActionId: ShortcutActionId): ShortcutAction | null => {
-      const normalizedNew = normalizeHotkey(hotkey)
-
-      for (const action of ALL_SHORTCUT_ACTIONS) {
-        if (action.id === currentActionId) continue
-
-        const existingHotkey = getResolvedHotkey(action.id, customHotkeys)
-        if (existingHotkey && normalizeHotkey(existingHotkey) === normalizedNew) {
-          return action
-        }
-      }
-      return null
-    },
-    [customHotkeys],
-  )
-
-  // Record a hotkey
-  const handleRecord = useCallback(
-    (hotkey: string) => {
-      if (!selectedActionId) return
-
-      // Check for conflicts
-      const conflictingAction = checkConflict(hotkey, selectedActionId)
-      if (conflictingAction) {
-        // Show conflict message and don't save
-        setConflictMessage(`"${conflictingAction.label}" already uses this shortcut`)
-        setIsRecording(false)
-
-        // Clear message after 2 seconds
-        setTimeout(() => {
-          setConflictMessage(null)
-        }, 2000)
-        return
-      }
-
-      // No conflict, save the hotkey then exit recording mode
-      setCustomHotkeys((prev) => ({
-        ...prev,
-        bindings: {
-          ...prev.bindings,
-          [selectedActionId]: hotkey,
-        },
-      }))
-      setConflictMessage(null)
-      // Delay to let atom update propagate before exiting recording mode
-      setTimeout(() => {
-        setIsRecording(false)
-      }, 50)
-    },
-    [selectedActionId, setCustomHotkeys, checkConflict],
-  )
-
-  // Reset selected hotkey to default
-  const handleReset = useCallback(() => {
-    if (!selectedActionId) return
-    setCustomHotkeys((prev) => {
-      const { [selectedActionId]: _, ...rest } = prev.bindings
-      return {
-        ...prev,
-        bindings: rest,
-      }
-    })
-  }, [selectedActionId, setCustomHotkeys])
-
-  // Reset all hotkeys to defaults
-  const handleResetAll = useCallback(() => {
-    setCustomHotkeys({ version: 1, bindings: {} })
-  }, [setCustomHotkeys])
-
-  // Count total shortcuts
-  const totalShortcuts = useMemo(() => {
-    return Object.values(filteredShortcuts).reduce((sum, arr) => sum + arr.length, 0)
-  }, [filteredShortcuts])
-
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left sidebar - shortcuts list */}
-      <ResizableSidebar
-        isOpen={true}
-        onClose={() => {}}
-        widthAtom={settingsKeyboardSidebarWidthAtom}
-        minWidth={200}
-        maxWidth={400}
-        side="left"
-        animationDuration={0}
-        initialWidth={240}
-        exitWidth={240}
-        disableClickToClose={true}
-      >
-        <div
-          className="flex flex-col h-full bg-background border-r overflow-hidden"
-          style={{ borderRightWidth: "0.5px" }}
-        >
-          {/* Search */}
-          <div className="px-2 pt-2 flex-shrink-0">
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder="Search shortcuts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-7 w-full rounded-lg text-sm bg-muted border border-input px-3 placeholder:text-muted-foreground/40 outline-none"
-            />
-          </div>
-
-          {/* Shortcuts list */}
-          <div
-            ref={listRef}
-            onKeyDown={listKeyDown}
-            tabIndex={-1}
-            className="flex-1 overflow-y-auto px-2 pt-2 pb-2 outline-none"
-          >
-            {totalShortcuts === 0 ? (
-              <div className="text-center py-8 text-sm text-muted-foreground">
-                No shortcuts found
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {(["general", "workspaces", "agents"] as ShortcutCategory[]).map((category) => {
-                  const actions = filteredShortcuts[category]
-                  if (actions.length === 0) return null
-                  return (
-                    <div key={category}>
-                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">
-                        {CATEGORY_LABELS[category]}
-                      </p>
-                      <div className="space-y-0.5">
-                        {actions.map((action) => (
-                          <ShortcutListItem
-                            key={action.id}
-                            action={action}
-                            config={customHotkeys}
-                            isSelected={selectedActionId === action.id}
-                            hasConflict={!!conflicts.get(action.id)}
-                            onClick={() => {
-                              setSelectedActionId(action.id)
-                              setIsRecording(false)
-                            }}
-                            ctrlTabTarget={ctrlTabTarget}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+    <div
+      data-settings-id={`keyboard-shortcut-${action.id}`}
+      className="rounded-lg border border-border bg-background p-3 outline-none"
+      tabIndex={-1}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">{action.label}</span>
+            {!action.editable && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                Fixed
+              </span>
             )}
           </div>
-
-          {/* Reset all button at bottom */}
-          {hasCustomHotkeys && (
-            <div className="pt-2 pb-2 px-2 flex-shrink-0">
-              <button
-                type="button"
-                onClick={handleResetAll}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <RotateCcw className="h-3 w-3" />
-                Reset all to defaults
-              </button>
-            </div>
-          )}
+          <p className="mt-0.5 text-xs text-muted-foreground">{action.description}</p>
         </div>
-      </ResizableSidebar>
+        <button
+          type="button"
+          disabled={!action.editable}
+          onClick={onStart}
+          aria-label={`Change ${action.label} shortcut`}
+          className={cn(
+            "min-w-28 rounded-md border px-3 py-2 text-center",
+            recording && "border-primary ring-2 ring-primary/20",
+            action.editable ? "hover:bg-muted" : "cursor-not-allowed opacity-70",
+          )}
+          title={action.reservedReason}
+        >
+          {recording ? (
+            <span className="text-xs text-muted-foreground">{currentDisplay || "Press keys…"}</span>
+          ) : (
+            <ShortcutKeys hotkey={hotkey} />
+          )}
+        </button>
+      </div>
+      {error && (
+        <p className="mt-2 text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+      {customized && !recording && (
+        <button
+          type="button"
+          onClick={onReset}
+          className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <RotateCcw className="h-3 w-3" /> Reset to platform default
+        </button>
+      )}
+    </div>
+  )
+}
 
-      {/* Right panel - shortcut details */}
-      <div className="flex-1 min-w-0 h-full overflow-hidden">
-        {selectedAction ? (
-          <ShortcutDetailPanel
-            action={selectedAction}
-            config={customHotkeys}
-            isRecording={isRecording}
-            onStartRecording={handleStartRecording}
-            onRecord={handleRecord}
-            onCancel={handleCancel}
-            onReset={handleReset}
-            ctrlTabTarget={ctrlTabTarget}
-            conflictMessage={conflictMessage}
-          />
-        ) : (
-          <EmptyDetailPanel />
+export function AgentsKeyboardTab() {
+  const [storedConfig, setStoredConfig] = useAtom(customHotkeysAtom)
+  const betaKanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
+  const config = useMemo(() => migrateHotkeysConfig(storedConfig), [storedConfig])
+  const [query, setQuery] = useState("")
+  const [recordingId, setRecordingId] = useState<ShortcutActionId | null>(null)
+  const [errors, setErrors] = useState<Partial<Record<ShortcutActionId, string>>>({})
+
+  useEffect(() => {
+    if (
+      storedConfig.version !== 2 ||
+      JSON.stringify(storedConfig.bindings) !== JSON.stringify(config.bindings)
+    ) {
+      setStoredConfig(config)
+    }
+  }, [config, setStoredConfig, storedConfig])
+
+  const categories = useMemo(() => {
+    const grouped = getShortcutsByCategory({ betaKanbanEnabled })
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return grouped
+    return Object.fromEntries(
+      Object.entries(grouped).map(([category, actions]) => [
+        category,
+        actions.filter((action) =>
+          `${action.label} ${action.description}`.toLowerCase().includes(normalized),
+        ),
+      ]),
+    ) as Record<ShortcutCategory, ShortcutAction[]>
+  }, [betaKanbanEnabled, query])
+
+  const saveBinding = useCallback(
+    (actionId: ShortcutActionId, hotkey: string) => {
+      const validation = validateHotkey(hotkey)
+      if (!validation.valid) {
+        setErrors((current) => ({ ...current, [actionId]: validation.reason }))
+        setRecordingId(null)
+        return
+      }
+      const candidate = {
+        version: 2 as const,
+        bindings: { ...config.bindings, [actionId]: validation.hotkey },
+      }
+      const conflict = detectConflicts(candidate).get(actionId)
+      if (conflict) {
+        const other = getShortcutAction(conflict.conflictingActionIds[0])
+        setErrors((current) => ({
+          ...current,
+          [actionId]: `${other?.label ?? "Another action"} already uses this shortcut`,
+        }))
+        setRecordingId(null)
+        return
+      }
+      setStoredConfig(candidate)
+      setErrors((current) => ({ ...current, [actionId]: undefined }))
+      setRecordingId(null)
+    },
+    [config.bindings, setStoredConfig],
+  )
+
+  const resetBinding = useCallback(
+    (actionId: ShortcutActionId) => {
+      const { [actionId]: _removed, ...bindings } = config.bindings
+      setStoredConfig({ version: 2, bindings })
+      setErrors((current) => ({ ...current, [actionId]: undefined }))
+    },
+    [config.bindings, setStoredConfig],
+  )
+
+  const hasOverrides = Object.keys(config.bindings).length > 0
+
+  return (
+    <div className="mx-auto max-w-3xl p-6" data-settings-id="settings-tab-keyboard">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Keyboard shortcuts</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Changes apply immediately. Fixed menu and hold shortcuts are shown but cannot be edited.
+          </p>
+        </div>
+        {hasOverrides && (
+          <button
+            type="button"
+            onClick={() => setStoredConfig({ version: 2, bindings: {} })}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> Reset all
+          </button>
         )}
+      </div>
+
+      <label
+        className="mt-5 block text-xs font-medium text-muted-foreground"
+        htmlFor="shortcut-search"
+      >
+        Search shortcuts
+      </label>
+      <input
+        id="shortcut-search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+        placeholder="Search actions"
+      />
+
+      <div className="mt-6 space-y-6">
+        {(["general", "workspaces", "agents"] as ShortcutCategory[]).map((category) => {
+          const actions = categories[category]
+          if (actions.length === 0) return null
+          return (
+            <section key={category} aria-labelledby={`shortcut-category-${category}`}>
+              <h3
+                id={`shortcut-category-${category}`}
+                className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+              >
+                {CATEGORY_LABELS[category]}
+              </h3>
+              <div className="space-y-2">
+                {actions.map((action) => (
+                  <ShortcutRow
+                    key={action.id}
+                    action={action}
+                    config={config}
+                    recording={recordingId === action.id}
+                    error={errors[action.id] ?? null}
+                    onStart={() => {
+                      setErrors((current) => ({ ...current, [action.id]: undefined }))
+                      setRecordingId(action.id)
+                    }}
+                    onSave={(hotkey) => saveBinding(action.id, hotkey)}
+                    onCancel={() => setRecordingId(null)}
+                    onReset={() => resetBinding(action.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )
+        })}
       </div>
     </div>
   )

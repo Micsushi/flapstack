@@ -99,8 +99,12 @@ features. Stage and feature README files are navigation routers only.
     show change-required without becoming selectable.
 - Verification: Node 22 full gate plus verified live dev smoke.
 - Remaining verification: Node 22 `npm run check` passes with 61 test files,
-  533 passing tests, 3 skipped tests, and a production build. The verified live
-  Settings smoke remains.
+  533 passing tests, 3 skipped tests, and a production build in the prior
+  checkout. Current checkout `npm run dev:verify` identifies the correct
+  worktree/profile and the production build passes, but the visual Settings
+  smoke is blocked by the locked Mac. The current full gate also stops on
+  unchanged Drizzle formatting plus three MCP migration tests owned outside
+  this feature.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F7-T1, S3-F7-T2, S3-F7-T3.
 - Blocks: S3-F8-T1 unless headless-only work is explicitly accepted;
@@ -111,7 +115,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T1 - Inventory actions and build the shortcut registry
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: One registry describes every real shortcut action, platform default,
   availability, focus policy, and runtime handler identity.
@@ -133,7 +137,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T2 - Implement binding validation and persistence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: Users can save, reset, and immediately inspect valid custom bindings
   without silent conflicts.
@@ -155,7 +159,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T3 - Route runtime hotkeys through resolved bindings
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: The runtime executes exactly the binding displayed in Settings and
   updates it without restart.
@@ -191,6 +195,11 @@ features. Stage and feature README files are navigation routers only.
   - Verified dev smoke covers edit, invoke, conflict, reset, input focus, and
     restart persistence.
 - Verification: focused suite, full check, verified dev smoke, platform matrix.
+- Remaining verification: registry/parser/runtime/editor tests, strict
+  TypeScript, scoped lint/style, strict OpenSpec, verified dev identity, and the
+  production build pass. Visual macOS smoke is blocked by the locked Mac;
+  Windows/Linux package checks remain unavailable; the repository full gate is
+  blocked by unchanged Drizzle formatting and three MCP migration tests.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F8-T2, S3-F8-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.

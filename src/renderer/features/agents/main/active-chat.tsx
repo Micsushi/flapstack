@@ -2297,7 +2297,7 @@ const ChatViewInner = memo(function ChatViewInner({
   )
 
   const handleCopyFullChat = useCallback(() => {
-    void copyChat({ chatId: parentChatId, format: "markdown" })
+    void copyChat({ chatId: parentChatId, format: "handoff" })
   }, [parentChatId])
   const projectColor = useMemo(() => {
     if (!projectId) return null

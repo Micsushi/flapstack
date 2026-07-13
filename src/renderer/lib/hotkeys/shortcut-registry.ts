@@ -1,377 +1,384 @@
 import type {
+  CustomHotkeysConfig,
   ShortcutAction,
   ShortcutActionId,
   ShortcutCategory,
-  CustomHotkeysConfig,
   ShortcutConflict,
+  ShortcutPlatform,
+  ShortcutValidationResult,
 } from "./types"
 
-/**
- * Master registry of all configurable shortcut actions
- * This is the single source of truth for default shortcuts
- */
+const platformDefaults = (
+  darwin: string | null,
+  other: string | null,
+): Record<ShortcutPlatform, string | null> => ({ darwin, win32: other, linux: other })
+
 export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
-  // ============================================
-  // GENERAL
-  // ============================================
   {
     id: "show-shortcuts",
-    label: "Show shortcuts",
+    actionId: "open-shortcuts",
+    label: "Keyboard shortcuts",
+    description: "Open Keyboard Settings",
     category: "general",
-    defaultKeys: ["?"],
+    defaults: platformDefaults("?", "?"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
   },
   {
     id: "open-settings",
+    actionId: "open-settings",
     label: "Settings",
+    description: "Open Settings",
     category: "general",
-    defaultKeys: ["cmd", ","],
+    defaults: platformDefaults("cmd+,", "ctrl+,"),
+    editable: false,
+    focusPolicy: "global",
+    dispatch: "native",
+    conflictGroup: "app",
+    reservedReason: "Managed by the application menu",
   },
   {
     id: "toggle-sidebar",
+    actionId: "toggle-sidebar",
     label: "Toggle sidebar",
+    description: "Show or hide the left sidebar",
     category: "general",
-    defaultKeys: ["cmd", "\\"],
-  },
-  {
-    id: "undo-archive",
-    label: "Undo archive",
-    category: "general",
-    defaultKeys: ["cmd", "Z"],
-  },
-
-  // ============================================
-  // CHATS
-  // ============================================
-  {
-    id: "toggle-details",
-    label: "View details",
-    category: "workspaces",
-    defaultKeys: ["cmd", "shift", "\\"],
+    defaults: platformDefaults("cmd+\\", "ctrl+\\"),
+    editable: true,
+    focusPolicy: "global",
+    dispatch: "renderer",
+    conflictGroup: "app",
   },
   {
     id: "new-workspace",
+    actionId: "create-new-agent",
     label: "New chat",
+    description: "Create a new chat",
     category: "workspaces",
-    defaultKeys: ["cmd", "N"],
-    altKeys: ["C"],
-  },
-  {
-    id: "search-workspaces",
-    label: "Search chats",
-    category: "workspaces",
-    defaultKeys: ["cmd", "K"],
-  },
-  {
-    id: "archive-workspace",
-    label: "Archive current chat",
-    category: "workspaces",
-    defaultKeys: ["cmd", "E"],
-  },
-  {
-    id: "quick-switch-workspaces",
-    label: "Quick switch chats",
-    category: "workspaces",
-    defaultKeys: ["ctrl", "Tab"],
-    isDynamic: true,
-    dynamicDescription: "Controlled by Ctrl+Tab preference",
-  },
-  {
-    id: "open-kanban",
-    label: "Open Kanban board",
-    category: "workspaces",
-    defaultKeys: ["cmd", "shift", "K"],
-  },
-
-  // ============================================
-  // AGENTS
-  // ============================================
-  {
-    id: "new-agent",
-    label: "Create new agent",
-    category: "agents",
-    defaultKeys: ["cmd", "T"],
-  },
-  {
-    id: "new-agent-split",
-    label: "New agent in split view",
-    category: "agents",
-    defaultKeys: ["cmd", "shift", "T"],
-  },
-  {
-    id: "search-chats",
-    label: "Search chats",
-    category: "agents",
-    defaultKeys: ["/"],
+    defaults: platformDefaults("cmd+n", "ctrl+n"),
+    editable: false,
+    focusPolicy: "global",
+    dispatch: "native",
+    conflictGroup: "app",
+    reservedReason: "Managed by the application menu",
   },
   {
     id: "search-in-chat",
-    label: "Search text in current chat",
+    actionId: "toggle-chat-search",
+    label: "Search current chat",
+    description: "Search the visible transcript",
     category: "agents",
-    defaultKeys: ["cmd", "F"],
+    defaults: platformDefaults("cmd+f", "ctrl+f"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
+  },
+  {
+    id: "new-agent",
+    actionId: "new-agent",
+    label: "New agent",
+    description: "Create another agent in the current chat",
+    category: "agents",
+    defaults: platformDefaults("cmd+t", "ctrl+t"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Handled by the active chat surface",
   },
   {
     id: "archive-agent",
+    actionId: "archive-agent",
     label: "Archive current agent",
+    description: "Archive the selected agent conversation",
     category: "agents",
-    defaultKeys: ["cmd", "W"],
-  },
-  {
-    id: "quick-switch-agents",
-    label: "Quick switch agents",
-    category: "agents",
-    defaultKeys: ["opt", "ctrl", "Tab"],
-    isDynamic: true,
-    dynamicDescription: "Controlled by Ctrl+Tab preference",
-  },
-  {
-    id: "prev-agent",
-    label: "Previous agent",
-    category: "agents",
-    defaultKeys: ["cmd", "["],
-  },
-  {
-    id: "next-agent",
-    label: "Next agent",
-    category: "agents",
-    defaultKeys: ["cmd", "]"],
-  },
-  {
-    id: "focus-input",
-    label: "Focus input",
-    category: "agents",
-    defaultKeys: ["Enter"],
-  },
-  {
-    id: "toggle-focus",
-    label: "Toggle focus",
-    category: "agents",
-    defaultKeys: ["cmd", "Esc"],
+    defaults: platformDefaults("cmd+w", "ctrl+w"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Handled by the active chat surface",
   },
   {
     id: "stop-generation",
+    actionId: "stop-generation",
     label: "Stop generation",
+    description: "Stop the active agent run",
     category: "agents",
-    defaultKeys: ["Esc"],
+    defaults: platformDefaults("esc", "esc"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Safety shortcut handled by the active run",
     altKeys: ["ctrl", "C"],
   },
   {
-    id: "switch-model",
-    label: "Switch model",
+    id: "toggle-details",
+    actionId: "toggle-details",
+    label: "Toggle details",
+    description: "Show or hide the details sidebar",
     category: "agents",
-    defaultKeys: ["cmd", "/"],
+    defaults: platformDefaults("cmd+shift+\\", "ctrl+shift+\\"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Handled by the details surface",
   },
   {
     id: "toggle-terminal",
+    actionId: "toggle-terminal",
     label: "Toggle terminal",
+    description: "Show or hide the terminal",
     category: "agents",
-    defaultKeys: ["cmd", "J"],
+    defaults: platformDefaults("cmd+j", "ctrl+j"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Handled by the terminal surface",
   },
   {
     id: "open-diff",
-    label: "Open diff",
+    actionId: "open-diff",
+    label: "Open changes",
+    description: "Open the current chat diff",
     category: "agents",
-    defaultKeys: ["cmd", "D"],
-  },
-  {
-    id: "create-pr",
-    label: "Create PR",
-    category: "agents",
-    defaultKeys: [],
+    defaults: platformDefaults("cmd+d", "ctrl+d"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Handled by the active chat surface",
   },
   {
     id: "file-search",
+    actionId: "file-search",
     label: "Go to file",
+    description: "Search files in the current workspace",
     category: "agents",
-    defaultKeys: ["cmd", "P"],
+    defaults: platformDefaults("cmd+p", "ctrl+p"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
   },
-  {
-    id: "voice-input",
-    label: "Voice input (hold)",
-    category: "agents",
-    defaultKeys: ["ctrl", "opt"],
-  },
-
-  // ============================================
-  // WORKSPACES (additional)
-  // ============================================
   {
     id: "open-in-editor",
-    label: "Open in editor",
+    actionId: "open-in-editor",
+    label: "Open workspace in editor",
+    description: "Open the current worktree in the preferred editor",
     category: "workspaces",
-    defaultKeys: ["cmd", "O"],
+    defaults: platformDefaults("cmd+o", "ctrl+o"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
   },
   {
     id: "open-file-in-editor",
+    actionId: "open-file-in-editor",
     label: "Open file in editor",
+    description: "Open the previewed file in the preferred editor",
     category: "agents",
-    defaultKeys: ["cmd", "shift", "O"],
+    defaults: platformDefaults("cmd+shift+o", "ctrl+shift+o"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
+  },
+  {
+    id: "open-kanban",
+    actionId: "open-kanban",
+    label: "Open Kanban board",
+    description: "Open the Kanban board when enabled",
+    category: "workspaces",
+    defaults: platformDefaults("cmd+shift+k", "ctrl+shift+k"),
+    editable: true,
+    focusPolicy: "workspace",
+    dispatch: "renderer",
+    conflictGroup: "app",
+    availability: "kanban",
+  },
+  {
+    id: "voice-input",
+    actionId: "voice-input",
+    label: "Voice input",
+    description: "Hold to dictate into the active composer",
+    category: "agents",
+    defaults: platformDefaults("ctrl+opt", "ctrl+alt"),
+    editable: false,
+    focusPolicy: "workspace",
+    dispatch: "local",
+    conflictGroup: "app",
+    reservedReason: "Hold shortcuts are configured by the voice control",
   },
 ]
 
-/**
- * Get shortcuts grouped by category
- */
-export function getShortcutsByCategory(): Record<ShortcutCategory, ShortcutAction[]> {
+export function getShortcutPlatform(
+  platform = globalThis.navigator?.platform ?? "",
+): ShortcutPlatform {
+  const value = platform.toLowerCase()
+  if (value.includes("mac")) return "darwin"
+  if (value.includes("win")) return "win32"
+  return "linux"
+}
+
+export function getShortcutsByCategory(
+  options: { betaKanbanEnabled?: boolean } = {},
+): Record<ShortcutCategory, ShortcutAction[]> {
+  const visible = ALL_SHORTCUT_ACTIONS.filter(
+    (action) => action.availability !== "kanban" || options.betaKanbanEnabled,
+  )
   return {
-    general: ALL_SHORTCUT_ACTIONS.filter((a) => a.category === "general"),
-    workspaces: ALL_SHORTCUT_ACTIONS.filter((a) => a.category === "workspaces"),
-    agents: ALL_SHORTCUT_ACTIONS.filter((a) => a.category === "agents"),
+    general: visible.filter((action) => action.category === "general"),
+    workspaces: visible.filter((action) => action.category === "workspaces"),
+    agents: visible.filter((action) => action.category === "agents"),
   }
 }
 
-/**
- * Get a shortcut action by ID
- */
 export function getShortcutAction(id: ShortcutActionId): ShortcutAction | undefined {
-  return ALL_SHORTCUT_ACTIONS.find((a) => a.id === id)
+  return ALL_SHORTCUT_ACTIONS.find((action) => action.id === id)
 }
 
-/**
- * Convert keys array to hotkey string
- * e.g., ["cmd", "shift", "N"] -> "cmd+shift+n"
- */
 export function keysToHotkeyString(keys: string[]): string {
-  return keys.map((k) => k.toLowerCase()).join("+")
+  return normalizeHotkey(keys.join("+"))
 }
 
-/**
- * Convert hotkey string to keys array
- * e.g., "cmd+shift+n" -> ["cmd", "shift", "N"]
- */
 export function hotkeyStringToKeys(hotkey: string): string[] {
-  return hotkey.split("+").map((part) => {
-    const lower = part.toLowerCase()
-    // Capitalize non-modifier keys
-    if (!["cmd", "ctrl", "opt", "alt", "shift", "meta"].includes(lower)) {
-      return part.toUpperCase()
-    }
-    return lower
-  })
+  return normalizeHotkey(hotkey)
+    .split("+")
+    .map((part) =>
+      ["cmd", "ctrl", "opt", "shift"].includes(part)
+        ? part
+        : part.length === 1
+          ? part.toUpperCase()
+          : part,
+    )
 }
 
-/**
- * Get the resolved hotkey for an action considering custom overrides
- */
+export function normalizeHotkey(hotkey: string): string {
+  const aliases: Record<string, string> = {
+    meta: "cmd",
+    command: "cmd",
+    control: "ctrl",
+    alt: "opt",
+    option: "opt",
+    escape: "esc",
+    " ": "space",
+  }
+  const parts = hotkey
+    .toLowerCase()
+    .split("+")
+    .map((part) => aliases[part.trim()] ?? part.trim())
+  const modifiers = ["cmd", "ctrl", "opt", "shift"].filter((modifier) => parts.includes(modifier))
+  const keys = parts.filter((part) => part && !["cmd", "ctrl", "opt", "shift"].includes(part))
+  return [...modifiers, ...keys].join("+")
+}
+
+const RESERVED_HOTKEYS: Record<ShortcutPlatform, Set<string>> = {
+  darwin: new Set(["cmd+q", "cmd+tab", "cmd+space", "cmd+opt+esc"]),
+  win32: new Set(["alt+f4", "ctrl+alt+delete", "cmd+l"]),
+  linux: new Set(["alt+f4", "ctrl+alt+delete"]),
+}
+
+export function validateHotkey(
+  hotkey: string,
+  platform = getShortcutPlatform(),
+): ShortcutValidationResult {
+  const normalized = normalizeHotkey(hotkey)
+  const parts = normalized.split("+").filter(Boolean)
+  const keys = parts.filter((part) => !["cmd", "ctrl", "opt", "shift"].includes(part))
+  if (keys.length !== 1) return { valid: false, reason: "Use one key with optional modifiers" }
+  if (new Set(parts).size !== parts.length) return { valid: false, reason: "Duplicate modifier" }
+  if (RESERVED_HOTKEYS[platform].has(normalized)) {
+    return { valid: false, reason: "Reserved by the operating system" }
+  }
+  return { valid: true, hotkey: normalized }
+}
+
 export function getResolvedHotkey(
   actionId: ShortcutActionId,
   config: CustomHotkeysConfig,
+  platform = getShortcutPlatform(),
 ): string | null {
-  const customHotkey = config.bindings[actionId]
-
-  // If explicitly set (including to a custom value), use it
-  if (customHotkey !== undefined) {
-    return customHotkey
-  }
-
-  // Otherwise use default
   const action = getShortcutAction(actionId)
   if (!action) return null
-
-  return keysToHotkeyString(action.defaultKeys)
+  const override = action.editable ? config.bindings[actionId] : undefined
+  if (override === null) return null
+  if (typeof override === "string") {
+    const validation = validateHotkey(override, platform)
+    if (validation.valid) return validation.hotkey
+  }
+  return action.defaults[platform]
 }
 
-/**
- * Get the resolved keys array for an action
- */
 export function getResolvedKeys(
   actionId: ShortcutActionId,
   config: CustomHotkeysConfig,
+  platform = getShortcutPlatform(),
 ): string[] | null {
-  const hotkey = getResolvedHotkey(actionId, config)
-  if (!hotkey) return null
-  return hotkeyStringToKeys(hotkey)
+  const hotkey = getResolvedHotkey(actionId, config, platform)
+  return hotkey ? hotkeyStringToKeys(hotkey) : null
 }
 
-/**
- * Check if an action has a custom (non-default) hotkey
- */
 export function isCustomHotkey(actionId: ShortcutActionId, config: CustomHotkeysConfig): boolean {
-  return config.bindings[actionId] !== undefined
+  return getShortcutAction(actionId)?.editable === true && config.bindings[actionId] !== undefined
 }
 
-/**
- * Normalize a hotkey string for comparison
- * Handles modifier order and case
- */
-export function normalizeHotkey(hotkey: string): string {
-  const parts = hotkey.toLowerCase().split("+")
-
-  // Define modifier order
-  const modifierOrder = ["cmd", "meta", "ctrl", "opt", "alt", "shift"]
-
-  const modifiers = parts.filter((p) => ["cmd", "meta", "ctrl", "opt", "alt", "shift"].includes(p))
-  const key = parts.filter((p) => !["cmd", "meta", "ctrl", "opt", "alt", "shift"].includes(p))[0]
-
-  // Sort modifiers
-  modifiers.sort((a, b) => modifierOrder.indexOf(a) - modifierOrder.indexOf(b))
-
-  // Normalize alt/opt
-  const normalizedMods = modifiers.map((m) => (m === "alt" ? "opt" : m))
-  // Normalize meta to cmd
-  const finalMods = normalizedMods.map((m) => (m === "meta" ? "cmd" : m))
-
-  return [...finalMods, key].join("+")
-}
-
-/**
- * Detect conflicts in hotkey configuration
- * Returns a map of actionId to array of conflicting actionIds
- */
-export function detectConflicts(
-  config: CustomHotkeysConfig,
-): Map<ShortcutActionId, ShortcutConflict> {
-  const conflicts = new Map<ShortcutActionId, ShortcutConflict>()
-  const hotkeyToActions = new Map<string, ShortcutActionId[]>()
-
-  // Build map of normalized hotkey -> action IDs
-  for (const action of ALL_SHORTCUT_ACTIONS) {
-    const hotkey = getResolvedHotkey(action.id, config)
-    if (!hotkey) continue
-
-    const normalized = normalizeHotkey(hotkey)
-    const existing = hotkeyToActions.get(normalized) || []
-    existing.push(action.id)
-    hotkeyToActions.set(normalized, existing)
-
-    // Also check altKeys if they exist and not customized
-    if (action.altKeys && !isCustomHotkey(action.id, config)) {
-      const altNormalized = normalizeHotkey(keysToHotkeyString(action.altKeys))
-      const altExisting = hotkeyToActions.get(altNormalized) || []
-      altExisting.push(action.id)
-      hotkeyToActions.set(altNormalized, altExisting)
-    }
-  }
-
-  // Find conflicts (hotkeys with multiple actions)
-  for (const [hotkey, actionIds] of hotkeyToActions) {
-    if (actionIds.length > 1) {
-      for (const actionId of actionIds) {
-        conflicts.set(actionId, {
-          actionId,
-          conflictingActionIds: actionIds.filter((id) => id !== actionId),
-          hotkey,
-        })
+export function migrateHotkeysConfig(value: unknown): CustomHotkeysConfig {
+  if (!value || typeof value !== "object") return { version: 2, bindings: {} }
+  const raw = value as { bindings?: unknown }
+  const bindings: Record<string, string | null> = {}
+  if (raw.bindings && typeof raw.bindings === "object") {
+    for (const action of ALL_SHORTCUT_ACTIONS) {
+      if (!action.editable) continue
+      const candidate = (raw.bindings as Record<string, unknown>)[action.id]
+      if (candidate === null) bindings[action.id] = null
+      if (typeof candidate === "string" && validateHotkey(candidate).valid) {
+        bindings[action.id] = normalizeHotkey(candidate)
       }
     }
   }
+  return { version: 2, bindings }
+}
 
+export function detectConflicts(
+  config: CustomHotkeysConfig,
+  platform = getShortcutPlatform(),
+): Map<ShortcutActionId, ShortcutConflict> {
+  const conflicts = new Map<ShortcutActionId, ShortcutConflict>()
+  const byHotkey = new Map<string, ShortcutActionId[]>()
+  for (const action of ALL_SHORTCUT_ACTIONS) {
+    const hotkey = getResolvedHotkey(action.id, config, platform)
+    if (!hotkey) continue
+    byHotkey.set(hotkey, [...(byHotkey.get(hotkey) ?? []), action.id])
+  }
+  for (const [hotkey, actionIds] of byHotkey) {
+    if (actionIds.length < 2) continue
+    for (const actionId of actionIds) {
+      conflicts.set(actionId, {
+        actionId,
+        conflictingActionIds: actionIds.filter((id) => id !== actionId),
+        hotkey,
+      })
+    }
+  }
   return conflicts
 }
 
-/**
- * Display mapping for special keys
- */
 const KEY_DISPLAY_MAP: Record<string, string> = {
   cmd: "⌘",
-  meta: "⌘",
   ctrl: "⌃",
   opt: "⌥",
-  alt: "⌥",
   shift: "⇧",
   enter: "↵",
   backspace: "⌫",
   delete: "⌦",
-  escape: "Esc",
   esc: "Esc",
   tab: "Tab",
   space: "Space",
@@ -381,36 +388,18 @@ const KEY_DISPLAY_MAP: Record<string, string> = {
   arrowright: "→",
 }
 
-/**
- * Convert a key to its display format
- */
 export function keyToDisplay(key: string): string {
-  const lower = key.toLowerCase()
-  return KEY_DISPLAY_MAP[lower] || key.toUpperCase()
+  return KEY_DISPLAY_MAP[key.toLowerCase()] ?? key.toUpperCase()
 }
 
-/**
- * Convert a hotkey string to display format
- * e.g., "cmd+shift+n" -> "⌘⇧N"
- */
 export function hotkeyToDisplay(hotkey: string): string {
-  return hotkey
-    .split("+")
-    .map((part) => keyToDisplay(part))
-    .join("")
+  return hotkeyStringToKeys(hotkey).map(keyToDisplay).join("")
 }
 
-/**
- * Convert keys array to display format
- * e.g., ["cmd", "shift", "N"] -> "⌘⇧N"
- */
 export function keysToDisplay(keys: string[]): string {
-  return keys.map((k) => keyToDisplay(k)).join("")
+  return keys.map(keyToDisplay).join("")
 }
 
-/**
- * Category labels for UI
- */
 export const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   general: "General",
   workspaces: "Chats",

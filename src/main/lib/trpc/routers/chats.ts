@@ -38,6 +38,7 @@ import { publicProcedure, router } from "../index"
 import { ensureTaskPrimaryWorktree } from "./tasks"
 import { deleteVoiceHistoryForChat } from "../../speech/history"
 import { getNextChatForkName } from "../../chat-fork-name"
+import { formatChatHandoff } from "../../chat-handoff"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -2048,7 +2049,7 @@ export const chatsRouter = router({
       z.object({
         chatId: z.string(),
         subChatId: z.string().optional(), // If provided, export only this sub-chat
-        format: z.enum(["json", "markdown", "text"]).default("markdown"),
+        format: z.enum(["json", "markdown", "text", "handoff"]).default("markdown"),
       }),
     )
     .query(async ({ input }) => {
@@ -2096,9 +2097,11 @@ export const chatsRouter = router({
       const allMessages: Array<{
         subChatId: string
         subChatName: string | null
+        createdAt?: Date
         messages: Array<{
           id: string
           role: string
+          createdAt?: Date | string
           parts: Array<{ type: string; text?: string; [key: string]: any }>
           metadata?: any
         }>
@@ -2110,6 +2113,7 @@ export const chatsRouter = router({
           allMessages.push({
             subChatId: subChat.id,
             subChatName: subChat.name,
+            createdAt: subChat.createdAt ?? undefined,
             messages,
           })
         } catch {
@@ -2136,6 +2140,23 @@ export const chatsRouter = router({
           ? `${chat.name || "chat"}-${chatSubChats[0].name}`
           : chat.name || "chat"
       const safeFilename = sanitizeFilename(exportName)
+
+      if (input.format === "handoff") {
+        return {
+          format: "handoff" as const,
+          content: formatChatHandoff({
+            chat: {
+              id: chat.id,
+              name: chat.name,
+              branch: chat.branch,
+              createdAt: chat.createdAt ?? undefined,
+            },
+            project,
+            conversations: allMessages,
+          }),
+          filename: `${safeFilename}-${chat.id.slice(0, 8)}-handoff.md`,
+        }
+      }
 
       if (input.format === "json") {
         return {

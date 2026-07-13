@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, Mic, Search, ShieldCheck, X } from "lucide-react"
+import { ChevronLeft, Keyboard, Mic, Search, ShieldCheck, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { EyeOpenFilledIcon, SlidersFilledIcon } from "../../icons"
 import {
@@ -21,78 +21,27 @@ import {
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
 import { searchSettings, type SettingsSearchEntry } from "./settings-search"
+import { getVisibleSettingsTabs } from "./settings-visibility"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
 
-// General settings tabs
-const MAIN_TABS = [
-  {
-    id: "preferences" as SettingsTab,
-    label: "Preferences",
-    icon: SlidersFilledIcon,
-  },
-  {
-    id: "permissions" as SettingsTab,
-    label: "Permissions",
-    icon: ShieldCheck,
-  },
-  {
-    id: "appearance" as SettingsTab,
-    label: "Appearance",
-    icon: EyeOpenFilledIcon,
-  },
-]
-
-// Advanced tabs (base - without Debug)
-const ADVANCED_TABS_BASE = [
-  {
-    id: "projects" as SettingsTab,
-    label: "Projects",
-    icon: FolderFilledIcon,
-  },
-  {
-    id: "models" as SettingsTab,
-    label: "Models",
-    icon: BrainFilledIcon,
-  },
-  {
-    id: "api-providers" as SettingsTab,
-    label: "API Providers",
-    icon: BrainFilledIcon,
-  },
-  {
-    id: "voice" as SettingsTab,
-    label: "Voice",
-    icon: Mic,
-  },
-  {
-    id: "skills" as SettingsTab,
-    label: "Skills",
-    icon: SkillIconFilled,
-  },
-  {
-    id: "mcp" as SettingsTab,
-    label: "MCP Servers",
-    icon: OriginalMCPIcon,
-  },
-  {
-    id: "plugins" as SettingsTab,
-    label: "Plugins",
-    icon: PluginFilledIcon,
-  },
-  {
-    id: "usage" as SettingsTab,
-    label: "Usage",
-    icon: SlidersFilledIcon,
-  },
-]
-
-// Debug tab definition
-const DEBUG_TAB = {
-  id: "debug" as SettingsTab,
-  label: "Debug",
-  icon: BugFilledIcon,
+const SETTINGS_TAB_ICONS: Partial<
+  Record<SettingsTab, React.ComponentType<{ className?: string }>>
+> = {
+  preferences: SlidersFilledIcon,
+  permissions: ShieldCheck,
+  appearance: EyeOpenFilledIcon,
+  projects: FolderFilledIcon,
+  models: BrainFilledIcon,
+  "api-providers": BrainFilledIcon,
+  voice: Mic,
+  keyboard: Keyboard,
+  skills: SkillIconFilled,
+  mcp: OriginalMCPIcon,
+  plugins: PluginFilledIcon,
+  usage: SlidersFilledIcon,
+  debug: BugFilledIcon,
 }
 
 interface TabButtonProps {
@@ -153,10 +102,22 @@ export function SettingsSidebar() {
   // Show debug tab if in development OR if devtools are unlocked
   const showDebugTab = isDevelopment || devToolsUnlocked
 
-  const mainTabs = useMemo(() => {
-    if (showDebugTab) return [...MAIN_TABS, DEBUG_TAB]
-    return MAIN_TABS
-  }, [showDebugTab])
+  const mainTabs = useMemo(
+    () =>
+      getVisibleSettingsTabs("main", { showDevelopment: showDebugTab }).map((tab) => ({
+        ...tab,
+        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+      })),
+    [showDebugTab],
+  )
+  const advancedTabs = useMemo(
+    () =>
+      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab }).map((tab) => ({
+        ...tab,
+        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+      })),
+    [showDebugTab],
+  )
 
   const searchResults = useMemo(
     () => searchSettings(searchQuery, { showDevelopment: showDebugTab }),
@@ -315,7 +276,7 @@ export function SettingsSidebar() {
 
             {/* Advanced Tabs */}
             <div className="space-y-1">
-              {ADVANCED_TABS_BASE.map((tab) => (
+              {advancedTabs.map((tab) => (
                 <TabButton
                   key={tab.id}
                   tab={tab}

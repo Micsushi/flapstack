@@ -50,7 +50,7 @@ export function formatHistoryForContext(
   return result
 }
 
-export type ExportFormat = "markdown" | "json" | "text"
+export type ExportFormat = "markdown" | "json" | "text" | "handoff"
 
 interface ExportOptions {
   chatId: string
@@ -111,6 +111,39 @@ function formatMessages(
   }
 }
 
+function formatRemoteHandoff(chat: any): { content: string; filename: string } {
+  const lines = [
+    "# Flapstack Chat Handoff",
+    "",
+    `- Chat: ${chat.name || "Untitled Chat"}`,
+    `- Chat ID: ${chat.id}`,
+    `- Exported: ${new Date().toISOString()}`,
+    "",
+  ]
+  for (const [conversationIndex, subChat] of (chat.subChats || []).entries()) {
+    for (const message of subChat.messages || []) {
+      const role = message.role === "user" ? "User" : "Assistant"
+      const label =
+        conversationIndex === 0
+          ? subChat.name || "Visible conversation"
+          : `Legacy recovery: ${subChat.name || subChat.id}`
+      lines.push(`## ${role} · ${label}`, "")
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : (message.content || [])
+              .filter((part: any) => part.type === "text")
+              .map((part: any) => part.text)
+              .join("\n")
+      lines.push(content || "_(No text content)_", "")
+    }
+  }
+  const safeName = String(chat.name || "remote-chat")
+    .replace(/[^a-z0-9]/gi, "-")
+    .toLowerCase()
+  return { content: lines.join("\n").trimEnd() + "\n", filename: `${safeName}-handoff.md` }
+}
+
 /**
  * Export a chat or sub-chat to a file.
  * Shows download dialog to save the exported content.
@@ -127,15 +160,17 @@ export async function exportChat({
     if (isRemote) {
       // Remote chat export - fetch from remote API and format locally
       const chat = await remoteApi.getAgentChat(chatId)
-      const subChat = subChatId ? chat.subChats.find((sc) => sc.id === subChatId) : chat.subChats[0]
-
-      if (!subChat) {
-        throw new Error("No chat data found")
+      if (format === "handoff" && !subChatId) {
+        exportData = formatRemoteHandoff(chat)
+      } else {
+        const subChat = subChatId
+          ? chat.subChats.find((sc) => sc.id === subChatId)
+          : chat.subChats[0]
+        if (!subChat) throw new Error("No chat data found")
+        const messages = (subChat.messages || []) as Message[]
+        const chatName = subChat.name || chat.name || "remote-chat"
+        exportData = formatMessages(messages, format, chatName)
       }
-
-      const messages = (subChat.messages || []) as Message[]
-      const chatName = subChat.name || chat.name || "remote-chat"
-      exportData = formatMessages(messages, format, chatName)
     } else {
       // Local chat export - use existing tRPC endpoint
       exportData = await trpcClient.chats.exportChat.query({
@@ -181,15 +216,17 @@ export async function copyChat({
     if (isRemote) {
       // Remote chat export - fetch from remote API and format locally
       const chat = await remoteApi.getAgentChat(chatId)
-      const subChat = subChatId ? chat.subChats.find((sc) => sc.id === subChatId) : chat.subChats[0]
-
-      if (!subChat) {
-        throw new Error("No chat data found")
+      if (format === "handoff" && !subChatId) {
+        exportData = formatRemoteHandoff(chat)
+      } else {
+        const subChat = subChatId
+          ? chat.subChats.find((sc) => sc.id === subChatId)
+          : chat.subChats[0]
+        if (!subChat) throw new Error("No chat data found")
+        const messages = (subChat.messages || []) as Message[]
+        const chatName = subChat.name || chat.name || "remote-chat"
+        exportData = formatMessages(messages, format, chatName)
       }
-
-      const messages = (subChat.messages || []) as Message[]
-      const chatName = subChat.name || chat.name || "remote-chat"
-      exportData = formatMessages(messages, format, chatName)
     } else {
       // Local chat export - use existing tRPC endpoint
       exportData = await trpcClient.chats.exportChat.query({
@@ -210,10 +247,10 @@ export async function copyChat({
       }
     }
 
-    toast.success("Copied to clipboard")
+    toast.success(format === "handoff" ? "Full chat history copied" : "Copied to clipboard")
   } catch (error) {
     console.error("[copyChat] Error:", error)
-    toast.error("Copy failed", {
+    toast.error(format === "handoff" ? "Could not copy full chat history" : "Copy failed", {
       description: error instanceof Error ? error.message : "Unable to copy chat",
     })
   }
