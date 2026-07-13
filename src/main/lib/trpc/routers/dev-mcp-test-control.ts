@@ -12,6 +12,7 @@ import {
   waitForRun,
 } from "../../mcp-test-control/service"
 import { publicProcedure, router } from "../index"
+import { recordDevAgentInputRendererState } from "../../mcp-test-control/renderer-state"
 
 const repoPathSchema = z.string().optional()
 
@@ -33,6 +34,21 @@ export const devMcpTestControlRouter = router({
     .query(({ input }) => getHarnessStatusForRepo(input)),
 
   listTestTargets: publicProcedure.query(() => listTestTargets()),
+
+  reportAgentInputRendererState: publicProcedure
+    .input(
+      z.object({
+        parentChatId: z.string(),
+        subChatId: z.string(),
+        pendingRequestIds: z.array(z.string()).max(32),
+        hydratedRequestIds: z.array(z.string()).max(32),
+        expiredRequestIds: z.array(z.string()).max(32),
+        dialogOpen: z.boolean(),
+        hydrationError: z.string().max(2_000).nullable(),
+        observedAt: z.number().int().nonnegative(),
+      }),
+    )
+    .mutation(({ input }) => recordDevAgentInputRendererState(input)),
 
   setChatRunConfig: publicProcedure
     .input(

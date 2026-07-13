@@ -5,6 +5,11 @@ import {
   PRODUCT_MCP_INVALIDATION_CHANNEL,
   type ProductMcpRendererInvalidation,
 } from "../shared/product-mcp-invalidation"
+import { DEV_AGENT_INPUT_CHANNEL, type DevAgentInputPayload } from "../shared/dev-agent-input"
+import {
+  DEV_TEST_CONTROL_VIEW_CHANNEL,
+  type DevTestControlViewPayload,
+} from "../shared/dev-test-control"
 
 // Only initialize Sentry in production to avoid IPC errors in dev mode
 if (process.env.NODE_ENV === "production") {
@@ -140,15 +145,15 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.on("shortcut:open-settings", handler)
     return () => ipcRenderer.removeListener("shortcut:open-settings", handler)
   },
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
-  ) => {
-    const handler = (
-      _event: unknown,
-      payload: { action: "created" | "archived"; chatId: string },
-    ) => callback(payload)
-    ipcRenderer.on("dev-mcp:chats-changed", handler)
-    return () => ipcRenderer.removeListener("dev-mcp:chats-changed", handler)
+  onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => {
+    const handler = (_event: unknown, payload: DevTestControlViewPayload) => callback(payload)
+    ipcRenderer.on(DEV_TEST_CONTROL_VIEW_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_TEST_CONTROL_VIEW_CHANNEL, handler)
+  },
+  onDevMcpAgentInput: (callback: (payload: DevAgentInputPayload) => void) => {
+    const handler = (_event: unknown, payload: DevAgentInputPayload) => callback(payload)
+    ipcRenderer.on(DEV_AGENT_INPUT_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_AGENT_INPUT_CHANNEL, handler)
   },
   onProductMcpInvalidation: (callback: (payload: ProductMcpRendererInvalidation) => void) => {
     const handler = (_event: unknown, raw: unknown) => {
@@ -328,9 +333,8 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
-  ) => () => void
+  onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => () => void
+  onDevMcpAgentInput: (callback: (payload: DevAgentInputPayload) => void) => () => void
   onProductMcpInvalidation: (
     callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void

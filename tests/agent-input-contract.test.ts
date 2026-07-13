@@ -48,6 +48,15 @@ describe("agent input contract", () => {
     ).toThrow()
   })
 
+  it("rejects a question with no possible answer", () => {
+    expect(() =>
+      agentInputRequestSchema.parse({
+        ...validRequest,
+        questions: [{ ...validRequest.questions[0], options: [], allowCustom: false }],
+      }),
+    ).toThrow(/requires an option or custom-answer input/i)
+  })
+
   it("declares one honest capability per current harness family", () => {
     expect(listAgentInputCapabilities().map(({ harness }) => harness)).toEqual([
       "claude-code",

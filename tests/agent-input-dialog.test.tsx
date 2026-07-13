@@ -15,13 +15,15 @@ const baseRequest = {
   toolUseId: "request-1",
   questions: [
     {
+      id: "question-1",
       question: "Choose one",
       header: "Single choice",
       options: [
-        { label: "Alpha", description: "First" },
-        { label: "Beta", description: "Second" },
+        { id: "alpha", label: "Alpha", description: "First" },
+        { id: "beta", label: "Beta", description: "Second" },
       ],
       multiSelect: false,
+      allowCustom: true,
     },
   ],
 }
@@ -68,7 +70,7 @@ describe("AgentInputDialog", () => {
       (button) => button.textContent === "Submit",
     )!
     await act(async () => submit.click())
-    expect(callbacks.onAnswer).toHaveBeenCalledWith({ "Choose one": "Other: Gamma" })
+    expect(callbacks.onAnswer).toHaveBeenCalledWith({ "question-1": ["Other: Gamma"] })
   })
 
   it("uses checkbox semantics for multi-select and exposes answer-in-chat", async () => {
@@ -98,5 +100,64 @@ describe("AgentInputDialog", () => {
   it("does not mount a dialog for a background chat", () => {
     renderDialog({ open: false })
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it("focuses custom input when a question has no options", async () => {
+    renderDialog({
+      request: {
+        ...baseRequest,
+        questions: [{ ...baseRequest.questions[0], options: [], allowCustom: true }],
+      },
+    })
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+    expect(document.activeElement).toBe(document.body.querySelector("textarea"))
+  })
+
+  it("keeps duplicate visible question text separate by stable question ID", async () => {
+    const callbacks = renderDialog({
+      request: {
+        ...baseRequest,
+        questions: [baseRequest.questions[0], { ...baseRequest.questions[0], id: "question-2" }],
+      },
+    })
+    const firstRadio = document.body.querySelector('input[type="radio"]') as HTMLInputElement
+    await act(async () => firstRadio.click())
+    const next = [...document.body.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("Next"),
+    )!
+    await act(async () => next.click())
+    const secondRadio = document.body.querySelector('input[type="radio"]') as HTMLInputElement
+    await act(async () => secondRadio.click())
+    const submit = [...document.body.querySelectorAll("button")].find(
+      (button) => button.textContent === "Submit",
+    )!
+    await act(async () => submit.click())
+
+    expect(callbacks.onAnswer).toHaveBeenCalledWith({
+      "question-1": ["Alpha"],
+      "question-2": ["Alpha"],
+    })
+  })
+
+  it("keeps duplicate option labels separate by stable option ID", async () => {
+    renderDialog({
+      request: {
+        ...baseRequest,
+        questions: [
+          {
+            ...baseRequest.questions[0],
+            options: [
+              { id: "first", label: "Same", description: "First meaning" },
+              { id: "second", label: "Same", description: "Second meaning" },
+            ],
+          },
+        ],
+      },
+    })
+    const radios = [...document.body.querySelectorAll('input[type="radio"]')] as HTMLInputElement[]
+    await act(async () => radios[0]!.click())
+    expect(radios.map((radio) => radio.checked)).toEqual([true, false])
   })
 })

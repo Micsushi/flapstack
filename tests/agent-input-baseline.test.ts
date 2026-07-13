@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   formatClaudeInputAnswers,
@@ -6,6 +7,15 @@ import {
 import { agentInputRequestSchema } from "../src/shared/agent-input"
 
 describe("Claude structured-input migration baseline", () => {
+  it("keeps lifecycle-owned requests out of legacy stream cleanup", () => {
+    const activeChatSource = readFileSync(
+      "src/renderer/features/agents/main/active-chat.tsx",
+      "utf8",
+    )
+
+    expect(activeChatSource.match(/if \(pendingQuestions\?\.request\) return/g)).toHaveLength(2)
+  })
+
   it("preserves single, multi, custom, headers, descriptions, and stable IDs", () => {
     const questions = normalizeClaudeInputQuestions([
       {

@@ -98,8 +98,26 @@ the release ledger covers 323 scenarios and 17 feature exits.
 - Complete every prerequisite feature exit, then rerun T2 and T3 on one frozen
   SHA before starting independent T4 review rounds.
 
+## Agent UX closeout lane
+
+The agent UX lane closed provider-neutral transport/UI defects and expanded the
+authenticated dev-test surface. MCP proved exact Dev identity, clean-profile
+fixture setup, canonical navigation, native and continuation question ownership,
+terminal answer cleanup, explicit expired-continuation state, approval
+separation, and reversible cleanup. Real UI proof was limited to modal
+accessibility and keyboard focus under the shared lease.
+
+Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
+869 tests passed and 3 skipped, and the production build. The unsigned macOS
+arm64 Preview package built; binary inspection and Claude, Codex, Whisper, and
+Parakeet smoke passed. No signed or packaged functional acceptance is claimed.
+
+This does not complete Q12/Q13 or promote credentialed provider, Usage, Voice,
+reasoning, packaged functional, Windows, or Linux rows. The final lane commit is
+reported by its delegated handoff; no push is performed.
+
 ## Cleanup contract
 
-The lane removes its `cf53` development profile, Preview test profile, package
-output, native staging output, processes, and the stale global `flapstack_dev`
-test registration. It does not remove user credentials or production data.
+The lane removes its isolated `acbf` development profile, generated Preview
+output, native staging output, and processes. It does not remove user
+credentials or production data.

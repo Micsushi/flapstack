@@ -158,6 +158,7 @@ import { usePastedTextFiles, type PastedTextFile } from "../hooks/use-pasted-tex
 import { useTextContextSelection } from "../hooks/use-text-context-selection"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { ACPChatTransport } from "../lib/acp-chat-transport"
+import { handleAgentInputChunk, toPendingAgentInput } from "../lib/agent-input-transport"
 import { CursorChatTransport } from "../lib/cursor-chat-transport"
 import { copyChat, formatHistoryForContext } from "../lib/export-chat"
 import { clearSubChatDraft, getSubChatDraftFull } from "../lib/drafts"
@@ -2534,17 +2535,73 @@ const ChatViewInner = memo(function ChatViewInner({
   )
 
   // Pending user questions from AskUserQuestion tool
-  const [pendingQuestionsMap, setPendingQuestionsMap] = useAtom(pendingUserQuestionsAtom)
+  const [pendingQuestionsMap, setPendingQuestionsMap] = useAtom(pendingUserQuestionsAtom, {
+    store: appStore,
+  })
   // Get pending questions for this specific subChat
   const pendingQuestions = pendingQuestionsMap.get(subChatId) ?? null
 
   // Expired user questions (timed out but still answerable as normal messages)
-  const [expiredQuestionsMap, setExpiredQuestionsMap] = useAtom(expiredUserQuestionsAtom)
+  const [expiredQuestionsMap, setExpiredQuestionsMap] = useAtom(expiredUserQuestionsAtom, {
+    store: appStore,
+  })
   const expiredQuestions = expiredQuestionsMap.get(subChatId) ?? null
+  const [agentInputHydrationError, setAgentInputHydrationError] = useState<string | null>(null)
+  const [hydratedAgentInputRequestIds, setHydratedAgentInputRequestIds] = useState<string[]>([])
+
+  useEffect(() => {
+    let disposed = false
+    const hydrate = () => {
+      void trpcClient.agentInput.list
+        .query({ chatId: subChatId })
+        .then((requests) => {
+          if (disposed) return
+          setAgentInputHydrationError(null)
+          setHydratedAgentInputRequestIds(requests.map((request) => request.requestId))
+          for (const request of requests) {
+            const nextPending = new Map(appStore.get(pendingUserQuestionsAtom))
+            nextPending.set(
+              subChatId,
+              toPendingAgentInput(request, { chatId: parentChatId, subChatId }),
+            )
+            appStore.set(pendingUserQuestionsAtom, nextPending)
+
+            const expired = appStore.get(expiredUserQuestionsAtom)
+            if (expired.has(subChatId)) {
+              const nextExpired = new Map(expired)
+              nextExpired.delete(subChatId)
+              appStore.set(expiredUserQuestionsAtom, nextExpired)
+            }
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            setAgentInputHydrationError(error instanceof Error ? error.message : String(error))
+          }
+        })
+    }
+    hydrate()
+    const interval = import.meta.env.DEV ? window.setInterval(hydrate, 500) : null
+    return () => {
+      disposed = true
+      if (interval !== null) window.clearInterval(interval)
+    }
+  }, [parentChatId, subChatId])
+
+  useEffect(() => {
+    if (!window.desktopApi?.onDevMcpAgentInput) return
+    return window.desktopApi.onDevMcpAgentInput((payload) => {
+      handleAgentInputChunk(payload, { chatId: parentChatId, subChatId })
+    })
+  }, [parentChatId, subChatId])
 
   // Unified display questions: prefer pending (live), fall back to expired
   const displayQuestions = pendingQuestions ?? expiredQuestions
   const isQuestionExpired = !pendingQuestions && !!expiredQuestions
+  const isQuestionContinuation =
+    isQuestionExpired ||
+    displayQuestions?.request?.capability.mode === "continuation" ||
+    displayQuestions?.request?.capability.mode === "unsupported"
   const [questionDialogOpen, setQuestionDialogOpen] = useState(false)
   const autoOpenedQuestionIdRef = useRef<string | null>(null)
 
@@ -2557,6 +2614,32 @@ const ChatViewInner = memo(function ChatViewInner({
     autoOpenedQuestionIdRef.current = displayQuestions.toolUseId
     setQuestionDialogOpen(true)
   }, [displayQuestions, isActive])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !trpcClient.devMcpTestControl) return
+    void trpcClient.devMcpTestControl.reportAgentInputRendererState.mutate({
+      parentChatId,
+      subChatId,
+      pendingRequestIds: [...appStore.get(pendingUserQuestionsAtom).values()].map(
+        (request) => request.toolUseId,
+      ),
+      hydratedRequestIds: hydratedAgentInputRequestIds,
+      expiredRequestIds: [...appStore.get(expiredUserQuestionsAtom).values()].map(
+        (request) => request.toolUseId,
+      ),
+      dialogOpen: questionDialogOpen,
+      hydrationError: agentInputHydrationError,
+      observedAt: Date.now(),
+    })
+  }, [
+    agentInputHydrationError,
+    hydratedAgentInputRequestIds,
+    expiredQuestionsMap,
+    parentChatId,
+    pendingQuestionsMap,
+    questionDialogOpen,
+    subChatId,
+  ])
 
   useEffect(() => {
     if (!pendingQuestions) return
@@ -2671,6 +2754,10 @@ const ChatViewInner = memo(function ChatViewInner({
     const wasStreaming = prevIsStreamingRef.current
     prevIsStreamingRef.current = isStreaming
 
+    // Provider-neutral requests are cleared only by lifecycle status events.
+    // The legacy stream transition heuristic predates the shared owner.
+    if (pendingQuestions?.request) return
+
     // Detect streaming stop transition
     if (wasStreaming && !isStreaming) {
       // Mark that we recently stopped streaming
@@ -2706,6 +2793,10 @@ const ChatViewInner = memo(function ChatViewInner({
   // Sync pending questions with messages state
   // This handles: 1) restoring on chat switch, 2) clearing when question is answered/timed out
   useEffect(() => {
+    // Provider-neutral requests are authoritative even when a continuation
+    // harness has no active paused stream. Status events own their cleanup.
+    if (pendingQuestions?.request) return
+
     // Check if there's a pending AskUserQuestion in the last assistant message
     const pendingQuestionPart = lastAssistantMessage?.parts?.find(
       (part: any) =>
@@ -2791,11 +2882,11 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Shared helpers for question answer handlers
   const formatAnswersAsText = useCallback(
-    (answers: Record<string, string>): string =>
-      Object.entries(answers)
-        .map(([question, answer]) => `${question}: ${answer}`)
-        .join("\n"),
-    [],
+    (answers: Record<string, string[]>): string =>
+      displayQuestions?.questions
+        .map((question) => `${question.question}: ${(answers[question.id] ?? []).join(", ")}`)
+        .join("\n") ?? "",
+    [displayQuestions],
   )
 
   const clearInputAndDraft = useCallback(() => {
@@ -2815,26 +2906,47 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Handle answering questions
   const handleQuestionsAnswer = useCallback(
-    async (answers: Record<string, string>) => {
+    async (answers: Record<string, string[]>) => {
       if (!displayQuestions) return
 
-      if (isQuestionExpired) {
-        // Question timed out - send answers as a normal user message
-        clearPendingQuestionCallback()
-        await sendUserMessage(formatAnswersAsText(answers))
-      } else {
-        // Question is still live - use tool approval path
-        await trpcClient.claude.respondToolApproval.mutate({
-          toolUseId: displayQuestions.toolUseId,
-          approved: true,
-          updatedInput: { questions: displayQuestions.questions, answers },
+      try {
+        if (isQuestionContinuation) {
+          const questions = displayQuestions.questions
+            .map((question, index) => `${index + 1}. ${question.question}`)
+            .join("\n")
+          await sendUserMessage(
+            `${questions}\n\nAnswer (normal continuation):\n${formatAnswersAsText(answers)}`,
+          )
+          await trpcClient.agentInput.respond
+            .mutate({
+              requestId: displayQuestions.toolUseId,
+              mode: "chat",
+              answers,
+              submittedAt: Date.now(),
+            })
+            .catch(() => ({ ok: false }))
+          clearPendingQuestionCallback()
+          return
+        }
+
+        const result = await trpcClient.agentInput.respond.mutate({
+          requestId: displayQuestions.toolUseId,
+          mode: "structured",
+          answers,
+          submittedAt: Date.now(),
         })
+        if (!result.ok) throw new Error("The question request is no longer waiting.")
         clearPendingQuestionCallback()
+      } catch (error) {
+        toast.error("Could not submit agent answers", {
+          description: error instanceof Error ? error.message : String(error),
+        })
+        throw error
       }
     },
     [
       displayQuestions,
-      isQuestionExpired,
+      isQuestionContinuation,
       clearPendingQuestionCallback,
       sendUserMessage,
       formatAnswersAsText,
@@ -2845,29 +2957,30 @@ const ChatViewInner = memo(function ChatViewInner({
   const handleQuestionsSkip = useCallback(async () => {
     if (!displayQuestions) return
 
-    if (isQuestionExpired) {
-      // Expired question - just clear the UI, no backend call needed
+    if (isQuestionContinuation) {
+      await trpcClient.agentInput.skip
+        .mutate({
+          requestId: displayQuestions.toolUseId,
+          message: QUESTIONS_SKIPPED_MESSAGE,
+        })
+        .catch(() => ({ ok: false }))
       clearPendingQuestionCallback()
       return
     }
 
-    const toolUseId = displayQuestions.toolUseId
-
-    // Clear UI immediately - don't wait for backend
-    // This ensures dialog closes even if stream was already aborted
-    clearPendingQuestionCallback()
-
-    // Try to notify backend (may fail if already aborted - that's ok)
     try {
-      await trpcClient.claude.respondToolApproval.mutate({
-        toolUseId,
-        approved: false,
+      const result = await trpcClient.agentInput.skip.mutate({
+        requestId: displayQuestions.toolUseId,
         message: QUESTIONS_SKIPPED_MESSAGE,
       })
-    } catch {
-      // Stream likely already aborted - ignore
+      if (!result.ok) throw new Error("The question request is no longer waiting.")
+      clearPendingQuestionCallback()
+    } catch (error) {
+      toast.error("Could not skip agent questions", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     }
-  }, [displayQuestions, isQuestionExpired, clearPendingQuestionCallback])
+  }, [displayQuestions, isQuestionContinuation, clearPendingQuestionCallback])
 
   // Ref to prevent double submit of question answer
   const isSubmittingQuestionAnswerRef = useRef(false)
@@ -2888,38 +3001,44 @@ const ChatViewInner = memo(function ChatViewInner({
       }
 
       const formattedAnswers = Object.fromEntries(
-        displayQuestions.questions.map((question) => [question.question, customText]),
+        displayQuestions.questions.map((question) => [question.id, [customText]]),
       )
 
-      if (isQuestionExpired) {
-        // Expired/continuation: send a normal linked user turn and disclose it
-        // in the visible text instead of claiming same-run continuation.
+      if (isQuestionContinuation) {
+        await sendUserMessage(
+          `${displayQuestions.questions.map((question, index) => `${index + 1}. ${question.question}`).join("\n")}\n\nAnswer (normal continuation):\n${customText}`,
+        )
+        await trpcClient.agentInput.respond
+          .mutate({
+            requestId: displayQuestions.toolUseId,
+            mode: "chat",
+            answers: formattedAnswers,
+            submittedAt: Date.now(),
+          })
+          .catch(() => ({ ok: false }))
         clearPendingQuestionCallback()
         clearInputAndDraft()
-        await sendUserMessage(
-          `${displayQuestions.questions.map((question, index) => `${index + 1}. ${question.question}`).join("\n")}\n\nAnswer (continued after structured request expired):\n${customText}`,
-        )
       } else {
-        // Native request is still live: return the free-text response to the
-        // same paused run. Do not abort it or create a second user message.
-        await trpcClient.claude.respondToolApproval.mutate({
-          toolUseId: displayQuestions.toolUseId,
-          approved: true,
-          updatedInput: {
-            questions: displayQuestions.questions,
-            answers: formattedAnswers,
-            responseMode: "chat",
-          },
+        const result = await trpcClient.agentInput.respond.mutate({
+          requestId: displayQuestions.toolUseId,
+          mode: "chat",
+          answers: formattedAnswers,
+          submittedAt: Date.now(),
         })
+        if (!result.ok) throw new Error("The question request is no longer waiting.")
         clearPendingQuestionCallback()
         clearInputAndDraft()
       }
+    } catch (error) {
+      toast.error("Could not submit agent answer", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       isSubmittingQuestionAnswerRef.current = false
     }
   }, [
     displayQuestions,
-    isQuestionExpired,
+    isQuestionContinuation,
     clearPendingQuestionCallback,
     clearInputAndDraft,
     sendUserMessage,
@@ -4627,9 +4746,10 @@ const ChatViewInner = memo(function ChatViewInner({
                         {index + 1}. {question.question}
                       </div>
                     ))}
-                    {isQuestionExpired && (
+                    {isQuestionContinuation && (
                       <div className="mt-1 text-amber-600 dark:text-amber-400">
-                        Native wait expired. Your reply will continue as a normal chat turn.
+                        This harness cannot resume a paused structured request. Your reply will
+                        continue as a normal chat turn.
                       </div>
                     )}
                   </div>

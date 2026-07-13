@@ -39,13 +39,16 @@ export class AgentInputLifecycleService {
       this.pending.set(request.requestId, entry)
       this.emit(request, "pending")
 
-      if (options.timeoutMs && options.timeoutMs > 0) {
+      const timeoutMs =
+        options.timeoutMs ??
+        (request.expiresAt !== undefined ? Math.max(0, request.expiresAt - Date.now()) : undefined)
+      if (timeoutMs !== undefined) {
         entry.timeout = setTimeout(() => {
           this.finish(request.requestId, {
             status: "expired",
             message: "Structured input request expired.",
           })
-        }, options.timeoutMs)
+        }, timeoutMs)
         entry.timeout.unref?.()
       }
 
@@ -73,8 +76,18 @@ export class AgentInputLifecycleService {
       if (answers.length === 0) throw new Error(`Question ${questionId} has no answer.`)
     }
     for (const question of entry.request.questions) {
-      if (!response.answers[question.id]?.length) {
+      const answers = response.answers[question.id] ?? []
+      if (!answers.length) {
         throw new Error(`Question ${question.id} requires an answer.`)
+      }
+      if (!question.multiSelect && answers.length !== 1) {
+        throw new Error(`Question ${question.id} accepts exactly one answer.`)
+      }
+      if (!question.allowCustom) {
+        const optionLabels = new Set(question.options.map((option) => option.label))
+        if (answers.some((answer) => !optionLabels.has(answer))) {
+          throw new Error(`Question ${question.id} does not accept a custom answer.`)
+        }
       }
     }
 

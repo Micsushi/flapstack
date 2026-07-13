@@ -78,4 +78,44 @@ describe("agent input lifecycle", () => {
     expect(service.list()).toHaveLength(0)
     vi.useRealTimers()
   })
+
+  it("uses request expiry and enforces single-select/custom-answer rules", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(100)
+    const service = new AgentInputLifecycleService()
+    const expired = service.create(request({ expiresAt: 110 }))
+    await vi.advanceTimersByTimeAsync(10)
+    await expect(expired).resolves.toMatchObject({ status: "expired" })
+
+    void service.create(
+      request({
+        requestId: "request-2",
+        runId: "run-2",
+        questions: [
+          {
+            ...request().questions[0],
+            allowCustom: false,
+          },
+        ],
+      }),
+    )
+    expect(() =>
+      service.answer({
+        requestId: "request-2",
+        mode: "structured",
+        answers: { "question-1": ["Yes", "No"] },
+        submittedAt: 111,
+      }),
+    ).toThrow(/exactly one/i)
+    expect(() =>
+      service.answer({
+        requestId: "request-2",
+        mode: "structured",
+        answers: { "question-1": ["Maybe"] },
+        submittedAt: 112,
+      }),
+    ).toThrow(/custom answer/i)
+    service.dispose()
+    vi.useRealTimers()
+  })
 })

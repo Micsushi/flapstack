@@ -3377,14 +3377,6 @@ export function AgentsSidebar({
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
 
-  useEffect(
-    () =>
-      window.desktopApi.onDevMcpChatsChanged(() => {
-        void Promise.all([utils.chats.list.invalidate(), utils.chats.listArchived.invalidate()])
-      }),
-    [utils.chats.list, utils.chats.listArchived],
-  )
-
   // Unified undo stack for workspaces and sub-chats (Jotai atom)
   const [undoStack, setUndoStack] = useAtom(undoStackAtom)
 

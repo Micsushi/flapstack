@@ -184,6 +184,34 @@ feature exits.
 
 ## Cleanup and evidence invalidation
 
+### 2026-07-13 agent UX closeout addendum
+
+The `codex/stage3-agentux-closeout` lane added one provider-neutral request/status
+handler across Claude, Codex, Cursor, OpenRouter, and NanoGPT transports; stable
+question IDs; shared lifecycle RPCs; clean-profile project/chat/open controls;
+and authenticated renderer-state inspection. The final Node 22 gate passed
+lint, formatting, TypeScript, 117 test files with 869 tests passed and 3 skipped,
+and the production build. All nine affected changes strict-validate.
+
+Live evidence used MCP for project/chat setup, canonical selection, question
+injection, owner/renderer state, answers, timeout, approvals, and cleanup. Real
+UI evidence was limited to accessibility semantics and keyboard focus while the
+shared UI lease was held. The native modal exposed radio semantics and focused
+its first option; Tab and Shift-Tab proved option focus order. Injected
+continuation conformance passed for Codex, Cursor, OpenRouter, and NanoGPT, but
+this is not credentialed provider-live proof.
+
+The unsigned macOS arm64 Preview directory package built successfully. Binary
+inspection and smoke passed for Electron 39.8.10, Claude 2.1.207, Codex 0.144.1,
+Whisper, Parakeet, and better-sqlite3. No package acceptance row is promoted:
+this host has no Developer ID signing identity, and no packaged functional run
+was claimed.
+
+No Usage, Voice, reasoning-provider, Windows, Linux, Keychain, microphone, or
+credentialed provider row is promoted by this addendum. Q12/Q13, `AQ-F4-T2`,
+`AQ-F5-T1`, undo/review `4.4`, `S3-F14-T3`-`T5`, `S3-F15-T2`-`T5`,
+`S3-F16-T3`-`T5`, and `S3-F17-T2`-`T5` remain open.
+
 Each run uses unique dev instance/profile, port, database, service label, test
 chat/run IDs, provider config, and temporary sidecar path. Cleanup must prove:
 

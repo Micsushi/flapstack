@@ -8,21 +8,28 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import * as z from "zod/v4"
 import {
   archiveTestChat,
+  archiveTestProject,
   cancelRun,
   createTestChat,
+  ensureTestProject,
   getChatState,
   getHarnessStatusForRepo,
   getOpencodeLogs,
   getProviderStatus,
+  getRendererAgentInputState,
   listProviderExtensions,
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
   launchTestRun,
+  injectAgentInputRequest,
+  listAgentInputRequests,
   listPendingApprovals,
   listTestTargets,
   mutateProjectProviderExtension,
+  openTestChat,
   replyApproval,
+  replyAgentInputRequest,
   waitForRunState,
 } from "./service"
 
@@ -183,6 +190,54 @@ function registerTools(server: McpServer): void {
     async (input) => result(getOpencodeLogs(input)),
   )
   server.registerTool(
+    "list_agent_input_requests",
+    {
+      description: "List live provider-neutral input requests without hidden provider data.",
+      inputSchema: { chatId: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(listAgentInputRequests(input)),
+  )
+  server.registerTool(
+    "get_renderer_agent_input_state",
+    {
+      description: "Inspect active renderer question ownership and dialog visibility.",
+      inputSchema: { subChatId: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(getRendererAgentInputState(input)),
+  )
+  server.registerTool(
+    "ensure_test_project",
+    {
+      description: "Register or restore this development checkout as a local test project.",
+      inputSchema: { name: z.string().min(1).max(200).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(ensureTestProject(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "archive_test_project",
+    {
+      description: "Reversibly archive an idle test project for this development checkout.",
+      inputSchema: { projectId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(archiveTestProject(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "create_test_chat",
     {
       description: "Create one local OpenRouter or NanoGPT project test chat.",
@@ -206,6 +261,21 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(createTestChat(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "open_test_chat",
+    {
+      description: "Select one existing test chat in the live renderer.",
+      inputSchema: { chatId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(openTestChat(input))
       } catch (error) {
         return failure(error)
       }
@@ -269,6 +339,74 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(await launchTestRun(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "inject_agent_input_request",
+    {
+      description: "Inject a bounded provider-neutral input request into one live test chat.",
+      inputSchema: {
+        subChatId: z.string().min(1),
+        harness: z.enum([
+          "claude-code",
+          "codex",
+          "cursor-agent",
+          "openrouter",
+          "nanogpt",
+          "local",
+          "custom",
+        ]),
+        model: z.string().min(1).optional(),
+        timeoutMs: z.number().int().min(1_000).max(300_000).optional(),
+        questions: z
+          .array(
+            z.object({
+              question: z.string().min(1).max(2_000),
+              header: z.string().min(1).max(120).optional(),
+              options: z
+                .array(
+                  z.object({
+                    label: z.string().min(1).max(200),
+                    description: z.string().min(1).max(500).optional(),
+                  }),
+                )
+                .max(12)
+                .optional(),
+              multiSelect: z.boolean().optional(),
+              allowCustom: z.boolean().optional(),
+            }),
+          )
+          .min(1)
+          .max(8),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(injectAgentInputRequest(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "reply_agent_input_request",
+    {
+      description: "Answer, skip, or cancel one injected provider-neutral input request.",
+      inputSchema: {
+        requestId: z.string().min(1),
+        action: z.enum(["answer", "skip", "cancel"]),
+        mode: z.enum(["structured", "chat"]).optional(),
+        answers: z.record(z.string(), z.array(z.string().min(1).max(4_000)).min(1)).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(replyAgentInputRequest(input))
       } catch (error) {
         return failure(error)
       }

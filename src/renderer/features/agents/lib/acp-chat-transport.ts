@@ -26,6 +26,7 @@ import {
 } from "./models"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { handleAgentInputChunk } from "./agent-input-transport"
 
 type UIMessageChunk = any
 
@@ -191,6 +192,10 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
           },
           {
             onData: (chunk: UIMessageChunk) => {
+              handleAgentInputChunk(chunk, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
               if (chunk.type === "codex-permission-request") {
                 const options: Array<{ optionId: string; name: string; kind: string }> =
                   Array.isArray(chunk.options)

@@ -13,6 +13,7 @@ import {
 } from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { handleAgentInputChunk } from "./agent-input-transport"
 
 /**
  * Client transport for the Cursor (`cursor-agent`) harness - Stage 2 Track D.
@@ -182,6 +183,10 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
           },
           {
             onData: (chunk: UIMessageChunk) => {
+              handleAgentInputChunk(chunk, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
               if (!reasoningEnabled && String(chunk.type).startsWith("reasoning-")) return
               if (chunk.type === "auth-error") {
                 forceFreshSessionSubChats.add(this.config.subChatId)

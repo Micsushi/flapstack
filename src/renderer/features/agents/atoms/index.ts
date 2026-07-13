@@ -1024,10 +1024,12 @@ export type PendingUserQuestion = {
   toolUseId: string
   request?: AgentInputRequest
   questions: Array<{
+    id: string
     question: string
     header: string
-    options: Array<{ label: string; description: string }>
+    options: Array<{ id: string; label: string; description: string }>
     multiSelect: boolean
+    allowCustom: boolean
   }>
 }
 // Map<subChatId, PendingUserQuestion> - supports multiple pending questions across workspaces

@@ -7,7 +7,13 @@ import { McpExternalMutationRefreshBridge } from "./features/mcp-safety/external
 import { TooltipProvider } from "./components/ui/tooltip"
 import { TRPCProvider } from "./contexts/TRPCProvider"
 import { WindowProvider, getInitialWindowParams } from "./contexts/WindowContext"
-import { selectedProjectAtom, selectedAgentChatIdAtom } from "./features/agents/atoms"
+import {
+  selectedProjectAtom,
+  selectedAgentChatIdAtom,
+  selectedChatIsRemoteAtom,
+  selectedDraftIdAtom,
+  showNewChatFormAtom,
+} from "./features/agents/atoms"
 import { useAgentSubChatStore } from "./features/agents/stores/sub-chat-store"
 import { AgentsLayout } from "./features/layout/agents-layout"
 import {
@@ -60,9 +66,74 @@ function AppContent() {
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
+  const setSelectedProject = useSetAtom(selectedProjectAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const setSelectedChatIsRemote = useSetAtom(selectedChatIsRemoteAtom)
+  const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
+  const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
   const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
+
+  useEffect(
+    () =>
+      window.desktopApi.onDevMcpViewChanged(async (payload) => {
+        if (payload.action === "project-created") {
+          const refreshedProjects = await trpcUtils.projects.list.fetch()
+          const project = refreshedProjects.find((item) => item.id === payload.projectId)
+          if (project) {
+            setSelectedProject({
+              id: project.id,
+              name: project.name,
+              path: project.path,
+              gitRemoteUrl: project.gitRemoteUrl,
+              gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+              gitOwner: project.gitOwner,
+              gitRepo: project.gitRepo,
+            })
+          }
+          return
+        }
+        if (payload.action === "project-archived") {
+          await Promise.all([
+            trpcUtils.projects.list.invalidate(),
+            trpcUtils.projects.listArchived.invalidate(),
+          ])
+          if (selectedProject?.id === payload.projectId) setSelectedProject(null)
+          return
+        }
+        if (payload.action === "chat-opened") {
+          setSelectedChatIsRemote(false)
+          setSelectedDraftId(null)
+          setShowNewChatForm(false)
+          setSelectedChatId(payload.chatId)
+          setChatId(payload.chatId)
+          if (payload.subChatId) {
+            addToOpenSubChats(payload.subChatId)
+            setActiveSubChat(payload.subChatId)
+          }
+          return
+        }
+        await Promise.all([
+          trpcUtils.chats.list.invalidate(),
+          trpcUtils.chats.listArchived.invalidate(),
+        ])
+      }),
+    [
+      addToOpenSubChats,
+      selectedProject?.id,
+      setActiveSubChat,
+      setChatId,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setSelectedProject,
+      setShowNewChatForm,
+      trpcUtils.chats.list,
+      trpcUtils.chats.listArchived,
+      trpcUtils.projects.list,
+      trpcUtils.projects.listArchived,
+    ],
+  )
 
   useEffect(() => {
     void migrateLegacyCredentials(localStorage, trpcClient).then(async (report) => {
