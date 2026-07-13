@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { createHash } from "node:crypto"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -52,6 +53,74 @@ describe("Stage 3 migration rebase", () => {
 
       expectStage3Schema(sqlite, "main-chat")
       expect(recoverInterruptedMcpRuns(path)).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it.each([
+    { name: "pre-0020", lastMigration: 19 },
+    { name: "current-0020", lastMigration: 20 },
+  ])(
+    "recovers legacy pending prompts transactionally from a $name profile",
+    ({ name, lastMigration }) => {
+      const { sqlite, directory } = database(name)
+      try {
+        migrate(drizzle(sqlite, { schema }), {
+          migrationsFolder: migrationSubset(directory, lastMigration),
+        })
+        seedLegacyQueuedPrompts(sqlite)
+
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+        expectRecoveredQueuedPrompts(sqlite)
+        const messagesAfterFirstRepair = sqlite
+          .prepare("SELECT messages FROM sub_chats WHERE id = 'legacy-queue-sub'")
+          .get()
+
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+        expectRecoveredQueuedPrompts(sqlite)
+        expect(
+          sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'legacy-queue-sub'").get(),
+        ).toEqual(messagesAfterFirstRepair)
+      } finally {
+        sqlite.close()
+      }
+    },
+  )
+
+  it("normalizes a partial 0020 column and records the canonical migration metadata", () => {
+    const { sqlite, directory } = database("partial-0020-column")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 19),
+      })
+      sqlite.exec("ALTER TABLE agent_runs ADD initial_prompt text")
+      seedLegacyQueuedPrompts(sqlite)
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expectRecoveredQueuedPrompts(sqlite)
+      expectCanonicalInitialPromptMigration(sqlite)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("repairs a partial 0020 journal entry whose column is missing", () => {
+    const { sqlite, directory } = database("partial-0020-journal")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 19),
+      })
+      const entry = initialPromptMigrationEntry()
+      sqlite
+        .prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+        .run(initialPromptMigrationHash(), entry.when)
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(columns(sqlite, "agent_runs")).toContain("initial_prompt")
+      expectCanonicalInitialPromptMigration(sqlite)
     } finally {
       sqlite.close()
     }
@@ -150,6 +219,83 @@ function expectStage3Schema(sqlite: Database.Database, chatId: string): void {
   expect(() => sqlite.prepare("DELETE FROM mcp_audit_records WHERE id = ?").run(auditId)).toThrow(
     /append-only/i,
   )
+}
+
+function seedLegacyQueuedPrompts(sqlite: Database.Database): void {
+  sqlite
+    .prepare(
+      `INSERT INTO chats (id, name, scope, permission_mode, harness, worktree_path)
+       VALUES ('legacy-queue-chat', 'Legacy queue', 'global', 'full-access', 'codex', '/tmp')`,
+    )
+    .run()
+  const messages = [
+    { id: "history", role: "assistant", parts: [{ type: "text", text: "History" }] },
+    { id: "mcp-legacy-a", role: "user", parts: [{ type: "text", text: "A" }] },
+    { id: "mcp-legacy-b", role: "user", parts: [{ type: "text", text: "B" }] },
+    { id: "mcp-finished", role: "user", parts: [{ type: "text", text: "Finished" }] },
+    { id: "ordinary-pending", role: "user", parts: [{ type: "text", text: "Ordinary" }] },
+  ]
+  sqlite
+    .prepare(
+      `INSERT INTO sub_chats (
+        id, chat_id, harness, permission_mode, worktree_path, run_status, messages
+       ) VALUES ('legacy-queue-sub', 'legacy-queue-chat', 'codex', 'full-access', '/tmp',
+         'pending', ?)`,
+    )
+    .run(JSON.stringify(messages))
+  const insert = sqlite.prepare(
+    `INSERT INTO agent_runs (
+      id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+      prompt_message_id, status, started_at
+    ) VALUES (?, 'legacy-queue-chat', 'legacy-queue-sub', 'codex', 'full-access', '/tmp', ?, ?, ?)`,
+  )
+  insert.run("legacy-a", "mcp-legacy-a", "pending", 1)
+  insert.run("legacy-b", "mcp-legacy-b", "pending", 2)
+  insert.run("legacy-finished", "mcp-finished", "success", 3)
+  insert.run("ordinary-queued", "ordinary-pending", "pending", 4)
+}
+
+function expectRecoveredQueuedPrompts(sqlite: Database.Database): void {
+  expect(
+    sqlite.prepare("SELECT id, initial_prompt FROM agent_runs ORDER BY started_at").all(),
+  ).toEqual([
+    { id: "legacy-a", initial_prompt: "A" },
+    { id: "legacy-b", initial_prompt: "B" },
+    { id: "legacy-finished", initial_prompt: null },
+    { id: "ordinary-queued", initial_prompt: null },
+  ])
+  const row = sqlite
+    .prepare("SELECT messages FROM sub_chats WHERE id = 'legacy-queue-sub'")
+    .get() as { messages: string }
+  expect(JSON.parse(row.messages).map((message: { id: string }) => message.id)).toEqual([
+    "history",
+    "mcp-finished",
+    "ordinary-pending",
+  ])
+}
+
+function expectCanonicalInitialPromptMigration(sqlite: Database.Database): void {
+  const entry = initialPromptMigrationEntry()
+  expect(
+    sqlite
+      .prepare("SELECT hash, created_at FROM __drizzle_migrations WHERE created_at = ?")
+      .all(entry.when),
+  ).toEqual([{ hash: initialPromptMigrationHash(), created_at: entry.when }])
+}
+
+function initialPromptMigrationEntry(): { tag: string; when: number } {
+  const journal = JSON.parse(
+    readFileSync(join(sourceMigrations, "meta", "_journal.json"), "utf8"),
+  ) as { entries: Array<{ tag: string; when: number }> }
+  const entry = journal.entries.find(({ tag }) => tag === "0020_silky_sphinx")
+  if (!entry) throw new Error("Missing 0020 migration metadata")
+  return entry
+}
+
+function initialPromptMigrationHash(): string {
+  return createHash("sha256")
+    .update(readFileSync(join(sourceMigrations, "0020_silky_sphinx.sql"), "utf8"))
+    .digest("hex")
 }
 
 function columns(sqlite: Database.Database, table: string): string[] {

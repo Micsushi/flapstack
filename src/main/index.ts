@@ -21,6 +21,7 @@ import {
 import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { runRequiredStartup } from "./lib/startup-gate"
+import { installBeforeQuitShutdown, runAppShutdown } from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -90,6 +91,18 @@ function abortAllAgentSessions(): void {
   abortAllCodexStreams()
   abortAllCursorStreams()
   abortAllOpencodeStreams()
+}
+
+async function abortAndWaitForAgentSessions(): Promise<void> {
+  if (pendingRunTimer) clearInterval(pendingRunTimer)
+  pendingRunTimer = null
+  while (pendingRunDrainActive) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+  }
+  abortAllAgentSessions()
+  while (hasActiveAgentSessions()) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+  }
 }
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
@@ -946,19 +959,28 @@ if (gotTheLock) {
     }
   })
 
-  // Cleanup before quit
-  app.on("before-quit", async () => {
-    console.log("[App] Shutting down...")
-    abortAllAgentSessions()
-    if (pendingRunTimer) clearInterval(pendingRunTimer)
-    cancelAllPendingOAuth()
-    await devMcpServer?.stop()
-    devMcpServer = null
-    await productMcpInvalidationBridge?.stop()
-    productMcpInvalidationBridge = null
-    await cleanupGitWatchers()
-    await shutdownAnalytics()
-    await closeDatabase()
+  // Electron does not await async event listeners. Hold quit until one guarded
+  // shutdown promise has finished, with SQLite closed only after stream
+  // finalizers and services can no longer write to it.
+  installBeforeQuitShutdown({
+    app,
+    shutdown: () =>
+      runAppShutdown({
+        persistProviderSessions: abortAndWaitForAgentSessions,
+        cancelPendingOAuth: () => cancelAllPendingOAuth(),
+        stopDevMcpServer: async () => {
+          await devMcpServer?.stop()
+          devMcpServer = null
+        },
+        stopProductMcpBridge: async () => {
+          await productMcpInvalidationBridge?.stop()
+          productMcpInvalidationBridge = null
+        },
+        cleanupGitWatchers,
+        shutdownAnalytics,
+        closeDatabase,
+      }),
+    reportError: (error) => console.error("[App] Shutdown error:", error),
   })
 
   // Handle uncaught exceptions

@@ -91,7 +91,7 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 | Gate                                          | Result  | Evidence or blocker                                                                                 |
 | --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                       | PASS    | 18 active changes, 311 normative scenarios, 17 feature exits                                        |
+| Release-ledger coverage                       | PASS    | 18 active changes, 315 normative scenarios, 17 feature exits                                        |
 | All active OpenSpec strict validation         | PASS    | all 18 non-archive changes; final-commit rerun is required for handoff                              |
 | Node 22 `npm run check`                       | PASS    | lint, format, typecheck, unit/integration tests, production build; final-commit rerun is required   |
 | Migration/security/concurrency/focused suites | PASS    | 52 focused files, 461 passed, 3 intentionally skipped; full migration chain has 20 entries          |

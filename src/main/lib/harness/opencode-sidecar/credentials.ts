@@ -19,8 +19,22 @@ const settingsFileName = "opencode-provider-settings.json"
 const daemonWarnings = new Map<OpencodeProviderId, string>()
 const providerOperations = new Map<OpencodeProviderId, Promise<void>>()
 const providerGenerations = new Map<OpencodeProviderId, number>()
+const providerMutationRevisions = new Map<OpencodeProviderId, number>()
+// Desired records invocation order; applied is the last main-store mutation
+// that completed. Failed requests roll desired back to applied before any
+// older async OS-store completion can reconcile.
+const providerDesiredMutations = new Map<OpencodeProviderId, ProviderMutation>()
+const providerAppliedMutations = new Map<OpencodeProviderId, ProviderMutation>()
 
-type ProviderSettings = Partial<Record<OpencodeProviderId, { baseUrl?: string }>>
+type ProviderSettings = Partial<
+  Record<OpencodeProviderId, { baseUrl?: string; legacyRetired?: true }>
+>
+
+type ProviderMutation = {
+  revision: number
+  apiKey: string | null
+  baseUrl?: string
+}
 
 type LegacyStoredCredential = {
   value: string
@@ -52,6 +66,42 @@ function generation(provider: OpencodeProviderId): number {
 
 function bumpGeneration(provider: OpencodeProviderId): void {
   providerGenerations.set(provider, generation(provider) + 1)
+}
+
+function beginMutation(
+  provider: OpencodeProviderId,
+  apiKey: string | null,
+  baseUrl?: string,
+): ProviderMutation {
+  const mutation = {
+    revision: (providerMutationRevisions.get(provider) ?? 0) + 1,
+    apiKey: apiKey?.trim() || null,
+    ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
+  }
+  providerMutationRevisions.set(provider, mutation.revision)
+  providerDesiredMutations.set(provider, mutation)
+  return mutation
+}
+
+function isCurrentMutation(provider: OpencodeProviderId, mutation: ProviderMutation): boolean {
+  return providerDesiredMutations.get(provider)?.revision === mutation.revision
+}
+
+function applyAndCommitMainMutation(
+  provider: OpencodeProviderId,
+  mutation: ProviderMutation,
+): void {
+  try {
+    applyMainMutation(provider, mutation)
+    providerAppliedMutations.set(provider, mutation)
+  } catch (error) {
+    if (isCurrentMutation(provider, mutation)) {
+      const applied = providerAppliedMutations.get(provider)
+      if (applied) providerDesiredMutations.set(provider, applied)
+      else providerDesiredMutations.delete(provider)
+    }
+    throw error
+  }
 }
 
 function serializeProviderOperation<T>(
@@ -109,9 +159,40 @@ function setBaseUrl(provider: OpencodeProviderId, baseUrl?: string): void {
   if (!baseUrl?.trim() && !existsSync(settingsPath())) return
   const settings = readSettings()
   const normalized = baseUrl?.trim()
-  if (normalized) settings[provider] = { baseUrl: normalized }
-  else delete settings[provider]
+  const legacyRetired = settings[provider]?.legacyRetired
+  if (normalized || legacyRetired) {
+    settings[provider] = {
+      ...(normalized ? { baseUrl: normalized } : {}),
+      ...(legacyRetired ? { legacyRetired } : {}),
+    }
+  } else delete settings[provider]
   writeJsonAtomic(settingsPath(), settings)
+}
+
+function setRetiredProviderSettings(provider: OpencodeProviderId, baseUrl?: string): void {
+  const settings = readSettings()
+  const normalized = baseUrl?.trim()
+  settings[provider] = {
+    ...(normalized ? { baseUrl: normalized } : {}),
+    legacyRetired: true,
+  }
+  writeJsonAtomic(settingsPath(), settings)
+}
+
+function retireLegacyProvider(provider: OpencodeProviderId): void {
+  const legacyPath = join(getOpencodeStorageDir(), legacyCredentialsFileName)
+  if (process.env.NODE_ENV === "test" && !existsSync(settingsPath()) && !existsSync(legacyPath)) {
+    // Unit tests that do not own an isolated profile must not create repo-local
+    // app data. Dedicated production-mode migration tests cover the tombstone.
+    return
+  }
+  const settings = readSettings()
+  settings[provider] = { ...settings[provider], legacyRetired: true }
+  writeJsonAtomic(settingsPath(), settings)
+}
+
+function isLegacyProviderRetired(provider: OpencodeProviderId): boolean {
+  return readSettings()[provider]?.legacyRetired === true
 }
 
 function decryptLegacy(stored: LegacyStoredCredential): string | null {
@@ -128,6 +209,7 @@ function decryptLegacy(stored: LegacyStoredCredential): string | null {
 }
 
 function migrateLegacyFile(provider: OpencodeProviderId): string | null {
+  if (isLegacyProviderRetired(provider)) return null
   const path = join(getOpencodeStorageDir(), legacyCredentialsFileName)
   const file = readJson<LegacyCredentialsFile>(path, {})
   const stored = file[provider]
@@ -140,8 +222,16 @@ function migrateLegacyFile(provider: OpencodeProviderId): string | null {
     requirePersistence: true,
   })
   if (result.acknowledged) {
+    retireLegacyProvider(provider)
     delete file[provider]
     writeJsonAtomic(path, file)
+    if (process.env.NODE_ENV !== "test") {
+      try {
+        setUsageSecret(legacyProviderSecretKey(provider), null)
+      } catch {
+        // The durable tombstone prevents this stale source from being imported.
+      }
+    }
   }
   return secret
 }
@@ -167,8 +257,108 @@ function setMainProviderKey(provider: OpencodeProviderId, apiKey: string, baseUr
   const result = getCredentialService().set(credentialId(provider), apiKey, {
     metadata: baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : undefined,
   })
-  setBaseUrl(provider, baseUrl)
   if (result.persistence === "session") console.warn(`[Credentials] ${provider} is session-only`)
+}
+
+function retireLegacyFileSource(provider: OpencodeProviderId): void {
+  // Write the durable tombstone before best-effort physical deletion. A locked
+  // Keychain or damaged legacy file must never resurrect an accepted replacement.
+  retireLegacyProvider(provider)
+  try {
+    clearLegacyFileProvider(provider)
+  } catch (error) {
+    console.warn(`[Credentials] Could not physically remove legacy ${provider} file`, error)
+  }
+}
+
+function daemonWarning(apiKey: string | null): string {
+  return apiKey
+    ? "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry."
+    : "The app credential was removed, but background secure-storage cleanup failed. Unlock the OS credential store and retry."
+}
+
+function writeDaemonCredentialSync(provider: OpencodeProviderId, apiKey: string | null): void {
+  let failed = false
+  try {
+    setUsageSecret(legacyProviderSecretKey(provider), null)
+  } catch {
+    failed = true
+  }
+  try {
+    setUsageSecret(usageProviderSecretKey(provider), apiKey)
+  } catch {
+    failed = true
+  }
+  if (failed) {
+    daemonWarnings.set(provider, daemonWarning(apiKey))
+    console.warn(`[Credentials] ${provider} daemon credential update is unavailable`)
+  } else {
+    daemonWarnings.delete(provider)
+  }
+}
+
+async function writeDaemonCredentialAsync(
+  provider: OpencodeProviderId,
+  mutation: ProviderMutation,
+): Promise<void> {
+  let failed = false
+  try {
+    await setUsageSecretAsync(legacyProviderSecretKey(provider), null)
+  } catch {
+    failed = true
+  }
+  try {
+    await setUsageSecretAsync(usageProviderSecretKey(provider), mutation.apiKey)
+  } catch {
+    failed = true
+  }
+  if (failed) {
+    daemonWarnings.set(provider, daemonWarning(mutation.apiKey))
+    console.warn(`[Credentials] ${provider} daemon credential update is unavailable`)
+  } else {
+    daemonWarnings.delete(provider)
+  }
+}
+
+async function reconcileLatestDaemonCredential(provider: OpencodeProviderId): Promise<void> {
+  while (true) {
+    const applied = providerAppliedMutations.get(provider)
+    if (!applied) return
+    await writeDaemonCredentialAsync(provider, applied)
+    if (providerAppliedMutations.get(provider)?.revision === applied.revision) return
+  }
+}
+
+function applyMainMutation(provider: OpencodeProviderId, mutation: ProviderMutation): void {
+  bumpGeneration(provider)
+  if (mutation.apiKey) {
+    const previousSettings = readSettings()
+    // Persist the retirement marker before accepting the replacement. A crash
+    // can then lose a session-only replacement, but cannot revive stale legacy data.
+    setRetiredProviderSettings(provider, mutation.baseUrl)
+    try {
+      setMainProviderKey(provider, mutation.apiKey, mutation.baseUrl)
+    } catch (error) {
+      try {
+        writeJsonAtomic(settingsPath(), previousSettings)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `Could not set or roll back the ${provider} credential`,
+        )
+      }
+      throw error
+    }
+    retireLegacyFileSource(provider)
+    return
+  }
+
+  // Clear every legacy durable source before the current store. A crash can
+  // then leave the credential still configured, but cannot resurrect legacy data.
+  retireLegacyProvider(provider)
+  clearLegacyFileProvider(provider)
+  setBaseUrl(provider)
+  getCredentialService().remove(credentialId(provider))
 }
 
 export function setProviderKey(
@@ -176,19 +366,10 @@ export function setProviderKey(
   apiKey: string,
   baseUrl?: string,
 ): void {
-  bumpGeneration(provider)
-  setMainProviderKey(provider, apiKey, baseUrl)
+  const mutation = beginMutation(provider, apiKey, baseUrl)
+  applyAndCommitMainMutation(provider, mutation)
   if (process.env.NODE_ENV !== "test") {
-    try {
-      setUsageSecret(usageProviderSecretKey(provider), apiKey.trim())
-      daemonWarnings.delete(provider)
-    } catch {
-      daemonWarnings.set(
-        provider,
-        "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
-      )
-      console.warn(`[Credentials] ${provider} background usage access is unavailable`)
-    }
+    writeDaemonCredentialSync(provider, mutation.apiKey)
   }
 }
 
@@ -197,20 +378,18 @@ export async function setProviderKeyAsync(
   apiKey: string,
   baseUrl?: string,
 ): Promise<void> {
+  const mutation = beginMutation(provider, apiKey, baseUrl)
   return serializeProviderOperation(provider, async () => {
-    bumpGeneration(provider)
-    setMainProviderKey(provider, apiKey, baseUrl)
+    if (!isCurrentMutation(provider, mutation)) return
+    try {
+      applyAndCommitMainMutation(provider, mutation)
+    } catch (error) {
+      if (process.env.NODE_ENV !== "test") await reconcileLatestDaemonCredential(provider)
+      throw error
+    }
     if (process.env.NODE_ENV !== "test") {
-      try {
-        await setUsageSecretAsync(usageProviderSecretKey(provider), apiKey.trim())
-        daemonWarnings.delete(provider)
-      } catch {
-        daemonWarnings.set(
-          provider,
-          "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
-        )
-        console.warn(`[Credentials] ${provider} daemon access is unavailable`)
-      }
+      await writeDaemonCredentialAsync(provider, mutation)
+      if (!isCurrentMutation(provider, mutation)) await reconcileLatestDaemonCredential(provider)
     }
   })
 }
@@ -220,13 +399,26 @@ export function getProviderKey(provider: OpencodeProviderId): string | null {
   if (serviceValue) return serviceValue
   const legacyFileValue = migrateLegacyFile(provider)
   if (legacyFileValue) return legacyFileValue
-  const legacyKeychainValue = getUsageSecret(legacyProviderSecretKey(provider))
+  const legacyKeychainValue = isLegacyProviderRetired(provider)
+    ? null
+    : getUsageSecret(legacyProviderSecretKey(provider))
   if (legacyKeychainValue) {
-    getCredentialService().set(credentialId(provider), legacyKeychainValue, {
+    const result = getCredentialService().set(credentialId(provider), legacyKeychainValue, {
       metadata: getProviderBaseUrl(provider)
         ? { baseUrl: getProviderBaseUrl(provider) }
         : undefined,
+      requirePersistence: true,
     })
+    if (result.acknowledged) {
+      retireLegacyFileSource(provider)
+      if (process.env.NODE_ENV !== "test") {
+        try {
+          setUsageSecret(legacyProviderSecretKey(provider), null)
+        } catch {
+          // The durable tombstone prevents this stale source from being imported.
+        }
+      }
+    }
     return legacyKeychainValue
   }
   const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
@@ -240,7 +432,9 @@ export async function getProviderKeyAsync(provider: OpencodeProviderId): Promise
     const legacyFileValue = migrateLegacyFile(provider)
     if (legacyFileValue) return legacyFileValue
     const readGeneration = generation(provider)
-    const legacyKeychainValue = await getUsageSecretAsync(legacyProviderSecretKey(provider))
+    const legacyKeychainValue = isLegacyProviderRetired(provider)
+      ? null
+      : await getUsageSecretAsync(legacyProviderSecretKey(provider))
     if (generation(provider) !== readGeneration) {
       return (
         getCredentialService().resolve(credentialId(provider)) ??
@@ -249,11 +443,22 @@ export async function getProviderKeyAsync(provider: OpencodeProviderId): Promise
       )
     }
     if (legacyKeychainValue) {
-      getCredentialService().set(credentialId(provider), legacyKeychainValue, {
+      const result = getCredentialService().set(credentialId(provider), legacyKeychainValue, {
         metadata: getProviderBaseUrl(provider)
           ? { baseUrl: getProviderBaseUrl(provider) }
           : undefined,
+        requirePersistence: true,
       })
+      if (result.acknowledged) {
+        retireLegacyFileSource(provider)
+        if (process.env.NODE_ENV !== "test") {
+          try {
+            await setUsageSecretAsync(legacyProviderSecretKey(provider), null)
+          } catch {
+            // The durable tombstone prevents this stale source from being imported.
+          }
+        }
+      }
       return legacyKeychainValue
     }
     const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
@@ -266,33 +471,27 @@ export function getProviderBaseUrl(provider: OpencodeProviderId): string | undef
 }
 
 export function clearProviderKey(provider: OpencodeProviderId): void {
-  bumpGeneration(provider)
-  // Clear every legacy durable source before the current store. A crash can
-  // then leave the credential still configured, but can never resurrect a
-  // credential that the current store already removed.
-  clearLegacyFileProvider(provider)
+  const mutation = beginMutation(provider, null)
+  applyAndCommitMainMutation(provider, mutation)
   if (process.env.NODE_ENV !== "test") {
-    setUsageSecret(legacyProviderSecretKey(provider), null)
-    setUsageSecret(usageProviderSecretKey(provider), null)
+    writeDaemonCredentialSync(provider, null)
   }
-  setBaseUrl(provider)
-  getCredentialService().remove(credentialId(provider))
-  daemonWarnings.delete(provider)
 }
 
 export async function clearProviderKeyAsync(provider: OpencodeProviderId): Promise<void> {
+  const mutation = beginMutation(provider, null)
   return serializeProviderOperation(provider, async () => {
-    bumpGeneration(provider)
-    clearLegacyFileProvider(provider)
-    if (process.env.NODE_ENV !== "test") {
-      await Promise.all([
-        setUsageSecretAsync(legacyProviderSecretKey(provider), null),
-        setUsageSecretAsync(usageProviderSecretKey(provider), null),
-      ])
+    if (!isCurrentMutation(provider, mutation)) return
+    try {
+      applyAndCommitMainMutation(provider, mutation)
+    } catch (error) {
+      if (process.env.NODE_ENV !== "test") await reconcileLatestDaemonCredential(provider)
+      throw error
     }
-    setBaseUrl(provider)
-    getCredentialService().remove(credentialId(provider))
-    daemonWarnings.delete(provider)
+    if (process.env.NODE_ENV !== "test") {
+      await writeDaemonCredentialAsync(provider, mutation)
+      if (!isCurrentMutation(provider, mutation)) await reconcileLatestDaemonCredential(provider)
+    }
   })
 }
 

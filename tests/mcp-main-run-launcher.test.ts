@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { migrateDatabase } from "../src/main/lib/db/migrate"
+import { migrateDatabase, recoverLegacyQueuedRunPrompts } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
 import {
   drainPendingMcpRuns,
@@ -137,36 +137,53 @@ describe("MCP main run launcher", () => {
   })
 
   it.each(["codex", "claude-code"] as const)(
-    "keeps two queued %s turns in exact transcript order",
+    "recovers two legacy queued %s turns before routing them in exact transcript order",
     async (harness) => {
       seedQueuedTurns(harness)
-      const appendTurn = async (run: QueuedAgentRun) => {
+      expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(2)
+      expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(0)
+      expect(
+        sqlite.prepare("SELECT id, initial_prompt FROM agent_runs ORDER BY started_at, id").all(),
+      ).toEqual([
+        { id: "ordered-first", initial_prompt: "A" },
+        { id: "ordered-second", initial_prompt: "B" },
+      ])
+      expect(
+        sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'").get(),
+      ).toEqual({ messages: "[]" })
+
+      const route = async (input: { runId: string; subChatId: string; prompt: string }) => {
         const row = sqlite
           .prepare("SELECT messages FROM sub_chats WHERE id = ?")
-          .get(run.subChatId) as { messages: string }
+          .get(input.subChatId) as { messages: string }
         const messages = JSON.parse(row.messages)
         messages.push(
           {
-            id: `mcp-${run.runId}`,
+            id: `mcp-${input.runId}`,
             role: "user",
-            parts: [{ type: "text", text: run.prompt }],
+            parts: [{ type: "text", text: input.prompt }],
           },
           {
-            id: `response-${run.runId}`,
+            id: `response-${input.runId}`,
             role: "assistant",
-            parts: [{ type: "text", text: `${run.prompt}-response` }],
+            parts: [{ type: "text", text: `${input.prompt}-response` }],
           },
         )
         sqlite
           .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
-          .run(JSON.stringify(messages), run.subChatId)
+          .run(JSON.stringify(messages), input.subChatId)
         sqlite
           .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-          .run(Date.now(), run.runId)
+          .run(Date.now(), input.runId)
+        return emptyStream()
       }
+      const routed = harness === "codex" ? harnessMocks.codex : harnessMocks.claude
+      routed.mockImplementation(route)
+      const launch = createMainRunLauncher()
 
-      expect(await drainPendingMcpRuns(path, appendTurn, { waitForCompletion: true })).toBe(1)
-      expect(await drainPendingMcpRuns(path, appendTurn, { waitForCompletion: true })).toBe(1)
+      expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
+      expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
+      expect(routed.mock.calls.map(([input]) => input.prompt)).toEqual(["A", "B"])
       const row = sqlite
         .prepare("SELECT messages FROM sub_chats WHERE id = 'ordered-sub'")
         .get() as {
@@ -238,6 +255,49 @@ describe("MCP main run launcher", () => {
       run_status: "running",
     })
   })
+
+  it("observes a pending owner inserted through a second SQLite connection", () => {
+    seedSharedConversationRuns()
+    const second = new Database(path)
+    second.pragma("journal_mode = WAL")
+    second.pragma("busy_timeout = 5000")
+    try {
+      sqlite
+        .prepare(
+          "UPDATE agent_runs SET status = 'failure' WHERE id IN ('shared-first', 'shared-second')",
+        )
+        .run()
+      expect(
+        sqlite
+          .prepare(
+            "SELECT id FROM agent_runs WHERE sub_chat_id = 'shared-sub' AND status IN ('pending', 'running')",
+          )
+          .get(),
+      ).toBeUndefined()
+      second
+        .prepare(
+          `INSERT INTO agent_runs (
+            id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+            prompt_message_id, initial_prompt, status, started_at
+          ) VALUES ('raced-pending', 'shared-chat', 'shared-sub', 'codex', 'full-access',
+            '/tmp/worktree', 'mcp-raced', 'Raced', 'pending', 3)`,
+        )
+        .run()
+
+      expect(
+        updateSubChatRunStatusIfAuthoritative(drizzle(sqlite, { schema }), {
+          runId: "shared-first",
+          subChatId: "shared-sub",
+          status: "failure",
+        }),
+      ).toBe(false)
+      expect(
+        sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
+      ).toEqual({ run_status: "pending" })
+    } finally {
+      second.close()
+    }
+  })
 })
 
 function queuedRun(runId: string, harness: "codex" | "claude-code"): QueuedAgentRun {
@@ -292,17 +352,23 @@ function seedQueuedTurns(harness: "codex" | "claude-code"): void {
   sqlite
     .prepare(
       `INSERT INTO sub_chats (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
-       VALUES ('ordered-sub', 'ordered-chat', ?, 'full-access', '/tmp/worktree', 'pending', '[]')`,
+       VALUES ('ordered-sub', 'ordered-chat', ?, 'full-access', '/tmp/worktree', 'pending', ?)`,
     )
-    .run(harness)
+    .run(
+      harness,
+      JSON.stringify([
+        { id: "mcp-ordered-first", role: "user", parts: [{ type: "text", text: "A" }] },
+        { id: "mcp-ordered-second", role: "user", parts: [{ type: "text", text: "B" }] },
+      ]),
+    )
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, initial_prompt, status, started_at
-    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree', ?, ?, 'pending', ?)`,
+      prompt_message_id, status, started_at
+    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree', ?, 'pending', ?)`,
   )
-  insert.run("ordered-first", harness, "mcp-ordered-first", "A", 1)
-  insert.run("ordered-second", harness, "mcp-ordered-second", "B", 2)
+  insert.run("ordered-first", harness, "mcp-ordered-first", 1)
+  insert.run("ordered-second", harness, "mcp-ordered-second", 2)
 }
 
 function seedRun(

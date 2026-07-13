@@ -21,3 +21,15 @@ app-control behavior is implemented.
 
 - **WHEN** evidence proves a debt item does not block safe Stage 3 work
 - **THEN** its owner, reason, and later destination are recorded explicitly
+
+### Requirement: Orderly application shutdown
+
+The Electron main process MUST finish provider/session persistence and service
+cleanup before it closes the application SQLite connection.
+
+#### Scenario: First and duplicate quit requests
+
+- **WHEN** Electron emits one or more quit requests while asynchronous cleanup
+  is still pending
+- **THEN** the first request is prevented, duplicate requests share one guarded
+  shutdown promise, SQLite closes last, and the app exits without a quit loop

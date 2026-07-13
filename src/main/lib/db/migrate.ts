@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 
 const STAGE3_MIGRATION_TAG = "0017_third_molecule_man"
+const INITIAL_PROMPT_MIGRATION_TAG = "0020_silky_sphinx"
 
 type Journal = {
   entries: Array<{ tag: string; when: number }>
@@ -20,7 +21,141 @@ export function migrateDatabase(
   migrationsFolder: string,
 ): void {
   normalizeLegacyStage3Migration(sqlite, migrationsFolder)
+  normalizeInitialPromptMigration(sqlite, migrationsFolder)
   migrate(database, { migrationsFolder })
+  recoverLegacyQueuedRunPrompts(sqlite)
+}
+
+/**
+ * Repairs profiles where the 0020 ALTER landed but its journal row did not (or
+ * vice versa). SQLite can commit DDL before an interrupted wrapper records the
+ * migration, so checking only Drizzle's journal is not sufficient here.
+ */
+export function normalizeInitialPromptMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!tableExists(sqlite, "__drizzle_migrations") || !tableExists(sqlite, "agent_runs"))
+    return false
+
+  const journal = readJournal(migrationsFolder)
+  const current = journal.entries.find((entry) => entry.tag === INITIAL_PROMPT_MIGRATION_TAG)
+  if (!current) throw new Error(`Missing ${INITIAL_PROMPT_MIGRATION_TAG} migration metadata.`)
+
+  const runColumns = columns(sqlite, "agent_runs")
+  const latest = latestMigrationTime(sqlite)
+  if (latest >= current.when) {
+    let changed = false
+    const normalize = sqlite.transaction(() => {
+      if (!runColumns.has("initial_prompt")) {
+        sqlite.exec("ALTER TABLE agent_runs ADD initial_prompt text")
+        changed = true
+      }
+      if (!migrationRecorded(sqlite, current.when)) {
+        recordMigration(sqlite, migrationsFolder, current)
+        changed = true
+      }
+    })
+    normalize.immediate()
+    return changed
+  }
+  if (!runColumns.has("initial_prompt")) return false
+
+  // A partial 0020 profile still needs every preceding migration before 0020
+  // is recorded as complete.
+  let normalizedThrough = latest
+  for (const entry of journal.entries) {
+    if (entry.tag === current.tag) break
+    if (entry.when <= normalizedThrough) continue
+    applyMigration(sqlite, migrationsFolder, entry)
+    normalizedThrough = Math.max(normalizedThrough, entry.when)
+  }
+
+  recordMigration(sqlite, migrationsFolder, current)
+  return true
+}
+
+/**
+ * Pre-0020 MCP queues stored prompts only as already-visible transcript rows.
+ * Move those prompts into their durable run rows before routing, then remove
+ * only the still-pending prompt message IDs. Both changes commit together so a
+ * restart can never lose the prompt or publish it twice.
+ */
+export function recoverLegacyQueuedRunPrompts(sqlite: Database.Database): number {
+  if (!columns(sqlite, "agent_runs").has("initial_prompt")) return 0
+
+  let recovered = 0
+  const repair = sqlite.transaction(() => {
+    const rows = sqlite
+      .prepare(
+        `SELECT r.id, r.sub_chat_id, r.prompt_message_id, r.initial_prompt, s.messages
+         FROM agent_runs r
+         JOIN sub_chats s ON s.id = r.sub_chat_id
+         WHERE r.status = 'pending'
+           AND r.prompt_message_id LIKE 'mcp-%'
+         ORDER BY r.sub_chat_id, r.started_at, r.id`,
+      )
+      .all() as Array<{
+      id: string
+      sub_chat_id: string
+      prompt_message_id: string
+      initial_prompt: string | null
+      messages: string
+    }>
+    const grouped = new Map<string, typeof rows>()
+    for (const row of rows) {
+      const group = grouped.get(row.sub_chat_id) ?? []
+      group.push(row)
+      grouped.set(row.sub_chat_id, group)
+    }
+
+    for (const [subChatId, runs] of grouped) {
+      let messages: Array<Record<string, unknown>>
+      try {
+        const parsed = JSON.parse(runs[0].messages) as unknown
+        if (!Array.isArray(parsed)) continue
+        messages = parsed as Array<Record<string, unknown>>
+      } catch {
+        continue
+      }
+
+      const removableIds = new Set<string>()
+      for (const run of runs) {
+        const message = messages.find((candidate) => candidate?.id === run.prompt_message_id)
+        const storedPrompt = run.initial_prompt?.trim() ?? ""
+        const recoveredPrompt = storedPrompt || extractPrompt(message)
+        if (!recoveredPrompt) continue
+
+        let changed = false
+        if (!storedPrompt) {
+          const updated = sqlite
+            .prepare(
+              `UPDATE agent_runs SET initial_prompt = ?
+               WHERE id = ? AND status = 'pending'
+                 AND (initial_prompt IS NULL OR trim(initial_prompt) = '')`,
+            )
+            .run(recoveredPrompt, run.id)
+          changed = updated.changes === 1
+        }
+        if (message) {
+          removableIds.add(run.prompt_message_id)
+          changed = true
+        }
+        if (changed) recovered += 1
+      }
+
+      if (removableIds.size > 0) {
+        sqlite
+          .prepare("UPDATE sub_chats SET messages = ? WHERE id = ?")
+          .run(
+            JSON.stringify(messages.filter((message) => !removableIds.has(String(message?.id)))),
+            subChatId,
+          )
+      }
+    }
+  })
+  repair.immediate()
+  return recovered
 }
 
 export function normalizeLegacyStage3Migration(
@@ -29,9 +164,7 @@ export function normalizeLegacyStage3Migration(
 ): boolean {
   if (!tableExists(sqlite, "__drizzle_migrations")) return false
 
-  const journal = JSON.parse(
-    readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
-  ) as Journal
+  const journal = readJournal(migrationsFolder)
   const current = journal.entries.find((entry) => entry.tag === STAGE3_MIGRATION_TAG)
   if (!current) throw new Error(`Missing ${STAGE3_MIGRATION_TAG} migration metadata.`)
 
@@ -84,6 +217,28 @@ export function normalizeLegacyStage3Migration(
   return true
 }
 
+function readJournal(migrationsFolder: string): Journal {
+  return JSON.parse(
+    readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"),
+  ) as Journal
+}
+
+function extractPrompt(message: Record<string, unknown> | undefined): string {
+  if (!message || !Array.isArray(message.parts)) return ""
+  return message.parts
+    .filter((part): part is { type: "text"; text: string } =>
+      Boolean(
+        part &&
+        typeof part === "object" &&
+        (part as { type?: unknown }).type === "text" &&
+        typeof (part as { text?: unknown }).text === "string",
+      ),
+    )
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
+}
+
 function ensureChatColumns(sqlite: Database.Database, chatColumns: Set<string>): void {
   addColumn(sqlite, "chats", chatColumns, "custom_permissions", "text")
   addColumn(sqlite, "chats", chatColumns, "mcp_exposure_enabled", "integer DEFAULT false NOT NULL")
@@ -98,6 +253,24 @@ function latestMigrationTime(sqlite: Database.Database): number {
     .prepare("SELECT max(created_at) created_at FROM __drizzle_migrations")
     .get() as { created_at: number | null }
   return row.created_at ?? 0
+}
+
+function migrationRecorded(sqlite: Database.Database, when: number): boolean {
+  return Boolean(
+    sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(when),
+  )
+}
+
+function recordMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+  entry: { tag: string; when: number },
+): void {
+  const migrationSql = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), "utf8")
+  const hash = createHash("sha256").update(migrationSql).digest("hex")
+  sqlite
+    .prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+    .run(hash, entry.when)
 }
 
 function applyMigration(

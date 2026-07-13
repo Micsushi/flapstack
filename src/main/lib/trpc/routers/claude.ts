@@ -308,7 +308,7 @@ async function createClaudeAgentRun(input: {
 async function completeClaudeAgentRun(
   runId: string | null,
   subChatId: string,
-  status: RunCompletionStatus,
+  resolveStatus: () => RunCompletionStatus,
 ) {
   if (!runId) return
 
@@ -325,14 +325,19 @@ async function completeClaudeAgentRun(
     console.warn("[claude] Failed to capture after checkpoint/manifest:", error)
   }
 
-  db.update(agentRuns)
+  const status = resolveStatus()
+  const completedRun = db
+    .update(agentRuns)
     .set({
       status,
       completedAt: new Date(),
       ...(afterCheckpointId && { afterCheckpointId }),
     })
-    .where(eq(agentRuns.id, runId))
-    .run()
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "running")))
+    .returning({ id: agentRuns.id })
+    .get()
+
+  if (!completedRun) return
 
   updateSubChatRunStatusIfAuthoritative(db, { runId, subChatId, status })
 }
@@ -466,7 +471,8 @@ export function abortAllClaudeSessions(): void {
       "Application reload cancelled the pending question.",
     )
   }
-  activeSessions.clear()
+  // Keep ownership until each async finalizer persists cancellation and removes
+  // its own entry. App shutdown waits for that durable boundary before DB close.
 }
 
 // In-memory cache of working MCP server names (resets on app restart)
@@ -988,7 +994,11 @@ export const claudeRouter = router({
         let lastChunkType = ""
         // Shared sessionId for cleanup to save on abort
         let currentSessionId: string | null = null
-        let agentRunId: string | null = null
+        // A queued launch owns its durable run before any provider preflight starts.
+        // Keep that identity even when offline/SDK setup exits before createClaudeAgentRun.
+        let agentRunId: string | null = input.runId ?? null
+        let runCompletionStatus: RunCompletionStatus = "failure"
+        let runCompletionPromise: Promise<void> | null = null
         console.log(`[SD] M:START sub=${subId} stream=${streamId.slice(-8)} mode=${input.mode}`)
 
         // Track if observable is still active (not unsubscribed)
@@ -1039,8 +1049,20 @@ export const claudeRouter = router({
           } as UIMessageChunk)
         }
 
-        const completeRun = async (status: RunCompletionStatus) => {
-          await completeClaudeAgentRun(agentRunId, input.subChatId, status)
+        const completeRun = (status: RunCompletionStatus): Promise<void> => {
+          runCompletionStatus = status
+          if (!agentRunId) return Promise.resolve()
+          if (!runCompletionPromise) {
+            runCompletionPromise = completeClaudeAgentRun(agentRunId, input.subChatId, () => {
+              const isCurrentSession = activeSessions.get(input.subChatId) === abortController
+              return abortController.signal.aborted || !isCurrentSession
+                ? "cancelled"
+                : runCompletionStatus
+            }).catch((runError) => {
+              console.error("[claude] Failed to complete run:", runError)
+            })
+          }
+          return runCompletionPromise
         }
 
         ;(async () => {
@@ -1183,7 +1205,6 @@ export const claudeRouter = router({
             if (offlineResult.error) {
               emitError(new Error(offlineResult.error), "Offline mode unavailable")
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
@@ -1214,7 +1235,6 @@ export const claudeRouter = router({
               emitError(sdkError, "Failed to load Claude SDK")
               console.log(`[SD] M:END sub=${subId} reason=sdk_load_error n=${chunkCount}`)
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
@@ -2228,9 +2248,7 @@ ${prompt}
                 console.error("[CLAUDE] ✗ Failed to create SDK query:", queryError)
                 emitError(queryError, "Failed to start Claude query")
                 console.log(`[SD] M:END sub=${subId} reason=query_error n=${chunkCount}`)
-                await completeRun("failure")
                 safeEmit({ type: "finish" } as UIMessageChunk)
-                safeComplete()
                 return
               }
 
@@ -2334,9 +2352,7 @@ ${prompt}
                       },
                     } as UIMessageChunk)
                     console.log(`[SD] M:END sub=${subId} reason=session_missing n=${chunkCount}`)
-                    await completeRun("failure")
                     safeEmit({ type: "finish" } as UIMessageChunk)
-                    safeComplete()
                     return
                   }
 
@@ -2461,9 +2477,7 @@ ${prompt}
                       messageId: msgAny.message?.id,
                       fullMessage: JSON.stringify(msgAny, null, 2),
                     })
-                    await completeRun("failure")
                     safeEmit({ type: "finish" } as UIMessageChunk)
-                    safeComplete()
                     return
                   }
 
@@ -2816,9 +2830,8 @@ ${prompt}
                 console.log(
                   `[SD] M:END sub=${subId} reason=stream_error cat=${errorCategory} n=${chunkCount} last=${lastChunkType}`,
                 )
-                await completeRun(abortController.signal.aborted ? "cancelled" : "failure")
+                runCompletionStatus = abortController.signal.aborted ? "cancelled" : "failure"
                 safeEmit({ type: "finish" } as UIMessageChunk)
-                safeComplete()
                 return
               }
 
@@ -2844,9 +2857,7 @@ ${prompt}
             if (messageCount === 0 && !abortController.signal.aborted) {
               emitError(new Error("No response received from Claude"), "Empty response")
               console.log(`[SD] M:END sub=${subId} reason=no_response n=${chunkCount}`)
-              await completeRun("failure")
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
@@ -2894,7 +2905,7 @@ ${prompt}
             console.log(
               `[SD] M:END sub=${subId} reason=ok n=${chunkCount} last=${lastChunkType} t=${duration}s`,
             )
-            await completeRun(abortController.signal.aborted ? "cancelled" : "success")
+            runCompletionStatus = abortController.signal.aborted ? "cancelled" : "success"
             if (pendingFinishChunk) {
               safeEmit({
                 ...pendingFinishChunk,
@@ -2910,19 +2921,27 @@ ${prompt}
                 messageMetadata: { context: metadata.context },
               } as UIMessageChunk)
             }
-            safeComplete()
           } catch (error) {
             const duration = ((Date.now() - streamStart) / 1000).toFixed(1)
             console.log(
               `[SD] M:END sub=${subId} reason=unexpected_error n=${chunkCount} t=${duration}s`,
             )
             emitError(error, "Unexpected error")
-            await completeRun("failure")
+            runCompletionStatus = "failure"
             safeEmit({ type: "finish" } as UIMessageChunk)
-            safeComplete()
           } finally {
-            if (activeSessions.get(input.subChatId) === abortController) {
-              activeSessions.delete(input.subChatId)
+            try {
+              await completeRun(runCompletionStatus)
+            } finally {
+              clearClaudeStreamIfOwned(getDatabase(), {
+                subChatId: input.subChatId,
+                streamId,
+                sessionId: currentSessionId,
+              })
+              if (activeSessions.get(input.subChatId) === abortController) {
+                activeSessions.delete(input.subChatId)
+              }
+              safeComplete()
             }
           }
         })()

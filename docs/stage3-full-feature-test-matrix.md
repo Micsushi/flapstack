@@ -189,7 +189,7 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
 - Candidate: isolated `cf53` worktree from integration baseline
   `fba7e32bec5db21233d17b82a8745e974de90293`; exact resulting commit is in the
   final handoff.
-- Automated: release-ledger coverage maps 18 active changes, 311 scenarios, and
+- Automated: release-ledger coverage maps 18 active changes, 315 scenarios, and
   17 feature exits; all active strict validation, Node 22 full/focused suites,
   migrations, MCP security/redaction, Usage daemon smoke, and production build
   pass. The daemon smoke exposed an early-signal startup race; the fixed gate

@@ -2,7 +2,7 @@ import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
 import { observable } from "@trpc/server/observable"
 import { streamText } from "ai"
-import { and, eq, ne } from "drizzle-orm"
+import { and, eq, isNull, ne } from "drizzle-orm"
 import { app } from "electron"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -176,7 +176,8 @@ export function abortAllCodexStreams(): void {
     console.log(`[codex] Aborting stream ${subChatId} before reload`)
     stream.controller.abort()
   }
-  activeStreams.clear()
+  // Keep ownership until each async finalizer persists cancellation and removes
+  // its own entry. App shutdown waits for that durable boundary before DB close.
 }
 
 function replyPendingCodexApproval(input: { requestId: string; optionId: string }): {
@@ -1220,19 +1221,35 @@ async function completeCodexRun(params: {
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
   if (!run || run.completedAt) return run
 
-  const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-  await captureNoChangeManifest(run.id)
+  let afterCheckpointId: string | undefined
+  try {
+    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
+    afterCheckpointId = after.id
+    await captureNoChangeManifest(run.id)
+  } catch (error) {
+    console.warn("[codex] Failed to capture after checkpoint/manifest:", error)
+  }
 
   const completedRun = db
     .update(agentRuns)
     .set({
       status: params.status,
       completedAt: new Date(),
-      afterCheckpointId: after.id,
+      ...(afterCheckpointId && { afterCheckpointId }),
     })
-    .where(eq(agentRuns.id, params.runId))
+    .where(
+      and(
+        eq(agentRuns.id, params.runId),
+        eq(agentRuns.status, "running"),
+        isNull(agentRuns.completedAt),
+      ),
+    )
     .returning()
     .get()
+
+  if (!completedRun) {
+    return db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
+  }
 
   updateSubChatRunStatusIfAuthoritative(db, {
     runId: params.runId,
@@ -2342,13 +2359,17 @@ export const codexRouter = router({
 
             const reader = uiStream.getReader()
             let pendingFinishChunk: any | null = null
+            let terminalProviderFailure = false
             const streamedReasoningOutputTexts = new Set<string>()
             while (true) {
               const { done, value } = await reader.read()
               if (done) break
+              const valueType = (value as { type?: string } | undefined)?.type
 
-              if (value?.type === "error") {
+              if (valueType === "error" || valueType === "auth-error") {
                 const normalized = extractCodexError(value)
+                // Provider/auth errors are terminal even if the transport later emits finish.
+                terminalProviderFailure = true
 
                 if (isCodexAuthError(normalized)) {
                   safeEmit({ ...value, type: "auth-error", errorText: normalized.message })
@@ -2358,7 +2379,17 @@ export const codexRouter = router({
                 continue
               }
 
-              if (value?.type === "finish") {
+              if (valueType === "finish") {
+                const finishValue = value as {
+                  finishReason?: string
+                  messageMetadata?: { resultSubtype?: string }
+                }
+                if (
+                  finishValue.finishReason === "error" ||
+                  finishValue.messageMetadata?.resultSubtype === "error"
+                ) {
+                  terminalProviderFailure = true
+                }
                 pendingFinishChunk = value
                 continue
               }
@@ -2407,7 +2438,7 @@ export const codexRouter = router({
               safeEmit({ type: "finish" })
             }
 
-            runCompletionStatus = "success"
+            runCompletionStatus = terminalProviderFailure ? "failure" : "success"
             await completeRunOnce(runCompletionStatus)
             safeComplete()
           } catch (error) {

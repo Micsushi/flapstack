@@ -155,6 +155,27 @@ main-process boundary.
 - **THEN** it receives status, source, update time, and an optional short
   fingerprint but cannot retrieve plaintext through the exposed API
 
+#### Scenario: Replacement retires legacy provider sources
+
+- **WHEN** the user accepts a replacement provider credential, including a
+  session-only replacement
+- **THEN** legacy file and OS-store sources are removed or durably tombstoned
+  so restart cannot resurrect the replaced value
+
+#### Scenario: Concurrent credential mutations have one order
+
+- **WHEN** synchronous and asynchronous set or clear operations overlap for one
+  provider
+- **THEN** invocation order is authoritative and an older completion cannot
+  overwrite or resurrect the newest requested state
+
+#### Scenario: Newest credential mutation fails before acceptance
+
+- **WHEN** a newer set or clear cannot update the main credential state while
+  an older asynchronous OS-store write is still completing
+- **THEN** desired and OS-store state return to the last successfully applied
+  mutation instead of publishing the failed request
+
 ### Requirement: Provider-Scoped Extension Settings
 
 The system SHALL identify skills, commands, plugins, custom agents, and MCP
