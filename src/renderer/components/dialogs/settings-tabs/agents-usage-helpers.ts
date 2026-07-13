@@ -89,6 +89,38 @@ function timestamp(value: UsageSummaryRow["capturedAt"]): number {
   return 0
 }
 
+/** Personal OAuth providers expose one active local account at a time. Keep
+ * older opaque identities in history, but do not render them as current after
+ * a login or credential rotation changes the account tag. */
+export function filterSupersededPersonalAccountRows(rows: UsageSummaryRow[]): UsageSummaryRow[] {
+  const latestPersonalAccountByProvider = new Map<
+    string,
+    { accountTag: string; capturedAt: number }
+  >()
+  const personalAccountTagsByProvider = new Map<string, Set<string>>()
+
+  for (const row of rows) {
+    if (row.sourceTag !== "personal-oauth") continue
+    const accountTag = row.accountTag ?? ""
+    const accountTags = personalAccountTagsByProvider.get(row.providerId) ?? new Set<string>()
+    accountTags.add(accountTag)
+    personalAccountTagsByProvider.set(row.providerId, accountTags)
+
+    const capturedAt = timestamp(row.capturedAt)
+    const current = latestPersonalAccountByProvider.get(row.providerId)
+    if (!current || capturedAt > current.capturedAt) {
+      latestPersonalAccountByProvider.set(row.providerId, { accountTag, capturedAt })
+    }
+  }
+
+  return rows.filter((row) => {
+    const accountTag = row.accountTag ?? ""
+    const personalAccountTags = personalAccountTagsByProvider.get(row.providerId)
+    if (!personalAccountTags?.has(accountTag)) return true
+    return latestPersonalAccountByProvider.get(row.providerId)?.accountTag === accountTag
+  })
+}
+
 /** Build one honest current card per provider/account from the currently loaded
  * samples. Metrics can arrive in separate provider rows (for example, one cost
  * bucket and one token bucket), so each field uses its newest non-null value

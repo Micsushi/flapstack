@@ -98,11 +98,13 @@ beforeEach(() => {
   homeDir = mkdtempSync(join(tmpdir(), "flapstack-e1-home-"))
   electronState.userDataPath = userDataDir
   electronState.homePath = homeDir
+  process.env.FLAPSTACK_CONFIG_DIR = userDataDir
   createTestSchema()
 })
 
 afterEach(() => {
   closeDatabase()
+  delete process.env.FLAPSTACK_CONFIG_DIR
   rmSync(userDataDir, { recursive: true, force: true })
   rmSync(homeDir, { recursive: true, force: true })
 })
@@ -535,6 +537,11 @@ describe("Stage 1 E1 scope lifecycle", () => {
       name: "Permission chat",
       permissionMode: "read-only",
     })
+    const subChat = getDatabase()
+      .insert(subChats)
+      .values({ chatId: chat.id, permissionMode: "read-only" })
+      .returning()
+      .get()
     const caller = permissionsRouter.createCaller(ctx)
 
     expect(await caller.resolveForChat({ chatId: chat.id })).toMatchObject({
@@ -542,14 +549,166 @@ describe("Stage 1 E1 scope lifecycle", () => {
       source: "chat",
     })
 
-    await caller.setChatMode({ chatId: chat.id, mode: "auto-edit-project-only" })
+    await caller.setChatMode({
+      chatId: chat.id,
+      mode: "auto-edit-project-only",
+      scope: "current-chat",
+    })
 
     expect(getDatabase().select().from(chats).where(eq(chats.id, chat.id)).get()).toMatchObject({
       permissionMode: "auto-edit-project-only",
     })
+    expect(
+      getDatabase().select().from(subChats).where(eq(subChats.id, subChat.id)).get(),
+    ).toMatchObject({ permissionMode: "auto-edit-project-only" })
     expect(await caller.resolveForChat({ chatId: chat.id })).toMatchObject({
       mode: "auto-edit-project-only",
       source: "chat",
+    })
+  })
+
+  it("atomically synchronizes all live permission rows and preserves run snapshots", async () => {
+    const db = getDatabase()
+    const firstProject = insertProject("permissions-all-one", {
+      defaultPermissionMode: "read-only",
+    })
+    const secondProject = insertProject("permissions-all-two", {
+      defaultPermissionMode: "auto-edit-project-only",
+    })
+    const task = insertTask(firstProject.id, "Permission task", {
+      defaultPermissionMode: "read-only",
+    })
+    const activeChat = insertChat({
+      scope: "task",
+      projectId: firstProject.id,
+      taskId: task.id,
+      name: "Active permission chat",
+      permissionMode: "read-only",
+    })
+    const archivedChat = insertChat({
+      scope: "project",
+      projectId: secondProject.id,
+      name: "Archived permission chat",
+      permissionMode: "auto-edit-project-only",
+      archivedAt: new Date(),
+    })
+    const activeSubChat = db
+      .insert(subChats)
+      .values({ chatId: activeChat.id, permissionMode: "read-only" })
+      .returning()
+      .get()
+    db.insert(subChats)
+      .values({ chatId: archivedChat.id, permissionMode: "auto-edit-project-only" })
+      .run()
+    const historicalRun = db
+      .insert(agentRuns)
+      .values({
+        chatId: activeChat.id,
+        subChatId: activeSubChat.id,
+        harness: "claude-code",
+        permissionMode: "read-only",
+        status: "running",
+      })
+      .returning()
+      .get()
+    const caller = permissionsRouter.createCaller(ctx)
+
+    expect(await caller.getPreferences()).toEqual({
+      globalDefault: "ask-before-edits",
+      changeBehavior: "ask",
+    })
+
+    const result = await caller.setChatMode({
+      chatId: activeChat.id,
+      mode: "full-access",
+      scope: "all-chats",
+      rememberBehavior: "all-chats",
+    })
+
+    expect(result).toMatchObject({
+      mode: "full-access",
+      scope: "all-chats",
+      changeBehavior: "all-chats",
+      updatedChats: 2,
+      updatedSubChats: 2,
+    })
+    expect(
+      db
+        .select()
+        .from(projects)
+        .all()
+        .every((row) => row.defaultPermissionMode === "full-access"),
+    ).toBe(true)
+    expect(
+      db
+        .select()
+        .from(tasks)
+        .all()
+        .every((row) => row.defaultPermissionMode === "full-access"),
+    ).toBe(true)
+    expect(
+      db
+        .select()
+        .from(chats)
+        .all()
+        .every((row) => row.permissionMode === "full-access"),
+    ).toBe(true)
+    expect(
+      db
+        .select()
+        .from(subChats)
+        .all()
+        .every((row) => row.permissionMode === "full-access"),
+    ).toBe(true)
+    expect(
+      db.select().from(agentRuns).where(eq(agentRuns.id, historicalRun.id)).get(),
+    ).toMatchObject({ permissionMode: "read-only", status: "running" })
+    expect(await caller.getPreferences()).toEqual({
+      globalDefault: "full-access",
+      changeBehavior: "all-chats",
+    })
+
+    const managedChats = await caller.listChatModes()
+    expect(managedChats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: activeChat.id,
+          projectName: firstProject.name,
+          taskName: task.name,
+          permissionMode: "full-access",
+          archivedAt: null,
+        }),
+        expect.objectContaining({
+          id: archivedChat.id,
+          projectName: secondProject.name,
+          permissionMode: "full-access",
+        }),
+      ]),
+    )
+
+    await caller.setChangeBehavior({ behavior: "ask" })
+    expect((await caller.getPreferences()).changeBehavior).toBe("ask")
+  })
+
+  it("restores permission preferences when scoped synchronization fails", async () => {
+    const caller = permissionsRouter.createCaller(ctx)
+    expect(await caller.getPreferences()).toEqual({
+      globalDefault: "ask-before-edits",
+      changeBehavior: "ask",
+    })
+
+    await expect(
+      caller.setChatMode({
+        chatId: "missing-chat",
+        mode: "full-access",
+        scope: "all-chats",
+        rememberBehavior: "all-chats",
+      }),
+    ).rejects.toThrow("Chat not found")
+
+    expect(await caller.getPreferences()).toEqual({
+      globalDefault: "ask-before-edits",
+      changeBehavior: "ask",
     })
   })
 })

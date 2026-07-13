@@ -1,32 +1,29 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, Mic, Route } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef } from "react"
+import { ChevronLeft, Mic, Search, ShieldCheck, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { EyeOpenFilledIcon, SlidersFilledIcon } from "../../icons"
 import {
   agentsSettingsDialogActiveTabAtom,
   devToolsUnlockedAtom,
   isDesktopAtom,
+  settingsSearchQueryAtom,
+  settingsSearchTargetAtom,
   type SettingsTab,
 } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
 import {
   BrainFilledIcon,
   BugFilledIcon,
-  CustomAgentIconFilled,
-  FlaskFilledIcon,
   FolderFilledIcon,
-  KeyboardFilledIcon,
   OriginalMCPIcon,
   PluginFilledIcon,
   SkillIconFilled,
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
+import { searchSettings, type SettingsSearchEntry } from "./settings-search"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
-
-// Clicks required to unlock devtools in production
-const DEVTOOLS_UNLOCK_CLICKS = 5
 
 // General settings tabs
 const MAIN_TABS = [
@@ -36,19 +33,14 @@ const MAIN_TABS = [
     icon: SlidersFilledIcon,
   },
   {
+    id: "permissions" as SettingsTab,
+    label: "Permissions",
+    icon: ShieldCheck,
+  },
+  {
     id: "appearance" as SettingsTab,
     label: "Appearance",
     icon: EyeOpenFilledIcon,
-  },
-  {
-    id: "keyboard" as SettingsTab,
-    label: "Keyboard",
-    icon: KeyboardFilledIcon,
-  },
-  {
-    id: "beta" as SettingsTab,
-    label: "Legacy Beta (Scaffold)",
-    icon: FlaskFilledIcon,
   },
 ]
 
@@ -80,11 +72,6 @@ const ADVANCED_TABS_BASE = [
     icon: SkillIconFilled,
   },
   {
-    id: "agents" as SettingsTab,
-    label: "Custom Agents (Scaffold)",
-    icon: CustomAgentIconFilled,
-  },
-  {
     id: "mcp" as SettingsTab,
     label: "MCP Servers",
     icon: OriginalMCPIcon,
@@ -98,11 +85,6 @@ const ADVANCED_TABS_BASE = [
     id: "usage" as SettingsTab,
     label: "Usage",
     icon: SlidersFilledIcon,
-  },
-  {
-    id: "future" as SettingsTab,
-    label: "Future Scaffolds",
-    icon: Route,
   },
 ]
 
@@ -151,7 +133,9 @@ function TabButton({ tab, isActive, onClick }: TabButtonProps) {
 
 export function SettingsSidebar() {
   const [activeTab, setActiveTab] = useAtom(agentsSettingsDialogActiveTabAtom)
-  const [devToolsUnlocked, setDevToolsUnlocked] = useAtom(devToolsUnlockedAtom)
+  const [searchQuery, setSearchQuery] = useAtom(settingsSearchQueryAtom)
+  const setSearchTarget = useSetAtom(settingsSearchTargetAtom)
+  const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const isDesktop = useAtomValue(isDesktopAtom)
 
@@ -163,9 +147,8 @@ export function SettingsSidebar() {
     window.desktopApi.setTrafficLightVisibility(true)
   }, [isDesktop])
 
-  // Beta tab click counter for unlocking devtools
-  const betaClickCountRef = useRef(0)
-  const betaClickTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
 
   // Show debug tab if in development OR if devtools are unlocked
   const showDebugTab = isDevelopment || devToolsUnlocked
@@ -175,28 +158,63 @@ export function SettingsSidebar() {
     return MAIN_TABS
   }, [showDebugTab])
 
-  const handleTabClick = (tabId: SettingsTab) => {
-    // Handle Beta tab clicks for devtools unlock
-    if (tabId === "beta" && !devToolsUnlocked) {
-      betaClickCountRef.current++
-      if (betaClickTimeoutRef.current) {
-        clearTimeout(betaClickTimeoutRef.current)
-      }
-      betaClickTimeoutRef.current = setTimeout(() => {
-        betaClickCountRef.current = 0
-      }, 2000)
-      if (betaClickCountRef.current >= DEVTOOLS_UNLOCK_CLICKS) {
-        setDevToolsUnlocked(true)
-        betaClickCountRef.current = 0
-        window.desktopApi?.unlockDevTools()
+  const searchResults = useMemo(
+    () => searchSettings(searchQuery, { showDevelopment: showDebugTab }),
+    [searchQuery, showDebugTab],
+  )
+
+  useEffect(() => {
+    setSelectedSearchIndex(0)
+  }, [searchQuery])
+
+  useEffect(() => {
+    const handleFind = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
       }
     }
+    document.addEventListener("keydown", handleFind)
+    return () => document.removeEventListener("keydown", handleFind)
+  }, [])
+
+  const handleTabClick = (tabId: SettingsTab) => {
     setActiveTab(tabId)
   }
 
   const handleBack = useCallback(() => {
+    setSearchQuery("")
     setDesktopView(null)
-  }, [setDesktopView])
+  }, [setDesktopView, setSearchQuery])
+
+  const selectSearchResult = useCallback(
+    (result: SettingsSearchEntry) => {
+      setActiveTab(result.tab)
+      setSearchTarget(result.targetId)
+      setSearchQuery("")
+    },
+    [setActiveTab, setSearchQuery, setSearchTarget],
+  )
+
+  const handleSearchKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "ArrowDown" && searchResults.length > 0) {
+        event.preventDefault()
+        setSelectedSearchIndex((index) => (index + 1) % searchResults.length)
+      } else if (event.key === "ArrowUp" && searchResults.length > 0) {
+        event.preventDefault()
+        setSelectedSearchIndex((index) => (index - 1 + searchResults.length) % searchResults.length)
+      } else if (event.key === "Enter") {
+        const result = searchResults[selectedSearchIndex]
+        if (result) {
+          event.preventDefault()
+          selectSearchResult(result)
+        }
+      }
+    },
+    [searchResults, selectSearchResult, selectedSearchIndex],
+  )
 
   return (
     <div className="flex flex-col h-full bg-tl-background" data-sidebar-content>
@@ -211,34 +229,103 @@ export function SettingsSidebar() {
         </button>
       </div>
 
+      <div className="px-3 pb-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search settings"
+            aria-label="Search settings"
+            aria-activedescendant={
+              searchQuery && searchResults[selectedSearchIndex]
+                ? `settings-search-result-${searchResults[selectedSearchIndex].id}`
+                : undefined
+            }
+            className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery("")
+                searchInputRef.current?.focus()
+              }}
+              className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+              aria-label="Clear Settings search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Tab list */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent px-2 pb-4 space-y-4">
-        {/* Main Tabs */}
-        <div className="space-y-1">
-          {mainTabs.map((tab) => (
-            <TabButton
-              key={tab.id}
-              tab={tab}
-              isActive={activeTab === tab.id}
-              onClick={() => handleTabClick(tab.id)}
-            />
-          ))}
-        </div>
+        {searchQuery ? (
+          <div className="space-y-1" role="listbox" aria-label="Settings search results">
+            {searchResults.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground">No matching settings.</div>
+            ) : (
+              searchResults.map((result, index) => (
+                <button
+                  key={result.id}
+                  id={`settings-search-result-${result.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedSearchIndex === index}
+                  onMouseEnter={() => setSelectedSearchIndex(index)}
+                  onClick={() => selectSearchResult(result)}
+                  className={cn(
+                    "w-full rounded-md px-3 py-2 text-left outline-none transition-colors",
+                    selectedSearchIndex === index
+                      ? "bg-foreground/5 text-foreground"
+                      : "text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground",
+                  )}
+                >
+                  <span className="block truncate text-xs font-medium">{result.label}</span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                    {result.tab === "api-providers"
+                      ? "API Providers"
+                      : result.tab.charAt(0).toUpperCase() + result.tab.slice(1)}
+                    {result.description ? ` · ${result.description}` : ""}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Main Tabs */}
+            <div className="space-y-1">
+              {mainTabs.map((tab) => (
+                <TabButton
+                  key={tab.id}
+                  tab={tab}
+                  isActive={activeTab === tab.id}
+                  onClick={() => handleTabClick(tab.id)}
+                />
+              ))}
+            </div>
 
-        {/* Separator */}
-        <div className="border-t border-border/50 mx-2" />
+            {/* Separator */}
+            <div className="border-t border-border/50 mx-2" />
 
-        {/* Advanced Tabs */}
-        <div className="space-y-1">
-          {ADVANCED_TABS_BASE.map((tab) => (
-            <TabButton
-              key={tab.id}
-              tab={tab}
-              isActive={activeTab === tab.id}
-              onClick={() => handleTabClick(tab.id)}
-            />
-          ))}
-        </div>
+            {/* Advanced Tabs */}
+            <div className="space-y-1">
+              {ADVANCED_TABS_BASE.map((tab) => (
+                <TabButton
+                  key={tab.id}
+                  tab={tab}
+                  isActive={activeTab === tab.id}
+                  onClick={() => handleTabClick(tab.id)}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

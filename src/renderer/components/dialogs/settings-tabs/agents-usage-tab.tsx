@@ -13,6 +13,7 @@ import {
   accountLabel,
   buildCurrentUsageSummaries,
   buildUsageHistorySeries,
+  filterSupersededPersonalAccountRows,
   formatQuotaUsage,
   prepareUsageHistorySeries,
   quotaPercentUsed,
@@ -825,45 +826,47 @@ function AllProvidersOverview({
   onSelectProvider: (providerId: ProviderId) => void
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      {PROVIDER_IDS.map((providerId) => {
-        const providerSummaries = summaries.filter((summary) => summary.providerId === providerId)
-        return (
-          <section
-            key={providerId}
-            className="overflow-hidden rounded-xl border border-border bg-foreground/[0.025]"
-          >
-            <button
-              type="button"
-              onClick={() => onSelectProvider(providerId)}
-              className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left hover:bg-foreground/[0.035]"
+    <div className="@container">
+      <div className="grid grid-cols-1 gap-4 @[54rem]:grid-cols-2">
+        {PROVIDER_IDS.map((providerId) => {
+          const providerSummaries = summaries.filter((summary) => summary.providerId === providerId)
+          return (
+            <section
+              key={providerId}
+              className="@container overflow-hidden rounded-xl border border-border bg-foreground/[0.025]"
             >
-              <span className="text-sm font-semibold text-foreground">
-                {providerLabel(providerId)}
-              </span>
-              <span className="text-[11px] text-muted-foreground">Details →</span>
-            </button>
-            <div
-              className={`grid grid-cols-1 gap-3 p-3 ${
-                providerSummaries.length > 1 ? "sm:grid-cols-2" : ""
-              }`}
-            >
-              {providerSummaries.length > 0 ? (
-                providerSummaries.map((summary) => (
-                  <CurrentUsageCard
-                    key={`${summary.providerId}|${summary.accountTag}|${summary.metricKey ?? ""}`}
-                    summary={summary}
-                  />
-                ))
-              ) : (
-                <div className="rounded-lg border border-dashed border-border p-4 sm:col-span-2">
-                  <p className="text-xs text-muted-foreground">No usage yet.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        )
-      })}
+              <button
+                type="button"
+                onClick={() => onSelectProvider(providerId)}
+                className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left hover:bg-foreground/[0.035]"
+              >
+                <span className="text-sm font-semibold text-foreground">
+                  {providerLabel(providerId)}
+                </span>
+                <span className="text-[11px] text-muted-foreground">Details →</span>
+              </button>
+              <div
+                className={`grid grid-cols-1 gap-3 p-3 ${
+                  providerSummaries.length > 1 ? "@[38rem]:grid-cols-2" : ""
+                }`}
+              >
+                {providerSummaries.length > 0 ? (
+                  providerSummaries.map((summary) => (
+                    <CurrentUsageCard
+                      key={`${summary.providerId}|${summary.accountTag}|${summary.metricKey ?? ""}`}
+                      summary={summary}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border p-4 @[38rem]:col-span-2">
+                    <p className="text-xs text-muted-foreground">No usage yet.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -979,7 +982,9 @@ export function AgentsUsageTab() {
   const currentSummaries = useMemo(
     () =>
       buildCurrentUsageSummaries(
-        currentSamples.filter((sample) => sample.sourceTag !== "onwatch-cost-history"),
+        filterSupersededPersonalAccountRows(currentSamples).filter(
+          (sample) => sample.sourceTag !== "onwatch-cost-history",
+        ),
       ).filter(hasDisplayableCurrentUsage),
     [currentSamples],
   )

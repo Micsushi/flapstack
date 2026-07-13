@@ -6,6 +6,13 @@
 4. [S3-F4 Audit history](features/s3-f4-audit-history/README.md)
 5. [S3-F5 Cross-agent spawning](features/s3-f5-cross-agent-spawning/README.md)
 6. [S3-F6 MCP management and safety UI](features/s3-f6-management-safety/README.md)
+7. [S3-F7 Honest Settings surface](features/s3-f7-honest-settings-surface/README.md)
+8. [S3-F8 Keyboard shortcuts](features/s3-f8-keyboard-shortcuts/README.md)
+9. [S3-F9 Voice Settings](features/s3-f9-voice-settings/README.md)
+10. [S3-F10 Secure credentials](features/s3-f10-secure-credentials/README.md)
+11. [S3-F11 Provider-scoped extensions](features/s3-f11-provider-extensions/README.md)
+12. [S3-F12 Permission mode promotion](features/s3-f12-permission-modes/README.md)
+13. [S3-F13 Copy and search consistency](features/s3-f13-copy-search/README.md)
 
 These are navigation links only. Completion state lives only in linked
 OpenSpec `tasks.md` files.

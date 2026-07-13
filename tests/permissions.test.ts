@@ -7,9 +7,13 @@ import {
   buildCodexPermissionApplication,
   copyOnCreate,
   getGlobalDefault,
+  getPermissionChangeBehavior,
   isClaudeMutatingTool,
+  isClaudeReadOnlyToolAllowed,
+  mapCodexAcpModeId,
   mapClaudeSdkPermissionMode,
   resolvePermission,
+  setPermissionChangeBehavior,
   setGlobalDefault,
   type PermissionMode,
 } from "../src/main/lib/permissions"
@@ -84,7 +88,20 @@ describe("permissions", () => {
     expect(getGlobalDefault()).toBe("auto-edit-project-only")
   })
 
-  it("reports cwd as the only enforced Codex ACP launch control", () => {
+  it("asks for permission-change scope by default and persists remembered behavior", () => {
+    expect(getPermissionChangeBehavior()).toBe("ask")
+
+    setPermissionChangeBehavior("all-chats")
+    expect(getPermissionChangeBehavior()).toBe("all-chats")
+
+    setPermissionChangeBehavior("current-chat")
+    expect(getPermissionChangeBehavior()).toBe("current-chat")
+
+    setPermissionChangeBehavior("ask")
+    expect(getPermissionChangeBehavior()).toBe("ask")
+  })
+
+  it("applies the Codex workspace mode and fail-closed approval bridge", () => {
     const application = buildCodexPermissionApplication({
       permissionMode: "auto-edit-project-only",
       cwd: "/tmp/project",
@@ -92,43 +109,49 @@ describe("permissions", () => {
 
     expect(application).toMatchObject({
       requested: "auto-edit-project-only",
-      applied: false,
-      degraded: true,
+      applied: true,
+      degraded: false,
     })
-    expect(application.enforced).toEqual([
-      expect.objectContaining({
-        control: "process-cwd",
-        applied: true,
-        value: "/tmp/project",
-      }),
-      expect.objectContaining({
-        control: "acp-session-cwd",
-        applied: true,
-        value: "/tmp/project",
-      }),
-    ])
-    expect(application.limitations).toEqual(
+    expect(application.enforced).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ control: "codex-sandbox" }),
-        expect.objectContaining({ control: "filesystem-write-scope" }),
+        expect.objectContaining({ control: "process-cwd", value: "/tmp/project" }),
+        expect.objectContaining({ control: "acp-session-cwd", value: "/tmp/project" }),
+        expect.objectContaining({ control: "codex-sandbox", value: "agent" }),
+        expect.objectContaining({
+          control: "codex-approval-policy",
+          value: "flapstack-bridge",
+        }),
       ]),
     )
+    expect(application.limitations).toHaveLength(0)
   })
 
-  it.each<PermissionMode>([
-    "read-only",
-    "ask-before-edits",
-    "auto-edit-project-only",
-    "full-access",
-    "custom",
-  ])("does not overclaim Codex ACP enforcement for %s", (permissionMode) => {
+  it.each<[PermissionMode, string, boolean]>([
+    ["read-only", "read-only", false],
+    ["ask-before-edits", "read-only", false],
+    ["auto-edit-project-only", "agent", false],
+    ["full-access", "agent-full-access", false],
+    ["custom", "read-only", true],
+  ])("maps Codex %s to %s with truthful degradation", (permissionMode, modeId, degraded) => {
     const application = buildCodexPermissionApplication({ permissionMode, cwd: "/tmp/project" })
 
+    expect(mapCodexAcpModeId(permissionMode)).toBe(modeId)
     expect(application.requested).toBe(permissionMode)
-    expect(application.applied).toBe(false)
-    expect(application.degraded).toBe(true)
-    expect(application.limitations.length).toBeGreaterThan(0)
-    expect(application.warnings.join(" ")).toContain("not")
+    expect(application.applied).toBe(!degraded)
+    expect(application.degraded).toBe(degraded)
+    expect(application.limitations.length > 0).toBe(degraded)
+  })
+
+  it("records explicit one-time approval for unexpected full-access escalations", () => {
+    const application = buildCodexPermissionApplication({
+      permissionMode: "full-access",
+      cwd: "/tmp/project",
+    })
+    expect(application.enforced).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ control: "codex-approval-policy", value: "allow-once" }),
+      ]),
+    )
   })
 
   it("reports missing cwd as unenforced for Codex ACP launch placement", () => {
@@ -137,10 +160,13 @@ describe("permissions", () => {
       cwd: null,
     })
 
-    expect(application.enforced).toEqual([
-      expect.objectContaining({ control: "process-cwd", applied: false }),
-      expect.objectContaining({ control: "acp-session-cwd", applied: false }),
-    ])
+    expect(application.enforced).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ control: "process-cwd", applied: false }),
+        expect.objectContaining({ control: "acp-session-cwd", applied: false }),
+        expect.objectContaining({ control: "codex-sandbox", value: "read-only" }),
+      ]),
+    )
   })
 
   it("reports Claude delegated permission limitations without overclaiming mid modes", () => {
@@ -193,5 +219,14 @@ describe("permissions", () => {
     expect(isClaudeMutatingTool("mcp__repo__update_file")).toBe(true)
     expect(isClaudeMutatingTool("Read")).toBe(false)
     expect(isClaudeMutatingTool("mcp__repo__list_files")).toBe(false)
+  })
+
+  it("allows only known read operations in Claude read-only mode", () => {
+    for (const toolName of ["Read", "Glob", "Grep", "WebSearch", "AskUserQuestion", "Skill"]) {
+      expect(isClaudeReadOnlyToolAllowed(toolName)).toBe(true)
+    }
+    for (const toolName of ["Write", "Bash", "Task", "mcp__repo__list_files", "FutureTool"]) {
+      expect(isClaudeReadOnlyToolAllowed(toolName)).toBe(false)
+    }
   })
 })

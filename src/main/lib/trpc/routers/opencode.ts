@@ -33,7 +33,12 @@ import {
   type SidecarUsage,
   setProviderKeyAsync,
 } from "../../harness/opencode-sidecar"
-import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import {
+  buildHarnessContextBundle,
+  getLastHarnessContextFingerprint,
+  prependStartupContext,
+  type HarnessContextMetadata,
+} from "../../harness/launch-context"
 import { sanitizeProviderErrorText } from "../../harness/provider-error"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
 import { captureOpenCodeRunUsageBatch } from "../../usage/run-usage"
@@ -314,6 +319,7 @@ export const opencodeRouter = router({
           let runPersisted = false
           let messagesWithPrompt: any[] | undefined
           let sidecarSessionId: string | undefined
+          let contextMetadata: HarnessContextMetadata | undefined
           let text = ""
           let reasoning = ""
           const reasoningMetadata: Array<{ partId: string; metadata: unknown }> = []
@@ -447,12 +453,26 @@ export const opencodeRouter = router({
               .run()
 
             const mapper = new SidecarChunkMapper()
-            const startupContext = await buildHarnessStartupContext({
+            if (input.sessionId && input.sessionId !== subChat.sessionId) {
+              console.warn(
+                `[opencode] Ignoring sessionId not stored on sub-chat ${input.subChatId}`,
+              )
+            }
+            const ownedSessionId = subChat.sessionId || undefined
+            const contextBundle = await buildHarnessContextBundle({
               cwd: input.cwd,
               projectPath: input.projectPath,
               harness: "opencode",
+              userPrompt: input.prompt,
+              sessionMode: ownedSessionId ? "resumed" : "new",
+              previousSourceFingerprint: getLastHarnessContextFingerprint(messages),
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            contextMetadata = contextBundle.metadata
+            safeEmit({
+              type: "message-metadata",
+              messageMetadata: { runId, context: contextMetadata },
+            })
+            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
 
             for await (const event of runSidecarSession(
               {
@@ -468,7 +488,7 @@ export const opencodeRouter = router({
                 permissionMode,
                 reasoningEnabled: input.reasoningEnabled,
                 reasoningEffort: input.reasoningEffort,
-                resumeSessionId: input.sessionId || subChat.sessionId || undefined,
+                resumeSessionId: ownedSessionId,
                 signal: controller.signal,
               },
               async (request) =>
@@ -596,6 +616,7 @@ export const opencodeRouter = router({
                   limitations: audit.limitations,
                   toolActivity: audit.toolActivity,
                   approvalActivity: audit.approvalActivity,
+                  context: contextMetadata,
                   ...(usage ? { usage } : {}),
                 }
                 if (

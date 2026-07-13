@@ -23,6 +23,9 @@ cursor-agent -p --output-format stream-json --stream-partial-output \
   before assistant text (the observed-on-this-machine shape).
 - `no-reasoning-output-run.jsonl` - the docs-suppressed fallback: assistant text only,
   no `thinking` events. The adapter must still produce a complete reply.
+- `tool-and-cumulative-final-run.jsonl` - current Cursor nested `tool_call` payloads plus
+  timestamped assistant deltas followed by an un-timestamped cumulative final answer.
+  The adapter must persist real tool evidence and render the final answer once.
 
 ## Regenerating
 

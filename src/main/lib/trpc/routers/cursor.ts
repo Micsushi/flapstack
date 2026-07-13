@@ -25,7 +25,11 @@ import {
   isCursorAuthText,
   parseCursorStreamLine,
 } from "../../cursor/stream"
-import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import {
+  buildHarnessContextBundle,
+  getLastHarnessContextFingerprint,
+  prependStartupContext,
+} from "../../harness/launch-context"
 import { getUsageSecret } from "../../usage/secrets"
 import {
   buildCursorPermissionApplication,
@@ -430,12 +434,20 @@ export const cursorRouter = router({
             })
             const { id: metadataModel, cliArg: modelArg } = resolveCursorModelArg(input.model)
 
-            const startupContext = await buildHarnessStartupContext({
+            const storedSessionId = getLastSessionId(existingMessages)
+            if (input.sessionId && input.sessionId !== storedSessionId) {
+              console.warn(`[cursor] Ignoring sessionId not stored on sub-chat ${input.subChatId}`)
+            }
+            const sessionId = input.forceNewSession ? undefined : storedSessionId
+            const contextBundle = await buildHarnessContextBundle({
               cwd: input.cwd,
               projectPath: input.projectPath,
               harness: HARNESS,
+              userPrompt: input.prompt,
+              sessionMode: sessionId ? "resumed" : "new",
+              previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
 
             // Persist the user message (dedupe a resent prompt like Codex).
             const lastMessage = existingMessages[existingMessages.length - 1]
@@ -472,9 +484,6 @@ export const cursorRouter = router({
               promptMessageId,
             })
 
-            const sessionId = input.forceNewSession
-              ? undefined
-              : (input.sessionId ?? getLastSessionId(existingMessages))
             const args = buildCursorArgs({
               model: modelArg,
               cwd: input.cwd,
@@ -586,6 +595,7 @@ export const cursorRouter = router({
                   outputTokens: metadata.outputTokens,
                   totalTokens: metadata.totalTokens,
                   resultSubtype: metadata.resultSubtype,
+                  context: contextBundle.metadata,
                 },
               }
               const latest = db
@@ -613,6 +623,7 @@ export const cursorRouter = router({
                 runId: input.runId,
                 sessionId: metadata.sessionId,
                 durationMs: metadata.durationMs ?? Date.now() - startedAt,
+                context: contextBundle.metadata,
                 resultSubtype:
                   metadata.resultSubtype ?? (runStatus === "success" ? "success" : "error"),
               },

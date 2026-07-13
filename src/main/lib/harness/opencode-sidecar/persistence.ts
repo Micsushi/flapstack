@@ -22,7 +22,7 @@ export type PersistedOpencodeApprovalActivity = {
   permission: string
   patterns: string[]
   command?: string
-  state: "pending" | "resolved"
+  state: "pending" | "resolved" | "no-longer-pending"
   decision?: "once" | "always" | "reject"
   decisionSource?: "policy" | "user" | "fallback"
   message?: string
@@ -238,7 +238,7 @@ export class OpencodeRunAuditAccumulator {
           patterns: event.patterns
             .slice(0, MAX_ARRAY_ITEMS)
             .map((pattern) => sanitizeOpencodeCommand(pattern, this.secrets)),
-          state: "resolved",
+          state: event.replyStatus === "applied" ? "resolved" : "no-longer-pending",
           decision: event.reply,
           decisionSource: event.source,
           ...(event.message

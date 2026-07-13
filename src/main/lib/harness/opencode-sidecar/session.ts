@@ -231,6 +231,7 @@ export async function* streamEvents(ctx: {
               permission: normalized.permission,
               patterns: normalized.patterns,
               reply: resolution.decision.reply,
+              replyStatus: resolution.replyStatus,
               ...(resolution.decision.reply === "reject"
                 ? { message: resolution.decision.message }
                 : {}),
@@ -279,7 +280,7 @@ export async function handlePermissionRequest(
   remembered?: SidecarPermissionResolution,
 ): Promise<SidecarPermissionResolution> {
   const auto = decideAutoApproval(input.permissionMode, request.permission)
-  const resolution: SidecarPermissionResolution =
+  const resolution: Omit<SidecarPermissionResolution, "replyStatus"> =
     remembered ??
     (auto
       ? { decision: auto, source: "policy" }
@@ -311,9 +312,12 @@ export async function handlePermissionRequest(
       else await client.replyPermission(request.requestId, decision.reply)
     }
   } catch (error) {
-    // An equivalent "always" reply may have removed this queued request before
-    // Flapstack reaches it. That is an idempotent success, not a provider failure.
-    if (!remembered || !isAlreadyResolvedPermissionReplyError(error)) throw error
+    // OpenCode removes permission requests after they expire and can also remove
+    // equivalent queued requests after an "always" reply. A late reply then gets
+    // a 404 even though the provider run is still valid. Keep consuming the run
+    // and record that the decision was not applied to a pending request.
+    if (!isAlreadyResolvedPermissionReplyError(error)) throw error
+    return { ...resolution, replyStatus: "no-longer-pending" }
   }
-  return resolution
+  return { ...resolution, replyStatus: "applied" }
 }

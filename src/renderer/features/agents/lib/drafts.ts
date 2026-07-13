@@ -64,6 +64,24 @@ export interface NewChatDraft {
   textContexts?: DraftTextContext[]
 }
 
+export function resolveNewChatDraftDestination(draft?: NewChatDraft): {
+  scope: "global" | "project"
+  project?: DraftProject
+} {
+  return draft?.project ? { scope: "project", project: draft.project } : { scope: "global" }
+}
+
+export type NewChatDraftRestoreAction = "none" | "clear" | "restore"
+
+export function getNewChatDraftRestoreAction(
+  previousDraftId: string | null,
+  selectedDraftId: string | null,
+): NewChatDraftRestoreAction {
+  if (previousDraftId === selectedDraftId) return "none"
+  if (selectedDraftId) return "restore"
+  return previousDraftId ? "clear" : "none"
+}
+
 // SubChatDraft uses key format: "chatId:subChatId"
 export type SubChatDraft = DraftContent
 
@@ -222,10 +240,23 @@ export function updateNewChatDraftText(
       text,
       updatedAt: Date.now(),
       isVisible: existing?.isVisible ?? false,
-      ...(project && { project }),
+      project,
     }
   } else {
     delete globalDrafts[draftId]
+  }
+  saveGlobalDrafts(globalDrafts)
+}
+
+export function updateNewChatDraftDestination(draftId: string, project?: DraftProject): void {
+  const globalDrafts = loadGlobalDrafts()
+  const existing = globalDrafts[draftId] as NewChatDraft | undefined
+  if (!existing) return
+
+  globalDrafts[draftId] = {
+    ...existing,
+    project,
+    updatedAt: Date.now(),
   }
   saveGlobalDrafts(globalDrafts)
 }
@@ -290,16 +321,16 @@ export function useNewChatDrafts(): NewChatDraft[] {
           .sort()
           .join(",")
         if (prevIds !== newIds) return newDrafts
-        // Also compare text content
-        const prevTexts = prev
-          .map((d) => `${d.id}:${d.text}`)
+        // Also compare text and project association so sidebar color rails stay current.
+        const prevContents = prev
+          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}`)
           .sort()
           .join("|")
-        const newTexts = newDrafts
-          .map((d) => `${d.id}:${d.text}`)
+        const newContents = newDrafts
+          .map((d) => `${d.id}:${d.text}:${d.project?.id ?? "global"}`)
           .sort()
           .join("|")
-        if (prevTexts !== newTexts) return newDrafts
+        if (prevContents !== newContents) return newDrafts
         return prev // No change, return previous reference
       })
     }

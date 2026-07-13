@@ -7,6 +7,16 @@ import { createPortal } from "react-dom"
 
 import { Button } from "../../../components/ui/button"
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../components/ui/alert-dialog"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -30,6 +40,7 @@ import {
 } from "../../../components/ui/prompt-input"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
+import { Switch } from "../../../components/ui/switch"
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -119,6 +130,7 @@ import { useDictationSession } from "../voice/dictation-session"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
   formatPermissionMode,
+  isSelectableRunPermissionMode,
   RUN_PERMISSION_MODE_OPTIONS,
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
@@ -786,13 +798,33 @@ export const ChatInputArea = memo(function ChatInputArea({
     { chatId: parentChatId },
     { enabled: !!parentChatId },
   )
+  const { data: permissionPreferences } = trpc.permissions.getPreferences.useQuery()
   const resolvedPermissionMode = permissionResolution?.mode ?? "ask-before-edits"
   const [requestedPermissionMode, setRequestedPermissionMode] =
     useState<RunPermissionMode>(resolvedPermissionMode)
+  const [pendingPermissionMode, setPendingPermissionMode] = useState<RunPermissionMode | null>(null)
+  const [pendingPermissionScope, setPendingPermissionScope] = useState<
+    "all-chats" | "current-chat"
+  >("all-chats")
+  const [rememberPermissionScope, setRememberPermissionScope] = useState(false)
+  const permissionConfirmationInFlightRef = useRef(false)
   const setChatPermissionModeMutation = trpc.permissions.setChatMode.useMutation({
-    onSuccess: (_result, variables) => {
-      trpcUtils.permissions.resolveForChat.invalidate({ chatId: variables.chatId })
+    onSuccess: (result) => {
+      setRequestedPermissionMode(result.mode)
+      setPendingPermissionMode(null)
+      trpcUtils.permissions.getPreferences.invalidate()
+      trpcUtils.permissions.getGlobalDefault.invalidate()
+      trpcUtils.permissions.listChatModes.invalidate()
+      trpcUtils.permissions.resolveForChat.invalidate()
       trpcUtils.chats.list.invalidate()
+      trpcUtils.chats.listArchived.invalidate()
+      trpcUtils.projects.list.invalidate()
+      trpcUtils.projects.listArchived.invalidate()
+      trpcUtils.tasks.list.invalidate()
+      trpcUtils.tasks.listArchived.invalidate()
+      toast.success(
+        result.scope === "all-chats" ? "Permission updated for all chats" : "Permission updated",
+      )
     },
     onError: (error) => {
       setRequestedPermissionMode(resolvedPermissionMode)
@@ -804,13 +836,59 @@ export const ChatInputArea = memo(function ChatInputArea({
     setRequestedPermissionMode(resolvedPermissionMode)
   }, [parentChatId, resolvedPermissionMode])
 
-  const handlePermissionModeChange = useCallback(
-    (mode: RunPermissionMode) => {
-      setRequestedPermissionMode(mode)
-      setChatPermissionModeMutation.mutate({ chatId: parentChatId, mode })
+  const applyPermissionMode = useCallback(
+    (
+      mode: RunPermissionMode,
+      scope: "all-chats" | "current-chat",
+      rememberBehavior?: "all-chats" | "current-chat",
+    ) => {
+      return setChatPermissionModeMutation.mutateAsync({
+        chatId: parentChatId,
+        mode,
+        scope,
+        ...(rememberBehavior ? { rememberBehavior } : {}),
+      })
     },
     [parentChatId, setChatPermissionModeMutation],
   )
+
+  const handlePermissionModeChange = useCallback(
+    (mode: RunPermissionMode) => {
+      if (mode === requestedPermissionMode || setChatPermissionModeMutation.isPending) return
+
+      const behavior = permissionPreferences?.changeBehavior ?? "ask"
+      if (behavior === "ask") {
+        setPendingPermissionMode(mode)
+        setPendingPermissionScope("all-chats")
+        setRememberPermissionScope(false)
+        return
+      }
+
+      void applyPermissionMode(mode, behavior)
+    },
+    [
+      applyPermissionMode,
+      permissionPreferences?.changeBehavior,
+      requestedPermissionMode,
+      setChatPermissionModeMutation.isPending,
+    ],
+  )
+
+  const handleConfirmPermissionModeChange = useCallback(async () => {
+    if (!pendingPermissionMode || permissionConfirmationInFlightRef.current) return
+    permissionConfirmationInFlightRef.current = true
+    try {
+      await applyPermissionMode(
+        pendingPermissionMode,
+        pendingPermissionScope,
+        rememberPermissionScope ? pendingPermissionScope : undefined,
+      )
+    } catch {
+      // The mutation's onError handler restores the selector and reports the failure.
+    } finally {
+      permissionConfirmationInFlightRef.current = false
+    }
+  }, [applyPermissionMode, pendingPermissionMode, pendingPermissionScope, rememberPermissionScope])
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
     { enabled: !!parentChatId && !sandboxId },
@@ -877,6 +955,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSettingsTab("voice")
     setSettingsOpen(true)
   }, [setSettingsOpen, setSettingsTab])
+  const handleOpenPermissionSettings = useCallback(() => {
+    setSettingsTab("permissions")
+    setSettingsOpen(true)
+  }, [setSettingsOpen, setSettingsTab])
 
   const {
     data: allMcpConfig,
@@ -930,16 +1012,12 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Plan mode - per-subChat using atomFamily
   const subChatModeAtom = useMemo(() => subChatModeAtomFamily(subChatId), [subChatId])
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtom)
-  const permissionPreviewHarness = provider === "codex" ? "codex" : "claude"
-  const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery(
-    {
-      harness: permissionPreviewHarness,
-      mode: requestedPermissionMode,
-      chatMode: subChatMode,
-      cwd: selectedWorktreePath ?? null,
-    },
-    { enabled: provider === "codex" || provider === "claude-code" },
-  )
+  const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery({
+    harness: provider,
+    mode: requestedPermissionMode,
+    chatMode: subChatMode,
+    cwd: selectedWorktreePath ?? null,
+  })
 
   // Helper to update mode (atomFamily + Zustand store sync)
   const updateMode = useCallback(
@@ -2135,7 +2213,9 @@ export const ChatInputArea = memo(function ChatInputArea({
                       <DropdownMenuTrigger asChild>
                         <button className="flex max-w-[150px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
                           <span className="truncate">
-                            {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]}
+                            {isSelectableRunPermissionMode(requestedPermissionMode)
+                              ? RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]
+                              : "Legacy mode - change required"}
                           </span>
                           <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                         </button>
@@ -2158,6 +2238,23 @@ export const ChatInputArea = memo(function ChatInputArea({
                             )}
                           </DropdownMenuItem>
                         ))}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={handleOpenPermissionSettings}
+                          className="justify-between gap-3"
+                        >
+                          <span className="flex items-center gap-2">
+                            <SettingsIcon className="h-3.5 w-3.5" />
+                            Change behavior
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {permissionPreferences?.changeBehavior === "all-chats"
+                              ? "All chats"
+                              : permissionPreferences?.changeBehavior === "current-chat"
+                                ? "This chat"
+                                : "Ask every time"}
+                          </span>
+                        </DropdownMenuItem>
                         {requestedPermissionMode === "custom" && (
                           <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
                             Custom toggles are stored as a Stage 1 scaffold; this run will use the
@@ -2180,10 +2277,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         </PopoverTrigger>
                         <PopoverContent align="start" sideOffset={6} className="w-64 text-xs">
                           <div className="font-medium text-foreground">Permission warning</div>
-                          <p className="mt-1 text-muted-foreground">
-                            {provider === "codex" ? "Codex" : "Claude"} may not fully follow this
-                            permission setting.
-                          </p>
+                          <p className="mt-1 text-muted-foreground">{permissionPreview.reason}</p>
                         </PopoverContent>
                       </Popover>
                     )}
@@ -2522,6 +2616,90 @@ export const ChatInputArea = memo(function ChatInputArea({
         projectPath={projectPath}
         mode={subChatMode}
       />
+
+      <AlertDialog
+        open={pendingPermissionMode !== null}
+        onOpenChange={(open) => {
+          if (!open && !setChatPermissionModeMutation.isPending) {
+            setPendingPermissionMode(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change chat permissions?</AlertDialogTitle>
+            <AlertDialogDescription className="mt-2">
+              {RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]} →{" "}
+              {pendingPermissionMode ? RUN_PERMISSION_MODE_LABELS[pendingPermissionMode] : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogBody className="space-y-4">
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingPermissionScope("all-chats")}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-colors",
+                  pendingPermissionScope === "all-chats"
+                    ? "border-foreground/40 bg-foreground/5"
+                    : "border-border hover:bg-foreground/[0.03]",
+                )}
+              >
+                <span className="block text-sm font-medium">All chats</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Active and archived chats, project/task defaults, and new chats.
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingPermissionScope("current-chat")}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-colors",
+                  pendingPermissionScope === "current-chat"
+                    ? "border-foreground/40 bg-foreground/5"
+                    : "border-border hover:bg-foreground/[0.03]",
+                )}
+              >
+                <span className="block text-sm font-medium">This chat only</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Keep every other chat and future default unchanged.
+                </span>
+              </button>
+            </div>
+
+            {pendingPermissionMode === "full-access" && pendingPermissionScope === "all-chats" && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                Full access will be enabled for every current and future chat.
+              </div>
+            )}
+
+            <label className="flex items-center justify-between gap-4 text-sm">
+              <span>
+                <span className="block font-medium">Remember my choice</span>
+                <span className="block text-xs text-muted-foreground">
+                  You can reset this to Ask every time in Settings → Permissions.
+                </span>
+              </span>
+              <Switch
+                checked={rememberPermissionScope}
+                onCheckedChange={setRememberPermissionScope}
+              />
+            </label>
+          </AlertDialogBody>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={setChatPermissionModeMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={() => void handleConfirmPermissionModeChange()}
+              disabled={setChatPermissionModeMutation.isPending}
+            >
+              {setChatPermissionModeMutation.isPending ? "Applying..." : "Apply"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }, arePropsEqual)

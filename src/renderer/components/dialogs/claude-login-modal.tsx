@@ -222,7 +222,7 @@ export function ClaudeLoginModal({
                   onClick={handleOpenModelsSettings}
                   className="text-xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
                 >
-                  Set a custom model in Settings
+                  Manage Claude accounts in Settings
                 </button>
               </div>
             )}

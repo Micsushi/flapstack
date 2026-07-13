@@ -228,32 +228,36 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           </span>
         </div>
       )}
-      {!isMobile && !isEditing && projectLabel && (
-        <span
-          className="inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-medium"
-          style={{
-            color: projectColor ?? undefined,
-            borderColor: projectColor
-              ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
-              : undefined,
-            backgroundColor: projectColor
-              ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
-              : undefined,
-          }}
-        >
-          {projectLabel}
-        </span>
-      )}
-      {!isMobile && !isEditing && providerName && (
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium",
-            providerClassName,
+      {!isMobile && !isEditing && (projectLabel || providerName) && (
+        <div className="mr-6 flex shrink-0 items-center gap-2">
+          {projectLabel && (
+            <span
+              className="inline-flex h-6 shrink-0 items-center rounded-md border px-2.5 text-xs font-medium"
+              style={{
+                color: projectColor ?? undefined,
+                borderColor: projectColor
+                  ? `color-mix(in srgb, ${projectColor} 45%, transparent)`
+                  : undefined,
+                backgroundColor: projectColor
+                  ? `color-mix(in srgb, ${projectColor} 14%, transparent)`
+                  : undefined,
+              }}
+            >
+              {projectLabel}
+            </span>
           )}
-        >
-          <ProviderChipIcon provider={provider} className="h-2.5 w-2.5" />
-          {providerName}
-        </span>
+          {providerName && (
+            <span
+              className={cn(
+                "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium",
+                providerClassName,
+              )}
+            >
+              <ProviderChipIcon provider={provider} className="h-3.5 w-3.5" />
+              {providerName}
+            </span>
+          )}
+        </div>
       )}
       {!isMobile && !isEditing && workspaceBranch && (
         <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>

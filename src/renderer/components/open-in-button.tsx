@@ -141,7 +141,7 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
   }, [path, copyPathMutation])
 
   return (
-    <div className="inline-flex -space-x-px rounded-md">
+    <div className="no-drag inline-flex -space-x-px rounded-md">
       {label && (
         <Button
           variant="outline"

@@ -68,7 +68,7 @@ export const cloudWhisperAdapter: SttAdapter = {
       : {
           available: false,
           status: "not-configured" as const,
-          reason: "Add an OpenAI API key in Settings > Models or set OPENAI_API_KEY.",
+          reason: "Add an OpenAI API key in Settings > Voice or set OPENAI_API_KEY.",
         }
   },
 

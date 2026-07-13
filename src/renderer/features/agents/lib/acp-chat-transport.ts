@@ -1,6 +1,8 @@
 import type { ChatTransport, UIMessage } from "ai"
+import { createElement } from "react"
 import { toast } from "sonner"
 import { normalizeCodexStreamChunk } from "../../../../shared/codex-tool-normalizer"
+import { CODEX_PERMISSION_TIMEOUT_MS } from "../../../../shared/harness-types"
 import {
   codexApiKeyAtom,
   codexLoginModalOpenAtom,
@@ -194,6 +196,83 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
           },
           {
             onData: (chunk: UIMessageChunk) => {
+              if (chunk.type === "codex-permission-request") {
+                const options: Array<{ optionId: string; name: string; kind: string }> =
+                  Array.isArray(chunk.options)
+                    ? chunk.options.filter(
+                        (
+                          option: unknown,
+                        ): option is {
+                          optionId: string
+                          name: string
+                          kind: string
+                        } =>
+                          Boolean(option) &&
+                          typeof (option as any).optionId === "string" &&
+                          typeof (option as any).name === "string",
+                      )
+                    : []
+                const rejectOption = options.find((option) => option.kind.startsWith("reject"))
+                let answered = false
+                const sendDecision = (optionId: string) => {
+                  if (answered) return
+                  answered = true
+                  void trpcClient.codex.replyPermission
+                    .mutate({ requestId: chunk.requestId, optionId })
+                    .then(({ resolved }) => {
+                      if (!resolved) toast.error("Approval request expired")
+                    })
+                    .catch((error: unknown) => {
+                      toast.error("Could not send approval", {
+                        description: error instanceof Error ? error.message : String(error),
+                      })
+                    })
+                }
+
+                toast.custom(
+                  (toastId) =>
+                    createElement(
+                      "div",
+                      { className: "rounded-lg border bg-background p-4 shadow-lg" },
+                      createElement(
+                        "div",
+                        { className: "font-medium" },
+                        chunk.title || "Codex needs approval",
+                      ),
+                      createElement(
+                        "div",
+                        { className: "mt-1 text-sm text-muted-foreground" },
+                        `Codex ${chunk.kind || "tool"} request. Choose an explicit permission response.`,
+                      ),
+                      createElement(
+                        "div",
+                        { className: "mt-3 flex flex-wrap gap-2" },
+                        ...options.map((option) =>
+                          createElement(
+                            "button",
+                            {
+                              key: option.optionId,
+                              className: option.kind.startsWith("reject")
+                                ? "rounded-md border px-3 py-1.5 text-sm hover:bg-destructive/10"
+                                : "rounded-md border px-3 py-1.5 text-sm hover:bg-accent",
+                              onClick: () => {
+                                sendDecision(option.optionId)
+                                toast.dismiss(toastId)
+                              },
+                            },
+                            option.name,
+                          ),
+                        ),
+                      ),
+                    ),
+                  {
+                    duration: CODEX_PERMISSION_TIMEOUT_MS - 1_000,
+                    onDismiss: () => sendDecision(rejectOption?.optionId ?? ""),
+                  },
+                )
+                return
+              }
+
               if (chunk.type === "session-init") {
                 appStore.set(sessionInfoAtom, {
                   tools: chunk.tools || [],

@@ -173,6 +173,7 @@ export type SettingsTab =
   | "profile"
   | "appearance"
   | "preferences"
+  | "permissions"
   | "models"
   | "api-providers"
   | "voice"
@@ -188,6 +189,8 @@ export type SettingsTab =
   | "future"
   | "keyboard"
 export const agentsSettingsDialogActiveTabAtom = atom<SettingsTab>("preferences")
+export const settingsSearchQueryAtom = atom("")
+export const settingsSearchTargetAtom = atom<string | null>(null)
 // Derived atom: maps settings open/close to desktopView navigation
 export const agentsSettingsDialogOpenAtom = atom(
   (get) => get(_desktopViewAtom) === "settings",
@@ -482,6 +485,23 @@ export const autoAdvanceTargetAtom = atomWithStorage<AutoAdvanceTarget>(
   { getOnInit: true },
 )
 
+// Preferences - Cross-section chat dragging
+// Migrate the original sidebar setting from its 1/0 format to JSON boolean storage.
+const crossScopeMoveStorageKey = "flapstack-sidebar-cross-scope-move"
+if (typeof window !== "undefined") {
+  const storedCrossScopeMove = localStorage.getItem(crossScopeMoveStorageKey)
+  if (storedCrossScopeMove === "1" || storedCrossScopeMove === "0") {
+    localStorage.setItem(crossScopeMoveStorageKey, JSON.stringify(storedCrossScopeMove === "1"))
+  }
+}
+
+export const crossScopeMoveEnabledAtom = atomWithStorage<boolean>(
+  crossScopeMoveStorageKey,
+  false,
+  undefined,
+  { getOnInit: true },
+)
+
 // Preferences - Default Agent Mode
 // Controls what mode new chats/sub-chats start in (Plan = read-only, Agent = can edit)
 // Re-using AgentMode type from features/agents/atoms
@@ -656,6 +676,7 @@ export const recordingHotkeyForActionAtom = atom<string | null>(null)
 // Login modal (shown when Claude Code auth fails)
 export const agentsLoginModalOpenAtom = atom<boolean>(false)
 export const codexLoginModalOpenAtom = atom<boolean>(false)
+export const codexLoginModalMethodAtom = atom<"chatgpt" | "api_key" | null>(null)
 
 export type ClaudeLoginModalConfig = {
   hideCustomModelSettingsLink: boolean

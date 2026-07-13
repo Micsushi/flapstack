@@ -1,0 +1,12 @@
+{
+  "name": "multi-worktree-progress",
+  "prompt": "What is the repository-wide progress and what remains?",
+  "authoritativeTaskFile": "STATUS.json",
+  "expected": {
+    "completed": 7,
+    "total": 12,
+    "remaining": 5,
+    "integrationBranch": "integration"
+  },
+  "providers": ["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt"]
+}

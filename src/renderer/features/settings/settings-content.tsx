@@ -1,52 +1,92 @@
-import { useAtomValue, useSetAtom } from "jotai"
+import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { useEffect } from "react"
-import { agentsSettingsDialogActiveTabAtom, devToolsUnlockedAtom } from "../../lib/atoms"
+import {
+  agentsSettingsDialogActiveTabAtom,
+  devToolsUnlockedAtom,
+  settingsSearchQueryAtom,
+  settingsSearchTargetAtom,
+} from "../../lib/atoms"
 import { desktopViewAtom } from "../agents/atoms"
 import { AgentsAppearanceTab } from "../../components/dialogs/settings-tabs/agents-appearance-tab"
-import { AgentsBetaTab } from "../../components/dialogs/settings-tabs/agents-beta-tab"
-import { AgentsCustomAgentsTab } from "../../components/dialogs/settings-tabs/agents-custom-agents-tab"
 import { AgentsDebugTab } from "../../components/dialogs/settings-tabs/agents-debug-tab"
-import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { AgentsMcpTab } from "../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-models-tab"
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
+import { AgentsPermissionsTab } from "../../components/dialogs/settings-tabs/agents-permissions-tab"
 import { AgentsProjectsTab } from "../../components/dialogs/settings-tabs/agents-project-worktree-tab"
 import { AgentsSkillsTab } from "../../components/dialogs/settings-tabs/agents-skills-tab"
 import { AgentsPluginsTab } from "../../components/dialogs/settings-tabs/agents-plugins-tab"
-import { AgentsFutureTab } from "../../components/dialogs/settings-tabs/agents-future-tab"
 import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/agents-api-providers-tab"
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
+import { normalizeVisibleSettingsTab } from "./settings-visibility"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
 
 export function SettingsContent() {
-  const activeTab = useAtomValue(agentsSettingsDialogActiveTabAtom)
+  const storedActiveTab = useAtomValue(agentsSettingsDialogActiveTabAtom)
+  const setActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const [searchQuery, setSearchQuery] = useAtom(settingsSearchQueryAtom)
+  const [searchTarget, setSearchTarget] = useAtom(settingsSearchTargetAtom)
   const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const showDebugTab = isDevelopment || devToolsUnlocked
+  const activeTab = normalizeVisibleSettingsTab(storedActiveTab, {
+    showDevelopment: showDebugTab,
+  })
   const setDesktopView = useSetAtom(desktopViewAtom)
+
+  useEffect(() => {
+    if (activeTab !== storedActiveTab) setActiveTab(activeTab)
+  }, [activeTab, setActiveTab, storedActiveTab])
 
   // Escape key closes settings
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
+        if (searchQuery) {
+          setSearchQuery("")
+          return
+        }
         setDesktopView(null)
       }
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [setDesktopView])
+  }, [searchQuery, setDesktopView, setSearchQuery])
+
+  useEffect(() => {
+    if (!searchTarget) return
+
+    const frame = requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-settings-id="${searchTarget}"]`)
+      if (target) {
+        target.scrollIntoView({ block: "center", behavior: "smooth" })
+        target.focus({ preventScroll: true })
+        target.animate(
+          [
+            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
+            { boxShadow: "0 0 0 2px rgba(245, 158, 11, 0.65)" },
+            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
+          ],
+          { duration: 1200, easing: "ease-out" },
+        )
+      }
+      setSearchTarget(null)
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [activeTab, searchTarget, setSearchTarget])
 
   const renderTabContent = () => {
     switch (activeTab) {
       case "appearance":
         return <AgentsAppearanceTab />
-      case "keyboard":
-        return <AgentsKeyboardTab />
       case "preferences":
         return <AgentsPreferencesTab />
+      case "permissions":
+        return <AgentsPermissionsTab />
       case "models":
         return <AgentsModelsTab />
       case "api-providers":
@@ -55,18 +95,12 @@ export function SettingsContent() {
         return <AgentsVoiceTab />
       case "skills":
         return <AgentsSkillsTab />
-      case "agents":
-        return <AgentsCustomAgentsTab />
       case "mcp":
         return <AgentsMcpTab />
       case "plugins":
         return <AgentsPluginsTab />
       case "projects":
         return <AgentsProjectsTab />
-      case "beta":
-        return <AgentsBetaTab />
-      case "future":
-        return <AgentsFutureTab />
       case "usage":
         return <AgentsUsageTab />
       case "debug":
@@ -80,18 +114,30 @@ export function SettingsContent() {
   const isTwoPanelTab =
     activeTab === "mcp" ||
     activeTab === "skills" ||
-    activeTab === "agents" ||
     activeTab === "projects" ||
-    activeTab === "keyboard" ||
     activeTab === "plugins"
 
   if (isTwoPanelTab) {
-    return <div className="h-full overflow-hidden">{renderTabContent()}</div>
+    return (
+      <div
+        className="h-full overflow-hidden outline-none"
+        data-settings-id={`settings-tab-${activeTab}`}
+        tabIndex={-1}
+      >
+        {renderTabContent()}
+      </div>
+    )
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto">{renderTabContent()}</div>
+    <div
+      className="h-full overflow-y-auto outline-none"
+      data-settings-id={`settings-tab-${activeTab}`}
+      tabIndex={-1}
+    >
+      <div className={activeTab === "usage" ? "mx-auto w-full max-w-7xl" : "mx-auto max-w-2xl"}>
+        {renderTabContent()}
+      </div>
     </div>
   )
 }

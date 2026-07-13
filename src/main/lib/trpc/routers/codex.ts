@@ -1,4 +1,5 @@
 import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
+import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
 import { observable } from "@trpc/server/observable"
 import { streamText } from "ai"
 import { and, eq, ne } from "drizzle-orm"
@@ -28,13 +29,25 @@ import {
   extractLatestCodexReasoningEvents,
 } from "../../codex/reasoning"
 import { resolveCodexStdioLaunch } from "../../codex/mcp-stdio"
+import {
+  allowCodexPermissionRequest,
+  createCodexPermissionDecision,
+  rejectCodexPermissionRequest,
+  resolveCodexPermissionOption,
+} from "../../codex/permission-bridge"
 import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
-import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import { CODEX_TRANSPORT_DECISION } from "../../harness/codex-transport-decision"
+import {
+  buildHarnessContextBundle,
+  getLastHarnessContextFingerprint,
+  prependStartupContext,
+} from "../../harness/launch-context"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
+  mapCodexAcpModeId,
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions"
@@ -113,6 +126,18 @@ type ActiveCodexStream = {
 }
 
 const activeStreams = new Map<string, ActiveCodexStream>()
+type CodexPermissionHandler = (
+  request: RequestPermissionRequest,
+) => Promise<RequestPermissionResponse>
+type PendingCodexApproval = {
+  subChatId: string
+  runId: string
+  request: RequestPermissionRequest
+  resolve: (response: RequestPermissionResponse) => void
+}
+
+const codexPermissionHandlers = new Map<string, { runId: string; handle: CodexPermissionHandler }>()
+const pendingCodexApprovals = new Map<string, PendingCodexApproval>()
 
 /** Check if there are any active Codex streaming sessions */
 export function hasActiveCodexStreams(): boolean {
@@ -126,6 +151,25 @@ export function abortAllCodexStreams(): void {
     stream.controller.abort()
   }
   activeStreams.clear()
+}
+
+function replyPendingCodexApproval(input: { requestId: string; optionId: string }): {
+  resolved: boolean
+} {
+  const pending = pendingCodexApprovals.get(input.requestId)
+  if (!pending) return { resolved: false }
+
+  pendingCodexApprovals.delete(input.requestId)
+  pending.resolve(resolveCodexPermissionOption(pending.request, input.optionId))
+  return { resolved: true }
+}
+
+function rejectPendingCodexApprovals(subChatId: string, runId?: string): void {
+  for (const [requestId, pending] of pendingCodexApprovals) {
+    if (pending.subChatId !== subChatId || (runId && pending.runId !== runId)) continue
+    pendingCodexApprovals.delete(requestId)
+    pending.resolve(rejectCodexPermissionRequest(pending.request))
+  }
 }
 const loginSessions = new Map<string, CodexLoginSession>()
 const codexMcpCache = new Map<string, CodexMcpSnapshot>()
@@ -1386,6 +1430,10 @@ function getOrCreateProvider(params: {
     command: resolveCodexAcpBinaryPath(),
     env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled),
     authMethodId: getCodexAuthMethodId(params.authConfig),
+    permissionRequestHandler: async (request) => {
+      const active = codexPermissionHandlers.get(params.subChatId)
+      return active ? active.handle(request) : rejectCodexPermissionRequest(request)
+    },
     session: {
       cwd: params.cwd,
       mcpServers: params.mcpServers,
@@ -1803,12 +1851,20 @@ export const codexRouter = router({
             }
 
             const existingMessages = parseStoredMessages(existingSubChat.messages)
-            const startupContext = await buildHarnessStartupContext({
+            const storedSessionId = getLastSessionId(existingMessages)
+            if (input.sessionId && input.sessionId !== storedSessionId) {
+              console.warn(`[codex] Ignoring sessionId not stored on sub-chat ${input.subChatId}`)
+            }
+            const ownedSessionId = input.forceNewSession ? undefined : storedSessionId
+            const contextBundle = await buildHarnessContextBundle({
               cwd: input.cwd,
               projectPath: input.projectPath,
               harness: "codex",
+              userPrompt: input.prompt,
+              sessionMode: ownedSessionId ? "resumed" : "new",
+              previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, startupContext)
+            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
             const fallbackModel = input.authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
@@ -1942,21 +1998,58 @@ export const codexRouter = router({
               console.error("[codex] Failed to resolve MCP servers:", mcpError)
             }
 
+            const handleCodexPermissionRequest: CodexPermissionHandler = async (request) => {
+              if (permissionMode === "read-only" || abortController.signal.aborted || !isActive) {
+                return rejectCodexPermissionRequest(request)
+              }
+              if (permissionMode === "full-access") {
+                return allowCodexPermissionRequest(request)
+              }
+
+              const requestId = crypto.randomUUID()
+              const decision = createCodexPermissionDecision({
+                request,
+                signal: abortController.signal,
+              })
+              pendingCodexApprovals.set(requestId, {
+                subChatId: input.subChatId,
+                runId: input.runId,
+                request,
+                resolve: decision.resolve,
+              })
+              safeEmit({
+                type: "codex-permission-request",
+                requestId,
+                runId: input.runId,
+                toolCallId: request.toolCall.toolCallId,
+                title: request.toolCall.title ?? "Codex tool",
+                kind: request.toolCall.kind ?? "other",
+                options: request.options.map((option) => ({
+                  optionId: option.optionId,
+                  name: option.name,
+                  kind: option.kind,
+                })),
+              })
+              if (!isActive) decision.reject()
+              return decision.promise.finally(() => pendingCodexApprovals.delete(requestId))
+            }
+            codexPermissionHandlers.set(input.subChatId, {
+              runId: input.runId,
+              handle: handleCodexPermissionRequest,
+            })
+
             const provider = getOrCreateProvider({
               subChatId: input.subChatId,
               cwd: input.cwd,
               mcpServers: mcpSnapshot.mcpServersForSession,
               mcpFingerprint: mcpSnapshot.fingerprint,
-              existingSessionId: input.forceNewSession
-                ? undefined
-                : (input.sessionId ?? getLastSessionId(existingMessages)),
+              existingSessionId: ownedSessionId,
               authConfig: input.authConfig,
               reasoningEnabled: input.reasoningEnabled,
             })
 
             const startedAt = Date.now()
-            let latestSessionId =
-              provider.getSessionId() || input.sessionId || getLastSessionId(existingMessages)
+            let latestSessionId = provider.getSessionId() || ownedSessionId
             let usagePromise: Promise<CodexUsageMetadata | null> | null = null
             let reasoningPromise: ReturnType<typeof pollCodexReasoning> | null = null
 
@@ -1990,7 +2083,7 @@ export const codexRouter = router({
             }
 
             const result = streamText({
-              model: provider.languageModel(acpModelId),
+              model: provider.languageModel(acpModelId, mapCodexAcpModeId(permissionMode)),
               messages: [
                 {
                   role: "user",
@@ -2018,6 +2111,8 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
+                    context: contextBundle.metadata,
+                    transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                     durationMs: Date.now() - startedAt,
                     resultSubtype: part.finishReason === "error" ? "error" : "success",
                   }
@@ -2031,6 +2126,8 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
+                    context: contextBundle.metadata,
+                    transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   }
                 }
 
@@ -2040,6 +2137,8 @@ export const codexRouter = router({
                   permissionMode,
                   permissionApplication,
                   runId: input.runId,
+                  context: contextBundle.metadata,
+                  transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                 }
               },
               onFinish: async ({ responseMessage, isContinuation }) => {
@@ -2062,6 +2161,8 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
+                          context: contextBundle.metadata,
+                          transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                           ...usageMetadata,
                         },
                       }
@@ -2074,6 +2175,8 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
+                          context: contextBundle.metadata,
+                          transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         },
                       }
                   const cleanedResponseMessage =
@@ -2097,6 +2200,8 @@ export const codexRouter = router({
                         permissionMode,
                         permissionApplication,
                         runId: input.runId,
+                        context: contextBundle.metadata,
+                        transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         resultSubtype: "empty-response",
                         ...usageMetadata,
                       },
@@ -2183,7 +2288,12 @@ export const codexRouter = router({
               }
               safeEmit({
                 type: "message-metadata",
-                messageMetadata: { runId: input.runId, ...(usageMetadata ?? {}) },
+                messageMetadata: {
+                  runId: input.runId,
+                  context: contextBundle.metadata,
+                  transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
+                  ...(usageMetadata ?? {}),
+                },
               })
               safeEmit(pendingFinishChunk)
             } else {
@@ -2211,6 +2321,11 @@ export const codexRouter = router({
             safeEmit({ type: "finish" })
             safeComplete()
           } finally {
+            const permissionHandler = codexPermissionHandlers.get(input.subChatId)
+            if (permissionHandler?.runId === input.runId) {
+              codexPermissionHandlers.delete(input.subChatId)
+            }
+            rejectPendingCodexApprovals(input.subChatId, input.runId)
             const activeStream = activeStreams.get(input.subChatId)
             if (!runCompleted) {
               const finalStatus =
@@ -2242,6 +2357,10 @@ export const codexRouter = router({
       })
     }),
 
+  replyPermission: publicProcedure
+    .input(z.object({ requestId: z.string(), optionId: z.string() }))
+    .mutation(({ input }) => replyPendingCodexApproval(input)),
+
   cancel: publicProcedure
     .input(
       z.object({
@@ -2261,11 +2380,14 @@ export const codexRouter = router({
 
       activeStream.cancelRequested = true
       activeStream.controller.abort()
+      rejectPendingCodexApprovals(input.subChatId, input.runId)
 
       return { cancelled: true, ignoredStale: false }
     }),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
+    codexPermissionHandlers.delete(input.subChatId)
+    rejectPendingCodexApprovals(input.subChatId)
     cleanupProvider(input.subChatId)
 
     const activeStream = activeStreams.get(input.subChatId)

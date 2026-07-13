@@ -338,7 +338,7 @@ function groupToolActivities(parts: any[], nestedToolIds: Set<string>): any[] {
   let current: any[] = []
 
   const flush = () => {
-    if (current.length >= 2) result.push({ type: "activity-group", parts: current })
+    if (current.length >= 1) result.push({ type: "activity-group", parts: current })
     else result.push(...current)
     current = []
   }

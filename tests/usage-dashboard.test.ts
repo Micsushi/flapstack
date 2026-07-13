@@ -4,6 +4,7 @@ import {
   buildCurrentUsageSummaries,
   buildUsageHistorySeries,
   compactHistoryPoints,
+  filterSupersededPersonalAccountRows,
   formatQuotaUsage,
   prepareUsageHistorySeries,
   quotaPercentRemaining,
@@ -89,6 +90,37 @@ describe("usage dashboard helpers", () => {
       ["five_hour", 30],
       ["seven_day", 70],
     ])
+  })
+
+  it("keeps only the newest personal OAuth identity on the current board", () => {
+    const rows = [
+      {
+        providerId: "anthropic",
+        accountTag: "old-login",
+        sourceTag: "personal-oauth",
+        metricKey: "five_hour",
+        capturedAt: "2026-07-12T12:00:00Z",
+      },
+      {
+        providerId: "anthropic",
+        accountTag: "current-login",
+        sourceTag: "personal-oauth",
+        metricKey: "five_hour",
+        capturedAt: "2026-07-13T12:00:00Z",
+      },
+      {
+        providerId: "anthropic",
+        accountTag: "organization",
+        sourceTag: "organization-cost",
+        capturedAt: "2026-07-11T12:00:00Z",
+      },
+    ]
+
+    expect(filterSupersededPersonalAccountRows(rows).map((row) => row.accountTag)).toEqual([
+      "current-login",
+      "organization",
+    ])
+    expect(rows).toHaveLength(3)
   })
 
   it("builds bounded historical series per provider account and metric", () => {

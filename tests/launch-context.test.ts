@@ -1,12 +1,19 @@
+import { execFileSync } from "node:child_process"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  buildHarnessContextBundle,
   buildHarnessStartupContext,
+  getLastHarnessContextFingerprint,
   FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION,
   prependStartupContext,
 } from "../src/main/lib/harness/launch-context"
+import {
+  collectGitPreflightSnapshot,
+  isRepositoryStateQuestion,
+} from "../src/main/lib/harness/git-preflight"
 
 let rootPath: string
 
@@ -49,6 +56,7 @@ describe("harness launch context", () => {
     expect(context).toContain("Current product context lives here.")
     expect(context).toContain(FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION)
     expect(context).toContain("Caveman full and ponytail full are enabled by default")
+    expect(context).not.toContain("Loaded context")
   })
 
   it("wraps the user request after the loaded context", () => {
@@ -84,6 +92,25 @@ describe("harness launch context", () => {
 
     expect(context).toContain("Harness: opencode")
     expect(context).toContain("OpenCode must follow this")
+  })
+
+  it("does not duplicate CLAUDE.md when Claude loads provider-native instructions", async () => {
+    writeFileSync(join(rootPath, "AGENTS.md"), "# Shared agent rules")
+    writeFileSync(join(rootPath, "CLAUDE.md"), "# Native Claude rules")
+
+    const bundle = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "claude-code",
+      providerNativeInstructions: true,
+      vaultConfigPath: noVaultConfigPath(),
+    })
+
+    expect(bundle.context).toContain("Shared agent rules")
+    expect(bundle.context).not.toContain("Native Claude rules")
+    expect(bundle.metadata.sourcePaths[0]).toBe(join(rootPath, "AGENTS.md"))
+    expect(bundle.metadata.sourcePaths.some((sourcePath) => sourcePath.endsWith("CLAUDE.md"))).toBe(
+      false,
+    )
   })
 
   it("loads an explicitly enabled machine-local vault without making it required", async () => {
@@ -194,5 +221,174 @@ After`
 
     expect(prompt).not.toMatch(/\b(?:hotline|read[_ -]?aloud|spoken|displayed)\b/i)
     expect(prompt).toContain("Use ordinary prose formatting.")
+  })
+
+  it("keeps resumed session context compact without resending startup files", async () => {
+    writeFileSync(join(rootPath, "AGENTS.md"), `# Repo agents\n${"x".repeat(20_000)}`)
+
+    const fullBundle = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "new",
+      vaultConfigPath: noVaultConfigPath(),
+    })
+    const fullContext = fullBundle.context
+    const resumedContext = await buildHarnessStartupContext({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "resumed",
+      vaultConfigPath: noVaultConfigPath(),
+      previousSourceFingerprint: fullBundle.metadata.sourceFingerprint,
+    })
+
+    expect(fullContext).toContain("# Repo agents")
+    expect(fullContext.length).toBeLessThan(8_500)
+    expect(resumedContext).toContain("FLAPSTACK COMPACT CONTEXT")
+    expect(resumedContext).not.toContain("# Repo agents")
+    expect(resumedContext.length).toBeLessThan(800)
+    expect(resumedContext.length).toBeLessThan(fullContext.length)
+  })
+
+  it("returns deterministic source metadata without persisting source contents", async () => {
+    const agentsPath = join(rootPath, "AGENTS.md")
+    writeFileSync(agentsPath, "# Repo agents\nFollow the repository rules.")
+
+    const first = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "new",
+      vaultConfigPath: noVaultConfigPath(),
+    })
+    const second = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "resumed",
+      vaultConfigPath: noVaultConfigPath(),
+      previousSourceFingerprint: first.metadata.sourceFingerprint,
+    })
+
+    expect(first.metadata.sourcePaths[0]).toBe(agentsPath)
+    expect(first.metadata.sourceFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(first.metadata.sourceFingerprint).toBe(second.metadata.sourceFingerprint)
+    expect(first.metadata.sourceChars).toBeGreaterThan(0)
+    expect(first.metadata).not.toHaveProperty("sourceContents")
+    expect(second.metadata.mode).toBe("resumed")
+  })
+
+  it("resends startup files when their fingerprint changed during a provider session", async () => {
+    const agentsPath = join(rootPath, "AGENTS.md")
+    writeFileSync(agentsPath, "# Repo agents\nOriginal instruction.")
+    const first = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "new",
+      vaultConfigPath: noVaultConfigPath(),
+    })
+
+    writeFileSync(agentsPath, "# Repo agents\nChanged safety instruction.")
+    const resumed = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      sessionMode: "resumed",
+      previousSourceFingerprint: first.metadata.sourceFingerprint,
+      vaultConfigPath: noVaultConfigPath(),
+    })
+
+    expect(resumed.metadata.sourceFingerprint).not.toBe(first.metadata.sourceFingerprint)
+    expect(resumed.context).toContain("Changed safety instruction.")
+    expect(resumed.context).not.toContain("FLAPSTACK COMPACT CONTEXT")
+  })
+
+  it("finds the latest persisted startup fingerprint", () => {
+    const older = "a".repeat(64)
+    const newer = "b".repeat(64)
+    expect(
+      getLastHarnessContextFingerprint([
+        { role: "assistant", metadata: { context: { sourceFingerprint: older } } },
+        { role: "user", parts: [] },
+        { role: "assistant", metadata: { context: { sourceFingerprint: newer } } },
+      ]),
+    ).toBe(newer)
+    expect(getLastHarnessContextFingerprint([{ metadata: { context: {} } }])).toBeUndefined()
+  })
+
+  it.each([
+    "What is the repository status?",
+    "How much progress is complete?",
+    "What remains in Stage 3?",
+    "List every worktree and branch",
+  ])("detects a repository-state question: %s", (prompt) => {
+    expect(isRepositoryStateQuestion(prompt)).toBe(true)
+  })
+
+  it("does not run Git preflight for unrelated prompts", async () => {
+    const context = await buildHarnessStartupContext({
+      cwd: rootPath,
+      harness: "claude-code",
+      userPrompt: "Explain this TypeScript function",
+      vaultConfigPath: noVaultConfigPath(),
+    })
+
+    expect(context).not.toContain("LIVE GIT PREFLIGHT")
+  })
+
+  it("injects deterministic live Git scope for repository-state questions", async () => {
+    const repositoryPath = join(rootPath, "repo")
+    const integrationPath = join(rootPath, "repo-integration")
+    mkdirSync(repositoryPath, { recursive: true })
+    writeFileSync(join(repositoryPath, "README.md"), "initial\n")
+    execFileSync("git", ["init", "-b", "main"], { cwd: repositoryPath })
+    execFileSync("git", ["add", "README.md"], { cwd: repositoryPath })
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Flapstack Test",
+        "-c",
+        "user.email=flapstack-test@example.invalid",
+        "commit",
+        "-m",
+        "initial",
+      ],
+      { cwd: repositoryPath },
+    )
+    execFileSync("git", ["branch", "integration"], { cwd: repositoryPath })
+    execFileSync("git", ["worktree", "add", integrationPath, "integration"], {
+      cwd: repositoryPath,
+    })
+    writeFileSync(join(repositoryPath, "dirty.txt"), "uncommitted\n")
+
+    const snapshot = await collectGitPreflightSnapshot(repositoryPath)
+    const bundle = await buildHarnessContextBundle({
+      cwd: repositoryPath,
+      harness: "codex",
+      userPrompt: "What remains in Stage 3?",
+      sessionMode: "resumed",
+      vaultConfigPath: noVaultConfigPath(),
+    })
+    const context = bundle.context
+
+    expect(snapshot).not.toBeNull()
+    expect(snapshot?.currentBranch).toBe("main")
+    expect(snapshot?.dirty).toBe(true)
+    expect(snapshot?.worktrees.map((worktree) => worktree.branch)).toEqual(["main", "integration"])
+    expect(context).toContain("--- LIVE GIT PREFLIGHT ---")
+    expect(context).toContain("Current branch: main")
+    expect(context).toContain("Current worktree dirty: yes")
+    expect(context).toContain("Worktrees (2)")
+    expect(context).toContain("branch=integration")
+    expect(context).toContain("Before any repository-wide status")
+    expect(context).toContain("authoritative task boards")
+    expect(context).toContain("memory, or a handoff alone")
+    expect(bundle.metadata.gitScope).toMatchObject({
+      repository: "repo",
+      currentBranch: "main",
+      dirty: true,
+    })
+    expect(bundle.metadata.gitScope?.worktrees.map((worktree) => worktree.name)).toEqual([
+      "repo",
+      "repo-integration",
+    ])
+    expect(JSON.stringify(bundle.metadata.gitScope)).not.toContain(rootPath)
   })
 })

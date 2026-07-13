@@ -1,20 +1,29 @@
 import { z } from "zod"
-import { eq } from "drizzle-orm"
-import { chats, getDatabase } from "../../db"
+import { desc, eq } from "drizzle-orm"
+import { chats, getDatabase, projects, subChats, tasks } from "../../db"
 import {
   getGlobalDefault,
+  getPermissionPreferences,
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
+  buildCursorPermissionApplication,
   mapClaudeSdkPermissionMode,
   parsePermissionMode,
+  permissionChangeBehaviors,
   permissionModes,
+  replacePermissionPreferences,
   resolvePermission,
+  setPermissionChangeBehavior,
   setGlobalDefault,
+  type PermissionChangeBehavior,
   type PermissionMode,
 } from "../../permissions"
+import { buildOpencodePermissionApplication } from "../../harness/opencode-sidecar"
 import { publicProcedure, router } from "../index"
 
 const permissionModeSchema = z.enum(permissionModes)
+const permissionChangeBehaviorSchema = z.enum(permissionChangeBehaviors)
+const permissionChangeScopeSchema = z.enum(["all-chats", "current-chat"])
 
 type Row = Record<string, unknown>
 type RawSqlDatabase = {
@@ -26,6 +35,10 @@ type RawSqlDatabase = {
 }
 
 export const permissionsRouter = router({
+  getPreferences: publicProcedure.query(() => {
+    return getPermissionPreferences()
+  }),
+
   getGlobalDefault: publicProcedure.query(() => {
     return { mode: getGlobalDefault() }
   }),
@@ -36,23 +49,50 @@ export const permissionsRouter = router({
       return { mode: setGlobalDefault(input.mode) }
     }),
 
-  setChatMode: publicProcedure
-    .input(z.object({ chatId: z.string(), mode: permissionModeSchema }))
+  setChangeBehavior: publicProcedure
+    .input(z.object({ behavior: permissionChangeBehaviorSchema }))
     .mutation(({ input }) => {
-      const db = getDatabase()
-      const chat = db
-        .update(chats)
-        .set({ permissionMode: input.mode, updatedAt: new Date() })
-        .where(eq(chats.id, input.chatId))
-        .returning()
-        .get()
-
-      if (!chat) {
-        throw new Error(`Chat not found: ${input.chatId}`)
-      }
-
-      return { mode: input.mode }
+      return { behavior: setPermissionChangeBehavior(input.behavior) }
     }),
+
+  setChatMode: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string(),
+        mode: permissionModeSchema,
+        scope: permissionChangeScopeSchema.default("current-chat"),
+        rememberBehavior: permissionChangeBehaviorSchema.optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      return applyScopedPermissionChange(input)
+    }),
+
+  listChatModes: publicProcedure.query(() => {
+    const db = getDatabase()
+    return db
+      .select({
+        id: chats.id,
+        name: chats.name,
+        scope: chats.scope,
+        permissionMode: chats.permissionMode,
+        projectId: chats.projectId,
+        projectName: projects.name,
+        taskId: chats.taskId,
+        taskName: tasks.name,
+        archivedAt: chats.archivedAt,
+        updatedAt: chats.updatedAt,
+      })
+      .from(chats)
+      .leftJoin(projects, eq(chats.projectId, projects.id))
+      .leftJoin(tasks, eq(chats.taskId, tasks.id))
+      .orderBy(desc(chats.updatedAt))
+      .all()
+      .map((chat) => ({
+        ...chat,
+        permissionMode: parsePermissionMode(chat.permissionMode) ?? getGlobalDefault(),
+      }))
+  }),
 
   resolveForChat: publicProcedure.input(z.object({ chatId: z.string() })).query(({ input }) => {
     const values = readPermissionValuesForChat(input.chatId)
@@ -70,7 +110,7 @@ export const permissionsRouter = router({
   previewHarness: publicProcedure
     .input(
       z.object({
-        harness: z.enum(["claude", "codex"]),
+        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt"]),
         mode: permissionModeSchema,
         chatMode: z.enum(["plan", "agent"]).default("agent"),
         cwd: z.string().nullable().optional(),
@@ -79,6 +119,15 @@ export const permissionsRouter = router({
     .query(({ input }) => {
       if (input.harness === "codex") {
         return buildCodexPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
+      }
+      if (input.harness === "cursor-agent") {
+        return buildCursorPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
+      }
+      if (input.harness === "openrouter" || input.harness === "nanogpt") {
+        return buildOpencodePermissionApplication({
+          permissionMode: input.mode,
+          cwd: input.cwd,
+        })
       }
       const sdk = mapClaudeSdkPermissionMode(input.mode, input.chatMode)
       return buildClaudePermissionApplication({
@@ -89,6 +138,93 @@ export const permissionsRouter = router({
       })
     }),
 })
+
+function applyScopedPermissionChange(input: {
+  chatId: string
+  mode: PermissionMode
+  scope: "all-chats" | "current-chat"
+  rememberBehavior?: PermissionChangeBehavior
+}): {
+  mode: PermissionMode
+  scope: "all-chats" | "current-chat"
+  changeBehavior: PermissionChangeBehavior
+  updatedChats: number
+  updatedSubChats: number
+} {
+  const db = getDatabase()
+  const previousPreferences = getPermissionPreferences()
+  const nextPreferences = {
+    globalDefault: input.scope === "all-chats" ? input.mode : previousPreferences.globalDefault,
+    changeBehavior: input.rememberBehavior ?? previousPreferences.changeBehavior,
+  }
+  const configChanged =
+    nextPreferences.globalDefault !== previousPreferences.globalDefault ||
+    nextPreferences.changeBehavior !== previousPreferences.changeBehavior
+
+  if (configChanged) {
+    replacePermissionPreferences(nextPreferences)
+  }
+
+  try {
+    const result = db.transaction((tx) => {
+      const existing = tx
+        .select({ id: chats.id })
+        .from(chats)
+        .where(eq(chats.id, input.chatId))
+        .get()
+
+      if (!existing) {
+        throw new Error(`Chat not found: ${input.chatId}`)
+      }
+
+      const updatedAt = new Date()
+
+      if (input.scope === "all-chats") {
+        tx.update(projects).set({ defaultPermissionMode: input.mode, updatedAt }).run()
+        tx.update(tasks).set({ defaultPermissionMode: input.mode, updatedAt }).run()
+        const updatedChats = tx
+          .update(chats)
+          .set({ permissionMode: input.mode, updatedAt })
+          .run().changes
+        const updatedSubChats = tx
+          .update(subChats)
+          .set({ permissionMode: input.mode, updatedAt })
+          .run().changes
+
+        return { updatedChats, updatedSubChats }
+      }
+
+      const updatedChats = tx
+        .update(chats)
+        .set({ permissionMode: input.mode, updatedAt })
+        .where(eq(chats.id, input.chatId))
+        .run().changes
+      const updatedSubChats = tx
+        .update(subChats)
+        .set({ permissionMode: input.mode, updatedAt })
+        .where(eq(subChats.chatId, input.chatId))
+        .run().changes
+
+      return { updatedChats, updatedSubChats }
+    })
+
+    return {
+      mode: input.mode,
+      scope: input.scope,
+      changeBehavior: nextPreferences.changeBehavior,
+      ...result,
+    }
+  } catch (error) {
+    if (configChanged) {
+      try {
+        replacePermissionPreferences(previousPreferences)
+      } catch (restoreError) {
+        console.error("[Permissions] Failed to restore permission preferences:", restoreError)
+      }
+    }
+    throw error
+  }
+}
 
 function readPermissionValuesForChat(chatId: string): {
   chatMode?: PermissionMode | null

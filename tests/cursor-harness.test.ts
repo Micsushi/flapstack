@@ -237,6 +237,72 @@ describe("cursor stream translator (D2)", () => {
     expect(text).toBe("Alpha Beta")
   })
 
+  it("does not duplicate a cumulative final after post-tool streamed text", () => {
+    const { chunks, parts } = runFixture("tool-and-cumulative-final-run.jsonl")
+    const text = parts
+      .filter(
+        (part): part is Extract<CursorAssistantPart, { type: "text" }> => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join("")
+
+    expect(text).toBe("Checking files.\nFinal answer.")
+    expect(
+      chunks
+        .filter((chunk) => chunk.type === "text-delta")
+        .map((chunk) => chunk.delta)
+        .join(""),
+    ).toBe("Checking files.\nFinal answer.")
+  })
+
+  it("persists current nested Cursor tool name, input, output, and result", () => {
+    const { parts } = runFixture("tool-and-cumulative-final-run.jsonl")
+    const toolPart = parts.find(
+      (part): part is Extract<CursorAssistantPart, { toolCallId: string }> => "toolCallId" in part,
+    )
+
+    expect(toolPart).toMatchObject({
+      type: "tool-read",
+      toolCallId: "tool_read_fixture",
+      toolName: "read",
+      input: { path: "/tmp/flapstack-test/package.json", limit: 20 },
+      output: { success: { content: '{"name":"flapstack"}', isEmpty: false } },
+      result: { success: { content: '{"name":"flapstack"}', isEmpty: false } },
+      state: "result",
+    })
+  })
+
+  it("tolerates named nested tool envelopes without variant keys", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({
+      type: "tool",
+      callId: "tool_shell_fixture",
+      tool: {
+        name: "shell",
+        arguments: { command: "pwd" },
+      },
+    })
+    translator.push({
+      type: "tool",
+      subtype: "completed",
+      callId: "tool_shell_fixture",
+      tool: {
+        name: "shell",
+        result: { stdout: "/tmp/flapstack-test" },
+      },
+    })
+
+    expect(translator.getParts()).toContainEqual({
+      type: "tool-shell",
+      toolCallId: "tool_shell_fixture",
+      toolName: "shell",
+      input: { command: "pwd" },
+      output: { stdout: "/tmp/flapstack-test" },
+      result: { stdout: "/tmp/flapstack-test" },
+      state: "result",
+    })
+  })
+
   it("preserves identical explicit incremental deltas", () => {
     const translator = new CursorStreamTranslator()
     translator.push({ type: "assistant", delta: { text: "ha" } })
@@ -250,6 +316,60 @@ describe("cursor stream translator (D2)", () => {
       .map((part) => part.text)
       .join("")
     expect(text).toBe("haha")
+  })
+
+  it("preserves identical timestamped message deltas from the current CLI", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "ha" }] },
+      timestamp_ms: 1,
+    })
+    translator.push({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "ha" }] },
+      timestamp_ms: 2,
+    })
+    translator.push({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "haha" }] },
+    })
+    translator.finish()
+
+    const text = translator
+      .getParts()
+      .filter(
+        (part): part is Extract<CursorAssistantPart, { type: "text" }> => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join("")
+    expect(text).toBe("haha")
+  })
+
+  it("treats a timestamped message with a completion reason as cumulative", () => {
+    const translator = new CursorStreamTranslator()
+    translator.push({
+      type: "assistant",
+      subtype: "delta",
+      timestamp_ms: 1,
+      message: { content: [{ type: "text", text: "Hello" }] },
+    })
+    translator.push({
+      type: "assistant",
+      timestamp_ms: 2,
+      finish_reason: "end_turn",
+      message: { content: [{ type: "text", text: "Hello world" }] },
+    })
+    translator.finish()
+
+    const text = translator
+      .getParts()
+      .filter(
+        (part): part is Extract<CursorAssistantPart, { type: "text" }> => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join("")
+    expect(text).toBe("Hello world")
   })
 })
 

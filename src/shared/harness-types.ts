@@ -106,6 +106,8 @@ export type RunAttachment =
       source?: string
     }
 
+export const CODEX_PERMISSION_TIMEOUT_MS = 60_000
+
 export interface RunInput {
   chatId: string
   subChatId: string

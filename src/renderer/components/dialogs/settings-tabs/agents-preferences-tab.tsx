@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import {
   analyticsOptOutAtom,
   autoAdvanceTargetAtom,
-  ctrlTabTargetAtom,
+  crossScopeMoveEnabledAtom,
   defaultAgentModeAtom,
   desktopNotificationsEnabledAtom,
   reasoningOutputEnabledAtom,
@@ -12,14 +12,8 @@ import {
   preferredEditorAtom,
   type AgentMode,
   type AutoAdvanceTarget,
-  type CtrlTabTarget,
 } from "../../../lib/atoms"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
-import type { RunPermissionMode } from "../../../../shared/harness-types"
-import {
-  RUN_PERMISSION_MODE_LABELS,
-  RUN_PERMISSION_MODE_OPTIONS,
-} from "../../../features/agents/constants"
 
 // Editor icon imports
 import cursorIcon from "../../../assets/app-icons/cursor.svg"
@@ -108,7 +102,6 @@ const JETBRAINS: EditorOption[] = [
 ]
 import vscodeBaseIcon from "../../../assets/app-icons/vscode.svg"
 import jetbrainsBaseIcon from "../../../assets/app-icons/jetbrains.svg"
-import { Kbd } from "../../ui/kbd"
 import { Select, SelectContent, SelectItem, SelectTrigger } from "../../ui/select"
 import {
   DropdownMenu,
@@ -149,19 +142,11 @@ export function AgentsPreferencesTab() {
   )
   const [notifyWhenFocused, setNotifyWhenFocused] = useAtom(notifyWhenFocusedAtom)
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom)
-  const [ctrlTabTarget, setCtrlTabTarget] = useAtom(ctrlTabTargetAtom)
   const [autoAdvanceTarget, setAutoAdvanceTarget] = useAtom(autoAdvanceTargetAtom)
+  const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useAtom(crossScopeMoveEnabledAtom)
   const [defaultAgentMode, setDefaultAgentMode] = useAtom(defaultAgentModeAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
-
-  const { data: globalPermissionDefault, refetch: refetchGlobalPermissionDefault } =
-    trpc.permissions.getGlobalDefault.useQuery()
-  const setGlobalPermissionDefaultMutation = trpc.permissions.setGlobalDefault.useMutation({
-    onSuccess: () => {
-      refetchGlobalPermissionDefault()
-    },
-  })
 
   // Co-authored-by setting from Claude settings.json
   const { data: includeCoAuthoredBy, refetch: refetchCoAuthoredBy } =
@@ -174,10 +159,6 @@ export function AgentsPreferencesTab() {
 
   const handleCoAuthoredByToggle = (enabled: boolean) => {
     setCoAuthoredByMutation.mutate({ enabled })
-  }
-
-  const handleGlobalPermissionDefaultChange = (mode: RunPermissionMode) => {
-    setGlobalPermissionDefaultMutation.mutate({ mode })
   }
 
   // Sync opt-out status to main process
@@ -203,7 +184,11 @@ export function AgentsPreferencesTab() {
 
       {/* Agent Behavior */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between p-4">
+        <div
+          className="flex items-center justify-between p-4 outline-none"
+          data-settings-id="preferences-reasoning"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Reasoning output</span>
             <span className="text-xs text-muted-foreground">
@@ -213,7 +198,11 @@ export function AgentsPreferencesTab() {
           </div>
           <Switch checked={reasoningOutputEnabled} onCheckedChange={setReasoningOutputEnabled} />
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-default-mode"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Default Mode</span>
             <span className="text-xs text-muted-foreground">
@@ -233,33 +222,11 @@ export function AgentsPreferencesTab() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Default Permission</span>
-            <span className="text-xs text-muted-foreground">
-              Permission mode copied into new chats when no project or task default overrides it
-            </span>
-          </div>
-          <Select
-            value={globalPermissionDefault?.mode ?? "ask-before-edits"}
-            onValueChange={(value: RunPermissionMode) => handleGlobalPermissionDefaultChange(value)}
-            disabled={setGlobalPermissionDefaultMutation.isPending}
-          >
-            <SelectTrigger className="w-auto px-2">
-              <span className="text-xs">
-                {RUN_PERMISSION_MODE_LABELS[globalPermissionDefault?.mode ?? "ask-before-edits"]}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {RUN_PERMISSION_MODE_LABELS[mode]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-coauthor"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Include Co-Authored-By</span>
             <span className="text-xs text-muted-foreground">
@@ -276,7 +243,11 @@ export function AgentsPreferencesTab() {
 
       {/* Notifications */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between p-4">
+        <div
+          className="flex items-center justify-between p-4 outline-none"
+          data-settings-id="preferences-desktop-notifications"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Desktop Notifications</span>
             <span className="text-xs text-muted-foreground">
@@ -288,7 +259,11 @@ export function AgentsPreferencesTab() {
             onCheckedChange={setDesktopNotificationsEnabled}
           />
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-sound-notifications"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Sound Notifications</span>
             <span className="text-xs text-muted-foreground">
@@ -297,7 +272,11 @@ export function AgentsPreferencesTab() {
           </div>
           <Switch checked={soundEnabled} onCheckedChange={setSoundEnabled} />
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-focused-notifications"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Notify When Focused</span>
             <span className="text-xs text-muted-foreground">
@@ -314,27 +293,24 @@ export function AgentsPreferencesTab() {
 
       {/* Navigation */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between p-4">
+        <div
+          className="flex items-center justify-between p-4 outline-none"
+          data-settings-id="preferences-drag-chats"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Quick Switch</span>
+            <span className="text-sm font-medium text-foreground">Drag chats between sections</span>
             <span className="text-xs text-muted-foreground">
-              What <Kbd>⌃Tab</Kbd> switches between
+              Allow dragging chats between Global, project, and task sections.
             </span>
           </div>
-          <Select
-            value={ctrlTabTarget}
-            onValueChange={(value: CtrlTabTarget) => setCtrlTabTarget(value)}
-          >
-            <SelectTrigger className="w-auto px-2">
-              <span className="text-xs">{ctrlTabTarget === "workspaces" ? "Chats" : "Agents"}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="workspaces">Chats</SelectItem>
-              <SelectItem value="agents">Agents</SelectItem>
-            </SelectContent>
-          </Select>
+          <Switch checked={crossScopeMoveEnabled} onCheckedChange={setCrossScopeMoveEnabled} />
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-auto-advance"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Auto-advance</span>
             <span className="text-xs text-muted-foreground">
@@ -361,7 +337,11 @@ export function AgentsPreferencesTab() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center justify-between p-4 border-t border-border">
+        <div
+          className="flex items-center justify-between p-4 border-t border-border outline-none"
+          data-settings-id="preferences-editor"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Preferred Editor</span>
             <span className="text-xs text-muted-foreground">
@@ -493,7 +473,11 @@ export function AgentsPreferencesTab() {
 
       {/* Privacy */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between gap-6 p-4">
+        <div
+          className="flex items-center justify-between gap-6 p-4 outline-none"
+          data-settings-id="preferences-analytics"
+          tabIndex={-1}
+        >
           <div className="flex flex-col space-y-1">
             <span className="text-sm font-medium text-foreground">Share Usage Analytics</span>
             <span className="text-xs text-muted-foreground">

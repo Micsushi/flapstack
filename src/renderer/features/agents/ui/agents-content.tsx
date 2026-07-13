@@ -38,7 +38,7 @@ import {
   agentsQuickSwitchSelectedIndexAtom,
   subChatsQuickSwitchOpenAtom,
   subChatsQuickSwitchSelectedIndexAtom,
-  ctrlTabTargetAtom,
+  type CtrlTabTarget,
   chatSourceModeAtom,
 } from "../../../lib/atoms"
 import { NewChatForm } from "../main/new-chat-form"
@@ -164,8 +164,8 @@ function AgentsContentInner() {
   const isQuickSwitchingRef = useRef(false)
   const frozenRecentChatsRef = useRef<typeof agentChats>([]) // Frozen snapshot for dialog
 
-  // Ctrl+Tab target preference
-  const ctrlTabTarget = useAtomValue(ctrlTabTargetAtom)
+  // Keep the retired persisted preference inert until the quick-switch system is rebuilt.
+  const ctrlTabTarget = getReleasedCtrlTabTarget()
 
   // Quick-switch dialog state - Sub-chats (Ctrl+Tab)
   const [subChatQuickSwitchOpen, setSubChatQuickSwitchOpen] = useAtom(subChatsQuickSwitchOpenAtom)
@@ -1252,7 +1252,7 @@ function AgentsContentInner() {
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (
                 <div
-                  className="relative h-[43px] shrink-0 border-b border-border bg-muted/30"
+                  className="relative h-[43px] shrink-0 border-b-2 border-border bg-muted/30"
                   style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
                   onMouseEnter={() => {
                     setOpenChatTabsHovered(true)
@@ -1284,7 +1284,7 @@ function AgentsContentInner() {
                                 handleOpenChatTabPointerDown(event, chat.id)
                               }
                               className={[
-                                "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 pt-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
+                                "group relative flex h-9 max-w-56 min-w-28 items-center gap-1.5 rounded-t-md border border-b-0 pl-3 pr-1 text-left text-xs transition-[background-color,border-color,color,box-shadow]",
                                 isActive
                                   ? "border-border bg-primary/15 font-medium text-foreground shadow-sm"
                                   : "border-border/40 bg-muted/25 text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground",
@@ -1310,15 +1310,16 @@ function AgentsContentInner() {
                                 data-open-chat-tab-action
                                 aria-label={`Close ${chat.name || "chat"}`}
                                 className={[
-                                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100",
+                                  "flex h-8 w-8 translate-y-0.5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,box-shadow,color,opacity] hover:bg-foreground/20 hover:text-foreground hover:ring-1 hover:ring-inset hover:ring-foreground/35 group-hover:opacity-100",
                                   isActive ? "opacity-60" : "opacity-0",
                                 ].join(" ")}
+                                onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   event.stopPropagation()
                                   handleCloseOpenChatTab(chat.id)
                                 }}
                               >
-                                <X className="h-3.5 w-3.5" />
+                                <X className="h-4 w-4" />
                               </button>
                               <span
                                 aria-hidden
@@ -1507,4 +1508,7 @@ export function AgentsContent() {
       <AgentsContentInner />
     </DictationSessionProvider>
   )
+}
+function getReleasedCtrlTabTarget(): CtrlTabTarget {
+  return "workspaces"
 }

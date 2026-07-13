@@ -12,6 +12,16 @@ describe("Stage 2 QOL regression contracts", () => {
     )
   })
 
+  it("collapses a single tool activity inside reasoning", () => {
+    const source = readSource("src/renderer/features/agents/main/assistant-message-item.tsx")
+    expect(source).toContain(
+      'if (current.length >= 1) result.push({ type: "activity-group", parts: current })',
+    )
+    expect(source).not.toContain(
+      'if (current.length >= 2) result.push({ type: "activity-group", parts: current })',
+    )
+  })
+
   it("requests the selected stored-diff scope", () => {
     const card = readSource("src/renderer/features/agents/ui/agent-changed-files-card.tsx")
     const router = readSource("src/main/lib/trpc/routers/runs.ts")

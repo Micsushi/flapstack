@@ -18,6 +18,7 @@ type CodexLoginContentProps = {
   onConnect?: () => void
   onOpenUrl: () => void
   onRetry: () => void
+  onMethodChange?: (method: CodexAuthMethod) => void
   onApiKeyChange: (value: string) => void
   onSubmitApiKey: () => void
 }
@@ -34,6 +35,7 @@ export function CodexLoginContent({
   onConnect,
   onOpenUrl,
   onRetry,
+  onMethodChange,
   onApiKeyChange,
   onSubmitApiKey,
 }: CodexLoginContentProps) {
@@ -44,6 +46,22 @@ export function CodexLoginContent({
 
   return (
     <div className="space-y-8">
+      {onMethodChange && (
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+          {(["chatgpt", "api_key"] as const).map((nextMethod) => (
+            <Button
+              key={nextMethod}
+              type="button"
+              size="sm"
+              variant={method === nextMethod ? "secondary" : "ghost"}
+              onClick={() => onMethodChange(nextMethod)}
+            >
+              {nextMethod === "chatgpt" ? "ChatGPT" : "API key"}
+            </Button>
+          ))}
+        </div>
+      )}
+
       <div className="text-center space-y-4">
         <div className="flex items-center justify-center gap-2 p-2 mx-auto w-max rounded-full border border-border">
           <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">

@@ -4858,7 +4858,7 @@ const ChatViewInner = memo(function ChatViewInner({
         {!isMobile && (
           <div
             className={cn(
-              "relative flex-shrink-0 border-b border-border/40 bg-background/95 py-2",
+              "relative flex-shrink-0 border-b-2 border-border bg-background/95 py-2",
               isSubChatsSidebarOpen && "pt-[52px]",
             )}
           >

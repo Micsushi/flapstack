@@ -47,6 +47,7 @@ import {
   subChatReasoningEnabledAtomFamily,
   getNextMode,
   type AgentMode,
+  type SelectedProject,
 } from "../atoms"
 import { defaultAgentModeAtom } from "../../../lib/atoms"
 import { ProjectSelector } from "../components/project-selector"
@@ -120,8 +121,12 @@ import {
   deleteNewChatDraft,
   DRAFTS_CHANGE_EVENT,
   markDraftVisible,
+  getNewChatDraftRestoreAction,
+  resolveNewChatDraftDestination,
+  updateNewChatDraftDestination,
   updateNewChatDraftText,
   type DraftProject,
+  type NewChatDraft,
 } from "../lib/drafts"
 import { useDictationSession } from "../voice/dictation-session"
 import {
@@ -748,16 +753,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     const draftId = currentDraftIdRef.current ?? generateDraftId()
     currentDraftIdRef.current = draftId
     setSelectedDraftId(draftId)
-    const project = validatedProject
-      ? {
-          id: validatedProject.id,
-          name: validatedProject.name,
-          path: validatedProject.path,
-          gitOwner: validatedProject.gitOwner,
-          gitRepo: validatedProject.gitRepo,
-          gitProvider: validatedProject.gitProvider,
-        }
-      : undefined
+    const project =
+      chatScope !== "global" && validatedProject
+        ? {
+            id: validatedProject.id,
+            name: validatedProject.name,
+            path: validatedProject.path,
+            gitOwner: validatedProject.gitOwner,
+            gitRepo: validatedProject.gitRepo,
+            gitProvider: validatedProject.gitProvider,
+          }
+        : undefined
     await dictation.start({
       key: `new-chat:${draftId}`,
       draftId,
@@ -779,6 +785,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     isVoiceReady,
     showVoiceSetup,
     setSelectedDraftId,
+    chatScope,
     validatedProject,
   ])
 
@@ -1140,13 +1147,18 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   // Restore draft when a specific draft is selected from sidebar
   // Or clear editor when "New Workspace" is clicked (selectedDraftId becomes null)
   useEffect(() => {
-    const hadDraftBefore = prevSelectedDraftIdRef.current !== null
+    const restoreAction = getNewChatDraftRestoreAction(
+      prevSelectedDraftIdRef.current,
+      selectedDraftId,
+    )
+    if (restoreAction === "none") return
+
     prevSelectedDraftIdRef.current = selectedDraftId
 
     if (!selectedDraftId) {
       // No draft selected - only clear if we had a draft before (user clicked "New Workspace")
       // Don't clear if user is currently typing (currentDraftIdRef has a value)
-      if (hadDraftBefore) {
+      if (restoreAction === "clear") {
         currentDraftIdRef.current = null
         lastSavedTextRef.current = ""
         if (editorRef.current) {
@@ -1163,8 +1175,33 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     }
 
     const globalDrafts = loadGlobalDrafts()
-    const draft = globalDrafts[selectedDraftId]
+    const draft = globalDrafts[selectedDraftId] as NewChatDraft | undefined
     if (draft?.text) {
+      const destination = resolveNewChatDraftDestination(draft)
+      setChatScope(destination.scope)
+      setSelectedTaskId(null)
+
+      if (destination.project) {
+        const liveProject = projectsList?.find((project) => project.id === destination.project?.id)
+        const project = liveProject ?? destination.project
+        const gitProvider =
+          project.gitProvider === "github" ||
+          project.gitProvider === "gitlab" ||
+          project.gitProvider === "bitbucket"
+            ? project.gitProvider
+            : null
+
+        setSelectedProject({
+          id: project.id,
+          name: project.name,
+          path: project.path,
+          gitRemoteUrl: liveProject?.gitRemoteUrl,
+          gitProvider,
+          gitOwner: project.gitOwner,
+          gitRepo: project.gitRepo,
+        })
+      }
+
       currentDraftIdRef.current = selectedDraftId
       lastSavedTextRef.current = draft.text // Initialize to prevent immediate re-save
 
@@ -1181,7 +1218,24 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
         return () => clearTimeout(timeoutId)
       }
     }
-  }, [selectedDraftId, validatedProject?.path])
+  }, [projectsList, selectedDraftId, setSelectedProject, validatedProject?.path])
+
+  const persistDraftDestination = useCallback((scope: ChatScope, project: SelectedProject) => {
+    if (!currentDraftIdRef.current) return
+    updateNewChatDraftDestination(
+      currentDraftIdRef.current,
+      scope !== "global" && project
+        ? {
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gitOwner: project.gitOwner,
+            gitRepo: project.gitRepo,
+            gitProvider: project.gitProvider,
+          }
+        : undefined,
+    )
+  }, [])
 
   // Mark draft as visible when component unmounts (user navigates away)
   // This ensures the draft only appears in the sidebar after leaving the form
@@ -1495,7 +1549,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
         updateNewChatDraftText(
           currentDraftIdRef.current,
           text,
-          validatedProject
+          chatScope !== "global" && validatedProject
             ? {
                 id: validatedProject.id,
                 name: validatedProject.name,
@@ -1512,7 +1566,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
         currentDraftIdRef.current = null
       }
     },
-    [validatedProject],
+    [chatScope, validatedProject],
   )
 
   // Clear current draft when chat is created
@@ -2361,7 +2415,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                         key={scope}
                         type="button"
                         disabled={disabled}
-                        onClick={() => setChatScope(scope)}
+                        onClick={() => {
+                          setChatScope(scope)
+                          persistDraftDestination(scope, validatedProject)
+                        }}
                         className={cn(
                           "rounded px-2 py-1 text-xs font-medium transition-colors",
                           chatScope === scope
@@ -2376,7 +2433,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                   })}
                 </div>
 
-                <ProjectSelector />
+                <ProjectSelector
+                  onProjectChange={(project) => persistDraftDestination(chatScope, project)}
+                />
 
                 {chatScope === "task" && validatedProject && (
                   <DropdownMenu>

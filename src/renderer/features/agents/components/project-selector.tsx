@@ -20,9 +20,13 @@ import {
 } from "../../../components/ui/icons"
 import { ProjectIcon } from "../../../components/ui/project-icon"
 import { trpc } from "../../../lib/trpc"
-import { selectedProjectAtom } from "../atoms"
+import { selectedProjectAtom, type SelectedProject } from "../atoms"
 
-export function ProjectSelector() {
+type ProjectSelectorProps = {
+  onProjectChange?: (project: NonNullable<SelectedProject>) => void
+}
+
+export function ProjectSelector({ onProjectChange }: ProjectSelectorProps = {}) {
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -61,7 +65,7 @@ export function ProjectSelector() {
           return [project, ...oldData]
         })
 
-        setSelectedProject({
+        const selection: NonNullable<SelectedProject> = {
           id: project.id,
           name: project.name,
           path: project.path,
@@ -69,7 +73,9 @@ export function ProjectSelector() {
           gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
           gitOwner: project.gitOwner,
           gitRepo: project.gitRepo,
-        })
+        }
+        setSelectedProject(selection)
+        onProjectChange?.(selection)
       }
     },
   })
@@ -89,7 +95,7 @@ export function ProjectSelector() {
           return [project, ...oldData]
         })
 
-        setSelectedProject({
+        const selection: NonNullable<SelectedProject> = {
           id: project.id,
           name: project.name,
           path: project.path,
@@ -97,7 +103,9 @@ export function ProjectSelector() {
           gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
           gitOwner: project.gitOwner,
           gitRepo: project.gitRepo,
-        })
+        }
+        setSelectedProject(selection)
+        onProjectChange?.(selection)
         setGithubDialogOpen(false)
         setGithubUrl("")
       }
@@ -117,7 +125,7 @@ export function ProjectSelector() {
   const handleSelectProject = (projectId: string) => {
     const project = projects?.find((p) => p.id === projectId)
     if (project) {
-      setSelectedProject({
+      const selection: NonNullable<SelectedProject> = {
         id: project.id,
         name: project.name,
         path: project.path,
@@ -125,7 +133,9 @@ export function ProjectSelector() {
         gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
         gitOwner: project.gitOwner,
         gitRepo: project.gitRepo,
-      })
+      }
+      setSelectedProject(selection)
+      onProjectChange?.(selection)
       setOpen(false)
     }
   }

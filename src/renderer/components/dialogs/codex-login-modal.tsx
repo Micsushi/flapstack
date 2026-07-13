@@ -9,6 +9,7 @@ import { useCodexLoginFlow } from "../../features/agents/hooks/use-codex-login-f
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
+  codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
   codexOnboardingAuthMethodAtom,
   codexOnboardingCompletedAtom,
@@ -22,6 +23,7 @@ type CodexLoginModalProps = {
 
 export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
   const [open, setOpen] = useAtom(codexLoginModalOpenAtom)
+  const [requestedMethod, setRequestedMethod] = useAtom(codexLoginModalMethodAtom)
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
@@ -43,6 +45,7 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
     isOpeningUrl,
     start,
     saveApiKey,
+    setMethod,
     setApiKeyInput,
     cancel,
     reset,
@@ -70,6 +73,10 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
     if (!didInitForOpenRef.current) {
       didInitForOpenRef.current = true
       reset()
+      if (requestedMethod && requestedMethod !== method) {
+        setMethod(requestedMethod)
+        return
+      }
     }
 
     if (!shouldAutoStartForCurrentFlow || method !== "chatgpt") {
@@ -82,7 +89,7 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
 
     didStartForOpenRef.current = true
     void start()
-  }, [method, open, reset, shouldAutoStartForCurrentFlow, start])
+  }, [method, open, requestedMethod, reset, setMethod, shouldAutoStartForCurrentFlow, start])
 
   useEffect(() => {
     if (!open || method !== "chatgpt") {
@@ -115,6 +122,7 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
       setPendingAuthRetry({ ...pendingAuthRetry, readyToRetry: true })
     }
 
+    setRequestedMethod(null)
     setOpen(false)
   }, [
     method,
@@ -124,6 +132,7 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
     setCodexOnboardingCompleted,
     setOpen,
     setPendingAuthRetry,
+    setRequestedMethod,
     state,
   ])
 
@@ -137,10 +146,20 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
     void start()
   }
 
+  const handleMethodChange = async (nextMethod: typeof method) => {
+    if (nextMethod === method) return
+    await cancel()
+    didStartForOpenRef.current = false
+    shouldAutoOpenUrlRef.current = false
+    reset()
+    setMethod(nextMethod)
+  }
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       void cancel()
       clearPendingRetryIfNeeded()
+      setRequestedMethod(null)
     }
     setOpen(nextOpen)
   }
@@ -185,6 +204,9 @@ export function CodexLoginModal({ autoStart = true }: CodexLoginModalProps) {
             }
 
             handleConnect()
+          }}
+          onMethodChange={(nextMethod) => {
+            void handleMethodChange(nextMethod)
           }}
           onApiKeyChange={setApiKeyInput}
           onSubmitApiKey={() => {

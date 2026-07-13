@@ -38,15 +38,7 @@ export type OpencodePermissionConfig = {
  * as an invalid OpenCode config object.
  */
 export type OpencodeSessionPermission = {
-  permission:
-    | "edit"
-    | "write"
-    | "apply_patch"
-    | "bash"
-    | "webfetch"
-    | "websearch"
-    | "external_directory"
-    | "task"
+  permission: string
   pattern: "*"
   action: OpencodePermissionRule
 }
@@ -73,7 +65,19 @@ export function buildOpencodeSessionPermissions(mode: PermissionMode): OpencodeS
   const rules = buildOpencodePermissionConfig(mode)
   const externalDirectory: OpencodePermissionRule =
     mode === "read-only" ? "deny" : mode === "full-access" ? "allow" : "ask"
+  const catchAll: OpencodePermissionRule =
+    mode === "read-only" ? "deny" : mode === "full-access" ? "allow" : "ask"
   return [
+    // OpenCode's built-in default is permissive. Start with a mode-level
+    // catch-all so new, unknown, and MCP tool permissions cannot bypass the
+    // Flapstack selection. Later specific rules override this baseline.
+    { permission: "*", pattern: "*", action: catchAll },
+    { permission: "read", pattern: "*", action: "allow" },
+    { permission: "glob", pattern: "*", action: "allow" },
+    { permission: "grep", pattern: "*", action: "allow" },
+    { permission: "list", pattern: "*", action: "allow" },
+    { permission: "lsp", pattern: "*", action: "allow" },
+    { permission: "question", pattern: "*", action: "allow" },
     { permission: "edit", pattern: "*", action: rules.edit },
     { permission: "write", pattern: "*", action: rules.edit },
     { permission: "apply_patch", pattern: "*", action: rules.edit },
@@ -141,15 +145,7 @@ function limitation(
 function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
   switch (mode) {
     case "read-only":
-      // OpenCode denies edit/bash/webfetch, but MCP side effects can't be proven
-      // from a permission name alone.
-      return [
-        limitation(
-          "mcp",
-          "deny mutating MCP tools",
-          "Read-only relies on provider per-tool deny rules; MCP server side effects cannot be proven from the tool name alone.",
-        ),
-      ]
+      return []
     case "auto-edit-project-only":
       return [
         limitation(
@@ -177,6 +173,12 @@ export function buildOpencodePermissionApplication(params: {
 }): HarnessPermissionApplication {
   const cwd = params.cwd?.trim() || null
   const rules = buildOpencodePermissionConfig(params.permissionMode)
+  const catchAll =
+    params.permissionMode === "read-only"
+      ? "deny"
+      : params.permissionMode === "full-access"
+        ? "allow"
+        : "ask"
   const limitations = getLimitations(params.permissionMode)
   const enforced = [
     {
@@ -190,7 +192,7 @@ export function buildOpencodePermissionApplication(params: {
     {
       control: "filesystem-write-scope" as const,
       applied: rules.edit !== "allow" || params.permissionMode === "auto-edit-project-only",
-      value: `edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}`,
+      value: `unknown=${catchAll}, edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}`,
       reason: "Flapstack sends these provider per-tool permission rules with the session request.",
     },
   ]
@@ -203,7 +205,7 @@ export function buildOpencodePermissionApplication(params: {
     limitations,
     warnings: Array.from(
       new Set([
-        `Provider permission rules: edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}.`,
+        `Provider permission rules: unknown=${catchAll}, edit=${rules.edit}, bash=${rules.bash}, webfetch=${rules.webfetch}.`,
         ...limitations.map((l) => l.reason),
       ]),
     ),

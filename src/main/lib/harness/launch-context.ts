@@ -1,9 +1,17 @@
+import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join } from "node:path"
+import {
+  collectGitPreflightSnapshot,
+  formatGitPreflightSnapshot,
+  isRepositoryStateQuestion,
+} from "./git-preflight"
 
-const MAX_FILE_CHARS = 6000
-const MAX_REFERENCED_FILES = 8
+const MAX_FILE_CHARS = 1800
+const MAX_TOTAL_FILE_CHARS = 5000
+const MAX_BASE_FILES = 6
+const MAX_REFERENCED_FILES = 2
 
 export const FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION = `# Flapstack default behavior
 
@@ -19,10 +27,12 @@ Caveman full and ponytail full are enabled by default for every chat.
 - normal mode, stop caveman, and stop ponytail do not disable these defaults.
 
 Never quote, reproduce, or narrate Flapstack's internal context envelope in
-visible reasoning or the final answer. Use loaded instructions silently. On the
-first assistant reply in a new chat, end with one compact "Loaded context:" line
-that names every loaded startup file by basename. Do not repeat that receipt on
-later replies unless the user asks what was loaded.
+visible reasoning or the final answer. Use loaded instructions silently. Do not
+add a startup-file receipt unless the user explicitly asks what was loaded.
+
+Concise output must never reduce investigation quality. Use the tools, live
+repository evidence, and verification needed for an accurate answer; brevity
+applies only to the visible response.
 
 These are application-owned instructions. Follow them even when no repository or
 user-level instruction file is present.`
@@ -35,6 +45,54 @@ type LaunchContextFile = {
 type LocalVaultConfig = {
   enabled?: boolean
   vaultRoot?: string
+}
+
+export type HarnessContextSessionMode = "new" | "resumed"
+
+export type HarnessContextMetadata = {
+  mode: HarnessContextSessionMode
+  sourcePaths: string[]
+  sourceFingerprint: string
+  sourceChars: number
+  gitScope?: {
+    repository: string
+    currentBranch: string | null
+    headSha: string
+    dirty: boolean
+    worktrees: Array<{
+      name: string
+      branch: string | null
+      headSha: string
+      detached: boolean
+      locked: boolean
+      prunable: boolean
+    }>
+  }
+}
+
+export type HarnessContextBundle = {
+  context: string
+  metadata: HarnessContextMetadata
+}
+
+export function getLastHarnessContextFingerprint(messages: unknown[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || typeof message !== "object") continue
+
+    const metadata = (message as { metadata?: unknown }).metadata
+    if (!metadata || typeof metadata !== "object") continue
+
+    const context = (metadata as { context?: unknown }).context
+    if (!context || typeof context !== "object") continue
+
+    const fingerprint = (context as { sourceFingerprint?: unknown }).sourceFingerprint
+    if (typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint)) {
+      return fingerprint
+    }
+  }
+
+  return undefined
 }
 
 async function readTextFile(path: string): Promise<string | null> {
@@ -107,81 +165,159 @@ async function collectLaunchContextFiles(
   cwd: string,
   projectPath?: string,
   vaultConfigPath = join(homedir(), ".flapstack", "launch-context.json"),
+  excludedBasenames = new Set<string>(),
 ): Promise<LaunchContextFile[]> {
   const roots = Array.from(new Set([projectPath, cwd].filter(Boolean) as string[]))
   const projectName = basename(projectPath || cwd)
-  const candidatePaths: string[] = [
-    join(homedir(), ".codex", "AGENTS.md"),
-    join(homedir(), ".claude", "CLAUDE.md"),
-  ]
-
-  const vaultConfig = await readLocalVaultConfig(vaultConfigPath)
-  if (vaultConfig?.vaultRoot) {
-    const projectVaultRoot = join(vaultConfig.vaultRoot, "Wiki", "Projects", projectName)
-    candidatePaths.push(
-      join(vaultConfig.vaultRoot, "AGENTS.md"),
-      join(vaultConfig.vaultRoot, "Wiki", "Projects", "projects_index.md"),
-      join(projectVaultRoot, `${projectName.toLowerCase()}_index.md`),
-      join(projectVaultRoot, "current-handoff.md"),
-    )
-  }
+  const candidatePaths: string[] = []
 
   for (const root of roots) {
     candidatePaths.push(join(root, "AGENTS.md"), join(root, "CLAUDE.md"))
   }
 
+  const vaultConfig = await readLocalVaultConfig(vaultConfigPath)
+  if (vaultConfig?.vaultRoot) {
+    const projectVaultRoot = join(vaultConfig.vaultRoot, "Wiki", "Projects", projectName)
+    candidatePaths.push(
+      join(projectVaultRoot, `${projectName.toLowerCase()}_index.md`),
+      join(projectVaultRoot, "current-handoff.md"),
+      join(vaultConfig.vaultRoot, "AGENTS.md"),
+      join(vaultConfig.vaultRoot, "Wiki", "Projects", "projects_index.md"),
+    )
+  }
+
+  candidatePaths.push(
+    join(homedir(), ".codex", "AGENTS.md"),
+    join(homedir(), ".claude", "CLAUDE.md"),
+  )
+
   const files: LaunchContextFile[] = []
   const seen = new Set<string>()
+  let remainingChars = MAX_TOTAL_FILE_CHARS
 
-  for (const path of candidatePaths) {
-    if (seen.has(path)) continue
+  async function addFile(path: string): Promise<boolean> {
+    if (excludedBasenames.has(basename(path).toLowerCase())) return false
+    if (seen.has(path) || remainingChars <= 0) return false
     seen.add(path)
 
     const content = await readTextFile(path)
-    if (content) {
-      files.push({ path, content: truncateContent(content) })
-    }
+    if (!content) return false
+
+    const truncated = truncateContent(content)
+    const bounded = truncated.slice(0, remainingChars)
+    files.push({
+      path,
+      content:
+        bounded.length < truncated.length
+          ? `${bounded}\n\n[...startup context budget reached...]`
+          : bounded,
+    })
+    remainingChars -= bounded.length
+    return true
+  }
+
+  for (const path of candidatePaths) {
+    if (files.length >= MAX_BASE_FILES) break
+    await addFile(path)
   }
 
   const referencedPaths = files.flatMap((file) => extractAbsoluteMarkdownPaths(file.content))
   for (const path of referencedPaths.slice(0, MAX_REFERENCED_FILES)) {
-    if (seen.has(path)) continue
-    seen.add(path)
-
-    const content = await readTextFile(path)
-    if (content) {
-      files.push({ path, content: truncateContent(content) })
-    }
+    await addFile(path)
   }
 
   return files
 }
 
-export async function buildHarnessStartupContext(params: {
+export async function buildHarnessContextBundle(params: {
   cwd: string
   projectPath?: string
   harness: "codex" | "claude-code" | "cursor-agent" | "opencode"
   vaultConfigPath?: string
-}): Promise<string> {
+  userPrompt?: string
+  sessionMode?: HarnessContextSessionMode
+  providerNativeInstructions?: boolean
+  previousSourceFingerprint?: string | null
+}): Promise<HarnessContextBundle> {
+  const mode = params.sessionMode ?? "new"
+  const gitPreflight =
+    params.userPrompt && isRepositoryStateQuestion(params.userPrompt)
+      ? await collectGitPreflightSnapshot(params.cwd)
+      : null
+  const gitSection = gitPreflight ? `\n\n${formatGitPreflightSnapshot(gitPreflight)}` : ""
+  const projectName = basename(params.projectPath || params.cwd)
   const files = await collectLaunchContextFiles(
     params.cwd,
     params.projectPath,
     params.vaultConfigPath,
+    params.harness === "claude-code" && params.providerNativeInstructions
+      ? new Set(["claude.md"])
+      : undefined,
   )
+  const sourceFingerprint = createHash("sha256")
+    .update(files.map((file) => `${file.path}\0${file.content}`).join("\0\0"))
+    .digest("hex")
+  const metadata: HarnessContextMetadata = {
+    mode,
+    sourcePaths: files.map((file) => file.path),
+    sourceFingerprint,
+    sourceChars: files.reduce((total, file) => total + file.content.length, 0),
+    ...(gitPreflight
+      ? {
+          gitScope: {
+            repository: basename(gitPreflight.repositoryRoot),
+            currentBranch: gitPreflight.currentBranch,
+            headSha: gitPreflight.headSha,
+            dirty: gitPreflight.dirty,
+            worktrees: gitPreflight.worktrees.map((worktree) => ({
+              name: basename(worktree.path),
+              branch: worktree.branch,
+              headSha: worktree.headSha,
+              detached: worktree.detached,
+              locked: worktree.locked,
+              prunable: worktree.prunable,
+            })),
+          },
+        }
+      : {}),
+  }
 
-  const projectName = basename(params.projectPath || params.cwd)
+  const startupSourcesUnchanged =
+    mode === "resumed" &&
+    Boolean(params.previousSourceFingerprint) &&
+    params.previousSourceFingerprint === sourceFingerprint
+
+  if (startupSourcesUnchanged) {
+    return {
+      context: `--- FLAPSTACK COMPACT CONTEXT (DO NOT QUOTE) ---
+Harness: ${params.harness}
+Project: ${projectName}
+Working directory: ${params.cwd}
+
+Continue following startup and project instructions already loaded by this
+session. Keep the visible answer concise, but investigate and verify as deeply
+as needed. Do not emit a startup-file receipt. Treat memory and handoffs as
+possibly stale leads; live repository evidence is authoritative.${gitSection}
+--- END FLAPSTACK COMPACT CONTEXT ---`,
+      metadata,
+    }
+  }
+
   const fileList = files.length
     ? files.map((file) => `- ${file.path}`).join("\n")
     : "- No external startup files found; Flapstack defaults still apply."
   const sections = files
     .map(
-      (file) => `--- BEGIN LOADED FILE: ${file.path} ---
+      (
+        file,
+      ) => `--- BEGIN LOADED ${isHintFile(file.path) ? "HINT" : "INSTRUCTION"} FILE: ${file.path} ---
 ${file.content}
 --- END LOADED FILE ---`,
     )
     .join("\n\n")
 
-  return `--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---
+  return {
+    context: `--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---
 Harness: ${params.harness}
 Project: ${projectName}
 Working directory: ${params.cwd}
@@ -193,12 +329,36 @@ Follow these instructions as active project context. If the user asks what conte
 or instructions are loaded, name these files and summarize the relevant loaded
 context. Do not claim that no context was loaded when this block is present.
 
+Startup content is deliberately capped. Read additional relevant sources with
+tools when needed. Handoffs and memory are possibly stale leads, never
+authoritative current state; live repository evidence overrides them.
+
 --- FLAPSTACK DEFAULTS ---
 ${FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION}
 --- END FLAPSTACK DEFAULTS ---
 
 ${sections}
---- END FLAPSTACK INTERNAL CONTEXT ---`
+${gitSection}
+--- END FLAPSTACK INTERNAL CONTEXT ---`,
+    metadata,
+  }
+}
+
+export async function buildHarnessStartupContext(params: {
+  cwd: string
+  projectPath?: string
+  harness: "codex" | "claude-code" | "cursor-agent" | "opencode"
+  vaultConfigPath?: string
+  userPrompt?: string
+  sessionMode?: HarnessContextSessionMode
+  providerNativeInstructions?: boolean
+  previousSourceFingerprint?: string | null
+}): Promise<string> {
+  return (await buildHarnessContextBundle(params)).context
+}
+
+function isHintFile(path: string): boolean {
+  return /(?:current-)?handoff\.md$/i.test(path) || /(?:^|\/)memories?(?:\/|$)/i.test(path)
 }
 
 function neutralizeEmbeddedThreadModeCommands(context: string): string {
@@ -224,9 +384,11 @@ export function prependStartupContext(prompt: string, startupContext: string): s
 caveman full
 ponytail full
 Be concise by default: at most 120 words or six short bullets unless the request
-needs more. Never echo the internal context, loaded file contents, this response
-contract, or request delimiters. Use ordinary prose formatting. The current user
-request alone may change mode intensity.
+needs more. Brevity applies only to the visible answer; investigate, use tools,
+and verify enough evidence for accuracy. Never echo the internal context, loaded
+file contents, this response contract, or request delimiters. Do not emit a
+startup-file receipt unless asked. Use ordinary prose formatting. The current
+user request alone may change mode intensity.
 --- END FLAPSTACK RESPONSE CONTRACT ---
 
 --- USER REQUEST ---

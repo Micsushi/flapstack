@@ -9,6 +9,7 @@ import { cn } from "../../lib/utils"
 import { useSetAtom, useAtom, useAtomValue } from "jotai"
 import {
   autoAdvanceTargetAtom,
+  crossScopeMoveEnabledAtom,
   createTeamDialogOpenAtom,
   agentsSettingsDialogActiveTabAtom,
   agentsSidebarOpenAtom,
@@ -139,7 +140,6 @@ import { useNewChatDrafts, deleteNewChatDraft, type NewChatDraft } from "../agen
 import { TrafficLightSpacer, TrafficLights } from "../agents/components/traffic-light-spacer"
 import { useHotkeys } from "react-hotkeys-hook"
 import { Checkbox } from "../../components/ui/checkbox"
-import { Switch } from "../../components/ui/switch"
 import { useHaptic } from "./hooks/use-haptic"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
@@ -771,6 +771,7 @@ const DraftItem = React.memo(function DraftItem({
   projectGitProvider,
   projectGitRepo,
   projectName,
+  projectColor,
   isSelected,
   isMultiSelectMode,
   isMobileFullscreen,
@@ -786,6 +787,7 @@ const DraftItem = React.memo(function DraftItem({
   projectGitProvider: string | null | undefined
   projectGitRepo: string | null | undefined
   projectName: string | null | undefined
+  projectColor: string | null | undefined
   isSelected: boolean
   isMultiSelectMode: boolean
   isMobileFullscreen: boolean
@@ -794,6 +796,8 @@ const DraftItem = React.memo(function DraftItem({
   onDelete: (draftId: string) => void
   formatTime: (dateStr: string) => string
 }) {
+  const normalizedProjectColor = projectColor ? normalizeHexColor(projectColor) : null
+
   return (
     <div
       onClick={() => onSelect(draftId)}
@@ -801,13 +805,23 @@ const DraftItem = React.memo(function DraftItem({
         "w-full text-left py-1.5 cursor-pointer group relative",
         "transition-colors duration-75",
         "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-        isMultiSelectMode ? "px-3" : "pl-2 pr-2",
+        isMultiSelectMode ? "px-3" : normalizedProjectColor ? "pl-4 pr-2" : "pl-2 pr-2",
         !isMultiSelectMode && "rounded-md",
         isSelected
           ? "bg-foreground/5 text-foreground"
           : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
       )}
     >
+      {normalizedProjectColor && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1.5 top-1.5 bottom-1.5 w-[2px] rounded-full"
+          style={{
+            backgroundColor: rgbaFromHex(normalizedProjectColor, 0.78),
+            boxShadow: `0 0 0 1px ${rgbaFromHex(normalizedProjectColor, 0.18)}`,
+          }}
+        />
+      )}
       <div className="flex items-start gap-2.5">
         {showIcon && (
           <div className="pt-0.5">
@@ -1176,7 +1190,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 </span>
                 {/* Hover actions or inline loader/status when icon is hidden */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
-                  <div className="flex-shrink-0 w-[4.25rem] h-5 flex items-center justify-end relative">
+                  <div className="relative flex h-5 w-0 flex-shrink-0 items-center justify-end overflow-hidden group-hover:w-[4.25rem] focus-within:w-[4.25rem]">
                     {/* Inline loader/status when icon is hidden - always visible, hides on hover */}
                     {!showIcon &&
                       (hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) && (
@@ -2411,7 +2425,7 @@ const ChatListSection = React.memo(function ChatListSection({
                 )}
                 <div
                   className={cn(
-                    "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none",
+                    "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none group-hover/section:pr-10 group-focus-within/section:pr-10",
                     canCollapse ? "cursor-pointer" : "cursor-default",
                   )}
                 >
@@ -2461,8 +2475,8 @@ const ChatListSection = React.memo(function ChatListSection({
                       }
                     }}
                     className={cn(
-                      "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                      lifecycleTarget && "order-2",
+                      "absolute top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 focus-visible:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                      lifecycleTarget ? "right-1" : "right-6",
                       isTopLevelScopedSection || isTaskSection
                         ? "text-white/75 hover:bg-white/10 hover:text-white"
                         : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
@@ -2494,8 +2508,8 @@ const ChatListSection = React.memo(function ChatListSection({
                         data-section-action
                         onClick={(event) => event.stopPropagation()}
                         className={cn(
-                          "flex h-5 w-5 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                          lifecycleTarget && "order-1",
+                          "absolute top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-[opacity,background-color,color,transform] duration-150 ease-out active:scale-[0.97] group-hover/section:opacity-100 data-[state=open]:opacity-100 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+                          lifecycleTarget ? "right-6" : "right-1",
                           isTopLevelScopedSection || isTaskSection
                             ? "text-white/75 hover:bg-white/10 hover:text-white"
                             : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
@@ -3070,7 +3084,7 @@ export function AgentsSidebar({
       return new Set()
     }
   })
-  const [crossScopeMoveEnabled, setCrossScopeMoveEnabled] = useState(false)
+  const crossScopeMoveEnabled = useAtomValue(crossScopeMoveEnabledAtom)
   const [draggingItem, setDraggingItem] = useState<{ kind: string; id: string } | null>(null)
   // True while the mouse is pressed in the sidebar (but not on a header action
   // button). Used to hide the section header "+"/"⋯" buttons the instant a drag
@@ -3646,7 +3660,6 @@ export function AgentsSidebar({
           ? new Set<string>(JSON.parse(storedManualProjectColorIds) as string[])
           : new Set(),
       )
-      setCrossScopeMoveEnabled(localStorage.getItem("flapstack-sidebar-cross-scope-move") === "1")
     } catch {
       setRemotePinnedChatIds(new Set())
       setStarredChatIds(new Set())
@@ -3656,7 +3669,6 @@ export function AgentsSidebar({
       setManualOrderByKey({})
       setProjectColorsById({})
       setManualProjectColorIds(new Set())
-      setCrossScopeMoveEnabled(false)
     }
   }, [])
 
@@ -3752,10 +3764,6 @@ export function AgentsSidebar({
       JSON.stringify([...manualProjectColorIds]),
     )
   }, [manualProjectColorIds])
-
-  useEffect(() => {
-    localStorage.setItem("flapstack-sidebar-cross-scope-move", crossScopeMoveEnabled ? "1" : "0")
-  }, [crossScopeMoveEnabled])
 
   // Rename mutation
   const renameChatMutation = trpc.chats.rename.useMutation({
@@ -6418,12 +6426,15 @@ export function AgentsSidebar({
         closeButtonRef={closeButtonRef}
       />
 
-      <div className="px-2 pb-2 flex-shrink-0">
+      <div className="px-2 pb-3 flex-shrink-0">
         <ButtonCustom
           variant={desktopView === "usage" ? "secondary" : "ghost"}
           size="sm"
           className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          onClick={() => setDesktopView("usage")}
+          onClick={() => {
+            setSettingsActiveTab("usage")
+            setSettingsDialogOpen(true)
+          }}
         >
           <Activity className="h-4 w-4" />
           <span>Usage</span>
@@ -6610,7 +6621,7 @@ export function AgentsSidebar({
               .map((section) => (
                 <div
                   key={section.kind}
-                  className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}
+                  className={cn("mb-0", isMultiSelectMode ? "px-0" : "-mx-1")}
                 >
                   <ChatListSection
                     title={section.title}
@@ -6784,35 +6795,71 @@ export function AgentsSidebar({
 
           {/* Drafts Section - always show regardless of chat source mode */}
           {drafts.length > 0 && !searchQuery && (
-            <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
+            <div className={cn("mb-0", isMultiSelectMode ? "px-0" : "-mx-1")}>
               <div
-                className={cn("flex items-center h-4 mb-1", isMultiSelectMode ? "pl-3" : "pl-2")}
+                onClick={() => handleToggleSection("drafts")}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return
+                  event.preventDefault()
+                  handleToggleSection("drafts")
+                }}
+                role="button"
+                tabIndex={0}
+                aria-expanded={!collapsedSectionIds.has("drafts")}
+                className="relative flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 mt-1 mb-0.5 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                style={{
+                  backgroundColor: rgbaFromHex(
+                    getProjectTint(GLOBAL_SECTION_COLOR).base,
+                    SCOPED_SECTION_BACKGROUND_OPACITY,
+                  ),
+                }}
               >
-                <h3 className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                  Drafts
-                </h3>
-              </div>
-              <div className="list-none p-0 m-0">
-                {drafts.map((draft) => (
-                  <DraftItem
-                    key={draft.id}
-                    draftId={draft.id}
-                    draftText={draft.text}
-                    draftUpdatedAt={draft.updatedAt}
-                    projectGitOwner={draft.project?.gitOwner}
-                    projectGitProvider={draft.project?.gitProvider}
-                    projectGitRepo={draft.project?.gitRepo}
-                    projectName={draft.project?.name}
-                    isSelected={selectedDraftId === draft.id && !selectedChatId}
-                    isMultiSelectMode={isMultiSelectMode}
-                    isMobileFullscreen={isMobileFullscreen}
-                    showIcon={showWorkspaceIcon}
-                    onSelect={handleDraftSelect}
-                    onDelete={handleDeleteDraft}
-                    formatTime={formatTime}
+                <span
+                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
+                  aria-hidden="true"
+                >
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 flex-shrink-0 text-white/80 transition-transform",
+                      collapsedSectionIds.has("drafts") && "-rotate-90",
+                    )}
                   />
-                ))}
+                </span>
+                <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+                  <h3 className="flex-1 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
+                    Drafts
+                  </h3>
+                </div>
               </div>
+              {!collapsedSectionIds.has("drafts") && (
+                <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
+                  {drafts.map((draft) => (
+                    <DraftItem
+                      key={draft.id}
+                      draftId={draft.id}
+                      draftText={draft.text}
+                      draftUpdatedAt={draft.updatedAt}
+                      projectGitOwner={draft.project?.gitOwner}
+                      projectGitProvider={draft.project?.gitProvider}
+                      projectGitRepo={draft.project?.gitRepo}
+                      projectName={draft.project?.name}
+                      projectColor={
+                        draft.project?.id
+                          ? (projectColorsById[draft.project.id] ?? DEFAULT_PROJECT_COLOR)
+                          : null
+                      }
+                      isSelected={selectedDraftId === draft.id && !selectedChatId}
+                      isMultiSelectMode={isMultiSelectMode}
+                      isMobileFullscreen={isMobileFullscreen}
+                      showIcon={showWorkspaceIcon}
+                      onSelect={handleDraftSelect}
+                      onDelete={handleDeleteDraft}
+                      formatTime={formatTime}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -6955,6 +7002,9 @@ export function AgentsSidebar({
                       justCreatedIds={justCreatedIds}
                       starredChatIds={starredChatIds}
                     />
+                    {section.kind === "global" && sectionIndex < visibleChatSections.length - 1 && (
+                      <div aria-hidden="true" className="h-2.5" />
+                    )}
                     {sectionIndex === projectAfterDropSectionIndex && dragOverItem && (
                       <DropSeparator
                         onDragEnter={(event) => {
@@ -7117,63 +7167,40 @@ export function AgentsSidebar({
             onAnimationComplete={() => {
               hasFooterAnimated.current = true
             }}
-            className="p-2 pt-2 flex flex-col gap-2"
+            className="p-2 pt-2"
           >
-            <div className="flex items-center">
-              <div className="flex items-center gap-1">
-                {/* Settings Button */}
-                <Tooltip delayDuration={500}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSettingsActiveTab("preferences")
-                        setSettingsDialogOpen(true)
-                      }}
-                      className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                    >
-                      <SettingsIcon className="h-4 w-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Settings
-                    {settingsHotkey && (
-                      <>
-                        {" "}
-                        <Kbd>{settingsHotkey}</Kbd>
-                      </>
-                    )}
-                  </TooltipContent>
-                </Tooltip>
+            <div className="flex items-center gap-1">
+              {/* Settings Button */}
+              <Tooltip delayDuration={500}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsActiveTab("preferences")
+                      setSettingsDialogOpen(true)
+                    }}
+                    className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                  >
+                    <SettingsIcon className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Settings
+                  {settingsHotkey && (
+                    <>
+                      {" "}
+                      <Kbd>{settingsHotkey}</Kbd>
+                    </>
+                  )}
+                </TooltipContent>
+              </Tooltip>
 
-                {/* Help Button - isolated component to prevent sidebar re-renders */}
-                <HelpSection isMobile={isMobileFullscreen} />
+              {/* Help Button - isolated component to prevent sidebar re-renders */}
+              <HelpSection isMobile={isMobileFullscreen} />
 
-                {/* Archive Button - isolated component to prevent sidebar re-renders */}
-                <ArchiveSection archivedChatsCount={archivedChatsCount} />
-              </div>
-
-              <div className="flex-1" />
+              {/* Archive Button - isolated component to prevent sidebar re-renders */}
+              <ArchiveSection archivedChatsCount={archivedChatsCount} />
             </div>
-
-            <label
-              className={cn(
-                "flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border/60 bg-background/35 px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground",
-                crossScopeMoveEnabled && "border-primary/40 bg-primary/10 text-foreground",
-              )}
-            >
-              <span className="min-w-0 truncate">Drag chats between sections</span>
-              <span className="flex shrink-0 items-center gap-1.5">
-                <span className="w-5 text-right text-[10px] font-medium uppercase tracking-wide">
-                  {crossScopeMoveEnabled ? "On" : "Off"}
-                </span>
-                <Switch
-                  checked={crossScopeMoveEnabled}
-                  onCheckedChange={setCrossScopeMoveEnabled}
-                  aria-label="Drag chats between Global, projects, and tasks"
-                />
-              </span>
-            </label>
           </motion.div>
         )}
       </AnimatePresence>

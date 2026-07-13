@@ -218,6 +218,13 @@ describe("permission mapping", () => {
 
   it("serializes the mode as the OpenCode session ruleset", () => {
     expect(buildOpencodeSessionPermissions("read-only")).toEqual([
+      { permission: "*", pattern: "*", action: "deny" },
+      { permission: "read", pattern: "*", action: "allow" },
+      { permission: "glob", pattern: "*", action: "allow" },
+      { permission: "grep", pattern: "*", action: "allow" },
+      { permission: "list", pattern: "*", action: "allow" },
+      { permission: "lsp", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "allow" },
       { permission: "edit", pattern: "*", action: "deny" },
       { permission: "write", pattern: "*", action: "deny" },
       { permission: "apply_patch", pattern: "*", action: "deny" },
@@ -258,7 +265,8 @@ describe("permission mapping", () => {
   it("surfaces honest limitations without claiming false enforcement", () => {
     const app = buildOpencodePermissionApplication({ permissionMode: "read-only", cwd: "/repo" })
     expect(app.requested).toBe("read-only")
-    expect(app.limitations.some((l) => l.control === "mcp")).toBe(true)
+    expect(app.limitations).toHaveLength(0)
+    expect(app.degraded).toBe(false)
     const full = buildOpencodePermissionApplication({ permissionMode: "full-access", cwd: "/repo" })
     expect(full.limitations).toHaveLength(0)
     expect(full.degraded).toBe(false)
@@ -443,6 +451,63 @@ describe("SSE parsing", () => {
     expect(onApproval).toHaveBeenCalledTimes(1)
     expect(events.filter((event) => event.kind === "permission-asked")).toHaveLength(1)
     expect(events.filter((event) => event.kind === "permission-decision")).toHaveLength(2)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "permission-decision",
+        requestId: "permission-2",
+        replyStatus: "no-longer-pending",
+      }),
+    )
+    expect(events.some((event) => event.kind === "error")).toBe(false)
+  })
+
+  it("continues after a delayed permission reply expires", async () => {
+    const response = new Response(
+      `data: ${JSON.stringify({
+        type: "permission.asked",
+        properties: {
+          sessionID: "session-1",
+          id: "expired-permission",
+          tool: { callID: "bash-1" },
+          permission: "bash",
+          patterns: ["git status --short"],
+        },
+      })}\n\n` +
+        `data: ${JSON.stringify({
+          type: "session.idle",
+          properties: { sessionID: "session-1" },
+        })}\n\n`,
+    )
+    const events = []
+    for await (const event of streamEvents({
+      client: {
+        replyPermission: vi
+          .fn()
+          .mockRejectedValue(new Error("OpenCode permission reply failed: HTTP 404")),
+      } as any,
+      handle: {} as any,
+      sessionId: "session-1",
+      input: {
+        provider: "openrouter",
+        model: "openrouter/test",
+        prompt: "test",
+        cwd: "/tmp",
+        permissionMode: "ask-before-edits",
+      },
+      onApproval: vi.fn().mockResolvedValue({ reply: "once" }),
+      eventResponse: response,
+    })) {
+      events.push(event)
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "permission-decision",
+        requestId: "expired-permission",
+        replyStatus: "no-longer-pending",
+      }),
+    )
+    expect(events).toContainEqual({ kind: "idle" })
     expect(events.some((event) => event.kind === "error")).toBe(false)
   })
 
@@ -846,10 +911,14 @@ describe("approval bridge", () => {
       command: "rm ./generated.txt",
     })
     expect(replies).toEqual([["req-1", "once"]])
-    expect(resolution).toEqual({ decision: { reply: "once" }, source: "user" })
+    expect(resolution).toEqual({
+      decision: { reply: "once" },
+      source: "user",
+      replyStatus: "applied",
+    })
   })
 
-  it("propagates a permission 404 for the first reply", async () => {
+  it("treats a late permission 404 as no longer pending", async () => {
     const client = {
       replyPermission: async () => {
         throw new Error("OpenCode permission reply failed: HTTP 404")
@@ -875,7 +944,11 @@ describe("approval bridge", () => {
           patterns: ["/vault/*"],
         },
       ),
-    ).rejects.toThrow("permission reply failed: HTTP 404")
+    ).resolves.toEqual({
+      decision: { reply: "always" },
+      source: "user",
+      replyStatus: "no-longer-pending",
+    })
     expect(
       isAlreadyResolvedPermissionReplyError(
         new Error("OpenCode permission reply failed: HTTP 404"),
@@ -889,7 +962,11 @@ describe("approval bridge", () => {
         throw new Error("OpenCode permission reply failed: HTTP 404")
       },
     } as unknown as OpencodeClient
-    const remembered = { decision: { reply: "always" as const }, source: "user" as const }
+    const remembered = {
+      decision: { reply: "always" as const },
+      source: "user" as const,
+      replyStatus: "applied" as const,
+    }
 
     await expect(
       handlePermissionRequest(
@@ -911,11 +988,40 @@ describe("approval bridge", () => {
         },
         remembered,
       ),
-    ).resolves.toEqual(remembered)
+    ).resolves.toEqual({ ...remembered, replyStatus: "no-longer-pending" })
   })
 })
 
 describe("sanitized run audit persistence", () => {
+  it("records a stale permission reply without claiming it was applied", () => {
+    const audit = new OpencodeRunAuditAccumulator()
+    audit.apply({
+      kind: "permission-asked",
+      requestId: "expired-request",
+      toolCallId: "bash-1",
+      permission: "bash",
+      patterns: ["git status --short"],
+    })
+    audit.apply({
+      kind: "permission-decision",
+      requestId: "expired-request",
+      toolCallId: "bash-1",
+      permission: "bash",
+      patterns: ["git status --short"],
+      reply: "once",
+      source: "user",
+      replyStatus: "no-longer-pending",
+    })
+
+    expect(audit.snapshot().approvalActivity).toContainEqual(
+      expect.objectContaining({
+        requestId: "expired-request",
+        state: "no-longer-pending",
+        decision: "once",
+      }),
+    )
+  })
+
   it("records tool and approval detail while redacting durable secrets", () => {
     const audit = new OpencodeRunAuditAccumulator()
     const permissionApplication = buildOpencodePermissionApplication({
@@ -952,6 +1058,7 @@ describe("sanitized run audit persistence", () => {
       patterns: ["curl *"],
       reply: "once",
       source: "user",
+      replyStatus: "applied",
     })
 
     const snapshot = audit.snapshot()

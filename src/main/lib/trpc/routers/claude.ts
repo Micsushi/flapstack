@@ -45,7 +45,11 @@ import {
 } from "../../db"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
-import { buildHarnessStartupContext, prependStartupContext } from "../../harness/launch-context"
+import {
+  buildHarnessContextBundle,
+  getLastHarnessContextFingerprint,
+  prependStartupContext,
+} from "../../harness/launch-context"
 import {
   ensureMcpTokensFresh,
   fetchMcpTools,
@@ -62,7 +66,7 @@ import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-setting
 import {
   buildClaudePermissionApplication,
   getGlobalDefault,
-  isClaudeMutatingTool,
+  isClaudeReadOnlyToolAllowed,
   mapClaudeSdkPermissionMode,
   parsePermissionMode,
   resolveForRun,
@@ -72,6 +76,11 @@ import {
   findMissingClaudeSessionMessage,
   isMissingClaudeSessionError,
 } from "../../claude/session-recovery"
+import {
+  buildClaudeSessionResumeOptions,
+  getOwnedClaudeSessionId,
+  resetClaudeSessionOptionsForFreshRun,
+} from "../../claude/session-options"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -1185,18 +1194,23 @@ export const claudeRouter = router({
               finalPrompt = `${finalPrompt}\n\nUse the "${skillMentions.join('", "')}" skill(s) for this task.`
             }
 
-            const startupContext = await buildHarnessStartupContext({
+            let contextBundle = await buildHarnessContextBundle({
               cwd: input.cwd,
               projectPath: input.projectPath,
               harness: HARNESS,
+              userPrompt: finalPrompt,
+              sessionMode: existingSessionId ? "resumed" : "new",
+              providerNativeInstructions: !isUsingOllama,
+              previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const contextualPrompt = prependStartupContext(finalPrompt, startupContext)
+            metadata.context = contextBundle.metadata
+            const contextualPrompt = prependStartupContext(finalPrompt, contextBundle.context)
 
             // Build prompt: if there are images, create an AsyncIterable<SDKUserMessage>
             // Otherwise use simple string prompt
-            let prompt: string | AsyncIterable<any> = contextualPrompt
+            const buildPrompt = (contextualText: string): string | AsyncIterable<any> => {
+              if (!input.images || input.images.length === 0) return contextualText
 
-            if (input.images && input.images.length > 0) {
               // Create message content array with images first, then text
               const messageContent: any[] = [
                 ...input.images.map((img) => ({
@@ -1210,10 +1224,10 @@ export const claudeRouter = router({
               ]
 
               // Add text if present
-              if (contextualPrompt.trim()) {
+              if (contextualText.trim()) {
                 messageContent.push({
                   type: "text" as const,
-                  text: contextualPrompt,
+                  text: contextualText,
                 })
               }
 
@@ -1229,8 +1243,9 @@ export const claudeRouter = router({
                 }
               }
 
-              prompt = createPromptWithImages()
+              return createPromptWithImages()
             }
+            let prompt: string | AsyncIterable<any> = buildPrompt(contextualPrompt)
 
             // Build full environment for Claude SDK (includes HOME, PATH, etc.)
             const claudeEnv = buildClaudeEnv({
@@ -1500,9 +1515,15 @@ export const claudeRouter = router({
             // Get bundled Claude binary path
             const claudeBinaryPath = getBundledClaudeBinaryPath()
 
-            let resumeSessionId = input.sessionId || existingSessionId || undefined
+            if (input.sessionId && input.sessionId !== existingSessionId) {
+              console.warn(`[claude] Ignoring sessionId not stored on sub-chat ${input.subChatId}`)
+            }
+            let resumeSessionId = getOwnedClaudeSessionId({
+              storedSessionId: existingSessionId,
+              requestedSessionId: input.sessionId,
+            })
 
-            const clearMissingSessionAndRetry = (reason: string) => {
+            const clearMissingSessionAndRetry = async (reason: string) => {
               if (!resumeSessionId) return false
 
               console.log(
@@ -1518,10 +1539,33 @@ export const claudeRouter = router({
               delete metadata.sessionId
               stderrLines.length = 0
 
-              delete (queryOptions.options as any).resume
-              delete (queryOptions.options as any).resumeSessionAt
-              delete (queryOptions.options as any).forkSession
-              ;(queryOptions.options as any).continue = true
+              resetClaudeSessionOptionsForFreshRun(queryOptions.options as any)
+
+              const previousPrompt = prompt
+              contextBundle = await buildHarnessContextBundle({
+                cwd: input.cwd,
+                projectPath: input.projectPath,
+                harness: HARNESS,
+                userPrompt: finalPrompt,
+                sessionMode: "new",
+                providerNativeInstructions: !isUsingOllama,
+              })
+              metadata.context = contextBundle.metadata
+              const freshPrompt = buildPrompt(
+                prependStartupContext(finalPrompt, contextBundle.context),
+              )
+              if (
+                isUsingOllama &&
+                typeof finalQueryPrompt === "string" &&
+                typeof previousPrompt === "string" &&
+                typeof freshPrompt === "string"
+              ) {
+                finalQueryPrompt = finalQueryPrompt.replace(previousPrompt, freshPrompt)
+              } else {
+                finalQueryPrompt = freshPrompt
+              }
+              prompt = freshPrompt
+              queryOptions.prompt = finalQueryPrompt
 
               return true
             }
@@ -1650,27 +1694,11 @@ export const claudeRouter = router({
               })
               console.log("[Ollama Debug] Session settings:", {
                 resumeSessionId: resumeSessionId || "none (first message)",
-                mode: resumeSessionId ? "resume" : "continue",
+                mode: resumeSessionId ? "resume" : "new",
                 note: resumeSessionId
                   ? "Resuming existing session to maintain chat history"
-                  : "Starting new session with continue mode",
+                  : "Starting an isolated new session",
               })
-            }
-
-            // Read AGENTS.md from project root if it exists
-            let agentsMdContent: string | undefined
-            try {
-              const agentsMdPath = path.join(input.cwd, "AGENTS.md")
-              agentsMdContent = await fs.readFile(agentsMdPath, "utf-8")
-              if (agentsMdContent.trim()) {
-                console.log(
-                  `[claude] Found AGENTS.md at ${agentsMdPath} (${agentsMdContent.length} chars)`,
-                )
-              } else {
-                agentsMdContent = undefined
-              }
-            } catch {
-              // AGENTS.md doesn't exist or can't be read - that's fine
             }
 
             // For Ollama: embed context AND history directly in prompt
@@ -1773,15 +1801,7 @@ IMPORTANT: When using tools, use these EXACT parameter names:
 
 When asked about the project, use Glob to find files and Read to examine them.
 Be concise and helpful.
-[/CONTEXT]${
-                agentsMdContent
-                  ? `
-
-[AGENTS.MD]
-${agentsMdContent}
-[/AGENTS.MD]`
-                  : ""
-              }
+[/CONTEXT]
 
 ${historyText}[CURRENT REQUEST]
 ${prompt}
@@ -1790,22 +1810,12 @@ ${prompt}
               console.log("[Ollama] Context prefix added to prompt")
             }
 
-            // System prompt config - use preset for both Claude and Ollama
-            // If AGENTS.md exists, append its content to the system prompt.
-            // Read-aloud never changes model output; speech is derived after the reply.
-            const systemPromptAppend = agentsMdContent
-              ? `\n\n# AGENTS.md\nThe following are the project's AGENTS.md instructions:\n\n${agentsMdContent}`
-              : ""
-            const systemPromptConfig = systemPromptAppend
-              ? {
-                  type: "preset" as const,
-                  preset: "claude_code" as const,
-                  append: systemPromptAppend,
-                }
-              : {
-                  type: "preset" as const,
-                  preset: "claude_code" as const,
-                }
+            // Keep provider-native settings enabled for skills and CLAUDE.md.
+            // Flapstack supplies AGENTS.md once through the structured context bundle.
+            const systemPromptConfig = {
+              type: "preset" as const,
+              preset: "claude_code" as const,
+            }
 
             const queryOptions = {
               prompt: finalQueryPrompt,
@@ -1893,7 +1903,10 @@ ${prompt}
                     }
                   }
 
-                  if (resolvedPermissionMode === "read-only" && isClaudeMutatingTool(toolName)) {
+                  if (
+                    resolvedPermissionMode === "read-only" &&
+                    !isClaudeReadOnlyToolAllowed(toolName)
+                  ) {
                     return {
                       behavior: "deny",
                       message: `Tool "${toolName}" blocked by read-only permission mode.`,
@@ -2016,21 +2029,13 @@ ${prompt}
                 pathToClaudeCodeExecutable: claudeBinaryPath,
                 // Session handling: For Ollama, use resume with session ID to maintain history
                 // For Claude API, use resume with rollback/fork support
-                ...(resumeSessionId && {
-                  resume: resumeSessionId,
-                  // Fork support - resume at specific point and create new session
-                  ...(shouldForkResume && forkResumeAtUuid && !isUsingOllama
-                    ? {
-                        resumeSessionAt: forkResumeAtUuid,
-                        forkSession: true,
-                      }
-                    : // Rollback support - resume at specific message UUID (from DB)
-                      resumeAtUuid && !isUsingOllama
-                      ? { resumeSessionAt: resumeAtUuid }
-                      : { continue: true }),
+                ...buildClaudeSessionResumeOptions({
+                  resumeSessionId,
+                  shouldForkResume,
+                  forkResumeAtUuid,
+                  resumeAtUuid,
+                  isUsingOllama,
                 }),
-                // For first message in chat (no session ID yet), use continue mode
-                ...(!resumeSessionId && { continue: true }),
                 ...(resolvedModel && { model: resolvedModel }),
                 ...(input.effort && { effort: input.effort }),
                 ...(!isUsingOllama && {
@@ -2153,7 +2158,7 @@ ${prompt}
                   if (
                     missingSessionMessage &&
                     !sessionRecoveryRetryUsed &&
-                    clearMissingSessionAndRetry("Claude session missing")
+                    (await clearMissingSessionAndRetry("Claude session missing"))
                   ) {
                     sessionRecoveryRetryUsed = true
                     sessionRecoveryRetryNeeded = true
@@ -2543,7 +2548,7 @@ ${prompt}
                 if (isSessionNotFound) {
                   if (
                     !sessionRecoveryRetryUsed &&
-                    clearMissingSessionAndRetry("Claude session missing after process exit")
+                    (await clearMissingSessionAndRetry("Claude session missing after process exit"))
                   ) {
                     sessionRecoveryRetryUsed = true
                     continue
@@ -2766,10 +2771,19 @@ ${prompt}
             )
             await completeRun(abortController.signal.aborted ? "cancelled" : "success")
             if (pendingFinishChunk) {
-              safeEmit(pendingFinishChunk)
+              safeEmit({
+                ...pendingFinishChunk,
+                messageMetadata: {
+                  ...pendingFinishChunk.messageMetadata,
+                  context: metadata.context,
+                },
+              })
             } else {
               // Keep protocol invariant for consumers that wait for finish.
-              safeEmit({ type: "finish" } as UIMessageChunk)
+              safeEmit({
+                type: "finish",
+                messageMetadata: { context: metadata.context },
+              } as UIMessageChunk)
             }
             safeComplete()
           } catch (error) {

@@ -1,3 +1,5 @@
+import type { HarnessContextMetadata } from "../harness/launch-context"
+
 // AI SDK UIMessageChunk format
 export type UIMessageChunk =
   // Message lifecycle
@@ -84,4 +86,5 @@ export type MessageMetadata = {
   durationMs?: number
   resultSubtype?: string
   finalTextId?: string
+  context?: HarnessContextMetadata
 }

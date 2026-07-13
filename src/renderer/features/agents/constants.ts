@@ -145,10 +145,12 @@ export const RUN_PERMISSION_MODE_LABELS: Record<RunPermissionMode, string> = {
 export const RUN_PERMISSION_MODE_OPTIONS = [
   "read-only",
   "ask-before-edits",
-  "auto-edit-project-only",
   "full-access",
-  "custom",
 ] as const satisfies readonly RunPermissionMode[]
+
+export function isSelectableRunPermissionMode(mode: RunPermissionMode): boolean {
+  return RUN_PERMISSION_MODE_OPTIONS.some((option) => option === mode)
+}
 
 export function formatPermissionMode(mode?: string | null): string {
   if (mode && mode in RUN_PERMISSION_MODE_LABELS) {

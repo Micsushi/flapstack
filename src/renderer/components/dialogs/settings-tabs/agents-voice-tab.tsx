@@ -10,6 +10,7 @@ export function AgentsVoiceTab() {
   const { data: adapters } = trpc.speech.listAdapters.useQuery()
   const { data: voices } = trpc.speech.listVoices.useQuery()
   const { data: sttModels } = trpc.speech.listSttModels.useQuery()
+  const { data: openAIKeyStatus } = trpc.voice.hasOpenAIKey.useQuery()
   const updateSettings = trpc.speech.updateSettings.useMutation({
     onSuccess: async () => {
       await utils.speech.getSettings.invalidate()
@@ -21,6 +22,16 @@ export function AgentsVoiceTab() {
   const speak = trpc.speech.speak.useMutation()
   const stopSpeaking = trpc.speech.stopSpeaking.useMutation()
   const [previewText, setPreviewText] = useState("Flapstack voice output is ready.")
+  const [openAIKey, setOpenAIKey] = useState("")
+  const setOpenAIKeyMutation = trpc.voice.setOpenAIKey.useMutation({
+    onSuccess: async () => {
+      setOpenAIKey("")
+      await utils.voice.hasOpenAIKey.invalidate()
+      await utils.speech.listAdapters.invalidate()
+      toast.success("OpenAI transcription key updated")
+    },
+    onError: (error) => toast.error(error.message),
+  })
   const [historySearch, setHistorySearch] = useState("")
   const { data: history } = trpc.speech.searchHistory.useQuery({ query: historySearch })
   const deleteHistory = trpc.speech.deleteHistoryEntry.useMutation({
@@ -69,6 +80,43 @@ export function AgentsVoiceTab() {
           available={selectedSttAvailability?.available}
           text={selectedSttAvailability?.reason || "Selected STT adapter is available."}
         />
+        <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+          <div>
+            <p className="text-sm text-foreground">OpenAI transcription API key</p>
+            <p className="text-xs text-muted-foreground">
+              {openAIKeyStatus?.hasKey
+                ? "A key is available for OpenAI Whisper. A key entered here lasts for this app session."
+                : "Optional for OpenAI Whisper. A key entered here lasts for this app session."}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={openAIKey}
+              onChange={(event) => setOpenAIKey(event.target.value)}
+              placeholder="sk-..."
+              className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm font-mono"
+            />
+            <button
+              type="button"
+              disabled={!openAIKey.trim() || setOpenAIKeyMutation.isPending}
+              onClick={() => setOpenAIKeyMutation.mutate({ key: openAIKey })}
+              className="h-9 rounded-md border border-border bg-background px-3 text-sm disabled:opacity-50"
+            >
+              Save
+            </button>
+            {openAIKeyStatus?.hasKey && (
+              <button
+                type="button"
+                disabled={setOpenAIKeyMutation.isPending}
+                onClick={() => setOpenAIKeyMutation.mutate({ key: "" })}
+                className="h-9 rounded-md px-3 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
         {settings.sttAdapterId === "local-parakeet" && (
           <>
             <div className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3">

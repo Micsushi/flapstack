@@ -18,6 +18,14 @@ export const permissionModes = [
 
 export type PermissionMode = (typeof permissionModes)[number]
 
+export const permissionChangeBehaviors = ["ask", "all-chats", "current-chat"] as const
+export type PermissionChangeBehavior = (typeof permissionChangeBehaviors)[number]
+
+export type PermissionPreferences = {
+  globalDefault: PermissionMode
+  changeBehavior: PermissionChangeBehavior
+}
+
 export type ClaudeSdkPermissionMode =
   "default" | "acceptEdits" | "bypassPermissions" | "plan" | "delegate" | "dontAsk"
 
@@ -50,13 +58,17 @@ export type PermissionResolution = {
   source: PermissionSource
 }
 
+export type CodexAcpModeId = "read-only" | "agent" | "agent-full-access"
+
 type PermissionConfig = {
   globalDefault?: PermissionMode
+  changeBehavior?: PermissionChangeBehavior
 }
 
 export const defaultPermissionMode: PermissionMode = "ask-before-edits"
 
 const permissionModeSet = new Set<string>(permissionModes)
+const permissionChangeBehaviorSet = new Set<string>(permissionChangeBehaviors)
 const configFileName = "permissions.json"
 
 export function isPermissionMode(value: unknown): value is PermissionMode {
@@ -65,6 +77,12 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
 
 export function parsePermissionMode(value: unknown): PermissionMode | null {
   return isPermissionMode(value) ? value : null
+}
+
+export function parsePermissionChangeBehavior(value: unknown): PermissionChangeBehavior | null {
+  return typeof value === "string" && permissionChangeBehaviorSet.has(value)
+    ? (value as PermissionChangeBehavior)
+    : null
 }
 
 export function copyOnCreate(
@@ -98,6 +116,18 @@ export function getGlobalDefault(): PermissionMode {
   return readPermissionConfig().globalDefault ?? defaultPermissionMode
 }
 
+export function getPermissionChangeBehavior(): PermissionChangeBehavior {
+  return readPermissionConfig().changeBehavior ?? "ask"
+}
+
+export function getPermissionPreferences(): PermissionPreferences {
+  const config = readPermissionConfig()
+  return {
+    globalDefault: config.globalDefault ?? defaultPermissionMode,
+    changeBehavior: config.changeBehavior ?? "ask",
+  }
+}
+
 export function setGlobalDefault(mode: PermissionMode): PermissionMode {
   const parsedMode = parsePermissionMode(mode)
 
@@ -109,11 +139,42 @@ export function setGlobalDefault(mode: PermissionMode): PermissionMode {
   return parsedMode
 }
 
+export function setPermissionChangeBehavior(
+  behavior: PermissionChangeBehavior,
+): PermissionChangeBehavior {
+  const parsedBehavior = parsePermissionChangeBehavior(behavior)
+
+  if (!parsedBehavior) {
+    throw new Error(`Invalid permission change behavior: ${String(behavior)}`)
+  }
+
+  writePermissionConfig({ ...readPermissionConfig(), changeBehavior: parsedBehavior })
+  return parsedBehavior
+}
+
+export function replacePermissionPreferences(preferences: PermissionPreferences): void {
+  const globalDefault = parsePermissionMode(preferences.globalDefault)
+  const changeBehavior = parsePermissionChangeBehavior(preferences.changeBehavior)
+
+  if (!globalDefault || !changeBehavior) {
+    throw new Error("Invalid permission preferences")
+  }
+
+  writePermissionConfig({ globalDefault, changeBehavior })
+}
+
 export function buildCodexPermissionApplication(params: {
   permissionMode: PermissionMode
   cwd?: string | null
 }): HarnessPermissionApplication {
   const cwd = params.cwd?.trim() || null
+  const modeId = mapCodexAcpModeId(params.permissionMode)
+  const approvalBehavior =
+    params.permissionMode === "read-only"
+      ? "reject"
+      : params.permissionMode === "full-access"
+        ? "allow-once"
+        : "flapstack-bridge"
   const enforced = [
     {
       control: "process-cwd" as const,
@@ -131,23 +192,56 @@ export function buildCodexPermissionApplication(params: {
         ? "The ACP new/load session request includes this cwd."
         : "No cwd was provided for this launch.",
     },
+    {
+      control: "codex-sandbox" as const,
+      applied: true,
+      value: modeId,
+      reason: `Codex ACP session mode is set to "${modeId}".`,
+    },
+    {
+      control: "codex-approval-policy" as const,
+      applied: true,
+      value: approvalBehavior,
+      reason:
+        approvalBehavior === "reject"
+          ? "Flapstack rejects every Codex escalation request in read-only mode."
+          : approvalBehavior === "allow-once"
+            ? "Flapstack explicitly allows unexpected Codex escalation requests once in full-access mode."
+            : "Codex permission requests are routed through the fail-closed Flapstack approval bridge.",
+    },
   ]
 
   const limitations = getCodexPermissionLimitations(params.permissionMode)
   const warnings = [
-    "Codex ACP launch currently exposes cwd and MCP server configuration, not Codex sandbox or approval-policy knobs.",
+    `Codex ACP mode "${modeId}" is selected.`,
     ...limitations.map((limitation) => limitation.reason),
   ]
 
   return {
     requested: params.permissionMode,
-    applied: false,
-    degraded: true,
+    applied: limitations.length === 0,
+    degraded: limitations.length > 0,
     enforced,
     limitations,
     warnings: Array.from(new Set(warnings)),
     reason:
-      "Flapstack records the requested permission mode, but this Codex ACP launch path can only apply cwd placement. Sandbox and tool-approval behavior are not app-enforced.",
+      limitations.length > 0
+        ? "Flapstack selects the closest conservative Codex ACP mode and approval behavior, but custom capability toggles remain unsupported."
+        : "Flapstack selects the Codex ACP mode and fail-closed approval behavior for this permission mode.",
+  }
+}
+
+export function mapCodexAcpModeId(mode: PermissionMode): CodexAcpModeId {
+  switch (mode) {
+    case "auto-edit-project-only":
+      return "agent"
+    case "full-access":
+      return "agent-full-access"
+    case "read-only":
+    case "ask-before-edits":
+    case "custom":
+    default:
+      return "read-only"
   }
 }
 
@@ -383,81 +477,31 @@ export function isClaudeMutatingTool(toolName: string): boolean {
   return CLAUDE_MUTATING_MCP_PATTERNS.some((pattern) => normalized.includes(pattern))
 }
 
+export function isClaudeReadOnlyToolAllowed(toolName: string): boolean {
+  return CLAUDE_READ_ONLY_TOOLS.has(toolName)
+}
+
 function getCodexPermissionLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
   switch (mode) {
     case "read-only":
-      return [
-        limitation(
-          "codex-sandbox",
-          "read-only filesystem sandbox",
-          "Read-only mode cannot be enforced because Codex ACP does not accept a read-only sandbox setting here.",
-        ),
-        limitation(
-          "codex-approval-policy",
-          "deny edits and mutating tools",
-          "Read-only mode cannot force-deny Codex tool calls through the current ACP provider.",
-        ),
-        limitation(
-          "filesystem-write-scope",
-          "no writes",
-          "The app cannot restrict Codex writes to read-only through this launch path.",
-        ),
-        limitation(
-          "shell",
-          "no shell mutations",
-          "Shell/tool mutation policy is not exposed here.",
-        ),
-      ]
+      return []
     case "ask-before-edits":
-      return [
-        limitation(
-          "codex-approval-policy",
-          "ask before edits",
-          "The current ACP provider does not expose a Flapstack-controlled ask-before-edit policy.",
-        ),
-        limitation(
-          "filesystem-write-scope",
-          "writes require approval",
-          "Write approval is adapter/runtime behavior, not enforced by Flapstack in this path.",
-        ),
-      ]
+      return []
     case "auto-edit-project-only":
-      return [
-        limitation(
-          "codex-sandbox",
-          "workspace-write sandbox",
-          "Project-only editing cannot be enforced because Codex ACP does not accept a workspace-write sandbox setting here.",
-        ),
-        limitation(
-          "filesystem-write-scope",
-          "writes limited to the selected project/worktree",
-          "The cwd is set, but the process is not sandboxed to that directory by Flapstack.",
-        ),
-      ]
+      return []
     case "full-access":
-      return [
-        limitation(
-          "codex-sandbox",
-          "full-access sandbox mode",
-          "Full-access/danger mode cannot be explicitly selected because Codex ACP does not expose a sandbox mode setting here.",
-        ),
-        limitation(
-          "codex-approval-policy",
-          "auto-approve tool calls",
-          "Flapstack cannot force Codex ACP to bypass permission prompts in this launch path.",
-        ),
-      ]
+      return []
     case "custom":
       return [
         limitation(
           "codex-sandbox",
           "custom sandbox toggles",
-          "Custom sandbox settings are not mapped because Codex ACP does not expose sandbox controls here.",
+          "Custom capability toggles are not implemented; Codex uses conservative read-only mode.",
         ),
         limitation(
           "codex-approval-policy",
           "custom approval toggles",
-          "Custom approval policy is not mapped because the current ACP provider has no policy hook for it.",
+          "Custom permission requests use the conservative Flapstack approval bridge.",
         ),
         limitation("network", "custom network toggle", "Network access cannot be controlled here."),
         limitation("git", "custom git toggle", "Git access cannot be controlled here."),
@@ -536,6 +580,17 @@ const CLAUDE_MUTATING_TOOLS = new Set([
   "WebFetch",
 ])
 
+const CLAUDE_READ_ONLY_TOOLS = new Set([
+  "AskUserQuestion",
+  "Glob",
+  "Grep",
+  "Read",
+  "Skill",
+  "TaskOutput",
+  "TodoRead",
+  "WebSearch",
+])
+
 const CLAUDE_MUTATING_MCP_PATTERNS = [
   "write",
   "edit",
@@ -582,6 +637,7 @@ function readPermissionConfig(): PermissionConfig {
     return {
       ...data,
       globalDefault: parsePermissionMode(data.globalDefault) ?? undefined,
+      changeBehavior: parsePermissionChangeBehavior(data.changeBehavior) ?? undefined,
     }
   } catch (error) {
     console.warn("[Permissions] Failed to read permission config:", error)

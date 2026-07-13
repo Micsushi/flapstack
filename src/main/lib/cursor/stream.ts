@@ -85,6 +85,53 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function firstDefined(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined)
+}
+
+function assistantTextMode(event: CursorRawEvent): "incremental" | "cumulative" {
+  const subtype = asString(event.subtype)?.toLowerCase()
+  const message = asRecord(event.message)
+  const hasCompletionReason =
+    firstDefined(
+      event.stop_reason,
+      event.stopReason,
+      event.finish_reason,
+      event.finishReason,
+      message?.stop_reason,
+      message?.stopReason,
+      message?.finish_reason,
+      message?.finishReason,
+    ) !== undefined
+  if (
+    event.is_final === true ||
+    event.isFinal === true ||
+    event.final === true ||
+    hasCompletionReason ||
+    (subtype && ["final", "complete", "completed", "finished", "result"].includes(subtype))
+  ) {
+    return "cumulative"
+  }
+  if (subtype && ["delta", "partial", "stream", "streaming", "update"].includes(subtype)) {
+    return "incremental"
+  }
+
+  // Current cursor-agent marks streamed `message.content` chunks with a
+  // timestamp, then emits the cumulative final message without one. Explicit
+  // final markers above win if a newer Cursor release timestamps that message.
+  if (event.timestamp_ms !== undefined || event.timestampMs !== undefined) {
+    return "incremental"
+  }
+
+  return "cumulative"
+}
+
 /** Pull assistant text out of the several shapes cursor-agent can emit. */
 function extractAssistantText(
   event: CursorRawEvent,
@@ -95,7 +142,7 @@ function extractAssistantText(
 
   const message = event.message as Record<string, unknown> | undefined
   const directText = asString(message?.text) ?? asString(event.text)
-  if (directText) return { text: directText, mode: "cumulative" }
+  if (directText) return { text: directText, mode: assistantTextMode(event) }
 
   const content = message?.content ?? event.content
   if (Array.isArray(content)) {
@@ -106,10 +153,89 @@ function extractAssistantText(
       )
       .map((part) => asString(part.text))
       .filter((text): text is string => Boolean(text))
-    if (textParts.length > 0) return { text: textParts.join(""), mode: "cumulative" }
+    if (textParts.length > 0) {
+      return { text: textParts.join(""), mode: assistantTextMode(event) }
+    }
   }
 
   return undefined
+}
+
+type NormalizedCursorToolEvent = {
+  callId: string
+  name: string
+  input?: unknown
+  output?: unknown
+  isResult: boolean
+}
+
+function toolNameFromPayloadKey(key: string): string | undefined {
+  if (!/(?:_?tool_?call)$/i.test(key)) return undefined
+  const name = key.replace(/(?:_?tool_?call)$/i, "")
+  if (!name) return undefined
+  return name[0].toLowerCase() + name.slice(1)
+}
+
+/** Normalize both historical flat events and current nested Cursor tool envelopes. */
+function normalizeCursorToolEvent(event: CursorRawEvent): NormalizedCursorToolEvent {
+  const envelope = asRecord(event.tool_call) ?? asRecord(event.toolCall) ?? asRecord(event.tool)
+  const payloadEntry = envelope
+    ? Object.entries(envelope).find(
+        ([key, value]) => Boolean(toolNameFromPayloadKey(key)) && Boolean(asRecord(value)),
+      )
+    : undefined
+  const payload = asRecord(payloadEntry?.[1])
+
+  const callId =
+    asString(event.call_id) ??
+    asString(event.callId) ??
+    asString(event.id) ??
+    asString(envelope?.toolCallId) ??
+    asString(envelope?.call_id) ??
+    asString(envelope?.callId) ??
+    asString(payload?.toolCallId) ??
+    asString(payload?.call_id) ??
+    asString(payload?.callId) ??
+    nextId("tool")
+  const name =
+    asString(event.name) ??
+    asString(event.tool_name) ??
+    asString(event.toolName) ??
+    asString(event.tool) ??
+    asString(envelope?.name) ??
+    asString(envelope?.tool_name) ??
+    asString(envelope?.toolName) ??
+    asString(payload?.name) ??
+    (payloadEntry ? toolNameFromPayloadKey(payloadEntry[0]) : undefined) ??
+    "tool"
+  const input = firstDefined(
+    event.input,
+    event.arguments,
+    event.args,
+    envelope?.input,
+    envelope?.arguments,
+    envelope?.args,
+    payload?.input,
+    payload?.arguments,
+    payload?.args,
+  )
+  const output = firstDefined(
+    event.output,
+    event.result,
+    envelope?.output,
+    envelope?.result,
+    payload?.output,
+    payload?.result,
+  )
+  const subtype = asString(event.subtype)?.toLowerCase()
+  const isResult =
+    output !== undefined ||
+    Boolean(
+      subtype &&
+      ["completed", "complete", "finished", "result", "failed", "error"].includes(subtype),
+    )
+
+  return { callId, name, input, output, isResult }
 }
 
 let idCounter = 0
@@ -127,6 +253,7 @@ export class CursorStreamTranslator {
   private textId: string | null = null
   private accumulatedText = ""
   private emittedText = ""
+  private currentAssistantText = ""
   private hasEmittedText = false
   private reasoningId: string | null = null
   private reasoningText = ""
@@ -201,14 +328,24 @@ export class CursorStreamTranslator {
     // `--stream-partial-output` may send cumulative text or incremental deltas.
     // Emit only the newly-added suffix; fall back to the whole chunk on reset.
     let delta = text
-    if (
-      assistantText.mode === "cumulative" &&
-      text.startsWith(this.emittedText) &&
-      text.length >= this.emittedText.length
-    ) {
-      delta = text.slice(this.emittedText.length)
+    if (assistantText.mode === "cumulative") {
+      if (this.emittedText && text.startsWith(this.emittedText)) {
+        // Some Cursor versions emit a cumulative answer for the full run.
+        delta = text.slice(this.emittedText.length)
+      } else if (this.currentAssistantText && text.startsWith(this.currentAssistantText)) {
+        // Current Cursor emits a cumulative final for only the post-tool model
+        // call. Compare against that segment so pre-tool progress text does not
+        // make the final answer appear new.
+        delta = text.slice(this.currentAssistantText.length)
+      } else if (
+        (this.emittedText && this.emittedText.endsWith(text)) ||
+        (this.currentAssistantText && this.currentAssistantText.endsWith(text))
+      ) {
+        delta = ""
+      }
     }
     this.emittedText += delta
+    this.currentAssistantText += delta
     this.accumulatedText += delta
 
     if (!delta) return chunks
@@ -262,15 +399,13 @@ export class CursorStreamTranslator {
   }
 
   private handleToolCall(event: CursorRawEvent): UIMessageChunk[] {
-    const callId = asString(event.call_id) ?? asString(event.id) ?? nextId("tool")
-    const name = asString(event.name) ?? asString(event.tool) ?? "tool"
-    const subtype = asString(event.subtype)
+    const { callId, name, input, output, isResult } = normalizeCursorToolEvent(event)
 
     // Assistant text/reasoning blocks must close before a tool part.
     const chunks: UIMessageChunk[] = this.closeOpenBlocks()
+    this.currentAssistantText = ""
 
-    if (subtype === "completed" || "result" in event || "output" in event) {
-      const output = event.result ?? event.output
+    if (isResult) {
       const existing = this.parts.find(
         (part) => "toolCallId" in part && part.toolCallId === callId,
       ) as Extract<CursorAssistantPart, { toolCallId: string }> | undefined
@@ -292,7 +427,6 @@ export class CursorStreamTranslator {
       return chunks
     }
 
-    const input = event.input ?? event.arguments
     this.parts.push({
       type: `tool-${name}`,
       toolCallId: callId,

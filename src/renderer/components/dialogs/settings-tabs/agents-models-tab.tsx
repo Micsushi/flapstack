@@ -1,19 +1,17 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronDown, MoreHorizontal, Plus, Trash2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { MoreHorizontal, Plus } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
   agentsLoginModalOpenAtom,
   claudeLoginModalConfigAtom,
   codexApiKeyAtom,
+  codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
   codexOnboardingAuthMethodAtom,
   codexOnboardingCompletedAtom,
-  customClaudeConfigAtom,
   hiddenModelsAtom,
   normalizeCodexApiKey,
-  openaiApiKeyAtom,
-  type CustomClaudeConfig,
 } from "../../../lib/atoms"
 import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon, SearchIcon } from "../../ui/icons"
@@ -21,15 +19,12 @@ import { CLAUDE_MODELS, CODEX_MODELS, CURSOR_MODELS } from "../../../features/ag
 import { trpc } from "../../../lib/trpc"
 import { Badge } from "../../ui/badge"
 import { Button } from "../../ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu"
-import { Input } from "../../ui/input"
-import { Label } from "../../ui/label"
 import { Switch } from "../../ui/switch"
 import { RenameDialog } from "../../rename-dialog"
 
@@ -48,12 +43,6 @@ function useIsNarrowScreen(): boolean {
   }, [])
 
   return isNarrow
-}
-
-const EMPTY_CONFIG: CustomClaudeConfig = {
-  model: "",
-  token: "",
-  baseUrl: "",
 }
 
 // Account row component
@@ -267,90 +256,21 @@ function AnthropicAccountsSection() {
 }
 
 export function AgentsModelsTab() {
-  const [storedConfig, setStoredConfig] = useAtom(customClaudeConfigAtom)
-  const [model, setModel] = useState(storedConfig.model)
-  const [baseUrl, setBaseUrl] = useState(storedConfig.baseUrl)
-  const [token, setToken] = useState(storedConfig.token)
   const setClaudeLoginModalConfig = useSetAtom(claudeLoginModalConfigAtom)
   const setClaudeLoginModalOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginModalOpen = useSetAtom(codexLoginModalOpenAtom)
+  const setCodexLoginModalMethod = useSetAtom(codexLoginModalMethodAtom)
   const isNarrowScreen = useIsNarrowScreen()
   const { data: claudeCodeIntegration, isLoading: isClaudeCodeLoading } =
     trpc.claudeCode.getIntegration.useQuery()
   const isClaudeCodeConnected = claudeCodeIntegration?.isConnected
   const { data: codexIntegration, isLoading: isCodexLoading } = trpc.codex.getIntegration.useQuery()
 
-  // OpenAI API key state
   const [storedCodexApiKey, setStoredCodexApiKey] = useAtom(codexApiKeyAtom)
-  const [codexApiKey, setCodexApiKey] = useState(storedCodexApiKey)
-  const [isSavingCodexApiKey, setIsSavingCodexApiKey] = useState(false)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const codexOnboardingAuthMethod = useAtomValue(codexOnboardingAuthMethodAtom)
-  const [storedOpenAIKey, setStoredOpenAIKey] = useAtom(openaiApiKeyAtom)
-  const [openaiKey, setOpenaiKey] = useState(storedOpenAIKey)
-  const setOpenAIKeyMutation = trpc.voice.setOpenAIKey.useMutation()
   const codexLogoutMutation = trpc.codex.logout.useMutation()
   const trpcUtils = trpc.useUtils()
-
-  useEffect(() => {
-    setModel(storedConfig.model)
-    setBaseUrl(storedConfig.baseUrl)
-    setToken(storedConfig.token)
-  }, [storedConfig.model, storedConfig.baseUrl, storedConfig.token])
-
-  useEffect(() => {
-    setOpenaiKey(storedOpenAIKey)
-  }, [storedOpenAIKey])
-
-  useEffect(() => {
-    setCodexApiKey(storedCodexApiKey)
-  }, [storedCodexApiKey])
-
-  const savedConfigRef = useRef(storedConfig)
-
-  const handleBlurSave = useCallback(() => {
-    const trimmedModel = model.trim()
-    const trimmedBaseUrl = baseUrl.trim()
-    const trimmedToken = token.trim()
-
-    // Only save if all fields are filled
-    if (trimmedModel && trimmedBaseUrl && trimmedToken) {
-      const next: CustomClaudeConfig = {
-        model: trimmedModel,
-        token: trimmedToken,
-        baseUrl: trimmedBaseUrl,
-      }
-      if (
-        next.model !== savedConfigRef.current.model ||
-        next.token !== savedConfigRef.current.token ||
-        next.baseUrl !== savedConfigRef.current.baseUrl
-      ) {
-        setStoredConfig(next)
-        savedConfigRef.current = next
-      }
-    } else if (!trimmedModel && !trimmedBaseUrl && !trimmedToken) {
-      // All cleared - reset
-      if (
-        savedConfigRef.current.model ||
-        savedConfigRef.current.token ||
-        savedConfigRef.current.baseUrl
-      ) {
-        setStoredConfig(EMPTY_CONFIG)
-        savedConfigRef.current = EMPTY_CONFIG
-      }
-    }
-  }, [model, baseUrl, token, setStoredConfig])
-
-  const handleReset = () => {
-    setStoredConfig(EMPTY_CONFIG)
-    savedConfigRef.current = EMPTY_CONFIG
-    setModel("")
-    setBaseUrl("")
-    setToken("")
-    toast.success("Model settings reset")
-  }
-
-  const canReset = Boolean(model.trim() || baseUrl.trim() || token.trim())
 
   const handleClaudeCodeSetup = () => {
     setClaudeLoginModalConfig({
@@ -360,7 +280,8 @@ export function AgentsModelsTab() {
     setClaudeLoginModalOpen(true)
   }
 
-  const handleCodexSetup = () => {
+  const handleCodexSetup = (method: "chatgpt" | "api_key") => {
+    setCodexLoginModalMethod(method)
     setCodexLoginModalOpen(true)
   }
 
@@ -375,6 +296,24 @@ export function AgentsModelsTab() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to disconnect Codex"
       toast.error(message)
+    }
+  }
+
+  const handleRemoveCodexApiKey = async () => {
+    const confirmed = window.confirm("Remove the Codex API key from Flapstack?")
+    if (!confirmed) return
+
+    try {
+      setStoredCodexApiKey("")
+      if (codexIntegration?.state === "connected_api_key") {
+        await codexLogoutMutation.mutateAsync()
+      }
+      await trpcUtils.codex.getIntegration.invalidate()
+      toast.success("Codex API key removed")
+    } catch (error) {
+      await trpcUtils.codex.getIntegration.invalidate()
+      const message = error instanceof Error ? error.message : "Failed to disconnect Codex API key"
+      toast.error(`API key removed, but Codex logout failed: ${message}`)
     }
   }
 
@@ -422,87 +361,6 @@ export function AgentsModelsTab() {
         : "Status unavailable"
   const showCodexLoading = isCodexLoading && !hasAppCodexApiKey && !hasLocalCodexSubscription
 
-  // OpenAI key handlers
-  const trimmedOpenAIKey = openaiKey.trim()
-  const canResetOpenAI = !!trimmedOpenAIKey
-
-  const handleCodexApiKeyBlur = async () => {
-    const trimmedKey = codexApiKey.trim()
-
-    if (trimmedKey === storedCodexApiKey) return
-    if (!trimmedKey) return
-
-    const normalized = normalizeCodexApiKey(trimmedKey)
-    if (!normalized) {
-      toast.error("Invalid Codex API key format. Key should start with 'sk-'")
-      setCodexApiKey(storedCodexApiKey)
-      return
-    }
-
-    setIsSavingCodexApiKey(true)
-    try {
-      setStoredCodexApiKey(normalized)
-      setCodexApiKey(normalized)
-      await trpcUtils.codex.getIntegration.invalidate()
-      toast.success("Codex API key saved")
-    } catch {
-      toast.error("Failed to save Codex API key")
-    } finally {
-      setIsSavingCodexApiKey(false)
-    }
-  }
-
-  const handleRemoveCodexApiKey = async () => {
-    setIsSavingCodexApiKey(true)
-    try {
-      setStoredCodexApiKey("")
-      setCodexApiKey("")
-
-      if (codexIntegration?.state === "connected_api_key") {
-        await codexLogoutMutation.mutateAsync().catch(() => {
-          toast.error("Codex API key removed, but failed to log out Codex CLI")
-        })
-      }
-
-      await trpcUtils.codex.getIntegration.invalidate()
-      toast.success("Codex API key removed")
-    } catch {
-      toast.error("Failed to remove Codex API key")
-    } finally {
-      setIsSavingCodexApiKey(false)
-    }
-  }
-
-  const handleSaveOpenAI = async () => {
-    if (trimmedOpenAIKey === storedOpenAIKey) return // No change
-    if (trimmedOpenAIKey && !trimmedOpenAIKey.startsWith("sk-")) {
-      toast.error("Invalid OpenAI API key format. Key should start with 'sk-'")
-      return
-    }
-
-    try {
-      await setOpenAIKeyMutation.mutateAsync({ key: trimmedOpenAIKey })
-      setStoredOpenAIKey(trimmedOpenAIKey)
-      // Invalidate voice availability check
-      await trpcUtils.voice.isAvailable.invalidate()
-      toast.success("OpenAI API key saved")
-    } catch (err) {
-      toast.error("Failed to save OpenAI API key")
-    }
-  }
-
-  const handleResetOpenAI = async () => {
-    try {
-      await setOpenAIKeyMutation.mutateAsync({ key: "" })
-      setStoredOpenAIKey("")
-      setOpenaiKey("")
-      await trpcUtils.voice.isAvailable.invalidate()
-      toast.success("OpenAI API key removed")
-    } catch (err) {
-      toast.error("Failed to remove OpenAI API key")
-    }
-  }
-
   // All models merged into one list for the top section
   const allModels = useMemo(() => {
     const items: { id: string; name: string; provider: "claude" | "codex" | "cursor" }[] = []
@@ -531,8 +389,6 @@ export function AgentsModelsTab() {
     const q = modelSearch.toLowerCase().trim()
     return allModels.filter((m) => m.name.toLowerCase().includes(q))
   }, [allModels, modelSearch])
-
-  const [isApiKeysOpen, setIsApiKeysOpen] = useState(false)
 
   return (
     <div className="p-6 space-y-6">
@@ -654,12 +510,39 @@ export function AgentsModelsTab() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => void handleCodexSetup()}
-                      disabled={
-                        isCodexLoading || codexLogoutMutation.isPending || isSavingCodexApiKey
-                      }
+                      onClick={() => handleCodexSetup("chatgpt")}
+                      disabled={isCodexLoading || codexLogoutMutation.isPending}
                     >
                       Connect
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-6 p-4 hover:bg-muted/50">
+                <div>
+                  <div className="text-sm font-medium">Codex API key</div>
+                  <div className="text-xs text-muted-foreground">
+                    {hasAppCodexApiKey ? "Configured in Flapstack" : "Not configured"}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {hasAppCodexApiKey && (
+                    <Badge variant="secondary" className="text-xs">
+                      Active
+                    </Badge>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => handleCodexSetup("api_key")}>
+                    {hasAppCodexApiKey ? "Update" : "Add"}
+                  </Button>
+                  {hasAppCodexApiKey && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={codexLogoutMutation.isPending}
+                      onClick={() => void handleRemoveCodexApiKey()}
+                    >
+                      Remove
                     </Button>
                   )}
                 </div>
@@ -668,160 +551,6 @@ export function AgentsModelsTab() {
           )}
         </div>
       </div>
-
-      {/* ===== API Keys Section (Collapsible) ===== */}
-      <Collapsible open={isApiKeysOpen} onOpenChange={setIsApiKeysOpen}>
-        <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground/80 transition-colors">
-          <ChevronDown
-            className={`h-4 w-4 transition-transform ${isApiKeysOpen ? "" : "-rotate-90"}`}
-          />
-          API Keys
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-4 pt-3">
-          {/* Codex API Key */}
-          <div className="bg-background rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between gap-6 p-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium">Codex API Key</Label>
-                  {hasAppCodexApiKey && (
-                    <Badge variant="secondary" className="text-xs">
-                      Active
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">Takes priority over subscription</p>
-              </div>
-              <div className="flex-shrink-0 w-80 flex items-center gap-2">
-                <Input
-                  type="password"
-                  value={codexApiKey}
-                  onChange={(e) => setCodexApiKey(e.target.value)}
-                  onBlur={handleCodexApiKeyBlur}
-                  className="w-full font-mono"
-                  placeholder="sk-..."
-                />
-                {hasAppCodexApiKey && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => void handleRemoveCodexApiKey()}
-                    disabled={isSavingCodexApiKey}
-                    aria-label="Remove Codex API key"
-                    className="text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* OpenAI API Key for Voice Input */}
-          <div className="bg-background rounded-lg border border-border overflow-hidden">
-            <div className="flex items-center justify-between gap-6 p-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium">OpenAI API Key</Label>
-                  {canResetOpenAI && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleResetOpenAI}
-                      disabled={setOpenAIKeyMutation.isPending}
-                      className="h-5 px-1.5 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Required for voice transcription (Whisper API)
-                </p>
-              </div>
-              <div className="flex-shrink-0 w-80">
-                <Input
-                  type="password"
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                  onBlur={handleSaveOpenAI}
-                  className="w-full"
-                  placeholder="sk-..."
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Override Model */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium text-foreground">Override Model</h4>
-              {canReset && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReset}
-                  className="text-muted-foreground hover:text-red-600 hover:bg-red-500/10"
-                >
-                  Reset
-                </Button>
-              )}
-            </div>
-            <div className="bg-background rounded-lg border border-border overflow-hidden">
-              <div className="flex items-center justify-between p-4">
-                <div className="flex-1">
-                  <Label className="text-sm font-medium">Model name</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Model identifier to use for requests
-                  </p>
-                </div>
-                <div className="flex-shrink-0 w-80">
-                  <Input
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    onBlur={handleBlurSave}
-                    className="w-full"
-                    placeholder="claude-3-7-sonnet-20250219"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 border-t border-border">
-                <div className="flex-1">
-                  <Label className="text-sm font-medium">API token</Label>
-                  <p className="text-xs text-muted-foreground">ANTHROPIC_AUTH_TOKEN env</p>
-                </div>
-                <div className="flex-shrink-0 w-80">
-                  <Input
-                    type="password"
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    onBlur={handleBlurSave}
-                    className="w-full"
-                    placeholder="sk-ant-..."
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 border-t border-border">
-                <div className="flex-1">
-                  <Label className="text-sm font-medium">Base URL</Label>
-                  <p className="text-xs text-muted-foreground">ANTHROPIC_BASE_URL env</p>
-                </div>
-                <div className="flex-shrink-0 w-80">
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    onBlur={handleBlurSave}
-                    className="w-full"
-                    placeholder="https://api.anthropic.com"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
     </div>
   )
 }

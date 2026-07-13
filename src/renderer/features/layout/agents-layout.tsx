@@ -295,7 +295,7 @@ export function AgentsLayout() {
         <div className="flex flex-1 overflow-hidden">
           {/* Left Sidebar - switches between chat list and settings nav */}
           <ResizableSidebar
-            isOpen={!isMobile && sidebarOpen}
+            isOpen={!isMobile && (isSettingsView || sidebarOpen)}
             onClose={handleCloseSidebar}
             widthAtom={agentsSidebarWidthAtom}
             minWidth={SIDEBAR_MIN_WIDTH}

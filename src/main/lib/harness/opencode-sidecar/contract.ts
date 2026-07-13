@@ -124,6 +124,7 @@ export type NormalizedSidecarEvent =
       reply: SidecarApprovalDecision["reply"]
       message?: string
       source: "policy" | "user" | "fallback"
+      replyStatus: "applied" | "no-longer-pending"
     }
   | { kind: "permission-application"; application: HarnessPermissionApplication }
   | { kind: "usage"; usage: SidecarUsage }
@@ -177,6 +178,7 @@ export type SidecarApprovalCallback = (request: {
 export type SidecarPermissionResolution = {
   decision: SidecarApprovalDecision
   source: "policy" | "user" | "fallback"
+  replyStatus: "applied" | "no-longer-pending"
 }
 
 export function limitation(

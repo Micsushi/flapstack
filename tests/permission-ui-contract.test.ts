@@ -1,0 +1,42 @@
+import { readFileSync } from "node:fs"
+import { describe, expect, it } from "vitest"
+
+const readSource = (path: string) => readFileSync(path, "utf8")
+
+describe("permission UI contract", () => {
+  it("asks for scope before an unremembered chat permission change", () => {
+    const source = readSource("src/renderer/features/agents/main/chat-input-area.tsx")
+    expect(source).toContain('if (behavior === "ask")')
+    expect(source).toContain('setPendingPermissionScope("all-chats")')
+    expect(source).toContain("Change chat permissions?")
+    expect(source).toContain("Remember my choice")
+    expect(source).toContain("This chat only")
+    expect(source).toContain('pendingPermissionMode === "full-access"')
+    expect(source).toContain("permissionConfirmationInFlightRef.current")
+  })
+
+  it("keeps direct Settings edits scoped to one named chat", () => {
+    const source = readSource(
+      "src/renderer/components/dialogs/settings-tabs/agents-permissions-tab.tsx",
+    )
+    expect(source).toContain("Ask every time")
+    expect(source).toContain("Always all chats")
+    expect(source).toContain("Always this chat")
+    expect(source).toContain('scope: "current-chat"')
+    expect(source).toContain("Default permission")
+    expect(source).toContain("Filter chats, projects, or tasks")
+  })
+
+  it("updates Settings search on the input change event", () => {
+    const source = readSource("src/renderer/features/settings/settings-sidebar.tsx")
+    expect(source).toContain("onChange={(event) => setSearchQuery(event.target.value)}")
+    expect(source).toContain('event.key.toLowerCase() === "f"')
+    expect(source).toContain('event.key === "ArrowDown"')
+    expect(source).toContain('event.key === "Enter"')
+  })
+
+  it("keeps Settings navigation visible when the chat sidebar is closed", () => {
+    const source = readSource("src/renderer/features/layout/agents-layout.tsx")
+    expect(source).toContain("isOpen={!isMobile && (isSettingsView || sidebarOpen)}")
+  })
+})
