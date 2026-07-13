@@ -111,7 +111,6 @@ export function buildOpencodeConfig(
                             effort: reasoningEffort,
                             exclude: !reasoningEnabled,
                           },
-                          reasoningEffort: reasoningEnabled ? reasoningEffort : "minimal",
                           includeReasoning: reasoningEnabled,
                         },
                       }

@@ -672,7 +672,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === selectedSubChatCursorModelId) ||
-      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
     [cursorUiModels, selectedSubChatCursorModelId],
   )
 

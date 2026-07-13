@@ -495,7 +495,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === lastSelectedCursorModelId) ||
-      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
     [cursorUiModels, lastSelectedCursorModelId],
   )
 

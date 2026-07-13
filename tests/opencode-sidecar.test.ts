@@ -274,6 +274,38 @@ describe("permission mapping", () => {
 })
 
 describe("SSE parsing", () => {
+  it("aborts a provider run when the event stream exceeds its idle deadline", async () => {
+    const abort = vi.fn().mockResolvedValue(undefined)
+    const response = new Response(
+      new ReadableStream({
+        start() {
+          // Intentionally never emits or closes.
+        },
+      }),
+    )
+    const events = []
+    for await (const event of streamEvents({
+      client: { abort } as any,
+      handle: {} as any,
+      sessionId: "session-1",
+      input: {
+        provider: "openrouter",
+        model: "openrouter/test",
+        prompt: "test",
+        cwd: "/tmp",
+        permissionMode: "read-only",
+      },
+      eventResponse: response,
+      eventIdleTimeoutMs: 5,
+    })) {
+      events.push(event)
+    }
+    expect(abort).toHaveBeenCalledWith("session-1")
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "error", errorText: expect.stringContaining("idle") }),
+    )
+  })
+
   it("treats unexpected EOF as a failed run", async () => {
     const response = new Response(
       new ReadableStream({
@@ -1325,7 +1357,6 @@ describe("credentials + config", () => {
           "anthropic/claude-opus-4-8": {
             options: {
               reasoning: { enabled: true, effort: "xhigh", exclude: false },
-              reasoningEffort: "xhigh",
               includeReasoning: true,
             },
           },
@@ -1346,13 +1377,14 @@ describe("credentials + config", () => {
           "anthropic/claude-opus-4-8": {
             options: {
               reasoning: { enabled: false, exclude: true },
-              reasoningEffort: "minimal",
               includeReasoning: false,
             },
           },
         },
       },
     })
+    expect(JSON.stringify(enabled)).not.toContain("reasoningEffort")
+    expect(JSON.stringify(disabled)).not.toContain("reasoningEffort")
     clearProviderKey("openrouter")
   })
 

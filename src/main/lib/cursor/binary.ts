@@ -105,6 +105,15 @@ export class CursorCliTimeoutError extends Error {
   }
 }
 
+export const DEFAULT_CURSOR_RUN_TIMEOUT_MS = 30 * 60_000
+
+export function resolveCursorRunTimeoutMs(
+  value = process.env.FLAPSTACK_CURSOR_RUN_TIMEOUT_MS,
+): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 5_000 ? parsed : DEFAULT_CURSOR_RUN_TIMEOUT_MS
+}
+
 export type CursorCliResult = {
   stdout: string
   stderr: string

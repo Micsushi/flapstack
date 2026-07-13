@@ -38,6 +38,33 @@ export function isAlreadyResolvedPermissionReplyError(error: unknown): boolean {
   return error instanceof Error && /permission reply failed:\s*HTTP 404/i.test(error.message)
 }
 
+const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 120_000
+
+export class SidecarEventIdleTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Provider event stream was idle for ${timeoutMs}ms.`)
+    this.name = "SidecarEventIdleTimeoutError"
+  }
+}
+
+async function readEventChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new SidecarEventIdleTimeoutError(timeoutMs)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function permissionScopeKey(
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
 ): string {
@@ -162,6 +189,7 @@ export async function* streamEvents(ctx: {
   input: SidecarLaunchInput
   onApproval?: SidecarApprovalCallback
   eventResponse: Response
+  eventIdleTimeoutMs?: number
 }): AsyncGenerator<NormalizedSidecarEvent> {
   const { client, sessionId, input, onApproval } = ctx
   const resp = ctx.eventResponse
@@ -186,7 +214,20 @@ export async function* streamEvents(ctx: {
         await client.abort(sessionId)
         break
       }
-      const { done, value } = await reader.read()
+      let result: ReadableStreamReadResult<Uint8Array>
+      try {
+        result = await readEventChunk(
+          reader,
+          ctx.eventIdleTimeoutMs ?? DEFAULT_EVENT_IDLE_TIMEOUT_MS,
+        )
+      } catch (error) {
+        if (!(error instanceof SidecarEventIdleTimeoutError)) throw error
+        await client.abort(sessionId).catch(() => undefined)
+        sawTerminalEvent = true
+        yield { kind: "error", errorText: error.message }
+        return
+      }
+      const { done, value } = result
       if (done) break
       const parsed = parseSseChunk(buffer, decoder.decode(value, { stream: true }))
       buffer = parsed.buffer
