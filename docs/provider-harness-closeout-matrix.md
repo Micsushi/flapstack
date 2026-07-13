@@ -75,6 +75,11 @@ rejects or labels the capability before launch.
 
 ## Exact blockers and wake conditions
 
+S3-F11 commit `b02055c56ac7a1c79fa49be49a2ba01730f66d5e` adds
+authenticated dev-only extension inventory/mutation probes and macOS Preview
+resource smoke. That evidence is not provider-live or UI-live D/E evidence and
+does not close any S3-F15-T2 through T5 row.
+
 - S3-F15-T2 wakes after S3-F10-T4 and S3-F12-T5 pass and S3-F15-T1 is integrated.
 - S3-F15-T3 wakes after S3-F10-T4 passes; dev-test-control MCP 3.3/3.4 already pass.
 - S3-F15-T4 wakes after S3-F15-T3, S3-F12-T5, S3-F3-T4, S3-F4-T2, and S3-F6-T2 pass.

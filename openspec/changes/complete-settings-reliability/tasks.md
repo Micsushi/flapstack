@@ -548,9 +548,21 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Unsupported provider/kind combinations remain hidden or read-only.
   - Package contains required provider resources and discovers user-local items.
 - Verification: full check, verified dev and package/provider matrix.
-- Remaining verification: run the SHA-bound full gate, exercise inventory and
-  mutations through the verified `Flapstack Dev` Settings UI, and prove packaged
-  discovery on macOS. Windows/Linux package rows remain explicitly unavailable.
+- Evidence: commit `b02055c56ac7a1c79fa49be49a2ba01730f66d5e`
+  passes the Node 22 full gate (99 files, 724 passed, 3 skipped), both scoped
+  strict OpenSpec validations, exact-checkout `npm run dev` plus
+  `npm run dev:verify`, content-redacted inventory of 74 user-local items,
+  create/update/delete through the production adapter for all five writable
+  provider/kind paths, fail-closed OpenCode mutation, exact Codex/Cursor runtime
+  tokens, cleanup, and macOS arm64 Preview build/launch/binary/resource smoke.
+  The package ran from its exact bundle and Preview profile and its absent dev
+  descriptor failed closed, preserving the product/dev MCP boundary.
+- Remaining verification: the Mac was locked, so exercise inventory and
+  mutations through the visible `Flapstack Dev` Settings UI and trigger
+  user-local discovery through the packaged Settings surface. The integrated
+  S3-F11-T4 evidence remains the current Claude skill/command/custom-agent
+  consumption proof because new budget-bounded Claude attempts did not return a
+  token. Windows/Linux package rows remain explicitly unavailable.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
