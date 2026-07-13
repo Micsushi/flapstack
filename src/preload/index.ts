@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import { exposeElectronTRPC } from "trpc-electron/main"
+import {
+  parseProductMcpRendererInvalidation,
+  PRODUCT_MCP_INVALIDATION_CHANNEL,
+  type ProductMcpRendererInvalidation,
+} from "../shared/product-mcp-invalidation"
 
 // Only initialize Sentry in production to avoid IPC errors in dev mode
 if (process.env.NODE_ENV === "production") {
@@ -144,6 +149,14 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ) => callback(payload)
     ipcRenderer.on("dev-mcp:chats-changed", handler)
     return () => ipcRenderer.removeListener("dev-mcp:chats-changed", handler)
+  },
+  onProductMcpInvalidation: (callback: (payload: ProductMcpRendererInvalidation) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseProductMcpRendererInvalidation(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(PRODUCT_MCP_INVALIDATION_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(PRODUCT_MCP_INVALIDATION_CHANNEL, handler)
   },
 
   // File change events (from Claude Write/Edit tools)
@@ -317,6 +330,9 @@ export interface DesktopApi {
   onShortcutOpenSettings: (callback: () => void) => () => void
   onDevMcpChatsChanged: (
     callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  ) => () => void
+  onProductMcpInvalidation: (
+    callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void
   // File changes
   onFileChanged: (

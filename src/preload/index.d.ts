@@ -29,6 +29,16 @@ export interface NotificationNavigationPayload {
   subChatId?: string
 }
 
+export interface ProductMcpRendererInvalidation {
+  version: 1
+  source: "product-mcp"
+  domains: Array<"projects" | "tasks" | "chats" | "runs" | "attachments" | "approvals" | "audit">
+  chatIds?: string[]
+  runIds?: string[]
+  projectIds?: string[]
+  taskIds?: string[]
+}
+
 export interface DesktopNotificationOptions extends NotificationNavigationPayload {
   title: string
   body: string
@@ -95,6 +105,9 @@ export interface DesktopApi {
   onShortcutNewAgent: (callback: () => void) => () => void
   onDevMcpChatsChanged: (
     callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  ) => () => void
+  onProductMcpInvalidation: (
+    callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void
 
   // Worktree setup failures

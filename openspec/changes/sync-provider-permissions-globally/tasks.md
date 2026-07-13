@@ -204,6 +204,9 @@ This is the sole task checklist for the change.
   - Provider allow cannot skip product Tier 3 approval.
   - Provider/product denial and bridge failure never widen access.
 - Verification: `tests/mcp-provider-permission-integration.test.ts`.
+- Remaining verification: the named provider/product matrix passes, including
+  no-double-prompt and mandatory Tier 3 cases; completion remains blocked by
+  the low-risk live Codex smoke in GPP-T4.
 - Blocked by: GPP-T3, GPP-T4, S3-F3-T5
 - Blocks: GPP-T6, S3-F12-T3
 - Relevant context: provider permission builders/bridges, product registry tier,
@@ -211,7 +214,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T10 - Enforce exact scoped custom-permission persistence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Scoped permission synchronization
 - Outcome: Per-chat custom toggles are exact and durable without creating false
   hierarchy-wide custom defaults.

@@ -33,7 +33,7 @@ describe("Flapstack MCP per-chat exposure", () => {
 
   it("migrates existing chats to exposure disabled", () => {
     const migration = readFileSync(
-      resolve(process.cwd(), "drizzle/0016_massive_ravenous.sql"),
+      resolve(process.cwd(), "drizzle/0017_third_molecule_man.sql"),
       "utf8",
     )
     expect(migration).toContain("ADD `mcp_exposure_enabled` integer DEFAULT false NOT NULL")

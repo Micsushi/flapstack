@@ -37,6 +37,18 @@ CREATE INDEX `mcp_audit_records_caller_chat_id_idx` ON `mcp_audit_records` (`cal
 CREATE INDEX `mcp_audit_records_tool_name_idx` ON `mcp_audit_records` (`tool_name`);--> statement-breakpoint
 CREATE INDEX `mcp_audit_records_status_idx` ON `mcp_audit_records` (`status`);--> statement-breakpoint
 CREATE INDEX `mcp_audit_records_invocation_id_idx` ON `mcp_audit_records` (`invocation_id`);--> statement-breakpoint
+CREATE TRIGGER `mcp_audit_records_no_update`
+BEFORE UPDATE ON `mcp_audit_records`
+BEGIN
+  SELECT RAISE(ABORT, 'mcp_audit_records is append-only');
+END;
+--> statement-breakpoint
+CREATE TRIGGER `mcp_audit_records_no_delete`
+BEFORE DELETE ON `mcp_audit_records`
+BEGIN
+  SELECT RAISE(ABORT, 'mcp_audit_records is append-only');
+END;
+--> statement-breakpoint
 ALTER TABLE `chats` ADD `custom_permissions` text;--> statement-breakpoint
 ALTER TABLE `chats` ADD `mcp_exposure_enabled` integer DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE `chats` ADD `parent_chat_id` text;--> statement-breakpoint

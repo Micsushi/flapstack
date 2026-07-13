@@ -48,4 +48,19 @@ if (!types.includes("permissionRequestHandler?:")) {
 }
 writeFileSync(typesPath, types)
 
-console.log("Patched @mcpc-tech/acp-ai-provider permission handling (fail closed).")
+const codexAcpPath = require.resolve("@agentclientprotocol/codex-acp")
+let codexAcpSource = readFileSync(codexAcpPath, "utf8")
+const correlatedMcpApproval =
+  /(toolCallId: context\.correlatedCallId,\s*kind: "execute",\s*status: "pending")(\s*\/\/ content:)/
+if (!codexAcpSource.includes("rawInput: { serverName: params.serverName }")) {
+  codexAcpSource = codexAcpSource.replace(
+    correlatedMcpApproval,
+    "$1,\n              rawInput: { serverName: params.serverName }$2",
+  )
+}
+if (!codexAcpSource.includes("rawInput: { serverName: params.serverName }")) {
+  throw new Error("Could not preserve MCP server identity in Codex ACP permission requests")
+}
+writeFileSync(codexAcpPath, codexAcpSource)
+
+console.log("Patched ACP permission handling (fail closed, product MCP identity preserved).")

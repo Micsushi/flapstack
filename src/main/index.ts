@@ -10,9 +10,14 @@ import {
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
-import { drainPendingAgentRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
+import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
+import {
+  startProductMcpInvalidationBridge,
+  type ProductMcpInvalidationBridge,
+} from "./lib/mcp-control/invalidation-bridge"
+import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
@@ -48,6 +53,7 @@ import { windowManager } from "./windows/window-manager"
 import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
+let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -833,6 +839,15 @@ if (gotTheLock) {
     try {
       initDatabase()
       console.log("[App] Database initialized")
+      productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
+        onInvalidation: (payload) => {
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) {
+              window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+            }
+          }
+        },
+      })
       devMcpServer = await startDevMcpServer({
         enabled: IS_DEV,
         userDataPath: app.getPath("userData"),
@@ -845,7 +860,7 @@ if (gotTheLock) {
         if (pendingRunDrainActive) return
         pendingRunDrainActive = true
         try {
-          await drainPendingAgentRuns(getDatabasePath(), pendingRunLauncher)
+          await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
         } catch (error) {
           console.error("[App] Pending run launch failed:", error)
         } finally {
@@ -919,6 +934,8 @@ if (gotTheLock) {
     cancelAllPendingOAuth()
     await devMcpServer?.stop()
     devMcpServer = null
+    await productMcpInvalidationBridge?.stop()
+    productMcpInvalidationBridge = null
     await cleanupGitWatchers()
     await shutdownAnalytics()
     await closeDatabase()

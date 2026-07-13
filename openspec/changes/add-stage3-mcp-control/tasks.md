@@ -73,7 +73,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T6 — Rebase Stage 3 storage onto the current migration chain
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: Stage 3 storage upgrades cleanly from the rebased Stage 2 schema.
 - Scope: Consolidate exposure, approval, audit, and custom-capability storage into
@@ -84,8 +84,8 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   - Exposure defaults off; custom capabilities default null; approval/audit
     tables and append-only audit protection exist.
 - Verification: `tests/stage3-migration-rebase.test.ts` and migration-chain tests.
-- Remaining verification: the rebased migration and existing upgrade fixture
-  pass; the dedicated named regression above must land before completion.
+- Verification evidence: fresh, current-main-era, and legacy Stage 3 fixtures
+  pass the dedicated migration regression and the full Node 22 gate.
 - Blocked by: S3-F4-T1
 - Blocks: S3-F2-T7, S3-F6-T4
 - Relevant context: `drizzle/0017_third_molecule_man.sql`, journal, snapshot,
@@ -93,7 +93,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F2-T7 — Recover only interrupted MCP-origin runs after startup
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F2
 - Outcome: Startup never queries pre-migration tables or relaunches ordinary
   interrupted runs as MCP work.
@@ -168,7 +168,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F3-T5 — Enforce provider and product MCP gates once
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F3
 - Outcome: Product MCP tools receive the intended combined authority without a
   bypass or duplicate approval prompt.
@@ -332,6 +332,9 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   - Failed/rolled-back mutations do not show phantom success.
 - Verification: `tests/mcp-external-mutation-refresh.test.ts` plus verified live
   mutation, approval, run, and audit observations.
+- Remaining verification: the named transport, coalescing, exact-invalidation,
+  and development-boundary regressions pass; live mutation, approval, run, and
+  audit observations remain open.
 - Blocked by: S3-F2-T5, S3-F3-T4, S3-F4-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: Electron main/preload event bridge, tRPC query invalidation,
