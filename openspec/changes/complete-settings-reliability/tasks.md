@@ -321,7 +321,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F10-T1 - Add encrypted main-process credential service
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Provider secrets have a write-only renderer API and encrypted,
   atomic main-process persistence.
@@ -334,7 +334,10 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Renderer API cannot fetch plaintext.
   - Interrupted writes preserve the prior valid store.
   - Unsupported/weak storage follows an explicit safe policy.
-- Verification: service, IPC, permissions, redaction, and corruption tests.
+- Verification: credential service and leakage-contract suites cover ciphertext,
+  restrictive permissions, atomic/corrupt-store failure, weak/unavailable
+  storage, metadata redaction, and the write-only IPC surface; Node 22
+  TypeScript and production build pass.
 - Estimated effort: 2 days.
 - Blocked by: none.
 - Blocks: S3-F10-T2, S3-F10-T3.
@@ -342,7 +345,7 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 
 ### S3-F10-T2 - Migrate legacy renderer credentials safely
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Existing Codex, OpenAI Voice, and custom Claude credentials move to
   encrypted storage without loss or premature deletion.
@@ -357,8 +360,10 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Failure keeps the source and reports retry/removal guidance.
   - Repeated startup cannot duplicate or corrupt a credential.
   - Provider transports consume the main-process credential path.
-- Verification: migration state-machine and transport integration tests with
-  success/failure/crash fixtures.
+- Verification: migration state-machine tests cover exact-key inventory,
+  acknowledgement/fingerprint matching, source retention on failure, and
+  idempotent retry; leakage contracts prove renderer transports no longer carry
+  Codex or Claude secrets; focused provider/usage suites pass.
 - Estimated effort: 1.5-2 days.
 - Blocked by: S3-F10-T1.
 - Blocks: S3-F10-T3, S3-F10-T4.
@@ -383,6 +388,9 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Subscription/API-key priority is accurate per provider.
 - Verification: component and IPC integration tests plus verified live auth
   setup/removal with disposable test values.
+- Remaining verification: provider-scoped management rows, replace/remove
+  confirmation, fingerprint/update-time display, Voice ownership/search, and a
+  live disposable-value setup/removal pass remain for this UI-owned task.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F7-T2, S3-F10-T1, S3-F10-T2.
 - Blocks: S3-F10-T4.
@@ -405,6 +413,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   - Migration and removal behave safely in packaged app.
 - Verification: security tests, full check, package smoke and filesystem/log
   inspection.
+- Remaining verification: macOS Preview arm64 packages and launches, and the
+  exact worktree Dev profile passes `npm run dev:verify`; packaged
+  credential migration/restart/removal, this Mac's actual Keychain-backed
+  persistence, Windows/Linux, and rollback evidence remain unavailable. The
+  full Node 22 suite is also blocked by the missing S3-F2-T6 migration artifact,
+  outside this credential scope.
 - Estimated effort: 1 day.
 - Blocked by: S3-F10-T2, S3-F10-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.

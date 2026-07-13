@@ -60,12 +60,8 @@ import {
   agentsSettingsDialogActiveTabAtom,
   anthropicOnboardingCompletedAtom,
   apiKeyOnboardingCompletedAtom,
-  codexApiKeyAtom,
   codexOnboardingCompletedAtom,
-  customClaudeConfigAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
-  normalizeCustomClaudeConfig,
   showOfflineModeFeaturesAtom,
   selectedOllamaModelAtom,
   customHotkeysAtom,
@@ -308,9 +304,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [])
   const [workMode, setWorkMode] = useAtom(lastSelectedWorkModeAtom)
   const debugMode = useAtomValue(agentsDebugModeAtom)
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   // Connection status for providers
   const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
@@ -467,8 +464,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     setLastSelectedClaudeEffort(selectedClaudeEffort)
   }, [lastSelectedClaudeEffort, selectedClaudeEffort, setLastSelectedClaudeEffort])
 
-  const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
-  const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const codexUiModels = useMemo(() => {
     const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"

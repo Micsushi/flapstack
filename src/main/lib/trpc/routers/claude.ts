@@ -75,6 +75,7 @@ import {
 import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
+import { getCredentialService } from "../../credential-service"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
 import {
@@ -941,13 +942,6 @@ export const claudeRouter = router({
         mode: z.enum(["plan", "agent"]).default("agent"),
         sessionId: z.string().optional(),
         model: z.string().optional(),
-        customConfig: z
-          .object({
-            model: z.string().min(1),
-            token: z.string().min(1),
-            baseUrl: z.string().min(1),
-          })
-          .optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
         reasoningEnabled: z.boolean().default(true),
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
@@ -1116,9 +1110,21 @@ export const claudeRouter = router({
 
             // 2.5. AUTO-FALLBACK: Check internet and switch to Ollama if offline
             // Only check if offline mode is enabled in settings
+            const customCredentialStatus = getCredentialService().status("claude.custom-api-token")
+            const customToken = getCredentialService().resolve("claude.custom-api-token")
+            const secureCustomConfig =
+              customToken &&
+              customCredentialStatus.metadata?.model &&
+              customCredentialStatus.metadata.baseUrl
+                ? {
+                    model: customCredentialStatus.metadata.model,
+                    token: customToken,
+                    baseUrl: customCredentialStatus.metadata.baseUrl,
+                  }
+                : undefined
             const claudeCodeToken = getClaudeCodeToken()
             const offlineResult = await checkOfflineFallback(
-              input.customConfig,
+              secureCustomConfig,
               claudeCodeToken,
               undefined, // selectedOllamaModel - will be read from customConfig if present
               input.offlineModeEnabled ?? false, // Pass offline mode setting
@@ -1132,7 +1138,7 @@ export const claudeRouter = router({
             }
 
             // Use offline config if available
-            const finalCustomConfig = offlineResult.config || input.customConfig
+            const finalCustomConfig = offlineResult.config || secureCustomConfig
             const isUsingOllama = offlineResult.isUsingOllama
 
             // Track connection method for analytics

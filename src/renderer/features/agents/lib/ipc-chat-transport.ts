@@ -5,11 +5,8 @@ import {
   agentsLoginModalOpenAtom,
   autoOfflineModeAtom,
   claudeLoginModalConfigAtom,
-  type CustomClaudeConfig,
-  customClaudeConfigAtom,
   enableTasksAtom,
   historyEnabledAtom,
-  normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
   sessionInfoAtom,
   showOfflineModeFeaturesAtom,
@@ -180,9 +177,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
     const claudeEffort = appStore.get(subChatClaudeEffortAtomFamily(this.config.subChatId))
 
-    const storedCustomConfig = appStore.get(customClaudeConfigAtom) as CustomClaudeConfig
-    const customConfig = normalizeCustomClaudeConfig(storedCustomConfig)
-
     // Get selected Ollama model for offline mode
     const selectedOllamaModel = appStore.get(selectedOllamaModelAtom)
     // Check if offline mode is enabled in settings
@@ -201,7 +195,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     let chunkCount = 0
     let lastChunkType = ""
     console.log(
-      `[SD] R:START sub=${subId} cwd=${this.config.cwd} projectPath=${this.config.projectPath || "(not set)"} customConfig=${customConfig ? "set" : "not set"}`,
+      `[SD] R:START sub=${subId} cwd=${this.config.cwd} projectPath=${this.config.projectPath || "(not set)"}`,
     )
 
     return new ReadableStream({
@@ -218,7 +212,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             reasoningEnabled: reasoningOutputEnabled,
             effort: claudeEffort,
             ...(modelString && { model: modelString }),
-            ...(customConfig && { customConfig }),
             ...(selectedOllamaModel && { selectedOllamaModel }),
             historyEnabled,
             offlineModeEnabled,

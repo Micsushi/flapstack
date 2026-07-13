@@ -1,18 +1,10 @@
-/**
- * Provider credential storage for OpenCode-backed harnesses (Track E - E3).
- *
- * Keys are stored encrypted with Electron `safeStorage` in a local JSON file
- * (no hosted sync). We deliberately avoid a DB migration here: the file lives
- * next to `permissions.json` under the Flapstack config dir. Raw keys are never
- * written to logs, manifests, or reusable docs.
- *
- * Scaffolding stage: read/write/clear + presence checks are real; they are the
- * source of truth the launcher/config will read from once wired.
- */
+/** Secure provider credential adapter for OpenCode-backed harnesses. */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
+import type { CredentialId } from "../../../../shared/credential-types"
+import { getCredentialService } from "../../credential-service"
 import {
   getUsageSecret,
   getUsageSecretAsync,
@@ -22,11 +14,35 @@ import {
 import type { OpencodeProviderId } from "./contract"
 
 const require = createRequire(import.meta.url)
-const credentialsFileName = "opencode-provider-credentials.json"
-const providerKeyCache = new Map<OpencodeProviderId, string>()
-const persistedProviderKeys = new Set<OpencodeProviderId>()
+const legacyCredentialsFileName = "opencode-provider-credentials.json"
+const settingsFileName = "opencode-provider-settings.json"
+const daemonWarnings = new Map<OpencodeProviderId, string>()
 
-/** Legacy key used by the short-lived direct-Keychain implementation. */
+type ProviderSettings = Partial<Record<OpencodeProviderId, { baseUrl?: string }>>
+
+type LegacyStoredCredential = {
+  value: string
+  encrypted: boolean
+  sessionOnly?: boolean
+  baseUrl?: string
+}
+
+type LegacyCredentialsFile = Partial<Record<OpencodeProviderId, LegacyStoredCredential>>
+
+export type ProviderCredentialStatus = {
+  provider: OpencodeProviderId
+  configured: boolean
+  sessionOnly?: boolean
+  baseUrl?: string
+  updatedAt?: number
+  fingerprint?: string
+  warning?: string
+}
+
+function credentialId(provider: OpencodeProviderId): CredentialId {
+  return `${provider}.api-key` as CredentialId
+}
+
 function legacyProviderSecretKey(provider: OpencodeProviderId): string {
   return `opencode.${provider}.api_key`
 }
@@ -35,58 +51,80 @@ function usageProviderSecretKey(provider: OpencodeProviderId): string {
   return `${provider}.api_key`
 }
 
-type StoredCredential = {
-  /** Base64 of an Electron safeStorage-encrypted key. */
-  value: string
-  encrypted: boolean
-  /** The key exists only in memory and must not trigger legacy migration. */
-  sessionOnly?: boolean
-  /** Optional per-provider base URL override (NanoGPT self-host / proxies). */
-  baseUrl?: string
-  updatedAt: number
-}
-
-type CredentialsFile = Partial<Record<OpencodeProviderId, StoredCredential>>
-
-export type ProviderCredentialStatus = {
-  provider: OpencodeProviderId
-  configured: boolean
-  sessionOnly?: boolean
-  baseUrl?: string
-  updatedAt?: number
-}
-
-function encryptValue(value: string): { value: string; encrypted: boolean } {
+function readJson<T>(path: string, fallback: T): T {
+  if (!existsSync(path)) return fallback
   try {
-    const { safeStorage } = require("electron") as {
-      safeStorage?: {
-        isEncryptionAvailable(): boolean
-        encryptString(v: string): Buffer
-      }
-    }
-    if (safeStorage?.isEncryptionAvailable()) {
-      return { value: safeStorage.encryptString(value).toString("base64"), encrypted: true }
-    }
+    chmodSync(path, 0o600)
+    return JSON.parse(readFileSync(path, "utf8")) as T
   } catch {
-    // Unit tests exercise file behavior without loading Electron.
+    return fallback
   }
-  if (process.env.NODE_ENV === "test") return { value, encrypted: false }
-  throw new Error("OS keychain encryption is unavailable; API keys cannot be stored securely.")
 }
 
-function decryptValue(stored: StoredCredential): string | null {
-  if (!stored.encrypted) return stored.value
+function writeJsonAtomic(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  const tempPath = `${path}.${process.pid}.tmp`
+  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  chmodSync(tempPath, 0o600)
+  renameSync(tempPath, path)
+  chmodSync(path, 0o600)
+}
+
+function settingsPath(): string {
+  return join(getOpencodeStorageDir(), settingsFileName)
+}
+
+function readSettings(): ProviderSettings {
+  return readJson(settingsPath(), {})
+}
+
+function setBaseUrl(provider: OpencodeProviderId, baseUrl?: string): void {
+  if (!baseUrl?.trim() && !existsSync(settingsPath())) return
+  const settings = readSettings()
+  const normalized = baseUrl?.trim()
+  if (normalized) settings[provider] = { baseUrl: normalized }
+  else delete settings[provider]
+  writeJsonAtomic(settingsPath(), settings)
+}
+
+function decryptLegacy(stored: LegacyStoredCredential): string | null {
+  if (stored.sessionOnly || !stored.value) return null
+  if (!stored.encrypted) return process.env.NODE_ENV === "test" ? stored.value : null
   try {
-    const { safeStorage } = require("electron") as {
-      safeStorage?: { decryptString(buffer: Buffer): string }
+    const electron = require("electron") as {
+      safeStorage?: { decryptString(value: Buffer): string }
     }
-    if (safeStorage) {
-      return safeStorage.decryptString(Buffer.from(stored.value, "base64"))
-    }
+    return electron.safeStorage?.decryptString(Buffer.from(stored.value, "base64")) ?? null
   } catch {
-    // Unable to decrypt (e.g. moved machines) - treat as not configured.
+    return null
   }
-  return null
+}
+
+function migrateLegacyFile(provider: OpencodeProviderId): string | null {
+  const path = join(getOpencodeStorageDir(), legacyCredentialsFileName)
+  const file = readJson<LegacyCredentialsFile>(path, {})
+  const stored = file[provider]
+  if (!stored) return null
+  if (stored.baseUrl && !getProviderBaseUrl(provider)) setBaseUrl(provider, stored.baseUrl)
+  const secret = decryptLegacy(stored)
+  if (!secret) return null
+  const result = getCredentialService().set(credentialId(provider), secret, {
+    metadata: stored.baseUrl ? { baseUrl: stored.baseUrl } : undefined,
+    requirePersistence: true,
+  })
+  if (result.acknowledged) {
+    delete file[provider]
+    writeJsonAtomic(path, file)
+  }
+  return secret
+}
+
+function setMainProviderKey(provider: OpencodeProviderId, apiKey: string, baseUrl?: string): void {
+  const result = getCredentialService().set(credentialId(provider), apiKey, {
+    metadata: baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : undefined,
+  })
+  setBaseUrl(provider, baseUrl)
+  if (result.persistence === "session") console.warn(`[Credentials] ${provider} is session-only`)
 }
 
 export function setProviderKey(
@@ -94,26 +132,17 @@ export function setProviderKey(
   apiKey: string,
   baseUrl?: string,
 ): void {
-  const trimmed = apiKey.trim()
-  if (!trimmed) {
-    throw new Error("API key cannot be empty")
-  }
-  const file = readCredentialsFile()
-  const { value, encrypted } = encryptValue(trimmed)
-  file[provider] = {
-    value,
-    encrypted,
-    ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
-    updatedAt: Date.now(),
-  }
-  writeCredentialsFile(file)
-  providerKeyCache.set(provider, trimmed)
-  persistedProviderKeys.add(provider)
+  setMainProviderKey(provider, apiKey, baseUrl)
   if (process.env.NODE_ENV !== "test") {
     try {
-      setUsageSecret(usageProviderSecretKey(provider), trimmed)
+      setUsageSecret(usageProviderSecretKey(provider), apiKey.trim())
+      daemonWarnings.delete(provider)
     } catch {
-      console.warn(`[OpencodeSidecar] ${provider} background usage key could not be stored`)
+      daemonWarnings.set(
+        provider,
+        "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
+      )
+      console.warn(`[Credentials] ${provider} background usage access is unavailable`)
     }
   }
 }
@@ -123,141 +152,81 @@ export async function setProviderKeyAsync(
   apiKey: string,
   baseUrl?: string,
 ): Promise<void> {
-  const trimmed = apiKey.trim()
-  if (!trimmed) throw new Error("API key cannot be empty")
-  if (process.env.NODE_ENV === "test") {
-    setProviderKey(provider, trimmed, baseUrl)
-    return
-  }
-  providerKeyCache.set(provider, trimmed)
-  try {
-    const file = readCredentialsFile()
-    const encrypted = encryptValue(trimmed)
-    file[provider] = {
-      ...encrypted,
-      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
-      updatedAt: Date.now(),
+  setMainProviderKey(provider, apiKey, baseUrl)
+  if (process.env.NODE_ENV !== "test") {
+    try {
+      await setUsageSecretAsync(usageProviderSecretKey(provider), apiKey.trim())
+      daemonWarnings.delete(provider)
+    } catch {
+      daemonWarnings.set(
+        provider,
+        "The app can use this credential, but the background usage daemon cannot access it. Unlock the OS credential store and retry.",
+      )
+      console.warn(`[Credentials] ${provider} daemon access is unavailable`)
     }
-    writeCredentialsFile(file)
-    persistedProviderKeys.add(provider)
-  } catch {
-    persistedProviderKeys.delete(provider)
-    const file = readCredentialsFile()
-    file[provider] = {
-      value: "",
-      encrypted: true,
-      sessionOnly: true,
-      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
-      updatedAt: Date.now(),
-    }
-    writeCredentialsFile(file)
-    console.warn(`[OpencodeSidecar] ${provider} key is available for this app session only`)
-  }
-  try {
-    await setUsageSecretAsync(usageProviderSecretKey(provider), trimmed)
-  } catch {
-    console.warn(`[OpencodeSidecar] ${provider} background usage key could not be stored`)
   }
 }
 
-/** Returns the decrypted key, or null when not configured / undecryptable. */
 export function getProviderKey(provider: OpencodeProviderId): string | null {
-  const cached = providerKeyCache.get(provider)
-  if (cached) return cached
-
-  const stored = readCredentialsFile()[provider]
-  if (stored) {
-    const decrypted = decryptValue(stored)
-    if (decrypted) return decrypted
+  const serviceValue = getCredentialService().resolve(credentialId(provider))
+  if (serviceValue) return serviceValue
+  const legacyFileValue = migrateLegacyFile(provider)
+  if (legacyFileValue) return legacyFileValue
+  const legacyKeychainValue = getUsageSecret(legacyProviderSecretKey(provider))
+  if (legacyKeychainValue) {
+    getCredentialService().set(credentialId(provider), legacyKeychainValue, {
+      metadata: getProviderBaseUrl(provider)
+        ? { baseUrl: getProviderBaseUrl(provider) }
+        : undefined,
+    })
+    return legacyKeychainValue
   }
-
-  // Migrate credentials saved by the short-lived direct-Keychain implementation.
-  const legacyCredential =
-    stored?.value === "" && stored.sessionOnly !== true
-      ? getUsageSecret(legacyProviderSecretKey(provider))
-      : null
-  if (legacyCredential) {
-    try {
-      setProviderKey(provider, legacyCredential, stored?.baseUrl)
-    } catch {
-      providerKeyCache.set(provider, legacyCredential)
-    }
-    return legacyCredential
-  }
-
-  // Development-only fallback: `scripts/dev.mjs` loads ignored `.env.local`.
-  // Production keeps using encrypted Electron safeStorage credentials.
   const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
   return process.env[envKey]?.trim() || null
 }
 
 export async function getProviderKeyAsync(provider: OpencodeProviderId): Promise<string | null> {
-  const cached = providerKeyCache.get(provider)
-  if (cached) return cached
-  if (process.env.NODE_ENV === "test") return getProviderKey(provider)
-  const stored = readCredentialsFile()[provider]
-  if (stored) {
-    const decrypted = decryptValue(stored)
-    if (decrypted) {
-      providerKeyCache.set(provider, decrypted)
-      persistedProviderKeys.add(provider)
-      return decrypted
-    }
-  }
-  const legacyCredential =
-    stored?.value === "" && stored.sessionOnly !== true
-      ? await getUsageSecretAsync(legacyProviderSecretKey(provider))
-      : null
-  if (legacyCredential) {
-    try {
-      await setProviderKeyAsync(provider, legacyCredential, stored?.baseUrl)
-    } catch {
-      providerKeyCache.set(provider, legacyCredential)
-    }
-    return legacyCredential
+  const serviceValue = getCredentialService().resolve(credentialId(provider))
+  if (serviceValue) return serviceValue
+  const legacyFileValue = migrateLegacyFile(provider)
+  if (legacyFileValue) return legacyFileValue
+  const legacyKeychainValue = await getUsageSecretAsync(legacyProviderSecretKey(provider))
+  if (legacyKeychainValue) {
+    getCredentialService().set(credentialId(provider), legacyKeychainValue, {
+      metadata: getProviderBaseUrl(provider)
+        ? { baseUrl: getProviderBaseUrl(provider) }
+        : undefined,
+    })
+    return legacyKeychainValue
   }
   const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
   return process.env[envKey]?.trim() || null
 }
 
 export function getProviderBaseUrl(provider: OpencodeProviderId): string | undefined {
-  return readCredentialsFile()[provider]?.baseUrl
+  return readSettings()[provider]?.baseUrl
 }
 
 export function clearProviderKey(provider: OpencodeProviderId): void {
-  providerKeyCache.delete(provider)
-  persistedProviderKeys.delete(provider)
+  getCredentialService().remove(credentialId(provider))
+  setBaseUrl(provider)
   if (process.env.NODE_ENV !== "test") {
-    try {
-      setUsageSecret(legacyProviderSecretKey(provider), null)
-      setUsageSecret(usageProviderSecretKey(provider), null)
-    } catch {
-      // Local encrypted storage remains independently clearable.
-    }
+    setUsageSecret(legacyProviderSecretKey(provider), null)
+    setUsageSecret(usageProviderSecretKey(provider), null)
   }
-  const file = readCredentialsFile()
-  if (file[provider]) {
-    delete file[provider]
-    writeCredentialsFile(file)
-  }
+  daemonWarnings.delete(provider)
 }
 
 export async function clearProviderKeyAsync(provider: OpencodeProviderId): Promise<void> {
+  getCredentialService().remove(credentialId(provider))
+  setBaseUrl(provider)
   if (process.env.NODE_ENV !== "test") {
-    try {
-      await setUsageSecretAsync(legacyProviderSecretKey(provider), null)
-      await setUsageSecretAsync(usageProviderSecretKey(provider), null)
-    } catch {
-      // Local encrypted storage remains independently clearable.
-    }
+    await Promise.all([
+      setUsageSecretAsync(legacyProviderSecretKey(provider), null),
+      setUsageSecretAsync(usageProviderSecretKey(provider), null),
+    ])
   }
-  providerKeyCache.delete(provider)
-  persistedProviderKeys.delete(provider)
-  const file = readCredentialsFile()
-  if (file[provider]) {
-    delete file[provider]
-    writeCredentialsFile(file)
-  }
+  daemonWarnings.delete(provider)
 }
 
 export function hasProviderKey(provider: OpencodeProviderId): boolean {
@@ -265,66 +234,36 @@ export function hasProviderKey(provider: OpencodeProviderId): boolean {
 }
 
 export function getCredentialStatus(provider: OpencodeProviderId): ProviderCredentialStatus {
-  const stored = readCredentialsFile()[provider]
+  const status = getCredentialService().status(credentialId(provider))
+  const configured = status.configured || getProviderKey(provider) !== null
   return {
     provider,
-    configured: hasProviderKey(provider),
-    ...(stored?.baseUrl ? { baseUrl: stored.baseUrl } : {}),
-    ...(stored?.updatedAt ? { updatedAt: stored.updatedAt } : {}),
+    configured,
+    ...(status.persistence === "session" ? { sessionOnly: true } : {}),
+    ...(getProviderBaseUrl(provider) ? { baseUrl: getProviderBaseUrl(provider) } : {}),
+    ...(status.updatedAt ? { updatedAt: status.updatedAt } : {}),
+    ...(status.fingerprint ? { fingerprint: status.fingerprint } : {}),
+    ...(status.warning || daemonWarnings.get(provider)
+      ? { warning: status.warning || daemonWarnings.get(provider) }
+      : {}),
   }
 }
 
 export async function getCredentialStatusAsync(
   provider: OpencodeProviderId,
 ): Promise<ProviderCredentialStatus> {
-  const stored = readCredentialsFile()[provider]
-  return {
-    provider,
-    configured: (await getProviderKeyAsync(provider)) !== null,
-    ...(providerKeyCache.has(provider) && !persistedProviderKeys.has(provider)
-      ? { sessionOnly: true }
-      : {}),
-    ...(stored?.baseUrl ? { baseUrl: stored.baseUrl } : {}),
-    ...(stored?.updatedAt ? { updatedAt: stored.updatedAt } : {}),
-  }
-}
-
-function readCredentialsFile(): CredentialsFile {
-  const path = getCredentialsPath()
-  if (!existsSync(path)) return {}
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as CredentialsFile
-  } catch (error) {
-    console.warn("[OpencodeSidecar] Failed to read provider credentials:", error)
-    return {}
-  }
-}
-
-function writeCredentialsFile(file: CredentialsFile): void {
-  const path = getCredentialsPath()
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, JSON.stringify(file, null, 2), { mode: 0o600 })
-}
-
-function getCredentialsPath(): string {
-  return join(getOpencodeStorageDir(), credentialsFileName)
+  await getProviderKeyAsync(provider)
+  return getCredentialStatus(provider)
 }
 
 export function getOpencodeStorageDir(): string {
-  const overrideDir = process.env.FLAPSTACK_CONFIG_DIR
-  if (overrideDir) {
-    return overrideDir
-  }
-  return join(getElectronUserDataPath(), "data")
-}
-
-function getElectronUserDataPath(): string {
+  if (process.env.FLAPSTACK_CONFIG_DIR) return process.env.FLAPSTACK_CONFIG_DIR
   try {
     const electron = require("electron") as { app?: { getPath(name: string): string } }
     const userDataPath = electron.app?.getPath("userData")
-    if (userDataPath) return userDataPath
+    if (userDataPath) return join(userDataPath, "data")
   } catch {
-    // Unit tests import the pure helpers outside Electron.
+    // Node-only tests do not load Electron.
   }
-  return join(process.cwd(), ".flapstack")
+  return join(process.cwd(), ".flapstack", "data")
 }

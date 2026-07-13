@@ -65,6 +65,7 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
+import { getCredentialService } from "../../credential-service"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -1474,6 +1475,10 @@ function cleanupProvider(subChatId: string): void {
   providerSessions.delete(subChatId)
 }
 
+function cleanupAllCodexProviders(): void {
+  for (const subChatId of [...providerSessions.keys()]) cleanupProvider(subChatId)
+}
+
 export const codexRouter = router({
   getIntegration: publicProcedure.query(async () => {
     const result = await runCodexCli(["login", "status"])
@@ -1482,7 +1487,10 @@ export const codexRouter = router({
       .join("\n")
       .trim()
 
-    const state = normalizeCodexIntegrationState(combinedOutput)
+    const storedApiKey = getCredentialService().status("codex.api-key").configured
+    const state = storedApiKey
+      ? ("connected_api_key" as const)
+      : normalizeCodexIntegrationState(combinedOutput)
 
     return {
       state,
@@ -1493,6 +1501,11 @@ export const codexRouter = router({
   }),
 
   logout: publicProcedure.mutation(async () => {
+    const hadStoredApiKey = getCredentialService().status("codex.api-key").configured
+    if (hadStoredApiKey) {
+      getCredentialService().remove("codex.api-key")
+      cleanupAllCodexProviders()
+    }
     const logoutResult = await runCodexCli(["logout"])
     const statusResult = await runCodexCli(["login", "status"])
 
@@ -1758,11 +1771,6 @@ export const codexRouter = router({
         forceNewSession: z.boolean().optional(),
         reasoningEnabled: z.boolean().default(true),
         images: z.array(imageAttachmentSchema).optional(),
-        authConfig: z
-          .object({
-            apiKey: z.string().min(1),
-          })
-          .optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1846,6 +1854,8 @@ export const codexRouter = router({
 
         ;(async () => {
           try {
+            const storedApiKey = getCredentialService().resolve("codex.api-key")
+            const authConfig = storedApiKey ? { apiKey: storedApiKey } : undefined
             const db = getDatabase()
 
             const existingSubChat = db
@@ -1878,13 +1888,13 @@ export const codexRouter = router({
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
             const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
-            const fallbackModel = input.authConfig?.apiKey?.trim()
+            const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
             const requestedModelId = extractCodexModelId(input.model) || fallbackModel
             const selectedModelId = preprocessCodexModelName({
               modelId: requestedModelId,
-              authConfig: input.authConfig,
+              authConfig,
             })
             const acpModelId = formatCodexModelForAcp(selectedModelId)
             const metadataModel = selectedModelId
@@ -2088,7 +2098,7 @@ export const codexRouter = router({
               mcpServers: mcpSnapshot.mcpServersForSession,
               mcpFingerprint: mcpSnapshot.fingerprint,
               existingSessionId: ownedSessionId,
-              authConfig: input.authConfig,
+              authConfig,
               reasoningEnabled: input.reasoningEnabled,
             })
 

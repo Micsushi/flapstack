@@ -26,6 +26,8 @@ import {
 import { appStore } from "./lib/jotai-store"
 import { VSCodeThemeProvider } from "./lib/themes/theme-provider"
 import { trpc } from "./lib/trpc"
+import { trpcClient } from "./lib/trpc"
+import { migrateLegacyCredentials } from "./lib/credential-migration"
 
 /**
  * Custom Toaster that adapts to theme
@@ -56,6 +58,22 @@ function AppContent() {
   const selectedProject = useAtomValue(selectedProjectAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
+  const trpcUtils = trpc.useUtils()
+
+  useEffect(() => {
+    void migrateLegacyCredentials(localStorage, trpcClient).then(async (report) => {
+      if (report.migrated.length > 0) {
+        await Promise.all([
+          trpcUtils.credentials.listStatuses.invalidate(),
+          trpcUtils.codex.getIntegration.invalidate(),
+          trpcUtils.voice.hasOpenAIKey.invalidate(),
+        ])
+      }
+      for (const retained of report.retained) {
+        console.warn(`[Credentials] Legacy migration retained ${retained.key}: ${retained.reason}`)
+      }
+    })
+  }, [trpcUtils])
 
   // Apply initial window params (chatId/subChatId) when opening via "Open in new window"
   useEffect(() => {
