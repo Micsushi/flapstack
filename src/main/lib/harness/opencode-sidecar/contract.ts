@@ -46,6 +46,8 @@ export type SidecarLaunchInput = {
   permissionMode: PermissionMode
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh"
+  /** Catalog truth. `null` means the selected model did not declare support. */
+  reasoningSupported: boolean | null
   /** Resume/fork an existing OpenCode session when continuing a chat. */
   resumeSessionId?: string
   /** Extra environment for the child process (never logged raw). */

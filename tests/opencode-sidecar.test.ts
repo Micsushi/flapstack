@@ -1356,6 +1356,27 @@ describe("credentials + config", () => {
     clearProviderKey("openrouter")
   })
 
+  it("omits reasoning fields for a model without declared support", () => {
+    setProviderKey("openrouter", "openrouter-secret-key")
+    const generated = buildOpencodeConfig(
+      "openrouter",
+      "plain-model",
+      undefined,
+      true,
+      "xhigh",
+      null,
+    )
+    expect(generated.config.provider).toMatchObject({
+      openrouter: { models: { "plain-model": { name: "plain-model" } } },
+    })
+    expect(
+      (generated.config.provider as any).openrouter.models["plain-model"].options,
+    ).toBeUndefined()
+    expect(generated.reasoningResolution).toMatchObject({ exact: false, sent: {} })
+    expect(generated.reasoningResolution.limitations).toHaveLength(2)
+    clearProviderKey("openrouter")
+  })
+
   it("refreshes and serves a locally cached model catalog", async () => {
     setProviderKey("openrouter", "sk-or-test-123")
     let requestUrl = ""

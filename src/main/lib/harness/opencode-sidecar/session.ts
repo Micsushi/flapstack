@@ -86,6 +86,7 @@ export async function* runSidecarSession(
     modelId: model.modelId,
     reasoningEnabled: input.reasoningEnabled,
     reasoningEffort: input.reasoningEffort,
+    reasoningSupported: input.reasoningSupported,
     cwd: input.cwd,
     ...(input.signal ? { signal: input.signal } : {}),
   })

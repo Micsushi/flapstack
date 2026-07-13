@@ -43,6 +43,34 @@ describe("chat search visible reasoning output", () => {
     ])
   })
 
+  it("finds the same visible reasoning after persisted history reload", () => {
+    const persisted = JSON.stringify([
+      {
+        id: "assistant-reloaded",
+        role: "assistant",
+        metadata: { durationMs: 4_200 },
+        parts: [
+          {
+            type: "tool-ReasoningOutput",
+            input: { text: "Reloaded provider-visible reasoning." },
+            opaque: { encrypted: "private" },
+          },
+        ],
+      },
+    ])
+    const reloaded = JSON.parse(persisted)
+    const results = extractSearchableText(reloaded)
+    expect(results).toEqual([
+      {
+        messageId: "assistant-reloaded",
+        partIndex: 0,
+        partType: "tool-ReasoningOutput",
+        text: "Reloaded provider-visible reasoning.",
+      },
+    ])
+    expect(JSON.stringify(results)).not.toContain("private")
+  })
+
   it("indexes visible file-content parts so scoped results can highlight in chat", () => {
     const results = extractSearchableText([
       {

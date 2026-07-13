@@ -19,6 +19,10 @@ import { pathToFileURL } from "node:url"
 import { getProviderBaseUrl, getProviderKey } from "./credentials"
 import { getProviderDefinition } from "./catalog"
 import type { OpencodeProviderId } from "./contract"
+import {
+  resolveReasoningControls,
+  type ReasoningControlResolution,
+} from "../../../../shared/reasoning-output"
 
 /** App attribution headers so provider dashboards can identify Flapstack runs. */
 export const FLAPSTACK_ATTRIBUTION_HEADERS: Record<string, string> = {
@@ -31,6 +35,7 @@ export type GeneratedOpencodeConfig = {
   config: Record<string, unknown>
   /** Env vars set on the sidecar process (keys live here, not in the file). */
   env: Record<string, string>
+  reasoningResolution: ReasoningControlResolution
 }
 
 const TOOL_ENV_GUARD_FILE = "flapstack-tool-env-guard.mjs"
@@ -62,6 +67,7 @@ export function buildOpencodeConfig(
   baseUrlOverride?: string,
   reasoningEnabled = true,
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
+  reasoningSupported: boolean | null = true,
 ): GeneratedOpencodeConfig {
   const def = getProviderDefinition(provider)
   const key = getProviderKey(provider)
@@ -71,6 +77,12 @@ export function buildOpencodeConfig(
   const baseUrl =
     baseUrlOverride || (def.allowsCustomBaseUrl && getProviderBaseUrl(provider)) || def.baseUrl
   const envKey = `FLAPSTACK_${provider.toUpperCase()}_API_KEY`
+  const reasoningResolution = resolveReasoningControls(
+    reasoningSupported === true
+      ? { toggle: true, efforts: ["minimal", "low", "medium", "high", "xhigh"] }
+      : { toggle: false },
+    { enabled: reasoningEnabled, effort: reasoningEffort },
+  )
 
   const config: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
@@ -91,15 +103,19 @@ export function buildOpencodeConfig(
               models: {
                 [selectedModelId]: {
                   name: selectedModelId,
-                  options: {
-                    reasoning: {
-                      enabled: reasoningEnabled,
-                      effort: reasoningEffort,
-                      exclude: !reasoningEnabled,
-                    },
-                    reasoningEffort: reasoningEnabled ? reasoningEffort : "minimal",
-                    includeReasoning: reasoningEnabled,
-                  },
+                  ...(reasoningSupported === true
+                    ? {
+                        options: {
+                          reasoning: {
+                            enabled: reasoningEnabled,
+                            effort: reasoningEffort,
+                            exclude: !reasoningEnabled,
+                          },
+                          reasoningEffort: reasoningEnabled ? reasoningEffort : "minimal",
+                          includeReasoning: reasoningEnabled,
+                        },
+                      }
+                    : {}),
                 },
               },
             }
@@ -111,6 +127,7 @@ export function buildOpencodeConfig(
   return {
     config,
     env: { [envKey]: key },
+    reasoningResolution,
   }
 }
 
@@ -124,6 +141,7 @@ export function writeIsolatedConfig(
   baseUrlOverride?: string,
   reasoningEnabled = true,
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
+  reasoningSupported: boolean | null = true,
 ): {
   configDir: string
   env: Record<string, string>
@@ -134,6 +152,7 @@ export function writeIsolatedConfig(
     baseUrlOverride,
     reasoningEnabled,
     reasoningEffort,
+    reasoningSupported,
   )
   const configDir = mkdtempSync(join(tmpdir(), "flapstack-opencode-"))
   const toolGuardPath = join(configDir, TOOL_ENV_GUARD_FILE)
