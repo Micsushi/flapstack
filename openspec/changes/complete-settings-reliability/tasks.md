@@ -389,6 +389,14 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Relevant context: `codexApiKeyAtom`, `openaiApiKeyAtom`,
   `customClaudeConfigAtom`, onboarding and provider transports.
 
+2026-07-13 security repair evidence: when encrypted persistence is unavailable,
+the generic credential service durably removes the prior encrypted entry before
+accepting a session-only replacement. An unreadable store or failed retirement
+rejects the replacement. The direct Settings endpoint and a fresh service after
+restart prove that the old value cannot reappear. This is automated fixture
+evidence only; it does not claim actual Keychain, Windows Credential Manager, or
+Linux Secret Service proof.
+
 ### S3-F10-T3 - Add safe credential management UI
 
 - [ ] Completion: acceptance and verification passed
@@ -683,6 +691,12 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   and dangling-symlink tests pass. Claude host callbacks use the boundary helper.
   Codex ACP workspace-write mapping is unit-tested but remains best-effort and
   unselectable until an unlocked live outside-project attempt proves exactness.
+- 2026-07-13 security repair evidence: project-boundary MCP and renderer
+  attachment writes now share no-follow/exclusive rooted writes, same-directory
+  atomic replacement, and immediate root/parent/final inode and realpath
+  revalidation. Parent and final swap attacks fail closed. Portable Node APIs do
+  not provide an exact directory-handle transaction across every platform, so
+  continuous namespace races and Windows reparse behavior remain platform gaps.
 
 ### S3-F12-T5 - Promote eligible permission modes and close the matrix
 
@@ -741,6 +755,10 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
   summaries while excluding opaque/private payloads. Source/copy regressions
   pass. Completion remains open on the blocked F8-F12 live gates and unlocked
   visual copy review.
+- 2026-07-13 security repair evidence: hidden `file-content` payloads are
+  excluded from current and legacy visible extraction, active/cross-chat search,
+  handoff, full-history clipboard/export, and JSON export. Attachment search is
+  filename-only. Agent transport still receives hidden file content as intended.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 

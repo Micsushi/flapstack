@@ -128,6 +128,10 @@ feature-local closeout gates.
   migration boundaries, unified evidence ledger.
 - 2026-07-13 status: not started. T2 and T3 are not complete, so independent
   completion review rounds cannot truthfully begin.
+- 2026-07-13 security repair note: the seven findings from the delegated
+  security/permissions review were repaired with attack regressions and gates.
+  This is pre-completion hardening evidence only; it does not satisfy T4 or
+  change the T2/T3 blockers above.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

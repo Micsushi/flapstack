@@ -5,6 +5,7 @@ import { getMcpControlTool, invokeMcpControlTool } from "../src/main/lib/mcp-con
 const caller = { chatId: "chat-1", runId: "run-1", permissionMode: "ask-before-edits" as const }
 const tool = getMcpControlTool("create_chat")!
 const originalStatus = tool.status
+const durableAudit = { append: () => undefined }
 
 afterEach(() => {
   tool.status = originalStatus
@@ -71,6 +72,7 @@ describe("MCP approval execution gate", () => {
       approvals,
       approvalId: () => "stale-caller",
       resolveCaller,
+      audit: durableAudit,
     })
     approvals.approve("stale-caller")
     await expect(staleCaller).resolves.toMatchObject({
@@ -83,6 +85,7 @@ describe("MCP approval execution gate", () => {
       approvals,
       approvalId: () => "stale-target",
       resolveTarget: vi.fn(() => null),
+      audit: durableAudit,
     })
     approvals.approve("stale-target")
     await expect(staleTarget).resolves.toMatchObject({
@@ -101,6 +104,7 @@ describe("MCP approval execution gate", () => {
       approvalId: () => "allowed",
       resolveTarget: () => ({}),
       execute,
+      audit: durableAudit,
     })
 
     expect(execute).not.toHaveBeenCalled()

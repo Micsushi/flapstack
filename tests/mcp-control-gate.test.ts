@@ -31,7 +31,12 @@ function createStore(input?: {
 }): McpCallerStore {
   const chat =
     input?.chat === undefined
-      ? { id: "chat-1", permissionMode: "ask-before-edits", archived: false }
+      ? {
+          id: "chat-1",
+          permissionMode: "ask-before-edits",
+          archived: false,
+          exposureEnabled: true,
+        }
       : input.chat
   const run =
     input?.run === undefined
@@ -58,7 +63,14 @@ describe("trusted MCP caller resolution", () => {
     ["missing chat", { chat: null }, /chat is missing or stale/],
     [
       "archived chat",
-      { chat: { id: "chat-1", permissionMode: "full-access", archived: true } },
+      {
+        chat: {
+          id: "chat-1",
+          permissionMode: "full-access",
+          archived: true,
+          exposureEnabled: true,
+        },
+      },
       /chat is missing or stale/,
     ],
     ["missing run", { run: null }, /run is missing or stale/],
@@ -83,6 +95,22 @@ describe("trusted MCP caller resolution", () => {
         createStore(storeInput as Parameters<typeof createStore>[0]),
       ),
     ).toThrow(expected as RegExp)
+  })
+
+  it("fails closed immediately after product MCP exposure is disabled", () => {
+    expect(() =>
+      resolveTrustedMcpCaller(
+        { chatId: "chat-1", runId: "run-1" },
+        createStore({
+          chat: {
+            id: "chat-1",
+            permissionMode: "full-access",
+            archived: false,
+            exposureEnabled: false,
+          },
+        }),
+      ),
+    ).toThrow(/exposure is disabled/)
   })
 
   it("requires stored custom capability toggles", () => {

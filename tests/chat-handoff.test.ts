@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { formatChatHandoff } from "../src/main/lib/chat-handoff"
+import { omitHiddenFileContentFromMessage } from "../src/shared/chat-visible-content"
 
 describe("full chat handoff formatter", () => {
   it("keeps complete cross-conversation history in chronological order", () => {
@@ -210,5 +211,36 @@ describe("full chat handoff formatter", () => {
       expect(result).toContain(`> Tool: Tool${index}`)
       expect(result).not.toContain(secrets[index])
     }
+  })
+
+  it("excludes hidden file content from current, legacy, handoff, and JSON export shapes", () => {
+    const hidden = "sk-proj-hidden-file-secret"
+    const messages = [
+      {
+        role: "user",
+        parts: [
+          { type: "text", text: "visible current text" },
+          { type: "file-content", content: hidden, name: "safe-name.txt" },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "visible legacy text" },
+          { type: "file-content", text: hidden, name: "legacy-name.txt" },
+        ],
+      },
+    ]
+    const result = formatChatHandoff({
+      chat: { id: "chat-file-content", name: "Hidden files" },
+      conversations: [{ subChatId: "visible", subChatName: null, messages }],
+    })
+    expect(result).toContain("visible current text")
+    expect(result).toContain("visible legacy text")
+    expect(result).not.toContain(hidden)
+
+    const json = JSON.stringify(messages.map(omitHiddenFileContentFromMessage))
+    expect(json).not.toContain(hidden)
+    expect(json).not.toContain("file-content")
   })
 })

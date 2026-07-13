@@ -223,7 +223,14 @@ export class CredentialService {
     const inspected = this.encryption.inspect()
 
     if (!inspected.available) {
-      return this.setSessionOnly(id, secret, fingerprint, updatedAt, metadata, inspected.warning)
+      return this.setSessionOnlyAfterDurableRetirement(
+        id,
+        secret,
+        fingerprint,
+        updatedAt,
+        metadata,
+        inspected.warning,
+      )
     }
 
     try {
@@ -256,7 +263,14 @@ export class CredentialService {
         process.platform === "darwin"
           ? "macOS Keychain encryption failed or access was denied. The credential is session-only; unlock Keychain Access and retry to persist it."
           : "Secure credential persistence failed. The credential is session-only; retry after restoring the OS credential backend."
-      const result = this.setSessionOnly(id, secret, fingerprint, updatedAt, metadata, warning)
+      const result = this.setSessionOnlyAfterDurableRetirement(
+        id,
+        secret,
+        fingerprint,
+        updatedAt,
+        metadata,
+        warning,
+      )
       if (options.requirePersistence) return { ...result, acknowledged: false }
       return result
     }
@@ -283,6 +297,28 @@ export class CredentialService {
       warning,
       acknowledged: false,
     }
+  }
+
+  private setSessionOnlyAfterDurableRetirement(
+    id: CredentialId,
+    secret: string,
+    fingerprint: string,
+    updatedAt: number,
+    metadata: CredentialMetadata | undefined,
+    warning?: string,
+  ): CredentialWriteAcknowledgement {
+    const store = this.readStoreStrict()
+    if (store.credentials[id]) {
+      delete store.credentials[id]
+      try {
+        this.writeStoreAtomic(store)
+      } catch {
+        throw new Error(
+          "Credential replacement was rejected because the prior durable value could not be retired.",
+        )
+      }
+    }
+    return this.setSessionOnly(id, secret, fingerprint, updatedAt, metadata, warning)
   }
 
   resolve(id: CredentialId): string | null {
@@ -404,4 +440,8 @@ export function getCredentialService(): CredentialService {
 
 export function resetCredentialServiceForTests(): void {
   defaultCredentialService = null
+}
+
+export function setCredentialServiceForTests(service: CredentialService): void {
+  defaultCredentialService = service
 }

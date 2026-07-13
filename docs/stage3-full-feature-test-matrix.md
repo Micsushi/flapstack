@@ -37,6 +37,14 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
 - [ ] **S3-M07** audit filtering, pagination, approval UI, exposure controls,
       connection state, and self-reference diagnostics pass in the live dev app.
 
+2026-07-13 security repair evidence: fresh per-call invocation UUIDs and
+context-bound durable approvals reject replay; product-MCP disable atomically
+invalidates running identities and revokes active sessions; mutation audit
+storage failure blocks dispatch; completion-audit failure leaves an explicit
+durable reconciliation trail; redaction fixtures exclude credentials, URLs,
+environment assignments, nested arbitrary text, and attachment content; rooted
+write swap attacks fail closed. Live approval/exposure UI remains unchecked.
+
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
 - [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is
@@ -71,6 +79,13 @@ Blocked or unavailable evidence stays unchecked and is reported as a limitation.
       check passed with 101 test files, 749 passed, 3 credential-conditional
       skipped, and the production build complete. Visual search/copy review,
       F8-F12 live acceptance, package checks, and Windows/Linux stay unchecked.
+
+2026-07-13 security repair evidence: the generic credential service and direct
+Settings endpoint retire old encrypted values before session-only replacement,
+including restart non-resurrection. Hidden current/legacy `file-content` is
+excluded from visible search, handoff, clipboard/full-history export, and JSON;
+attachment search uses filenames only. Actual OS stores and unlocked UI remain
+unchecked.
 
 ### S3-F13 copy/search evidence - 2026-07-13 PDT
 

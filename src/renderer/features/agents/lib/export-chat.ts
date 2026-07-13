@@ -1,7 +1,10 @@
 import { trpcClient } from "../../../lib/trpc"
 import { remoteApi } from "../../../lib/remote-api"
 import { toast } from "sonner"
-import { formatVisiblePartForHandoff } from "../../../../shared/chat-visible-content"
+import {
+  formatVisiblePartForHandoff,
+  omitHiddenFileContentFromMessage,
+} from "../../../../shared/chat-visible-content"
 
 const MAX_HISTORY_CHARS = 50_000
 
@@ -78,7 +81,7 @@ function formatMessages(
 
   if (format === "json") {
     return {
-      content: JSON.stringify(messages, null, 2),
+      content: JSON.stringify(messages.map(omitHiddenFileContentFromMessage), null, 2),
       filename: `${safeName}-${timestamp}.json`,
     }
   }

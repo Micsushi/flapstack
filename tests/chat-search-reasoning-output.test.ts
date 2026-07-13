@@ -71,7 +71,7 @@ describe("chat search visible reasoning output", () => {
     expect(JSON.stringify(results)).not.toContain("private")
   })
 
-  it("indexes visible file-content parts so scoped results can highlight in chat", () => {
+  it("never indexes hidden file-content payloads", () => {
     const results = extractSearchableText([
       {
         id: "user-file",
@@ -79,12 +79,7 @@ describe("chat search visible reasoning output", () => {
         parts: [{ type: "file-content", content: "needle inside attachment" }],
       },
     ] as any)
-    expect(results).toContainEqual({
-      messageId: "user-file",
-      partIndex: 0,
-      partType: "text",
-      text: "needle inside attachment",
-    })
+    expect(results).toEqual([])
   })
 
   it("indexes visible structured questions and answers without arbitrary tool input", () => {

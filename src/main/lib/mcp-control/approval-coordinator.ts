@@ -2,7 +2,7 @@ import { and, eq, gt, isNull } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
 import { mcpApprovalRequests } from "../db/schema"
-import { redactMcpAuditSummary } from "./audit-storage"
+import { redactMcpAuditSummary, summarizeMcpAuditInput } from "./audit-storage"
 import type { McpApprovalCoordinator, McpPendingApproval } from "./approval-lifecycle"
 
 type Database = BetterSQLite3Database<typeof schema>
@@ -23,27 +23,65 @@ export function createSqliteMcpApprovalCoordinator(
           toolName: pending.toolName,
           tier: pending.tier,
           targetSummary: summarizeTarget(pending.input),
-          inputSummary: redactMcpAuditSummary(pending.input),
+          inputSummary: redactMcpAuditSummary({
+            contextHash: pending.contextHash,
+            summary: summarizeMcpAuditInput(pending.toolName, pending.input),
+          }),
           createdAt: pending.createdAt,
           expiresAt: pending.expiresAt,
         })
-        .onConflictDoNothing()
         .run()
       if (result.changes === 1) onPublished?.()
     },
-    readDecision(id) {
+    readDecision(pending) {
       const row = database
         .select({
+          invocationId: mcpApprovalRequests.invocationId,
+          callerChatId: mcpApprovalRequests.callerChatId,
+          callerRunId: mcpApprovalRequests.callerRunId,
+          toolName: mcpApprovalRequests.toolName,
+          tier: mcpApprovalRequests.tier,
+          inputSummary: mcpApprovalRequests.inputSummary,
           decision: mcpApprovalRequests.decision,
           grantSession: mcpApprovalRequests.grantSession,
         })
         .from(mcpApprovalRequests)
-        .where(eq(mcpApprovalRequests.id, id))
+        .where(eq(mcpApprovalRequests.id, pending.id))
         .get()
+      if (!row || !approvalRowMatches(row, pending)) {
+        throw new Error("MCP approval identity or context mismatch.")
+      }
       if (row?.decision !== "approve" && row?.decision !== "deny") return null
       return { decision: row.decision, grantSession: row.grantSession }
     },
   }
+}
+
+function approvalRowMatches(
+  row: {
+    invocationId: string
+    callerChatId: string
+    callerRunId: string | null
+    toolName: string
+    tier: number
+    inputSummary: string
+  },
+  pending: McpPendingApproval,
+): boolean {
+  let contextHash: unknown
+  try {
+    contextHash = (JSON.parse(row.inputSummary) as { contextHash?: unknown }).contextHash
+  } catch {
+    return false
+  }
+  return (
+    row.invocationId === pending.invocationId &&
+    row.callerChatId === pending.caller.chatId &&
+    row.callerRunId === (pending.caller.runId ?? null) &&
+    row.toolName === pending.toolName &&
+    row.tier === pending.tier &&
+    contextHash === pending.contextHash
+  )
 }
 
 export function listPendingMcpApprovals(database: Database) {
@@ -98,7 +136,10 @@ function summarizeTarget(input: unknown): string {
   const record = input as Record<string, unknown>
   for (const key of ["target", "chatId", "taskId", "projectId", "runId", "worktreeId", "path"]) {
     const value = record[key]
-    if (typeof value === "string" && value.trim()) return `${key}: ${value.slice(0, 256)}`
+    if (typeof value === "string" && value.trim()) {
+      const safe = JSON.parse(redactMcpAuditSummary(value)) as string
+      return `${key}: ${safe.slice(0, 256)}`
+    }
   }
   return "Target described by bounded input"
 }

@@ -353,3 +353,28 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   S3-F6-T2, S3-F6-T3, S3-F6-T5
 - Blocks: Stage 3 exit
 - Relevant context: all Stage 3 changes, tests, and manual evidence.
+
+## 2026-07-13 security and permissions repair evidence
+
+- S3-F2-T4: disabling product MCP now commits exposure-off and cancellation of
+  running launcher identities together, revokes active Claude/Codex sessions,
+  and revalidates durable exposure on every call. Re-enabling accepts a new run
+  identity but cannot revive the cancelled child. Development test-control and
+  third-party MCP identities remain separate.
+- S3-F3-T3/T4: every request receives a random internal UUID. Durable approval
+  rows bind invocation, chat/run caller, tool, tier, and canonical-input hash;
+  an ID collision or context mismatch cancels instead of inheriting approval.
+- S3-F4-T1/T2: audit storage uses operation allowlists and content hashes rather
+  than arbitrary payload text. Tier 1-3 dispatch requires a durable final
+  pre-execution record; storage failure performs zero mutation. If the terminal
+  append fails after dispatch, the durable allowed trail remains explicitly
+  reconciliation-required.
+- S3-F2-T5: MCP and renderer attachment writes share one fail-closed rooted
+  writer with no-follow exclusive creation where supported, same-parent atomic
+  replacement, and root/parent/final inode plus realpath checks around commit.
+  Node does not expose portable `openat`/`renameat` directory-handle semantics,
+  so no stronger continuous-race or Windows reparse-point guarantee is claimed.
+- Attack regressions cover approval replay, immediate exposure disable and
+  re-enable/new identity, audit disk/table/lock failure with zero mutation,
+  completion reconciliation, and adversarial parent/final filesystem swaps.
+  The Node 22 full gate and strict change validation pass on the repair tree.

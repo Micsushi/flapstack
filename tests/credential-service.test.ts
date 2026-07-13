@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   CredentialService,
   credentialFingerprint,
+  resetCredentialServiceForTests,
+  setCredentialServiceForTests,
   type CredentialEncryption,
 } from "../src/main/lib/credential-service"
+import { credentialsRouter } from "../src/main/lib/trpc/routers/credentials"
 
 const encryptedBackend: CredentialEncryption = {
   inspect: () => ({ available: true, backend: "test-keychain" }),
@@ -19,6 +22,7 @@ describe("main-process credential service", () => {
   const dirs: string[] = []
 
   afterEach(() => {
+    resetCredentialServiceForTests()
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
@@ -85,22 +89,19 @@ describe("main-process credential service", () => {
     expect(() => readFileSync(service.storePath)).toThrow()
   })
 
-  it("does not overwrite an unreadable store", () => {
+  it("rejects session replacement when an unreadable store cannot prove retirement", () => {
     const dir = tempDir()
     const path = join(dir, "credentials.v1.json")
     const damaged = "{not-json-and-must-survive"
     writeFileSync(path, damaged, { mode: 0o600 })
     const service = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
 
-    const result = service.set("claude.custom-api-token", "sk-ant-session")
-
-    expect(result.persistence).toBe("session")
-    expect(result.acknowledged).toBe(false)
+    expect(() => service.set("claude.custom-api-token", "sk-ant-session")).toThrow()
     expect(readFileSync(path, "utf8")).toBe(damaged)
     expect(service.status("codex.api-key").warning).toMatch(/unreadable/)
     expect(service.resolve("codex.api-key")).toBeNull()
     expect(() => service.remove("codex.api-key")).toThrow()
-    expect(service.resolve("claude.custom-api-token")).toBe("sk-ant-session")
+    expect(service.resolve("claude.custom-api-token")).toBeNull()
   })
 
   it("rejects encryption that cannot round-trip before changing disk", () => {
@@ -120,6 +121,36 @@ describe("main-process credential service", () => {
 
     expect(result).toMatchObject({ acknowledged: false, persistence: "session" })
     expect(() => readFileSync(service.storePath)).toThrow()
+  })
+
+  it("retires the old durable value before Settings accepts session-only replacement", async () => {
+    const dir = tempDir()
+    const persisted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+    persisted.set("codex.api-key", "sk-old-durable")
+
+    const unavailable: CredentialEncryption = {
+      inspect: () => ({
+        available: false,
+        backend: "unavailable",
+        warning: "Keychain unavailable; session only",
+      }),
+      encrypt: () => {
+        throw new Error("must not encrypt")
+      },
+      decrypt: encryptedBackend.decrypt,
+    }
+    const session = new CredentialService({ storageDir: dir, encryption: unavailable })
+    setCredentialServiceForTests(session)
+    const caller = credentialsRouter.createCaller({ getWindow: () => null })
+    await expect(
+      caller.set({ id: "codex.api-key", secret: "sk-new-session" }),
+    ).resolves.toMatchObject({ persistence: "session", acknowledged: false })
+    expect(session.resolve("codex.api-key")).toBe("sk-new-session")
+
+    resetCredentialServiceForTests()
+    const restarted = new CredentialService({ storageDir: dir, encryption: encryptedBackend })
+    expect(restarted.resolve("codex.api-key")).toBeNull()
+    expect(restarted.status("codex.api-key").configured).toBe(false)
   })
 
   it("rejects metadata URLs that could leak embedded credentials", () => {

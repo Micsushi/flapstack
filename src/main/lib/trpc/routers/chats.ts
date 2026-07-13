@@ -40,6 +40,7 @@ import { deleteVoiceHistoryForChat } from "../../speech/history"
 import { getNextChatForkName } from "../../chat-fork-name"
 import { formatChatHandoff } from "../../chat-handoff"
 import { getPermissionPreferences } from "../../permissions"
+import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visible-content"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -2193,7 +2194,10 @@ export const chatsRouter = router({
                     path: project.path,
                   }
                 : null,
-              conversations: allMessages,
+              conversations: allMessages.map((conversation) => ({
+                ...conversation,
+                messages: conversation.messages.map(omitHiddenFileContentFromMessage),
+              })),
             },
             null,
             2,

@@ -49,7 +49,7 @@ import {
   getLastHarnessContextFingerprint,
   prependStartupContext,
 } from "../../harness/launch-context"
-import { getChatMcpExposure } from "../../mcp-control/exposure"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
@@ -1847,6 +1847,13 @@ export const codexRouter = router({
         }
 
         const abortController = new AbortController()
+        const releaseProductMcpSession = getChatMcpExposure(input.chatId)
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId: input.runId,
+              revoke: () => abortController.abort(),
+            })
+          : () => undefined
         activeStreams.set(input.subChatId, {
           runId: input.runId,
           controller: abortController,
@@ -2459,6 +2466,7 @@ export const codexRouter = router({
             safeEmit({ type: "finish" })
             safeComplete()
           } finally {
+            releaseProductMcpSession()
             const permissionHandler = codexPermissionHandlers.get(input.subChatId)
             if (permissionHandler?.runId === input.runId) {
               codexPermissionHandlers.delete(input.subChatId)
@@ -2486,6 +2494,7 @@ export const codexRouter = router({
         return () => {
           isActive = false
           abortController.abort()
+          releaseProductMcpSession()
 
           const activeStream = activeStreams.get(input.subChatId)
           if (activeStream?.runId === input.runId) {

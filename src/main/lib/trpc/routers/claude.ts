@@ -57,7 +57,7 @@ import {
   FLAPSTACK_MCP_SERVER_NAME,
 } from "../../mcp-control/registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
-import { getChatMcpExposure } from "../../mcp-control/exposure"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
 import {
@@ -985,6 +985,14 @@ export const claudeRouter = router({
 
         const abortController = new AbortController()
         const streamId = crypto.randomUUID()
+        const launchRunId = input.runId ?? crypto.randomUUID()
+        const releaseProductMcpSession = getChatMcpExposure(input.chatId)
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId: launchRunId,
+              revoke: () => abortController.abort(),
+            })
+          : () => undefined
         activeSessions.set(input.subChatId, abortController)
 
         // Stream debug logging
@@ -996,7 +1004,7 @@ export const claudeRouter = router({
         let currentSessionId: string | null = null
         // A queued launch owns its durable run before any provider preflight starts.
         // Keep that identity even when offline/SDK setup exits before createClaudeAgentRun.
-        let agentRunId: string | null = input.runId ?? null
+        let agentRunId: string | null = launchRunId
         let runCompletionStatus: RunCompletionStatus = "failure"
         let runCompletionPromise: Promise<void> | null = null
         console.log(`[SD] M:START sub=${subId} stream=${streamId.slice(-8)} mode=${input.mode}`)
@@ -1524,7 +1532,7 @@ export const claudeRouter = router({
                 if (getChatMcpExposure(input.chatId)) {
                   const permissionMode = resolveClaudeRunPermission(input.chatId)
                   const registration = buildMcpStdioRegistration(
-                    { chatId: input.chatId, permissionMode },
+                    { chatId: input.chatId, runId: launchRunId, permissionMode },
                     {
                       executablePath: process.execPath,
                       mainDirectory: __dirname,
@@ -1746,7 +1754,7 @@ export const claudeRouter = router({
             })
             if (!isAuthoritativeRun()) return
             const run = await createClaudeAgentRun({
-              runId: input.runId,
+              runId: launchRunId,
               chatId: input.chatId,
               subChatId: input.subChatId,
               model: resolvedModel,
@@ -2933,6 +2941,7 @@ ${prompt}
             try {
               await completeRun(runCompletionStatus)
             } finally {
+              releaseProductMcpSession()
               clearClaudeStreamIfOwned(getDatabase(), {
                 subChatId: input.subChatId,
                 streamId,
@@ -2951,6 +2960,7 @@ ${prompt}
           console.log(`[SD] M:CLEANUP sub=${subId} sessionId=${currentSessionId || "none"}`)
           isObservableActive = false // Prevent emit after unsubscribe
           abortController.abort()
+          releaseProductMcpSession()
           const isCurrentSession = activeSessions.get(input.subChatId) === abortController
           if (isCurrentSession) {
             activeSessions.delete(input.subChatId)

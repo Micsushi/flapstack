@@ -5,7 +5,7 @@ import type { McpCallerIdentity, McpCallerStore } from "./types"
 
 const callerEnvironmentSchema = z.object({
   FLAPSTACK_MCP_CHAT_ID: z.string().trim().min(1),
-  FLAPSTACK_MCP_RUN_ID: z.string().trim().min(1).optional(),
+  FLAPSTACK_MCP_RUN_ID: z.string().trim().min(1),
   FLAPSTACK_MCP_PERMISSION_MODE: z.string().trim().min(1).optional(),
 })
 
@@ -30,6 +30,9 @@ export function resolveTrustedMcpCaller(
   const chat = store.findChat(launchIdentity.chatId)
   if (!chat || chat.archived) {
     throw new Error(`MCP caller chat is missing or stale: ${launchIdentity.chatId}`)
+  }
+  if (!chat.exposureEnabled) {
+    throw new Error(`MCP exposure is disabled for caller chat: ${launchIdentity.chatId}`)
   }
 
   const run = launchIdentity.runId ? store.findRun(launchIdentity.runId) : null
@@ -81,12 +84,16 @@ export function createSqliteMcpCallerStore(
 
   return {
     findChat(chatId) {
-      const row = query("SELECT id, permission_mode, archived_at FROM chats WHERE id = ?", [chatId])
+      const row = query(
+        "SELECT id, permission_mode, archived_at, mcp_exposure_enabled FROM chats WHERE id = ?",
+        [chatId],
+      )
       return row
         ? {
             id: String(row.id),
             permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
             archived: row.archived_at != null,
+            exposureEnabled: row.mcp_exposure_enabled === 1,
           }
         : null
     },

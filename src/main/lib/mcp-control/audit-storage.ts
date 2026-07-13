@@ -1,5 +1,5 @@
 import { mcpAuditRecords } from "../db/schema"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { and, desc, eq, gte, lt, lte, or } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
@@ -15,7 +15,11 @@ const secretKey =
   /(?:api[-_]?key|authorization|credential|cookie|pass(?:word)?|secret|token|private[-_]?key|session(?:[-_]?id)?|access[-_]?token|refresh[-_]?token)/i
 const reasoningKey = /(?:reasoning|chain[-_]?of[-_]?thought|thinking)/i
 const bearerValue = /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+/gi
-const tokenValue = /\b(?:sk|rk|pk|ghp|gho|github_pat)_[a-z0-9_-]+\b/gi
+const tokenValue = /\b(?:sk(?:-proj|-ant)?|rk|pk|ghp|gho|github_pat)[-_][a-z0-9_-]+\b/gi
+const envAssignment = /\b([a-z][a-z0-9_]{2,})\s*=\s*(?:"[^"]*"|'[^']*'|[^\s;&]+)/gi
+const queryCredential =
+  /([?&](?:api[-_]?key|authorization|credential|password|secret|token|access[-_]?token|refresh[-_]?token)=)[^&#\s]*/gi
+const urlValue = /https?:\/\/[^\s"'<>]+/gi
 
 export type McpAuditStatus =
   "allowed" | "denied" | "approval-required" | "timed-out" | "stale" | "failed" | "completed"
@@ -111,14 +115,159 @@ export function appendMcpAuditRecord(database: AuditDatabase, record: AppendMcpA
         permissionMode: record.caller.permissionMode ?? null,
         customPermissions: record.caller.customPermissions ?? null,
       }),
-      chatSnapshot: redactMcpAuditSummary(record.chatSnapshot ?? null),
-      runSnapshot: redactMcpAuditSummary(record.runSnapshot ?? null),
-      inputSummary: redactMcpAuditSummary(record.input ?? null),
-      resultSummary: redactMcpAuditSummary(record.result ?? null),
+      chatSnapshot: redactMcpAuditSummary(summarizeSnapshot(record.chatSnapshot)),
+      runSnapshot: redactMcpAuditSummary(summarizeSnapshot(record.runSnapshot)),
+      inputSummary: redactMcpAuditSummary(summarizeMcpAuditInput(record.toolName, record.input)),
+      resultSummary: redactMcpAuditSummary(summarizeMcpAuditResult(record.result)),
       durationMs: Math.max(0, Math.floor(record.durationMs ?? 0)),
       ...(record.createdAt ? { createdAt: record.createdAt } : {}),
     })
     .run()
+}
+
+/** Operation-specific allowlist. Arbitrary content is represented only by size and hash. */
+export function summarizeMcpAuditInput(toolName: string, value: unknown): unknown {
+  const input = asRecord(value)
+  if (!input) return null
+  const textDigest = (key: string) => summarizeText(input[key])
+  const safe = (...keys: string[]) => {
+    const entries: Array<[string, string | number | boolean]> = []
+    for (const key of keys) {
+      const item = input[key]
+      if (typeof item === "boolean" || typeof item === "number") entries.push([key, item])
+      if (typeof item === "string" && item.trim()) entries.push([key, redactString(item)])
+    }
+    return Object.fromEntries(entries)
+  }
+
+  switch (toolName) {
+    case "create_chat":
+      return {
+        ...safe("scope", "projectId", "taskId", "harness", "model"),
+        name: textDigest("name"),
+      }
+    case "create_task":
+      return {
+        ...safe("projectId"),
+        name: textDigest("name"),
+        description: textDigest("description"),
+      }
+    case "add_attachment":
+      return {
+        ...safe("chatId", "kind"),
+        name: typeof input.name === "string" ? redactString(input.name) : null,
+        content: textDigest("contentText"),
+      }
+    case "write_attachment_to_worktree":
+      return safe("attachmentId", "worktreePath", "targetRelativePath", "overwrite")
+    case "launch_run":
+      return {
+        ...safe("chatId", "idempotencyKey"),
+        initialPrompt: textDigest("initialPrompt"),
+      }
+    case "create_automation_draft":
+      return { ...safe("trigger", "dryRun"), name: textDigest("name") }
+    case "search":
+      return { ...safe("scope", "scopeId", "cursor", "limit"), query: textDigest("query") }
+    case "rename_item":
+      return { ...safe("kind", "id"), name: textDigest("name") }
+    case "move_chat":
+      return safe("id", "scope", "projectId", "taskId")
+    case "archive_item":
+    case "restore_item":
+    case "pin_item":
+      return safe("kind", "id", "pinned")
+    case "list_projects":
+    case "list_tasks":
+    case "list_chats":
+    case "list_runs":
+    case "list_worktrees":
+    case "list_artifacts":
+      return safe("projectId", "taskId", "chatId", "runId", "cursor", "limit")
+    case "ping":
+    case "describe":
+      return null
+    default:
+      return { keys: Object.keys(input).sort().slice(0, MAX_ENTRIES) }
+  }
+}
+
+function summarizeMcpAuditResult(value: unknown): unknown {
+  const result = asRecord(value)
+  if (!result) return value === null ? null : { type: typeof value }
+  const error = asRecord(result.error)
+  const data = asRecord(result.data)
+  const decision = asRecord(result.decision)
+  return {
+    ok: result.ok === true,
+    ...(decision
+      ? {
+          decision: Object.fromEntries(
+            ["id", "state", "source"].flatMap((key) =>
+              typeof decision[key] === "string" ? [[key, redactString(decision[key])]] : [],
+            ),
+          ),
+        }
+      : {}),
+    ...(error
+      ? {
+          error: {
+            ...(typeof error.code === "string" ? { code: redactString(error.code) } : {}),
+            ...(typeof error.message === "string" ? { message: summarizeText(error.message) } : {}),
+          },
+        }
+      : {}),
+    ...(data
+      ? {
+          data: {
+            keys: Object.keys(data).sort().slice(0, MAX_ENTRIES),
+            ...(typeof data.id === "string" ? { id: redactString(data.id) } : {}),
+            ...(typeof data.runId === "string" ? { runId: redactString(data.runId) } : {}),
+            ...(Array.isArray(data.items) ? { itemCount: data.items.length } : {}),
+          },
+        }
+      : {}),
+    ...(!error && !data ? { keys: Object.keys(result).sort().slice(0, MAX_ENTRIES) } : {}),
+  }
+}
+
+function summarizeSnapshot(value: unknown): unknown {
+  const snapshot = asRecord(value)
+  if (!snapshot) return null
+  const allowed = [
+    "id",
+    "chatId",
+    "runId",
+    "projectId",
+    "taskId",
+    "status",
+    "scope",
+    "harness",
+    "permissionMode",
+    "archived",
+  ]
+  return Object.fromEntries(
+    allowed.flatMap((key) => {
+      const item = snapshot[key]
+      return typeof item === "string" || typeof item === "boolean" || typeof item === "number"
+        ? [[key, item]]
+        : []
+    }),
+  )
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function summarizeText(value: unknown): unknown {
+  if (typeof value !== "string") return null
+  return {
+    byteLength: Buffer.byteLength(value),
+    sha256: createHash("sha256").update(value).digest("hex"),
+  }
 }
 
 /** Query append-only audit storage in a stable newest-first order. */
@@ -226,5 +375,23 @@ function redactValue(value: unknown, depth: number): unknown {
 function redactString(value: string): string {
   const bounded =
     value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}${truncated}` : value
-  return bounded.replace(bearerValue, redacted).replace(tokenValue, redacted)
+  return bounded
+    .replace(urlValue, redactUrl)
+    .replace(bearerValue, redacted)
+    .replace(tokenValue, redacted)
+    .replace(envAssignment, (_match, key: string) => `${key}=${redacted}`)
+    .replace(queryCredential, `$1${redacted}`)
+}
+
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw)
+    url.username = ""
+    url.password = ""
+    if (url.search) url.search = `?${redacted}`
+    if (url.hash) url.hash = `#${redacted}`
+    return url.toString()
+  } catch {
+    return redacted
+  }
 }

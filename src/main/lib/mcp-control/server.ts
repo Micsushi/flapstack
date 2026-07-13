@@ -10,7 +10,6 @@ import { appendMcpAuditRecord } from "./audit-storage"
 import { getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
-import { buildProductMcpInvocationId } from "./provider-permissions"
 import { publishProductMcpInvalidation } from "./invalidation-bridge"
 import {
   invalidationForProductMcpMutation,
@@ -40,9 +39,10 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
       },
       async (input, extra) => {
         // MCP SDK callbacks with no input schema receive only the request context.
-        const requestId = extra?.requestId ?? readRequestId(input) ?? randomUUID()
         const toolInput = extra ? input : {}
-        const invocationId = buildProductMcpInvocationId(caller, requestId)
+        // Provider request IDs are caller-controlled and can be replayed. Every
+        // received invocation owns a fresh internal identity instead.
+        const invocationId = randomUUID()
         const response = await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
           approvals,
           approvalId: () => invocationId,
@@ -73,12 +73,6 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
     await close()
   }
   return server
-}
-
-function readRequestId(value: unknown): string | number | null {
-  if (!value || typeof value !== "object") return null
-  const requestId = (value as { requestId?: unknown }).requestId
-  return typeof requestId === "string" || typeof requestId === "number" ? requestId : null
 }
 
 export async function connectMcpControlServer(

@@ -54,7 +54,7 @@ function createDatabase(): { path: string; sqlite: Database.Database } {
   migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
   sqlite
     .prepare(
-      "INSERT INTO chats (id, name, scope, permission_mode, custom_permissions) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO chats (id, name, scope, permission_mode, custom_permissions, mcp_exposure_enabled) VALUES (?, ?, ?, ?, ?, 1)",
     )
     .run("chat-1", "Custom caller", "global", "custom", JSON.stringify(toggles))
   return { path, sqlite }

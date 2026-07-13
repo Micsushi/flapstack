@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 
@@ -199,7 +200,18 @@ function appendLaunchAudit(
     source.chat_snapshot,
     redactMcpAuditSummary({ runId }),
     source.input_summary,
-    redactMcpAuditSummary(error ? { runId, error } : { runId, execution: "finished" }),
+    redactMcpAuditSummary({
+      runId,
+      outcome: status,
+      ...(error
+        ? {
+            error: {
+              byteLength: Buffer.byteLength(error),
+              sha256: createHash("sha256").update(error).digest("hex"),
+            },
+          }
+        : {}),
+    }),
   )
 }
 

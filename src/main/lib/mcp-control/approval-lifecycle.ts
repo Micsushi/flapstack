@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { McpCallerIdentity, McpRiskTier } from "./types"
 
 export type McpApprovalTerminalState =
@@ -12,6 +13,7 @@ export type McpApprovalDecision = {
 export type McpPendingApproval = {
   id: string
   invocationId: string
+  contextHash: string
   caller: Pick<McpCallerIdentity, "chatId" | "runId">
   toolName: string
   tier: McpRiskTier
@@ -32,7 +34,9 @@ export type McpApprovalRequest = {
 
 export type McpApprovalCoordinator = {
   publish: (pending: McpPendingApproval) => void
-  readDecision: (id: string) => { decision: "approve" | "deny"; grantSession: boolean } | null
+  readDecision: (
+    pending: McpPendingApproval,
+  ) => { decision: "approve" | "deny"; grantSession: boolean } | null
 }
 
 export type McpApprovalWait = {
@@ -70,7 +74,12 @@ export class McpApprovalLifecycle {
     if (this.stopped) return settled(request.id, "shutdown", "shutdown")
 
     const existing = this.pending.get(request.id)
-    if (existing) return { pending: snapshot(existing), decision: existing.decision }
+    if (existing) {
+      if (existing.contextHash !== buildMcpApprovalContextHash(request)) {
+        return settled(request.id, "cancelled", "cancellation")
+      }
+      return { pending: snapshot(existing), decision: existing.decision }
+    }
 
     // Tier 3 always needs a new human decision, even when a lower-tier grant
     // exists for the same chat and tool.
@@ -91,6 +100,7 @@ export class McpApprovalLifecycle {
     const pending: PendingApproval = {
       ...request,
       invocationId: request.invocationId ?? request.id,
+      contextHash: buildMcpApprovalContextHash(request),
       input: request.input ?? null,
       createdAt,
       expiresAt: new Date(createdAt.getTime() + timeoutMs),
@@ -195,7 +205,7 @@ export class McpApprovalLifecycle {
     if (!pending || this.stopped || !this.coordinator) return
     let decision: ReturnType<McpApprovalCoordinator["readDecision"]> = null
     try {
-      decision = this.coordinator.readDecision(id)
+      decision = this.coordinator.readDecision(snapshot(pending))
     } catch {
       // A short SQLite lock must not crash the harness child. Retry until the
       // request's own bounded timeout closes it safely.
@@ -218,8 +228,44 @@ function settled(
 }
 
 function snapshot(pending: McpPendingApproval): McpPendingApproval {
-  const { id, invocationId, caller, toolName, tier, createdAt, expiresAt, input } = pending
-  return { id, invocationId, caller: { ...caller }, toolName, tier, createdAt, expiresAt, input }
+  const { id, invocationId, contextHash, caller, toolName, tier, createdAt, expiresAt, input } =
+    pending
+  return {
+    id,
+    invocationId,
+    contextHash,
+    caller: { ...caller },
+    toolName,
+    tier,
+    createdAt,
+    expiresAt,
+    input,
+  }
+}
+
+export function buildMcpApprovalContextHash(
+  request: Pick<McpApprovalRequest, "caller" | "toolName" | "tier" | "input">,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalJson({
+        caller: { chatId: request.caller.chatId, runId: request.caller.runId ?? null },
+        toolName: request.toolName,
+        tier: request.tier,
+        input: request.input ?? null,
+      }),
+    )
+    .digest("hex")
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return JSON.stringify("[UNDEFINED]")
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  return `{${Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+    .join(",")}}`
 }
 
 function grantKey(

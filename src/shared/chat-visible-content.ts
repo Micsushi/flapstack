@@ -61,10 +61,6 @@ export function extractVisibleMessageParts(message: unknown): VisibleMessagePart
       const text = nonEmptyString(part.text)
       return text ? [{ partIndex, partType: type, text }] : []
     }
-    if (type === "file-content") {
-      const text = nonEmptyString(part.content) ?? nonEmptyString(part.text)
-      return text ? [{ partIndex, partType: "file-content", text }] : []
-    }
     if (type === "tool-ReasoningOutput" || type === "tool-Thinking") {
       const text = nonEmptyString(asRecord(part.input)?.text)
       return text ? [{ partIndex, partType: type, text }] : []
@@ -91,10 +87,6 @@ export function formatVisiblePartForHandoff(partValue: unknown): string[] {
     const text = nonEmptyString(part.text)
     return text ? [`> Reasoning: ${text}`] : []
   }
-  if (type === "file-content") {
-    const text = nonEmptyString(part.content) ?? nonEmptyString(part.text)
-    return text ? [text] : []
-  }
   if (type === "tool-ReasoningOutput" || type === "tool-Thinking") {
     const text = nonEmptyString(asRecord(part.input)?.text)
     return text ? [`> Reasoning: ${text}`] : []
@@ -113,4 +105,17 @@ export function formatVisiblePartForHandoff(partValue: unknown): string[] {
     return [`> Tool: ${name}`]
   }
   return []
+}
+
+/** Remove agent-only file payloads before any visible JSON export. */
+export function omitHiddenFileContentFromMessage<T>(message: T): T {
+  const record = asRecord(message)
+  if (!record) return message
+  const withoutHidden = (value: unknown) =>
+    Array.isArray(value) ? value.filter((part) => asRecord(part)?.type !== "file-content") : value
+  return {
+    ...record,
+    ...(Array.isArray(record.parts) ? { parts: withoutHidden(record.parts) } : {}),
+    ...(Array.isArray(record.content) ? { content: withoutHidden(record.content) } : {}),
+  } as T
 }

@@ -342,6 +342,46 @@ describe("top-level chat forks", () => {
   })
 })
 
+describe("chat export visibility", () => {
+  it("excludes hidden file payloads from local JSON clipboard/export data", async () => {
+    const db = getDatabase()
+    const chat = insertChat({ scope: "global", name: "Hidden file export" })
+    const secret = "sk-proj-hidden-export-secret"
+    db.insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify([
+          {
+            id: "current",
+            role: "user",
+            parts: [
+              { type: "text", text: "visible current" },
+              { type: "file-content", content: secret, name: "current.txt" },
+            ],
+          },
+          {
+            id: "legacy",
+            role: "user",
+            content: [
+              { type: "text", text: "visible legacy" },
+              { type: "file-content", text: secret, name: "legacy.txt" },
+            ],
+          },
+        ]),
+      })
+      .run()
+
+    const exported = await chatsRouter.createCaller(ctx).exportChat({
+      chatId: chat.id,
+      format: "json",
+    })
+    expect(exported.content).toContain("visible current")
+    expect(exported.content).toContain("visible legacy")
+    expect(exported.content).not.toContain(secret)
+    expect(exported.content).not.toContain("file-content")
+  })
+})
+
 describe("Stage 1 E1 scope lifecycle", () => {
   it("creates, lists, validates, and moves project/task/global chats", async () => {
     const db = getDatabase()
@@ -898,6 +938,7 @@ describe("Stage 1 E1 search archive and scope filters", () => {
         expect.objectContaining({ title: "needle hidden project-parent chat" }),
       ]),
     )
+    expect(await caller.query({ query: "attachment text" })).toEqual([])
 
     const projectScoped = await caller.query({
       query: "needle",

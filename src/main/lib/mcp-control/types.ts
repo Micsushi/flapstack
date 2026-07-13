@@ -23,6 +23,7 @@ export type McpCallerRecord = {
   id: string
   permissionMode: string | null
   archived: boolean
+  exposureEnabled: boolean
 }
 
 export type McpRunRecord = {

@@ -164,7 +164,7 @@ describe("product and development MCP boundary", () => {
   it("registers only the product invalidation endpoint with product stdio", () => {
     process.env[PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV] = "/tmp/product-only.sock"
     const registration = buildMcpStdioRegistration(
-      { chatId: "chat-1", permissionMode: "full-access" },
+      { chatId: "chat-1", runId: "run-1", permissionMode: "full-access" },
       { executablePath: "/electron", mainDirectory: "/out/main", databasePath: "/data/db" },
     )
 

@@ -143,11 +143,47 @@ describe("MCP audit storage", () => {
       hiddenReasoning: "never persist",
       prose: "Authorization: Bearer abc123",
       gitHub: "ghp_abcdefghijklmnopqrstuvwxyz",
+      providerKeys: "sk-proj-projectsecret sk-ant-anthropicsecret",
+      env: "OPENAI_API_KEY=environment-secret\nNORMAL=value",
+      basic: "Basic dXNlcjpwYXNz",
+      url: "https://user:password@example.test/v1?token=query-secret#fragment",
+      nested: { arbitrary: ".env SECRET_TOKEN=deep-secret" },
     })
     expect(summary).toContain("[REDACTED]")
     expect(summary).not.toContain("top-secret")
     expect(summary).not.toContain("never persist")
     expect(summary).not.toContain("abc123")
     expect(summary).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz")
+    for (const secret of [
+      "projectsecret",
+      "anthropicsecret",
+      "environment-secret",
+      "dXNlcjpwYXNz",
+      "password",
+      "query-secret",
+      "deep-secret",
+    ]) {
+      expect(summary).not.toContain(secret)
+    }
+  })
+
+  it("stores attachment name, size, and hash without durable contentText", () => {
+    const contentText = "sk-proj-never-persist\nTOKEN=also-never-persist"
+    appendMcpAuditRecord(drizzle(sqlite, { schema }), {
+      id: "attachment-audit",
+      status: "allowed",
+      caller: { chatId: "chat-1" },
+      toolName: "add_attachment",
+      tier: 1,
+      input: { chatId: "chat-1", name: ".env", kind: "text", contentText },
+    })
+    const row = sqlite
+      .prepare("SELECT input_summary FROM mcp_audit_records WHERE id = ?")
+      .get("attachment-audit") as { input_summary: string }
+    expect(row.input_summary).toContain("byteLength")
+    expect(row.input_summary).toContain("sha256")
+    expect(row.input_summary).toContain(".env")
+    expect(row.input_summary).not.toContain(contentText)
+    expect(row.input_summary).not.toContain("never-persist")
   })
 })

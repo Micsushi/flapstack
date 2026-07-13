@@ -22,6 +22,9 @@ afterEach(async () => {
 describe("Flapstack MCP stdio transport", () => {
   it("rejects startup without launcher-owned caller identity", () => {
     expect(() => readMcpCallerIdentity({})).toThrow(/launcher-provided caller identity/)
+    expect(() => readMcpCallerIdentity({ FLAPSTACK_MCP_CHAT_ID: "chat-without-run" })).toThrow(
+      /launcher-provided caller identity/,
+    )
   })
 
   it("lists and calls ping and describe through a real stdio child", async () => {
@@ -34,7 +37,7 @@ describe("Flapstack MCP stdio transport", () => {
     })
     database
       .prepare(
-        "INSERT INTO chats (id, scope, permission_mode) VALUES ('chat-transport-test', 'global', 'read-only')",
+        "INSERT INTO chats (id, scope, permission_mode, mcp_exposure_enabled) VALUES ('chat-transport-test', 'global', 'read-only', 1)",
       )
       .run()
     database
@@ -99,5 +102,15 @@ describe("Flapstack MCP stdio transport", () => {
     const projects = await client.callTool({ name: "list_projects", arguments: {} })
     expect(projects.structuredContent).toEqual({ ok: true, data: { items: [], nextCursor: null } })
     await client.close()
+
+    const audited = new Database(databasePath, { readonly: true })
+    expect(
+      audited
+        .prepare(
+          "SELECT count(DISTINCT invocation_id) count FROM mcp_audit_records WHERE status = 'completed' AND tool_name IN ('ping', 'describe', 'list_projects')",
+        )
+        .get(),
+    ).toEqual({ count: 3 })
+    audited.close()
   })
 })

@@ -194,11 +194,6 @@ export function extractSearchableText(messages: Message[]): ExtractedText[] {
         if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
           return [part.text]
         }
-        if (part.type === "file-content") {
-          const filePart = part as MessagePart & { text?: string; content?: string }
-          const content = filePart.content ?? filePart.text
-          if (typeof content === "string" && content.trim()) return [content]
-        }
         return []
       })
       if (textParts.length > 0) {

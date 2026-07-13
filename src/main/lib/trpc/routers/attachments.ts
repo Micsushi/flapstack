@@ -1,12 +1,10 @@
 import { and, desc, eq } from "drizzle-orm"
 import { app } from "electron"
-import { constants } from "node:fs"
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import { basename, dirname, join, resolve } from "node:path"
-import { randomUUID } from "node:crypto"
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises"
+import { basename, join, resolve } from "node:path"
 import { z } from "zod"
 import { attachments, chats, getDatabase, projects, tasks } from "../../db"
-import { prepareSafeWritePath } from "../../path-safety"
+import { writeFileInsideRoot } from "../../path-safety"
 import { publicProcedure, router } from "../index"
 
 const attachmentKindSchema = z.enum(["file", "image", "pasted-text", "chat-history", "text"])
@@ -177,46 +175,23 @@ export const attachmentsRouter = router({
         throw new Error("Attachment target must be one of the chat's known worktree roots")
       }
 
-      const targetPath = await prepareSafeWritePath(
-        input.worktreePath,
-        input.targetRelativePath ?? attachment.name,
-      )
       const sourcePath = attachment.storedPath ?? attachment.sourcePath
-      const writeContent = async (destination: string, exclusive: boolean) => {
-        if (sourcePath) {
-          await copyFile(sourcePath, destination, exclusive ? constants.COPYFILE_EXCL : 0)
-        } else if (attachment.contentText !== null) {
-          await writeFile(destination, attachment.contentText, {
-            encoding: "utf-8",
-            flag: exclusive ? "wx" : "w",
-          })
-        } else {
-          throw new Error("Attachment has no stored content")
-        }
+      if (!sourcePath && attachment.contentText === null) {
+        throw new Error("Attachment has no stored content")
       }
-
-      if (!input.overwrite) {
-        try {
-          await writeContent(targetPath, true)
-        } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-            throw new Error("Target file already exists")
-          }
-          throw error
+      try {
+        return await writeFileInsideRoot(
+          input.worktreePath,
+          input.targetRelativePath ?? attachment.name,
+          sourcePath ? { sourcePath } : { data: attachment.contentText! },
+          { overwrite: input.overwrite },
+        )
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+          throw new Error("Target file already exists")
         }
-      } else {
-        const temporaryPath = join(dirname(targetPath), `.flapstack-${randomUUID()}.tmp`)
-        try {
-          await writeContent(temporaryPath, true)
-          await rm(targetPath, { force: true })
-          await rename(temporaryPath, targetPath)
-        } finally {
-          await rm(temporaryPath, { force: true })
-        }
+        throw error
       }
-
-      const resultStat = await stat(targetPath)
-      return { targetPath, byteLength: resultStat.size }
     }),
 
   get: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {

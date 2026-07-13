@@ -140,14 +140,14 @@ describe("MCP invocation audit", () => {
     expect(statuses("denied")).toEqual(["denied"])
     expect(statuses("approval-denied")).toEqual(["approval-required", "denied"])
     expect(statuses("timed-out")).toEqual(["approval-required", "timed-out"])
-    expect(statuses("stale")).toEqual(["approval-required", "allowed", "stale"])
+    expect(statuses("stale")).toEqual(["approval-required", "stale"])
     expect(statuses("failed")).toEqual(["allowed", "failed"])
     expect(statuses("session-grant")).toEqual(["approval-required", "allowed", "completed"])
 
     const persisted = sqlite
       .prepare("SELECT invocation_id, duration_ms, input_summary FROM mcp_audit_records")
       .all() as Array<{ invocation_id: string; duration_ms: number; input_summary: string }>
-    expect(persisted).toHaveLength(18)
+    expect(persisted).toHaveLength(17)
     expect(persisted.every((row) => row.invocation_id.length > 0 && row.duration_ms >= 0)).toBe(
       true,
     )
@@ -161,5 +161,56 @@ describe("MCP invocation audit", () => {
         expect.objectContaining({ result_summary: expect.stringContaining("session-grant") }),
       ]),
     )
+  })
+
+  it.each(["disk full", "no such table", "database is locked"])(
+    "blocks mutation before dispatch when audit persistence fails: %s",
+    async (message) => {
+      const execute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
+      await expect(
+        invokeMcpControlTool(
+          "pin_item",
+          { ...caller, permissionMode: "full-access" },
+          { kind: "chat", id: "chat-2", pinned: true },
+          undefined,
+          {
+            audit: {
+              append: () => {
+                throw new Error(message)
+              },
+            },
+            resolveTarget: () => ({}),
+            execute,
+          },
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining("mandatory pre-execution audit") },
+      })
+      expect(execute).not.toHaveBeenCalled()
+    },
+  )
+
+  it("leaves a durable allowed trail and returns reconciliation failure if completion audit fails", async () => {
+    const append = vi
+      .fn()
+      .mockImplementationOnce((record) => appendMcpAuditRecord(drizzle(sqlite, { schema }), record))
+      .mockImplementationOnce(() => {
+        throw new Error("database is locked")
+      })
+    const execute = vi.fn(() => ({ ok: true as const, data: { mutated: true } }))
+    const result = await invokeMcpControlTool(
+      "pin_item",
+      { ...caller, permissionMode: "full-access" },
+      { kind: "chat", id: "chat-2", pinned: true },
+      undefined,
+      { audit: { append }, resolveTarget: () => ({}), execute, invocationId: () => "outbox" },
+    )
+    expect(execute).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("requires reconciliation") },
+    })
+    expect(statuses("outbox")).toEqual(["allowed"])
   })
 })

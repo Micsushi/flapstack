@@ -48,7 +48,7 @@ describe("MCP approval renderer coordination", () => {
         toolName: "archive_chat",
         risk: 2,
         targetLabel: "chatId: chat-2",
-        inputSummary: expect.stringContaining("[REDACTED]"),
+        inputSummary: expect.stringContaining("contextHash"),
       },
     ])
     expect(listPendingMcpApprovals(database)[0].inputSummary).not.toContain("sk_should_not_render")
@@ -69,5 +69,44 @@ describe("MCP approval renderer coordination", () => {
     await expect(wait.decision).resolves.toMatchObject({ state: "approved", source: "user" })
     expect(listPendingMcpApprovals(database)).toEqual([])
     lifecycle.shutdown()
+  })
+
+  it("never reuses a durable decision after an approval id collision", async () => {
+    const database = drizzle(sqlite, { schema })
+    const first = new McpApprovalLifecycle(createSqliteMcpApprovalCoordinator(database))
+    const original = first.request({
+      id: "replayed-json-rpc-id",
+      invocationId: "invocation-original",
+      caller: { chatId: "chat-1", runId: "run-1" },
+      toolName: "rename_item",
+      tier: 2,
+      input: { id: "chat-2", name: "Safe name" },
+      timeoutMs: 2_000,
+    })
+    expect(
+      decideMcpApproval(database, {
+        id: "replayed-json-rpc-id",
+        decision: "approve",
+        grantSession: false,
+      }),
+    ).toBe(true)
+    await expect(original.decision).resolves.toMatchObject({ state: "approved" })
+    first.shutdown()
+
+    const replay = new McpApprovalLifecycle(createSqliteMcpApprovalCoordinator(database))
+    const mutated = replay.request({
+      id: "replayed-json-rpc-id",
+      invocationId: "invocation-mutated",
+      caller: { chatId: "chat-1", runId: "run-1" },
+      toolName: "archive_item",
+      tier: 2,
+      input: { id: "chat-3" },
+      timeoutMs: 2_000,
+    })
+    await expect(mutated.decision).resolves.toMatchObject({
+      state: "cancelled",
+      source: "cancellation",
+    })
+    replay.shutdown()
   })
 })

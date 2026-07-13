@@ -23,6 +23,21 @@ The exact final command results and commit are reported with the branch handoff.
 The durable row truth lives in `docs/stage3-release-candidate-ledger.md` and
 `docs/stage3-full-feature-test-matrix.md`.
 
+## Security repair round
+
+Seven delegated security/permissions findings were repaired on a fresh
+`cf293cd`-based worktree. Focused attack tests cover approval-ID replay,
+disable/re-enable identity revocation, credential restart non-resurrection,
+audit secret/content exclusion, hidden file-content exclusion, audit-storage
+failure before and after dispatch, and parent/final symlink swaps. Node 22 full
+check and affected strict OpenSpec validation pass. The exact commit is the
+commit containing this handoff; no push was performed.
+
+The portable rooted writer cannot claim an exact filesystem transaction against
+a continuously racing namespace or untested Windows reparse behavior. Locked
+UI, actual macOS Keychain, Windows Credential Manager, Linux Secret Service,
+package/platform, and paid-provider proof remain open and unclaimed.
+
 ## Remaining human and platform proof
 
 - Unlock macOS and complete visual/accessibility, clipboard, microphone,

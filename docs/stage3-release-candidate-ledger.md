@@ -104,6 +104,25 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | Windows/Linux                                 | BLOCKED | target hosts unavailable                                                                            |
 | Independent review rounds                     | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                              |
 
+### 2026-07-13 security repair round
+
+The delegated security/permissions review found seven required defects. The
+repair tree now binds approvals to fresh invocation/context identity, revokes
+and durably invalidates product-MCP children on disable, retires encrypted
+credentials before session replacement, stores allowlisted audit summaries,
+keeps hidden file payloads out of search/handoff/clipboard/export, blocks
+mutations when the final pre-execution audit cannot persist, and shares one
+rooted writer across MCP and renderer attachment writes. Attack regressions and
+the Node 22 full gate pass. This hardening does not turn the blocked live,
+package, platform, T2/T3, or formal T4 rows into PASS.
+
+The rooted writer uses no-follow exclusive creation where the host supports it,
+same-parent atomic replacement, and root/parent/final identity and realpath
+checks immediately around commit. Node has no portable cross-platform
+directory-handle `openat`/`renameat` transaction, so continuous namespace races
+and Windows reparse-point behavior remain unproved. No locked-UI, Keychain,
+Windows, Linux, or paid-provider evidence is claimed.
+
 ## Cleanup and evidence invalidation
 
 Each run uses unique dev instance/profile, port, database, service label, test

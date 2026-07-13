@@ -206,9 +206,7 @@ export const searchRouter = router({
         }
       }
 
-      const attachmentConditions = [
-        or(like(attachments.name, pattern), like(attachments.contentText, pattern)),
-      ]
+      const attachmentConditions = [like(attachments.name, pattern)]
       if (input.scope === "task" && input.scopeId)
         attachmentConditions.push(eq(attachments.taskId, input.scopeId))
       if (input.scope === "chat" && input.scopeId)
@@ -226,7 +224,7 @@ export const searchRouter = router({
         results.push({
           type: "attachment",
           title: attachment.name,
-          snippet: snippet(attachment.contentText || attachment.name, input.query),
+          snippet: snippet(attachment.name, input.query),
           projectId: parent.projectId,
           taskId: attachment.taskId ?? parent.taskId,
           chatId: attachment.chatId,

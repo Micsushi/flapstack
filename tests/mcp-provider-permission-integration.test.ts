@@ -104,6 +104,7 @@ describe("provider and product MCP permission integration", () => {
         approvals,
         approvalId: () => correlationId,
         invocationId: () => correlationId,
+        audit: { append: vi.fn() },
         execute,
       },
     )
@@ -145,6 +146,7 @@ describe("provider and product MCP permission integration", () => {
           approvals,
           approvalId: () => id,
           invocationId: () => id,
+          audit: { append: vi.fn() },
           execute,
         },
       )

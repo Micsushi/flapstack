@@ -1,10 +1,8 @@
 import Database from "better-sqlite3"
 import { createHash, randomUUID } from "node:crypto"
-import { constants } from "node:fs"
-import { copyFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, resolve } from "node:path"
 import { z } from "zod"
-import { prepareSafeWritePath } from "../path-safety"
+import { writeFileInsideRoot } from "../path-safety"
 import { getPermissionPreferences } from "../permissions"
 import {
   prepareThreadSpawn,
@@ -763,32 +761,16 @@ async function writeAttachment(
     .map((value) => resolve(value))
   if (!roots.includes(resolve(input.worktreePath)))
     return fail("out-of-scope", "Worktree is not a known target for this attachment.")
-  const destination = await prepareSafeWritePath(
+  const source = stringOrNull(attachment.stored_path) ?? stringOrNull(attachment.source_path)
+  const content = typeof attachment.content_text === "string" ? attachment.content_text : null
+  if (!source && content === null) return fail("invalid-input", "Attachment has no content.")
+  const result = await writeFileInsideRoot(
     input.worktreePath,
     input.targetRelativePath ?? String(attachment.name),
+    source ? { sourcePath: source } : { data: content! },
+    { overwrite: input.overwrite },
   )
-  const source = stringOrNull(attachment.stored_path) ?? stringOrNull(attachment.source_path)
-  const write = async (path: string, exclusive: boolean) =>
-    source
-      ? copyFile(source, path, exclusive ? constants.COPYFILE_EXCL : 0)
-      : typeof attachment.content_text === "string"
-        ? writeFile(path, attachment.content_text, {
-            encoding: "utf8",
-            flag: exclusive ? "wx" : "w",
-          })
-        : Promise.reject(new Error("Attachment has no content."))
-  if (!input.overwrite) await write(destination, true)
-  else {
-    const temporary = join(dirname(destination), `.flapstack-${randomUUID()}.tmp`)
-    try {
-      await write(temporary, true)
-      await rm(destination, { force: true })
-      await rename(temporary, destination)
-    } finally {
-      await rm(temporary, { force: true })
-    }
-  }
-  return { ok: true, data: { targetPath: destination, byteLength: (await stat(destination)).size } }
+  return { ok: true, data: result }
 }
 function fail(code: McpControlErrorCode, message: string): McpControlResponse {
   return { ok: false, error: { code, message } }

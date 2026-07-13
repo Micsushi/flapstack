@@ -56,15 +56,17 @@ describe("MCP approval lifecycle", () => {
     })
   })
 
-  it("shares one pending decision for duplicate request ids", async () => {
+  it("shares only an exact duplicate pending decision and rejects context collisions", async () => {
     const lifecycle = new McpApprovalLifecycle()
     const first = lifecycle.request(request("same-id"))
-    const second = lifecycle.request(request("same-id", { toolName: "archive_item" }))
+    const duplicate = lifecycle.request(request("same-id"))
+    const collision = lifecycle.request(request("same-id", { toolName: "archive_item" }))
 
-    expect(second.pending).toMatchObject({ id: "same-id", toolName: "rename_item" })
-    expect(second.decision).toBe(first.decision)
+    expect(duplicate.pending).toMatchObject({ id: "same-id", toolName: "rename_item" })
+    expect(duplicate.decision).toBe(first.decision)
+    await expect(collision.decision).resolves.toMatchObject({ state: "cancelled" })
     lifecycle.deny("same-id")
-    await expect(Promise.all([first.decision, second.decision])).resolves.toEqual([
+    await expect(Promise.all([first.decision, duplicate.decision])).resolves.toEqual([
       { id: "same-id", state: "denied", source: "user" },
       { id: "same-id", state: "denied", source: "user" },
     ])

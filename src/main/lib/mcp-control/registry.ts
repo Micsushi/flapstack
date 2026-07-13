@@ -327,17 +327,6 @@ export async function invokeMcpControlTool(
       })
       return approvalError
     }
-    audit(dependencies, {
-      invocationId,
-      startedAt,
-      status: "allowed",
-      caller: trustedCaller.caller,
-      toolName: tool.name,
-      tier: tool.tier,
-      input,
-      result: { decision },
-    })
-
     // Approval never authorizes an old snapshot. Both caller and selected
     // target are resolved again immediately before any handler can run.
     const recheckedCaller = resolveCaller(caller, dependencies)
@@ -388,6 +377,17 @@ export async function invokeMcpControlTool(
       })
       return target.response
     }
+    const approvalAuditPersisted = audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "allowed",
+      caller: recheckedCaller.caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: { decision },
+    })
+    if (!approvalAuditPersisted && tool.tier > 0) return auditStorageUnavailable(false)
     return auditedDispatch(
       tool,
       recheckedCaller.caller,
@@ -413,7 +413,7 @@ export async function invokeMcpControlTool(
     })
     return target.response
   }
-  audit(dependencies, {
+  const preExecutionAuditPersisted = audit(dependencies, {
     invocationId,
     startedAt,
     status: "allowed",
@@ -423,6 +423,7 @@ export async function invokeMcpControlTool(
     input,
     result: { decision: initialGate.decision, reason: initialGate.reason },
   })
+  if (!preExecutionAuditPersisted && tool.tier > 0) return auditStorageUnavailable(false)
   return auditedDispatch(
     tool,
     trustedCaller.caller,
@@ -445,7 +446,7 @@ async function auditedDispatch(
 ): Promise<McpControlResponse> {
   try {
     const response = await dispatch(tool, caller, input, readService, dependencies)
-    audit(dependencies, {
+    const terminalAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
       status: response.ok ? "completed" : "failed",
@@ -455,13 +456,14 @@ async function auditedDispatch(
       input,
       result: response,
     })
+    if (!terminalAuditPersisted && tool.tier > 0) return auditStorageUnavailable(true)
     return response
   } catch (error) {
     const response: McpControlResponse = {
       ok: false,
       error: { code: "internal-error", message: "Tool execution failed." },
     }
-    audit(dependencies, {
+    const failureAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
       status: "failed",
@@ -471,6 +473,7 @@ async function auditedDispatch(
       input,
       result: { response, error: error instanceof Error ? error.message : String(error) },
     })
+    if (!failureAuditPersisted && tool.tier > 0) return auditStorageUnavailable(true)
     return response
   }
 }
@@ -478,11 +481,25 @@ async function auditedDispatch(
 function audit(
   dependencies: McpInvocationDependencies,
   event: Omit<AppendMcpAuditRecord, "durationMs"> & { startedAt: number },
-): void {
+): boolean {
   try {
     dependencies.audit?.append({ ...event, durationMs: Date.now() - event.startedAt })
+    return dependencies.audit !== undefined
   } catch {
     // Audit storage is append-only and must not turn an already safe denial into execution.
+    return false
+  }
+}
+
+function auditStorageUnavailable(afterDispatch: boolean): McpControlResponse {
+  return {
+    ok: false,
+    error: {
+      code: "internal-error",
+      message: afterDispatch
+        ? "Tool execution reached a terminal state, but its completion audit could not be persisted. The durable pre-execution record requires reconciliation."
+        : "Mutation blocked because its mandatory pre-execution audit could not be persisted.",
+    },
   }
 }
 
