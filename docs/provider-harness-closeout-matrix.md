@@ -81,12 +81,13 @@ rejects or labels the capability before launch.
 
 ## Current closeout evidence and blockers
 
-Credential and permission/custom-capability code prerequisites are integrated
-at base `5297ed777d0430f468ef23def55119f51d87795b`. Their acceptance rows remain
-open: S3-F10-T4 still lacks packaged credential migration/restart/removal,
-actual Keychain-backed persistence, and Windows/Linux proof; S3-F12-T5 still
-lacks its prerequisite acceptance and unlocked live UI proof. S3-F6-T2 still
-lacks active/background approval UI rows.
+Credential and permission/custom-capability code prerequisites are integrated.
+S3-F10-T4 remains open: the exact packaged macOS Preview now proves redacted
+encrypted create/restart/remove with no plaintext observed, but provider
+consumption, actual Keychain trust, legacy migration, and Windows/Linux remain
+unproved. S3-F12-T5 is complete after authenticated all-chat/custom controls,
+shared-lease dialog/legacy AX, and live Codex ask/allow/reject/project-boundary
+proof. S3-F6-T2 still lacks active/background approval UI rows.
 
 Safe 2026-07-13 evidence from this worktree:
 

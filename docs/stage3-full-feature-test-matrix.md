@@ -119,17 +119,17 @@ cross-platform rows remain unchecked.
 
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
-- [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is
+- [x] **S3-S01** only honest, implemented tabs appear; every visible tab is
       directly routable and searchable.
-- [ ] **S3-S02** editable keyboard shortcuts use one registry for display,
+- [x] **S3-S02** editable keyboard shortcuts use one registry for display,
       persistence, conflict detection, runtime dispatch, reset, and focus policy.
 - [ ] **S3-S03** voice selectors control real adapters/models; Prefer offline,
       voice, playback rate, history, and error/download states match runtime.
 - [ ] **S3-S04** secrets use write-only renderer APIs and approved encrypted
       persistence/migration paths; no key appears in logs, IPC, exports, or audit.
-- [ ] **S3-S05** provider extensions show accurate discovery, scope, duplicate,
+- [x] **S3-S05** provider extensions show accurate discovery, scope, duplicate,
       mutation, and runtime-consumption behavior.
-- [ ] **S3-S06** permission changes support current/all-chat scope and remembered
+- [x] **S3-S06** permission changes support current/all-chat scope and remembered
       behavior; custom capabilities persist exactly and clear when custom ends.
       2026-07-13 headless evidence: versioned hierarchy persistence, atomic
       all-chat custom, immutable run snapshots, provider gates, and path-safety
@@ -138,6 +138,10 @@ cross-platform rows remain unchecked.
       and legacy-change workflow remain unchecked because the Mac was locked.
       Full Node 22 check passed (730 passed, 3 skipped); unsigned macOS Preview
       packaging contains migration 0019 and both ACP bridge patches.
+      Continuation proof used MCP for all-chat/current-chat/custom state and
+      real Codex ask/allow/reject/project-boundary runs. Shared-lease AX proved
+      the dialog and legacy label; Codex alone is exact/selectable for project-
+      only and conservative providers remain unavailable.
 - [ ] **S3-S07** copy and Settings search use the same visibility/route registry
       and never expose unavailable destinations or stale provider claims.
       2026-07-13 headless evidence: the release registry owns indexed major
@@ -156,7 +160,7 @@ cross-platform rows remain unchecked.
 
 - Candidate: isolated `609c` worktree on
   `codex/stage3-settings-live-closeout`, starting from
-  `d08502ec16764653df589894c7a1c6ecacc87ce9`.
+  `03ef5bf79c3acba30d08b6843ebfbc233e7f67f0`.
 - Functional control: the loopback development test-control MCP requires its
   random bearer token and mode-`0600` descriptor. It controls project/Settings
   selection, shortcut state, credential lifecycle, provider extensions,
@@ -178,16 +182,18 @@ cross-platform rows remain unchecked.
   with a mode-`0600` ciphertext store and no disposable plaintext. This does not
   promote packaged Keychain behavior.
 - Current unsigned macOS arm64 Preview build, architecture/resource/license
-  inspection, and bundled Claude/Codex/Whisper/Parakeet smoke pass. Current
-  Preview launch, packaged credential/provider discovery, Windows, and Linux
-  remain open.
-- Node 22.23.1 `npm run check` passed lint, formatting, TypeScript, 119 test
-  files with 879 passing and 3 skipped tests, and the production build. Strict
-  validation passed for Settings, global provider permissions, provider
-  harness closeout, and development test-control MCP. Release-ledger coverage
-  passed for 18 active changes, 323 scenarios, and 17 feature exits.
-- Result: S3-F8-T4 and S3-F10-T3 close on this candidate. S3-S01 through S3-S07
-  remain unchecked until their full feature exits and dependency rows close.
+  inspection, and bundled Claude/Codex/Whisper/Parakeet smoke pass. The exact
+  Preview launched in an isolated profile, discovered 73 user-local extensions,
+  rendered the packaged Skills AX surface, and completed a disposable encrypted
+  credential create/restart/remove lifecycle with no plaintext observed.
+  Provider consumption, actual Keychain trust, Windows, and Linux remain open.
+- Node 22.23.1 `npm run check` passed lint, formatting, TypeScript, 125 test
+  files with 934 passing and 3 skipped tests, and the production build. Strict
+  validation passed for Settings and global provider permissions.
+- Result: S3-F7-T4, S3-F8-T4, S3-F10-T3, S3-F11-T5, S3-F12-T1 through T5,
+  GPP-T4, GPP-T6, and GPP-T9 close. S3-S01, S3-S02, S3-S05, and S3-S06 close.
+  Credential S3-S04, Voice S3-S03, and release-coupled copy/search S3-S07 stay
+  unchecked on their recorded unavailable/dependency evidence.
 
 2026-07-13 security repair evidence: the generic credential service and direct
 Settings endpoint retire old encrypted values before session-only replacement,
@@ -245,9 +251,11 @@ visual, clipboard-interaction, Windows, or Linux rows.
   Parakeet, SQLite, native binaries, and licenses passed package inspection and
   smoke. The packaged main bundle contains the provider discovery/mutation
   implementation. A missing dev descriptor failed closed in Preview.
-- Blocked/unavailable: the Mac was locked, so no visual Settings evidence or
-  packaged user-local discovery invocation is claimed. Windows/Linux remain
-  untested. Therefore S3-S05 and S3-F11-T5 stay unchecked.
+- Historical blocker: that candidate ran while the Mac was locked and did not
+  claim visual Settings or packaged discovery. The `609c` continuation above
+  supersedes those two missing rows with shared-lease AX and exact packaged
+  user-local discovery, so S3-S05 and S3-F11-T5 are now checked. Windows/Linux
+  remain untested.
 
 ## 3. Migrated Stage 2 closeout
 

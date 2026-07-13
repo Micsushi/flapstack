@@ -8,11 +8,11 @@ package, or platform rows remain open.
 
 - Candidate source: the exact commit containing this ledger, resolved with
   `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Integration baseline: `1a1d7d8c357ba8c1719bbea8aaf78473b089e0f8`.
-- Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
-  on `codex/stage3-integration`; `main` remains untouched.
-- Profile isolation: worker-lane Dev and Preview evidence remains historical
-  until the integrated candidate reruns its exact checkout/profile gates.
+- Integration baseline: `03ef5bf79c3acba30d08b6843ebfbc233e7f67f0`.
+- Checkout: `/Users/michaelshi/.codex/worktrees/609c/flapstack` on
+  `codex/stage3-settings-live-closeout`; main and integration remain untouched.
+- Profile isolation: exact named Dev and Preview profiles were used for this
+  continuation; the disposable Preview profile was removed after shutdown.
 - Supported release runtime: Node 22. macOS arm64 is locally available;
   Windows and Linux are unavailable in this lane.
 - Result vocabulary: only PASS satisfies a required row. FAIL, BLOCKED, and
@@ -94,18 +94,18 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                  |
 | Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
-| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
+| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 125 files, 934 passed, 3 conditional skips, all production builds                                 |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
 | S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
 | MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
 | Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
 | Verified lane Dev profiles             | PASS    | isolated `93ea`, `609c`, `acbf`, and `c8ae` worker checkouts/profiles; integrated profile rerun pending                     |
-| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; current executable launch not run                             |
+| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; exact isolated executable launch and shutdown                 |
 | Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
 | Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
 | Visual orchestration and MCP UI        | PENDING | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
-| Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
+| Remaining live/package feature rows    | BLOCKED | credential provider consumption/actual Keychain trust, Voice/microphone, paid-provider proof, and other feature exits       |
 | Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
 | Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
 
@@ -127,10 +127,20 @@ Settings Cmd+F plus Down/Enter navigation, blank credential fields, and message
 and full-history clipboard passed. Disposable credential, extension, permission,
 shortcut, and chat changes were removed, restored, or reversibly archived.
 
-S3-F8-T4 and S3-F10-T3 close. S3-F7-T4, S3-F10-T4, S3-F11-T5, S3-F12-T1
-through T5, and S3-F13-T1 through T4 remain open on their recorded legacy,
-package, dependency, every-target, and platform evidence. No Preview-launch,
-packaged Keychain, Windows, Linux, or unavailable paid-provider claim is made.
+S3-F7-T4, S3-F8-T4, S3-F10-T3, S3-F11-T5, and S3-F12-T1 through T5 close.
+GPP-T4, GPP-T6, and GPP-T9 close with fresh Codex approval/project-boundary and
+live permission UI proof. S3-F10-T4 and S3-F13-T1 through T4 remain open on
+packaged credential consumption/actual Keychain trust, Voice dependencies, and
+Windows/Linux evidence. No unavailable paid-provider or cross-platform claim is
+made.
+
+The rebuilt unsigned macOS arm64 Preview launched from its exact bundle in the
+isolated `Flapstack Preview 609c-settings-closeout` profile. Authenticated MCP
+reported `isPackaged: true`, discovered 73 user-local Claude/Codex extensions,
+and exercised a disposable encrypted credential create/restart/remove lifecycle
+with no plaintext observed. Real accessibility showed packaged provider,
+scope, kind, and runtime badges. This is package lifecycle evidence, not an OS
+Keychain trust or provider-consumption claim.
 
 ### 2026-07-13 security repair round
 

@@ -42,14 +42,20 @@ import { providerCapabilitiesRouter } from "./provider-capabilities"
 import { credentialsRouter } from "./credentials"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
+import { basename } from "node:path"
+import { isDevTestControlEnabled } from "../../mcp-test-control/lifecycle"
 
 /**
  * Create the main app router
  * Uses getter pattern to avoid stale window references
  */
 export function createAppRouter(getWindow: () => BrowserWindow | null) {
-  const devTestControlEnabled =
-    !app.isPackaged || process.env.FLAPSTACK_ENABLE_DEV_TEST_CONTROL === "1"
+  const devTestControlEnabled = isDevTestControlEnabled(
+    !app.isPackaged,
+    process.platform === "darwin" &&
+      app.isPackaged &&
+      basename(process.execPath) === "Flapstack Preview",
+  )
 
   return router({
     agentInput: agentInputRouter,

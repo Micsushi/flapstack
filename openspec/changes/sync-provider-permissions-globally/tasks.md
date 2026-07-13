@@ -80,7 +80,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T4 - Apply Codex ACP modes and add a fail-closed approval bridge
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Closest provider mapping
 - Outcome: Codex runs use the selected ACP mode, and unanswered permission
   requests can never be auto-approved.
@@ -104,6 +104,14 @@ This is the sole task checklist for the change.
   and the Codex product-MCP identity patch. `Flapstack Dev` and Codex login were
   verified, but the Mac was locked before a fresh Codex permission request could
   be exercised. Live smoke remains open.
+- 2026-07-13 `609c` continuation: authenticated Dev MCP launched real Codex ACP
+  ask-mode runs and resolved one redacted request with reject-once and one with
+  allow-once. The original workspace agent exposed `/tmp`; the installed patch
+  now excludes `TMPDIR` and `/tmp`. A fresh project-only run auto-wrote inside
+  the checkout, asked for `/tmp`, rejected once, left the outside marker absent,
+  and completed successfully. Object-shaped rejected tool output is reduced to
+  a generic message and no raw provider payload is returned. Installed and
+  packaged patch assertions pass.
 - Blocked by: none
 - Blocks: GPP-T6, GPP-T9
 - Relevant context: Codex ACP provider lifecycle, `@mcpc-tech/acp-ai-provider`,
@@ -192,7 +200,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T9 - Integrate provider permission mapping with product MCP approval
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Product MCP integration
 - Outcome: Provider-native tool authority and Stage 3 product MCP tiers combine
   without authorizing third-party MCP, double prompting, or bypassing Tier 3.
@@ -210,7 +218,8 @@ This is the sole task checklist for the change.
 - Verification: `tests/mcp-provider-permission-integration.test.ts`.
 - 2026-07-13 closeout: the named provider/product matrix passes, including
   separate product/third-party capabilities, no-double-prompt, fail-closed, and
-  mandatory Tier 3 cases. Completion remains blocked by GPP-T4 live Codex proof.
+  mandatory Tier 3 cases. The fresh GPP-T4 Codex approval/boundary proof closes
+  the remaining live dependency without widening Tier 3 or third-party MCP.
 - Blocked by: GPP-T3, GPP-T4, S3-F3-T5
 - Blocks: GPP-T6, S3-F12-T3
 - Relevant context: provider permission builders/bridges, product registry tier,
@@ -245,7 +254,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T6 - Run full and live verification
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Verification
 - Outcome: The feature is code-ready and its live behavior is proven in the
   correct Flapstack Dev profile.
@@ -273,6 +282,14 @@ This is the sole task checklist for the change.
   covered by isolated router/service tests. The Mac lock blocks visual Settings
   rows and the fresh Codex smoke in GPP-T4. Full Node 22 `npm run check` passed
   with 730 tests passed and 3 skipped; macOS Preview packaging passed unsigned.
+- 2026-07-13 `609c` continuation: authenticated MCP drove all-chat and current-
+  chat permission UI state, remembered/reset behavior, exact reviewed custom
+  capabilities, archived-chat propagation, Settings search, run metadata, and
+  live Codex approve/reject/project-boundary smokes. Shared-lease accessibility
+  proved the real dialog, scope copy, selector state, and legacy change-required
+  label. The exact Dev passed `npm run dev:verify`; the rebuilt unsigned Preview
+  launched with the same production renderer bridge. Unavailable paid-provider
+  and cross-platform rows remain explicitly unclaimed.
 - Blocked by: GPP-T2, GPP-T4, GPP-T5, GPP-T7, GPP-T8, GPP-T9, GPP-T10
 - Blocks: none
 - Relevant context: root `AGENTS.md` live-dev rules, run metadata, provider

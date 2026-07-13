@@ -30,6 +30,14 @@ export type DevRendererControlCommand =
       command: "settings.get"
     }
   | {
+      command: "settings.legacy.get"
+    }
+  | {
+      command: "settings.legacy.mutate"
+      activeTab?: string
+      ctrlTabTarget?: "workspaces" | "agents"
+    }
+  | {
       command: "settings.control"
       operation: "open" | "close" | "navigate" | "search" | "select-project"
       tab?: string
@@ -42,6 +50,24 @@ export type DevRendererControlCommand =
       chatId: string
       subChatId: string
       project: { id: string; name: string; path: string }
+    }
+  | {
+      command: "permissions.ui.get"
+    }
+  | {
+      command: "permissions.ui.control"
+      operation:
+        | "select-mode"
+        | "set-scope"
+        | "set-remember"
+        | "set-custom-capability"
+        | "set-custom-reviewed"
+        | "apply"
+        | "cancel"
+      mode?: "read-only" | "ask-before-edits" | "auto-edit-project-only" | "full-access" | "custom"
+      scope?: "all-chats" | "current-chat"
+      enabled?: boolean
+      capability?: string
     }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
@@ -62,8 +88,12 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "shortcuts.get",
       "shortcuts.mutate",
       "settings.get",
+      "settings.legacy.get",
+      "settings.legacy.mutate",
       "settings.control",
       "chat.select",
+      "permissions.ui.get",
+      "permissions.ui.control",
     ].includes(String(value.command))
   ) {
     return null
@@ -120,6 +150,23 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       }
     }
   }
+  if (value.command === "settings.legacy.mutate") {
+    if (
+      value.activeTab !== undefined &&
+      (typeof value.activeTab !== "string" ||
+        value.activeTab.length < 1 ||
+        value.activeTab.length > 100)
+    ) {
+      return null
+    }
+    if (
+      value.ctrlTabTarget !== undefined &&
+      !["workspaces", "agents"].includes(String(value.ctrlTabTarget))
+    ) {
+      return null
+    }
+    if (value.activeTab === undefined && value.ctrlTabTarget === undefined) return null
+  }
   if (value.command === "chat.select") {
     if (
       typeof value.chatId !== "string" ||
@@ -141,6 +188,57 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       project.id.length > 200 ||
       project.name.length > 500 ||
       project.path.length > 4_096
+    ) {
+      return null
+    }
+  }
+  if (value.command === "permissions.ui.control") {
+    if (
+      ![
+        "select-mode",
+        "set-scope",
+        "set-remember",
+        "set-custom-capability",
+        "set-custom-reviewed",
+        "apply",
+        "cancel",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.mode !== undefined &&
+      ![
+        "read-only",
+        "ask-before-edits",
+        "auto-edit-project-only",
+        "full-access",
+        "custom",
+      ].includes(String(value.mode))
+    ) {
+      return null
+    }
+    if (value.scope !== undefined && !["all-chats", "current-chat"].includes(String(value.scope))) {
+      return null
+    }
+    if (value.enabled !== undefined && typeof value.enabled !== "boolean") return null
+    if (
+      value.capability !== undefined &&
+      (typeof value.capability !== "string" || value.capability.length > 100)
+    ) {
+      return null
+    }
+    if (value.operation === "select-mode" && value.mode === undefined) return null
+    if (value.operation === "set-scope" && value.scope === undefined) return null
+    if (
+      ["set-remember", "set-custom-reviewed"].includes(String(value.operation)) &&
+      value.enabled === undefined
+    ) {
+      return null
+    }
+    if (
+      value.operation === "set-custom-capability" &&
+      (value.capability === undefined || value.enabled === undefined)
     ) {
       return null
     }

@@ -60,6 +60,10 @@ import {
   startOpencodeDevRun,
 } from "../trpc/routers/opencode"
 import { SAFE_CHATGPT_CODEX_MODEL } from "./codex-status"
+import {
+  listPendingCodexPermissionRequests,
+  replyPendingCodexPermissionRequest,
+} from "../codex/permission-bridge"
 import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
 import { listDevAgentInputRendererStates } from "./renderer-state"
@@ -242,6 +246,38 @@ export async function requestDevRendererControl(input: DevRendererControlCommand
 
 export async function getLiveSettingsState() {
   return requestDevRendererControl({ command: "settings.get" })
+}
+
+export async function getLiveSettingsLegacyState() {
+  return requestDevRendererControl({ command: "settings.legacy.get" })
+}
+
+export async function mutateLiveSettingsLegacyState(input: {
+  activeTab?: string
+  ctrlTabTarget?: "workspaces" | "agents"
+}) {
+  return requestDevRendererControl({ command: "settings.legacy.mutate", ...input })
+}
+
+export async function getPermissionUiState() {
+  return requestDevRendererControl({ command: "permissions.ui.get" })
+}
+
+export async function controlPermissionUi(input: {
+  operation:
+    | "select-mode"
+    | "set-scope"
+    | "set-remember"
+    | "set-custom-capability"
+    | "set-custom-reviewed"
+    | "apply"
+    | "cancel"
+  mode?: "read-only" | "ask-before-edits" | "auto-edit-project-only" | "full-access" | "custom"
+  scope?: "all-chats" | "current-chat"
+  enabled?: boolean
+  capability?: string
+}) {
+  return requestDevRendererControl({ command: "permissions.ui.control", ...input })
 }
 
 export async function controlSettings(input: {
@@ -1320,6 +1356,80 @@ export async function launchTestRun(input: {
     reasoningEffort: input.reasoningEffort,
   })
   return { launched: true, runId, subChatId: subChat.id, chatId: chat.id, provider, model, cwd }
+}
+
+export async function launchHarnessTestRun(input: {
+  subChatId: string
+  prompt: string
+  harness?: "codex" | "claude-code"
+  model?: string
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
+}) {
+  const db = getDatabase()
+  const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
+  if (!subChat) throw new Error("Sub-chat not found")
+  const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
+  if (!chat || chat.archivedAt) throw new Error("Active chat not found")
+  if (!chat.projectId) throw new Error("Harness test runs require a persisted project")
+  const project = db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+  if (!project || project.archivedAt) throw new Error("Active project not found")
+  const harness = input.harness ?? subChat.harness ?? chat.harness
+  if (harness !== "codex" && harness !== "claude-code") {
+    throw new Error("Harness test runs support Codex and Claude only")
+  }
+  const prompt = input.prompt.trim()
+  if (!prompt) throw new Error("Prompt cannot be empty")
+  const runId = randomUUID()
+  const model =
+    input.model ??
+    subChat.model ??
+    chat.model ??
+    (harness === "codex" ? SAFE_CHATGPT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL_ID)
+  const run = {
+    runId,
+    chatId: chat.id,
+    subChatId: subChat.id,
+    harness,
+    prompt,
+    model,
+    reasoningEffort: input.reasoningEffort ?? "minimal",
+    permissionMode: subChat.permissionMode ?? chat.permissionMode ?? "ask-before-edits",
+    customPermissions: chat.customPermissions ?? null,
+    worktreePath: project.path,
+    projectPath: project.path,
+  } as const
+  const { createMainRunLauncher } = await import("../main-run-launcher")
+  void createMainRunLauncher()(run).catch((error: unknown) =>
+    console.warn(
+      `[dev-mcp] ${harness} test run ${runId} ended with:`,
+      error instanceof Error ? error.message : "unknown failure",
+    ),
+  )
+  return {
+    launched: true,
+    runId,
+    chatId: chat.id,
+    subChatId: subChat.id,
+    harness,
+    model,
+    permissionMode: run.permissionMode,
+    projectId: project.id,
+  }
+}
+
+export function listCodexPermissionRequests(input?: { runId?: string }) {
+  return listPendingCodexPermissionRequests(input).map((request) => ({
+    ...request,
+    title: redactSecretLikeText(request.title).slice(0, 500),
+    options: request.options.map((option) => ({
+      ...option,
+      name: redactSecretLikeText(option.name).slice(0, 200),
+    })),
+  }))
+}
+
+export function replyCodexPermissionRequest(input: { requestId: string; optionId: string }) {
+  return replyPendingCodexPermissionRequest(input)
 }
 
 export function replyApproval(input: {

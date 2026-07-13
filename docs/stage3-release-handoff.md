@@ -5,29 +5,34 @@ remains blocked on recorded package, provider, dependency, and platform rows.
 
 ## Candidate
 
-- Starting baseline: `d08502ec16764653df589894c7a1c6ecacc87ce9`.
+- Starting baseline: `03ef5bf79c3acba30d08b6843ebfbc233e7f67f0`.
 - Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
 - Branch: `codex/stage3-settings-live-closeout` in the isolated `609c` worktree.
-- Runtime: Node 22.23.1 on macOS arm64. Exact `Flapstack Dev 609c` MCP and
-  shared-lease UI proof passed; current Preview build/inspect/smoke passed
-  without launching the packaged UI.
+- Runtime: Node 22.23.1 on macOS arm64. Exact named Dev MCP and shared-lease UI
+  proof passed; current Preview build/inspect/smoke plus exact isolated
+  packaged launch, MCP, accessibility, restart, and shutdown passed.
 - Main and integration worktrees were read-only. No push, merge, publish, or
   OpenSpec archive was done.
 
 ## Safe closeout result
 
-- S3-F8-T4 and S3-F10-T3 are complete. Keyboard runtime/edit/conflict/reset,
+- S3-F7-T4, S3-F8-T4, S3-F10-T3, S3-F11-T5, and S3-F12-T1 through T5 are
+  complete. Keyboard runtime/edit/conflict/reset,
   restart persistence, real key delivery/focus suppression, write-only
   credential management, exact Dev encrypted-storage evidence, Settings
   accessibility/search, and actual clipboard behavior pass.
 - Functional live actions and assertions used the authenticated development
   MCP. Computer Use was limited to pixels, accessibility, focus, keyboard
   delivery, and clipboard initiation; the clipboard was read from the local OS.
-- Node 22.23.1 `npm run check` passes lint, formatting, TypeScript, 119 test
-  files with 879 passing and 3 skipped tests, and the production build. Four
-  affected strict OpenSpec validations and the 323-scenario release ledger pass.
-- S3-F7-T4, S3-F10-T4, S3-F11-T5, S3-F12-T1 through T5, and S3-F13-T1 through
-  T4 remain open. GPP-T4, GPP-T6, and GPP-T9 remain supporting blockers.
+- Node 22.23.1 `npm run check` passes lint, formatting, TypeScript, 125 test
+  files with 934 passing and 3 skipped tests, and the production build. Both
+  targeted strict OpenSpec validations pass.
+- GPP-T4, GPP-T6, and GPP-T9 are complete after fresh Codex ask/approve/reject,
+  exact project-boundary, all-chat/custom-default, and shared-lease dialog proof.
+- S3-F10-T4 and S3-F13-T1 through T4 remain open. The packaged macOS lifecycle
+  proved redacted encrypted create/restart/remove and no plaintext, but actual
+  Keychain trust, provider consumption, Voice dependencies, Windows/Linux, and
+  unavailable paid-provider rows remain unproved.
 
 - S3-F17-T1 is complete. The release ledger covers all active scenarios and
   feature exits and rejects coverage/dependency drift automatically.

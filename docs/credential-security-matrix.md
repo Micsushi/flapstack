@@ -45,12 +45,19 @@ fixtures. No provider credential is recorded here.
   Electron 39.8.10.
 - `npm run package:smoke:preview:mac` executed the bundled Claude 2.1.207,
   Codex 0.144.1, Whisper, and Parakeet probes.
-- Exact executable launch evidence belongs to an earlier candidate and is
-  context only after the current Settings changes. The current lane did not
-  launch Preview.
-- Packaged credential entry, encrypted-file inspection, credential restart,
-  removal, and restore remain unavailable. Therefore this run does not claim
-  packaged macOS Keychain-backed credential persistence.
+- The exact rebuilt Preview executable launched under the shared UI lease with
+  an isolated `Flapstack Preview 609c-settings-closeout` profile. Its
+  authenticated test-control descriptor was mode `0600`, reported
+  `isPackaged: true`, and was removed on shutdown.
+- A generated disposable OpenRouter value completed packaged create/status,
+  filesystem inspection, restart persistence, status, and removal. Responses
+  were redacted, the fingerprint survived restart, no plaintext match was found
+  in the isolated profile, and final status was unconfigured. The profile was
+  removed after shutdown.
+- This proves the packaged production credential service lifecycle on this
+  macOS arm64 Preview. It does not prove provider consumption, migration of a
+  real legacy source, or actual OS Keychain trust; those acceptance rows remain
+  open.
 
 ## Remaining platform and rollback evidence
 

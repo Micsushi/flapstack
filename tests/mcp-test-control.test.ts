@@ -54,6 +54,8 @@ describe("dev MCP test-control registry", () => {
       "remove_credential",
       "get_settings_state",
       "control_settings",
+      "get_settings_legacy_state",
+      "mutate_settings_legacy_state",
       "get_visible_copy_search_state",
       "select_test_chat",
       "get_shortcut_state",
@@ -83,11 +85,17 @@ describe("dev MCP test-control registry", () => {
       "mutate_project_provider_extension",
       "get_permission_state",
       "set_permission_default",
+      "set_permission_change_behavior",
       "set_chat_permission",
       "preview_permission",
+      "get_permission_ui_state",
+      "control_permission_ui",
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
+      "launch_harness_test_run",
+      "list_codex_permission_requests",
+      "reply_codex_permission_request",
       "inject_agent_input_request",
       "reply_agent_input_request",
       "reply_approval",
@@ -135,6 +143,40 @@ describe("dev renderer Settings control boundary", () => {
     ).toEqual({ domains: ["credentials", "permissions"] })
     expect(parseDevMcpSettingsInvalidation({ domains: ["credentials", "filesystem"] })).toBeNull()
     expect(parseDevMcpSettingsInvalidation({ domains: [] })).toBeNull()
+  })
+
+  it("accepts bounded legacy and permission UI controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        activeTab: "beta",
+        ctrlTabTarget: "agents",
+      }),
+    ).toMatchObject({ command: "settings.legacy.mutate", activeTab: "beta" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        ctrlTabTarget: "unsafe",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-custom-capability",
+        capability: "network",
+        enabled: false,
+      }),
+    ).toMatchObject({ operation: "set-custom-capability", capability: "network" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-scope",
+      }),
+    ).toBeNull()
   })
 
   it("accepts only bounded chat-selection identities from the main process", () => {

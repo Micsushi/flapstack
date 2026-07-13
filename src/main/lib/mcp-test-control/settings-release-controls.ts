@@ -145,6 +145,12 @@ export async function setPermissionDefault(input: {
   return result
 }
 
+export async function setPermissionChangeBehavior(input: { behavior: PermissionChangeBehavior }) {
+  const result = await permissionsRouter.createCaller(callerContext).setChangeBehavior(input)
+  notifySettingsChanged(["permissions"])
+  return result
+}
+
 export async function setChatPermission(input: {
   chatId: string
   mode: PermissionMode

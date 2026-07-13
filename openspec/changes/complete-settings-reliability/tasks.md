@@ -86,7 +86,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F7-T4 - Prove the hidden surface in the real app
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Honest Settings Surface
 - Outcome: The release-facing hide is proven in the correct dev profile and the
   full repository gate passes.
@@ -102,13 +102,14 @@ features. Stage and feature README files are navigation routers only.
   - Existing stored data remains present and hidden legacy permission values
     show change-required without becoming selectable.
 - Verification: Node 22 full gate plus verified live dev smoke.
-- Remaining verification: this exact `609c` checkout passes Node 22
-  `npm run check` with 119 test files, 879 passing tests, 3 skipped tests, and a
-  production build. `npm run dev:verify` identifies this worktree and isolated
-  profile. Authenticated MCP proved hidden-route/search policy and preserved
-  project selection. Accessibility inspection proved the visible credential
-  search surface. A representative live legacy permission value and the final
-  post-lease visual matrix remain open.
+- Verification evidence: the exact isolated `609c` Dev instance exposed its
+  checkout/profile through a mode-`0600` authenticated MCP descriptor.
+  MCP proved all 13 visible routes, 19 stable control targets, hidden search
+  filtering, project selection, raw legacy tab preservation, normalized legacy
+  routing, and the released quick-switch target. Shared-lease accessibility
+  inspection proved the visible sidebar/search surface and rendered an
+  OpenRouter legacy project-only value as `Legacy mode - change required`
+  without offering it as a new choice. `npm run dev:verify` passed.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F7-T1, S3-F7-T2, S3-F7-T3.
 - Blocks: S3-F8-T1 unless headless-only work is explicitly accepted;
@@ -558,7 +559,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F11-T5 - Promote extension surfaces with provider evidence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Skills, Plugins, and Custom Agents expose only proven provider paths
   and carry an honest platform/provider matrix.
@@ -580,18 +581,16 @@ secret-store and unlocked Settings proof remain open.
   tokens, cleanup, and macOS arm64 Preview build/launch/binary/resource smoke.
   The package ran from its exact bundle and Preview profile and its absent dev
   descriptor failed closed, preserving the product/dev MCP boundary.
-- Remaining verification: shared-lease UI proof now covers Settings search,
-  Keyboard, write-only credentials, and copy, but not provider-extension
-  inventory/mutations or packaged user-local discovery. Trigger user-local
-  discovery through the packaged Settings surface. The integrated
-  S3-F11-T4 evidence remains the current Claude skill/command/custom-agent
-  consumption proof because new budget-bounded Claude attempts did not return a
-  token. Windows/Linux package rows remain explicitly unavailable.
 - 2026-07-13 `609c` closeout: authenticated MCP listed 73 content-redacted
   user/project items and project-ID-rooted Codex skill create/update/delete
   passed with cleanup. Arbitrary paths are not accepted; nested symlink and
-  parent-swap regressions fail closed. Current Preview build/inspect/smoke pass.
-  Packaged user-local discovery and Windows/Linux remain open.
+  parent-swap regressions fail closed. The rebuilt unsigned macOS arm64 Preview
+  passed package inspection/smoke, launched from the exact bundle in an isolated
+  profile, discovered the same 73 user-local Claude/Codex extensions through
+  MCP, and rendered provider, scope, kind, and runtime badges in the packaged
+  Skills accessibility tree. Integrated S3-F11-T4 remains the runtime-
+  consumption authority. Windows/Linux remain explicitly unavailable and are
+  not inferred from macOS.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -601,7 +600,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F12-T1 - Reconcile active permission ownership and eligibility matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The follow-on begins from the closed provider synchronization change
   and an evidence-backed provider/mode eligibility matrix.
@@ -619,15 +618,15 @@ secret-store and unlocked Settings proof remain open.
   GPP-T9, and GPP-T10.
 - Blocks: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Relevant context: active permission proposal/design/tasks and provider adapters.
-- 2026-07-13 implementation evidence: ownership is reconciled in code and the
-  five-mode matrix now distinguishes selectable from exact/conservative/
-  best-effort/unavailable. Project-only stays unselectable for every provider,
-  including Codex, until live outside-boundary proof closes GPP-T4. This task
-  remains open on its stated GPP dependencies and S3-F7-T2.
+- 2026-07-13 closeout evidence: ownership is reconciled and the five-mode matrix
+  distinguishes selectable from exact/conservative/best-effort/unavailable.
+  Live Codex proof closed GPP-T4: project writes auto-ran while `/tmp` produced
+  a redacted pending request and remained absent after rejection. Codex alone
+  now exposes exact project-only; conservative providers remain unavailable.
 
 ### S3-F12-T2 - Add durable custom defaults across the permission hierarchy
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The existing exact per-chat custom schema gains coherent global,
   project, and task defaults without changing future-chat behavior accidentally.
@@ -650,13 +649,13 @@ secret-store and unlocked Settings proof remain open.
 - 2026-07-13 implementation evidence: schema v1, legacy migration, durable
   global/project/task/chat defaults, copy-on-create, immutable run snapshots,
   atomic all-chat custom, fail-closed parsing, and current-chat capability UI
-  are implemented and covered by focused persistence tests. Acceptance remains
-  open because T1 is blocked and live Settings proof is unavailable while the
-  Mac is locked.
+  are implemented and covered by focused persistence tests. Authenticated live
+  UI control applied a complete reviewed schema v1 to all-chat global, project,
+  active, archived, and future-chat defaults, then read it back exactly.
 
 ### S3-F12-T3 - Enforce custom capabilities across providers
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: Claude, Codex, Cursor, OpenRouter, and NanoGPT consume each custom
   capability through native controls or conservative Flapstack approvals.
@@ -678,11 +677,13 @@ secret-store and unlocked Settings proof remain open.
   unknown/disabled capabilities deny conservatively; product read/write/Tier 3
   and third-party MCP stay separate; Tier 3 still requires the Stage 3 gate.
   Cursor and OpenCode mappings are explicitly conservative, not parity claims.
-  Acceptance remains open on T1/T2/GPP-T9 and provider-live proof.
+  Live preview/readback covered Claude, Codex, Cursor, OpenRouter, and NanoGPT;
+  the Codex project-boundary run and product-MCP matrix closed the exact live
+  and GPP-T9 dependencies without widening conservative providers.
 
 ### S3-F12-T4 - Prove exact project-only eligibility per provider
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: `auto-edit-project-only` appears only where outside-project mutation
   is deterministically asked or denied.
@@ -703,8 +704,12 @@ secret-store and unlocked Settings proof remain open.
 - Relevant context: project/worktree roots, provider sandboxes, path safety.
 - 2026-07-13 implementation evidence: canonical path, traversal, symlink escape,
   and dangling-symlink tests pass. Claude host callbacks use the boundary helper.
-  Codex ACP workspace-write mapping is unit-tested but remains best-effort and
-  unselectable until an unlocked live outside-project attempt proves exactness.
+  Codex ACP workspace-write initially exposed `/tmp` as writable; the installed
+  agent patch now excludes `TMPDIR` and `/tmp`. A fresh live run auto-wrote the
+  in-project marker, emitted a redacted approval for `/tmp`, rejected once,
+  left the outside marker absent, and completed without leaking raw output.
+  Codex is exact/selectable; all other providers remain hidden for new
+  project-only selection.
 - 2026-07-13 security repair evidence: project-boundary MCP and renderer
   attachment writes now share no-follow/exclusive rooted writes, same-directory
   atomic replacement, and immediate root/parent/final inode and realpath
@@ -714,7 +719,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F12-T5 - Promote eligible permission modes and close the matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: Custom and project-only choices return only for contexts with proven
   enforcement and clear limitations.
@@ -733,10 +738,12 @@ secret-store and unlocked Settings proof remain open.
 - Relevant context: permission Settings/chat selectors, previews and run records.
 - 2026-07-13 implementation evidence: provider-aware selectors, change-required
   legacy rendering, custom capability controls, durable run snapshots, and
-  package bridge assertions are implemented. Full Node 22 `npm run check` and
-  unsigned macOS Preview packaging pass; the package includes migration 0019,
-  stale-session recovery, and Codex MCP identity preservation. The row remains
-  open because T2-T4 acceptance and unlocked live UI proof are not complete.
+  package bridge assertions are implemented. Live MCP and shared-lease
+  accessibility proved all-chat/current-chat dialogs, remembered scope,
+  reviewed custom controls, Codex project-only selection, legacy change-
+  required rendering, and archived-chat propagation. The rebuilt unsigned
+  macOS Preview launched with the same production renderer bridge. Unsupported
+  provider modes remain unavailable rather than being claimed as parity.
 
 ## S3-F13 - Copy and Search Consistency
 
@@ -783,6 +790,13 @@ secret-store and unlocked Settings proof remain open.
   launcher-owned registration metadata is required for product authority, so
   duplicate case variants cannot elevate. Live Settings and provider UI rows
   remain unchecked.
+- 2026-07-13 shared-lease closeout: authenticated MCP enumerated every visible
+  copy/search route and bounded visible chat text; real accessibility inspection
+  covered provider-specific permission/extension labels, and actual OS
+  clipboard proof used an isolated marker-only chat. The copied handoff
+  contained the visible marker/guard text and no hidden payload. This row stays
+  unchecked only because its declared S3-F9-T5 and S3-F10-T4 release
+  dependencies remain unavailable.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 
@@ -813,6 +827,11 @@ secret-store and unlocked Settings proof remain open.
   legacy content, and private/tool exclusions. Registry/search/navigation and
   full-history regressions pass. Completion remains open because T1 and live
   target review remain open.
+- 2026-07-13 shared-lease closeout: MCP verified all 13 visible routes and 19
+  stable control targets, all 19 label searches, no hidden beta route, and no
+  unavailable OpenRouter alias. Real Cmd+F, listbox selection, Down/Enter
+  delivery, provider filter focus, and Skills target navigation passed. The
+  row stays unchecked only on its declared T1 dependency.
 
 ### S3-F13-T3 - Verify Settings discovery and accessibility
 
@@ -841,6 +860,11 @@ secret-store and unlocked Settings proof remain open.
   Down/Enter delivery, API Providers navigation, and focus transfer into the
   selected provider card. Completion remains open on T1/T2 dependency truth
   and the full every-visible-target matrix.
+- 2026-07-13 shared-lease closeout: the every-visible-target matrix passed over
+  MCP; real accessibility proved sidebar labels, search focus, selected result
+  context, focus transfer, permission dialog scope copy, Keyboard labels, and
+  packaged Skills discovery. The row stays unchecked only on T1/T2 dependency
+  truth.
 
 ### S3-F13-T4 - Run the Settings Hardening release gate
 
@@ -886,6 +910,12 @@ secret-store and unlocked Settings proof remain open.
   reset. The task remains open on F7/F9/F10-F12 exits, packaged credential and
   provider discovery, the every-visible-target sweep, and Windows/Linux.
 - Final candidate automation: Node 22.23.1 `npm run check` passed lint,
-  formatting, TypeScript, 119 test files with 879 passing and 3 skipped tests,
-  and the production build. All four affected strict OpenSpec validations and
-  release-ledger coverage for 18 changes, 323 scenarios, and 17 exits pass.
+  formatting, TypeScript, 125 test files with 934 passing and 3 skipped tests,
+  and the production build. Both targeted strict OpenSpec validations pass.
+- Continuation evidence: S3-F7-T4, S3-F11-T5, and S3-F12-T1 through T5 now
+  close with exact Dev/Preview MCP and shared-lease UI proof. The final macOS
+  arm64 Preview launched, discovered 73 user-local extensions, and completed a
+  disposable encrypted credential create/restart/remove lifecycle with no
+  plaintext observed. S3-F13-T1 through T4 remain unchecked because Voice,
+  packaged credential consumption/actual Keychain trust, and Windows/Linux are
+  still unavailable; no such result is inferred from the safe closeout.

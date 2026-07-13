@@ -39,6 +39,7 @@ import {
   subChatsQuickSwitchOpenAtom,
   subChatsQuickSwitchSelectedIndexAtom,
   type CtrlTabTarget,
+  getReleasedCtrlTabTarget,
   chatSourceModeAtom,
 } from "../../../lib/atoms"
 import { NewChatForm } from "../main/new-chat-form"
@@ -1508,7 +1509,4 @@ export function AgentsContent() {
       <AgentsContentInner />
     </DictationSessionProvider>
   )
-}
-function getReleasedCtrlTabTarget(): CtrlTabTarget {
-  return "workspaces"
 }

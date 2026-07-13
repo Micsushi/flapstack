@@ -64,10 +64,12 @@ describe("Settings release visibility", () => {
       "src/renderer/components/dialogs/settings-tabs/agents-preferences-tab.tsx",
     )
     const content = readSource("src/renderer/features/agents/ui/agents-content.tsx")
+    const atoms = readSource("src/renderer/lib/atoms/index.ts")
     expect(preferences).not.toContain("preferences-quick-switch")
     expect(preferences).not.toContain("ctrlTabTargetAtom")
     expect(content).not.toContain("ctrlTabTargetAtom")
     expect(content).toContain("const ctrlTabTarget = getReleasedCtrlTabTarget()")
-    expect(content).toContain('return "workspaces"')
+    expect(atoms).toContain("export function getReleasedCtrlTabTarget")
+    expect(atoms).toContain('return "workspaces"')
   })
 })
