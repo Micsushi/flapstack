@@ -84,6 +84,7 @@ import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 import { ProjectVaultView } from "../../project-vault/project-vault-view"
+import { AutomationsDetailView, AutomationsView, InboxView } from "../../automations"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -1149,7 +1150,13 @@ function AgentsContentInner() {
     return (
       <div className="flex h-full bg-background" data-agents-page data-mobile-view>
         {/* Mobile: Settings fullscreen view */}
-        {desktopView === "settings" ? (
+        {desktopView === "automations" ? (
+          <AutomationsView />
+        ) : desktopView === "automations-detail" ? (
+          <AutomationsDetailView />
+        ) : desktopView === "inbox" ? (
+          <InboxView />
+        ) : desktopView === "settings" ? (
           <SettingsContent />
         ) : desktopView === "usage" ? (
           <div className="h-full overflow-y-auto select-text">
@@ -1281,7 +1288,13 @@ function AgentsContentInner() {
 
         {/* Main content */}
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
-          {desktopView === "settings" ? (
+          {desktopView === "automations" ? (
+            <AutomationsView />
+          ) : desktopView === "automations-detail" ? (
+            <AutomationsDetailView />
+          ) : desktopView === "inbox" ? (
+            <InboxView />
+          ) : desktopView === "settings" ? (
             <SettingsContent />
           ) : desktopView === "usage" ? (
             <div className="h-full overflow-y-auto select-text">
