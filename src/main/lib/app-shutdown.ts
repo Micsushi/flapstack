@@ -12,6 +12,7 @@ export type AppShutdownSteps = {
   cancelPendingOAuth(): void | Promise<void>
   stopDevMcpServer(): void | Promise<void>
   stopProductMcpBridge(): void | Promise<void>
+  stopMobileBridge(): void | Promise<void>
   cleanupGitWatchers(): void | Promise<void>
   shutdownAnalytics(): void | Promise<void>
   closeDatabase(): void | Promise<void>
@@ -32,6 +33,7 @@ export async function runAppShutdown(steps: AppShutdownSteps): Promise<void> {
   await run(steps.cancelPendingOAuth)
   await run(steps.stopDevMcpServer)
   await run(steps.stopProductMcpBridge)
+  await run(steps.stopMobileBridge)
   await run(steps.cleanupGitWatchers)
   await run(steps.shutdownAnalytics)
   await run(steps.closeDatabase)
