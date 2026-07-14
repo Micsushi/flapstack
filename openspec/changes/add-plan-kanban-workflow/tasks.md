@@ -44,6 +44,13 @@
 ### S4-F9-T4 — Replace chat-derived Kanban with real task cards
 
 - [ ] Completion: acceptance and verification passed
+- Evidence (code-ready; UI proof pending): Node 22
+  `npx vitest run tests/task-kanban.test.ts tests/plan-kanban-schema.test.ts` passes 10 focused
+  service/schema/selector/keyboard/accessibility tests; focused ESLint/Prettier and strict
+  OpenSpec validation pass. A full TypeScript pass succeeded before final polling/invalidation
+  edits; its final rerun was stopped without errors after 12 minutes of ten-worktree TypeScript
+  contention. Live task navigation, drag/drop, keyboard, screen-reader, and stale/error
+  walkthroughs remain unverified.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Project Kanban lists and moves durable tasks in fixed columns.
 - Scope: Task board query; backlog/planned/in-progress/review/done columns; ordering/rebalance; versioned move; filters; archive/done; card task/chat/run summaries; keyboard drag alternative; accessibility.

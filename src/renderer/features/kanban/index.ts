@@ -1,5 +1,4 @@
 export { KanbanView } from "./kanban-view"
 export { KanbanBoard } from "./components/kanban-board"
 export { KanbanColumn } from "./components/kanban-column"
-export { KanbanCard, type KanbanCardData } from "./components/kanban-card"
-export { deriveWorkspaceStatus, type SubChatStatus } from "./lib/derive-status"
+export { KanbanCard, type TaskKanbanCardData } from "./components/kanban-card"
