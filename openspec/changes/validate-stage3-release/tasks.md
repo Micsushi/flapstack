@@ -156,6 +156,13 @@ feature-local closeout gates.
   terminal state. Migration, run-launch, orchestration, Usage store, scheduler,
   and daemon lifecycle regressions pass under Node 22. T4 remains unchecked and
   blocked by T2/T3; no UI, provider-live, package, or platform row is promoted.
+- 2026-07-14 correctness/data follow-up: the reported stale project/tab state
+  traced to development controls selecting direct-DB fixtures before refreshing
+  renderer project/chat queries. The headless repair refreshes list and exact
+  chat caches first, rejects stale identities, clears incompatible active
+  chat/sub-chat state, and opens the requested parent tab synchronously. Focused
+  control/selection tests and TypeScript pass. The UI observation was not rerun
+  under this lane's UI prohibition, so T4 remains unchecked.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

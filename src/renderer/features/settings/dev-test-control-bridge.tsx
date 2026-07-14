@@ -11,7 +11,13 @@ import {
 import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
 import { trpc } from "../../lib/trpc"
-import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from "../agents/atoms"
+import {
+  desktopViewAtom,
+  openAgentChatIdsAtom,
+  selectedAgentChatIdAtom,
+  selectedChatIsRemoteAtom,
+  selectedProjectAtom,
+} from "../agents/atoms"
 import { readRendererOrchestrationCard } from "../agents/lib/orchestration-test-state"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
 import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
@@ -23,6 +29,7 @@ import {
   widgetVisibilityAtomFamily,
 } from "../details-sidebar/atoms"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
+import { chatBelongsToProject, refreshDevSelectionSnapshot } from "./dev-test-selection-refresh"
 
 function boundedCarryoverDataset(
   element: HTMLElement,
@@ -154,8 +161,34 @@ export function DevTestControlBridge() {
           appStore.set(agentsSettingsDialogOpenAtom, true)
           nextState = { ...nextState, settingsOpen: true, searchQuery: query }
         } else {
+          const snapshot = await refreshDevSelectionSnapshot({
+            invalidateProjects: () => trpcUtils.projects.list.invalidate(),
+            fetchProjects: () => trpcUtils.projects.list.fetch(),
+            invalidateChats: () => trpcUtils.chats.list.invalidate(),
+            fetchChats: () => trpcUtils.chats.list.fetch({}),
+          })
+          if (
+            request.project &&
+            !snapshot.projects.some((project) => project.id === request.project?.id)
+          ) {
+            window.desktopApi.respondDevRendererControl({
+              requestId: request.requestId,
+              ok: false,
+              error: "Selected project is no longer active",
+            })
+            return
+          }
+          const selectedChatId = appStore.get(selectedAgentChatIdAtom)
+          if (!chatBelongsToProject(snapshot.chats, selectedChatId, request.project?.id ?? null)) {
+            appStore.set(selectedAgentChatIdAtom, null)
+            appStore.set(selectedChatIsRemoteAtom, false)
+            useAgentSubChatStore.getState().setChatId(null)
+          }
           appStore.set(selectedProjectAtom, request.project ?? null)
-          nextState = { ...nextState, selectedProject: request.project ?? null }
+          nextState = {
+            ...nextState,
+            selectedProject: request.project ?? null,
+          }
         }
         window.desktopApi.respondDevRendererControl({
           requestId: request.requestId,
@@ -165,12 +198,35 @@ export function DevTestControlBridge() {
         return
       }
       if (request.command === "chat.select") {
-        await trpcUtils.chats.list.invalidate()
-        await trpcUtils.chats.list.fetch({})
+        const snapshot = await refreshDevSelectionSnapshot(
+          {
+            invalidateProjects: () => trpcUtils.projects.list.invalidate(),
+            fetchProjects: () => trpcUtils.projects.list.fetch(),
+            invalidateChats: () => trpcUtils.chats.list.invalidate(),
+            fetchChats: () => trpcUtils.chats.list.fetch({}),
+            invalidateChat: (chatId) => trpcUtils.chats.get.invalidate({ id: chatId }),
+            fetchChat: (chatId) => trpcUtils.chats.get.fetch({ id: chatId }),
+          },
+          request.chatId,
+        )
+        const projectActive = snapshot.projects.some((project) => project.id === request.project.id)
+        if (!projectActive || snapshot.targetChat?.projectId !== request.project.id) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error: "Test chat project state is stale",
+          })
+          return
+        }
         const store = useAgentSubChatStore.getState()
+        store.setChatId(null)
         store.queueNavigation(request.chatId, request.subChatId)
         appStore.set(selectedProjectAtom, request.project)
         appStore.set(selectedAgentChatIdAtom, request.chatId)
+        appStore.set(selectedChatIsRemoteAtom, false)
+        appStore.set(openAgentChatIdsAtom, (current) =>
+          current.includes(request.chatId) ? current : [...current, request.chatId],
+        )
         appStore.set(agentsSettingsDialogOpenAtom, false)
         if (request.showOrchestration) {
           appStore.set(detailsSidebarOpenAtom, true)
