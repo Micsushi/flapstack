@@ -483,3 +483,25 @@ Provider/CLI versions (no secrets):
 Logs/screenshots:
 Notes:
 ```
+
+### Exact integration closeout — 2026-07-14
+
+- Candidate `0a3d1af16777332dcbbe60134a4927c8dcff368b`: Node 22 full gate
+  PASS with 129 files, 960 passed, 3 conditional skips, and production build.
+  All 18 active OpenSpec changes, the 348-scenario release ledger, the
+  29-row/14-scenario Usage matrix, and development daemon smoke pass.
+- Exact verified Dev passed credentialed Cursor, OpenRouter, NanoGPT, Codex,
+  and Claude runs; native Claude structured question answer/resume; Usage
+  refresh; Discord HTTP 204; Settings/Usage inspection; and both new-chat and
+  active-chat model-tuning inspection. All test chats were archived.
+- A real two-file Codex response exposed recoverable production Review state
+  and Undo restored the clean fixture. This is functional evidence only: the
+  Mac locked before the fresh card pixels and conflict variants were captured.
+- Exact unsigned arm64 Preview build, inspection, bundled-runtime smoke,
+  startup/migrations/window creation, shutdown, and cleanup pass. Exact
+  packaged Usage LaunchAgent polling remains blocked in the locked GUI session.
+- Remaining manual exits: full-history copy menus, today/older timestamps,
+  fresh Review/Undo visuals, background question notification/badge and
+  multi-chat lifecycle, then dependent aggregate exits and S3-F17 review.
+  Windows/Linux are deferred to Stage 4; signing/notarization and Admin usage
+  keys are future considerations.

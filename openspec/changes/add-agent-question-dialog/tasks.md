@@ -378,7 +378,7 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 ## Feature Exit Checklist
 
 - [x] One shared contract, lifecycle owner, transport, persistence path, and renderer UI.
-- [ ] Claude native path passes.
+- [x] Claude native path passes.
 - [x] Codex declared capability path passes.
 - [x] Cursor declared capability path passes.
 - [x] OpenRouter and NanoGPT pass through one OpenCode adapter.
@@ -398,3 +398,11 @@ No exact notification navigation or multi-chat visual lifecycle evidence could b
 collected. Q11 remains open for that live proof; Q12 remains open for credentialed
 Claude, Codex, Cursor, OpenRouter, and NanoGPT stop/reload/delivery evidence; Q13
 and the four remaining exit rows stay open behind Q11/Q12.
+
+2026-07-14 exact-candidate Claude proof: verified Dev commit `0a3d1af` received
+native `AskUserQuestion` request `toolu_01Sbbqc4FBASMry3pKd1jDoh` in run
+`48ac0ccd-1610-43a8-8e5e-7a179bdc2275`. The shared persisted lifecycle
+hydrated the dialog, accepted structured answer `Yes`, resumed the same run,
+and completed with `STAGE3_FINAL_QUESTION_ANSWERED`. The chat was archived.
+This closes the Claude native feature-exit row only. Q11 notification/badge
+navigation and the complete Q12 stop/reload/provider matrix remain open.

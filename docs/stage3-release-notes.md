@@ -16,16 +16,19 @@ Status: release candidate under validation; not Stage 3 complete.
 
 ## Required evidence still open
 
-- Complete real-provider Codex/Claude MCP exposure, approval, audit, spawn,
-  stop, and restart UI. MCP-first closeout passed a real Claude-to-Codex target
-  launch plus stdio/approval/stop/restart controls, but the reverse Claude
-  target launch failed and remaining visual/provider-caller rows stay open.
-- Visual Settings, Usage, provider, reasoning, accessibility, clipboard, Voice,
-  microphone, and Keychain-backed credential lifecycle on unlocked macOS.
-- Same-candidate UI-live provider/reasoning evidence where task boards require
-  it, including Claude/Codex/Cursor recapture.
-- Windows and Linux package, service, secret-store, and UI evidence.
-- S3-F17 independent review rounds after automated and live release gates pass.
+- On unlocked macOS, visually close full-history copy, today/older timestamps,
+  the fresh two-file Review/Undo card, and background question notification/
+  badge navigation with multiple chats.
+- Rerun exact packaged Preview Usage LaunchAgent polling/restart/cleanup while
+  the GUI session is unlocked.
+- Close the remaining question stop/reload/provider aggregate and dependent
+  task-board exits, then run the frozen-SHA release gates and independent S3-F17
+  review rounds.
+
+Exact-candidate Cursor, OpenRouter, NanoGPT, Codex, Claude, native Claude
+question, Usage refresh, Discord HTTP 204, Dev identity, model-tuning UI, and
+unsigned macOS Preview package/startup evidence now pass. Windows/Linux are
+deferred to the end of Stage 4 by release decision.
 
 No open row is promoted by fixture, prior-SHA, headless, macOS-only, or package
 inspection evidence. See `docs/stage3-release-candidate-ledger.md` for the exact

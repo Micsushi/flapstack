@@ -263,3 +263,29 @@ retain an exact provider limitation as BLOCKED. Repeat the existing Cursor
 `launch_harness_test_run`. Finish by listing pending approvals, archiving every
 probe chat, and confirming zero isolated OpenCode temp directories. Do not copy
 IDs or pass claims from this base to the final integration SHA.
+
+## 2026-07-14 exact integration provider rerun
+
+Verified candidate `0a3d1af16777332dcbbe60134a4927c8dcff368b`
+ran from `Flapstack Dev stage3-finish` after `npm run dev:verify` passed.
+
+- Cursor run `075a5837-f1f9-4930-a275-2cd0ba5d03bf`: PASS.
+- OpenRouter raw catalog model `openai/gpt-oss-20b:free` normalized to
+  `openrouter/openai/gpt-oss-20b:free`; run
+  `432bfe78-7a5c-45c7-815a-2df3a2af880e`: PASS, reported cost `$0`.
+- NanoGPT raw catalog model `zai-org/glm-4.7-flash` normalized to
+  `nanogpt/zai-org/glm-4.7-flash`; run
+  `9734f25e-64cf-4845-a55d-f18af9326af3`: PASS, estimated cost `$0`.
+- Codex run `88659855-8f6c-42c1-9b9b-12c7cbc51003`: PASS.
+- Claude run `f41eae0b-9a97-49e7-b03f-cbe85e5874a7`: PASS, cost
+  `$0.119855`.
+- Native Claude question run `48ac0ccd-1610-43a8-8e5e-7a179bdc2275`
+  persisted and rendered request `toolu_01Sbbqc4FBASMry3pKd1jDoh`, accepted
+  structured answer `Yes`, resumed the same run, and completed: PASS.
+- All probe chats were archived; pending approvals and temporary OpenCode
+  sidecars were zero. Conservative cumulative Stage 3 provider spend was
+  `$0.76064943`, below the approved `$2` ceiling.
+
+The Mac locked before background notification/badge navigation and the complete
+multi-chat stop/reload matrix could be visually closed. Those aggregate rows
+remain open; provider credential-path closure is no longer a blocker.

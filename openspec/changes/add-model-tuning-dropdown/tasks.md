@@ -21,8 +21,14 @@
 
 - [x] 4.1 Add focused tests for visible labels, effort selection, supported fast mode, unsupported fast-mode hiding, and model-switch reset behavior.
 - [x] 4.2 Run formatting, lint, strict TypeScript, focused tests, and the production build.
-- [ ] 4.3 Run `npm run dev:verify` and manually verify both new-chat and active-chat controls in the `Flapstack Dev` profile.
+- [x] 4.3 Run `npm run dev:verify` and manually verify both new-chat and active-chat controls in the `Flapstack Dev` profile.
 
 2026-07-13 lane attempt: `npm run dev:verify` passed for the isolated `ee39-ux`
 profile. Locked macOS prevented manual inspection of both new-chat and
 active-chat controls, so task 4.3 remains open.
+
+2026-07-14 exact-candidate closeout: commit `0a3d1af` passed
+`npm run dev:verify` from the integration checkout with the isolated
+`Flapstack Dev stage3-finish` profile. Manual UI and accessibility inspection
+confirmed the `Opus 4.8` / `High` tuning control in both the new-chat composer
+and an active Claude chat. Task 4.3 is complete.

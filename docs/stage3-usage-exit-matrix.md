@@ -260,3 +260,30 @@ For Discord, read `discord.webhook_url` from the final profile's namespaced OS
 credential store via stdin, post one bounded embed, emit only `{ok,status}`, and
 expect HTTP 204. Never place or print the webhook in argv, environment, logs, or
 evidence. U10 threshold/daemon persistence and Windows/Linux rows remain open.
+
+## 2026-07-14 exact integration Usage rerun
+
+Candidate `0a3d1af16777332dcbbe60134a4927c8dcff368b` passed
+`npm run dev:verify` with `Flapstack Dev stage3-finish`.
+
+- Manual refresh PASS: Codex inserted 1 sample, Anthropic 2, Cursor 2, and
+  OpenRouter 2. NanoGPT inserted 0 and truthfully remained
+  `run-usage-only`.
+- Manual UI PASS before lock: Usage Settings rendered Codex, Claude, Cursor,
+  and OpenRouter cards; Settings search for `usage` returned Usage and Share
+  usage analytics.
+- Discord transport PASS: one bounded embed returned HTTP 204. The namespaced
+  Keychain value was read only in memory and did not appear in argv,
+  environment, output, or tracked evidence.
+- Exact unsigned arm64 Preview build, package inspection, clean-HOME bundled
+  runtime smoke, startup, 23 migrations, main-window creation, clean shutdown,
+  and cleanup PASS.
+- Exact packaged Preview Usage LaunchAgent polling remained BLOCKED after the
+  Mac locked. The launchd job started with the correct executable, arguments,
+  and environment, but the locked GUI session never produced the daemon status
+  row. Earlier unlocked lane evidence remains historical, not exact-SHA proof.
+- Cleanup PASS: no exact Dev/Preview process, Usage job/plist, disposable
+  profile, test project, Usage sample, or temporary sidecar remained.
+
+Windows/Linux are deferred to the end of Stage 4. Admin usage keys and Apple
+distribution signing/notarization are future considerations, not Stage 3 rows.

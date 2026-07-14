@@ -1,8 +1,8 @@
 # Stage 3 release candidate ledger
 
-Status: integrated Stage 3 automation verified. This ledger does not claim
-Stage 3 release completion while real-provider, complete live UI, credential,
-package, or platform rows remain open.
+Status: exact-candidate automation, provider, Usage, Dev, and macOS package
+evidence recorded. Stage 3 is not complete while the remaining locked-macOS
+manual rows and exact packaged Usage daemon row remain open.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
 notarization are deferred to `docs/future-release-considerations.md`. Neither is
@@ -10,15 +10,14 @@ a Stage 3 acceptance row.
 
 ## Candidate header
 
-- Candidate source: the exact commit containing this ledger, resolved with
-  `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Integration baseline: `821c9cd2d6b1c2931da52b98f19eab23b3e965db`.
-- Checkout: `/Users/michaelshi/.codex/worktrees/cdd7/flapstack` on
-  `codex/stage3-release-final-cdd7`; `main` remains untouched.
-- Profile isolation: worker-lane Dev and Preview evidence remains historical
-  until the integrated candidate reruns its exact checkout/profile gates.
-- Supported release runtime: Node 22. macOS arm64 is locally available;
-  Windows and Linux are unavailable in this lane.
+- Candidate source: `0a3d1af16777332dcbbe60134a4927c8dcff368b`.
+- Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
+  on `codex/stage3-integration`; `main` remains untouched.
+- Profile isolation: exact Dev used `Flapstack Dev stage3-finish`; exact Preview
+  used a disposable `Flapstack Preview stage3-final` profile.
+- Supported release runtime: Node 22 on macOS arm64. Exact Dev evidence used
+  22.22.1; the final documentation gate used 22.23.1. Windows and Linux are
+  explicitly deferred to the end of Stage 4 and do not block Stage 3.
 - Result vocabulary: only PASS satisfies a required row. FAIL, BLOCKED, and
   NOT RUN remain release-open.
 
@@ -88,31 +87,63 @@ S3-F6, F9, F10, F12, F13, F14, F15, and F16 to feed S3-F17.
 <!-- stage3-release-feature: S3-F16 | exit=S3-F16-T5 | depends=S3-F10,S3-F15 -->
 <!-- stage3-release-feature: S3-F17 | exit=S3-F17-T5 | depends=S3-F6,S3-F9,S3-F10,S3-F12,S3-F13,S3-F14,S3-F15,S3-F16 -->
 
-Current truth: S3-F1-F5 core tasks are complete. Required exits F6 and F7-F16,
-plus supporting live rows, remain open where their task boards say so. S3-F17-T2
-and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
+Current truth: implementation and exact-candidate automation are complete.
+Provider credential paths, Usage refresh, Discord transport, Dev identity, and
+unsigned macOS Preview build/startup now have exact-candidate evidence. The
+remaining feature exits are the manual rows listed in the current handoff;
+S3-F17-T2/T3/T4/T5 remain open until those rows close.
 
 ## Execution evidence
 
-| Gate                                   | Result  | Evidence or blocker                                                                                                         |
-| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                | PASS    | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
-| Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
-| Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
-| Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
-| Final security/control review          | PARTIAL | 12 Node 22 non-native files, 72 passed; native SQLite reruns remain with coordinator ABI/full gate                          |
-| S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
-| MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
-| Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
-| Usage daemon smoke                     | PASS    | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
-| Verified lane Dev profiles             | PASS    | isolated `93ea`, `609c`, `acbf`, and `c8ae` worker checkouts/profiles; integrated profile rerun pending                     |
-| macOS Preview build/inspect/smoke      | PASS    | current unsigned arm64 package; ABI/licenses/pinned runtimes; current executable launch not run                             |
-| Settings keyboard/search/credential AX | PASS    | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
-| Settings clipboard and Dev Keychain    | PASS    | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
-| Visual orchestration and MCP UI        | PENDING | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
-| Remaining live/package feature rows    | BLOCKED | provider-extension packaged discovery, packaged credential restart, other feature exits, microphone, paid-provider proof    |
-| Windows/Linux                          | BLOCKED | target hosts unavailable                                                                                                    |
-| Independent review rounds              | BLOCKED | S3-F17-T4 requires completed T2 and T3                                                                                      |
+| Gate                                   | Result   | Evidence or blocker                                                                                                         |
+| -------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Release-ledger coverage                | PASS     | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
+| Affected OpenSpec strict validation    | PASS     | all 18 active changes pass strict non-interactive validation                                                                |
+| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 129 files, 960 passed, 3 conditional skips, production build                     |
+| Security round-3 focused suite         | PASS     | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
+| Final security/control review          | PASS     | three repair rounds, focused attack suites, native SQLite coverage, and exact-candidate full gate pass                      |
+| S3-F5 focused and attack suites        | PASS     | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
+| MCP-first management closeout          | PARTIAL  | two-way real target launches and provider paths pass; remaining manual visual aggregate stays open                          |
+| Production/dev MCP separation          | PASS     | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
+| Usage daemon smoke                     | PASS     | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
+| Verified lane Dev profiles             | PASS     | exact integration checkout and isolated `Flapstack Dev stage3-finish` profile verified                                      |
+| macOS Preview build/inspect/smoke      | PASS     | exact unsigned arm64 build, inspection, clean-HOME sidecars, startup/migrations/window, shutdown, cleanup                   |
+| Settings keyboard/search/credential AX | PASS     | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
+| Settings clipboard and Dev Keychain    | PASS     | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
+| Visual orchestration and MCP UI        | PENDING  | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
+| Remaining live/package feature rows    | BLOCKED  | locked-macOS copy/timestamp/Undo/question visuals and exact packaged Usage daemon polling                                   |
+| Windows/Linux                          | DEFERRED | moved to end of Stage 4 by release decision                                                                                 |
+| Independent review rounds              | BLOCKED  | S3-F17-T4 requires completed T2 and T3                                                                                      |
+
+## 2026-07-14 exact integration closeout
+
+- Node 22 `npm run check`: PASS, 129 test files, 960 passed, 3 conditional
+  skips, lint, Prettier, TypeScript, and production build.
+- Release ledger: PASS, 18 active changes, 348 normative scenarios, 54 stable
+  rows, and 17 feature exits. All 18 active changes strict-validate.
+- Verified Dev: PASS for this checkout and `Flapstack Dev stage3-finish`.
+  New-chat and active-chat model tuning, Settings navigation, Usage cards, and
+  Usage search were manually observed before macOS locked.
+- Live providers: Cursor, OpenRouter, NanoGPT, Codex, and Claude exact-candidate
+  runs completed. Raw OpenRouter/NanoGPT catalog IDs were normalized and all
+  probe chats were archived. The bounded total spend was `$0.76064943`, below
+  the user-approved `$2` ceiling.
+- Native Claude question: PASS through request persistence, renderer hydration,
+  structured answer, same-run continuation, terminal success, and cleanup.
+- Usage refresh: PASS for Codex, Anthropic, Cursor, and OpenRouter. NanoGPT
+  truthfully reported `run-usage-only`. One Discord transport send returned
+  HTTP 204 without exposing its Keychain credential.
+- Review/Undo: a real two-file Codex response produced a recoverable change set,
+  opened stored Review state through the production renderer controls, and
+  restored both original files. Fresh pixel proof was blocked after macOS
+  locked, so undo/review task 4.4 remains open.
+- macOS Preview: unsigned arm64 build, inspection, bundled-runtime smoke, exact
+  startup, migrations, window creation, shutdown, and cleanup PASS. Apple
+  signing/notarization remains deferred public-distribution work.
+- BLOCKED: after macOS locked, exact visual clipboard/timestamps/Undo-card/
+  question-notification rows could not finish. Exact packaged Usage LaunchAgent
+  daemon polling also remained blocked in the locked GUI session. No process,
+  profile, plist, LaunchAgent, test project, or temporary sidecar was left.
 
 ### 2026-07-13 Settings closeout candidate
 

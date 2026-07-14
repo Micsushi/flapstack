@@ -1,7 +1,8 @@
 # Stage 3 integrated release handoff
 
-Status: integrated implementation and automation are green; Stage 3 release
-remains blocked on recorded live UI, provider, package, and platform rows.
+Status: exact-candidate implementation, automation, providers, Usage refresh,
+Dev, and macOS Preview evidence are green. Stage 3 remains blocked only on the
+recorded locked-macOS manual rows and exact packaged Usage daemon proof.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
 notarization are explicitly deferred to `docs/future-release-considerations.md`
@@ -10,13 +11,15 @@ and do not block Stage 3.
 ## Current candidate
 
 - Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
-- Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
+- Evidence candidate: `0a3d1af16777332dcbbe60134a4927c8dcff368b`;
+  resolve the later documentation commit with `git rev-parse HEAD`.
 - Branch: `codex/stage3-integration` in
   `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`.
-- Runtime: Node 22.23.1 on macOS arm64.
-- Current integrated automation, migrations, strict OpenSpec, and release-ledger
-  coverage pass. Exact integrated Dev, provider, Preview, and cross-platform
-  evidence remains open where the authoritative matrices say so.
+- Runtime: Node 22 on macOS arm64; exact Dev used 22.22.1 and the final
+  documentation gate used 22.23.1.
+- Exact integrated automation, migrations, strict OpenSpec, release-ledger,
+  Dev, credentialed providers, Usage refresh, Discord transport, and unsigned
+  Preview build/startup pass. Remaining proof is listed below.
 - `main` remains untouched. No push, merge, publish, or OpenSpec archive was done.
 
 ## Historical Settings lane candidate
@@ -146,16 +149,21 @@ Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
 863 passed and 3 conditional skips, and the production build. The three
 affected strict changes and release-ledger coverage pass.
 
-## Remaining human and platform proof
+## Remaining Stage 3 proof
 
-- Unlock macOS and complete visual/accessibility, clipboard, microphone,
-  Keychain credential, approval-dialog, Voice, Usage, reasoning, and provider
-  rows on the exact candidate.
-- Capture required Claude, Codex, Cursor, OpenRouter, and NanoGPT live evidence
-  without fabricating unavailable credentials or capabilities.
-- Run Windows and Linux package, secret-store, service, and UI matrices.
-- Complete every prerequisite feature exit, then rerun T2 and T3 on one frozen
-  SHA before starting independent T4 review rounds.
+- Unlock macOS and visually verify sidebar/active-chat full-history copy,
+  current/older message timestamps, the fresh real two-file Review/Undo card,
+  and background question notification/badge navigation with multiple chats.
+- Rerun the exact packaged Preview Usage LaunchAgent start/poll/restart/cleanup
+  smoke while the GUI session is unlocked.
+- Finish the remaining question stop/reload/provider-live aggregate and any
+  task-board aggregate exits that depend on these manual rows.
+- Rerun the frozen-SHA T2/T3 release gate, then complete independent T4 review
+  rounds and T5 archive/handoff.
+
+Windows/Linux proof is deferred to the end of Stage 4. Apple signing,
+notarization, and OpenAI/Anthropic Admin usage keys are future considerations,
+not Stage 3 blockers.
 
 ## Agent UX closeout lane
 
