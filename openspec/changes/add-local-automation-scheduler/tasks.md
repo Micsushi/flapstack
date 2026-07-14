@@ -15,7 +15,7 @@
 
 ### S4-F5-T2 — Implement the leased main-process scheduler
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Due occurrences are leased and dispatched once with startup recovery.
 - Scope: Scheduler service, timer lifecycle, transactional lease/CAS, next-fire calculation, one-catch-up policy, clock-change handling, startup/shutdown reconciliation.
