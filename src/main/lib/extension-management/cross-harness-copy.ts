@@ -24,6 +24,34 @@ export const CROSS_HARNESS_COPY_SCHEMA_VERSION = 1 as const
 const MAX_PORTABLE_NODES = 10_000
 const MAX_PORTABLE_DEPTH = 20
 const unsafePortableKeys = new Set(["__proto__", "constructor", "prototype"])
+const hostOnlyPortableKeys = new Set([
+  "absolutepath",
+  "afterhash",
+  "backup",
+  "backupid",
+  "backuppath",
+  "backupreference",
+  "beforehash",
+  "confirmationhash",
+  "createdat",
+  "cwd",
+  "filehash",
+  "filepath",
+  "hash",
+  "nativepath",
+  "path",
+  "relativepath",
+  "runtime",
+  "runtimeconsumption",
+  "runtimereload",
+  "runtimestate",
+  "sourcehash",
+  "sourceid",
+  "sourcepath",
+  "targethash",
+  "targetpath",
+  "updatedat",
+])
 
 const portableMetadataSchema = z.record(z.string(), z.unknown())
 
@@ -391,9 +419,16 @@ function sanitizePortableRecord(
       if (unsafePortableKeys.has(key)) {
         throw new Error(`${fieldPath}.${key} is not portable`)
       }
+      if (hostOnlyPortableKeys.has(normalizePortableKey(key))) {
+        throw new Error(`${fieldPath}.${key} is host-only and cannot be exported`)
+      }
       return [key, sanitizePortableValue(entry, `${fieldPath}.${key}`, depth + 1, budget)]
     }),
   )
+}
+
+function normalizePortableKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
 function sanitizePortableValue(

@@ -79,7 +79,7 @@
   stale-preview confirmation hashes, and native-adapter rollback. Portable
   manifests omit host paths/runtime state, reject unsafe data, and never export
   unsupported source fields; target-only unknown native fields survive
-  overwrites. Node 22 focused copy/native/capability/provider/path suites pass 51
+  overwrites. Node 22 focused copy/native/capability/provider/path suites pass 58
   tests; focused and repository ESLint, repository formatting, and strict
   OpenSpec pass. Full TypeScript reaches only two unrelated pre-existing Codex
   ACP provider-setting errors. Completion remains unchecked because declared T1

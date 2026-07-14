@@ -185,6 +185,46 @@ describe("cross-harness extension copy", () => {
     expect(existsSync(targetFile)).toBe(false)
   })
 
+  it("fails closed when supported skill metadata nests host-only state", async () => {
+    const home = temporaryRoot()
+    const source = target("claude-code", "skill", "user", "release-check")
+    const destination = target("codex", "skill", "user", "release-check")
+    const sourceFile = join(home, ".claude", "skills", "release-check", "SKILL.md")
+    const targetFile = join(home, ".agents", "skills", "release-check", "SKILL.md")
+    write(
+      sourceFile,
+      [
+        "---",
+        "name: release-check",
+        "description: Release check",
+        "metadata:",
+        "  path: /Users/private",
+        "  cwd: /repo",
+        "  hash: secret-file-hash",
+        "  backup: /tmp/backup",
+        "  runtime: next-run",
+        "---",
+        "",
+        "body",
+        "",
+      ].join("\n"),
+    )
+
+    const preview = await previewCrossHarnessCopy(
+      { source, target: destination, collisionPolicy: "reject" },
+      { homeDir: home },
+    )
+
+    expect(preview).toMatchObject({
+      status: "unsupported",
+      canApply: false,
+      portableManifest: null,
+      confirmationHash: null,
+    })
+    expect(preview.reasons.join(" ")).toContain("metadata.metadata.path is host-only")
+    expect(existsSync(targetFile)).toBe(false)
+  })
+
   it("reports unsupported target capability without inventing parity", async () => {
     const home = temporaryRoot()
     const source = target("claude-code", "skill", "user", "release-check")
@@ -306,7 +346,46 @@ describe("portable extension manifest sanitization", () => {
       }),
     ).toThrow("JSON-compatible")
   })
+
+  it.each([
+    ["path", "/Users/private"],
+    ["cwd", "/repo"],
+    ["hash", "secret-file-hash"],
+    ["backup", { id: "backup-id" }],
+    ["runtime", { state: "next-run" }],
+  ])("rejects nested host-only %s metadata", (key, value) => {
+    const manifest = portableManifest({ metadata: { [key]: value } })
+
+    expect(() => sanitizePortableExtensionManifest(manifest)).toThrow(
+      `metadata.metadata.${key} is host-only`,
+    )
+  })
+
+  it("retains allowed portable metadata without substring false positives", () => {
+    const allowed = {
+      category: "review",
+      pathHint: "docs only",
+      runtimeNotes: "Node-compatible",
+      hashingAlgorithm: "sha256",
+      backupStrategy: "manual",
+      nested: { labels: ["safe", "portable"], enabled: true, retries: 2 },
+    }
+    const sanitized = sanitizePortableExtensionManifest(portableManifest({ metadata: allowed }))
+
+    expect(sanitized.metadata.metadata).toEqual(allowed)
+  })
 })
+
+function portableManifest(metadata: Record<string, unknown>) {
+  return {
+    schemaVersion: 1 as const,
+    origin: { harness: "codex" as const, kind: "skill" as const, scope: "user" as const },
+    kind: "skill" as const,
+    name: "safe-skill",
+    content: "body",
+    metadata: { name: "safe-skill", description: "safe", ...metadata },
+  }
+}
 
 function confirmed(
   preview: CrossHarnessCopyPreview,
