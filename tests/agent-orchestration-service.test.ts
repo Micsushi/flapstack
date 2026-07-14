@@ -289,10 +289,26 @@ describe("durable agent task orchestration", () => {
     expect(
       sqlite
         .prepare(
-          "SELECT provider_id, total_tokens, cost_quality FROM usage_samples WHERE run_id = ?",
+          `SELECT provider_id, total_tokens, cost_quality, attribution_state,
+                  attribution_project_id, attribution_task_id, attribution_chat_id,
+                  attribution_orchestration_id, attribution_run_id,
+                  source_class, dedupe_strategy
+           FROM usage_samples WHERE run_id = ?`,
         )
         .get(agent.runId),
-    ).toEqual({ provider_id: "codex", total_tokens: 150, cost_quality: "unknown" })
+    ).toEqual({
+      provider_id: "codex",
+      total_tokens: 150,
+      cost_quality: "unknown",
+      attribution_state: "attributed",
+      attribution_project_id: "project-1",
+      attribution_task_id: created.orchestration.taskId,
+      attribution_chat_id: agent.chatId,
+      attribution_orchestration_id: created.orchestration.taskId,
+      attribution_run_id: agent.runId,
+      source_class: "flapstack-run",
+      dedupe_strategy: "exact-fact",
+    })
   })
 
   it("survives restart and supports pause, resume, manual stop, retry, and active replacement", () => {

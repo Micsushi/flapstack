@@ -191,6 +191,7 @@ export const usageBudgetPolicyDtoSchema = z
 
 export type UsageAttributionSnapshot = z.infer<typeof usageAttributionSnapshotSchema>
 export type UsageFactClassification = z.infer<typeof usageFactClassificationSchema>
+export type UsageSourceClass = z.infer<typeof usageSourceClassSchema>
 export type UsageBudgetScope = z.infer<typeof usageBudgetScopeSchema>
 export type UsageBudgetThreshold = z.infer<typeof usageBudgetThresholdSchema>
 export type UsageBudgetAction = z.infer<typeof usageBudgetActionSchema>
