@@ -28,7 +28,7 @@ feature-local closeout gates.
 - Relevant context: all active `openspec/changes/**`, Stage 3 feature routers,
   existing Stage 2/3 test matrices and package/live-dev rules.
 - 2026-07-13 evidence: `docs/stage3-release-candidate-ledger.md` maps all 18
-  active non-archive changes, 347 normative scenarios, 54 stable release rows,
+  active non-archive changes, 350 normative scenarios, 54 stable release rows,
   17 feature exits, the
   required prerequisite graph, stable evidence rows, candidate identity,
   invalidation rules, and cleanup/reversal requirements. The automated

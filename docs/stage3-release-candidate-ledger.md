@@ -8,9 +8,9 @@ package, or platform rows remain open.
 
 - Candidate source: the exact commit containing this ledger, resolved with
   `git rev-parse HEAD` and recorded in the final handoff after commit.
-- Integration baseline: `1a1d7d8c357ba8c1719bbea8aaf78473b089e0f8`.
-- Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
-  on `codex/stage3-integration`; `main` remains untouched.
+- Integration baseline: `821c9cd2d6b1c2931da52b98f19eab23b3e965db`.
+- Checkout: `/Users/michaelshi/.codex/worktrees/cdd7/flapstack` on
+  `codex/stage3-release-final-cdd7`; `main` remains untouched.
 - Profile isolation: worker-lane Dev and Preview evidence remains historical
   until the integrated candidate reruns its exact checkout/profile gates.
 - Supported release runtime: Node 22. macOS arm64 is locally available;
@@ -84,8 +84,8 @@ S3-F6, F9, F10, F12, F13, F14, F15, and F16 to feed S3-F17.
 <!-- stage3-release-feature: S3-F16 | exit=S3-F16-T5 | depends=S3-F10,S3-F15 -->
 <!-- stage3-release-feature: S3-F17 | exit=S3-F17-T5 | depends=S3-F6,S3-F9,S3-F10,S3-F12,S3-F13,S3-F14,S3-F15,S3-F16 -->
 
-Current truth: S3-F1-F4 core tasks are complete. Required exits F5/F6, F7-F16,
-and supporting live rows remain open where their task boards say so. S3-F17-T2
+Current truth: S3-F1-F5 core tasks are complete. Required exits F6 and F7-F16,
+plus supporting live rows, remain open where their task boards say so. S3-F17-T2
 and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 ## Execution evidence
