@@ -17,6 +17,7 @@ import {
   buildLaunchAgentPlist,
   buildSystemdUserUnit,
   buildWindowsDaemonScript,
+  daemonServiceIdForConfig,
   uninstallLaunchAgent,
 } from "../src/main/lib/usage-daemon/platform"
 import {
@@ -788,6 +789,26 @@ describe("usage Track B scaffolds", () => {
     expect(plist).toContain("<key>KeepAlive</key><false/>")
   })
 
+  it("isolates preview and dev daemon services and secret namespaces", () => {
+    expect(
+      daemonServiceIdForConfig("/Users/test/Library/Application Support/Flapstack/data"),
+    ).toBeNull()
+    expect(
+      daemonServiceIdForConfig("/Users/test/Library/Application Support/Flapstack Dev c100/data"),
+    ).toBe("flapstack-dev-c100")
+    const plist = buildLaunchAgentPlist({
+      nodePath: "/app/Flapstack",
+      daemonEntryPath: "/app/usage-daemon.js",
+      dbPath: "/profile/data/agents.db",
+      configDir: "/profile/data",
+      cadenceSeconds: 30,
+      serviceId: "flapstack-dev-c100",
+      secretNamespace: "flapstack-dev-c100",
+    })
+    expect(plist).toContain("dev.flapstack.usage-daemon.flapstack-dev-c100")
+    expect(plist).toContain("FLAPSTACK_USAGE_SECRET_NAMESPACE")
+  })
+
   it("builds Windows and Linux per-user daemon launch definitions", () => {
     const params = {
       nodePath: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
@@ -795,6 +816,7 @@ describe("usage Track B scaffolds", () => {
       dbPath: "/tmp/data/agents.db",
       configDir: "/tmp/data",
       cadenceSeconds: 300,
+      secretNamespace: "flapstack-preview",
     }
     const windows = buildWindowsDaemonScript({
       ...params,
@@ -804,9 +826,11 @@ describe("usage Track B scaffolds", () => {
       configDir: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack",
     })
     expect(windows).toContain('set "ELECTRON_RUN_AS_NODE=1"')
+    expect(windows).toContain('set "FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
     expect(windows).toContain('"C:\\Program Files\\Flapstack\\Flapstack.exe"')
     const systemd = buildSystemdUserUnit(params)
     expect(systemd).toContain('Environment="FLAPSTACK_DB_PATH=/tmp/data/agents.db"')
+    expect(systemd).toContain('Environment="FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
     expect(systemd).toContain("WantedBy=default.target")
     expect(systemd).toContain('ExecStart="/Applications/Flapstack.app/Contents/MacOS/Flapstack"')
   })
@@ -818,9 +842,19 @@ describe("usage Track B scaffolds", () => {
       return undefined
     })
     expect(() =>
-      uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove }),
+      uninstallLaunchAgent({
+        path: "/tmp/test.plist",
+        domain: "gui/501",
+        label: "dev.flapstack.usage-daemon.flapstack-dev-c100",
+        run,
+        remove,
+      }),
     ).toThrow(/still loaded/)
     expect(remove).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledWith(
+      ["print", "gui/501/dev.flapstack.usage-daemon.flapstack-dev-c100"],
+      { stdio: "ignore" },
+    )
   })
 
   it("removes a stale daemon plist only after launchctl confirms no job is loaded", () => {

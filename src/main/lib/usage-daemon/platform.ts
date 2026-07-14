@@ -5,7 +5,7 @@
 
 import { homedir, platform } from "node:os"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { execFileSync } from "node:child_process"
 
 export type DaemonPlatform = "darwin" | "win32" | "linux" | "unsupported"
@@ -26,6 +26,37 @@ export interface DaemonInstallParams {
   dbPath: string
   configDir: string
   cadenceSeconds: number
+  serviceId?: string | null
+  secretNamespace?: string | null
+}
+
+function sanitizeServiceId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
+export function daemonServiceIdForConfig(configDir: string): string | null {
+  const profile = basename(dirname(configDir))
+  if (!profile || profile === "Flapstack") return null
+  return sanitizeServiceId(profile) || null
+}
+
+function serviceLabel(base: string, serviceId?: string | null): string {
+  const normalized = serviceId ? sanitizeServiceId(serviceId) : ""
+  return normalized ? `${base}.${normalized}` : base
+}
+
+function windowsTaskName(serviceId?: string | null): string {
+  const normalized = serviceId ? sanitizeServiceId(serviceId) : ""
+  return normalized ? `${WINDOWS_TASK_NAME} (${normalized})` : WINDOWS_TASK_NAME
+}
+
+function systemdUnitName(serviceId?: string | null): string {
+  const normalized = serviceId ? sanitizeServiceId(serviceId) : ""
+  return normalized ? `flapstack-usage-daemon-${normalized}.service` : SYSTEMD_UNIT_NAME
 }
 
 function launchctlDomain(): string {
@@ -35,12 +66,18 @@ function launchctlDomain(): string {
 }
 
 /** Path of the macOS LaunchAgent plist for the current user. */
-export function launchAgentPlistPath(): string {
-  return join(homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`)
+export function launchAgentPlistPath(serviceId?: string | null): string {
+  return join(
+    homedir(),
+    "Library",
+    "LaunchAgents",
+    `${serviceLabel(LAUNCH_AGENT_LABEL, serviceId)}.plist`,
+  )
 }
 
 /** Build a macOS LaunchAgent plist that runs the daemon at login. */
 export function buildLaunchAgentPlist(params: DaemonInstallParams): string {
+  const label = serviceLabel(LAUNCH_AGENT_LABEL, params.serviceId)
   const xml = (value: string | number) =>
     String(value)
       .replace(/&/g, "&amp;")
@@ -52,7 +89,7 @@ export function buildLaunchAgentPlist(params: DaemonInstallParams): string {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${xml(params.nodePath)}</string>
@@ -63,6 +100,7 @@ export function buildLaunchAgentPlist(params: DaemonInstallParams): string {
     <key>FLAPSTACK_DB_PATH</key><string>${xml(params.dbPath)}</string>
     <key>FLAPSTACK_CONFIG_DIR</key><string>${xml(params.configDir)}</string>
     <key>FLAPSTACK_USAGE_CADENCE_SECONDS</key><string>${xml(params.cadenceSeconds)}</string>
+    ${params.secretNamespace ? `<key>FLAPSTACK_USAGE_SECRET_NAMESPACE</key><string>${xml(params.secretNamespace)}</string>` : ""}
     <!-- process.execPath is Electron in packaged builds. This makes it execute
          the standalone daemon bundle as Node rather than opening the app UI. -->
     <key>ELECTRON_RUN_AS_NODE</key><string>1</string>
@@ -77,22 +115,31 @@ disables the daemon and it exits cleanly. -->
 }
 
 /** Describe the install support available on the current platform. */
-export function describeInstall(): { platform: DaemonPlatform; supported: boolean; note: string } {
+export function describeInstall(configDir?: string): {
+  platform: DaemonPlatform
+  supported: boolean
+  note: string
+} {
   const p = currentDaemonPlatform()
+  const serviceId = configDir ? daemonServiceIdForConfig(configDir) : null
   switch (p) {
     case "darwin":
-      return { platform: p, supported: true, note: `LaunchAgent at ${launchAgentPlistPath()}` }
+      return {
+        platform: p,
+        supported: true,
+        note: `LaunchAgent at ${launchAgentPlistPath(serviceId)}`,
+      }
     case "win32":
       return {
         platform: p,
         supported: true,
-        note: `Per-user Scheduled Task: ${WINDOWS_TASK_NAME}`,
+        note: `Per-user Scheduled Task: ${windowsTaskName(serviceId)}`,
       }
     case "linux":
       return {
         platform: p,
         supported: true,
-        note: `systemd user service: ${SYSTEMD_UNIT_NAME}`,
+        note: `systemd user service: ${systemdUnitName(serviceId)}`,
       }
     default:
       return { platform: p, supported: false, note: "Unsupported platform for background daemon." }
@@ -102,9 +149,10 @@ export function describeInstall(): { platform: DaemonPlatform; supported: boolea
 export function installMacLaunchAgent(params: DaemonInstallParams): void {
   if (currentDaemonPlatform() !== "darwin")
     throw new Error("Usage daemon install is currently supported on macOS only")
-  const path = launchAgentPlistPath()
+  const serviceId = params.serviceId ?? daemonServiceIdForConfig(params.configDir)
+  const path = launchAgentPlistPath(serviceId)
   mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true })
-  writeFileSync(path, buildLaunchAgentPlist(params), { mode: 0o600 })
+  writeFileSync(path, buildLaunchAgentPlist({ ...params, serviceId }), { mode: 0o600 })
   try {
     execFileSync("launchctl", ["bootout", launchctlDomain(), path], { stdio: "ignore" })
   } catch {}
@@ -125,6 +173,9 @@ export function buildWindowsDaemonScript(params: DaemonInstallParams): string {
     set("FLAPSTACK_CONFIG_DIR", params.configDir),
     set("FLAPSTACK_USAGE_CADENCE_SECONDS", params.cadenceSeconds),
     set("ELECTRON_RUN_AS_NODE", "1"),
+    ...(params.secretNamespace
+      ? [set("FLAPSTACK_USAGE_SECRET_NAMESPACE", params.secretNamespace)]
+      : []),
     `${quote(params.nodePath)} ${quote(params.daemonEntryPath)}`,
     "",
   ].join("\r\n")
@@ -135,11 +186,12 @@ export function installWindowsScheduledTask(params: DaemonInstallParams): void {
     throw new Error("Windows usage daemon install requires Windows")
   mkdirSync(params.configDir, { recursive: true })
   const scriptPath = windowsDaemonScriptPath(params.configDir)
+  const taskName = windowsTaskName(params.serviceId ?? daemonServiceIdForConfig(params.configDir))
   writeFileSync(scriptPath, buildWindowsDaemonScript(params), { mode: 0o600 })
   execFileSync("schtasks.exe", [
     "/Create",
     "/TN",
-    WINDOWS_TASK_NAME,
+    taskName,
     "/SC",
     "ONLOGON",
     "/RL",
@@ -148,25 +200,26 @@ export function installWindowsScheduledTask(params: DaemonInstallParams): void {
     scriptPath,
     "/F",
   ])
-  execFileSync("schtasks.exe", ["/Run", "/TN", WINDOWS_TASK_NAME])
+  execFileSync("schtasks.exe", ["/Run", "/TN", taskName])
 }
 
 export function uninstallWindowsScheduledTask(configDir: string): void {
   if (currentDaemonPlatform() !== "win32")
     throw new Error("Windows usage daemon uninstall requires Windows")
+  const taskName = windowsTaskName(daemonServiceIdForConfig(configDir))
   try {
-    execFileSync("schtasks.exe", ["/End", "/TN", WINDOWS_TASK_NAME], { stdio: "ignore" })
+    execFileSync("schtasks.exe", ["/End", "/TN", taskName], { stdio: "ignore" })
   } catch {}
   try {
-    execFileSync("schtasks.exe", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], {
+    execFileSync("schtasks.exe", ["/Delete", "/TN", taskName, "/F"], {
       stdio: "ignore",
     })
   } catch {}
   rmSync(windowsDaemonScriptPath(configDir), { force: true })
 }
 
-export function systemdUserUnitPath(): string {
-  return join(homedir(), ".config", "systemd", "user", SYSTEMD_UNIT_NAME)
+export function systemdUserUnitPath(serviceId?: string | null): string {
+  return join(homedir(), ".config", "systemd", "user", systemdUnitName(serviceId))
 }
 
 export function buildSystemdUserUnit(params: DaemonInstallParams): string {
@@ -182,6 +235,7 @@ Environment="FLAPSTACK_DB_PATH=${escape(params.dbPath)}"
 Environment="FLAPSTACK_CONFIG_DIR=${escape(params.configDir)}"
 Environment="FLAPSTACK_USAGE_CADENCE_SECONDS=${escape(params.cadenceSeconds)}"
 Environment="ELECTRON_RUN_AS_NODE=1"
+${params.secretNamespace ? `Environment="FLAPSTACK_USAGE_SECRET_NAMESPACE=${escape(params.secretNamespace)}"` : ""}
 ExecStart="${escape(params.nodePath)}" "${escape(params.daemonEntryPath)}"
 Restart=on-failure
 RestartSec=30
@@ -194,22 +248,26 @@ WantedBy=default.target
 export function installLinuxSystemdUserService(params: DaemonInstallParams): void {
   if (currentDaemonPlatform() !== "linux")
     throw new Error("Linux usage daemon install requires Linux")
-  const path = systemdUserUnitPath()
+  const serviceId = params.serviceId ?? daemonServiceIdForConfig(params.configDir)
+  const unitName = systemdUnitName(serviceId)
+  const path = systemdUserUnitPath(serviceId)
   mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true })
   writeFileSync(path, buildSystemdUserUnit(params), { mode: 0o600 })
   execFileSync("systemctl", ["--user", "daemon-reload"])
-  execFileSync("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT_NAME])
+  execFileSync("systemctl", ["--user", "enable", "--now", unitName])
 }
 
-export function uninstallLinuxSystemdUserService(): void {
+export function uninstallLinuxSystemdUserService(configDir: string): void {
   if (currentDaemonPlatform() !== "linux")
     throw new Error("Linux usage daemon uninstall requires Linux")
+  const serviceId = daemonServiceIdForConfig(configDir)
+  const unitName = systemdUnitName(serviceId)
   try {
-    execFileSync("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT_NAME], {
+    execFileSync("systemctl", ["--user", "disable", "--now", unitName], {
       stdio: "ignore",
     })
   } catch {}
-  rmSync(systemdUserUnitPath(), { force: true })
+  rmSync(systemdUserUnitPath(serviceId), { force: true })
   execFileSync("systemctl", ["--user", "daemon-reload"])
 }
 
@@ -229,23 +287,24 @@ export function installUsageDaemon(params: DaemonInstallParams): void {
 export function uninstallUsageDaemon(configDir: string): void {
   switch (currentDaemonPlatform()) {
     case "darwin":
-      return uninstallMacLaunchAgent()
+      return uninstallMacLaunchAgent(daemonServiceIdForConfig(configDir))
     case "win32":
       return uninstallWindowsScheduledTask(configDir)
     case "linux":
-      return uninstallLinuxSystemdUserService()
+      return uninstallLinuxSystemdUserService(configDir)
     default:
       throw new Error("Background usage daemon is unsupported on this platform")
   }
 }
 
-export function uninstallMacLaunchAgent(): void {
+export function uninstallMacLaunchAgent(serviceId?: string | null): void {
   if (currentDaemonPlatform() !== "darwin")
     throw new Error("Usage daemon install is currently supported on macOS only")
-  const path = launchAgentPlistPath()
+  const path = launchAgentPlistPath(serviceId)
   uninstallLaunchAgent({
     path,
     domain: launchctlDomain(),
+    label: serviceLabel(LAUNCH_AGENT_LABEL, serviceId),
     run: (args, options) => execFileSync("launchctl", args, options),
     remove: (target) => rmSync(target, { force: true }),
   })
@@ -254,10 +313,11 @@ export function uninstallMacLaunchAgent(): void {
 export function uninstallLaunchAgent(params: {
   path: string
   domain: string
+  label?: string
   run: (args: string[], options: { stdio: "ignore" }) => unknown
   remove: (path: string) => void
 }): void {
-  const serviceTarget = `${params.domain}/${LAUNCH_AGENT_LABEL}`
+  const serviceTarget = `${params.domain}/${params.label ?? LAUNCH_AGENT_LABEL}`
   try {
     params.run(["bootout", params.domain, params.path], { stdio: "ignore" })
   } catch (bootoutError) {

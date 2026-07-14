@@ -68,12 +68,15 @@ authority for Usage exit work.
   - Evidence contains no credential or webhook value.
 - Verification: `npm run smoke:usage-daemon`; packaged/manual service matrix on
   macOS, Windows, and Linux where supported; sanitized process/service evidence.
-- Verified safe subset (2026-07-13): the built daemon smoke now proves one
-  owner, duplicate rejection, forced-crash stale-lock recovery, restart, clean
-  stop, cleared PID, and isolated database/config cleanup. Provider diagnostics
-  are redacted before SQLite, IPC, or logs. A real macOS LaunchAgent cadence
-  with a persisted credential remains open with S3-F10-T4; Windows/Linux remain
-  unobserved, so this completion box stays unchecked.
+- Verified safe subset (2026-07-13): the built daemon smoke proves one owner,
+  duplicate rejection, forced-crash stale-lock recovery, restart, clean stop,
+  cleared PID, and isolated database/config cleanup. A packaged Preview
+  LaunchAgent smoke additionally proved closed-app start, heartbeat/poll, stop,
+  new-PID restart, profile-scoped service/secret names, and exact job/plist/PID
+  cleanup. A real no-TTY Keychain probe wrote, read, and deleted one unique
+  namespaced item without placing its value in argv or output. A credentialed
+  closed-app sample remains blocked by open prerequisite S3-F10-T4;
+  Windows/Linux remain unobserved, so this completion box stays unchecked.
 - Blocked by: S3-F14-T1, S3-F10-T4.
 - Blocks: S3-F14-T5.
 - Relevant context: daemon lifecycle/platform modules, usage secrets, package
@@ -101,11 +104,15 @@ authority for Usage exit work.
   `npm run dev:verify`), provider matrix, SQLite comparison, screenshots/logs
   with secrets redacted.
 - Verified safe subset (2026-07-13): read-only personal OAuth probes returned
-  one Codex and two Claude provider-reported quota samples. Cursor was not
-  logged in; OpenRouter and NanoGPT were not configured. An isolated
-  `Flapstack Dev e899` profile passed `dev:verify` on port 5174 after port 5173
-  correctly failed closed. The Mac was locked, so visual dashboard/history,
-  alert, filter, paging, and fault-state rows remain open.
+  one Codex and two Claude provider-reported quota samples with distinct metric
+  keys, private-source tags, and opaque account tags. Cursor was not logged in;
+  OpenRouter and NanoGPT were not configured. Both the earlier isolated
+  `Flapstack Dev e899` run and this lane's exact `Flapstack Dev c100` profile
+  passed `dev:verify`; the c100 app initialized its database and migrations.
+  The Mac was locked during the c100 dev run. The exact packaged Preview window
+  later became inspectable, but its clean no-project onboarding made Usage
+  Settings unreachable. Visual dashboard/history, alert, filter, paging,
+  settings, and fault-state comparisons therefore remain open.
 - Blocked by: S3-F14-T1, S3-F14-T2, S3-F10-T4.
 - Blocks: S3-F14-T5.
 - Relevant context: Usage Settings/dashboard, provider adapters, generation
@@ -133,14 +140,15 @@ authority for Usage exit work.
 - Verified safe subset (2026-07-13): focused Usage/credential suites passed 107
   tests; matrix coverage, production build, enhanced daemon smoke, isolated
   verified dev, unsigned arm64 Preview build, binary inspection, bundled
-  Claude/Codex/Whisper/Parakeet smoke, exact Preview process launch, and clean
-  process cleanup passed. The locked Mac prevented Preview main initialization;
-  that process never opened or migrated its database, so packaged startup stays
-  open. Node 22 `npm run check`
-  passed with 102 test files, 745 tests passed, and 3 credential-conditional
-  tests skipped. Required locked-UI, Keychain-backed closed-app, Windows,
-  Linux, and final SHA-bound rows remain open, so this completion box stays
-  unchecked.
+  Claude/Codex/Whisper/Parakeet smoke, and clean process cleanup passed. The
+  Preview daemon bundle also passed native LaunchAgent start/stop/restart and
+  cleanup without opening the app. The exact packaged app then initialized,
+  applied 23 migrations, exposed its main window, and shut down with zero
+  projects/samples and no process, job, or plist left. Node 22 `npm run check`
+  passed with 125 test files, 931 tests passed, and 3 credential-conditional
+  tests skipped. Required Usage UI rows, credentialed alert delivery,
+  Windows/Linux, and the final integrated SHA remain open, so this completion
+  box stays unchecked.
 - Blocked by: S3-F14-T2, S3-F14-T3, S3-F14-T4.
 - Blocks: S3-F17-T2.
 - Relevant context: this change, S3-F14 matrix/evidence, root live-dev rules.
