@@ -48,8 +48,18 @@ import {
   usageInsightQuerySchema,
   usageRollupQuerySchema,
 } from "../../../../shared/advanced-usage"
+import {
+  saveUsageExplorerViewSchema,
+  usageExplorerExportSchema,
+} from "../../../../shared/advanced-usage-explorer"
 import { queryUsageRollups } from "../../usage/rollups"
 import { queryUsageInsights } from "../../usage/insights"
+import { exportAdvancedUsage, queryAdvancedUsageExplorer } from "../../usage/explorer"
+import {
+  deleteUsageExplorerView,
+  listUsageExplorerViews,
+  saveUsageExplorerView,
+} from "../../usage/explorer-views"
 import {
   appendUsageBudgetOverrideAudit,
   createUsageBudget,
@@ -188,6 +198,38 @@ export const usageRouter = router({
     }
     return queryUsageInsights(getDatabase(), input)
   }),
+
+  queryExplorer: publicProcedure.input(usageRollupQuerySchema).query(async ({ input }) => {
+    if (
+      !input.providerIds ||
+      input.providerIds.some((id) => id === "codex" || id === "anthropic")
+    ) {
+      await syncOnWatchUsageHistory(getDatabasePath())
+    }
+    return queryAdvancedUsageExplorer(getDatabase(), input)
+  }),
+
+  exportAdvancedUsage: publicProcedure
+    .input(usageExplorerExportSchema)
+    .mutation(async ({ input }) => {
+      if (
+        !input.query.providerIds ||
+        input.query.providerIds.some((id) => id === "codex" || id === "anthropic")
+      ) {
+        await syncOnWatchUsageHistory(getDatabasePath())
+      }
+      return exportAdvancedUsage(getDatabase(), input)
+    }),
+
+  listExplorerViews: publicProcedure.query(() => listUsageExplorerViews()),
+
+  saveExplorerView: publicProcedure
+    .input(saveUsageExplorerViewSchema)
+    .mutation(({ input }) => saveUsageExplorerView(input)),
+
+  deleteExplorerView: publicProcedure
+    .input(z.object({ id: z.string().trim().min(1).max(200) }).strict())
+    .mutation(({ input }) => deleteUsageExplorerView(input.id)),
 
   listBudgets: publicProcedure
     .input(z.object({ enabledOnly: z.boolean().optional() }).optional())

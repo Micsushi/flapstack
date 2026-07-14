@@ -24,6 +24,7 @@ import {
   type UsageHistoryRange,
   type UsageStatus,
 } from "./agents-usage-helpers"
+import { AdvancedUsageExplorer } from "../../../features/usage/advanced-usage-explorer"
 
 const PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt"] as const
 type ProviderId = (typeof PROVIDER_IDS)[number]
@@ -1324,6 +1325,8 @@ export function AgentsUsageTab() {
           )}
         </section>
       )}
+
+      <AdvancedUsageExplorer />
 
       <details
         className="group rounded-xl border border-border bg-foreground/[0.02]"
