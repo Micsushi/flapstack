@@ -1,12 +1,13 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   LocalModelChatService,
   assembleLocalModelMessages,
   createDatabaseLocalModelRunPersistence,
   parseOllamaChatLine,
   type StreamLocalModelChatInput,
+  type LocalModelRunChangeTracker,
 } from "../src/main/lib/harness/local-model-stream"
 import * as schema from "../src/main/lib/db/schema"
 import type { LocalModelRunMetadata } from "../src/shared/local-model-contract"
@@ -164,6 +165,78 @@ describe("local model stream", () => {
       status: "succeeded",
       result: { ok: true },
     })
+  })
+
+  it("gates project writes behind before/after checkpoints and manifest finalization", async () => {
+    const fixture = setup()
+    const requests: Array<Record<string, unknown>> = []
+    const order: string[] = []
+    const runChanges: LocalModelRunChangeTracker = {
+      captureBefore: vi.fn(async () => {
+        order.push("before")
+      }),
+      captureAfterAndManifest: vi.fn(async () => {
+        order.push("after-and-manifest")
+      }),
+    }
+    const service = new LocalModelChatService({
+      persistence: fixture.persistence,
+      fetchImpl: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)))
+        return requests.length === 1
+          ? byteStreamResponse([
+              '{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"write_file","arguments":{"path":"README.md","content":"after\\n","expected_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}]},"done":true}\n',
+            ])
+          : byteStreamResponse(['{"message":{"role":"assistant","content":"Done."},"done":true}\n'])
+      },
+      buildContext: async () => contextBundle,
+      createReadToolExecutor: () => ({
+        execute: async (call) => ({
+          ok: true,
+          tool: call.name,
+          content: "read",
+          truncated: false,
+        }),
+      }),
+      createWriteToolExecutor: () => ({
+        execute: async (call) => {
+          order.push("write")
+          return { ok: true, tool: call.name, content: "written", truncated: false }
+        },
+      }),
+      runChanges,
+      now: () => NOW,
+    })
+
+    const chunks = await collect(
+      service.stream(
+        input({
+          runId: "run-write",
+          permissionMode: "auto-edit-project-only",
+          metadata: writeMetadata,
+        }),
+      ),
+    )
+
+    expect(requests[0]).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({ function: expect.objectContaining({ name: "write_file" }) }),
+      ]),
+    })
+    expect(order).toEqual(["before", "write", "after-and-manifest"])
+    expect(runChanges.captureBefore).toHaveBeenCalledWith("run-write", "/repo")
+    expect(runChanges.captureAfterAndManifest).toHaveBeenCalledWith("run-write", "/repo")
+    expect(fixture.run("run-write")).toMatchObject({
+      status: "success",
+      permission_mode: "auto-edit-project-only",
+    })
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "tool-input-available", toolName: "write_file" }),
+        expect.objectContaining({ type: "tool-output-available" }),
+        { type: "text-delta", id: "local-response", delta: "Done." },
+      ]),
+    )
   })
 
   it("persists a bounded terminal reason when a tool loop reaches its limit", async () => {
@@ -543,6 +616,25 @@ const toolMetadata: LocalModelRunMetadata = {
         requiredCapability: "tools",
         mutates: false,
         customPermission: null,
+        available: true,
+        limitation: null,
+      },
+    ],
+  },
+}
+
+const writeMetadata: LocalModelRunMetadata = {
+  ...toolMetadata,
+  permission: {
+    mode: "auto-edit-project-only",
+    customPermissions: null,
+    toolTiers: [
+      ...toolMetadata.permission.toolTiers,
+      {
+        tier: "project-write",
+        requiredCapability: "tools",
+        mutates: true,
+        customPermission: "projectWrite",
         available: true,
         limitation: null,
       },

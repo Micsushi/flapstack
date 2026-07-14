@@ -43,13 +43,14 @@
 
 ### S4-F6-T4 — Add exact project-scoped edit and write tools
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Authorized local runs make bounded project edits with checkpoints and manifests.
 - Scope: Edit/write/apply-patch tools; before-write revalidation; symlink/race defense; permission resolution; ask-mode approval; atomic writes; checkpoint/manifest integration.
 - Out of scope: Shell, git commands, network, external directories.
 - Acceptance: Read-only denies mutation; project-only cannot escape; ask mode blocks pending approval; successful writes appear in the run manifest and undo path.
 - Verification: `npm test -- local-model-write-tools` with permission, traversal, symlink swap, stale file, approval, rollback, and manifest cases.
+- Manual verification remaining: live Ollama, renderer, package, and provider/device acceptance stays with S4-F6-T8; no such evidence is claimed here.
 - Blocked by: S4-F6-T3
 - Blocks: S4-F6-T5, S4-F6-T7
 - Context: run undo/review, checkpoint service, path validation, approval UI.

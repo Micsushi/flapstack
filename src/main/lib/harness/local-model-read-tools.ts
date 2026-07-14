@@ -9,7 +9,7 @@ export type LocalModelReadToolName = (typeof LOCAL_MODEL_READ_TOOL_NAMES)[number
 export type LocalModelToolSchema = {
   type: "function"
   function: {
-    name: LocalModelReadToolName
+    name: string
     description: string
     parameters: {
       type: "object"
@@ -145,6 +145,13 @@ export type LocalModelToolErrorCode =
   | "not-found"
   | "not-text"
   | "file-too-large"
+  | "permission-denied"
+  | "approval-denied"
+  | "approval-timeout"
+  | "approval-cancelled"
+  | "stale-file"
+  | "write-failed"
+  | "rollback-failed"
   | "tool-failed"
 
 export type LocalModelToolLoopLimitCode =
@@ -285,6 +292,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
   runId: string
   messages: readonly LocalModelLoopMessage[]
   toolsEnabled: boolean
+  tools?: readonly LocalModelToolSchema[]
   provider: LocalModelToolProvider
   executor?: LocalModelReadToolExecutor
   signal: AbortSignal
@@ -305,6 +313,8 @@ export async function* runBoundedLocalModelToolLoop(input: {
   }, limits.maxWallTimeMs)
 
   const messages = input.messages.map(copyMessage)
+  const tools = input.toolsEnabled ? (input.tools ?? LOCAL_MODEL_READ_TOOL_SCHEMAS) : []
+  const allowedToolNames = new Set(tools.map((tool) => tool.function.name))
   let callCount = 0
   let sequence = 0
   let outputChars = 0
@@ -317,7 +327,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
 
   try {
     for (let iteration = 1; iteration <= limits.maxIterations; iteration += 1) {
-      assertWithinContext(messages, limits.maxContextChars, input.toolsEnabled)
+      assertWithinContext(messages, limits.maxContextChars, tools)
       assertWithinTime(now(), startedAt, limits.maxWallTimeMs, wallTimedOut)
       const turnCalls: LocalModelNormalizedToolCall[] = []
       let assistantText = ""
@@ -327,7 +337,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
       try {
         for await (const event of input.provider.streamTurn({
           messages,
-          tools: input.toolsEnabled ? LOCAL_MODEL_READ_TOOL_SCHEMAS : [],
+          tools,
           signal: deadlineController.signal,
         })) {
           assertWithinTime(now(), startedAt, limits.maxWallTimeMs, wallTimedOut)
@@ -380,7 +390,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
       if (!input.executor) throw new Error("Read-only tool executor is unavailable.")
 
       messages.push({ role: "assistant", content: assistantText, toolCalls: turnCalls })
-      assertWithinContext(messages, limits.maxContextChars, input.toolsEnabled)
+      assertWithinContext(messages, limits.maxContextChars, tools)
       for (const call of turnCalls) {
         callCount += 1
         sequence += 1
@@ -424,7 +434,12 @@ export async function* runBoundedLocalModelToolLoop(input: {
           throw new LocalModelToolLoopError("tool-recursion-limit")
         }
 
-        const result = await executeNormalizedCall(input.executor, call, deadlineController.signal)
+        const result = await executeNormalizedCall(
+          input.executor,
+          call,
+          deadlineController.signal,
+          allowedToolNames,
+        )
         const serializedResult = JSON.stringify(result)
         if (outputChars + serializedResult.length > limits.maxOutputChars) {
           yield {
@@ -446,7 +461,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
           toolCallId: call.id,
           toolName: call.name,
         })
-        assertWithinContext(messages, limits.maxContextChars, input.toolsEnabled)
+        assertWithinContext(messages, limits.maxContextChars, tools)
       }
 
       if (iteration === limits.maxIterations) {
@@ -645,9 +660,10 @@ async function executeNormalizedCall(
   executor: LocalModelReadToolExecutor,
   call: LocalModelNormalizedToolCall,
   signal: AbortSignal,
+  allowedToolNames: ReadonlySet<string>,
 ): Promise<LocalModelToolResult> {
-  if (!LOCAL_MODEL_READ_TOOL_NAMES.includes(call.name as LocalModelReadToolName)) {
-    return denied(call.name, "unknown-tool", "Unknown read-only tool.")
+  if (!allowedToolNames.has(call.name)) {
+    return denied(call.name, "unknown-tool", "Unknown or unavailable local-model tool.")
   }
   if (!isRecord(call.arguments)) {
     return denied(call.name, "malformed-tool-call", "Tool arguments must be an object.")
@@ -656,7 +672,7 @@ async function executeNormalizedCall(
     return await executor.execute(call, signal)
   } catch (error) {
     if (isAbortError(error)) throw error
-    return denied(call.name, "tool-failed", "The read-only tool failed safely.")
+    return denied(call.name, "tool-failed", "The local-model tool failed safely.")
   }
 }
 
@@ -685,9 +701,13 @@ function completeEvidence(
   result: LocalModelToolResult,
   completedAt: number,
 ): LocalModelToolEvidence {
+  const failed =
+    result.errorCode === "tool-failed" ||
+    result.errorCode === "write-failed" ||
+    result.errorCode === "rollback-failed"
   return {
     ...evidence,
-    status: result.ok ? "succeeded" : result.errorCode === "tool-failed" ? "failed" : "denied",
+    status: result.ok ? "succeeded" : failed ? "failed" : "denied",
     result,
     completedAt: new Date(completedAt).toISOString(),
   }
@@ -768,11 +788,11 @@ function compileGlob(pattern: string): (path: string) => boolean {
 function assertWithinContext(
   messages: readonly LocalModelLoopMessage[],
   maxChars: number,
-  toolsEnabled: boolean,
+  tools: readonly LocalModelToolSchema[],
 ): void {
   const chars =
     messages.reduce((total, message) => total + JSON.stringify(message).length, 0) +
-    (toolsEnabled ? JSON.stringify(LOCAL_MODEL_READ_TOOL_SCHEMAS).length : 0)
+    JSON.stringify(tools).length
   if (chars > maxChars) throw new LocalModelToolLoopError("tool-context-limit")
 }
 
@@ -879,7 +899,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 function toolSchema(
-  name: LocalModelReadToolName,
+  name: string,
   description: string,
   properties: Record<string, Record<string, unknown>>,
   required: string[],
