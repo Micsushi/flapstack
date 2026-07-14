@@ -114,6 +114,11 @@ export type NativeExtensionAdapterRegistration = {
   format: "markdown-frontmatter"
 }
 
+export type NativeExtensionAdapterDescriptor = NativeExtensionAdapterRegistration & {
+  shape: AdapterShape
+  knownFields: string[]
+}
+
 type AdapterShape = "skill-directory" | "markdown-file"
 
 type NativeAdapterDefinition = {
@@ -249,6 +254,22 @@ export const nativeExtensionAdapterRegistry: NativeExtensionAdapterRegistration[
       format: "markdown-frontmatter" as const,
     })),
   )
+
+export function getNativeExtensionAdapterDescriptor(
+  targetInput: NativeExtensionTarget,
+): NativeExtensionAdapterDescriptor {
+  const target = nativeExtensionTargetSchema.parse(targetInput)
+  const adapterDefinition = findAdapter(target)
+  return {
+    capabilityId: extensionCapabilityId(target.harness, target.kind, target.scope),
+    harness: adapterDefinition.harness,
+    kind: adapterDefinition.kind,
+    scope: target.scope as "user" | "project",
+    format: "markdown-frontmatter",
+    shape: adapterDefinition.shape,
+    knownFields: [...adapterDefinition.knownFields],
+  }
+}
 
 const backupRecordSchema = z
   .object({

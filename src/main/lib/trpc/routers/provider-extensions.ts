@@ -8,6 +8,9 @@ import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { publicProcedure, router } from "../index"
 import {
   applyNativeExtensionMutation,
+  applyCrossHarnessCopy,
+  crossHarnessCopyApplySchema,
+  crossHarnessCopyPreviewSchema,
   extensionBaselineGaps,
   extensionCapabilityRegistry,
   extensionHarnessBaselines,
@@ -17,6 +20,7 @@ import {
   nativeExtensionRestoreSchema,
   nativeExtensionTargetSchema,
   previewNativeExtensionMutation,
+  previewCrossHarnessCopy,
   readNativeExtension,
   restoreNativeExtensionBackup,
 } from "../../extension-management"
@@ -77,4 +81,24 @@ export const providerExtensionsRouter = router({
       target: registeredNativeTarget(input.target),
     })
   }),
+
+  previewCrossHarnessCopy: publicProcedure
+    .input(crossHarnessCopyPreviewSchema)
+    .query(({ input }) => {
+      return previewCrossHarnessCopy({
+        ...input,
+        source: registeredNativeTarget(input.source),
+        target: registeredNativeTarget(input.target),
+      })
+    }),
+
+  applyCrossHarnessCopy: publicProcedure
+    .input(crossHarnessCopyApplySchema)
+    .mutation(({ input }) => {
+      return applyCrossHarnessCopy({
+        ...input,
+        source: registeredNativeTarget(input.source),
+        target: registeredNativeTarget(input.target),
+      })
+    }),
 })
