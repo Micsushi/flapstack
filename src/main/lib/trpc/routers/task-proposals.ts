@@ -6,6 +6,7 @@ import {
 } from "../../../../shared/task-proposals"
 import { getDatabasePath } from "../../db"
 import { TaskProposalError, TaskProposalService } from "../../task-proposals"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
 const user = { type: "user" as const, id: "local-user" }
@@ -54,9 +55,21 @@ export const taskProposalsRouter = router({
     .input(z.object({ proposalId }))
     .query(({ input }) => handle(() => service().preview(user, input.proposalId))),
 
-  approve: publicProcedure
-    .input(taskProposalApprovalSchema)
-    .mutation(({ input }) => handle(() => service().approve(user, input))),
+  approve: publicProcedure.input(taskProposalApprovalSchema).mutation(({ input }) => {
+    const result = handle(() => service().approve(user, input))
+    if (result.item.created) {
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["task-proposals", "tasks", "chats", "plan-sources"],
+        projectIds: [result.item.proposal.projectId],
+        proposalIds: [result.item.proposal.id],
+        taskIds: [String(result.item.task.id)],
+        chatIds: [String(result.item.chat.id)],
+      })
+    }
+    return result
+  }),
 
   approveBatch: publicProcedure
     .input(
@@ -64,9 +77,34 @@ export const taskProposalsRouter = router({
         approvals: z.array(taskProposalApprovalSchema).min(1).max(AI_TASK_PROPOSAL_BATCH_CAP),
       }),
     )
-    .mutation(({ input }) => handle(() => service().approveBatch(user, input))),
+    .mutation(({ input }) => {
+      const result = handle(() => service().approveBatch(user, input))
+      const created = result.items.filter((item) => item.created)
+      if (created.length > 0) {
+        publishLocalProductInvalidation({
+          version: 1,
+          source: "product-mcp",
+          domains: ["task-proposals", "tasks", "chats", "plan-sources"],
+          projectIds: [...new Set(created.map((item) => item.proposal.projectId))],
+          proposalIds: created.map((item) => item.proposal.id),
+          taskIds: created.map((item) => String(item.task.id)),
+          chatIds: created.map((item) => String(item.chat.id)),
+        })
+      }
+      return result
+    }),
 
-  deny: publicProcedure
-    .input(z.object({ proposalId, expectedVersion }))
-    .mutation(({ input }) => handle(() => service().deny(user, input))),
+  deny: publicProcedure.input(z.object({ proposalId, expectedVersion })).mutation(({ input }) => {
+    const result = handle(() => service().deny(user, input))
+    if (result.changed) {
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["task-proposals", "plan-sources"],
+        projectIds: [result.record.projectId],
+        proposalIds: [result.record.id],
+      })
+    }
+    return result
+  }),
 })

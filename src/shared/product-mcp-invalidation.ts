@@ -15,6 +15,7 @@ export const productMcpInvalidationDomains = [
   "vaults",
   "automations",
   "task-proposals",
+  "plan-sources",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -135,7 +136,7 @@ export function invalidationForProductMcpMutation(
     case "propose_task":
     case "update_task_proposal":
     case "cancel_task_proposal":
-      return event(["task-proposals"], {
+      return event(["task-proposals", "plan-sources"], {
         proposalIds: compactIds(
           stringValue(request.proposalId),
           stringValue(result.id),

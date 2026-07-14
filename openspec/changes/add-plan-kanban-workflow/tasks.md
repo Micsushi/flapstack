@@ -102,6 +102,12 @@
 ### S4-F9-T7 — Add provenance, divergence, and cross-window consistency
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. Node 22 full headless F9 regression passes
+  49 tests across 8 suites, including source edits, linked task/proposal comparisons, stale
+  two-window moves, promotion deduplication, proposal decision races, and renderer invalidation.
+  Full strict TypeScript, repo-wide ESLint, focused Prettier, production build, `git diff --check`,
+  and strict OpenSpec validation pass. Live Plan/Kanban compare UI, accessibility, and real
+  multi-window refresh walkthroughs remain prohibited and unverified, so completion stays open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Plan sources, proposals, tasks, chats, and boards remain truthful after edits and concurrent actions.
 - Scope: Source-task link query; fingerprint divergence; compare UI data; optimistic versions; renderer invalidation; board refresh; no silent reverse sync; move/promotion/proposal race handling.

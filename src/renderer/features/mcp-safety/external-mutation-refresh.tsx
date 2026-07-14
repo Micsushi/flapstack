@@ -15,6 +15,7 @@ export function McpExternalMutationRefreshBridge() {
       projectsArchived: () => utils.projects.listArchived.invalidate(),
       tasksList: () => Promise.all([utils.tasks.list.invalidate(), utils.tasks.board.invalidate()]),
       tasksArchived: () => utils.tasks.listArchived.invalidate(),
+      task: (id) => utils.tasks.get.invalidate({ id }),
       chatsList: () => utils.chats.list.invalidate(),
       chatsArchived: () => utils.chats.listArchived.invalidate(),
       chat: (id) => utils.chats.get.invalidate({ id }),
@@ -32,6 +33,13 @@ export function McpExternalMutationRefreshBridge() {
       projectVault: () => utils.projectVaults.invalidate(),
       automations: () => utils.automations.invalidate(),
       taskProposals: () => utils.taskProposals.invalidate(),
+      planSources: (projectId) =>
+        projectId
+          ? Promise.all([
+              utils.planSources.refresh.invalidate({ projectId }),
+              utils.planSources.sourceLinks.invalidate({ projectId }),
+            ])
+          : utils.planSources.invalidate(),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate)
     const unsubscribe = window.desktopApi.onProductMcpInvalidation(coalescer.push)

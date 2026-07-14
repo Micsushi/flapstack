@@ -20,6 +20,8 @@ import {
   PlanTaskPromotionError,
   promotePlanCandidate,
 } from "../../plan-task-promotion"
+import { listPlanSourceLinks } from "../../plan-kanban-consistency"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
 const sourcePathSchema = z.string().trim().min(1).max(4096)
@@ -81,7 +83,7 @@ export const planSourcesRouter = router({
     .mutation(async ({ input }) => {
       const config = getProjectPlanSourceConfig(input.projectId)
       const relativePath = await validateMarkdownPlanSource(config.rootPath, input.relativePath)
-      return getDatabase()
+      const registration = getDatabase()
         .insert(planSourceRegistrations)
         .values({
           projectId: input.projectId,
@@ -95,13 +97,20 @@ export const planSourcesRouter = router({
         })
         .returning()
         .get()
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["plan-sources"],
+        projectIds: [input.projectId],
+      })
+      return registration
     }),
 
   unregisterMarkdown: publicProcedure
     .input(z.object({ projectId: z.string().min(1), relativePath: sourcePathSchema }))
     .mutation(({ input }) => {
       getProjectPlanSourceConfig(input.projectId)
-      return getDatabase()
+      const registration = getDatabase()
         .delete(planSourceRegistrations)
         .where(
           and(
@@ -111,6 +120,15 @@ export const planSourcesRouter = router({
         )
         .returning()
         .get()
+      if (registration) {
+        publishLocalProductInvalidation({
+          version: 1,
+          source: "product-mcp",
+          domains: ["plan-sources"],
+          projectIds: [input.projectId],
+        })
+      }
+      return registration
     }),
 
   refresh: publicProcedure
@@ -125,6 +143,13 @@ export const planSourcesRouter = router({
         expectedFingerprints: input.expectedFingerprints,
       }),
     ),
+
+  sourceLinks: publicProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const snapshot = await readProjectPlanSources(getProjectPlanSourceConfig(input.projectId))
+      return listPlanSourceLinks(getDatabase(), snapshot)
+    }),
 
   previewPromotion: publicProcedure
     .input(planTaskPromotionPreviewInputSchema)
@@ -142,7 +167,18 @@ export const planSourcesRouter = router({
     .mutation(async ({ input }) => {
       try {
         const snapshot = await readPromotionSnapshot(input.reference)
-        return promotePlanCandidate(getDatabase(), snapshot, input)
+        const result = promotePlanCandidate(getDatabase(), snapshot, input)
+        if (result.created) {
+          publishLocalProductInvalidation({
+            version: 1,
+            source: "product-mcp",
+            domains: ["tasks", "chats", "plan-sources"],
+            projectIds: [...new Set([input.reference.sourceProjectId, input.targetProjectId])],
+            taskIds: [result.task.id],
+            chatIds: [result.chat.id],
+          })
+        }
+        return result
       } catch (error) {
         promotionError(error)
       }
@@ -154,7 +190,15 @@ export const planSourcesRouter = router({
       observable<PlanSourceRefreshEvent>((emit) => {
         const watcher = new PlanSourceRefreshWatcher({
           loadConfig: () => getProjectPlanSourceConfig(input.projectId),
-          onRefresh: (event) => emit.next(event),
+          onRefresh: (event) => {
+            emit.next(event)
+            publishLocalProductInvalidation({
+              version: 1,
+              source: "product-mcp",
+              domains: ["plan-sources"],
+              projectIds: [event.projectId],
+            })
+          },
           onError: (error) => emit.error(error),
         })
         void watcher.start().catch((error) => {

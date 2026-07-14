@@ -5,8 +5,11 @@ import {
   AI_TASK_PROPOSAL_BATCH_CAP,
   type TaskProposalRecord,
 } from "../../../../shared/task-proposals"
+import { describePlanSourceLinkStatus } from "../../../../shared/plan-kanban-consistency"
 import { trpc } from "../../../lib/trpc"
 import { Button } from "../../../components/ui/button"
+import { Badge } from "../../../components/ui/badge"
+import { PlanSourceComparisonDialog } from "../../plan/plan-source-comparison-dialog"
 
 type Proposal = TaskProposalRecord
 
@@ -195,9 +198,17 @@ function ProposalPreview({
   onDeny: () => void
 }) {
   const [detailsOpen, setDetailsOpen] = useState(true)
+  const [comparisonOpen, setComparisonOpen] = useState(false)
   const preview = trpc.taskProposals.preview.useQuery(
     { proposalId: proposal.id },
     { refetchOnWindowFocus: false },
+  )
+  const sourceLinks = trpc.planSources.sourceLinks.useQuery(
+    { projectId: proposal.projectId },
+    { enabled: Boolean(proposal.source), refetchOnWindowFocus: true, refetchInterval: 5_000 },
+  )
+  const sourceLink = sourceLinks.data?.find(
+    (link) => link.kind === "proposal" && link.entity.id === proposal.id,
   )
   return (
     <article
@@ -218,6 +229,14 @@ function ProposalPreview({
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {proposal.projectName} · {proposal.targetStatus} · version {proposal.version}
           </p>
+          {sourceLink && (
+            <Badge
+              variant={sourceLink.diverged ? "destructive" : "outline"}
+              className="mt-1 text-[9px]"
+            >
+              {describePlanSourceLinkStatus(sourceLink.status)}
+            </Badge>
+          )}
           {proposal.description && (
             <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
               {proposal.description}
@@ -261,6 +280,17 @@ function ProposalPreview({
       )}
 
       <div className="mt-3 flex justify-end gap-2">
+        {sourceLink && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mr-auto h-7 text-xs"
+            onClick={() => setComparisonOpen(true)}
+          >
+            Compare source
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -281,6 +311,9 @@ function ProposalPreview({
           <Check className="mr-1 h-3 w-3" /> Approve exact preview
         </Button>
       </div>
+      {sourceLink && comparisonOpen && (
+        <PlanSourceComparisonDialog link={sourceLink} onClose={() => setComparisonOpen(false)} />
+      )}
     </article>
   )
 }

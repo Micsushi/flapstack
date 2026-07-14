@@ -175,7 +175,14 @@ export function moveTaskKanbanCard(
     for (const target of targetRows) {
       const nextOrder = orders.get(target.id)
       if (nextOrder && nextOrder !== target.boardOrder) {
-        tx.update(tasks).set({ boardOrder: nextOrder }).where(eq(tasks.id, target.id)).run()
+        tx.update(tasks)
+          .set({
+            boardOrder: nextOrder,
+            version: sql`${tasks.version} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, target.id))
+          .run()
       }
     }
 

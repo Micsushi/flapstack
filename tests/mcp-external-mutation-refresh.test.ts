@@ -7,6 +7,7 @@ import {
   type ProductMcpRendererInvalidation,
 } from "../src/shared/product-mcp-invalidation"
 import {
+  publishLocalProductInvalidation,
   publishProductMcpInvalidation,
   startProductMcpInvalidationBridge,
 } from "../src/main/lib/mcp-control/invalidation-bridge"
@@ -50,7 +51,7 @@ describe("product MCP external mutation refresh", () => {
     ).toEqual({
       version: 1,
       source: "product-mcp",
-      domains: ["task-proposals"],
+      domains: ["task-proposals", "plan-sources"],
       projectIds: ["project-1"],
       proposalIds: ["proposal-1"],
     })
@@ -140,6 +141,15 @@ describe("product MCP external mutation refresh", () => {
       expect(sent).toBe(true)
       await vi.waitFor(() => expect(received).toHaveLength(1))
 
+      publishLocalProductInvalidation({
+        version: 1,
+        source: "product-mcp",
+        domains: ["tasks", "plan-sources"],
+        taskIds: ["task-1"],
+        projectIds: ["project-1"],
+      })
+      await vi.waitFor(() => expect(received).toHaveLength(2))
+
       await new Promise<void>((resolve, reject) => {
         const socket = createConnection(bridge.endpoint)
         socket.once("connect", () =>
@@ -156,7 +166,7 @@ describe("product MCP external mutation refresh", () => {
         socket.once("error", reject)
       })
       await new Promise((resolve) => setTimeout(resolve, 10))
-      expect(received).toHaveLength(1)
+      expect(received).toHaveLength(2)
     } finally {
       await bridge.stop()
     }
@@ -170,6 +180,7 @@ describe("product MCP external mutation refresh", () => {
       projectsArchived: () => calls.push("projects.archived"),
       tasksList: () => calls.push("tasks.list"),
       tasksArchived: () => calls.push("tasks.archived"),
+      task: (id) => calls.push(`task:${id}`),
       chatsList: () => calls.push("chats.list"),
       chatsArchived: () => calls.push("chats.archived"),
       chat: (id) => calls.push(`chat:${id}`),
@@ -183,6 +194,7 @@ describe("product MCP external mutation refresh", () => {
       projectVault: (id) => calls.push(`vault:${id}`),
       automations: () => calls.push("automations"),
       taskProposals: () => calls.push("task-proposals"),
+      planSources: (id) => calls.push(`plan-sources:${id ?? "all"}`),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate, 25)
     coalescer.push({
@@ -220,7 +232,8 @@ describe("product MCP external mutation refresh", () => {
     coalescer.push({
       version: 1,
       source: "product-mcp",
-      domains: ["task-proposals"],
+      domains: ["task-proposals", "plan-sources"],
+      projectIds: ["project-1"],
       proposalIds: ["proposal-1"],
     })
 
@@ -239,6 +252,7 @@ describe("product MCP external mutation refresh", () => {
       "vault:project-1",
       "automations",
       "task-proposals",
+      "plan-sources:project-1",
     ])
     coalescer.dispose()
   })

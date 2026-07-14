@@ -10,6 +10,7 @@ export type ProductMcpRendererInvalidators = {
   projectsArchived: Invalidate
   tasksList: Invalidate
   tasksArchived: Invalidate
+  task: (id: string) => unknown | Promise<unknown>
   chatsList: Invalidate
   chatsArchived: Invalidate
   chat: (id: string) => unknown | Promise<unknown>
@@ -23,6 +24,7 @@ export type ProductMcpRendererInvalidators = {
   projectVault: (projectId: string) => unknown | Promise<unknown>
   automations: Invalidate
   taskProposals: Invalidate
+  planSources: (projectId?: string) => unknown | Promise<unknown>
 }
 
 export function createProductMcpRendererInvalidator(
@@ -36,6 +38,7 @@ export function createProductMcpRendererInvalidator(
     }
     if (domains.has("tasks")) {
       pending.push(invalidators.tasksList(), invalidators.tasksArchived())
+      pending.push(...(event.taskIds ?? []).map((id) => invalidators.task(id)))
     }
     if (domains.has("chats")) {
       pending.push(invalidators.chatsList(), invalidators.chatsArchived())
@@ -59,6 +62,11 @@ export function createProductMcpRendererInvalidator(
     }
     if (domains.has("automations")) pending.push(invalidators.automations())
     if (domains.has("task-proposals")) pending.push(invalidators.taskProposals())
+    if (domains.has("plan-sources")) {
+      const projectIds = event.projectIds ?? []
+      if (projectIds.length === 0) pending.push(invalidators.planSources())
+      else pending.push(...projectIds.map((id) => invalidators.planSources(id)))
+    }
     await Promise.all(pending)
   }
 }

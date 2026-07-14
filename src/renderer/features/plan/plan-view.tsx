@@ -25,6 +25,8 @@ import type {
   PlanSourceSnapshot,
   ProjectPlanSnapshot,
 } from "../../../shared/plan-sources"
+import type { PlanSourceLink } from "../../../shared/plan-kanban-consistency"
+import { describePlanSourceLinkStatus } from "../../../shared/plan-kanban-consistency"
 import {
   buildPlanOpenTarget,
   buildPlanViewModel,
@@ -37,6 +39,7 @@ import {
 } from "../../../shared/plan-view"
 import { selectedProjectAtom } from "../agents/atoms"
 import { PlanPromotionDialog } from "./plan-promotion-dialog"
+import { PlanSourceComparisonDialog } from "./plan-source-comparison-dialog"
 
 const INITIAL_STATE: PlanViewState = { selectedSourceId: null, query: "", status: "all" }
 const STATUS_FILTERS: Array<{ value: PlanStatusFilter; label: string }> = [
@@ -57,10 +60,24 @@ export function PlanView() {
     source: PlanSourceSnapshot
     candidate: PlanCandidate
   } | null>(null)
+  const [comparisonTarget, setComparisonTarget] = useState<PlanSourceLink | null>(null)
   const refreshQuery = trpc.planSources.refresh.useQuery(
     { projectId },
     { enabled: Boolean(projectId), refetchOnWindowFocus: false },
   )
+  const sourceLinksQuery = trpc.planSources.sourceLinks.useQuery(
+    { projectId },
+    { enabled: Boolean(projectId), refetchOnWindowFocus: true, refetchInterval: 5_000 },
+  )
+  const linksByCandidateId = useMemo(() => {
+    const links = new Map<string, PlanSourceLink[]>()
+    for (const link of sourceLinksQuery.data ?? []) {
+      const current = links.get(link.provenance.sourceCandidateId) ?? []
+      current.push(link)
+      links.set(link.provenance.sourceCandidateId, current)
+    }
+    return links
+  }, [sourceLinksQuery.data])
   const openInEditor = trpc.external.openFileInEditor.useMutation({
     onError: (error) => toast.error(error.message || "Could not open plan source"),
   })
@@ -71,6 +88,7 @@ export function PlanView() {
     setWatchError(null)
     setCollapsedIds(new Set())
     setPromotionTarget(null)
+    setComparisonTarget(null)
   }, [projectId])
 
   useEffect(() => {
@@ -84,6 +102,7 @@ export function PlanView() {
       onData: (event) => {
         setLiveSnapshot(event.snapshot)
         setWatchError(null)
+        void sourceLinksQuery.refetch()
       },
       onError: (error) => setWatchError(error.message || "Plan source watcher stopped"),
     },
@@ -382,6 +401,8 @@ export function PlanView() {
                             ? (candidate) => setPromotionTarget({ source, candidate })
                             : undefined
                         }
+                        linksByCandidateId={linksByCandidateId}
+                        onCompare={setComparisonTarget}
                       />
                     ))}
                   </ul>
@@ -414,6 +435,12 @@ export function PlanView() {
           onClose={() => setPromotionTarget(null)}
         />
       )}
+      {comparisonTarget && (
+        <PlanSourceComparisonDialog
+          link={comparisonTarget}
+          onClose={() => setComparisonTarget(null)}
+        />
+      )}
     </main>
   )
 }
@@ -425,6 +452,8 @@ function PlanTreeNode({
   onToggleCollapsed,
   onOpenSource,
   onPromote,
+  linksByCandidateId,
+  onCompare,
 }: {
   node: PlanViewNode
   level: number
@@ -432,12 +461,16 @@ function PlanTreeNode({
   onToggleCollapsed: (candidateId: string) => void
   onOpenSource: (relativePath: string, line?: number) => void
   onPromote?: (candidate: PlanCandidate) => void
+  linksByCandidateId: ReadonlyMap<string, PlanSourceLink[]>
+  onCompare: (link: PlanSourceLink) => void
 }) {
   const hasChildren = node.children.length > 0
   const isCollapsed = collapsedIds.has(node.candidate.id)
   const isPromotableCandidate =
     (node.candidate.kind === "task" || node.candidate.kind === "checklist") &&
     node.candidate.completed !== true
+  const sourceLinks = linksByCandidateId.get(node.candidate.id) ?? []
+  const linkedTask = sourceLinks.find((link) => link.kind === "task")
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const treeItems = event.currentTarget
       .closest('[role="tree"]')
@@ -516,6 +549,15 @@ function PlanTreeNode({
               <Badge variant="outline" className="text-[10px] text-muted-foreground">
                 {node.candidate.kind}
               </Badge>
+              {sourceLinks.map((link) => (
+                <Badge
+                  key={`${link.kind}:${link.entity.id}`}
+                  variant={link.diverged ? "destructive" : "outline"}
+                  className="text-[10px]"
+                >
+                  {link.kind} · {describePlanSourceLinkStatus(link.status)}
+                </Badge>
+              ))}
             </div>
             {node.candidate.body && (
               <p className="mt-1 max-w-3xl whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
@@ -536,15 +578,31 @@ function PlanTreeNode({
               {isPromotableCandidate && (
                 <button
                   type="button"
-                  disabled={!onPromote}
+                  disabled={!onPromote || Boolean(linkedTask)}
                   className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-55"
                   aria-label={`Promote ${node.candidate.title} to task`}
-                  title={onPromote ? "Review task and chat preview" : "Refresh this source first"}
+                  title={
+                    linkedTask
+                      ? "This plan item already has a durable task"
+                      : onPromote
+                        ? "Review task and chat preview"
+                        : "Refresh this source first"
+                  }
                   onClick={() => onPromote?.(node.candidate)}
                 >
                   Promote to task
                 </button>
               )}
+              {sourceLinks.map((link) => (
+                <button
+                  key={`compare:${link.kind}:${link.entity.id}`}
+                  type="button"
+                  className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+                  onClick={() => onCompare(link)}
+                >
+                  Compare {link.kind}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -560,6 +618,8 @@ function PlanTreeNode({
               onToggleCollapsed={onToggleCollapsed}
               onOpenSource={onOpenSource}
               onPromote={onPromote}
+              linksByCandidateId={linksByCandidateId}
+              onCompare={onCompare}
             />
           ))}
         </ul>

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm"
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import { z } from "zod"
@@ -23,6 +23,7 @@ import {
   taskWorkflowStatusSchema,
   type TaskWorkflowStatus,
 } from "../../../../shared/plan-kanban"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 
 const permissionModeSchema = z.enum(permissionModes)
 const customPermissionsSchema = z.custom<CustomPermissionToggles>(
@@ -38,6 +39,17 @@ function taskWorktreeSlug(task: { id: string; name: string }): string {
 
 function taskBranchName(task: { id: string; name: string }): string {
   return `task/${taskWorktreeSlug(task)}`
+}
+
+function publishTaskChange(task: { id: string; projectId: string } | undefined): void {
+  if (!task) return
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["tasks", "plan-sources"],
+    projectIds: [task.projectId],
+    taskIds: [task.id],
+  })
 }
 
 export async function ensureTaskPrimaryWorktree(taskId: string) {
@@ -62,6 +74,7 @@ export async function ensureTaskPrimaryWorktree(taskId: string) {
     .set({
       primaryWorktreePath: worktreePath,
       primaryBranch: branch,
+      version: sql`${tasks.version} + 1`,
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, task.id))
@@ -87,7 +100,9 @@ export const tasksRouter = router({
     )
     .mutation(({ input }) => {
       try {
-        return moveTaskKanbanCard(getDatabase(), input)
+        const task = moveTaskKanbanCard(getDatabase(), input)
+        publishTaskChange(task)
+        return task
       } catch (error) {
         if (error instanceof TaskKanbanError) {
           throw new TRPCError({
@@ -103,7 +118,9 @@ export const tasksRouter = router({
     .input(z.object({ id: z.string(), expectedVersion: z.number().int().positive() }))
     .mutation(({ input }) => {
       try {
-        return archiveTaskKanbanCard(getDatabase(), input)
+        const task = archiveTaskKanbanCard(getDatabase(), input)
+        publishTaskChange(task)
+        return task
       } catch (error) {
         if (error instanceof TaskKanbanError) {
           throw new TRPCError({ code: "CONFLICT", message: error.message })
@@ -125,7 +142,7 @@ export const tasksRouter = router({
       const project = db.select().from(projects).where(eq(projects.id, input.projectId)).get()
       if (!project) throw new Error("Project not found")
 
-      return db
+      const task = db
         .insert(tasks)
         .values({
           projectId: input.projectId,
@@ -137,6 +154,8 @@ export const tasksRouter = router({
         })
         .returning()
         .get()
+      publishTaskChange(task)
+      return task
     }),
 
   list: publicProcedure
@@ -186,11 +205,12 @@ export const tasksRouter = router({
         status: taskWorkflowStatusSchema.optional(),
         defaultPermissionMode: permissionModeSchema.optional(),
         defaultCustomPermissions: customPermissionsSchema.optional().nullable(),
+        expectedVersion: z.number().int().positive(),
       }),
     )
     .mutation(({ input }) => {
       const db = getDatabase()
-      const { id, ...updates } = input
+      const { id, expectedVersion, ...updates } = input
       if (updates.status !== undefined) {
         const current = db
           .select({ status: tasks.status })
@@ -214,7 +234,7 @@ export const tasksRouter = router({
       ) {
         throw new Error("Custom capability toggles require custom permission mode.")
       }
-      return db
+      const task = db
         .update(tasks)
         .set({
           ...updates,
@@ -224,56 +244,72 @@ export const tasksRouter = router({
               : updates.defaultCustomPermissions
                 ? JSON.stringify(updates.defaultCustomPermissions)
                 : null,
+          version: sql`${tasks.version} + 1`,
           updatedAt: new Date(),
         })
-        .where(eq(tasks.id, id))
+        .where(and(eq(tasks.id, id), eq(tasks.version, expectedVersion)))
         .returning()
         .get()
+      if (!task) {
+        throw new TRPCError({ code: "CONFLICT", message: "Task changed in another window." })
+      }
+      publishTaskChange(task)
+      return task
     }),
 
   delete: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
-    return db.delete(tasks).where(eq(tasks.id, input.id)).returning().get()
+    const task = db.delete(tasks).where(eq(tasks.id, input.id)).returning().get()
+    publishTaskChange(task)
+    return task
   }),
 
   pin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
-    return db
+    const task = db
       .update(tasks)
-      .set({ pinnedAt: new Date(), updatedAt: new Date() })
+      .set({ pinnedAt: new Date(), version: sql`${tasks.version} + 1`, updatedAt: new Date() })
       .where(eq(tasks.id, input.id))
       .returning()
       .get()
+    publishTaskChange(task)
+    return task
   }),
 
   unpin: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
-    return db
+    const task = db
       .update(tasks)
-      .set({ pinnedAt: null, updatedAt: new Date() })
+      .set({ pinnedAt: null, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
       .where(eq(tasks.id, input.id))
       .returning()
       .get()
+    publishTaskChange(task)
+    return task
   }),
 
   archive: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
-    return db
+    const task = db
       .update(tasks)
-      .set({ archivedAt: new Date(), updatedAt: new Date() })
+      .set({ archivedAt: new Date(), version: sql`${tasks.version} + 1`, updatedAt: new Date() })
       .where(eq(tasks.id, input.id))
       .returning()
       .get()
+    publishTaskChange(task)
+    return task
   }),
 
   restore: publicProcedure.input(z.object({ id: z.string() })).mutation(({ input }) => {
     const db = getDatabase()
-    return db
+    const task = db
       .update(tasks)
-      .set({ archivedAt: null, updatedAt: new Date() })
+      .set({ archivedAt: null, version: sql`${tasks.version} + 1`, updatedAt: new Date() })
       .where(eq(tasks.id, input.id))
       .returning()
       .get()
+    publishTaskChange(task)
+    return task
   }),
 
   listChats: publicProcedure.input(z.object({ taskId: z.string() })).query(({ input }) => {
@@ -288,5 +324,9 @@ export const tasksRouter = router({
 
   ensurePrimaryWorktree: publicProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(({ input }) => ensureTaskPrimaryWorktree(input.id)),
+    .mutation(async ({ input }) => {
+      const task = await ensureTaskPrimaryWorktree(input.id)
+      publishTaskChange(task)
+      return task
+    }),
 })

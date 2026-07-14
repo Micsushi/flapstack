@@ -99,3 +99,9 @@ export async function publishProductMcpInvalidation(
     socket.once("close", () => finish(false))
   })
 }
+
+/** Publish a committed main-process mutation through the same all-window bridge. */
+export function publishLocalProductInvalidation(event: ProductMcpRendererInvalidation): void {
+  const endpoint = getProductMcpInvalidationEndpoint()
+  if (endpoint) void publishProductMcpInvalidation(event, endpoint)
+}

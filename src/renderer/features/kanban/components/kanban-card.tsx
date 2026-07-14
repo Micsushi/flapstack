@@ -1,4 +1,4 @@
-import { memo } from "react"
+import { memo, useState } from "react"
 import { Archive, GitBranch, MessageSquare, Play, ExternalLink } from "lucide-react"
 import { formatTimeAgo } from "../../../lib/utils/format-time-ago"
 import { cn } from "../../../lib/utils"
@@ -8,6 +8,10 @@ import {
   type TaskKanbanCard as TaskKanbanCardData,
   type TaskKanbanMoveTarget,
 } from "../../../../shared/task-kanban"
+import { describePlanSourceLinkStatus } from "../../../../shared/plan-kanban-consistency"
+import { Badge } from "../../../components/ui/badge"
+import { trpc } from "../../../lib/trpc"
+import { PlanSourceComparisonDialog } from "../../plan/plan-source-comparison-dialog"
 
 export type { TaskKanbanCardData }
 
@@ -34,7 +38,19 @@ export const KanbanCard = memo(function KanbanCard({
   onDragStart,
   onDropBefore,
 }: KanbanCardProps) {
+  const [comparisonOpen, setComparisonOpen] = useState(false)
   const timeAgo = formatTimeAgo(card.updatedAt ?? card.createdAt ?? new Date())
+  const sourceLinks = trpc.planSources.sourceLinks.useQuery(
+    { projectId: card.projectId },
+    {
+      enabled: Boolean(card.sourcePath),
+      refetchOnWindowFocus: true,
+      refetchInterval: 5_000,
+    },
+  )
+  const sourceLink = sourceLinks.data?.find(
+    (link) => link.kind === "task" && link.entity.id === card.id,
+  )
 
   return (
     <article
@@ -71,7 +87,17 @@ export const KanbanCard = memo(function KanbanCard({
           onMove(card, target)
         }}
       >
-        <span className="block truncate text-sm font-medium">{card.name}</span>
+        <span className="flex items-center gap-1">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{card.name}</span>
+          {sourceLink && (
+            <Badge
+              variant={sourceLink.diverged ? "destructive" : "outline"}
+              className="shrink-0 text-[9px]"
+            >
+              {describePlanSourceLinkStatus(sourceLink.status)}
+            </Badge>
+          )}
+        </span>
         {card.description && (
           <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
             {card.description}
@@ -110,6 +136,17 @@ export const KanbanCard = memo(function KanbanCard({
               <ExternalLink className="h-3 w-3" />
             </button>
           )}
+          {sourceLink && (
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setComparisonOpen(true)}
+              aria-label={`Compare plan source for ${card.name}`}
+              title="Compare durable task with current plan source"
+            >
+              Compare
+            </button>
+          )}
           <button
             type="button"
             className="rounded p-1 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -121,6 +158,9 @@ export const KanbanCard = memo(function KanbanCard({
           </button>
         </span>
       </div>
+      {sourceLink && comparisonOpen && (
+        <PlanSourceComparisonDialog link={sourceLink} onClose={() => setComparisonOpen(false)} />
+      )}
     </article>
   )
 })
