@@ -74,6 +74,8 @@
 - Out of scope: Hosted analytics and unredacted credential/raw payload export.
 - Acceptance: Every aggregate links to facts/provenance; estimates remain labeled; export matches selected filters and contains no secrets.
 - Verification: `npm test -- advanced-usage-ui` plus export/redaction, accessibility, and live dashboard walkthrough.
+- Automated evidence: Node 22 focused explorer state/view, export, hostile redaction, and accessibility tests pass; TypeScript, lint, formatting, production build, strict OpenSpec, and full repo gate are recorded at commit handoff.
+- Manual verification remaining: live dashboard walkthrough. Completion stays unchecked until observed.
 - Blocked by: S4-F7-T2, S4-F7-T3, S4-F7-T4, S4-F7-T5
 - Blocks: S4-F7-T7, S4-F8-T3
 - Context: usage dashboard, provider tabs, graph components, scoped search/filter patterns.
