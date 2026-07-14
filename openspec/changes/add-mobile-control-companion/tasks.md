@@ -15,13 +15,16 @@
 
 ### S4-F10-T2 — Implement default-off HTTPS bridge lifecycle
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F10
 - Outcome: Desktop Flapstack safely serves an authenticated companion endpoint on approved LAN interfaces.
 - Scope: Settings; certificate generation/storage/fingerprint; private-interface selection; HTTPS/WebSocket server; origin/host checks; rate/connection limits; enable/disable/rebind; network-change shutdown; startup/quit cleanup.
 - Out of scope: Pairing credentials and application data APIs.
 - Acceptance: No listener before opt-in; public/unapproved bind fails; disable/network change closes sessions; certificate keys stay protected and unlogged.
 - Verification: `npm test -- mobile-bridge` with bind, interface change, TLS, origin, rate, restart, disable, and key-permission fixtures.
+- Automated evidence: Node 22 `npm test -- mobile-bridge` passes 9/9; mobile-control-contract and app-shutdown fixtures pass; strict OpenSpec passes.
+- Migration: None. The bridge uses the existing file-backed settings pattern and protected app data files.
+- Manual verification remaining: live listener, real network transition, browser/device, UI, and packaged-app evidence stay intentionally open for S4-F10-T8.
 - Blocked by: S4-F10-T1
 - Blocks: S4-F10-T3, S4-F10-T4, S4-F10-T8
 - Context: dev MCP HTTP lifecycle (separate surface), Electron startup/shutdown, secure settings storage.
