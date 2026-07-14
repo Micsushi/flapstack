@@ -309,10 +309,46 @@ These groups are now owned by Stage 3 features and their OpenSpec task boards.
       three related strict OpenSpec validations, Node 22.23.1 full check (101
       files, 754 passed, 3 skipped), production build, and unsigned macOS arm64
       Preview inspect/smoke pass.
+- [ ] **R-FIXTURE (S3-F16)** deterministic classification, control-resolution,
+      fallback, timer, search, and persistence fixtures pass on the frozen
+      candidate. Historical fixture evidence exists; rerun it after the final
+      integration change before promotion.
+- [ ] **R-LIVE (S3-F16)** every credential-available Claude, Codex, Cursor,
+      OpenRouter, and NanoGPT reasoning path records exact candidate, model,
+      request resolution, observable class, and honest unavailable cases.
+- [ ] **R-UI (S3-F16)** reasoning disclosure, timer, keyboard accessibility,
+      search, disabled state, and no-fabrication behavior pass in verified Dev
+      and eligible Preview UI contexts.
+- [ ] **R-RELOAD (S3-F16)** the same live reasoning runs preserve visible,
+      token-only, private/opaque, absent, timer, and search truth after restart.
 - [ ] **S3-C01 (S3-F17)** migrated preflight rows `P-01` through `P-10` and MVP
       carryover rows `F3-*` through `F11-*` pass without regressing Stage 1/2.
 
-## 4. Final integrated release gate (S3-F17)
+## 4. Supporting active-change rows
+
+- [ ] **S3-A01** response change summaries and context/evidence provenance stay
+      bounded, accurate, redacted, and attached to the correct run and files.
+- [ ] **S3-A02** a fresh multi-file response passes Review, exact Undo,
+      non-overlapping later-edit preservation, conflict handling, and recovery.
+- [ ] **S3-A03** structured agent questions pass foreground/background,
+      notification navigation, multi-chat, stop/reload, continuation, and
+      credential-available provider delivery without draft or focus loss.
+- [ ] **S3-A04** the active-chat Open In control resolves the correct local
+      folder, remains disabled without one, and passes verified Dev behavior.
+- [ ] **S3-A05** full-history copy and canonical-conversation migration include
+      visible reasoning/questions while excluding hidden/private payloads; the
+      actual clipboard and legacy/current chat paths pass.
+- [ ] **S3-A06** dev-test MCP and agent context/evidence controls remain
+      development-only, authenticated, redacted, bounded, and proven against
+      exact run and renderer state.
+- [ ] **S3-A07** current and legacy transcript timestamps display the correct
+      local date/time across today and older-message cases.
+
+These rows remain open until their owning active-change boards and exact-SHA
+manual evidence close. Automation or historical lane evidence alone does not
+promote them.
+
+## 5. Final integrated release gate (S3-F17)
 
 - [ ] **S3-X01** a clean-profile walkthrough creates/opens project, task, chat,
       worktree, run, artifact, checkpoint, and production MCP control paths.

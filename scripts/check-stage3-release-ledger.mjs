@@ -13,6 +13,15 @@ const activeChanges = readdirSync(changesRoot, { withFileTypes: true })
 const changeMappings = parseMappings("stage3-release-change", "change")
 assertSameSet("active OpenSpec changes", [...changeMappings.keys()], activeChanges)
 
+const evidenceCorpus = collectMarkdown(resolve(root, "docs"), {
+  exclude: new Set([resolve(root, "docs/stage3-release-candidate-ledger.md")]),
+}).concat(collectMarkdown(resolve(root, "tests/fixtures")))
+const releaseRows = [...new Set([...changeMappings.values()].flatMap((mapping) => mapping.rows))]
+for (const row of releaseRows) {
+  if (!containsRowDefinition(evidenceCorpus, row))
+    fail(`release row ${row} has no evidence-board definition`)
+}
+
 let scenarioCount = 0
 for (const change of activeChanges) {
   const mapping = changeMappings.get(change)
@@ -24,9 +33,12 @@ for (const change of activeChanges) {
 const featureMappings = parseMappings("stage3-release-feature", "feature")
 const expectedFeatures = Array.from({ length: 17 }, (_, index) => `S3-F${index + 1}`)
 assertSameSet("Stage 3 feature exits", [...featureMappings.keys()], expectedFeatures)
+const taskCorpus = collectMarkdown(changesRoot, { basename: "tasks.md" })
 
 for (const [feature, mapping] of featureMappings) {
   if (!mapping.exit) fail(`${feature} has no exit task`)
+  if (!containsTaskHeading(taskCorpus, mapping.exit))
+    fail(`${feature} exit task ${mapping.exit} does not exist`)
   for (const dependency of mapping.depends) {
     if (!featureMappings.has(dependency)) fail(`${feature} has unknown dependency ${dependency}`)
   }
@@ -67,8 +79,38 @@ for (const field of [
 }
 
 console.log(
-  `stage3 release ledger coverage passed (${activeChanges.length} changes, ${scenarioCount} scenarios, ${featureMappings.size} feature exits)`,
+  `stage3 release ledger coverage passed (${activeChanges.length} changes, ${scenarioCount} scenarios, ${releaseRows.length} release rows, ${featureMappings.size} feature exits)`,
 )
+
+function collectMarkdown(directory, options = {}) {
+  let content = ""
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name)
+    if (options.exclude?.has(path)) continue
+    if (entry.isDirectory()) content += collectMarkdown(path, options)
+    if (
+      entry.isFile() &&
+      entry.name.endsWith(".md") &&
+      (!options.basename || entry.name === options.basename)
+    ) {
+      content += `\n${readFileSync(path, "utf8")}`
+    }
+  }
+  return content
+}
+
+function containsRowDefinition(content, token) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(
+    `^(?:- \\[[ xX]\\] \\*\\*${escaped}(?:[ (]|\\*\\*)|\\| \\s*${escaped}\\s*\\|)`,
+    "m",
+  ).test(content)
+}
+
+function containsTaskHeading(content, taskId) {
+  const escaped = taskId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`^### ${escaped}(?: —| -|$)`, "m").test(content)
+}
 
 function parseMappings(kind, keyName) {
   const mappings = new Map()
