@@ -532,6 +532,443 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   manifest: many(fileChangeManifests),
 }))
 
+// ============ LOCAL AUTOMATION ============
+// Automation rows are inert by default. Scheduler and control services may
+// only make an approved row active; the database rejects partial authority and
+// target combinations even when a caller bypasses the TypeScript contracts.
+export const automations = sqliteTable(
+  "automations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    description: text("description"),
+    scopeType: text("scope_type").notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").references(() => chats.id, { onDelete: "cascade" }),
+    actionType: text("action_type").notNull(),
+    actionConfig: text("action_config").notNull().default("{}"),
+    prompt: text("prompt").notNull(),
+    harness: text("harness").notNull(),
+    model: text("model"),
+    permissionMode: text("permission_mode").notNull(),
+    customPermissions: text("custom_permissions"),
+    worktreeStrategy: text("worktree_strategy").notNull().default("inherit"),
+    worktreePath: text("worktree_path"),
+    state: text("state").notNull().default("draft"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+    approvalState: text("approval_state").notNull().default("pending"),
+    approvedBy: text("approved_by"),
+    approvedAt: integer("approved_at", { mode: "timestamp" }),
+    approvalAuditId: text("approval_audit_id"),
+    createdByType: text("created_by_type").notNull().default("user"),
+    createdByChatId: text("created_by_chat_id"),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("automations_scope_idx").on(table.scopeType, table.projectId, table.taskId, table.chatId),
+    index("automations_state_enabled_idx").on(table.state, table.enabled),
+    index("automations_approval_idx").on(table.approvalState, table.createdByType),
+    check("automations_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+    check(
+      "automations_scope_check",
+      sql`(
+        (${table.scopeType} = 'global' and ${table.projectId} is null and ${table.taskId} is null and ${table.chatId} is null) or
+        (${table.scopeType} = 'project' and ${table.projectId} is not null and ${table.taskId} is null and ${table.chatId} is null) or
+        (${table.scopeType} = 'task' and ${table.projectId} is null and ${table.taskId} is not null and ${table.chatId} is null) or
+        (${table.scopeType} = 'chat' and ${table.projectId} is null and ${table.taskId} is null and ${table.chatId} is not null)
+      )`,
+    ),
+    check(
+      "automations_action_check",
+      sql`(
+        (${table.actionType} = 'run-chat' and ${table.scopeType} = 'chat') or
+        (${table.actionType} = 'create-chat-run' and ${table.scopeType} in ('global', 'project', 'task')) or
+        (${table.actionType} = 'create-task-run' and ${table.scopeType} = 'project')
+      )`,
+    ),
+    check(
+      "automations_harness_check",
+      sql`${table.harness} in ('codex', 'claude-code', 'cursor-agent', 'openrouter', 'nanogpt', 'local')`,
+    ),
+    check(
+      "automations_permission_check",
+      sql`(
+        (${table.permissionMode} = 'custom' and ${table.customPermissions} is not null) or
+        (${table.permissionMode} in ('read-only', 'ask-before-edits', 'auto-edit-project-only', 'full-access') and ${table.customPermissions} is null)
+      )`,
+    ),
+    check(
+      "automations_worktree_check",
+      sql`(
+        (${table.worktreeStrategy} = 'existing' and ${table.worktreePath} is not null) or
+        (${table.worktreeStrategy} in ('inherit', 'task-primary', 'none') and ${table.worktreePath} is null)
+      )`,
+    ),
+    check(
+      "automations_state_check",
+      sql`${table.state} in ('draft', 'active', 'paused', 'archived')`,
+    ),
+    check(
+      "automations_approval_state_check",
+      sql`${table.approvalState} in ('pending', 'approved', 'denied', 'revoked')`,
+    ),
+    check(
+      "automations_enabled_approval_check",
+      sql`(${table.enabled} = 0 and ${table.state} in ('draft', 'paused', 'archived')) or (
+        ${table.enabled} = 1 and
+        ${table.state} = 'active' and ${table.approvalState} = 'approved' and
+        ${table.approvedBy} is not null and ${table.approvedAt} is not null
+      )`,
+    ),
+    check(
+      "automations_approval_provenance_check",
+      sql`(
+        (${table.approvalState} = 'pending' and ${table.approvedBy} is null and ${table.approvedAt} is null and ${table.approvalAuditId} is null) or
+        (${table.approvalState} in ('approved', 'denied', 'revoked') and ${table.approvedBy} is not null and ${table.approvedAt} is not null and ${table.approvalAuditId} is not null)
+      )`,
+    ),
+    check(
+      "automations_creator_check",
+      sql`(
+        (${table.createdByType} = 'user') or
+        (${table.createdByType} = 'agent' and ${table.createdByChatId} is not null)
+      )`,
+    ),
+    check("automations_version_check", sql`${table.version} >= 1`),
+  ],
+)
+
+export const automationTriggers = sqliteTable(
+  "automation_triggers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    automationId: text("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    cron: text("cron"),
+    timezone: text("timezone"),
+    catchUp: text("catch_up"),
+    runProjectId: text("run_project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    runTaskId: text("run_task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    runChatId: text("run_chat_id").references(() => chats.id, { onDelete: "cascade" }),
+    runStatuses: text("run_statuses"),
+    rootPath: text("root_path").references(() => filesystemRootRegistrations.path, {
+      onDelete: "restrict",
+    }),
+    includeGlobs: text("include_globs"),
+    excludeGlobs: text("exclude_globs"),
+    debounceMs: integer("debounce_ms"),
+    nextFireAt: integer("next_fire_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("automation_triggers_automation_type_idx").on(table.automationId, table.type),
+    index("automation_triggers_due_idx").on(table.enabled, table.nextFireAt),
+    index("automation_triggers_run_project_idx").on(table.runProjectId),
+    index("automation_triggers_run_task_idx").on(table.runTaskId),
+    index("automation_triggers_run_chat_idx").on(table.runChatId),
+    index("automation_triggers_root_idx").on(table.rootPath),
+    check(
+      "automation_triggers_config_check",
+      sql`(
+        (${table.type} = 'manual' and
+          ${table.cron} is null and ${table.timezone} is null and ${table.catchUp} is null and
+          ${table.runProjectId} is null and ${table.runTaskId} is null and ${table.runChatId} is null and ${table.runStatuses} is null and
+          ${table.rootPath} is null and ${table.includeGlobs} is null and ${table.excludeGlobs} is null and ${table.debounceMs} is null) or
+        (${table.type} = 'schedule' and
+          ${table.cron} is not null and ${table.timezone} is not null and ${table.catchUp} in ('none', 'one') and
+          ${table.runProjectId} is null and ${table.runTaskId} is null and ${table.runChatId} is null and ${table.runStatuses} is null and
+          ${table.rootPath} is null and ${table.includeGlobs} is null and ${table.excludeGlobs} is null and ${table.debounceMs} is null) or
+        (${table.type} = 'run-complete' and
+          ((${table.runProjectId} is not null) + (${table.runTaskId} is not null) + (${table.runChatId} is not null)) = 1 and
+          ${table.runStatuses} is not null and
+          ${table.cron} is null and ${table.timezone} is null and ${table.catchUp} is null and
+          ${table.rootPath} is null and ${table.includeGlobs} is null and ${table.excludeGlobs} is null and ${table.debounceMs} is null) or
+        (${table.type} = 'file-change' and
+          ${table.rootPath} is not null and ${table.includeGlobs} is not null and ${table.excludeGlobs} is not null and
+          ${table.debounceMs} between 100 and 60000 and
+          ${table.cron} is null and ${table.timezone} is null and ${table.catchUp} is null and
+          ${table.runProjectId} is null and ${table.runTaskId} is null and ${table.runChatId} is null and ${table.runStatuses} is null)
+      )`,
+    ),
+  ],
+)
+
+export const automationOccurrences = sqliteTable(
+  "automation_occurrences",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    automationId: text("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    triggerId: text("trigger_id")
+      .notNull()
+      .references(() => automationTriggers.id, { onDelete: "cascade" }),
+    dedupeKey: text("dedupe_key").notNull(),
+    state: text("state").notNull().default("pending"),
+    scheduledFor: integer("scheduled_for", { mode: "timestamp" }).notNull(),
+    payload: text("payload").notNull().default("{}"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    terminalAt: integer("terminal_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("automation_occurrences_dedupe_idx").on(table.automationId, table.dedupeKey),
+    index("automation_occurrences_state_due_idx").on(table.state, table.scheduledFor),
+    index("automation_occurrences_trigger_idx").on(table.triggerId, table.createdAt),
+    check(
+      "automation_occurrences_state_check",
+      sql`${table.state} in ('pending', 'leased', 'running', 'completed', 'cancelled', 'skipped')`,
+    ),
+    check(
+      "automation_occurrences_terminal_check",
+      sql`(
+        (${table.state} in ('completed', 'cancelled', 'skipped') and ${table.terminalAt} is not null) or
+        (${table.state} in ('pending', 'leased', 'running') and ${table.terminalAt} is null)
+      )`,
+    ),
+  ],
+)
+
+export const automationExecutions = sqliteTable(
+  "automation_executions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    occurrenceId: text("occurrence_id")
+      .notNull()
+      .references(() => automationOccurrences.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull().default(1),
+    state: text("state").notNull().default("pending"),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    authoritySnapshot: text("authority_snapshot").notNull(),
+    budgetSnapshot: text("budget_snapshot").notNull(),
+    resultSummary: text("result_summary"),
+    stopReason: text("stop_reason"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("automation_executions_attempt_idx").on(table.occurrenceId, table.attempt),
+    index("automation_executions_state_idx").on(table.state, table.createdAt),
+    index("automation_executions_run_idx").on(table.runId),
+    check("automation_executions_attempt_check", sql`${table.attempt} between 1 and 10`),
+    check(
+      "automation_executions_state_check",
+      sql`${table.state} in ('pending', 'running', 'succeeded', 'failed', 'denied', 'cancelled', 'timed-out')`,
+    ),
+    check(
+      "automation_executions_time_check",
+      sql`(
+        (${table.state} = 'pending' and ${table.startedAt} is null and ${table.completedAt} is null) or
+        (${table.state} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null) or
+        (${table.state} in ('succeeded', 'failed', 'denied', 'cancelled', 'timed-out') and ${table.completedAt} is not null)
+      )`,
+    ),
+  ],
+)
+
+export const automationLeases = sqliteTable(
+  "automation_leases",
+  {
+    occurrenceId: text("occurrence_id")
+      .primaryKey()
+      .references(() => automationOccurrences.id, { onDelete: "cascade" }),
+    owner: text("owner").notNull(),
+    token: text("token").notNull(),
+    acquiredAt: integer("acquired_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("automation_leases_token_idx").on(table.token),
+    index("automation_leases_expiry_idx").on(table.expiresAt),
+    check("automation_leases_expiry_check", sql`${table.expiresAt} > ${table.acquiredAt}`),
+  ],
+)
+
+export const automationRetryPolicies = sqliteTable(
+  "automation_retry_policies",
+  {
+    automationId: text("automation_id")
+      .primaryKey()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    mode: text("mode").notNull().default("none"),
+    maxAttempts: integer("max_attempts").notNull().default(1),
+    initialDelayMs: integer("initial_delay_ms").notNull().default(0),
+    maxDelayMs: integer("max_delay_ms").notNull().default(0),
+    deadlineMs: integer("deadline_ms").notNull().default(0),
+  },
+  (table) => [
+    check(
+      "automation_retry_policies_check",
+      sql`(
+        (${table.mode} = 'none' and ${table.maxAttempts} = 1 and ${table.initialDelayMs} = 0 and ${table.maxDelayMs} = 0 and ${table.deadlineMs} = 0) or
+        (${table.mode} = 'exponential' and ${table.maxAttempts} between 2 and 10 and
+          ${table.initialDelayMs} between 100 and 86400000 and
+          ${table.maxDelayMs} between ${table.initialDelayMs} and 86400000 and
+          ${table.deadlineMs} between ${table.initialDelayMs} and 2678400000)
+      )`,
+    ),
+  ],
+)
+
+export const automationBudgets = sqliteTable(
+  "automation_budgets",
+  {
+    automationId: text("automation_id")
+      .primaryKey()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    maxDurationMs: integer("max_duration_ms").default(3_600_000),
+    maxTotalTokens: integer("max_total_tokens"),
+    maxCostUsdMicros: integer("max_cost_usd_micros"),
+    maxConcurrentRuns: integer("max_concurrent_runs").notNull().default(1),
+  },
+  (table) => [
+    check(
+      "automation_budgets_values_check",
+      sql`(${table.maxDurationMs} is null or ${table.maxDurationMs} between 1000 and 2678400000) and
+        (${table.maxTotalTokens} is null or ${table.maxTotalTokens} > 0) and
+        (${table.maxCostUsdMicros} is null or ${table.maxCostUsdMicros} > 0) and
+        (${table.maxCostUsdMicros} is null or ${table.maxDurationMs} is not null or ${table.maxTotalTokens} is not null) and
+        ${table.maxConcurrentRuns} = 1`,
+    ),
+  ],
+)
+
+export const automationInboxItems = sqliteTable(
+  "automation_inbox_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    automationId: text("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    occurrenceId: text("occurrence_id").references(() => automationOccurrences.id, {
+      onDelete: "set null",
+    }),
+    executionId: text("execution_id").references(() => automationExecutions.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    unread: integer("unread", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    readAt: integer("read_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("automation_inbox_unread_idx").on(table.unread, table.createdAt),
+    index("automation_inbox_automation_idx").on(table.automationId, table.createdAt),
+    check(
+      "automation_inbox_kind_check",
+      sql`${table.kind} in ('completed', 'failed', 'denied', 'budget-exhausted', 'cancelled')`,
+    ),
+    check("automation_inbox_title_check", sql`length(trim(${table.title})) between 1 and 256`),
+    check(
+      "automation_inbox_read_check",
+      sql`(${table.unread} = 1 and ${table.readAt} is null) or (${table.unread} = 0 and ${table.readAt} is not null)`,
+    ),
+  ],
+)
+
+export const automationsRelations = relations(automations, ({ one, many }) => ({
+  project: one(projects, { fields: [automations.projectId], references: [projects.id] }),
+  task: one(tasks, { fields: [automations.taskId], references: [tasks.id] }),
+  chat: one(chats, { fields: [automations.chatId], references: [chats.id] }),
+  createdByChat: one(chats, {
+    fields: [automations.createdByChatId],
+    references: [chats.id],
+    relationName: "automationCreatorChat",
+  }),
+  triggers: many(automationTriggers),
+  occurrences: many(automationOccurrences),
+  retryPolicy: one(automationRetryPolicies),
+  budget: one(automationBudgets),
+  inboxItems: many(automationInboxItems),
+}))
+
+export const automationTriggersRelations = relations(automationTriggers, ({ one, many }) => ({
+  automation: one(automations, {
+    fields: [automationTriggers.automationId],
+    references: [automations.id],
+  }),
+  occurrences: many(automationOccurrences),
+}))
+
+export const automationOccurrencesRelations = relations(automationOccurrences, ({ one, many }) => ({
+  automation: one(automations, {
+    fields: [automationOccurrences.automationId],
+    references: [automations.id],
+  }),
+  trigger: one(automationTriggers, {
+    fields: [automationOccurrences.triggerId],
+    references: [automationTriggers.id],
+  }),
+  executions: many(automationExecutions),
+  lease: one(automationLeases),
+}))
+
+export const automationExecutionsRelations = relations(automationExecutions, ({ one }) => ({
+  occurrence: one(automationOccurrences, {
+    fields: [automationExecutions.occurrenceId],
+    references: [automationOccurrences.id],
+  }),
+  run: one(agentRuns, { fields: [automationExecutions.runId], references: [agentRuns.id] }),
+}))
+
+export const automationLeasesRelations = relations(automationLeases, ({ one }) => ({
+  occurrence: one(automationOccurrences, {
+    fields: [automationLeases.occurrenceId],
+    references: [automationOccurrences.id],
+  }),
+}))
+
+export const automationRetryPoliciesRelations = relations(automationRetryPolicies, ({ one }) => ({
+  automation: one(automations, {
+    fields: [automationRetryPolicies.automationId],
+    references: [automations.id],
+  }),
+}))
+
+export const automationBudgetsRelations = relations(automationBudgets, ({ one }) => ({
+  automation: one(automations, {
+    fields: [automationBudgets.automationId],
+    references: [automations.id],
+  }),
+}))
+
+export const automationInboxItemsRelations = relations(automationInboxItems, ({ one }) => ({
+  automation: one(automations, {
+    fields: [automationInboxItems.automationId],
+    references: [automations.id],
+  }),
+  occurrence: one(automationOccurrences, {
+    fields: [automationInboxItems.occurrenceId],
+    references: [automationOccurrences.id],
+  }),
+  execution: one(automationExecutions, {
+    fields: [automationInboxItems.executionId],
+    references: [automationExecutions.id],
+  }),
+}))
+
 // ============ MCP AUDIT RECORDS ============
 // Deliberately no foreign keys: audit history must survive chat/run lifecycle changes.
 export const mcpAuditRecords = sqliteTable(
@@ -973,6 +1410,22 @@ export type SubChat = typeof subChats.$inferSelect
 export type NewSubChat = typeof subChats.$inferInsert
 export type AgentRun = typeof agentRuns.$inferSelect
 export type NewAgentRun = typeof agentRuns.$inferInsert
+export type Automation = typeof automations.$inferSelect
+export type NewAutomation = typeof automations.$inferInsert
+export type AutomationTrigger = typeof automationTriggers.$inferSelect
+export type NewAutomationTrigger = typeof automationTriggers.$inferInsert
+export type AutomationOccurrence = typeof automationOccurrences.$inferSelect
+export type NewAutomationOccurrence = typeof automationOccurrences.$inferInsert
+export type AutomationExecution = typeof automationExecutions.$inferSelect
+export type NewAutomationExecution = typeof automationExecutions.$inferInsert
+export type AutomationLease = typeof automationLeases.$inferSelect
+export type NewAutomationLease = typeof automationLeases.$inferInsert
+export type AutomationRetryPolicy = typeof automationRetryPolicies.$inferSelect
+export type NewAutomationRetryPolicy = typeof automationRetryPolicies.$inferInsert
+export type AutomationBudget = typeof automationBudgets.$inferSelect
+export type NewAutomationBudget = typeof automationBudgets.$inferInsert
+export type AutomationInboxItem = typeof automationInboxItems.$inferSelect
+export type NewAutomationInboxItem = typeof automationInboxItems.$inferInsert
 export type Checkpoint = typeof checkpoints.$inferSelect
 export type NewCheckpoint = typeof checkpoints.$inferInsert
 export type FileChangeManifest = typeof fileChangeManifests.$inferSelect

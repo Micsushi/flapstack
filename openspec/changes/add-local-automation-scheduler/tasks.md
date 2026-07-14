@@ -2,7 +2,7 @@
 
 ### S4-F5-T1 — Add automation contracts and durable schema
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Typed local automation, trigger, occurrence, execution, lease, retry, budget, and inbox records exist.
 - Scope: Shared Zod/TypeScript DTOs; additive Drizzle schema/migration; enabled/approval provenance; indexes; prior-schema fixtures.
