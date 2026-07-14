@@ -111,6 +111,14 @@
 - Blocked by: S4-F1-T2 and Stage 3 approval/audit gate
 - Blocks: S4-F1-T7
 - Context: `hooks-management.ts`, MCP gate/audit patterns, provider hook files.
+- Code-ready evidence: the production hook router now exposes a schema-versioned
+  managed inventory, exact shell-free command preview, import-default-off
+  lifecycle, registered-root revalidation, bounded mockable dry-run, explicit
+  enable/disable state, Tier 3 Stage 3 approval, and append-only redacted audit.
+  Node 22 focused hook/registry/approval/audit coverage passes 32 tests;
+  TypeScript and focused ESLint pass. Completion remains unchecked because live
+  Settings/restart/package evidence and native harness runtime consumption are
+  unverified; see `docs/stage4-s4-f1-t6-hook-safety.md`.
 
 ### S4-F1-T7 — Close unified extension acceptance
 
