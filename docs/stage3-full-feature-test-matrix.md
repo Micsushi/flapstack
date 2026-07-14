@@ -404,6 +404,13 @@ stays unchecked because this is pre-completion repair evidence and the full
 independent review sequence, live rows, package rows, and platform rows remain
 open.
 
+2026-07-14 headless follow-up: development fixture selection now refreshes
+project/chat list and exact-chat caches before changing renderer atoms, clears
+incompatible active chat/sub-chat state, rejects stale project ownership, and
+opens the requested parent tab synchronously. Focused automated coverage passes.
+The reported pixels were not rerun because this review lane prohibits UI
+control, so no visual row is promoted.
+
 ### S3-F17 safe closeout evidence — 2026-07-13 PDT
 
 - Candidate: isolated `cf53` worktree from integration baseline
