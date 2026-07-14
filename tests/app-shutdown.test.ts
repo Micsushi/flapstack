@@ -2,10 +2,38 @@ import { describe, expect, it, vi } from "vitest"
 import {
   installBeforeQuitShutdown,
   runAppShutdown,
+  waitForShutdownIdle,
   type BeforeQuitEvent,
 } from "../src/main/lib/app-shutdown"
 
 describe("application shutdown", () => {
+  it("bounds waits for a provider that never becomes idle", async () => {
+    let elapsed = 0
+    await expect(
+      waitForShutdownIdle({
+        isIdle: () => false,
+        timeoutMs: 25,
+        pollMs: 10,
+        now: () => elapsed,
+        sleep: async (milliseconds) => {
+          elapsed += milliseconds
+        },
+      }),
+    ).resolves.toBe(false)
+    expect(elapsed).toBe(25)
+  })
+
+  it("returns as soon as shutdown becomes idle", async () => {
+    let polls = 0
+    await expect(
+      waitForShutdownIdle({
+        isIdle: () => ++polls >= 3,
+        timeoutMs: 25,
+        sleep: async () => undefined,
+      }),
+    ).resolves.toBe(true)
+  })
+
   it("awaits provider persistence and service cleanup before closing SQLite last", async () => {
     const order: string[] = []
     const step = (name: string) => async () => {

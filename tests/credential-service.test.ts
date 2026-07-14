@@ -81,6 +81,33 @@ describe("main-process credential service", () => {
     expect(decryptions).toBe(afterVerifiedWrite)
   })
 
+  it("reports a cached warning after use discovers an undecryptable credential", () => {
+    const dir = tempDir()
+    new CredentialService({ storageDir: dir, encryption: encryptedBackend }).set(
+      "codex.api-key",
+      "machine-bound-secret",
+    )
+    let decryptions = 0
+    const migrated = new CredentialService({
+      storageDir: dir,
+      encryption: {
+        ...encryptedBackend,
+        decrypt: () => {
+          decryptions += 1
+          throw new Error("wrong machine")
+        },
+      },
+    })
+
+    expect(migrated.status("codex.api-key").warning).toBeUndefined()
+    expect(migrated.resolve("codex.api-key")).toBeNull()
+    expect(migrated.status("codex.api-key")).toMatchObject({
+      configured: true,
+      warning: expect.stringMatching(/could not be decrypted/i),
+    })
+    expect(decryptions).toBe(1)
+  })
+
   it("uses memory only when OS encryption is unavailable", () => {
     const dir = tempDir()
     const service = new CredentialService({

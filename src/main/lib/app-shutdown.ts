@@ -17,6 +17,32 @@ export type AppShutdownSteps = {
   closeDatabase(): void | Promise<void>
 }
 
+export type ShutdownWaitOptions = {
+  isIdle: () => boolean
+  timeoutMs: number
+  pollMs?: number
+  now?: () => number
+  sleep?: (milliseconds: number) => Promise<void>
+}
+
+/** Bound shutdown waits so a stuck provider cannot prevent the process from exiting forever. */
+export async function waitForShutdownIdle(options: ShutdownWaitOptions): Promise<boolean> {
+  const now = options.now ?? Date.now
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, milliseconds)
+      }))
+  const deadline = now() + options.timeoutMs
+
+  while (!options.isIdle()) {
+    if (now() >= deadline) return false
+    await sleep(Math.min(options.pollMs ?? 10, Math.max(0, deadline - now())))
+  }
+  return true
+}
+
 /** Run every cleanup step in order. SQLite is always attempted last. */
 export async function runAppShutdown(steps: AppShutdownSteps): Promise<void> {
   const errors: unknown[] = []

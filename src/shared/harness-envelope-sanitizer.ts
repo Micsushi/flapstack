@@ -13,8 +13,29 @@ const COMPLETE_ENVELOPES = [
 const INCOMPLETE_ENVELOPE =
   /(^|\n)(?:\[(?:FLAPSTACK(?: STARTUP CONTEXT| DEFAULTS| THREAD DEFAULTS)|USER REQUEST|FILE:[^\]]*)\]|--- (?:FLAPSTACK (?:INTERNAL|COMPACT) CONTEXT(?: \(DO NOT QUOTE\))?|FLAPSTACK RESPONSE CONTRACT|USER REQUEST|BEGIN LOADED FILE:[^\n]*) ---)[\s\S]*$/i
 
-const TRAILING_MARKER_PREFIX =
-  /(^|\n)(?:\[(?:F(?:L(?:A(?:P(?:S(?:T(?:A(?:C(?:K)?)?)?)?)?)?)?)?|U(?:S(?:E(?:R)?)?)?|FILE:?)[^\n]*|--- (?:F(?:L(?:A(?:P(?:S(?:T(?:A(?:C(?:K)?)?)?)?)?)?)?)?|U(?:S(?:E(?:R)?)?)?|B(?:E(?:G(?:I(?:N)?)?)?)?)[^\n]*)$/i
+const FIXED_OPENING_MARKERS = [
+  "[FLAPSTACK STARTUP CONTEXT]",
+  "[FLAPSTACK DEFAULTS]",
+  "[FLAPSTACK THREAD DEFAULTS]",
+  "[USER REQUEST]",
+  "--- FLAPSTACK INTERNAL CONTEXT (DO NOT QUOTE) ---",
+  "--- FLAPSTACK COMPACT CONTEXT (DO NOT QUOTE) ---",
+  "--- FLAPSTACK RESPONSE CONTRACT ---",
+  "--- USER REQUEST ---",
+]
+
+function stripTrailingMarkerPrefix(text: string): string {
+  const markerStart = text.lastIndexOf("\n") + 1
+  const line = text.slice(markerStart)
+  if (!line) return text
+  const upperLine = line.toUpperCase()
+  const fixedPrefix = FIXED_OPENING_MARKERS.some((marker) => marker.startsWith(upperLine))
+  const variablePrefix =
+    /^\[FILE(?::[^\]\n]*)?$/i.test(line) ||
+    (/^--- BEGIN LOADED FILE:/i.test(line) && !/---\s*$/i.test(line)) ||
+    "--- BEGIN LOADED FILE:".startsWith(upperLine)
+  return fixedPrefix || variablePrefix ? text.slice(0, markerStart) : text
+}
 
 /**
  * Removes exact Flapstack prompt envelopes when a provider echoes them into
@@ -25,7 +46,7 @@ export function sanitizeHarnessEnvelopeEcho(text: string): string {
   let sanitized = text
   for (const pattern of COMPLETE_ENVELOPES) sanitized = sanitized.replace(pattern, "$1")
   sanitized = sanitized.replace(INCOMPLETE_ENVELOPE, "$1")
-  sanitized = sanitized.replace(TRAILING_MARKER_PREFIX, "$1")
+  sanitized = stripTrailingMarkerPrefix(sanitized)
   sanitized = sanitized.replace(
     /^\s*(?:\[\/(?:FLAPSTACK STARTUP CONTEXT|FLAPSTACK DEFAULTS|FLAPSTACK THREAD DEFAULTS|USER REQUEST|FILE)\]|--- END (?:FLAPSTACK (?:INTERNAL|COMPACT) CONTEXT|FLAPSTACK DEFAULTS|FLAPSTACK RESPONSE CONTRACT|USER REQUEST|LOADED FILE) ---)\s*$/gim,
     "",

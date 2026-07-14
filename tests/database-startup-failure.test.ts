@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { runRequiredStartup } from "../src/main/lib/startup-gate"
+import { runIsolatedStartupTasks, runRequiredStartup } from "../src/main/lib/startup-gate"
 
 const directories: string[] = []
 
@@ -16,6 +16,23 @@ afterEach(() => {
 })
 
 describe("required database startup", () => {
+  it("continues later startup services after an optional service fails", async () => {
+    const order: string[] = []
+    const report = vi.fn()
+
+    await runIsolatedStartupTasks(
+      [
+        { name: "bridge", run: () => Promise.reject(new Error("bridge unavailable")) },
+        { name: "scheduler", run: () => order.push("scheduler") },
+        { name: "usage", run: () => order.push("usage") },
+      ],
+      report,
+    )
+
+    expect(order).toEqual(["scheduler", "usage"])
+    expect(report).toHaveBeenCalledWith("bridge", expect.any(Error))
+  })
+
   it("closes and exits without continuing to a window after initialization fails", async () => {
     const cleanup = vi.fn()
     const continueStartup = vi.fn()

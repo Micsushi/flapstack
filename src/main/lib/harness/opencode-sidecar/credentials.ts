@@ -49,7 +49,7 @@ export type ProviderCredentialStatus = {
   provider: OpencodeProviderId
   configured: boolean
   sessionOnly?: boolean
-  source?: "encrypted-store" | "session-memory" | "environment"
+  source?: "encrypted-store" | "session-memory" | "legacy-file" | "environment"
   baseUrl?: string
   updatedAt?: number
   fingerprint?: string
@@ -501,24 +501,37 @@ export function hasProviderKey(provider: OpencodeProviderId): boolean {
 
 export function getCredentialStatus(provider: OpencodeProviderId): ProviderCredentialStatus {
   const status = getCredentialService().status(credentialId(provider))
+  const legacyFile = isLegacyProviderRetired(provider)
+    ? undefined
+    : readJson<LegacyCredentialsFile>(join(getOpencodeStorageDir(), legacyCredentialsFileName), {})[
+        provider
+      ]
+  const legacyFileConfigured = Boolean(legacyFile && !legacyFile.sessionOnly && legacyFile.value)
   const environmentConfigured = Boolean(
     process.env[`FLAPSTACK_${provider.toUpperCase()}_API_KEY`]?.trim(),
   )
-  const configured = status.configured || environmentConfigured
+  const configured = status.configured || legacyFileConfigured || environmentConfigured
   return {
     provider,
     configured,
     ...(status.persistence === "session" ? { sessionOnly: true } : {}),
     ...(status.source
       ? { source: status.source }
-      : environmentConfigured
-        ? { source: "environment" as const }
-        : {}),
+      : legacyFileConfigured
+        ? { source: "legacy-file" as const }
+        : environmentConfigured
+          ? { source: "environment" as const }
+          : {}),
     ...(getProviderBaseUrl(provider) ? { baseUrl: getProviderBaseUrl(provider) } : {}),
     ...(status.updatedAt ? { updatedAt: status.updatedAt } : {}),
     ...(status.fingerprint ? { fingerprint: status.fingerprint } : {}),
-    ...(status.warning || daemonWarnings.get(provider)
-      ? { warning: status.warning || daemonWarnings.get(provider) }
+    ...(status.warning || daemonWarnings.get(provider) || legacyFileConfigured
+      ? {
+          warning:
+            status.warning ||
+            daemonWarnings.get(provider) ||
+            "A legacy credential is configured and will migrate securely when first used.",
+        }
       : {}),
   }
 }

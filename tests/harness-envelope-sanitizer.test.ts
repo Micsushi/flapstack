@@ -21,4 +21,24 @@ describe("harness envelope sanitizer", () => {
       "The token [FILE:demo] can appear in documentation.",
     )
   })
+
+  it("preserves ordinary final lines that merely begin like a marker", () => {
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n[FIXME] keep this")).toBe(
+      "Visible first.\n[FIXME] keep this",
+    )
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n[Future work] keep this")).toBe(
+      "Visible first.\n[Future work] keep this",
+    )
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n--- Budget note ---")).toBe(
+      "Visible first.\n--- Budget note ---",
+    )
+  })
+
+  it("still hides genuine partial trailing envelope markers", () => {
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n[FLAP")).toBe("Visible first.")
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n[FILE:/private/context")).toBe(
+      "Visible first.",
+    )
+    expect(sanitizeHarnessEnvelopeEcho("Visible first.\n--- BEGIN LOADED")).toBe("Visible first.")
+  })
 })
