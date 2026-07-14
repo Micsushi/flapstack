@@ -204,6 +204,13 @@
       "when": 1784014770612,
       "tag": "0028_automation_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1784018194084,
+      "tag": "0029_advanced_usage_contracts",
+      "breakpoints": true
     }
   ]
 }
