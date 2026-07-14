@@ -2306,6 +2306,13 @@ const ChatViewInner = memo(function ChatViewInner({
   const stopRef = useRef(stop)
   stopRef.current = stop
 
+  const latestUserMessageIdRef = useRef<string | null>(null)
+  latestUserMessageIdRef.current =
+    [...messages].reverse().find((message) => message.role === "user")?.id ?? null
+  const [editableStoppedUserMessageId, setEditableStoppedUserMessageId] = useState<string | null>(
+    null,
+  )
+
   const isStreaming = status === "streaming" || status === "submitted"
 
   // Ref for isStreaming to use in callbacks/effects that need fresh value
@@ -2333,6 +2340,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const handleStop = useCallback(async () => {
     // Mark as manually aborted to prevent completion sound
     agentChatStore.setManuallyAborted(subChatId, true)
+    setEditableStoppedUserMessageId(latestUserMessageIdRef.current)
     await stopRef.current()
   }, [subChatId])
 
@@ -3391,6 +3399,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
         // Update local state with truncated messages from server
         setMessages(result.messages)
+        setEditableStoppedUserMessageId(null)
         recomputeChangedFiles(result.messages)
         refreshDiff?.()
 
@@ -3582,14 +3591,13 @@ const ChatViewInner = memo(function ChatViewInner({
       } else if (shouldStop) {
         e.preventDefault()
         // Mark as manually aborted to prevent completion sound
-        agentChatStore.setManuallyAborted(subChatId, true)
-        await stop()
+        await handleStop()
       }
     }
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isActive, isStreaming, stop, subChatId, displayQuestions, handleQuestionsSkip])
+  }, [isActive, isStreaming, displayQuestions, handleQuestionsSkip, handleStop])
 
   // Keyboard shortcut: Enter to focus input when not already focused
   useFocusInputOnEnter(editorRef, isActive)
@@ -4722,6 +4730,7 @@ const ChatViewInner = memo(function ChatViewInner({
                 MessageGroupWrapper={MessageGroup}
                 toolRegistry={AgentToolRegistry}
                 onRollback={handleRollback}
+                editableStoppedUserMessageId={editableStoppedUserMessageId}
                 onFork={handleForkFromMessage}
               />
             </div>

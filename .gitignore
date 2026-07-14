@@ -7,6 +7,14 @@ release/
 release-*/
 out/
 
+# Generated videos
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.avi
+*.mkv
+
 # IDE
 .idea/
 *.swp

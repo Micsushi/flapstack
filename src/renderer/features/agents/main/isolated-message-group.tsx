@@ -2,7 +2,7 @@
 
 import { createContext, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAtom, useAtomValue } from "jotai"
-import { ArrowUpToLine, MoreHorizontal } from "lucide-react"
+import { ArrowUpToLine, MoreHorizontal, Pencil } from "lucide-react"
 import {
   getPerChatMessageKey,
   messageAtomFamily,
@@ -10,6 +10,7 @@ import {
   isLastUserMessagePerChatAtomFamily,
   rollbackTargetPerChatAtomFamily,
   isRollingBackAtom,
+  canEditStoppedUserMessage,
 } from "../stores/message-store"
 import { MemoizedAssistantMessages } from "./messages-list"
 import {
@@ -18,7 +19,6 @@ import {
   TextMentionBlock,
 } from "../mentions/render-file-mentions"
 import { AgentImageItem } from "../ui/agent-image-item"
-import { IconTextUndo } from "../../../components/ui/icons"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { cn } from "../../../lib/utils"
 import { useStreamingStatusStore } from "../stores/streaming-status-store"
@@ -68,6 +68,7 @@ interface IsolatedMessageGroupProps {
   sandboxSetupError?: string
   onRetrySetup?: () => void
   onRollback?: (msg: any) => void
+  editableStoppedUserMessageId?: string | null
   onFork?: (messageId: string) => void
   // Components passed from parent - must be stable references
   UserBubbleComponent: React.ComponentType<{
@@ -103,6 +104,7 @@ function areGroupPropsEqual(
     prev.sandboxSetupError === next.sandboxSetupError &&
     prev.onRetrySetup === next.onRetrySetup &&
     prev.onRollback === next.onRollback &&
+    prev.editableStoppedUserMessageId === next.editableStoppedUserMessageId &&
     prev.onFork === next.onFork &&
     prev.UserBubbleComponent === next.UserBubbleComponent &&
     prev.ToolCallComponent === next.ToolCallComponent &&
@@ -121,6 +123,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   sandboxSetupError,
   onRetrySetup,
   onRollback,
+  editableStoppedUserMessageId,
   onFork,
   UserBubbleComponent,
   ToolCallComponent,
@@ -183,8 +186,17 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
     })
   }, [])
 
-  // Show rollback button only when this user turn has a valid rollback target.
-  const canRollback = onRollback && !!rollbackTargetSdkUuid && !isStreaming
+  // A stopped prompt can be replaced only until a new turn starts. Completed
+  // turns keep the existing fork-only behavior.
+  const canEditStoppedMessage =
+    !!onRollback &&
+    canEditStoppedUserMessage({
+      userMessageId: userMsgId,
+      editableStoppedUserMessageId: editableStoppedUserMessageId ?? null,
+      rollbackTargetSdkUuid,
+      isLastGroup,
+      isStreaming,
+    })
   const canFork = !!onFork
 
   // Extract user message content
@@ -340,23 +352,24 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                 {timestamp && (
                   <span className="mr-1 text-[10px] text-muted-foreground">{timestamp}</span>
                 )}
-                {canRollback && (
+                {canEditStoppedMessage && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => onRollback(userMsg)}
                         disabled={isRollingBack}
                         tabIndex={-1}
+                        aria-label="Edit stopped prompt"
                         className={cn(
                           "p-1.5 rounded-md transition-all duration-150 ease-out hover:bg-accent/80 active:scale-[0.97]",
                           isRollingBack && "!opacity-50 cursor-not-allowed",
                         )}
                       >
-                        <IconTextUndo className="w-3.5 h-3.5 text-muted-foreground" />
+                        <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                      {isRollingBack ? "Rolling back..." : "Rollback to here"}
+                      {isRollingBack ? "Preparing edit..." : "Edit stopped prompt"}
                     </TooltipContent>
                   </Tooltip>
                 )}
