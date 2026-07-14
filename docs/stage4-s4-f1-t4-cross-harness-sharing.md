@@ -25,8 +25,11 @@ service over the existing native adapter and capability registries.
 - Portable manifests contain only schema version, portable origin identity,
   kind, normalized name, content, and target-supported metadata. They contain
   no native path, `cwd`, source ID, timestamps, runtime state, or file hashes.
-- Manifest input is strict. Prototype keys, non-JSON values, excessive nesting,
-  and excessive metadata fail closed.
+- Manifest input is strict. Prototype keys and a recursive exact-key denylist
+  reject host-only path, working-directory, hash, backup, runtime, identity,
+  and timestamp state. Normal portable metadata with similar longer names is
+  retained. Non-JSON values, excessive nesting, and excessive metadata also
+  fail closed.
 - Source fields without a target equivalent are named but not exported. No
   lossy manifest or target write is offered.
 - Target-only unknown native fields survive confirmed overwrites and are named
