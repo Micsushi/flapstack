@@ -67,7 +67,7 @@
 
 ### S4-F5-T6 — Execute bounded runs with retry, budgets, and kill
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: A leased occurrence launches one normal Flapstack run and reaches a truthful terminal state.
 - Scope: Shared target resolution, permission/worktree snapshot, dry-run resolver, run/orchestration launch, concurrency=1 default, retry/deadline, token/cost/time budgets, pause/kill, checkpoints/manifests/usage, result summary.

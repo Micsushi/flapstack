@@ -23,22 +23,58 @@ export function createMainRunLauncher(): AgentRunLauncher {
             reasoningEnabled: run.reasoningEffort !== "minimal",
             ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
           })
-        : await caller.claude.chat({
-            runId: run.runId,
-            chatId: run.chatId,
-            subChatId: run.subChatId,
-            prompt: run.prompt,
-            cwd,
-            ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(model ? { model } : {}),
-            mode: "agent",
-            reasoningEnabled: run.reasoningEffort !== "minimal",
-            ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
-              ? { effort: run.reasoningEffort }
-              : {}),
-          })
+        : run.harness === "claude-code"
+          ? await caller.claude.chat({
+              runId: run.runId,
+              chatId: run.chatId,
+              subChatId: run.subChatId,
+              prompt: run.prompt,
+              cwd,
+              ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+              ...(model ? { model } : {}),
+              mode: "agent",
+              reasoningEnabled: run.reasoningEffort !== "minimal",
+              ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
+                ? { effort: run.reasoningEffort }
+                : {}),
+            })
+          : run.harness === "cursor-agent"
+            ? await caller.cursor.chat({
+                runId: run.runId,
+                chatId: run.chatId,
+                subChatId: run.subChatId,
+                prompt: run.prompt,
+                cwd,
+                ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+                ...(model ? { model } : {}),
+                reasoningEnabled: run.reasoningEffort !== "minimal",
+              })
+            : run.harness === "openrouter" || run.harness === "nanogpt"
+              ? await caller.opencode.chat({
+                  runId: run.runId,
+                  chatId: run.chatId,
+                  subChatId: run.subChatId,
+                  provider: run.harness,
+                  model: requireModel(run),
+                  prompt: run.prompt,
+                  cwd,
+                  ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+                  reasoningEnabled: run.reasoningEffort !== "minimal",
+                  reasoningEffort: run.reasoningEffort ?? "high",
+                })
+              : unsupportedHarness(run)
     await drainStream(stream, run)
   }
+}
+
+function requireModel(run: QueuedAgentRun): string {
+  const model = run.model?.trim()
+  if (!model) throw new Error(`${run.harness} run requires an explicit model.`)
+  return model
+}
+
+function unsupportedHarness(run: QueuedAgentRun): never {
+  throw new Error(`Harness ${run.harness} has no main-process run launcher.`)
 }
 
 function resolveCodexLaunchModel(
