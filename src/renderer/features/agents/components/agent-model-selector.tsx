@@ -50,6 +50,13 @@ type CursorModelOption = {
 }
 
 type OpencodeModelOption = { id: string; name: string }
+type LocalModelOption = {
+  id: string
+  name: string
+  chat: "supported" | "unsupported" | "unknown"
+  tools: "supported" | "unsupported" | "unknown"
+  limitations: string[]
+}
 
 interface AgentModelSelectorProps {
   open: boolean
@@ -105,6 +112,13 @@ interface AgentModelSelectorProps {
       onSelectModel: (modelId: string) => void
     }
   >
+  local?: {
+    catalogState:
+      "not-checked" | "invalid-endpoint" | "ready" | "empty" | "stale" | "unavailable" | "error"
+    models: LocalModelOption[]
+    selectedModelId: string | null
+    onOpenSettings: () => void
+  }
 }
 
 const EMPTY_OPENCODE_PROVIDERS: NonNullable<AgentModelSelectorProps["opencode"]> = {
@@ -117,11 +131,12 @@ type FlatModelItem =
   | { type: "codex"; model: CodexModelOption }
   | { type: "cursor"; model: CursorModelOption }
   | { type: "opencode"; provider: "openrouter" | "nanogpt"; model: OpencodeModelOption }
+  | { type: "local"; model: LocalModelOption }
   | { type: "ollama"; modelName: string; isRecommended: boolean }
   | { type: "custom" }
 
 type ModelGroup = {
-  id: AgentProviderId
+  id: AgentProviderId | "local"
   label: string
   items: FlatModelItem[]
 }
@@ -404,6 +419,7 @@ export function AgentModelSelector({
   codex,
   cursor,
   opencode = EMPTY_OPENCODE_PROVIDERS,
+  local,
 }: AgentModelSelectorProps) {
   const [search, setSearch] = useState("")
   const setClaudeLoginOpen = useSetAtom(agentsLoginModalOpenAtom)
@@ -416,6 +432,7 @@ export function AgentModelSelector({
     "cursor-agent": selectedAgentId === "cursor-agent",
     openrouter: selectedAgentId === "openrouter",
     nanogpt: selectedAgentId === "nanogpt",
+    local: false,
   }))
 
   // On open: collapse everything except the current provider and scroll its
@@ -428,6 +445,7 @@ export function AgentModelSelector({
       "cursor-agent": selectedAgentId === "cursor-agent",
       openrouter: selectedAgentId === "openrouter",
       nanogpt: selectedAgentId === "nanogpt",
+      local: false,
     })
     const frame = requestAnimationFrame(() => {
       document.getElementById(`model-group-${selectedAgentId}`)?.scrollIntoView({ block: "start" })
@@ -479,8 +497,13 @@ export function AgentModelSelector({
         items: opencode[provider].models.map((model) => ({ type: "opencode", provider, model })),
       })
     }
+    groups.push({
+      id: "local",
+      label: "Local · Ollama",
+      items: (local?.models ?? []).map((model) => ({ type: "local", model })),
+    })
     return groups
-  }, [claude, codex, cursor, opencode])
+  }, [claude, codex, cursor, opencode, local?.models])
 
   // Filter by search
   const filteredGroups = useMemo(() => {
@@ -503,6 +526,8 @@ export function AgentModelSelector({
             case "cursor":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "opencode":
+              return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
+            case "local":
               return item.model.name.toLowerCase().includes(q) || item.model.id.includes(q)
             case "ollama":
               return item.modelName.toLowerCase().includes(q)
@@ -547,6 +572,8 @@ export function AgentModelSelector({
           selectedAgentId === item.provider &&
           opencode[item.provider].selectedModelId === item.model.id
         )
+      case "local":
+        return local?.selectedModelId === item.model.id
       case "ollama":
         return selectedAgentId === "claude-code" && claude.selectedOllamaModel === item.modelName
       case "custom":
@@ -554,15 +581,17 @@ export function AgentModelSelector({
     }
   }
 
-  const getItemProvider = (item: FlatModelItem): AgentProviderId => {
+  const getItemProvider = (item: FlatModelItem): AgentProviderId | null => {
     if (item.type === "codex") return "codex"
     if (item.type === "cursor") return "cursor-agent"
     if (item.type === "opencode") return item.provider
+    if (item.type === "local") return null
     return "claude-code"
   }
 
   const isItemDisabled = (item: FlatModelItem): boolean => {
     const provider = getItemProvider(item)
+    if (!provider) return false
     if (canSelectProvider(provider)) return false
     // When onContinueWithProvider is available, cross-provider items are clickable (not disabled)
     if (onContinueWithProvider) return false
@@ -570,7 +599,8 @@ export function AgentModelSelector({
   }
 
   const isItemCrossProvider = (item: FlatModelItem): boolean => {
-    return !canSelectProvider(getItemProvider(item)) && !!onContinueWithProvider
+    const provider = getItemProvider(item)
+    return Boolean(provider && !canSelectProvider(provider) && onContinueWithProvider)
   }
 
   const handleConfirmCrossProvider = useCallback(
@@ -596,6 +626,13 @@ export function AgentModelSelector({
 
   const handleItemClick = (item: FlatModelItem) => {
     const provider = getItemProvider(item)
+
+    if (item.type === "local") {
+      local?.onOpenSettings()
+      handleOpenChange(false)
+      return
+    }
+    if (!provider) return
 
     // Cross-provider click → show confirmation or continue directly
     if (!canSelectProvider(provider) && onContinueWithProvider) {
@@ -660,6 +697,8 @@ export function AgentModelSelector({
         return item.model.name
       case "opencode":
         return item.model.name
+      case "local":
+        return item.model.name
       case "ollama":
         return item.modelName + (item.isRecommended ? " (recommended)" : "")
       case "custom":
@@ -677,6 +716,8 @@ export function AgentModelSelector({
         return `cursor-${item.model.id}`
       case "opencode":
         return `${item.provider}-${item.model.id}`
+      case "local":
+        return `local-${item.model.id}`
       case "ollama":
         return `ollama-${item.modelName}`
       case "custom":
@@ -794,7 +835,14 @@ export function AgentModelSelector({
                               crossProvider && "opacity-60",
                             )}
                           >
-                            <span className="truncate flex-1">{getItemLabel(item)}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{getItemLabel(item)}</span>
+                              {item.type === "local" && (
+                                <span className="block truncate text-[10px] text-muted-foreground">
+                                  Chat {item.model.chat} · Tools {item.model.tools}
+                                </span>
+                              )}
+                            </span>
                             {crossProvider && (
                               <span className="text-[10px] text-muted-foreground shrink-0">
                                 New chat
@@ -804,6 +852,34 @@ export function AgentModelSelector({
                           </CommandItem>
                         )
                       })}
+
+                    {isExpanded && group.id === "local" && local && (
+                      <div className="mx-1 my-1 rounded-md border border-green-500/20 bg-green-500/5 px-2 py-2 text-xs">
+                        <p className="text-muted-foreground">
+                          {local.catalogState === "not-checked"
+                            ? "Refresh the Ollama catalog in Local Models settings."
+                            : local.catalogState === "invalid-endpoint"
+                              ? "Fix the loopback endpoint in Local Models settings."
+                              : local.catalogState === "ready"
+                                ? "Inspect capability and permission limits before local launch."
+                                : `Local catalog: ${local.catalogState}.`}
+                        </p>
+                        <p className="mt-1 text-muted-foreground">
+                          Local failures never fall back to a cloud provider.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            local.onOpenSettings()
+                            handleOpenChange(false)
+                          }}
+                          className="mt-2 inline-flex items-center gap-1 font-medium text-green-700 hover:underline dark:text-green-300"
+                        >
+                          Open Local Models settings
+                          <ChevronRight className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
 
                     {((group.id === "claude-code" && !claude.isConnected) ||
                       (group.id === "codex" && !codex.isConnected) ||

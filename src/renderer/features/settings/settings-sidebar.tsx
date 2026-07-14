@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, Keyboard, Mic, Search, ShieldCheck, X } from "lucide-react"
+import { ChevronLeft, HardDrive, Keyboard, Mic, Search, ShieldCheck, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { EyeOpenFilledIcon, SlidersFilledIcon } from "../../icons"
 import {
@@ -36,6 +36,7 @@ const SETTINGS_TAB_ICONS: Partial<
   appearance: EyeOpenFilledIcon,
   projects: FolderFilledIcon,
   models: BrainFilledIcon,
+  "local-models": HardDrive,
   "api-providers": BrainFilledIcon,
   voice: Mic,
   keyboard: Keyboard,
