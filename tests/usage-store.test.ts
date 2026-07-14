@@ -74,6 +74,12 @@ describe("usage SQLite integration", () => {
         "",
       ),
     )
+    sqlite.exec(
+      readFileSync(
+        resolve(process.cwd(), "drizzle/0029_advanced_usage_contracts.sql"),
+        "utf8",
+      ).replaceAll("--> statement-breakpoint", ""),
+    )
     db = drizzle(sqlite, { schema })
   })
 
@@ -944,6 +950,7 @@ describe("usage SQLite integration", () => {
       expect(names.map((row) => row.name).sort()).toEqual([
         "usage_alert_arm_states",
         "usage_alert_events",
+        "usage_budgets",
         "usage_cycles",
         "usage_daemon_status",
         "usage_generation_reconciliation",

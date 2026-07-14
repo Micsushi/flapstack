@@ -2,7 +2,7 @@
 
 ### S4-F7-T1 — Add attribution and budget contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Usage facts can retain product-scope attribution and budgets have one typed policy model.
 - Scope: Add nullable attribution snapshot fields/table; budget scope/threshold/action/reset DTOs; source-class/dedupe fields; indexes; migrations; fixtures.
