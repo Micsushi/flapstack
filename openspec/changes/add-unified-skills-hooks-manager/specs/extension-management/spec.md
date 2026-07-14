@@ -45,6 +45,13 @@ while exposing unsupported scopes honestly.
 - **THEN** the next supported run for that task excludes it and the UI shows the
   resolved source of the decision
 
+#### Scenario: Native discovery cannot be suppressed
+
+- **WHEN** a disabled extension targets a harness without a supported native
+  discovery filter or isolation contract
+- **THEN** Flapstack exposes the policy as unsupported or blocked and refuses to
+  launch the run instead of relying on prompt instructions
+
 ### Requirement: Hook validation and explicit enablement
 
 Flapstack SHALL keep imported hooks disabled until schema validation, exact

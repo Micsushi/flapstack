@@ -9,9 +9,14 @@ import * as schema from "../src/main/lib/db/schema"
 import { chats, extensionEnablementPolicies, projects, tasks } from "../src/main/lib/db/schema"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import {
+  applyCodexExtensionPolicyConfig,
   buildExtensionRunContext,
   clearExtensionEnablementPolicy,
+  ExtensionPolicyRunBlockedError,
   extensionPolicyTargetFromManifest,
+  filterClaudeExtensionMcpServers,
+  filterCodexExtensionMcpServers,
+  getClaudeExtensionSdkOptions,
   resolveExtensionEnablement,
   setExtensionEnablementPolicy,
   UnsupportedExtensionPolicyScopeError,
@@ -222,11 +227,6 @@ describe("extension enablement policy", () => {
       root: () => join(homeDir, ".agents", "skills"),
       files: ["alpha/SKILL.md", "beta/SKILL.md"],
     },
-    {
-      harness: "cursor-agent" as const,
-      root: () => join(projectRoot, ".cursor", "commands"),
-      files: ["alpha.md", "beta.md"],
-    },
   ])("injects the resolved enabled set into $harness run context", async (fixture) => {
     for (const file of fixture.files) writeExtension(fixture.root(), file)
     const inventory = await discoverProviderExtensions({ cwd: projectRoot, homeDir })
@@ -252,9 +252,154 @@ describe("extension enablement policy", () => {
     expect(runContext.manifest.disabledExtensionIds).toContain(alpha!.id)
     expect(runContext.manifest.enabledExtensionIds).not.toContain(alpha!.id)
     expect(runContext.manifest.enabledExtensionIds).toContain(beta!.id)
-    expect(runContext.context).toContain("Only extensions listed under Enabled are available")
+    expect(runContext.context).toContain("applied native discovery controls before provider launch")
     expect(runContext.context).toContain(`${alpha!.id} | policy=task`)
+    if (fixture.harness === "claude-code") {
+      expect(getClaudeExtensionSdkOptions(runContext.launchPolicy)).toEqual({ skills: ["beta"] })
+    } else {
+      expect(applyCodexExtensionPolicyConfig({}, runContext.launchPolicy)).toMatchObject({
+        skills: { config: [{ path: alpha!.sourceId, enabled: false }] },
+      })
+    }
   })
+
+  it("blocks Cursor command disablement before its unsupported native discovery can launch", async () => {
+    writeExtension(join(projectRoot, ".cursor", "commands"), "alpha.md")
+    const alpha = (await discoverProviderExtensions({ cwd: projectRoot, homeDir })).find(
+      (extension) => extension.provider === "cursor" && extension.name === "alpha",
+    )
+    expect(alpha).toBeDefined()
+    const resolved = setExtensionEnablementPolicy(database, {
+      target: extensionPolicyTargetFromManifest(alpha!),
+      location: { type: "task", projectId: "project-1", taskId: "task-1" },
+      enabled: false,
+    })
+    expect(resolved.runtimeEnforcement).toMatchObject({ support: "unsupported" })
+
+    await expect(
+      buildExtensionRunContext(database, {
+        chatId: "chat-1",
+        harness: "cursor-agent",
+        cwd: projectRoot,
+        homeDir,
+      }),
+    ).rejects.toThrow(ExtensionPolicyRunBlockedError)
+  })
+
+  it("blocks Claude commands because its SDK has no per-command discovery filter", async () => {
+    writeExtension(join(homeDir, ".claude", "commands"), "alpha.md")
+    const alpha = (await discoverProviderExtensions({ cwd: projectRoot, homeDir })).find(
+      (extension) =>
+        extension.provider === "claude" &&
+        extension.kind === "command" &&
+        extension.name === "alpha",
+    )
+    expect(alpha).toBeDefined()
+    setExtensionEnablementPolicy(database, {
+      target: extensionPolicyTargetFromManifest(alpha!),
+      location: { type: "task", projectId: "project-1", taskId: "task-1" },
+      enabled: false,
+    })
+
+    await expect(
+      buildExtensionRunContext(database, {
+        chatId: "chat-1",
+        harness: "claude-code",
+        cwd: projectRoot,
+        homeDir,
+      }),
+    ).rejects.toThrow("no supported per-command native discovery filter")
+  })
+
+  it("blocks ambiguous Claude skill names instead of exposing a disabled duplicate", async () => {
+    writeExtension(join(homeDir, ".claude", "skills"), "alpha/SKILL.md")
+    writeExtension(join(projectRoot, ".claude", "skills"), "alpha/SKILL.md")
+    const alphas = (await discoverProviderExtensions({ cwd: projectRoot, homeDir })).filter(
+      (extension) =>
+        extension.provider === "claude" && extension.kind === "skill" && extension.name === "alpha",
+    )
+    expect(alphas).toHaveLength(2)
+    const projectAlpha = alphas.find((extension) => extension.source === "project")!
+    setExtensionEnablementPolicy(database, {
+      target: extensionPolicyTargetFromManifest(projectAlpha),
+      location: { type: "task", projectId: "project-1", taskId: "task-1" },
+      enabled: false,
+    })
+
+    await expect(
+      buildExtensionRunContext(database, {
+        chatId: "chat-1",
+        harness: "claude-code",
+        cwd: projectRoot,
+        homeDir,
+      }),
+    ).rejects.toThrow("conflicting enabled and disabled native entries")
+  })
+
+  it.each(["claude-code", "codex"] as const)(
+    "removes disabled MCP servers from %s launch input and enables native config suppression",
+    async (harness) => {
+      if (harness === "claude-code") {
+        writeFileSync(
+          join(homeDir, ".claude.json"),
+          JSON.stringify({
+            mcpServers: { alpha: { command: "alpha" }, beta: { command: "beta" } },
+          }),
+        )
+      } else {
+        const codexDir = join(homeDir, ".codex")
+        mkdirSync(codexDir, { recursive: true })
+        writeFileSync(
+          join(codexDir, "config.toml"),
+          '[mcp_servers.alpha]\ncommand = "alpha"\n\n[mcp_servers.beta]\ncommand = "beta"\n',
+        )
+      }
+      const inventory = await discoverProviderExtensions({ cwd: projectRoot, homeDir })
+      const alpha = inventory.find(
+        (extension) =>
+          extension.name === "alpha" &&
+          extension.kind === "mcp" &&
+          extensionPolicyTargetFromManifest(extension).harness === harness,
+      )
+      expect(alpha).toBeDefined()
+      setExtensionEnablementPolicy(database, {
+        target: extensionPolicyTargetFromManifest(alpha!),
+        location: { type: "task", projectId: "project-1", taskId: "task-1" },
+        enabled: false,
+      })
+      const runContext = await buildExtensionRunContext(database, {
+        chatId: "chat-1",
+        harness,
+        cwd: projectRoot,
+        homeDir,
+      })
+
+      if (harness === "claude-code") {
+        expect(getClaudeExtensionSdkOptions(runContext.launchPolicy)).toEqual({
+          strictMcpConfig: true,
+        })
+        expect(
+          filterClaudeExtensionMcpServers(
+            { alpha: { command: "alpha" }, beta: { command: "beta" } },
+            runContext.launchPolicy,
+          ),
+        ).toEqual({ beta: { command: "beta" } })
+      } else {
+        expect(
+          filterCodexExtensionMcpServers(
+            [
+              { name: "alpha", command: "alpha" },
+              { name: "beta", command: "beta" },
+            ],
+            runContext.launchPolicy,
+          ),
+        ).toEqual([{ name: "beta", command: "beta" }])
+        expect(applyCodexExtensionPolicyConfig({}, runContext.launchPolicy)).toMatchObject({
+          mcp_servers: { alpha: { enabled: false } },
+        })
+      }
+    },
+  )
 
   it("keeps the migration serialized as 0030 immediately after 0029", () => {
     const journal = JSON.parse(readFileSync(join(migrations, "meta", "_journal.json"), "utf8")) as {
@@ -276,6 +421,24 @@ describe("extension enablement policy", () => {
       expect(source).toContain("extensionContext.context")
       expect(source).toContain("extensionPolicy")
     }
+    const claudeSource = readFileSync("src/main/lib/trpc/routers/claude.ts", "utf8")
+    expect(claudeSource).toContain("getClaudeExtensionSdkOptions")
+    expect(claudeSource).toContain("filterClaudeExtensionMcpServers")
+    expect(
+      claudeSource.indexOf("const extensionContext = await buildExtensionRunContext"),
+    ).toBeLessThan(claudeSource.indexOf("claudeQuery(queryOptions"))
+
+    const codexSource = readFileSync("src/main/lib/trpc/routers/codex.ts", "utf8")
+    expect(codexSource).toContain("applyCodexExtensionPolicyConfig")
+    expect(codexSource).toContain("filterCodexExtensionMcpServers")
+    expect(
+      codexSource.indexOf("const extensionContext = await buildExtensionRunContext"),
+    ).toBeLessThan(codexSource.indexOf("getOrCreateProvider({"))
+
+    const cursorSource = readFileSync("src/main/lib/trpc/routers/cursor.ts", "utf8")
+    expect(
+      cursorSource.indexOf("const extensionContext = await buildExtensionRunContext"),
+    ).toBeLessThan(cursorSource.indexOf("child = spawn(binary, args"))
   })
 })
 

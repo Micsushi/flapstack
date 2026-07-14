@@ -73,7 +73,12 @@ import {
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
-import { buildExtensionRunContext } from "../../extension-management"
+import {
+  applyCodexExtensionPolicyConfig,
+  buildExtensionRunContext,
+  filterCodexExtensionMcpServers,
+  type ExtensionLaunchPolicy,
+} from "../../extension-management"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
 import {
   buildProjectVaultRunContext,
@@ -101,6 +106,7 @@ type CodexProviderSession = {
   cwd: string
   authFingerprint: string | null
   mcpFingerprint: string
+  extensionPolicyFingerprint: string
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
 }
@@ -1323,6 +1329,7 @@ function buildCodexProviderEnv(
   authConfig?: { apiKey: string },
   reasoningEnabled = true,
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
+  extensionLaunchPolicy?: ExtensionLaunchPolicy,
 ): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
@@ -1347,14 +1354,19 @@ function buildCodexProviderEnv(
   } catch {
     existingConfig = {}
   }
-  env.CODEX_CONFIG = JSON.stringify({
+  const runConfig = {
     ...existingConfig,
     model_reasoning_summary: reasoningEnabled ? "detailed" : "none",
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: reasoningEnabled,
     hide_agent_reasoning: !reasoningEnabled,
     ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
-  })
+  }
+  env.CODEX_CONFIG = JSON.stringify(
+    extensionLaunchPolicy
+      ? applyCodexExtensionPolicyConfig(runConfig, extensionLaunchPolicy)
+      : runConfig,
+  )
 
   const apiKey = authConfig?.apiKey?.trim()
   if (!apiKey) {
@@ -1442,6 +1454,7 @@ function getOrCreateProvider(params: {
   cwd: string
   mcpServers: CodexMcpServerForSession[]
   mcpFingerprint: string
+  extensionLaunchPolicy: ExtensionLaunchPolicy
   existingSessionId?: string
   authConfig?: {
     apiKey: string
@@ -1457,6 +1470,7 @@ function getOrCreateProvider(params: {
     existing.cwd === params.cwd &&
     existing.authFingerprint === authFingerprint &&
     existing.mcpFingerprint === params.mcpFingerprint &&
+    existing.extensionPolicyFingerprint === params.extensionLaunchPolicy.fingerprint &&
     existing.reasoningEnabled === params.reasoningEnabled &&
     existing.reasoningEffort === (params.reasoningEffort ?? null)
   ) {
@@ -1475,7 +1489,12 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
-    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled, params.reasoningEffort),
+    env: buildCodexProviderEnv(
+      params.authConfig,
+      params.reasoningEnabled,
+      params.reasoningEffort,
+      params.extensionLaunchPolicy,
+    ),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     permissionRequestHandler: async (request) => {
       const active = codexPermissionHandlers.get(params.subChatId)
@@ -1494,6 +1513,7 @@ function getOrCreateProvider(params: {
     cwd: params.cwd,
     authFingerprint,
     mcpFingerprint: params.mcpFingerprint,
+    extensionPolicyFingerprint: params.extensionLaunchPolicy.fingerprint,
     reasoningEnabled: params.reasoningEnabled,
     reasoningEffort: params.reasoningEffort ?? null,
   })
@@ -2233,8 +2253,12 @@ export const codexRouter = router({
             const provider = getOrCreateProvider({
               subChatId: input.subChatId,
               cwd: input.cwd,
-              mcpServers: mcpSnapshot.mcpServersForSession,
+              mcpServers: filterCodexExtensionMcpServers(
+                mcpSnapshot.mcpServersForSession,
+                extensionContext.launchPolicy,
+              ),
               mcpFingerprint: mcpSnapshot.fingerprint,
+              extensionLaunchPolicy: extensionContext.launchPolicy,
               existingSessionId: ownedSessionId,
               authConfig,
               reasoningEnabled: input.reasoningEnabled,
