@@ -13,6 +13,8 @@ import {
   archiveTestProject,
   cancelRun,
   cleanupProductMcpCaller,
+  cancelProductMcpChildRun,
+  controlProductMcpRenderer,
   controlSettings,
   controlPermissionUi,
   createTestChat,
@@ -23,6 +25,7 @@ import {
   getHarnessStatusForRepo,
   getOpencodeLogs,
   getProductMcpState,
+  getProductMcpRendererState,
   getProductMcpTestCall,
   getProviderStatus,
   getSettingsState,
@@ -451,13 +454,36 @@ function registerTools(server: McpServer): void {
       inputSchema: {
         chatId: z.string().min(1).max(200),
         subChatId: z.string().min(1).max(200),
+        showOrchestration: z.boolean().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
       try {
         const selection = resolveTestChatSelection(input)
-        return result(await requestDevRendererControl({ command: "chat.select", ...selection }))
+        return result(
+          await requestDevRendererControl({
+            command: "chat.select",
+            ...selection,
+            showOrchestration: input.showOrchestration,
+          }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_orchestration_state",
+    {
+      description:
+        "Inspect bounded visible task-card, lineage-control, and selection state in the live renderer.",
+      inputSchema: { taskId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "orchestration.get", ...input }))
       } catch (error) {
         return failure(error)
       }
@@ -751,6 +777,9 @@ function registerTools(server: McpServer): void {
         harness: z.enum(["codex", "claude"]),
         name: z.string().trim().min(1).max(200).optional(),
         repoPath: z.string().min(1).optional(),
+        permissionMode: z
+          .enum(["read-only", "ask-before-edits", "auto-edit-project-only", "full-access"])
+          .optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -833,6 +862,8 @@ function registerTools(server: McpServer): void {
         chatId: z.string().min(1),
         toolName: z.string().trim().min(1).max(200).optional(),
         decision: productMcpAuditDecisionSchema.optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
         cursor: z.string().min(1).max(512).optional(),
         limit: z.number().int().min(1).max(100).optional(),
       },
@@ -841,6 +872,39 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(getProductMcpState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_product_mcp_renderer_state",
+    {
+      description: "Read bounded live renderer state for one isolated product-MCP caller.",
+      inputSchema: { chatId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getProductMcpRendererState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_product_mcp_renderer",
+    {
+      description: "Open or close audit history for one isolated product-MCP caller renderer.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        operation: z.enum(["open-audit", "close-audit"]),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlProductMcpRenderer(input))
       } catch (error) {
         return failure(error)
       }
@@ -875,6 +939,25 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(cleanupProductMcpCaller(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cancel_product_mcp_child_run",
+    {
+      description: "Cancel one pending or active spawned child owned by an isolated MCP caller.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        childChatId: z.string().min(1).max(200),
+        runId: z.string().min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cancelProductMcpChildRun(input))
       } catch (error) {
         return failure(error)
       }

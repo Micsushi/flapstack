@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react"
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogBody,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -80,6 +82,7 @@ export function McpBackgroundApprovalNotice({
             <Button
               key={approval.chatId}
               aria-label={`Review MCP approval in ${approval.chatName}`}
+              data-mcp-caller-chat-id={approval.chatId}
               size="sm"
               variant="outline"
               onClick={() => onOpenChat(approval.chatId)}
@@ -131,7 +134,11 @@ export function McpApprovalDialog({
   const open = approval.state === "pending" && closedId !== approval.id
   return (
     <AlertDialog open={open}>
-      <AlertDialogContent aria-describedby={`mcp-approval-${approval.id}-description`}>
+      <AlertDialogContent
+        aria-describedby={`mcp-approval-${approval.id}-description`}
+        data-mcp-approval-dialog="active"
+        data-mcp-caller-chat-id={approval.chatId}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>Approve MCP action</AlertDialogTitle>
           <AlertDialogDescription id={`mcp-approval-${approval.id}-description`}>
@@ -164,21 +171,25 @@ export function McpApprovalDialog({
           )}
         </AlertDialogBody>
         <AlertDialogFooter>
-          <Button
-            aria-label={`Deny ${approval.toolName}`}
-            disabled={submitting}
-            variant="outline"
-            onClick={() => void decide("deny")}
-          >
-            Deny
-          </Button>
-          <Button
-            aria-label={`Approve ${approval.toolName}`}
-            disabled={submitting}
-            onClick={() => void decide("approve")}
-          >
-            Approve
-          </Button>
+          <AlertDialogCancel asChild>
+            <Button
+              aria-label={`Deny ${approval.toolName}`}
+              disabled={submitting}
+              variant="outline"
+              onClick={() => void decide("deny")}
+            >
+              Deny
+            </Button>
+          </AlertDialogCancel>
+          <AlertDialogAction asChild>
+            <Button
+              aria-label={`Approve ${approval.toolName}`}
+              disabled={submitting}
+              onClick={() => void decide("approve")}
+            >
+              Approve
+            </Button>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

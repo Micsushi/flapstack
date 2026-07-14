@@ -306,7 +306,7 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F5-T3 — Prove cross-agent behavior live
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F5
 - Outcome: Real Codex and Claude sessions prove both spawn directions and safety failures.
 - Scope: Approval, denial, launch, fork navigation, task membership, bounded
@@ -325,52 +325,60 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
 
 ### S3-F6-T1 — Add MCP exposure and connection controls
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
 - Outcome: User can see and change per-chat exposure and connection state.
 - Scope: Default-off toggle, supported/unsupported state, registration errors, and current caller identity.
 - Out of scope: Third-party MCP server management redesign.
 - Acceptance: State is honest after restart and failures; enabling never silently focuses another window.
 - Verification: Renderer state tests and manual reconnect check.
-- Remaining verification: implementation and renderer tests pass; live
-  enable/restart/disable/reconnect rows M-01 through M-04 and M-20 remain.
+- Verification evidence: real isolated Codex and Claude callers began
+  default-off, enabled into connected state, disabled with revocation, and
+  reconnected only through fresh caller runs. Exposure persisted across exact
+  Dev restart and rendered current connected state without selection theft.
 - Blocked by: S3-F2-T4
 - Blocks: S3-F6-T4
 - Relevant context: chat settings and existing agents settings surfaces.
 
 ### S3-F6-T2 — Add accessible approval UI without focus theft
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
 - Outcome: User sees caller, tool, risk, target, and bounded input before deciding.
 - Scope: Active-chat dialog, background notification/badge, approve, deny, timeout, and session grant option.
 - Out of scope: OS activation for background requests.
 - Acceptance: Background calls do not steal focus; keyboard/screen-reader flow works; stale decisions close safely.
 - Verification: Component logic tests and manual active/background checks.
-- Remaining verification: implementation and component tests pass; live active,
-  background, deny, timeout, and session-grant rows M-05 through M-10 remain.
+- Verification evidence: the isolated `Flapstack Dev a4af-mcp-closeout`
+  renderer exposed the active approval dialog for the selected caller and the
+  background Review action without changing the selected chat. Real product
+  calls proved approve, deny, 60-second timeout, one session grant, and a fresh
+  Tier 3 approval. Component coverage proves alert-dialog labeling, keyboard
+  actions, live-region background notice, no focus movement, and stale close.
 - Blocked by: S3-F3-T3
 - Blocks: S3-F5-T3, S3-F6-T4
 - Relevant context: shared dialog primitives and pending approval service.
 
 ### S3-F6-T3 — Add audit viewer
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
 - Outcome: User can inspect and filter redacted MCP history.
 - Scope: List, filters, pagination, compact detail, empty/error states, and links to safe targets.
 - Out of scope: Editing or deleting audit records.
 - Acceptance: Filters and paging match queries; no credential or hidden reasoning renders.
 - Verification: Renderer tests and manual allowed/denied/failed review.
-- Remaining verification: implementation and query/component tests pass; live
-  paging, decision, and redaction rows M-18 and M-19 remain.
+- Verification evidence: live product history paged with bounded cursors,
+  contained allowed/denied/timed-out/failed outcomes, excluded the injected
+  credential marker, and rendered the selected caller's audit view. Query and
+  component coverage proves filters, empty/error states, and safe navigation.
 - Blocked by: S3-F4-T3
 - Blocks: S3-F5-T3, S3-F6-T4, S3-F6-T5
 - Relevant context: audit query DTO and settings/details UI.
 
 ### S3-F6-T5 — Refresh renderer state after MCP child mutations
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S3 / Feature S3-F6
 - Outcome: Chat, run, approval, and audit changes made outside renderer tRPC
   appear in the open app without manual reload.
@@ -384,9 +392,12 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   - Failed/rolled-back mutations do not show phantom success.
 - Verification: `tests/mcp-external-mutation-refresh.test.ts` plus verified live
   mutation, approval, run, and audit observations.
-- Remaining verification: the named transport, coalescing, exact-invalidation,
-  and development-boundary regressions pass; live mutation, approval, run, and
-  audit observations remain open.
+- Verification evidence: authenticated external calls changed active and
+  background approval state, timeout settlement removed the pending notice,
+  exposure/audit state rendered without reload, and orchestration progress plus
+  parent/child lineage refreshed after committed scheduler mutations. Focused
+  transport/coalescing tests keep exact query families and failed mutations
+  isolated from renderer success.
 - Blocked by: S3-F2-T5, S3-F3-T4, S3-F4-T2, S3-F6-T3
 - Blocks: S3-F6-T4
 - Relevant context: Electron main/preload event bridge, tRPC query invalidation,
@@ -517,3 +528,34 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   Node 22 `npm run check` passes lint, formatting, TypeScript, 117 test files
   with 863 passed and 3 conditional skips, and the production build. The three
   affected strict changes and release-ledger coverage pass.
+
+## 2026-07-13 current-candidate MCP/orchestration closeout evidence
+
+- Exact `npm run dev:verify` identified checkout
+  `/Users/michaelshi/.codex/worktrees/a4af/flapstack`, profile
+  `Flapstack Dev a4af-mcp-closeout`, and its Electron main process after restart.
+- Authenticated product-stdio proof passed default-off exposure, disable/new-run
+  reconnect for Codex and Claude, real Codex-to-Claude and Claude-to-Codex
+  children, active/background approval without selection theft, approve, deny,
+  60-second timeout, session grant, fresh Tier 3 approval, audit paging and
+  redaction, self-archive denial, same-harness spawn denial, and cleanup.
+- A second exact Dev start proved exposure and audit persistence across restart,
+  session-grant expiry, and a fresh denied approval. Approval settlement now
+  publishes the approval-domain invalidation that removes timed-out notices.
+- Authenticated orchestration proof passed deferred mixed-harness queue state,
+  create/read/pause/replace/retry/add/progress/stop/archive controls, durable
+  estimated-cost provenance, and cleanup. A real read-only Codex child returned
+  exactly `ORCHESTRATION_FORK_OK`; 17,272 authoritative tokens triggered a
+  durable token-budget stop with unknown cost left unfabricated. Parent/child
+  renderer lineage controls were present in both directions.
+- A persisted legacy unified-sidebar preference initially hid the only product
+  MCP widget while renderer atoms still reported widget visibility. The
+  authenticated open-audit control now opens the actual unified product surface;
+  the rerun rendered both connected exposure state and audit history. Therefore
+  S3-F5-T3 and S3-F6-T1/T2/T3/T5 close. S3-F6-T4 remains unchecked because the
+  shared UI lease was released before pixel/package acceptance; no such claim is
+  promoted.
+- Final Node 22 `npm run check` passes lint, Prettier, TypeScript, 125 test files
+  with 936 passed and 3 conditional skips, and the production build. Strict
+  validation reports `add-stage3-mcp-control` valid; both staged and unstaged
+  diffs pass whitespace checks.

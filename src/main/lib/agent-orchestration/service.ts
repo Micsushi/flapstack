@@ -85,14 +85,16 @@ export function createAgentOrchestrationService(databasePath: string) {
             )
           }
           const now = Date.now()
+          const initialStatus = options.deferScheduling ? "paused" : "queued"
           db.prepare(
             `INSERT INTO task_orchestrations (
               task_id, initiating_chat_id, status, max_parallel_agents, max_depth,
               stop_conditions, created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             taskId,
             input.initiatingChatId,
+            initialStatus,
             input.maxParallelAgents,
             input.maxDepth,
             JSON.stringify(input.stopConditions),
@@ -240,9 +242,12 @@ export function createAgentOrchestrationService(databasePath: string) {
           if (current !== "paused") {
             throw new AgentOrchestrationError("conflict", "Only paused orchestration can resume.")
           }
+          const now = Date.now()
           db.prepare(
-            "UPDATE task_orchestrations SET status = 'running', updated_at = ? WHERE task_id = ?",
-          ).run(Date.now(), taskId)
+            `UPDATE task_orchestrations
+             SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
+             WHERE task_id = ?`,
+          ).run(now, now, taskId)
           safeTickTask(db, taskId)
         } else {
           if (["completed", "failed", "stopped"].includes(current)) {

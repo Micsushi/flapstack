@@ -68,7 +68,10 @@ export class McpApprovalLifecycle {
   private readonly grants = new Map<string, SessionGrant>()
   private stopped = false
 
-  constructor(private readonly coordinator?: McpApprovalCoordinator) {}
+  constructor(
+    private readonly coordinator?: McpApprovalCoordinator,
+    private readonly onPendingChanged?: () => void,
+  ) {}
 
   request(request: McpApprovalRequest): McpApprovalWait {
     if (this.stopped) return settled(request.id, "shutdown", "shutdown")
@@ -197,6 +200,11 @@ export class McpApprovalLifecycle {
     this.pending.delete(id)
     clearTimeout(pending.timer)
     pending.resolve({ id, state, source })
+    try {
+      this.onPendingChanged?.()
+    } catch {
+      // Approval settlement must not fail because renderer notification failed.
+    }
     return true
   }
 

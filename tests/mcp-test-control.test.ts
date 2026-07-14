@@ -67,7 +67,11 @@ describe("dev MCP test-control registry", () => {
       "mutate_settings_legacy_state",
       "get_visible_copy_search_state",
       "select_test_chat",
+      "get_renderer_orchestration_state",
       "get_shortcut_state",
+      "get_product_mcp_renderer_state",
+      "cancel_product_mcp_child_run",
+      "control_product_mcp_renderer",
       "mutate_shortcut_binding",
       "list_provider_extensions",
       "list_test_targets",
@@ -207,8 +211,14 @@ describe("dev renderer Settings control boundary", () => {
         chatId: "chat-1",
         subChatId: "sub-chat-1",
         project: { id: "project-1", name: "Project", path: "/registered/project" },
+        showOrchestration: true,
       }),
-    ).toMatchObject({ command: "chat.select", chatId: "chat-1", subChatId: "sub-chat-1" })
+    ).toMatchObject({
+      command: "chat.select",
+      chatId: "chat-1",
+      subChatId: "sub-chat-1",
+      showOrchestration: true,
+    })
     expect(
       parseDevRendererControlRequest({
         requestId: "request-id-long-enough",
@@ -216,6 +226,45 @@ describe("dev renderer Settings control boundary", () => {
         chatId: "chat-1",
         subChatId: "sub-chat-1",
         project: { id: "project-1", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+        taskId: "task-1",
+      }),
+    ).toMatchObject({ command: "orchestration.get", taskId: "task-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+        taskId: "",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only bounded product MCP renderer controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "open-audit",
+      }),
+    ).toMatchObject({ command: "mcp.control", operation: "open-audit" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "delete",
       }),
     ).toBeNull()
   })
@@ -510,6 +559,7 @@ describe("dev MCP transport", () => {
       const created = await client.callTool({
         name: "create_test_orchestration",
         arguments: {
+          deferScheduling: true,
           request: {
             projectId: fixtureResult.projectId,
             task: { mode: "create", name: "Live API orchestration" },
@@ -533,17 +583,27 @@ describe("dev MCP transport", () => {
       })
       const createdResult = (created.structuredContent as { result: any }).result
       const taskId = createdResult.orchestration.taskId as string
-      expect(createdResult.aggregate).toMatchObject({ active: 1, queued: 0 })
+      expect(createdResult).toMatchObject({
+        orchestration: { status: "paused" },
+        aggregate: { active: 0, queued: 1 },
+      })
 
       const read = await client.callTool({
         name: "get_test_orchestration",
         arguments: { taskId },
       })
       expect((read.structuredContent as { result: any }).result).toMatchObject({
-        overview: { orchestration: { taskId, status: "running" } },
+        overview: { orchestration: { taskId, status: "paused" } },
         lineage: { taskId },
       })
 
+      const resumed = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "resume" },
+      })
+      expect((resumed.structuredContent as { result: any }).result.orchestration.status).toBe(
+        "running",
+      )
       const paused = await client.callTool({
         name: "mutate_test_orchestration",
         arguments: { taskId, action: "pause" },

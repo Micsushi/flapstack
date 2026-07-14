@@ -26,10 +26,11 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const publish = (event: ProductMcpRendererInvalidation): void => {
     void publishProductMcpInvalidation(event)
   }
+  const publishApprovalChange = () =>
+    publish({ version: 1, source: "product-mcp", domains: ["approvals"] })
   const approvals = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(getDatabase(), () =>
-      publish({ version: 1, source: "product-mcp", domains: ["approvals"] }),
-    ),
+    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    publishApprovalChange,
   )
   const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
