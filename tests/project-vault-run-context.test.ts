@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { and, eq } from "drizzle-orm"
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -218,7 +219,18 @@ describe("project vault run context", () => {
 
   it("rejects secret-like selected content without exposing it in the report", async () => {
     const secret = "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456"
-    await setSection("context", secret)
+    const vault = database.select().from(schema.projectVaults).get()
+    writeFileSync(join(vault!.rootPath, "context.md"), secret)
+    database
+      .update(schema.projectVaultSections)
+      .set({ contentHash: createHash("sha256").update(secret).digest("hex") })
+      .where(
+        and(
+          eq(schema.projectVaultSections.projectId, "project-1"),
+          eq(schema.projectVaultSections.sectionId, "context"),
+        ),
+      )
+      .run()
 
     const failure = await buildProjectVaultRunContext(database, {
       chatId: "project-chat",
