@@ -26,7 +26,11 @@ import {
 import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
-import { installBeforeQuitShutdown, runAppShutdown, waitForShutdownIdle } from "./lib/app-shutdown"
+import {
+  abortAndWaitForShutdownIdle,
+  installBeforeQuitShutdown,
+  runAppShutdown,
+} from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -103,17 +107,12 @@ function abortAllAgentSessions(): void {
 async function abortAndWaitForAgentSessions(): Promise<void> {
   if (pendingRunTimer) clearInterval(pendingRunTimer)
   pendingRunTimer = null
-  const deadline = Date.now() + 10_000
-  const drainStopped = await waitForShutdownIdle({
-    isIdle: () => !pendingRunDrainActive,
-    timeoutMs: Math.max(0, deadline - Date.now()),
+  const stopped = await abortAndWaitForShutdownIdle({
+    abort: abortAllAgentSessions,
+    isIdle: () => !pendingRunDrainActive && !hasActiveAgentSessions(),
+    timeoutMs: 10_000,
   })
-  abortAllAgentSessions()
-  const sessionsStopped = await waitForShutdownIdle({
-    isIdle: () => !hasActiveAgentSessions(),
-    timeoutMs: Math.max(0, deadline - Date.now()),
-  })
-  if (!drainStopped || !sessionsStopped) {
+  if (!stopped) {
     throw new Error("Timed out waiting for agent sessions to stop during shutdown")
   }
 }

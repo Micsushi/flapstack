@@ -260,6 +260,7 @@ describe("authenticated dev control for live product MCP", () => {
       )
       cleanupProductMcpCaller({ chatId: caller.chatId })
     },
+    30_000,
   )
 
   it("stops an approval-waiting child, cancels its caller, and clears the pending decision", async () => {

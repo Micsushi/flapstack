@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import {
+  abortAndWaitForShutdownIdle,
   installBeforeQuitShutdown,
   runAppShutdown,
   waitForShutdownIdle,
@@ -32,6 +33,30 @@ describe("application shutdown", () => {
         sleep: async () => undefined,
       }),
     ).resolves.toBe(true)
+  })
+
+  it("sends provider aborts before waiting on one combined idle predicate", async () => {
+    const order: string[] = []
+    let drainActive = true
+    let providerActive = true
+
+    await expect(
+      abortAndWaitForShutdownIdle({
+        abort: () => {
+          order.push("abort")
+          providerActive = false
+        },
+        isIdle: () => {
+          order.push("poll")
+          return !drainActive && !providerActive
+        },
+        timeoutMs: 25,
+        sleep: async () => {
+          drainActive = false
+        },
+      }),
+    ).resolves.toBe(true)
+    expect(order).toEqual(["abort", "poll", "poll"])
   })
 
   it("awaits provider persistence and service cleanup before closing SQLite last", async () => {

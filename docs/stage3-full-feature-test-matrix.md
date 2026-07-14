@@ -407,7 +407,7 @@ evidence; the final closeout below supersedes that historical status.
 ## 6. Final integrated closeout - 2026-07-14 PDT
 
 The final integration candidate passed the Node 22 repository gate with 130
-test files, 976 passed tests, 3 declared conditional skips, lint, Prettier,
+test files, 984 passed tests, 3 declared conditional skips, lint, Prettier,
 TypeScript, and the production build. All 18 Stage 3 changes strict-validated;
 the release ledger and Usage matrix coverage gates passed. Exact Dev identity
 passed after the final restart in `Flapstack Dev stage3-capture`.
@@ -434,6 +434,12 @@ The final review repairs normalize stale Codex effort suffixes, preserve correct
 Voice composer ownership, bind and expire renderer evidence, restore clipboard
 state before reporting success, fixture-scope Voice controls, and keep
 provider-controlled question headers off lock-screen notifications.
+
+The third review also repaired shutdown ordering so all provider aborts are sent
+before one bounded combined drain/session wait, preserved ordinary trailing
+Markdown such as `-`, `--`, `---`, and `[`, and gave only the cold-load
+two-way product-MCP spawn cases a 30-second timeout. The focused 20-test suite
+and full Node 22 gate pass after these changes.
 
 2026-07-14 headless follow-up: development fixture selection now refreshes
 project/chat list and exact-chat caches before changing renderer atoms, clears
@@ -518,7 +524,7 @@ Notes:
 ### Exact integration closeout — 2026-07-14
 
 - Candidate is the final commit containing this matrix. Node 22 full gate PASS
-  with 130 files, 976 passed, 3 conditional skips, and production build. All 18
+  with 130 files, 984 passed, 3 conditional skips, and production build. All 18
   completed OpenSpec changes are archived; 29 current specs strict-validate;
   the 349-scenario release ledger and 29-row/14-scenario Usage matrix pass.
 - Exact verified Dev passed credentialed Cursor, OpenRouter, NanoGPT, Codex,

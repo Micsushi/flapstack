@@ -99,7 +99,7 @@ release decision.
 | -------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                | PASS     | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
 | OpenSpec strict validation             | PASS     | all 18 changes archived; all 29 current specs pass strict non-interactive validation                                        |
-| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 130 files, 976 passed, 3 conditional skips, production build                     |
+| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 130 files, 984 passed, 3 conditional skips, production build                     |
 | Security round-3 focused suite         | PASS     | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
 | Final security/control review          | PASS     | three repair rounds, focused attack suites, native SQLite coverage, and exact-candidate full gate pass                      |
 | S3-F5 focused and attack suites        | PASS     | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
@@ -117,8 +117,12 @@ release decision.
 
 ## 2026-07-14 exact integration closeout
 
-- Node 22 `npm run check`: PASS, 130 test files, 976 passed, 3 conditional
+- Node 22 `npm run check`: PASS, 130 test files, 984 passed, 3 conditional
   skips, lint, Prettier, TypeScript, and production build.
+- Third-review repairs: PASS. Shutdown sends provider aborts before one bounded
+  combined drain/session wait; streaming envelope filtering requires a
+  distinctive marker prefix; cold-load two-way spawn cases have a focused
+  30-second timeout. Focused regression suite passed 20 tests.
 - Release ledger: PASS, 18 archived changes, 349 normative scenarios, 54 stable
   rows, and 17 feature exits. All 29 current specs strict-validate.
 - Verified Dev: PASS for this checkout and `Flapstack Dev stage3-capture` after
