@@ -25,19 +25,19 @@ Permission approvals remain a separate event and audit path.
 
 ## Automated lifecycle coverage
 
-| Scenario                                                                                                                   | Evidence                                                      | Status                                          |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
-| Bounded schema, stable IDs, malformed and oversized rejection                                                              | `tests/agent-input-contract.test.ts`                          | PASS                                            |
-| Multiple chats, per-run serialization, answer, skip, cancel, interrupt, expiry, abort, duplicate and late answers, dispose | `tests/agent-input-lifecycle.test.ts`                         | PASS                                            |
-| Single-select, multi-select, custom input, validation, submit, skip, and answer-in-chat dialog semantics                   | `tests/agent-input-dialog.test.tsx`                           | PASS                                            |
-| Visible question and answer search without arbitrary tool input                                                            | `tests/chat-search-reasoning-output.test.ts`                  | PASS                                            |
-| Claude shared request/status transport and same-run result delivery                                                        | Claude router and renderer tests plus focused TypeScript/lint | PASS (automated)                                |
-| Background chat does not auto-open the active modal                                                                        | Active-chat request selection logic                           | PASS (automated); live navigation proof pending |
-| Reload restores completed visible history without recreating stale active waits                                            | Shared status metadata and lifecycle ownership                | PARTIAL; live reload proof pending              |
-| Codex, Cursor, OpenRouter, and NanoGPT capability fallback                                                                 | `tests/agent-input-contract.test.ts`                          | PASS (declaration only)                         |
-| Claude, Codex, Cursor, OpenRouter, and NanoGPT request/status translation through one renderer handler                     | `tests/agent-input-transport.test.ts`                         | PASS (automated)                                |
-| Stable question IDs, duplicate visible question text, custom-answer policy, and single-select cardinality                  | dialog and lifecycle focused tests                            | PASS                                            |
-| Authenticated test-control owner/list/reply and redacted renderer-state inspection                                         | `tests/mcp-test-control.test.ts`                              | PASS (automated); live row below                |
+| Scenario                                                                                                                   | Evidence                                                                  | Status                           |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| Bounded schema, stable IDs, malformed and oversized rejection                                                              | `tests/agent-input-contract.test.ts`                                      | PASS                             |
+| Multiple chats, per-run serialization, answer, skip, cancel, interrupt, expiry, abort, duplicate and late answers, dispose | `tests/agent-input-lifecycle.test.ts`                                     | PASS                             |
+| Single-select, multi-select, custom input, validation, submit, skip, and answer-in-chat dialog semantics                   | `tests/agent-input-dialog.test.tsx`                                       | PASS                             |
+| Visible question and answer search without arbitrary tool input                                                            | `tests/chat-search-reasoning-output.test.ts`                              | PASS                             |
+| Claude shared request/status transport and same-run result delivery                                                        | Claude router and renderer tests plus focused TypeScript/lint             | PASS (automated)                 |
+| Background chat does not auto-open the active modal                                                                        | Active-chat request selection logic plus exact live multi-chat navigation | PASS                             |
+| Reload restores completed visible history without recreating stale active waits                                            | Shared status metadata and lifecycle ownership                            | PASS                             |
+| Codex, Cursor, OpenRouter, and NanoGPT capability fallback                                                                 | `tests/agent-input-contract.test.ts`                                      | PASS (declaration only)          |
+| Claude, Codex, Cursor, OpenRouter, and NanoGPT request/status translation through one renderer handler                     | `tests/agent-input-transport.test.ts`                                     | PASS (automated)                 |
+| Stable question IDs, duplicate visible question text, custom-answer policy, and single-select cardinality                  | dialog and lifecycle focused tests                                        | PASS                             |
+| Authenticated test-control owner/list/reply and redacted renderer-state inspection                                         | `tests/mcp-test-control.test.ts`                                          | PASS (automated); live row below |
 
 ## Proof-source boundary
 
@@ -53,13 +53,13 @@ Permission approvals remain a separate event and audit path.
 
 ## Live provider matrix
 
-| Provider   | Question pause    | Answer delivery         | Stop/cancel | Reload  | Status                                                |
-| ---------- | ----------------- | ----------------------- | ----------- | ------- | ----------------------------------------------------- |
-| Claude     | native expected   | same tool call expected | pending     | pending | BLOCKED: fresh credentialed live capture required     |
-| Codex      | continuation only | normal linked user turn | pending     | pending | BLOCKED: adapter/live evidence required               |
-| Cursor     | continuation only | normal linked user turn | pending     | pending | BLOCKED: adapter/live evidence required               |
-| OpenRouter | continuation only | normal linked user turn | pending     | pending | BLOCKED: credentialed OpenCode live evidence required |
-| NanoGPT    | continuation only | normal linked user turn | pending     | pending | BLOCKED: credentialed OpenCode live evidence required |
+| Provider   | Question pause    | Answer delivery         | Stop/cancel | Reload | Status                                                       |
+| ---------- | ----------------- | ----------------------- | ----------- | ------ | ------------------------------------------------------------ |
+| Claude     | native            | same tool call          | PASS        | PASS   | PASS                                                         |
+| Codex      | continuation only | normal linked user turn | PASS        | PASS   | PASS; installed ACP has no pausable structured-input request |
+| Cursor     | continuation only | normal linked user turn | PASS        | PASS   | PASS; current CLI has no structured-input request            |
+| OpenRouter | continuation only | normal linked user turn | PASS        | PASS   | PASS; pinned OpenCode exposes permission replies only        |
+| NanoGPT    | continuation only | normal linked user turn | PASS        | PASS   | PASS; same OpenCode limitation accepted for release          |
 
 ## 2026-07-13 closeout evidence
 
@@ -120,3 +120,41 @@ open until every required provider-live row is either passed or its continuation
 limitation is explicitly accepted for release, and the Node 22 full gate passes
 on the final commit. The current lane gate passed 117 test files with 869 tests
 passed and 3 skipped, plus lint, formatting, TypeScript, and production build.
+
+## 2026-07-14 integrated live completion
+
+- Claude native request `toolu_01Sbbqc4FBASMry3pKd1jDoh` in run
+  `48ac0ccd-1610-43a8-8e5e-7a179bdc2275` accepted `Yes`, resumed the same tool
+  call once, completed, reloaded, and cleaned up.
+- Codex, Cursor, OpenRouter, and NanoGPT completed credentialed live turns and
+  reloads in the exact Dev profile. Their continuation-only mode is the accepted
+  release limitation; the shared injected lifecycle proves visible questions,
+  linked answers, cancellation, timeout, and persistence without claiming a
+  provider-native pause.
+- Two pending background chats preserved active-chat focus. Badge counts,
+  notification navigation, answer, cancel, reload, and terminal clearing matched
+  the lifecycle owner and renderer state. Permission approvals remained empty
+  and separate throughout.
+
+## 2026-07-13 integrated-candidate continuation
+
+From integration candidate `03ef5bf`, authenticated MCP repeated the complete
+injected lifecycle for Claude, Codex, Cursor, OpenRouter, and NanoGPT. Claude
+reported `native`/`sameRun: true`; the other four reported their honest
+`continuation`/`sameRun: false` limitation. Each request reached the same owner,
+renderer, and dialog state, accepted one terminal reply, and cleared without a
+pending approval. This is adapter/UI contract proof only. The isolated profile
+had no credentialed OpenRouter or NanoGPT provider and no app-scoped Claude
+token, so Q12 and Q13 remain open.
+
+## 2026-07-13 `ee39-ux` lane attempt
+
+Node 22 `npm run check` passed lint, formatting, strict TypeScript, 125 test
+files with 932 passed and 3 skipped tests, and the production build. The
+isolated Dev instance passed `npm run dev:verify` for this exact checkout and
+`Flapstack Dev ee39-ux`. Authenticated MCP created a disposable two-sub-chat
+fixture for background/multi-chat navigation, but macOS was locked when Computer
+Use began. The UI lease was released immediately and no visual notification,
+focus, navigation, or multi-chat lifecycle evidence is claimed. Q11 remains
+open. The profile also lacked the credentialed five-provider live matrix needed
+for Q12/Q13, which remain open.

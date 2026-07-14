@@ -5,28 +5,39 @@ const root = resolve(import.meta.dirname, "..")
 const changesRoot = resolve(root, "openspec/changes")
 const ledger = readFileSync(resolve(root, "docs/stage3-release-candidate-ledger.md"), "utf8")
 
-const activeChanges = readdirSync(changesRoot, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name !== "archive")
-  .map((entry) => entry.name)
-  .sort()
-
 const changeMappings = parseMappings("stage3-release-change", "change")
-assertSameSet("active OpenSpec changes", [...changeMappings.keys()], activeChanges)
+const mappedChangeRoots = new Map(
+  [...changeMappings.keys()].map((change) => [change, resolveChangeRoot(change)]),
+)
+
+const evidenceCorpus = collectMarkdown(resolve(root, "docs"), {
+  exclude: new Set([resolve(root, "docs/stage3-release-candidate-ledger.md")]),
+}).concat(collectMarkdown(resolve(root, "tests/fixtures")))
+const releaseRows = [...new Set([...changeMappings.values()].flatMap((mapping) => mapping.rows))]
+for (const row of releaseRows) {
+  if (!containsRowDefinition(evidenceCorpus, row))
+    fail(`release row ${row} has no evidence-board definition`)
+}
 
 let scenarioCount = 0
-for (const change of activeChanges) {
+for (const change of changeMappings.keys()) {
   const mapping = changeMappings.get(change)
   if (!mapping?.rows.length) fail(`change ${change} has no release rows`)
-  const specsRoot = resolve(changesRoot, change, "specs")
+  const specsRoot = resolve(mappedChangeRoots.get(change), "specs")
   scenarioCount += countScenarios(specsRoot)
 }
 
 const featureMappings = parseMappings("stage3-release-feature", "feature")
 const expectedFeatures = Array.from({ length: 17 }, (_, index) => `S3-F${index + 1}`)
 assertSameSet("Stage 3 feature exits", [...featureMappings.keys()], expectedFeatures)
+const taskCorpus = [...mappedChangeRoots.values()]
+  .map((changeRoot) => collectMarkdown(changeRoot, { basename: "tasks.md" }))
+  .join("\n")
 
 for (const [feature, mapping] of featureMappings) {
   if (!mapping.exit) fail(`${feature} has no exit task`)
+  if (!containsTaskHeading(taskCorpus, mapping.exit))
+    fail(`${feature} exit task ${mapping.exit} does not exist`)
   for (const dependency of mapping.depends) {
     if (!featureMappings.has(dependency)) fail(`${feature} has unknown dependency ${dependency}`)
   }
@@ -67,8 +78,55 @@ for (const field of [
 }
 
 console.log(
-  `stage3 release ledger coverage passed (${activeChanges.length} changes, ${scenarioCount} scenarios, ${featureMappings.size} feature exits)`,
+  `stage3 release ledger coverage passed (${changeMappings.size} changes, ${scenarioCount} scenarios, ${releaseRows.length} release rows, ${featureMappings.size} feature exits)`,
 )
+
+function resolveChangeRoot(change) {
+  const activeRoot = resolve(changesRoot, change)
+  try {
+    if (readdirSync(activeRoot)) return activeRoot
+  } catch {
+    // Completed Stage 3 changes move under the dated archive directory.
+  }
+  const archiveRoot = resolve(changesRoot, "archive")
+  const matches = readdirSync(archiveRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.endsWith(`-${change}`))
+    .map((entry) => resolve(archiveRoot, entry.name))
+  if (matches.length !== 1) {
+    fail(`change ${change} must exist exactly once as active or archived; found ${matches.length}`)
+  }
+  return matches[0]
+}
+
+function collectMarkdown(directory, options = {}) {
+  let content = ""
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name)
+    if (options.exclude?.has(path)) continue
+    if (entry.isDirectory()) content += collectMarkdown(path, options)
+    if (
+      entry.isFile() &&
+      entry.name.endsWith(".md") &&
+      (!options.basename || entry.name === options.basename)
+    ) {
+      content += `\n${readFileSync(path, "utf8")}`
+    }
+  }
+  return content
+}
+
+function containsRowDefinition(content, token) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(
+    `^(?:- \\[[ xX]\\] \\*\\*${escaped}(?:[ (]|\\*\\*)|\\| \\s*${escaped}\\s*\\|)`,
+    "m",
+  ).test(content)
+}
+
+function containsTaskHeading(content, taskId) {
+  const escaped = taskId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`^### ${escaped}(?: —| -|$)`, "m").test(content)
+}
 
 function parseMappings(kind, keyName) {
   const mappings = new Map()

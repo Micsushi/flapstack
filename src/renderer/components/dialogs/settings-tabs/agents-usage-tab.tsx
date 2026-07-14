@@ -93,11 +93,13 @@ function InlineError({ label, message }: { label: string; message: string }) {
 }
 
 function PagingControls({
+  kind,
   loaded,
   limit,
   maximum,
   onLimitChange,
 }: {
+  kind: "alerts" | "samples" | "cycles"
   loaded: number
   limit: number
   maximum: number
@@ -115,6 +117,8 @@ function PagingControls({
         {limit > PAGE_SIZE && (
           <button
             type="button"
+            data-dev-usage-paging={kind}
+            data-dev-usage-action="show-25"
             onClick={() => onLimitChange(PAGE_SIZE)}
             className="rounded border border-border px-2 py-1 hover:bg-foreground/5"
           >
@@ -124,6 +128,8 @@ function PagingControls({
         {mayHaveMore && limit + PAGE_SIZE < maximum && (
           <button
             type="button"
+            data-dev-usage-paging={kind}
+            data-dev-usage-action="show-more"
             onClick={() => onLimitChange(Math.min(limit + PAGE_SIZE, maximum))}
             className="rounded border border-border px-2 py-1 hover:bg-foreground/5"
           >
@@ -133,6 +139,8 @@ function PagingControls({
         {mayHaveMore && (
           <button
             type="button"
+            data-dev-usage-paging={kind}
+            data-dev-usage-action="show-all"
             onClick={() => onLimitChange(maximum)}
             className="rounded border border-border px-2 py-1 hover:bg-foreground/5"
           >
@@ -1116,11 +1124,22 @@ export function AgentsUsageTab() {
 
       <Tabs value={providerFilter} onValueChange={selectProvider}>
         <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-border bg-foreground/[0.035] p-1">
-          <TabsTrigger value={ALL_PROVIDERS} className="shrink-0 text-xs">
+          <TabsTrigger
+            value={ALL_PROVIDERS}
+            className="shrink-0 text-xs"
+            data-dev-usage-control="provider"
+            data-value={ALL_PROVIDERS}
+          >
             All
           </TabsTrigger>
           {PROVIDER_IDS.map((providerId) => (
-            <TabsTrigger key={providerId} value={providerId} className="shrink-0 text-xs">
+            <TabsTrigger
+              key={providerId}
+              value={providerId}
+              className="shrink-0 text-xs"
+              data-dev-usage-control="provider"
+              data-value={providerId}
+            >
               {providerLabel(providerId)}
             </TabsTrigger>
           ))}
@@ -1143,6 +1162,8 @@ export function AgentsUsageTab() {
               <button
                 key={value}
                 type="button"
+                data-dev-usage-control="scope"
+                data-value={value}
                 aria-pressed={usageScope === value}
                 onClick={() => {
                   setUsageScope(value)
@@ -1233,6 +1254,8 @@ export function AgentsUsageTab() {
                   <button
                     key={option}
                     type="button"
+                    data-dev-usage-control="history-mode"
+                    data-value={option}
                     aria-pressed={historyMode === option}
                     onClick={() => setHistoryMode(option)}
                     className={`rounded px-2 py-1 text-[10px] transition-colors ${
@@ -1254,6 +1277,8 @@ export function AgentsUsageTab() {
                   <button
                     key={option}
                     type="button"
+                    data-dev-usage-control="history-range"
+                    data-value={option}
                     aria-pressed={historyRange === option}
                     onClick={() => setHistoryRange(option)}
                     className={`rounded px-1.5 py-1 text-[10px] uppercase transition-colors ${
@@ -1292,7 +1317,10 @@ export function AgentsUsageTab() {
         </section>
       )}
 
-      <details className="group rounded-xl border border-border bg-foreground/[0.02]">
+      <details
+        className="group rounded-xl border border-border bg-foreground/[0.02]"
+        data-dev-usage-control="monitoring"
+      >
         <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground hover:bg-foreground/[0.03]">
           <span className="inline-flex items-center gap-2">
             <span className="text-muted-foreground transition-transform group-open:rotate-90">
@@ -1438,7 +1466,7 @@ export function AgentsUsageTab() {
           </div>
 
           {/* Provider cards */}
-          <div className="space-y-2">
+          <div className="space-y-2" data-dev-usage-section="provider-states">
             <h4 className="text-sm font-medium text-foreground">Providers</h4>
             {capabilitiesQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Loading provider capabilities…</p>
@@ -1629,7 +1657,7 @@ export function AgentsUsageTab() {
             )}
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2" data-dev-usage-section="alerts">
             <h4 className="text-sm font-medium text-foreground">Alert history</h4>
             {alertEventsQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Loading usage alerts…</p>
@@ -1644,6 +1672,7 @@ export function AgentsUsageTab() {
                 {alertEvents.map((event) => (
                   <div
                     key={event.id}
+                    data-dev-usage-row="alerts"
                     className={`p-2 text-xs ${
                       event.deliveryStatus === "failed" ? "text-destructive" : ""
                     }`}
@@ -1669,6 +1698,7 @@ export function AgentsUsageTab() {
             )}
             {!alertEventsQuery.error && (
               <PagingControls
+                kind="alerts"
                 loaded={alertEvents.length}
                 limit={alertLimit}
                 maximum={MAX_ALERT_LIMIT}
@@ -1678,7 +1708,7 @@ export function AgentsUsageTab() {
           </div>
 
           {/* Recent samples */}
-          <div className="space-y-2">
+          <div className="space-y-2" data-dev-usage-section="samples">
             <h4 className="text-sm font-medium text-foreground">Recent samples</h4>
             {samplesQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Loading usage samples…</p>
@@ -1706,7 +1736,11 @@ export function AgentsUsageTab() {
                   </thead>
                   <tbody>
                     {samples.map((s) => (
-                      <tr key={s.id} className="border-b border-border/50">
+                      <tr
+                        key={s.id}
+                        className="border-b border-border/50"
+                        data-dev-usage-row="samples"
+                      >
                         <td className="p-2">{providerLabel(s.providerId)}</td>
                         <td className="p-2">{accountLabel(s.accountTag)}</td>
                         <td className="p-2">{s.sourceTag ?? s.source}</td>
@@ -1731,6 +1765,7 @@ export function AgentsUsageTab() {
             )}
             {!samplesQuery.error && (
               <PagingControls
+                kind="samples"
                 loaded={samples.length}
                 limit={sampleLimit}
                 maximum={MAX_SAMPLE_LIMIT}
@@ -1739,7 +1774,7 @@ export function AgentsUsageTab() {
             )}
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2" data-dev-usage-section="cycles">
             <h4 className="text-sm font-medium text-foreground">Historical cycles</h4>
             {cyclesQuery.isLoading ? (
               <p className="text-xs text-muted-foreground">Loading historical billing cycles…</p>
@@ -1764,7 +1799,11 @@ export function AgentsUsageTab() {
                   </thead>
                   <tbody>
                     {cycles.map((cycle) => (
-                      <tr key={cycle.id} className="border-b border-border/50">
+                      <tr
+                        key={cycle.id}
+                        className="border-b border-border/50"
+                        data-dev-usage-row="cycles"
+                      >
                         <td className="p-2">{providerLabel(cycle.providerId)}</td>
                         <td className="p-2">{accountLabel(cycle.accountTag)}</td>
                         <td className="p-2">
@@ -1791,6 +1830,7 @@ export function AgentsUsageTab() {
             )}
             {!cyclesQuery.error && (
               <PagingControls
+                kind="cycles"
                 loaded={cycles.length}
                 limit={cycleLimit}
                 maximum={MAX_CYCLE_LIMIT}

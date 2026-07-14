@@ -13,7 +13,10 @@ import {
   archiveTestProject,
   cancelRun,
   cleanupProductMcpCaller,
+  cancelProductMcpChildRun,
+  controlProductMcpRenderer,
   controlSettings,
+  controlPermissionUi,
   createTestChat,
   ensureTestProject,
   createTestOrchestration,
@@ -22,28 +25,44 @@ import {
   getHarnessStatusForRepo,
   getOpencodeLogs,
   getProductMcpState,
+  getProductMcpRendererState,
   getProductMcpTestCall,
   getProviderStatus,
   getSettingsState,
   getLiveSettingsState,
+  getLiveSettingsLegacyState,
+  mutateLiveSettingsLegacyState,
+  getPermissionUiState,
   getVisibleCopySearchState,
   requestDevRendererControl,
   getRendererAgentInputState,
+  getRendererAgentInputNavigationState,
+  getRendererUsageUiState,
+  getRendererVoiceUiState,
+  navigateAgentInputNotification,
+  controlRendererUsageUi,
+  controlRendererVoiceUi,
+  captureTestRenderer,
+  cleanupAllTestRendererCaptures,
+  cleanupTestRendererCapture,
   listProviderExtensions,
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
   getTestOrchestration,
   launchTestRun,
+  launchHarnessTestRun,
   injectAgentInputRequest,
   listAgentInputRequests,
   listPendingApprovals,
+  listCodexPermissionRequests,
   listTestTargets,
   mutateProjectProviderExtension,
   manageProductMcpRecovery,
   prepareProductMcpCaller,
   mutateTestOrchestration,
   replyApproval,
+  replyCodexPermissionRequest,
   replyProductMcpApproval,
   sendTestPrompt,
   setProductMcpTestExposure,
@@ -64,7 +83,23 @@ import {
   setChatPermission,
   setOrReplaceCredential,
   setPermissionDefault,
+  setPermissionChangeBehavior,
 } from "./settings-release-controls"
+import {
+  cleanupCarryoverRunFixture,
+  cleanupUsageUiFixture,
+  cleanupVoiceUiFixture,
+  controlVoiceSettings,
+  createCarryoverRunFixture,
+  createUsageUiFixture,
+  createVoiceUiFixture,
+  getCarryoverRunFixtureFiles,
+  getRunChangeState,
+  getUsageState,
+  getVoiceState,
+  refreshUsageState,
+  undoRunChange,
+} from "./carryover-controls"
 
 export const DEV_MCP_DESCRIPTOR_FILENAME = "dev-test-control-mcp.json"
 
@@ -165,6 +200,39 @@ const customPermissionsSchema = z
   })
   .strict()
 const permissionModeSchema = z.enum(permissionModes)
+const settingsTabSchema = z.enum([
+  "profile",
+  "appearance",
+  "preferences",
+  "permissions",
+  "models",
+  "api-providers",
+  "voice",
+  "skills",
+  "agents",
+  "mcp",
+  "plugins",
+  "worktrees",
+  "projects",
+  "usage",
+  "debug",
+  "beta",
+  "future",
+  "keyboard",
+])
+const customPermissionCapabilitySchema = z.enum([
+  "projectWrite",
+  "shell",
+  "network",
+  "git",
+  "browser",
+  "secrets",
+  "subagents",
+  "thirdPartyMcp",
+  "productMcpRead",
+  "productMcpWrite",
+  "productMcpTier3",
+])
 
 function registerTools(server: McpServer): void {
   server.registerTool(
@@ -338,6 +406,41 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "get_settings_legacy_state",
+    {
+      description: "Inspect raw and release-effective legacy Settings state.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return result(await getLiveSettingsLegacyState())
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_settings_legacy_state",
+    {
+      description: "Seed bounded legacy tab and quick-switch values in the live renderer.",
+      inputSchema: {
+        activeTab: settingsTabSchema.optional(),
+        ctrlTabTarget: z.enum(["workspaces", "agents"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        if (input.activeTab === undefined && input.ctrlTabTarget === undefined) {
+          throw new Error("At least one legacy Settings value is required")
+        }
+        return result(await mutateLiveSettingsLegacyState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "get_visible_copy_search_state",
     {
       description:
@@ -364,13 +467,65 @@ function registerTools(server: McpServer): void {
       inputSchema: {
         chatId: z.string().min(1).max(200),
         subChatId: z.string().min(1).max(200),
+        showOrchestration: z.boolean().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
       try {
         const selection = resolveTestChatSelection(input)
-        return result(await requestDevRendererControl({ command: "chat.select", ...selection }))
+        return result(
+          await requestDevRendererControl({
+            command: "chat.select",
+            ...selection,
+            showOrchestration: input.showOrchestration,
+          }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "copy_test_chat_history",
+    {
+      description:
+        "Exercise active-header or sidebar-menu full-history copy for one persisted test chat.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        subChatId: z.string().min(1).max(200),
+        source: z.enum(["active-header", "sidebar-menu"]),
+        expectedText: z.string().min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const selection = resolveTestChatSelection(input)
+        return result(
+          await requestDevRendererControl({
+            command: "chat.copy",
+            chatId: selection.chatId,
+            source: input.source,
+            expectedText: input.expectedText,
+          }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_orchestration_state",
+    {
+      description:
+        "Inspect bounded visible task-card, lineage-control, and selection state in the live renderer.",
+      inputSchema: { taskId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "orchestration.get", ...input }))
       } catch (error) {
         return failure(error)
       }
@@ -466,6 +621,301 @@ function registerTools(server: McpServer): void {
     async (input) => result(getReasoningTimerState(input)),
   )
   server.registerTool(
+    "get_voice_state",
+    {
+      description:
+        "Inspect bounded production Voice settings, adapter readiness, models, and history counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getVoiceState()),
+  )
+  server.registerTool(
+    "control_voice_settings",
+    {
+      description: "Update bounded production Voice preferences without synthetic UI input.",
+      inputSchema: {
+        sttAdapterId: z.enum(["local-parakeet", "local-whisper"]).optional(),
+        retainDictationAudio: z.boolean().optional(),
+        sttModelUnloadMinutes: z.number().int().min(1).max(60).optional(),
+        whisperModelId: z.enum(["tiny", "base", "small"]).optional(),
+        ttsAdapterId: z.enum(["kokoro", "native-os"]).optional(),
+        voiceId: z.string().max(500).nullable().optional(),
+        voiceByTtsAdapterId: z
+          .record(z.string().max(100), z.string().max(500).nullable())
+          .optional(),
+        rate: z.number().min(0.5).max(2).optional(),
+        preferOffline: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => result(controlVoiceSettings(input)),
+  )
+  server.registerTool(
+    "create_voice_ui_fixture",
+    {
+      description: "Create one sanitized local Voice History row with a silent WAV.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async () => result(await createVoiceUiFixture()),
+  )
+  server.registerTool(
+    "cleanup_voice_ui_fixture",
+    {
+      description: "Delete one exact sanitized Stage 3 Voice History fixture.",
+      inputSchema: { id: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cleanupVoiceUiFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_voice_ui_state",
+    {
+      description: "Inspect bounded Voice settings and one exact sanitized fixture row.",
+      inputSchema: { historyId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getRendererVoiceUiState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_renderer_voice_ui",
+    {
+      description: "Exercise bounded Voice settings, history, preview, and stop controls.",
+      inputSchema: {
+        operation: z.enum([
+          "open",
+          "search",
+          "copy-history",
+          "play-history",
+          "insert-history",
+          "delete-history",
+          "preview",
+          "stop",
+          "set-stt",
+          "set-tts",
+          "set-rate",
+        ]),
+        value: z.string().max(500).optional(),
+        historyId: z.string().min(1).max(200).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlRendererVoiceUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_usage_state",
+    {
+      description:
+        "Inspect redacted Usage settings, provider states, current samples, and daemon health.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getUsageState()),
+  )
+  server.registerTool(
+    "refresh_usage_state",
+    {
+      description: "Run the production Usage refresh with saved credentials only.",
+      inputSchema: {
+        providerId: z.enum(["codex", "anthropic", "cursor", "openrouter", "nanogpt"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async (input) => result(await refreshUsageState(input)),
+  )
+  server.registerTool(
+    "create_usage_ui_fixture",
+    {
+      description: "Create sanitized Usage cards, history, paging, alert, and limitation rows.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async () => result(await createUsageUiFixture()),
+  )
+  server.registerTool(
+    "cleanup_usage_ui_fixture",
+    {
+      description: "Delete only the sanitized Stage 3 Usage UI fixture rows.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async () => result(cleanupUsageUiFixture()),
+  )
+  server.registerTool(
+    "get_renderer_usage_ui_state",
+    {
+      description: "Inspect bounded provider filters, history controls, paging, and row counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getRendererUsageUiState()),
+  )
+  server.registerTool(
+    "control_renderer_usage_ui",
+    {
+      description: "Exercise enumerated provider, history, monitoring, and paging controls.",
+      inputSchema: {
+        operation: z.enum([
+          "open",
+          "select-provider",
+          "set-scope",
+          "set-history-mode",
+          "set-history-range",
+          "open-monitoring",
+          "show-all",
+          "scroll-to",
+        ]),
+        value: z.string().min(1).max(100).optional(),
+        target: z.enum(["provider-states", "alerts", "samples", "cycles"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlRendererUsageUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_run_change_state",
+    {
+      description: "Inspect one stored run change set and optional historical review diff.",
+      inputSchema: {
+        runId: z.string().min(1),
+        includeReview: z.boolean().optional(),
+        filePath: z.string().min(1).max(4_096).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getRunChangeState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "undo_run_change",
+    {
+      description: "Undo one stored run change set through the conflict-safe production service.",
+      inputSchema: { runId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await undoRunChange(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "create_carryover_run_fixture",
+    {
+      description:
+        "Create an isolated temp Git repository with a two-file run, visible reasoning fixture, and optional later edit.",
+      inputSchema: { laterEdit: z.enum(["none", "non-overlap", "overlap"]).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await createCarryoverRunFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_carryover_run_fixture_files",
+    {
+      description: "Read only alpha.txt and beta.txt from an isolated carryover fixture.",
+      inputSchema: { projectId: z.string().min(1) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getCarryoverRunFixtureFiles(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_carryover_run_fixture",
+    {
+      description: "Delete one isolated carryover fixture and its temp Git repository.",
+      inputSchema: { projectId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cleanupCarryoverRunFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_carryover_state",
+    {
+      description: "Inspect bounded live Voice, Usage, reasoning, or run-change renderer state.",
+      inputSchema: {
+        surface: z.enum(["voice", "usage", "reasoning", "run-change"]),
+        runId: z.string().min(1).max(200).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "carryover.get", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_renderer_carryover",
+    {
+      description: "Control an enumerated live reasoning or run-change disclosure action.",
+      inputSchema: {
+        surface: z.enum(["reasoning", "run-change"]),
+        operation: z.enum(["toggle", "open-review", "show-all", "undo"]),
+        runId: z.string().min(1).max(200).optional(),
+        index: z.number().int().min(0).max(100).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "carryover.control", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "list_pending_approvals",
     {
       description: "List pending OpenRouter or NanoGPT permission requests.",
@@ -494,6 +944,9 @@ function registerTools(server: McpServer): void {
         harness: z.enum(["codex", "claude"]),
         name: z.string().trim().min(1).max(200).optional(),
         repoPath: z.string().min(1).optional(),
+        permissionMode: z
+          .enum(["read-only", "ask-before-edits", "auto-edit-project-only", "full-access"])
+          .optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -576,6 +1029,8 @@ function registerTools(server: McpServer): void {
         chatId: z.string().min(1),
         toolName: z.string().trim().min(1).max(200).optional(),
         decision: productMcpAuditDecisionSchema.optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
         cursor: z.string().min(1).max(512).optional(),
         limit: z.number().int().min(1).max(100).optional(),
       },
@@ -584,6 +1039,39 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(getProductMcpState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_product_mcp_renderer_state",
+    {
+      description: "Read bounded live renderer state for one isolated product-MCP caller.",
+      inputSchema: { chatId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getProductMcpRendererState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_product_mcp_renderer",
+    {
+      description: "Open or close audit history for one isolated product-MCP caller renderer.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        operation: z.enum(["open-audit", "close-audit"]),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlProductMcpRenderer(input))
       } catch (error) {
         return failure(error)
       }
@@ -624,6 +1112,25 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "cancel_product_mcp_child_run",
+    {
+      description: "Cancel one pending or active spawned child owned by an isolated MCP caller.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        childChatId: z.string().min(1).max(200),
+        runId: z.string().min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cancelProductMcpChildRun(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "list_agent_input_requests",
     {
       description: "List live provider-neutral input requests without hidden provider data.",
@@ -640,6 +1147,54 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (input) => result(getRendererAgentInputState(input)),
+  )
+  server.registerTool(
+    "get_renderer_agent_input_navigation_state",
+    {
+      description: "Inspect selected chat and bounded background-input badge counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getRendererAgentInputNavigationState()),
+  )
+  server.registerTool(
+    "navigate_agent_input_notification",
+    {
+      description: "Navigate through the exact notification-click event for one pending request.",
+      inputSchema: { requestId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(navigateAgentInputNotification(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "capture_test_renderer",
+    {
+      description: "Capture the current bounded Stage 3 test renderer to a mode-0600 local PNG.",
+      inputSchema: { chatId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await captureTestRenderer(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_test_renderer_capture",
+    {
+      description: "Delete one exact temporary renderer capture created by this process.",
+      inputSchema: { captureId: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => result(cleanupTestRendererCapture(input)),
   )
   server.registerTool(
     "ensure_test_project",
@@ -674,11 +1229,11 @@ function registerTools(server: McpServer): void {
   server.registerTool(
     "create_test_chat",
     {
-      description: "Create one local OpenRouter or NanoGPT project test chat.",
+      description: "Create one local Cursor, OpenRouter, or NanoGPT project test chat.",
       inputSchema: {
         projectId: z.string().min(1),
         name: z.string().min(1).max(200),
-        provider: z.enum(["openrouter", "nanogpt"]),
+        provider: z.enum(["cursor-agent", "openrouter", "nanogpt"]),
         model: z.string().min(1),
         permissionMode: z
           .enum([
@@ -893,6 +1448,21 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "set_permission_change_behavior",
+    {
+      description: "Set the persisted permission-change behavior.",
+      inputSchema: { behavior: z.enum(["ask", "current-chat", "all-chats"]) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await setPermissionChangeBehavior(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "set_chat_permission",
     {
       description: "Set one chat or all chats permission state through production persistence.",
@@ -936,13 +1506,75 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "get_permission_ui_state",
+    {
+      description: "Inspect the active chat permission selector and confirmation state.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return result(await getPermissionUiState())
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_permission_ui",
+    {
+      description: "Drive the active permission selector and confirmation through typed actions.",
+      inputSchema: {
+        operation: z.enum([
+          "select-mode",
+          "set-scope",
+          "set-remember",
+          "set-custom-capability",
+          "set-custom-reviewed",
+          "apply",
+          "cancel",
+        ]),
+        mode: permissionModeSchema.optional(),
+        scope: z.enum(["all-chats", "current-chat"]).optional(),
+        enabled: z.boolean().optional(),
+        capability: customPermissionCapabilitySchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        if (input.operation === "select-mode" && input.mode === undefined) {
+          throw new Error("select-mode requires mode")
+        }
+        if (input.operation === "set-scope" && input.scope === undefined) {
+          throw new Error("set-scope requires scope")
+        }
+        if (
+          (input.operation === "set-remember" || input.operation === "set-custom-reviewed") &&
+          input.enabled === undefined
+        ) {
+          throw new Error(`${input.operation} requires enabled`)
+        }
+        if (
+          input.operation === "set-custom-capability" &&
+          (input.capability === undefined || input.enabled === undefined)
+        ) {
+          throw new Error("set-custom-capability requires capability and enabled")
+        }
+        return result(await controlPermissionUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "launch_test_run",
     {
-      description: "Launch a real OpenRouter or NanoGPT run through Flapstack persistence.",
+      description:
+        "Launch a real Cursor, OpenRouter, or NanoGPT run through Flapstack persistence.",
       inputSchema: {
         subChatId: z.string().min(1),
         prompt: z.string().min(1).max(20_000),
-        provider: z.enum(["openrouter", "nanogpt"]).optional(),
+        provider: z.enum(["cursor-agent", "openrouter", "nanogpt"]).optional(),
         model: z.string().min(1).optional(),
         cwd: z.string().min(1).optional(),
         reasoningEnabled: z.boolean().optional(),
@@ -957,6 +1589,45 @@ function registerTools(server: McpServer): void {
         return failure(error)
       }
     },
+  )
+  server.registerTool(
+    "launch_harness_test_run",
+    {
+      description: "Launch a real Codex or Claude run rooted to its persisted test project.",
+      inputSchema: {
+        subChatId: z.string().min(1),
+        prompt: z.string().min(1).max(20_000),
+        harness: z.enum(["codex", "claude-code"]).optional(),
+        model: z.string().min(1).max(500).optional(),
+        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async (input) => {
+      try {
+        return result(await launchHarnessTestRun(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "list_codex_permission_requests",
+    {
+      description: "List redacted pending Codex ACP permission requests.",
+      inputSchema: { runId: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(listCodexPermissionRequests(input)),
+  )
+  server.registerTool(
+    "reply_codex_permission_request",
+    {
+      description: "Resolve one Codex ACP permission request with an exact advertised option.",
+      inputSchema: { requestId: z.string().min(1), optionId: z.string().min(1).max(500) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => result(replyCodexPermissionRequest(input)),
   )
   server.registerTool(
     "inject_agent_input_request",
@@ -1078,6 +1749,8 @@ export async function startDevMcpServer(input: {
 }): Promise<DevMcpServerHandle | null> {
   if (!input.enabled) return null
 
+  cleanupAllTestRendererCaptures()
+
   const token = randomBytes(32).toString("base64url")
   const expressApp = createMcpExpressApp({
     host: "127.0.0.1",
@@ -1147,6 +1820,7 @@ export async function startDevMcpServer(input: {
     stop: async () => {
       rmSync(descriptorPath, { force: true })
       await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+      cleanupAllTestRendererCaptures()
     },
   }
 }

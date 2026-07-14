@@ -3,10 +3,7 @@ import { resolve } from "node:path"
 
 const root = resolve(import.meta.dirname, "..")
 const matrixPath = resolve(root, "docs/stage3-usage-exit-matrix.md")
-const specPath = resolve(
-  root,
-  "openspec/changes/harden-usage-exit/specs/usage-exit-hardening/spec.md",
-)
+const specPath = resolve(root, "openspec/specs/usage-exit-hardening/spec.md")
 const matrix = readFileSync(matrixPath, "utf8")
 const spec = readFileSync(specPath, "utf8")
 

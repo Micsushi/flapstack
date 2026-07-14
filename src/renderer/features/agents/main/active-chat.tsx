@@ -2289,6 +2289,17 @@ const ChatViewInner = memo(function ChatViewInner({
     experimental_throttle: 50, // Throttle updates to reduce re-renders during streaming
   })
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const refreshPersistedMessages = (event: Event) => {
+      const detail = (event as CustomEvent<{ subChatId?: string; messages?: unknown[] }>).detail
+      if (detail?.subChatId !== subChatId || !Array.isArray(detail.messages)) return
+      setMessages(detail.messages as Parameters<typeof setMessages>[0])
+    }
+    window.addEventListener("flapstack-dev-chat-refresh", refreshPersistedMessages)
+    return () => window.removeEventListener("flapstack-dev-chat-refresh", refreshPersistedMessages)
+  }, [setMessages, subChatId])
+
   // Refs for useChat functions to keep callbacks stable across renders
   const sendMessageRef = useRef(sendMessage)
   sendMessageRef.current = sendMessage
@@ -2643,10 +2654,7 @@ const ChatViewInner = memo(function ChatViewInner({
     if (notifiedPendingQuestionIdsRef.current.has(pendingQuestions.toolUseId)) return
 
     notifiedPendingQuestionIdsRef.current.add(pendingQuestions.toolUseId)
-    const firstQuestion = pendingQuestions.questions[0]
-    const questionName =
-      firstQuestion?.header || firstQuestion?.question || workspaceName || "Agent"
-    notifyAgentNeedsInput(questionName, {
+    notifyAgentNeedsInput("", {
       chatId: parentChatId,
       subChatId,
       parentChatName: workspaceName || undefined,
@@ -4639,6 +4647,7 @@ const ChatViewInner = memo(function ChatViewInner({
               onSave={handleRenameSubChat}
               isMobile={false}
               chatId={subChatId}
+              copyChatId={parentChatId}
               hasMessages={true} /* Always show "New Chat" placeholder when name is empty */
               onCopyChat={handleCopyFullChat}
               isSidebarOpen={isAgentsSidebarOpen}

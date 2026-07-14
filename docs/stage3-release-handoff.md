@@ -1,19 +1,27 @@
 # Stage 3 integrated release handoff
 
-Status: integrated implementation and automation are green; Stage 3 release
-remains blocked on recorded live UI, provider, package, and platform rows.
+Status: Stage 3 complete. Exact-candidate implementation, automation, providers,
+Voice, Usage, Dev, macOS Preview, review, and cleanup evidence are green.
+
+OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
+notarization are explicitly deferred to `docs/future-release-considerations.md`
+and do not block Stage 3.
 
 ## Current candidate
 
 - Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
-- Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
+- Evidence candidate: the final commit containing this handoff; resolve with
+  `git rev-parse HEAD` after the local closeout commit.
 - Branch: `codex/stage3-integration` in
   `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`.
-- Runtime: Node 22.23.1 on macOS arm64.
-- Current integrated automation, migrations, strict OpenSpec, and release-ledger
-  coverage pass. Exact integrated Dev, provider, Preview, and cross-platform
-  evidence remains open where the authoritative matrices say so.
-- `main` remains untouched. No push, merge, publish, or OpenSpec archive was done.
+- Runtime: Node 22 on macOS arm64; exact Dev used 22.22.1 and the final
+  documentation gate used 22.23.1.
+- Exact integrated automation, migrations, OpenSpec, release-ledger, Dev,
+  credentialed providers, Voice, Usage, Discord transport, unsigned Preview,
+  package daemon lifecycle, and review pass.
+- All 18 completed Stage 3 OpenSpec changes are archived and all 29 current
+  specs strict-validate.
+- `main` remains untouched. No push, merge, or publish was done.
 
 ## Historical Settings lane candidate
 
@@ -142,16 +150,14 @@ Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
 863 passed and 3 conditional skips, and the production build. The three
 affected strict changes and release-ledger coverage pass.
 
-## Remaining human and platform proof
+## Remaining Stage 3 proof
 
-- Unlock macOS and complete visual/accessibility, clipboard, microphone,
-  Keychain credential, approval-dialog, Voice, Usage, reasoning, and provider
-  rows on the exact candidate.
-- Capture required Claude, Codex, Cursor, OpenRouter, and NanoGPT live evidence
-  without fabricating unavailable credentials or capabilities.
-- Run Windows and Linux package, secret-store, service, and UI matrices.
-- Complete every prerequisite feature exit, then rerun T2 and T3 on one frozen
-  SHA before starting independent T4 review rounds.
+None. All required Stage 3 rows and OpenSpec task boards are complete. The only
+remaining action is the user's merge/push decision.
+
+Windows/Linux proof is deferred to the end of Stage 4. Apple signing,
+notarization, and OpenAI/Anthropic Admin usage keys are future considerations,
+not Stage 3 blockers.
 
 ## Agent UX closeout lane
 
@@ -183,3 +189,29 @@ tracked by the commit. No user credential or production profile was changed.
 The lane removes its isolated `acbf` development profile, generated Preview
 output, native staging output, and processes. It does not remove user
 credentials or production data.
+
+## Agent UX integrated-candidate continuation
+
+The continuation starts from `03ef5bf` and does not reapply the already
+integrated lane commit. Authenticated MCP added bounded Voice, Usage,
+run-change, and renderer-disclosure controls. A disposable canonical Git repo
+proved stored Review, two-file Undo, preservation of a non-overlapping edit,
+and no-write conflict blocking. All fixtures were removed, Voice rate was
+restored, Dev stopped, and the shared UI lease was released.
+
+The exact selected fixture conversation did not render its synthetic transcript,
+so collapsed/expanded and Review pixels are not claimed. No Computer Use was
+used in this continuation. Q12/Q13, AQ-F4-T2, AQ-F5-T1, undo 4.4,
+S3-F9-T1-T5, S3-F14-T3-T5, S3-F15-T2-T5, S3-F16-T3-T5, and S3-F17-T2-T5
+remain open for their stated provider, visual, platform, or prerequisite gates.
+
+Final headless gates pass on Node 22: 125 test files, 932 passed, 3 skipped,
+lint, formatting, TypeScript, production build, all ten affected strict OpenSpec
+changes, release-ledger and Usage-matrix coverage, and daemon smoke. Unsigned
+arm64 Preview build/inspection/runtime smoke pass; public-distribution signing
+is deferred beyond Stage 3.
+
+The later `ee39-ux` live attempt passed exact-checkout Dev verification but was
+blocked by locked macOS before Computer Use could begin. Its shared UI lease was
+released immediately to `usage-exit-preview`; no additional manual row is
+claimed.

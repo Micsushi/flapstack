@@ -1,9 +1,18 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { and, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import {
@@ -62,6 +71,7 @@ import {
 import { SAFE_CHATGPT_CODEX_MODEL } from "./codex-status"
 import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
+import { requireVoiceUiFixture } from "./carryover-controls"
 import { listDevAgentInputRendererStates } from "./renderer-state"
 import {
   authorizeMcpDispatchRetry,
@@ -114,6 +124,198 @@ export function listAgentInputRequests(input?: { chatId?: string }) {
 export function getRendererAgentInputState(input?: { subChatId?: string }) {
   const states = listDevAgentInputRendererStates()
   return input?.subChatId ? states.filter((state) => state.subChatId === input.subChatId) : states
+}
+
+export function getRendererAgentInputNavigationState() {
+  return requestDevRendererControl({ command: "agent-input.get" })
+}
+
+export function getRendererUsageUiState() {
+  return requestDevRendererControl({ command: "usage-ui.get" })
+}
+
+export function getRendererVoiceUiState(input: { historyId: string }) {
+  requireVoiceUiFixture(input.historyId)
+  return requestDevRendererControl({ command: "voice-ui.get", historyId: input.historyId })
+}
+
+export function controlRendererVoiceUi(input: {
+  operation:
+    | "open"
+    | "search"
+    | "copy-history"
+    | "play-history"
+    | "insert-history"
+    | "delete-history"
+    | "preview"
+    | "stop"
+    | "set-stt"
+    | "set-tts"
+    | "set-rate"
+  value?: string
+  historyId?: string
+}) {
+  if (
+    ["copy-history", "play-history", "insert-history", "delete-history"].includes(input.operation)
+  ) {
+    if (!input.historyId) throw new Error(`${input.operation} requires a Voice fixture ID`)
+    requireVoiceUiFixture(input.historyId)
+  }
+  return requestDevRendererControl({ command: "voice-ui.control", ...input })
+}
+
+export function controlRendererUsageUi(input: {
+  operation:
+    | "open"
+    | "select-provider"
+    | "set-scope"
+    | "set-history-mode"
+    | "set-history-range"
+    | "open-monitoring"
+    | "show-all"
+    | "scroll-to"
+  value?: string
+  target?: "provider-states" | "alerts" | "samples" | "cycles"
+}) {
+  return requestDevRendererControl({ command: "usage-ui.control", ...input })
+}
+
+export function navigateAgentInputNotification(input: { requestId: string }) {
+  const request = agentInputLifecycle
+    .list()
+    .find((candidate) => candidate.requestId === input.requestId)
+  if (!request) throw new Error("Pending agent input request not found")
+  const parentChatId = getDatabase()
+    .select({ chatId: subChats.chatId })
+    .from(subChats)
+    .where(eq(subChats.id, request.chatId))
+    .get()?.chatId
+  if (!parentChatId) throw new Error("Agent input request chat context not found")
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed())
+  if (windows.length === 0) throw new Error("Renderer window is unavailable")
+  for (const window of windows) {
+    window.webContents.send("app:notification-clicked", {
+      chatId: parentChatId,
+      subChatId: request.chatId,
+    })
+  }
+  return {
+    requestId: request.requestId,
+    parentChatId,
+    subChatId: request.chatId,
+    rendererCount: windows.length,
+  }
+}
+
+type RendererNavigationState = {
+  selectedChatId?: unknown
+  activeSubChatId?: unknown
+  desktopView?: unknown
+}
+
+const RENDERER_CAPTURE_PREFIX = `flapstack-renderer-evidence-${createHash("sha256")
+  .update(process.cwd())
+  .digest("hex")
+  .slice(0, 12)}-`
+const LEGACY_RENDERER_CAPTURE_PREFIX = "flapstack-renderer-evidence-"
+const RENDERER_CAPTURE_TTL_MS = 15 * 60_000
+const rendererCaptures = new Map<
+  string,
+  { directory: string; path: string; expiry: ReturnType<typeof setTimeout> }
+>()
+
+function releaseRendererCapture(captureId: string) {
+  const capture = rendererCaptures.get(captureId)
+  if (!capture) return false
+  rendererCaptures.delete(captureId)
+  clearTimeout(capture.expiry)
+  rmSync(capture.directory, { recursive: true, force: true })
+  return true
+}
+
+export function cleanupAllTestRendererCaptures() {
+  for (const captureId of [...rendererCaptures.keys()]) releaseRendererCapture(captureId)
+  for (const entry of readdirSync(tmpdir(), { withFileTypes: true })) {
+    if (!entry.name.startsWith(LEGACY_RENDERER_CAPTURE_PREFIX)) continue
+    const path = join(tmpdir(), entry.name)
+    try {
+      const belongsToCheckout = entry.name.startsWith(RENDERER_CAPTURE_PREFIX)
+      const isExpired = Date.now() - statSync(path).mtimeMs >= RENDERER_CAPTURE_TTL_MS
+      if (belongsToCheckout || isExpired) rmSync(path, { recursive: true, force: true })
+    } catch {
+      // A concurrent cleanup can remove the directory between listing and inspection.
+    }
+  }
+}
+
+export function cleanupTestRendererCapture(input: { captureId: string }) {
+  return { captureId: input.captureId, deleted: releaseRendererCapture(input.captureId) }
+}
+
+async function requireExactRendererNavigation(
+  window: BrowserWindow,
+  chatId: string,
+  expectedSubChatId?: string,
+) {
+  if (window.isDestroyed()) throw new Error("Renderer window is unavailable")
+  const navigation = (await requestDevRendererControlForWindow(
+    { command: "agent-input.get" },
+    window,
+  )) as RendererNavigationState
+  if (navigation.selectedChatId !== chatId || navigation.desktopView !== null) {
+    throw new Error("Renderer capture requires the exact active chat with no full-page overlay")
+  }
+  if (typeof navigation.activeSubChatId !== "string") {
+    throw new Error("Renderer capture requires an active conversation")
+  }
+  if (expectedSubChatId && navigation.activeSubChatId !== expectedSubChatId) {
+    throw new Error("Renderer capture navigation changed during capture")
+  }
+  const activeConversation = getDatabase()
+    .select({ id: subChats.id })
+    .from(subChats)
+    .where(and(eq(subChats.id, navigation.activeSubChatId), eq(subChats.chatId, chatId)))
+    .get()
+  if (!activeConversation) throw new Error("Renderer capture conversation does not match chat")
+  return navigation.activeSubChatId
+}
+
+export async function captureTestRenderer(input: { chatId: string }) {
+  const target = getDatabase()
+    .select({ projectName: projects.name, projectPath: projects.path })
+    .from(chats)
+    .innerJoin(projects, eq(chats.projectId, projects.id))
+    .where(and(eq(chats.id, input.chatId), isNull(chats.archivedAt)))
+    .get()
+  if (!target) throw new Error("Active test chat not found")
+
+  const projectPath = realpathSync(target.projectPath)
+  const checkoutPath = realpathSync(process.cwd())
+  const tempRoot = realpathSync(tmpdir())
+  const isCheckoutProject = projectPath === checkoutPath
+  const isCarryoverFixture =
+    target.projectName === "Carryover run fixture" &&
+    join(projectPath, "..") === tempRoot &&
+    basename(projectPath).startsWith("flapstack-carryover-run-")
+  if (!isCheckoutProject && !isCarryoverFixture) {
+    throw new Error("Renderer capture is limited to this checkout or an isolated carryover fixture")
+  }
+
+  const window = getDevRendererWindow()
+  const activeSubChatId = await requireExactRendererNavigation(window, input.chatId)
+
+  const image = await window.webContents.capturePage()
+  if (image.isEmpty()) throw new Error("Renderer capture was empty")
+  await requireExactRendererNavigation(window, input.chatId, activeSubChatId)
+  const captureId = randomUUID()
+  const directory = mkdtempSync(join(tmpdir(), RENDERER_CAPTURE_PREFIX))
+  const outputPath = join(directory, "capture.png")
+  writeFileSync(outputPath, image.toPNG(), { mode: 0o600 })
+  const expiry = setTimeout(() => releaseRendererCapture(captureId), RENDERER_CAPTURE_TTL_MS)
+  expiry.unref()
+  rendererCaptures.set(captureId, { directory, path: outputPath, expiry })
+  const size = image.getSize()
+  return { captureId, path: outputPath, width: size.width, height: size.height }
 }
 
 export function injectAgentInputRequest(input: {
@@ -215,11 +417,17 @@ type ProductMcpTestCall = {
 
 const productMcpTestCalls = new Map<string, ProductMcpTestCall>()
 
-export async function requestDevRendererControl(input: DevRendererControlCommand) {
+function getDevRendererWindow() {
   const windows = BrowserWindow?.getAllWindows?.() ?? []
   const window = BrowserWindow?.getFocusedWindow?.() ?? windows.find((item) => !item.isDestroyed())
   if (!window || window.isDestroyed()) throw new Error("No live renderer is available")
+  return window
+}
 
+function requestDevRendererControlForWindow(
+  input: DevRendererControlCommand,
+  window: Electron.BrowserWindow,
+) {
   const requestId = randomUUID()
   return new Promise<unknown>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -238,6 +446,10 @@ export async function requestDevRendererControl(input: DevRendererControlCommand
     ipcMain.on(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
     window.webContents.send(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, { ...input, requestId })
   })
+}
+
+export async function requestDevRendererControl(input: DevRendererControlCommand) {
+  return requestDevRendererControlForWindow(input, getDevRendererWindow())
 }
 
 export async function getLiveSettingsState() {

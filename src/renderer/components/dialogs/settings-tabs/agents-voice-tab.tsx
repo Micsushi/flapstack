@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { trpc } from "../../../lib/trpc"
 import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
 import { agentsSettingsDialogActiveTabAtom, agentsSettingsDialogOpenAtom } from "../../../lib/atoms"
+import { desktopViewAtom } from "../../../features/agents/atoms"
 import {
   captureVoiceHistoryInsertTarget,
   insertVoiceHistoryIntoTarget,
@@ -12,6 +13,7 @@ import {
 
 export function AgentsVoiceTab() {
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
+  const setDesktopView = useSetAtom(desktopViewAtom)
   const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const utils = trpc.useUtils()
   const { data: settings } = trpc.speech.getSettings.useQuery()
@@ -80,6 +82,7 @@ export function AgentsVoiceTab() {
           Speech to text
         </h4>
         <select
+          data-dev-voice-control="stt-adapter"
           value={settings.sttAdapterId}
           onChange={(event) => update({ sttAdapterId: event.target.value })}
           className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
@@ -212,6 +215,7 @@ export function AgentsVoiceTab() {
           Voice history
         </h4>
         <input
+          data-dev-voice-control="history-search"
           value={historySearch}
           onChange={(event) => setHistorySearch(event.target.value)}
           placeholder="Search dictated or spoken text"
@@ -222,6 +226,8 @@ export function AgentsVoiceTab() {
             history.map((entry) => (
               <div
                 key={entry.id}
+                data-dev-voice-history-id={entry.id}
+                data-dev-voice-history-kind={entry.kind}
                 className="flex items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"
               >
                 <span className="w-20 shrink-0 text-muted-foreground">
@@ -233,6 +239,7 @@ export function AgentsVoiceTab() {
                 </span>
                 {entry.audioPath && (
                   <button
+                    data-dev-voice-action="play-history"
                     type="button"
                     className="text-emerald-600 hover:text-emerald-700"
                     title="Play recording"
@@ -257,6 +264,7 @@ export function AgentsVoiceTab() {
                   </button>
                 )}
                 <button
+                  data-dev-voice-action="copy-history"
                   type="button"
                   title="Copy transcript"
                   onClick={async () => {
@@ -274,11 +282,13 @@ export function AgentsVoiceTab() {
                 </button>
                 {entry.kind === "transcription" && (
                   <button
+                    data-dev-voice-action="insert-history"
                     type="button"
                     title="Insert into active chat input"
                     onClick={() => {
                       const target = captureVoiceHistoryInsertTarget()
                       setSettingsOpen(false)
+                      setDesktopView(null)
                       window.setTimeout(async () => {
                         if (target && insertVoiceHistoryIntoTarget(target, entry.text)) {
                           toast.success("Inserted voice transcript")
@@ -298,6 +308,7 @@ export function AgentsVoiceTab() {
                 )}
                 {entry.audioPath && (
                   <button
+                    data-dev-voice-action="reveal-history"
                     type="button"
                     title="Reveal recording"
                     onClick={() => revealHistory.mutate({ id: entry.id })}
@@ -306,6 +317,7 @@ export function AgentsVoiceTab() {
                   </button>
                 )}
                 <button
+                  data-dev-voice-action="delete-history"
                   type="button"
                   title="Delete history entry"
                   className="text-destructive"
@@ -329,6 +341,7 @@ export function AgentsVoiceTab() {
           Text to speech
         </h4>
         <select
+          data-dev-voice-control="tts-adapter"
           value={settings.ttsAdapterId}
           onChange={(event) => {
             const ttsAdapterId = event.target.value
@@ -351,6 +364,7 @@ export function AgentsVoiceTab() {
         />
 
         <select
+          data-dev-voice-control="voice"
           value={voices?.resolvedVoiceId || ""}
           onChange={(event) => {
             const voiceId = event.target.value || null
@@ -380,6 +394,7 @@ export function AgentsVoiceTab() {
         <label className="space-y-1.5 block">
           <span className="text-sm text-foreground">Rate: {settings.rate.toFixed(1)}x</span>
           <input
+            data-dev-voice-control="rate"
             type="range"
             min="0.5"
             max="2"
@@ -392,11 +407,13 @@ export function AgentsVoiceTab() {
 
         <div className="flex gap-2">
           <input
+            data-dev-voice-control="preview-text"
             value={previewText}
             onChange={(event) => setPreviewText(event.target.value)}
             className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm"
           />
           <button
+            data-dev-voice-action="preview"
             type="button"
             onClick={async () => {
               stopManagedSpeech()
@@ -414,6 +431,7 @@ export function AgentsVoiceTab() {
             <Play className="h-4 w-4" />
           </button>
           <button
+            data-dev-voice-action="stop"
             type="button"
             onClick={() => {
               stopManagedSpeech()

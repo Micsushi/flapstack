@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
@@ -6,7 +7,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+
+vi.mock("electron", () => ({
+  app: { getPath: () => process.env.FLAPSTACK_CONFIG_DIR || "/tmp" },
+  BrowserWindow: { getAllWindows: () => [] },
+}))
 import {
   SAFE_CHATGPT_CODEX_MODEL,
   normalizeCodexStatus,
@@ -31,6 +37,7 @@ import {
   parseDevRendererControlRequest,
 } from "../src/shared/dev-renderer-control"
 import {
+  cleanupAllTestRendererCaptures,
   listAgentInputRequests,
   replyAgentInputRequest,
 } from "../src/main/lib/mcp-test-control/service"
@@ -40,7 +47,21 @@ import {
   recordDevAgentInputRendererState,
 } from "../src/main/lib/mcp-test-control/renderer-state"
 import * as schema from "../src/main/lib/db/schema"
-import { closeDatabase } from "../src/main/lib/db"
+import { closeDatabase, getDatabase } from "../src/main/lib/db"
+import {
+  cleanupCarryoverRunFixture,
+  cleanupUsageUiFixture,
+  cleanupVoiceUiFixture,
+  controlVoiceSettings,
+  createCarryoverRunFixture,
+  createUsageUiFixture,
+  createVoiceUiFixture,
+  getCarryoverRunFixtureFiles,
+  getRunChangeState,
+  getVoiceState,
+  requireVoiceUiFixture,
+  undoRunChange,
+} from "../src/main/lib/mcp-test-control/carryover-controls"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -54,15 +75,43 @@ describe("dev MCP test-control registry", () => {
       "remove_credential",
       "get_settings_state",
       "control_settings",
+      "get_settings_legacy_state",
+      "mutate_settings_legacy_state",
       "get_visible_copy_search_state",
       "select_test_chat",
+      "copy_test_chat_history",
+      "get_renderer_orchestration_state",
       "get_shortcut_state",
+      "get_product_mcp_renderer_state",
+      "cancel_product_mcp_child_run",
+      "control_product_mcp_renderer",
       "mutate_shortcut_binding",
       "list_provider_extensions",
       "list_test_targets",
       "get_chat_state",
       "get_run_state",
       "get_reasoning_timer_state",
+      "get_voice_state",
+      "control_voice_settings",
+      "create_voice_ui_fixture",
+      "cleanup_voice_ui_fixture",
+      "get_renderer_voice_ui_state",
+      "control_renderer_voice_ui",
+      "get_usage_state",
+      "refresh_usage_state",
+      "create_usage_ui_fixture",
+      "cleanup_usage_ui_fixture",
+      "get_renderer_usage_ui_state",
+      "control_renderer_usage_ui",
+      "get_run_change_state",
+      "undo_run_change",
+      "create_carryover_run_fixture",
+      "get_carryover_run_fixture_files",
+      "cleanup_carryover_run_fixture",
+      "get_renderer_carryover_state",
+      "capture_test_renderer",
+      "cleanup_test_renderer_capture",
+      "control_renderer_carryover",
       "list_pending_approvals",
       "get_opencode_logs",
       "prepare_product_mcp_caller",
@@ -75,6 +124,8 @@ describe("dev MCP test-control registry", () => {
       "cleanup_product_mcp_caller",
       "list_agent_input_requests",
       "get_renderer_agent_input_state",
+      "get_renderer_agent_input_navigation_state",
+      "navigate_agent_input_notification",
       "ensure_test_project",
       "archive_test_project",
       "create_test_chat",
@@ -83,11 +134,17 @@ describe("dev MCP test-control registry", () => {
       "mutate_project_provider_extension",
       "get_permission_state",
       "set_permission_default",
+      "set_permission_change_behavior",
       "set_chat_permission",
       "preview_permission",
+      "get_permission_ui_state",
+      "control_permission_ui",
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
+      "launch_harness_test_run",
+      "list_codex_permission_requests",
+      "reply_codex_permission_request",
       "inject_agent_input_request",
       "reply_agent_input_request",
       "reply_approval",
@@ -125,6 +182,71 @@ describe("dev renderer Settings control boundary", () => {
         project: { id: "project-id", name: "Project", path: 42 },
       }),
     ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "agent-input.get",
+      }),
+    ).toMatchObject({ command: "agent-input.get" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "show-all",
+        target: "samples",
+      }),
+    ).toMatchObject({ command: "usage-ui.control", target: "samples" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "scroll-to",
+        target: "provider-states",
+      }),
+    ).toMatchObject({ command: "usage-ui.control", target: "provider-states" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "show-all",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "copy-history",
+        historyId: "voice-history-id",
+      }),
+    ).toMatchObject({ command: "voice-ui.control", historyId: "voice-history-id" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "copy-history",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "set-rate",
+        value: "1.4",
+      }),
+    ).toMatchObject({ command: "voice-ui.control", value: "1.4" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.get",
+        historyId: "voice-history-id",
+      }),
+    ).toMatchObject({ command: "voice-ui.get", historyId: "voice-history-id" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.get",
+      }),
+    ).toBeNull()
   })
 
   it("accepts only known Settings invalidation domains", () => {
@@ -137,6 +259,40 @@ describe("dev renderer Settings control boundary", () => {
     expect(parseDevMcpSettingsInvalidation({ domains: [] })).toBeNull()
   })
 
+  it("accepts bounded legacy and permission UI controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        activeTab: "beta",
+        ctrlTabTarget: "agents",
+      }),
+    ).toMatchObject({ command: "settings.legacy.mutate", activeTab: "beta" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        ctrlTabTarget: "unsafe",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-custom-capability",
+        capability: "network",
+        enabled: false,
+      }),
+    ).toMatchObject({ operation: "set-custom-capability", capability: "network" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-scope",
+      }),
+    ).toBeNull()
+  })
+
   it("accepts only bounded chat-selection identities from the main process", () => {
     expect(
       parseDevRendererControlRequest({
@@ -145,8 +301,32 @@ describe("dev renderer Settings control boundary", () => {
         chatId: "chat-1",
         subChatId: "sub-chat-1",
         project: { id: "project-1", name: "Project", path: "/registered/project" },
+        showOrchestration: true,
       }),
-    ).toMatchObject({ command: "chat.select", chatId: "chat-1", subChatId: "sub-chat-1" })
+    ).toMatchObject({
+      command: "chat.select",
+      chatId: "chat-1",
+      subChatId: "sub-chat-1",
+      showOrchestration: true,
+    })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.copy",
+        chatId: "chat-1",
+        source: "active-header",
+        expectedText: "bounded fixture",
+      }),
+    ).toMatchObject({ command: "chat.copy", source: "active-header" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.copy",
+        chatId: "chat-1",
+        source: "anything",
+        expectedText: "bounded fixture",
+      }),
+    ).toBeNull()
     expect(
       parseDevRendererControlRequest({
         requestId: "request-id-long-enough",
@@ -156,6 +336,292 @@ describe("dev renderer Settings control boundary", () => {
         project: { id: "project-1", name: "Project", path: 42 },
       }),
     ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+        taskId: "task-1",
+      }),
+    ).toMatchObject({ command: "orchestration.get", taskId: "task-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+        taskId: "",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "orchestration.get",
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only bounded product MCP renderer controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "open-audit",
+      }),
+    ).toMatchObject({ command: "mcp.control", operation: "open-audit" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "mcp.control",
+        chatId: "test-caller",
+        operation: "delete",
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only enumerated carryover reads and controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.get",
+        surface: "voice",
+      }),
+    ).toMatchObject({ command: "carryover.get", surface: "voice" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "run-change",
+        operation: "open-review",
+        runId: "run-1",
+      }),
+    ).toMatchObject({ operation: "open-review", runId: "run-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "run-change",
+        operation: "undo",
+        runId: "run-1",
+      }),
+    ).toMatchObject({ operation: "undo", runId: "run-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "voice",
+        operation: "click-anything",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "reasoning",
+        operation: "toggle",
+        index: 101,
+      }),
+    ).toBeNull()
+  })
+})
+
+describe("dev MCP carryover controls", () => {
+  it("updates bounded Voice preferences and returns history counts without transcript content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-voice-"))
+    const previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    process.env.FLAPSTACK_CONFIG_DIR = dir
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    try {
+      expect(controlVoiceSettings({ rate: 1.4, preferOffline: false })).toMatchObject({
+        rate: 1.4,
+        preferOffline: false,
+      })
+      const state = await getVoiceState()
+      expect(state.settings).toMatchObject({ rate: 1.4, preferOffline: false })
+      expect(state.history).toEqual({
+        count: expect.any(Number),
+        transcriptionCount: expect.any(Number),
+        speechCount: expect.any(Number),
+        withAudioCount: expect.any(Number),
+      })
+      expect(JSON.stringify(state.history)).not.toContain("text")
+      const forgedFixture = getDatabase()
+        .insert(schema.voiceArtifacts)
+        .values({
+          kind: "transcription",
+          text: "sanitized fixture",
+          adapterId: "local-parakeet",
+          originId: "stage3-voice-ui-fixture",
+          originLabel: "Stage 3 Voice UI fixture",
+        })
+        .returning({ id: schema.voiceArtifacts.id })
+        .get()
+      const userArtifact = getDatabase()
+        .insert(schema.voiceArtifacts)
+        .values({
+          kind: "transcription",
+          text: "private user transcript",
+          adapterId: "local-parakeet",
+          originLabel: "New chat",
+        })
+        .returning({ id: schema.voiceArtifacts.id })
+        .get()
+      const fixture = await createVoiceUiFixture()
+      expect(requireVoiceUiFixture(fixture.id)).toMatchObject({
+        id: fixture.id,
+        hasAudio: true,
+      })
+      expect(() => requireVoiceUiFixture(forgedFixture.id)).toThrow(
+        "Voice UI control requires an exact Stage 3 fixture",
+      )
+      expect(() => requireVoiceUiFixture(userArtifact.id)).toThrow(
+        "Voice UI control requires an exact Stage 3 fixture",
+      )
+      await cleanupVoiceUiFixture({ id: fixture.id })
+    } finally {
+      closeDatabase()
+      if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
+      else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("creates and cleans isolated run fixtures for non-overlap and conflict proof", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-carryover-"))
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    const fixtureIds: string[] = []
+    try {
+      const nonOverlap = await createCarryoverRunFixture({ laterEdit: "non-overlap" })
+      fixtureIds.push(nonOverlap.projectId)
+      expect(nonOverlap.backgroundSubChatId).toEqual(expect.any(String))
+      const review = await getRunChangeState({ runId: nonOverlap.runId, includeReview: true })
+      expect(review).toMatchObject({ fileCount: 2, recoverable: true })
+      expect(review.diff).toContain("alpha from response")
+      expect(review.diff).toContain("beta from response")
+      expect(await undoRunChange({ runId: nonOverlap.runId })).toMatchObject({
+        success: true,
+        alreadyUndone: false,
+        files: expect.arrayContaining(["alpha.txt", "beta.txt"]),
+      })
+      expect(await getCarryoverRunFixtureFiles({ projectId: nonOverlap.projectId })).toEqual({
+        alpha: "alpha before\nmanual anchor\nomega from later manual edit\n",
+        beta: "beta before\n",
+      })
+
+      const overlap = await createCarryoverRunFixture({ laterEdit: "overlap" })
+      fixtureIds.push(overlap.projectId)
+      const beforeConflict = await getCarryoverRunFixtureFiles({ projectId: overlap.projectId })
+      expect(await undoRunChange({ runId: overlap.runId })).toMatchObject({
+        success: false,
+        conflicts: [expect.objectContaining({ filePath: "alpha.txt" })],
+      })
+      expect(await getCarryoverRunFixtureFiles({ projectId: overlap.projectId })).toEqual(
+        beforeConflict,
+      )
+    } finally {
+      for (const projectId of fixtureIds) {
+        await cleanupCarryoverRunFixture({ projectId }).catch(() => {})
+      }
+      expect(getDatabase().select().from(schema.filesystemRootRegistrations).all()).toEqual([])
+      closeDatabase()
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("creates and cleans bounded Usage UI evidence rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-usage-ui-"))
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    try {
+      const fixture = await createUsageUiFixture()
+      expect(fixture).toMatchObject({ samples: 30, cycles: 30, alerts: 30, providerStates: 2 })
+      const db = getDatabase()
+      expect(
+        db
+          .select()
+          .from(schema.usageSamples)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageCycles)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageAlertEvents)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageProviderStates)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(2)
+
+      const collidingUserSample = db
+        .insert(schema.usageSamples)
+        .values({
+          providerId: "codex",
+          accountTag: fixture.accountTag,
+          source: "external-provider",
+          costQuality: "provider-reported",
+          sourceTag: "user-data",
+          dedupeKey: "user-owned-collision",
+        })
+        .returning({ id: schema.usageSamples.id })
+        .get()
+
+      expect(cleanupUsageUiFixture()).toMatchObject({
+        samples: 30,
+        cycles: 30,
+        alerts: 30,
+        providerStates: 2,
+      })
+      expect(db.select().from(schema.usageSamples).all()).toEqual([
+        expect.objectContaining({ id: collidingUserSample.id, sourceTag: "user-data" }),
+      ])
+      expect(db.select().from(schema.usageCycles).all()).toEqual([])
+      expect(db.select().from(schema.usageAlertEvents).all()).toEqual([])
+      expect(db.select().from(schema.usageProviderStates).all()).toEqual([])
+    } finally {
+      closeDatabase()
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("sweeps checkout-scoped renderer capture directories", () => {
+    const checkoutScope = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 12)
+    const directory = mkdtempSync(join(tmpdir(), `flapstack-renderer-evidence-${checkoutScope}-`))
+    writeFileSync(join(directory, "capture.png"), "sanitized fixture", { mode: 0o600 })
+
+    cleanupAllTestRendererCaptures()
+
+    expect(existsSync(directory)).toBe(false)
   })
 })
 
@@ -269,9 +735,65 @@ describe("dev MCP transport", () => {
       })
       expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
       const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const inheritedCustomPermissions = {
+        schemaVersion: 1,
+        projectWrite: true,
+        shell: false,
+        network: false,
+        git: false,
+        browser: false,
+        secrets: false,
+        subagents: false,
+        thirdPartyMcp: false,
+        productMcpRead: true,
+        productMcpWrite: false,
+        productMcpTier3: false,
+      }
+      sqlite
+        .prepare(
+          "UPDATE projects SET default_permission_mode = ?, default_custom_permissions = ? WHERE id = ?",
+        )
+        .run("custom", JSON.stringify(inheritedCustomPermissions), fixtureResult.projectId)
+      const inheritedChat = await client.callTool({
+        name: "create_test_chat",
+        arguments: {
+          projectId: fixtureResult.projectId,
+          name: "Inherited custom permissions",
+          provider: "openrouter",
+          model: "openai/gpt-5.2",
+        },
+      })
+      expect(inheritedChat, JSON.stringify(inheritedChat.content)).not.toMatchObject({
+        isError: true,
+      })
+      const inheritedChatResult = (inheritedChat.structuredContent as { result: any }).result
+      expect(
+        sqlite
+          .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = ?")
+          .get(inheritedChatResult.chatId),
+      ).toEqual({
+        permission_mode: "custom",
+        custom_permissions: JSON.stringify(inheritedCustomPermissions),
+      })
+      const cursorChat = await client.callTool({
+        name: "create_test_chat",
+        arguments: {
+          projectId: fixtureResult.projectId,
+          name: "Cursor live proof",
+          provider: "cursor-agent",
+          model: "auto",
+        },
+      })
+      expect(cursorChat, JSON.stringify(cursorChat.content)).not.toMatchObject({ isError: true })
+      expect((cursorChat.structuredContent as { result: any }).result).toMatchObject({
+        projectId: fixtureResult.projectId,
+        provider: "cursor-agent",
+        model: "auto",
+      })
       const created = await client.callTool({
         name: "create_test_orchestration",
         arguments: {
+          deferScheduling: true,
           request: {
             projectId: fixtureResult.projectId,
             task: { mode: "create", name: "Live API orchestration" },
@@ -295,17 +817,27 @@ describe("dev MCP transport", () => {
       })
       const createdResult = (created.structuredContent as { result: any }).result
       const taskId = createdResult.orchestration.taskId as string
-      expect(createdResult.aggregate).toMatchObject({ active: 1, queued: 0 })
+      expect(createdResult).toMatchObject({
+        orchestration: { status: "paused" },
+        aggregate: { active: 0, queued: 1 },
+      })
 
       const read = await client.callTool({
         name: "get_test_orchestration",
         arguments: { taskId },
       })
       expect((read.structuredContent as { result: any }).result).toMatchObject({
-        overview: { orchestration: { taskId, status: "running" } },
+        overview: { orchestration: { taskId, status: "paused" } },
         lineage: { taskId },
       })
 
+      const resumed = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "resume" },
+      })
+      expect((resumed.structuredContent as { result: any }).result.orchestration.status).toBe(
+        "running",
+      )
       const paused = await client.callTool({
         name: "mutate_test_orchestration",
         arguments: { taskId, action: "pause" },

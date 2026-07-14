@@ -30,6 +30,14 @@ export type DevRendererControlCommand =
       command: "settings.get"
     }
   | {
+      command: "settings.legacy.get"
+    }
+  | {
+      command: "settings.legacy.mutate"
+      activeTab?: string
+      ctrlTabTarget?: "workspaces" | "agents"
+    }
+  | {
       command: "settings.control"
       operation: "open" | "close" | "navigate" | "search" | "select-project"
       tab?: string
@@ -42,6 +50,97 @@ export type DevRendererControlCommand =
       chatId: string
       subChatId: string
       project: { id: string; name: string; path: string }
+      showOrchestration?: boolean
+    }
+  | {
+      command: "chat.copy"
+      chatId: string
+      source: "active-header" | "sidebar-menu"
+      expectedText: string
+    }
+  | {
+      command: "agent-input.get"
+    }
+  | {
+      command: "usage-ui.get"
+    }
+  | {
+      command: "voice-ui.get"
+      historyId: string
+    }
+  | {
+      command: "voice-ui.control"
+      operation:
+        | "open"
+        | "search"
+        | "copy-history"
+        | "play-history"
+        | "insert-history"
+        | "delete-history"
+        | "preview"
+        | "stop"
+        | "set-stt"
+        | "set-tts"
+        | "set-rate"
+      value?: string
+      historyId?: string
+    }
+  | {
+      command: "usage-ui.control"
+      operation:
+        | "open"
+        | "select-provider"
+        | "set-scope"
+        | "set-history-mode"
+        | "set-history-range"
+        | "open-monitoring"
+        | "show-all"
+        | "scroll-to"
+      value?: string
+      target?: "provider-states" | "alerts" | "samples" | "cycles"
+    }
+  | {
+      command: "orchestration.get"
+      taskId: string
+    }
+  | {
+      command: "mcp.get"
+      chatId: string
+    }
+  | {
+      command: "mcp.control"
+      chatId: string
+      operation: "open-audit" | "close-audit"
+    }
+  | {
+      command: "permissions.ui.get"
+    }
+  | {
+      command: "permissions.ui.control"
+      operation:
+        | "select-mode"
+        | "set-scope"
+        | "set-remember"
+        | "set-custom-capability"
+        | "set-custom-reviewed"
+        | "apply"
+        | "cancel"
+      mode?: "read-only" | "ask-before-edits" | "auto-edit-project-only" | "full-access" | "custom"
+      scope?: "all-chats" | "current-chat"
+      enabled?: boolean
+      capability?: string
+    }
+  | {
+      command: "carryover.get"
+      surface: "voice" | "usage" | "reasoning" | "run-change"
+      runId?: string
+    }
+  | {
+      command: "carryover.control"
+      surface: "reasoning" | "run-change"
+      operation: "toggle" | "open-review" | "show-all" | "undo"
+      runId?: string
+      index?: number
     }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
@@ -62,8 +161,23 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "shortcuts.get",
       "shortcuts.mutate",
       "settings.get",
+      "settings.legacy.get",
+      "settings.legacy.mutate",
       "settings.control",
       "chat.select",
+      "chat.copy",
+      "agent-input.get",
+      "voice-ui.get",
+      "voice-ui.control",
+      "usage-ui.get",
+      "usage-ui.control",
+      "permissions.ui.get",
+      "permissions.ui.control",
+      "carryover.get",
+      "carryover.control",
+      "mcp.get",
+      "mcp.control",
+      "orchestration.get",
     ].includes(String(value.command))
   ) {
     return null
@@ -120,6 +234,23 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       }
     }
   }
+  if (value.command === "settings.legacy.mutate") {
+    if (
+      value.activeTab !== undefined &&
+      (typeof value.activeTab !== "string" ||
+        value.activeTab.length < 1 ||
+        value.activeTab.length > 100)
+    ) {
+      return null
+    }
+    if (
+      value.ctrlTabTarget !== undefined &&
+      !["workspaces", "agents"].includes(String(value.ctrlTabTarget))
+    ) {
+      return null
+    }
+    if (value.activeTab === undefined && value.ctrlTabTarget === undefined) return null
+  }
   if (value.command === "chat.select") {
     if (
       typeof value.chatId !== "string" ||
@@ -141,6 +272,210 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       project.id.length > 200 ||
       project.name.length > 500 ||
       project.path.length > 4_096
+    ) {
+      return null
+    }
+    if (value.showOrchestration !== undefined && typeof value.showOrchestration !== "boolean") {
+      return null
+    }
+  }
+  if (value.command === "chat.copy") {
+    if (
+      typeof value.chatId !== "string" ||
+      value.chatId.length < 1 ||
+      value.chatId.length > 200 ||
+      !["active-header", "sidebar-menu"].includes(String(value.source)) ||
+      typeof value.expectedText !== "string" ||
+      value.expectedText.length < 1 ||
+      value.expectedText.length > 200
+    ) {
+      return null
+    }
+  }
+  if (value.command === "usage-ui.control") {
+    if (
+      ![
+        "open",
+        "select-provider",
+        "set-scope",
+        "set-history-mode",
+        "set-history-range",
+        "open-monitoring",
+        "show-all",
+        "scroll-to",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.value !== undefined &&
+      (typeof value.value !== "string" || value.value.length > 100)
+    ) {
+      return null
+    }
+    if (
+      value.target !== undefined &&
+      !["provider-states", "alerts", "samples", "cycles"].includes(String(value.target))
+    ) {
+      return null
+    }
+    if (
+      ["select-provider", "set-scope", "set-history-mode", "set-history-range"].includes(
+        String(value.operation),
+      ) &&
+      value.value === undefined
+    ) {
+      return null
+    }
+    if (["show-all", "scroll-to"].includes(String(value.operation)) && value.target === undefined) {
+      return null
+    }
+  }
+  if (value.command === "voice-ui.control") {
+    if (
+      ![
+        "open",
+        "search",
+        "copy-history",
+        "play-history",
+        "insert-history",
+        "delete-history",
+        "preview",
+        "stop",
+        "set-stt",
+        "set-tts",
+        "set-rate",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.value !== undefined &&
+      (typeof value.value !== "string" || value.value.length > 500)
+    ) {
+      return null
+    }
+    if (
+      value.historyId !== undefined &&
+      (typeof value.historyId !== "string" || value.historyId.length > 200)
+    ) {
+      return null
+    }
+    if (
+      ["search", "set-stt", "set-tts", "set-rate"].includes(String(value.operation)) &&
+      value.value === undefined
+    ) {
+      return null
+    }
+    if (
+      ["copy-history", "play-history", "insert-history", "delete-history"].includes(
+        String(value.operation),
+      ) &&
+      value.historyId === undefined
+    ) {
+      return null
+    }
+  }
+  if (
+    value.command === "voice-ui.get" &&
+    (typeof value.historyId !== "string" ||
+      value.historyId.length < 1 ||
+      value.historyId.length > 200)
+  ) {
+    return null
+  }
+  if (
+    value.command === "orchestration.get" &&
+    (typeof value.taskId !== "string" || value.taskId.length < 1 || value.taskId.length > 200)
+  ) {
+    return null
+  }
+  if (value.command === "mcp.get" || value.command === "mcp.control") {
+    if (typeof value.chatId !== "string" || value.chatId.length < 1 || value.chatId.length > 200) {
+      return null
+    }
+    if (
+      value.command === "mcp.control" &&
+      !["open-audit", "close-audit"].includes(String(value.operation))
+    ) {
+      return null
+    }
+  }
+  if (value.command === "permissions.ui.control") {
+    if (
+      ![
+        "select-mode",
+        "set-scope",
+        "set-remember",
+        "set-custom-capability",
+        "set-custom-reviewed",
+        "apply",
+        "cancel",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.mode !== undefined &&
+      ![
+        "read-only",
+        "ask-before-edits",
+        "auto-edit-project-only",
+        "full-access",
+        "custom",
+      ].includes(String(value.mode))
+    ) {
+      return null
+    }
+    if (value.scope !== undefined && !["all-chats", "current-chat"].includes(String(value.scope))) {
+      return null
+    }
+    if (value.enabled !== undefined && typeof value.enabled !== "boolean") return null
+    if (
+      value.capability !== undefined &&
+      (typeof value.capability !== "string" || value.capability.length > 100)
+    ) {
+      return null
+    }
+    if (value.operation === "select-mode" && value.mode === undefined) return null
+    if (value.operation === "set-scope" && value.scope === undefined) return null
+    if (
+      ["set-remember", "set-custom-reviewed"].includes(String(value.operation)) &&
+      value.enabled === undefined
+    ) {
+      return null
+    }
+    if (
+      value.operation === "set-custom-capability" &&
+      (value.capability === undefined || value.enabled === undefined)
+    ) {
+      return null
+    }
+  }
+  if (value.command === "carryover.get" || value.command === "carryover.control") {
+    const surfaces =
+      value.command === "carryover.get"
+        ? ["voice", "usage", "reasoning", "run-change"]
+        : ["reasoning", "run-change"]
+    if (!surfaces.includes(String(value.surface))) return null
+    if (
+      value.runId !== undefined &&
+      (typeof value.runId !== "string" || value.runId.length > 200)
+    ) {
+      return null
+    }
+    if (
+      value.index !== undefined &&
+      (typeof value.index !== "number" ||
+        !Number.isInteger(value.index) ||
+        value.index < 0 ||
+        value.index > 100)
+    ) {
+      return null
+    }
+    if (
+      value.command === "carryover.control" &&
+      !["toggle", "open-review", "show-all", "undo"].includes(String(value.operation))
     ) {
       return null
     }
