@@ -1,4 +1,5 @@
 import type { HarnessContextMetadata } from "../harness/launch-context"
+import type { ProjectVaultContextManifest } from "../project-vaults/run-context"
 import type { AgentInputRequest, AgentInputStatusEvent } from "../../../shared/agent-input"
 
 // AI SDK UIMessageChunk format
@@ -81,4 +82,5 @@ export type MessageMetadata = {
   resultSubtype?: string
   finalTextId?: string
   context?: HarnessContextMetadata
+  vaultContext?: ProjectVaultContextManifest
 }

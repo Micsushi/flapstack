@@ -104,6 +104,12 @@ import {
   getOwnedClaudeSessionId,
   resetClaudeSessionOptionsForFreshRun,
 } from "../../claude/session-options"
+import { projectVaultSectionIds } from "../../project-vaults/registry"
+import {
+  buildProjectVaultRunContext,
+  persistProjectVaultContextManifest,
+  ProjectVaultContextRejectedError,
+} from "../../project-vaults/run-context"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -999,6 +1005,7 @@ export const claudeRouter = router({
         historyEnabled: z.boolean().optional(),
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
         enableTasks: z.boolean().optional(), // Enable task management tools (TodoWrite, Task agents)
+        vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1338,8 +1345,34 @@ export const claudeRouter = router({
               providerNativeInstructions: !isUsingOllama,
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            let vaultContext
+            try {
+              vaultContext = await buildProjectVaultRunContext(db, {
+                chatId: input.chatId,
+                runId: launchRunId,
+                harness: HARNESS,
+                ...(input.vaultContextSectionIds
+                  ? { runSectionIds: input.vaultContextSectionIds }
+                  : {}),
+              })
+            } catch (error) {
+              if (error instanceof ProjectVaultContextRejectedError) {
+                persistProjectVaultContextManifest(db, {
+                  runId: launchRunId,
+                  manifest: error.manifest,
+                  ...(input.vaultContextSectionIds
+                    ? { runSectionIds: input.vaultContextSectionIds }
+                    : {}),
+                })
+              }
+              throw error
+            }
             metadata.context = contextBundle.metadata
-            const contextualPrompt = prependStartupContext(finalPrompt, contextBundle.context)
+            metadata.vaultContext = vaultContext.manifest
+            const contextualPrompt = prependStartupContext(
+              finalPrompt,
+              [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+            )
 
             // Build prompt: if there are images, create an AsyncIterable<SDKUserMessage>
             // Otherwise use simple string prompt
@@ -1707,7 +1740,10 @@ export const claudeRouter = router({
               })
               metadata.context = contextBundle.metadata
               const freshPrompt = buildPrompt(
-                prependStartupContext(finalPrompt, contextBundle.context),
+                prependStartupContext(
+                  finalPrompt,
+                  [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+                ),
               )
               if (
                 isUsingOllama &&
@@ -1807,6 +1843,13 @@ export const claudeRouter = router({
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
             })
             agentRunId = run.id
+            persistProjectVaultContextManifest(db, {
+              runId: run.id,
+              manifest: vaultContext.manifest,
+              ...(input.vaultContextSectionIds
+                ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
+            })
             metadata = {
               ...metadata,
               harness: HARNESS,
@@ -2966,13 +3009,17 @@ ${prompt}
                 messageMetadata: {
                   ...pendingFinishChunk.messageMetadata,
                   context: metadata.context,
+                  vaultContext: metadata.vaultContext,
                 },
               })
             } else {
               // Keep protocol invariant for consumers that wait for finish.
               safeEmit({
                 type: "finish",
-                messageMetadata: { context: metadata.context },
+                messageMetadata: {
+                  context: metadata.context,
+                  vaultContext: metadata.vaultContext,
+                },
               } as UIMessageChunk)
             }
           } catch (error) {

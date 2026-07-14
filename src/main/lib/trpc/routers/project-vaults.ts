@@ -16,6 +16,10 @@ import {
   writeProjectVaultSection,
 } from "../../project-vaults/storage"
 import { projectVaultSectionIds, projectVaultSectionRegistry } from "../../project-vaults/registry"
+import {
+  getProjectVaultContextSelection,
+  updateProjectVaultContextSelection,
+} from "../../project-vaults/run-context"
 
 const sectionSchema = z.enum(projectVaultSectionIds)
 const deleteContractSchema = z.object({
@@ -61,6 +65,21 @@ export const projectVaultsRouter = router({
   getSectionRegistry: publicProcedure.query(() =>
     projectVaultSectionRegistry.map(({ initialContent: _initialContent, ...section }) => section),
   ),
+
+  getContextSelection: publicProcedure
+    .input(z.object({ projectId: z.string().min(1), taskId: z.string().min(1).optional() }))
+    .query(({ input }) => getProjectVaultContextSelection(getDatabase(), input)),
+
+  updateContextSelection: publicProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        taskId: z.string().min(1).optional(),
+        // Null is valid only for tasks and means inherit the project selection.
+        sectionIds: z.array(sectionSchema).nullable(),
+      }),
+    )
+    .mutation(({ input }) => updateProjectVaultContextSelection(getDatabase(), input)),
 
   getScaffoldPlan: publicProcedure
     .input(

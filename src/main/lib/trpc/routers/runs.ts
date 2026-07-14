@@ -14,6 +14,7 @@ import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { permissionModes } from "../../permissions"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
+import { projectVaultSectionIds } from "../../project-vaults/registry"
 
 const permissionModeSchema = z.enum(permissionModes)
 
@@ -28,6 +29,7 @@ export const runsRouter = router({
         permissionMode: permissionModeSchema,
         worktreePath: z.string().nullable().optional(),
         promptMessageId: z.string().optional(),
+        vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -63,6 +65,10 @@ export const runsRouter = router({
           customPermissions: input.permissionMode === "custom" ? chat.customPermissions : null,
           worktreePath: input.worktreePath ?? null,
           promptMessageId: input.promptMessageId,
+          vaultContextSections:
+            input.vaultContextSectionIds === undefined
+              ? null
+              : JSON.stringify(input.vaultContextSectionIds),
           status: "running",
         })
         .returning()
