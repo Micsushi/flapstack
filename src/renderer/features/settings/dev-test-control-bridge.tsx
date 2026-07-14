@@ -2,7 +2,9 @@ import { useEffect } from "react"
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
+  ctrlTabTargetAtom,
   customHotkeysAtom,
+  getReleasedCtrlTabTarget,
   settingsSearchQueryAtom,
   settingsSearchTargetAtom,
 } from "../../lib/atoms"
@@ -10,6 +12,7 @@ import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
 import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from "../agents/atoms"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
+import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
 import { SETTINGS_TAB_REGISTRY, normalizeVisibleSettingsTab } from "./settings-visibility"
 
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
@@ -29,11 +32,51 @@ export function DevTestControlBridge() {
         searchTarget: settingsSearchTarget,
         selectedProject,
       }
+      const legacyState = () => ({
+        rawActiveTab: appStore.get(agentsSettingsDialogActiveTabAtom),
+        normalizedActiveTab: normalizeVisibleSettingsTab(
+          appStore.get(agentsSettingsDialogActiveTabAtom),
+        ),
+        storedCtrlTabTarget: appStore.get(ctrlTabTargetAtom),
+        effectiveCtrlTabTarget: getReleasedCtrlTabTarget(),
+      })
       if (request.command === "settings.get") {
         window.desktopApi.respondDevRendererControl({
           requestId: request.requestId,
           ok: true,
           state: settingsState,
+        })
+        return
+      }
+      if (request.command === "settings.legacy.get") {
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: legacyState(),
+        })
+        return
+      }
+      if (request.command === "settings.legacy.mutate") {
+        const previous = legacyState()
+        if (request.activeTab !== undefined) {
+          const tab = SETTINGS_TAB_REGISTRY.find((entry) => entry.id === request.activeTab)?.id
+          if (!tab) {
+            window.desktopApi.respondDevRendererControl({
+              requestId: request.requestId,
+              ok: false,
+              error: "Unknown Settings tab",
+            })
+            return
+          }
+          appStore.set(agentsSettingsDialogActiveTabAtom, tab)
+        }
+        if (request.ctrlTabTarget !== undefined) {
+          appStore.set(ctrlTabTargetAtom, request.ctrlTabTarget)
+        }
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: { previous, current: legacyState() },
         })
         return
       }
@@ -91,6 +134,27 @@ export function DevTestControlBridge() {
             settingsOpen: false,
           },
         })
+        return
+      }
+      if (
+        request.command === "permissions.ui.get" ||
+        request.command === "permissions.ui.control"
+      ) {
+        void invokePermissionUiTestControl(request)
+          .then((state) =>
+            window.desktopApi.respondDevRendererControl({
+              requestId: request.requestId,
+              ok: true,
+              state,
+            }),
+          )
+          .catch((error: unknown) =>
+            window.desktopApi.respondDevRendererControl({
+              requestId: request.requestId,
+              ok: false,
+              error: error instanceof Error ? error.message : "Permission UI control failed",
+            }),
+          )
         return
       }
       const platform = request.platform ?? undefined

@@ -432,6 +432,9 @@ export const betaUpdatesEnabledAtom = atomWithStorage<boolean>(
 // When "workspaces" (default), Ctrl+Tab switches between chats, and Opt+Ctrl+Tab switches between agents.
 // When "agents", Ctrl+Tab switches between agents, and Opt+Ctrl+Tab switches between chats.
 export type CtrlTabTarget = "workspaces" | "agents"
+export function getReleasedCtrlTabTarget(): CtrlTabTarget {
+  return "workspaces"
+}
 export const ctrlTabTargetAtom = atomWithStorage<CtrlTabTarget>(
   "preferences:ctrl-tab-target",
   "workspaces", // Default: Ctrl+Tab switches chats, Opt+Ctrl+Tab switches agents

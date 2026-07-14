@@ -80,7 +80,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T4 - Apply Codex ACP modes and add a fail-closed approval bridge
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Closest provider mapping
 - Outcome: Codex runs use the selected ACP mode, and unanswered permission
   requests can never be auto-approved.
@@ -104,6 +104,12 @@ This is the sole task checklist for the change.
   and the Codex product-MCP identity patch. `Flapstack Dev` and Codex login were
   verified, but the Mac was locked before a fresh Codex permission request could
   be exercised. Live smoke remains open.
+- 2026-07-13 `64d1` completion: install-patch verification and final Preview
+  packaging retain the callback-aware fail-closed provider bundle and Codex
+  product-MCP identity patch. A verified Dev Codex project-only run wrote inside
+  the checkout, denied `/tmp`, surfaced one raw-input-free pending request,
+  accepted only the advertised `reject_once` option, and completed with the
+  outside marker absent.
 - Blocked by: none
 - Blocks: GPP-T6, GPP-T9
 - Relevant context: Codex ACP provider lifecycle, `@mcpc-tech/acp-ai-provider`,
@@ -192,7 +198,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T9 - Integrate provider permission mapping with product MCP approval
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Product MCP integration
 - Outcome: Provider-native tool authority and Stage 3 product MCP tiers combine
   without authorizing third-party MCP, double prompting, or bypassing Tier 3.
@@ -211,6 +217,10 @@ This is the sole task checklist for the change.
 - 2026-07-13 closeout: the named provider/product matrix passes, including
   separate product/third-party capabilities, no-double-prompt, fail-closed, and
   mandatory Tier 3 cases. Completion remains blocked by GPP-T4 live Codex proof.
+- 2026-07-13 `64d1` completion: GPP-T4 live Codex proof is closed. The named
+  provider/product integration matrix passes with Tier 0 reads, third-party and
+  write denial, one-prompt correlation, mandatory Tier 3 review, and fail-closed
+  unknown or uncorrelated calls.
 - Blocked by: GPP-T3, GPP-T4, S3-F3-T5
 - Blocks: GPP-T6, S3-F12-T3
 - Relevant context: provider permission builders/bridges, product registry tier,
@@ -245,7 +255,7 @@ This is the sole task checklist for the change.
 
 ### GPP-T6 - Run full and live verification
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / Provider permissions / Verification
 - Outcome: The feature is code-ready and its live behavior is proven in the
   correct Flapstack Dev profile.
@@ -273,6 +283,14 @@ This is the sole task checklist for the change.
   covered by isolated router/service tests. The Mac lock blocks visual Settings
   rows and the fresh Codex smoke in GPP-T4. Full Node 22 `npm run check` passed
   with 730 tests passed and 3 skipped; macOS Preview packaging passed unsigned.
+- 2026-07-13 `64d1` completion: strict validation passes for both permission and
+  Settings changes. Verified Dev identity named this checkout and isolated
+  profile. Live proof covered all-chat confirmation with complete custom
+  toggles, archived and future inheritance, current-chat-only mutation,
+  remembered-current reset to ask, Settings search, provider previews, and a
+  successful Codex run capturing exact project-only mapping. Final Node 22 full
+  gate and unsigned Preview build/inspect/smoke pass; unavailable Windows/Linux
+  rows are not claimed.
 - Blocked by: GPP-T2, GPP-T4, GPP-T5, GPP-T7, GPP-T8, GPP-T9, GPP-T10
 - Blocks: none
 - Relevant context: root `AGENTS.md` live-dev rules, run metadata, provider

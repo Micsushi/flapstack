@@ -33,7 +33,10 @@ import {
   allowCodexPermissionRequest,
   createCodexPermissionDecision,
   rejectCodexPermissionRequest,
-  resolveCodexPermissionOption,
+  registerPendingCodexPermissionRequest,
+  removePendingCodexPermissionRequest,
+  replyPendingCodexPermissionRequest,
+  rejectPendingCodexPermissionRequests,
 } from "../../codex/permission-bridge"
 import {
   agentRuns,
@@ -157,15 +160,7 @@ const activeStreams = new Map<string, ActiveCodexStream>()
 type CodexPermissionHandler = (
   request: RequestPermissionRequest,
 ) => Promise<RequestPermissionResponse>
-type PendingCodexApproval = {
-  subChatId: string
-  runId: string
-  request: RequestPermissionRequest
-  resolve: (response: RequestPermissionResponse) => void
-}
-
 const codexPermissionHandlers = new Map<string, { runId: string; handle: CodexPermissionHandler }>()
-const pendingCodexApprovals = new Map<string, PendingCodexApproval>()
 
 /** Check if there are any active Codex streaming sessions */
 export function hasActiveCodexStreams(): boolean {
@@ -191,28 +186,10 @@ export function cancelActiveCodexRun(input: { subChatId: string; runId: string }
   if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
   activeStream.cancelRequested = true
   activeStream.controller.abort()
-  rejectPendingCodexApprovals(input.subChatId, input.runId)
+  rejectPendingCodexPermissionRequests(input.subChatId, input.runId)
   return { cancelled: true, ignoredStale: false }
 }
 
-function replyPendingCodexApproval(input: { requestId: string; optionId: string }): {
-  resolved: boolean
-} {
-  const pending = pendingCodexApprovals.get(input.requestId)
-  if (!pending) return { resolved: false }
-
-  pendingCodexApprovals.delete(input.requestId)
-  pending.resolve(resolveCodexPermissionOption(pending.request, input.optionId))
-  return { resolved: true }
-}
-
-function rejectPendingCodexApprovals(subChatId: string, runId?: string): void {
-  for (const [requestId, pending] of pendingCodexApprovals) {
-    if (pending.subChatId !== subChatId || (runId && pending.runId !== runId)) continue
-    pendingCodexApprovals.delete(requestId)
-    pending.resolve(rejectCodexPermissionRequest(pending.request))
-  }
-}
 const loginSessions = new Map<string, CodexLoginSession>()
 const codexMcpCache = new Map<string, CodexMcpSnapshot>()
 
@@ -2175,7 +2152,7 @@ export const codexRouter = router({
                 request,
                 signal: abortController.signal,
               })
-              pendingCodexApprovals.set(requestId, {
+              registerPendingCodexPermissionRequest(requestId, {
                 subChatId: input.subChatId,
                 runId: input.runId,
                 request,
@@ -2195,7 +2172,7 @@ export const codexRouter = router({
                 })),
               })
               if (!isActive) decision.reject()
-              return decision.promise.finally(() => pendingCodexApprovals.delete(requestId))
+              return decision.promise.finally(() => removePendingCodexPermissionRequest(requestId))
             }
             codexPermissionHandlers.set(input.subChatId, {
               runId: input.runId,
@@ -2511,7 +2488,7 @@ export const codexRouter = router({
             if (permissionHandler?.runId === input.runId) {
               codexPermissionHandlers.delete(input.subChatId)
             }
-            rejectPendingCodexApprovals(input.subChatId, input.runId)
+            rejectPendingCodexPermissionRequests(input.subChatId, input.runId)
             const activeStream = activeStreams.get(input.subChatId)
             if (!runCompleted) {
               const finalStatus =
@@ -2546,7 +2523,7 @@ export const codexRouter = router({
 
   replyPermission: publicProcedure
     .input(z.object({ requestId: z.string(), optionId: z.string() }))
-    .mutation(({ input }) => replyPendingCodexApproval(input)),
+    .mutation(({ input }) => replyPendingCodexPermissionRequest(input)),
 
   cancel: publicProcedure
     .input(
@@ -2559,7 +2536,7 @@ export const codexRouter = router({
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     codexPermissionHandlers.delete(input.subChatId)
-    rejectPendingCodexApprovals(input.subChatId)
+    rejectPendingCodexPermissionRequests(input.subChatId)
     cleanupProvider(input.subChatId)
 
     const activeStream = activeStreams.get(input.subChatId)

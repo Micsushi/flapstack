@@ -118,10 +118,10 @@ export function getPermissionEligibility(
   if (mode === "auto-edit-project-only") {
     if (harness === "codex") {
       return {
-        selectable: false,
-        enforcement: "best-effort",
+        selectable: true,
+        enforcement: "exact",
         reason:
-          "Codex ACP workspace-write mapping is unit-tested; live outside-project proof remains open.",
+          "Codex ACP workspace-write excludes temporary roots; live proof auto-writes inside and asks outside the project.",
       }
     }
     return {

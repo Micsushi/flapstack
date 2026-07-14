@@ -46,10 +46,10 @@ describe("permission promotion", () => {
     ).toBeNull()
   })
 
-  it("keeps project-only hidden for cwd/classifier providers", () => {
+  it("offers exact project-only only for the proven Codex workspace boundary", () => {
     expect(getPermissionEligibility("codex", "auto-edit-project-only")).toMatchObject({
-      selectable: false,
-      enforcement: "best-effort",
+      selectable: true,
+      enforcement: "exact",
     })
     for (const harness of ["claude-code", "cursor-agent", "openrouter", "nanogpt"] as const) {
       expect(getPermissionEligibility(harness, "auto-edit-project-only").selectable).toBe(false)
