@@ -145,3 +145,15 @@ completion authority for remaining reasoning parity work.
   credential-conditional skips and the production build. Unsigned macOS arm64
   Preview package inspection and bundled-runtime smoke passed. This task remains
   open while T3/T4 visual and same-SHA live blockers remain.
+
+### 2026-07-13 final credential-path continuation
+
+- Credentialed headless runs captured exact control resolution for Cursor,
+  OpenRouter, NanoGPT, Codex, and Claude. NanoGPT enabled persisted reasoning;
+  disabled persisted text only. OpenRouter enabled passed; its selected free
+  endpoint rejected disabled reasoning as mandatory.
+- The Claude native question attempt persisted the exact read-only `dontAsk`
+  blocker. Other providers declare continuation-only structured input.
+- Evidence is bound to a live tree matching base `f4c4ad4`, not the final
+  integration SHA. T4/T5 remain unchecked pending final-SHA provider/UI/reload
+  recapture and accessibility rows.

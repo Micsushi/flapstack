@@ -141,7 +141,14 @@ export function normalizeOpencodeModelId(provider: OpencodeProviderId, modelId: 
     openrouter: new Set(["openrouter/tencent/hy3:free", "openrouter/google/gemini-3-pro"]),
     nanogpt: new Set(["nanogpt/deepseek-v3", "nanogpt/deepseek-chat"]),
   }
-  return legacy[provider].has(modelId) ? DEFAULT_OPENCODE_MODELS[provider][0].id : modelId
+  const trimmed = modelId.trim()
+  if (!trimmed) throw new Error(`Model cannot be empty for the ${provider} provider.`)
+  const qualifiedProvider = trimmed.match(/^(openrouter|nanogpt)\//)?.[1]
+  if (qualifiedProvider && qualifiedProvider !== provider) {
+    throw new Error(`Model ${trimmed} does not belong to the ${provider} provider.`)
+  }
+  const normalized = qualifiedProvider === provider ? trimmed : `${provider}/${trimmed}`
+  return legacy[provider].has(normalized) ? DEFAULT_OPENCODE_MODELS[provider][0].id : normalized
 }
 
 const CURSOR_MODEL_LABELS: Record<string, string> = Object.fromEntries(

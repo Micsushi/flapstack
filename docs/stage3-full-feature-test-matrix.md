@@ -445,6 +445,21 @@ control, so no visual row is promoted.
   native-dialog, focus, or pixel evidence was added.
 - The exact synthetic chat selection succeeded but its transcript did not mount,
   so reasoning and run-change visual rows remain open. No S3-X row is promoted.
+
+### 2026-07-13 provider-final lane continuation
+
+- Credential/model-path discovery passed for Cursor, OpenRouter enabled,
+  NanoGPT enabled/disabled, Codex low/minimal, and Claude low/minimal on a live
+  source tree exactly matching base `f4c4ad4`. OpenRouter disabled is BLOCKED by
+  the selected endpoint's mandatory-reasoning contract.
+- Usage refresh passed for Codex, Anthropic, Cursor, and OpenRouter; NanoGPT is
+  truthfully `run-usage-only`. One Discord transport send returned HTTP 204.
+- Claude native structured input was attempted and blocked by read-only
+  `dontAsk`; all other required providers are continuation-only. Agent-question
+  closure remains open.
+- This is not final-integration SHA evidence. S3-H01, S3-U01, R-LIVE, R-UI,
+  R-RELOAD, and the release gates remain unchecked until the sanitized rerun
+  recipe is executed on the integrated candidate.
 - A later `ee39-ux` attempt passed exact-checkout Dev verification and created a
   two-sub-chat fixture, but macOS was locked before Computer Use could inspect
   any pixels or navigation. The lease was released immediately; no manual row is

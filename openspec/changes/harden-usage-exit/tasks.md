@@ -149,6 +149,20 @@ authority for Usage exit work.
   tests skipped. Required Usage UI rows, credentialed alert delivery,
   Windows/Linux, and the final integrated SHA remain open, so this completion
   box stays unchecked.
+
 - Blocked by: S3-F14-T2, S3-F14-T3, S3-F14-T4.
 - Blocks: S3-F17-T2.
 - Relevant context: this change, S3-F14 matrix/evidence, root live-dev rules.
+
+### 2026-07-13 final credential-path continuation
+
+- Credentialed refresh passed for Codex, Anthropic, Cursor, and OpenRouter;
+  NanoGPT returned `run-usage-only` without inventing account history.
+- One real Discord webhook transport delivery returned HTTP 204 with the
+  namespaced Keychain value kept off argv/output. This does not prove a
+  persisted threshold event or closed-app delivery.
+- Conservative provider spend was `$0.39908543`. Cleanup left no active lane
+  chat, approval, sidecar directory, or unintended daemon/app control change.
+- T4/T5 remain unchecked: the runtime only tree-matched base `f4c4ad4`, not the
+  final integration SHA, and required UI, alert-event, Windows, Linux, and final
+  package rows remain open.

@@ -155,3 +155,19 @@ sole completion authority for their remaining provider-harness work.
   archived, no approval remained pending, no temporary sidecar directory
   remained, and artifacts contain no credential. Required visual rows remain
   open while the Mac is locked.
+
+### 2026-07-13 final credential-path continuation
+
+- Cursor, OpenRouter reasoning-enabled, NanoGPT enabled/disabled, Codex
+  low/minimal, and Claude low/minimal credentialed headless runs completed on a
+  live tree exactly matching base `f4c4ad4`. OpenRouter disabled truthfully
+  failed because the free endpoint mandates reasoning.
+- Raw OpenRouter/NanoGPT catalog IDs exposed missing provider-prefix
+  normalization in dev-test launch. The source fix and regression assertions
+  are included in this lane; final integration must rerun after landing it.
+- Claude native question initiation was attempted. Read-only `dontAsk` blocked
+  `AskUserQuestion`; other providers remain continuation-only. No question row
+  is promoted.
+- All chats archived, recorded approvals are empty, and sidecar temp cleanup
+  passed. T3-T5 stay unchecked because this base predates final integration and
+  lacks same-SHA renderer/package/cross-platform closure.
