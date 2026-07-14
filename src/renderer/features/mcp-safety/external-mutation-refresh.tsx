@@ -13,7 +13,7 @@ export function McpExternalMutationRefreshBridge() {
     const invalidate = createProductMcpRendererInvalidator({
       projectsList: () => utils.projects.list.invalidate(),
       projectsArchived: () => utils.projects.listArchived.invalidate(),
-      tasksList: () => utils.tasks.list.invalidate(),
+      tasksList: () => Promise.all([utils.tasks.list.invalidate(), utils.tasks.board.invalidate()]),
       tasksArchived: () => utils.tasks.listArchived.invalidate(),
       chatsList: () => utils.chats.list.invalidate(),
       chatsArchived: () => utils.chats.listArchived.invalidate(),
