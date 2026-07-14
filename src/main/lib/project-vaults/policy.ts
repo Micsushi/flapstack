@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm"
 import { isAbsolute, join, resolve } from "node:path"
 import type { getDatabase } from "../db"
-import { projects, projectVaultPolicies } from "../db/schema"
+import { projects, projectVaultPolicies, projectVaults } from "../db/schema"
 
 export const vaultLocationModes = ["app-managed", "project-owned"] as const
 export type VaultLocationMode = (typeof vaultLocationModes)[number]
@@ -129,6 +129,15 @@ export function updateProjectVaultPolicy(
 ): ProjectVaultPolicy {
   const current = getOrCreateProjectVaultPolicy(database, input)
   const project = database.select().from(projects).where(eq(projects.id, input.projectId)).get()!
+  const scaffolded = database
+    .select({ rootPath: projectVaults.rootPath })
+    .from(projectVaults)
+    .where(eq(projectVaults.projectId, input.projectId))
+    .get()
+
+  if (scaffolded && input.locationMode !== current.locationMode) {
+    throw new Error("Delete the existing project vault before changing its location mode.")
+  }
 
   if (input.locationMode === "project-owned" && input.projectOwnedOptIn !== true) {
     throw new Error("Project-owned vault storage requires explicit opt-in.")

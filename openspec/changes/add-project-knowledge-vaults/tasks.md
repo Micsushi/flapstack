@@ -15,13 +15,14 @@
 
 ### S4-F2-T2 — Implement typed vault storage and scaffold
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Approved projects create and maintain typed Markdown knowledge safely.
 - Scope: Additive metadata, section registry, scaffold, atomic read/write, versioning, backups, root/symlink checks, and delete confirmation.
 - Out of scope: UI and run injection.
 - Acceptance: Only approved sections are created; escaped paths and stale versions fail closed; content survives restart.
 - Verification: Migration, scaffold, path attack, concurrency, backup, and rollback tests.
+- Evidence (2026-07-13): 37 focused headless DB/filesystem/security/migration tests passed across `project-vault-storage`, `project-vault-policy`, `path-safety`, `registered-root-identity`, `stage3-migration-rebase`, and `plan-kanban-schema`; TypeScript, focused ESLint/Prettier, strict OpenSpec, and `git diff --check` passed.
 - Blocked by: S4-F2-T1
 - Blocks: S4-F2-T3, S4-F2-T4, S4-F2-T5, S4-F8-T1
 - Context: `project-vaults.ts`, path safety, project and attachment storage patterns.
