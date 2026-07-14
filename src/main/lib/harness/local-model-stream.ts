@@ -3,9 +3,15 @@ import { and, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { UIMessageChunk } from "../claude/types"
 import { agentRuns, chats, subChats } from "../db/schema"
+import { getDatabase } from "../db"
+import { captureCheckpoint, captureRunManifest } from "../checkpoints"
+import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
+import { createSqliteMcpApprovalCoordinator } from "../mcp-control/approval-coordinator"
+import { publishProductMcpInvalidation } from "../mcp-control/invalidation-bridge"
 import type * as schema from "../db/schema"
 import type { LocalModelRunMetadata } from "../../../shared/local-model-contract"
 import type { RunPermissionMode } from "../../../shared/harness-types"
+import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { buildHarnessContextBundle, type HarnessContextBundle } from "./launch-context"
 import { getOllamaEndpointConfig, type OllamaEndpointConfig } from "./local-model-catalog"
 import {
@@ -19,6 +25,15 @@ import {
   type LocalModelToolLoopLimits,
   type LocalModelToolProvider,
 } from "./local-model-read-tools"
+import { LOCAL_MODEL_READ_TOOL_SCHEMAS } from "./local-model-read-tools"
+import {
+  createProjectLocalModelWriteToolExecutor,
+  LOCAL_MODEL_WRITE_TOOL_NAMES,
+  LOCAL_MODEL_WRITE_TOOL_SCHEMAS,
+  type LocalModelWriteApprovalRequest,
+  type LocalModelWriteApprovalDecision,
+  type LocalModelWriteToolOptions,
+} from "./local-model-write-tools"
 
 const DEFAULT_STREAM_TIMEOUT_MS = 120_000
 const DEFAULT_TRANSCRIPT_CHARS = 48_000
@@ -113,7 +128,20 @@ export type LocalModelChatServiceDependencies = {
   fetchImpl?: typeof fetch
   buildContext?: (input: StreamLocalModelChatInput) => Promise<HarnessContextBundle>
   createReadToolExecutor?: (rootPath: string) => LocalModelReadToolExecutor
+  createWriteToolExecutor?: (options: LocalModelWriteToolOptions) => LocalModelReadToolExecutor
+  createWriteApprovalSession?: () => LocalModelWriteApprovalSession
+  runChanges?: LocalModelRunChangeTracker
   now?: () => number
+}
+
+export type LocalModelWriteApprovalSession = {
+  request(input: LocalModelWriteApprovalRequest): Promise<LocalModelWriteApprovalDecision>
+  shutdown(): void
+}
+
+export type LocalModelRunChangeTracker = {
+  captureBefore(runId: string, worktreePath: string): Promise<void>
+  captureAfterAndManifest(runId: string, worktreePath: string): Promise<void>
 }
 
 export type LocalModelReconnectResult = {
@@ -131,6 +159,7 @@ export type LocalModelStreamErrorCode =
   | "abandoned-stream"
   | "consumer-disconnected"
   | "run-not-startable"
+  | "change-tracking-failed"
   | LocalModelToolLoopError["code"]
 
 const SAFE_ERROR_TEXT: Record<LocalModelStreamErrorCode, string> = {
@@ -142,6 +171,7 @@ const SAFE_ERROR_TEXT: Record<LocalModelStreamErrorCode, string> = {
   "abandoned-stream": "The local model stream was abandoned when Flapstack stopped.",
   "consumer-disconnected": "The local model stream ended when its consumer disconnected.",
   "run-not-startable": "This local model run is already active or terminal and cannot resume.",
+  "change-tracking-failed": "The local model run could not preserve recoverable change evidence.",
   "tool-iteration-limit": "The local model tool loop reached its iteration limit.",
   "tool-call-limit": "The local model tool loop reached its tool-call limit.",
   "tool-context-limit": "The local model tool loop reached its context limit.",
@@ -207,6 +237,21 @@ export class LocalModelChatService {
     let terminal = false
     let textStarted = false
     let usage: LocalModelPersistedRunFinish["usage"]
+    let approvalSession: LocalModelWriteApprovalSession | undefined
+    let changeTrackingStarted = false
+    let changeTrackingAttempted = false
+    const worktreePath = input.worktreePath ?? input.cwd
+    const runChanges = this.dependencies.runChanges ?? defaultLocalModelRunChangeTracker
+
+    const finishChangeTracking = async () => {
+      if (!changeTrackingStarted || changeTrackingAttempted) return
+      changeTrackingAttempted = true
+      try {
+        await runChanges.captureAfterAndManifest(runId, worktreePath)
+      } catch {
+        throw new LocalModelStreamError("change-tracking-failed")
+      }
+    }
 
     try {
       const transcript = this.dependencies.persistence.loadTranscript(input.subChatId)
@@ -228,6 +273,16 @@ export class LocalModelChatService {
       })
       began = true
 
+      const writeToolsEnabled = localWriteToolsEnabled(input)
+      if (writeToolsEnabled) {
+        try {
+          await runChanges.captureBefore(runId, worktreePath)
+          changeTrackingStarted = true
+        } catch {
+          throw new LocalModelStreamError("change-tracking-failed")
+        }
+      }
+
       const endpoint = input.endpoint ?? getOllamaEndpointConfig()
       const messages = assembleLocalModelMessages({
         context: context.context,
@@ -236,15 +291,51 @@ export class LocalModelChatService {
         maxTranscriptChars: input.maxTranscriptChars,
       })
       const toolsEnabled = localReadToolsEnabled(input.metadata)
+      const tools = writeToolsEnabled
+        ? [...LOCAL_MODEL_READ_TOOL_SCHEMAS, ...LOCAL_MODEL_WRITE_TOOL_SCHEMAS]
+        : LOCAL_MODEL_READ_TOOL_SCHEMAS
       const provider = createOllamaToolProvider({
         endpoint,
         model: input.model,
         fetchImpl: this.dependencies.fetchImpl ?? fetch,
       })
       const executor = toolsEnabled
-        ? (this.dependencies.createReadToolExecutor?.(input.worktreePath ?? input.cwd) ??
-          createReadOnlyLocalModelToolExecutor({ rootPath: input.worktreePath ?? input.cwd }))
+        ? (this.dependencies.createReadToolExecutor?.(worktreePath) ??
+          createReadOnlyLocalModelToolExecutor({ rootPath: worktreePath }))
         : undefined
+      let toolExecutor = executor
+      if (writeToolsEnabled && executor) {
+        if (input.permissionMode === "ask-before-edits") {
+          approvalSession =
+            this.dependencies.createWriteApprovalSession?.() ??
+            createLocalModelWriteApprovalSession()
+        }
+        const writer =
+          this.dependencies.createWriteToolExecutor?.({
+            rootPath: worktreePath,
+            runId,
+            chatId: input.chatId,
+            permissionMode: input.permissionMode,
+            projectWriteAllowed: true,
+            requestApproval: approvalSession?.request,
+          }) ??
+          createProjectLocalModelWriteToolExecutor({
+            rootPath: worktreePath,
+            runId,
+            chatId: input.chatId,
+            permissionMode: input.permissionMode,
+            projectWriteAllowed: true,
+            requestApproval: approvalSession?.request,
+          })
+        toolExecutor = {
+          execute: (call, signal) =>
+            LOCAL_MODEL_WRITE_TOOL_NAMES.includes(
+              call.name as (typeof LOCAL_MODEL_WRITE_TOOL_NAMES)[number],
+            )
+              ? writer.execute(call, signal)
+              : executor.execute(call, signal),
+        }
+      }
 
       yield { type: "start", messageId: assistantMessageId }
 
@@ -253,8 +344,9 @@ export class LocalModelChatService {
         runId,
         messages,
         toolsEnabled,
+        tools,
         provider,
-        executor,
+        executor: toolExecutor,
         signal: controller.signal,
         limits: {
           ...input.toolLoopLimits,
@@ -321,6 +413,7 @@ export class LocalModelChatService {
       }
       if (!sawDone) throw new LocalModelStreamError("provider-disconnected")
 
+      await finishChangeTracking()
       this.dependencies.persistence.finalize({
         runId,
         streamId,
@@ -338,7 +431,12 @@ export class LocalModelChatService {
       yield { type: "finish", messageMetadata: usage }
     } catch (error) {
       const cancelled = controller.signal.aborted && !timedOut
-      const streamError = normalizeStreamError(error, timedOut)
+      let streamError = normalizeStreamError(error, timedOut)
+      try {
+        await finishChangeTracking()
+      } catch (trackingError) {
+        streamError = normalizeStreamError(trackingError, false)
+      }
       if (began) {
         this.dependencies.persistence.finalize({
           runId,
@@ -356,9 +454,15 @@ export class LocalModelChatService {
       yield { type: "finish" }
     } finally {
       clearTimeout(timer)
+      approvalSession?.shutdown()
       if (!terminal && began) {
         controller.abort()
-        const errorCode = "consumer-disconnected"
+        let errorCode: LocalModelStreamErrorCode = "consumer-disconnected"
+        try {
+          await finishChangeTracking()
+        } catch {
+          errorCode = "change-tracking-failed"
+        }
         this.dependencies.persistence.finalize({
           runId,
           streamId,
@@ -529,6 +633,95 @@ function localReadToolsEnabled(metadata: LocalModelRunMetadata): boolean {
     metadata.capabilities.tools.state === "supported" &&
     metadata.permission.toolTiers.some((tier) => tier.tier === "read" && tier.available)
   )
+}
+
+function localWriteToolsEnabled(input: StreamLocalModelChatInput): boolean {
+  const metadata = input.metadata
+  if (
+    metadata.capabilities.tools.state !== "supported" ||
+    metadata.permission.mode !== input.permissionMode ||
+    !metadata.permission.toolTiers.some((tier) => tier.tier === "project-write" && tier.available)
+  ) {
+    return false
+  }
+  if (input.permissionMode === "read-only") return false
+  if (input.permissionMode !== "custom") return true
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input.customPermissions ?? "null")
+  } catch {
+    return false
+  }
+  const persisted = parseCustomPermissionCapabilities(parsed)
+  return Boolean(
+    persisted?.projectWrite && metadata.permission.customPermissions?.projectWrite === true,
+  )
+}
+
+const defaultLocalModelRunChangeTracker: LocalModelRunChangeTracker = {
+  async captureBefore(runId, worktreePath) {
+    const before = await captureCheckpoint(runId, worktreePath, "before")
+    getDatabase()
+      .update(agentRuns)
+      .set({ beforeCheckpointId: before.id })
+      .where(eq(agentRuns.id, runId))
+      .run()
+  },
+  async captureAfterAndManifest(runId, worktreePath) {
+    const after = await captureCheckpoint(runId, worktreePath, "after")
+    getDatabase()
+      .update(agentRuns)
+      .set({ afterCheckpointId: after.id })
+      .where(eq(agentRuns.id, runId))
+      .run()
+    await captureRunManifest(runId)
+  },
+}
+
+function createLocalModelWriteApprovalSession(): LocalModelWriteApprovalSession {
+  const publishApprovalChange = () => {
+    void publishProductMcpInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["approvals"],
+    })
+  }
+  const lifecycle = new McpApprovalLifecycle(
+    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    publishApprovalChange,
+  )
+  return {
+    request: async (input) => {
+      const id = randomUUID()
+      const cancel = () => lifecycle.cancel(id)
+      input.signal.addEventListener("abort", cancel, { once: true })
+      try {
+        const wait = lifecycle.request({
+          id,
+          invocationId: id,
+          caller: { chatId: input.chatId, runId: input.runId },
+          toolName: `local_model.${input.tool}`,
+          tier: 2,
+          input: {
+            path: input.path,
+            callId: input.callId,
+            expectedSha256: input.expectedSha256,
+            nextSha256: input.nextSha256,
+            byteLength: input.byteLength,
+          },
+        })
+        if (input.signal.aborted) lifecycle.cancel(id)
+        const decision = await wait.decision
+        if (decision.state === "approved") return "approved"
+        if (decision.state === "denied") return "denied"
+        if (decision.state === "timed-out") return "timed-out"
+        return "cancelled"
+      } finally {
+        input.signal.removeEventListener("abort", cancel)
+      }
+    },
+    shutdown: () => lifecycle.shutdown(),
+  }
 }
 
 export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalModelRunPersistence {
