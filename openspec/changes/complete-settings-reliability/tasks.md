@@ -327,13 +327,11 @@ Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
 - Verification: Voice suites, `npm run check`, `npm run dev:verify`, packaged
   matrix, and recorded manual evidence.
 - Remaining verification: focused suites, Rust tests, strict OpenSpec, real
-  sidecar smoke, database migration, and verified dev identity pass. The Node 22
-  full gate reaches 79 passing test files and 629 passing tests, then fails three
-  unrelated MCP migration/append-only assertions because this base has
-  `0016_glamorous_deathbird.sql` while the tests require
-  `0016_massive_ravenous.sql`. Packaged-app launch, live Voice UI, and unavailable
-  OS rows remain open until actually observed; the arm64 Preview package
-  binary/license inspection passes.
+  sidecar smoke, database migration, verified dev identity, and the current
+  Node 22 full gate pass on `codex/stage3-integration`. The former three-test MCP
+  migration mismatch is resolved and no longer blocks S3-F9. Packaged-app
+  launch, live Voice UI, and unavailable OS rows remain open until actually
+  observed; the arm64 Preview package binary/license inspection passes.
 - Estimated effort: 1 day.
 - Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3, S3-F9-T4.
 - Blocks: S3-F13-T1, S3-F13-T4, and Stage 3 exit.

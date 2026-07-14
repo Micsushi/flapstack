@@ -1,12 +1,24 @@
-# Stage 3 release lane handoff
+# Stage 3 integrated release handoff
 
-Status: Settings closeout implemented and locally verified; Stage 3 release
-remains blocked on recorded package, provider, dependency, and platform rows.
+Status: integrated implementation and automation are green; Stage 3 release
+remains blocked on recorded live UI, provider, package, and platform rows.
 
-## Candidate
+## Current candidate
+
+- Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
+- Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
+- Branch: `codex/stage3-integration` in
+  `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`.
+- Runtime: Node 22.23.1 on macOS arm64.
+- Current integrated automation, migrations, strict OpenSpec, and release-ledger
+  coverage pass. Exact integrated Dev, provider, Preview, and cross-platform
+  evidence remains open where the authoritative matrices say so.
+- `main` remains untouched. No push, merge, publish, or OpenSpec archive was done.
+
+## Historical Settings lane candidate
 
 - Starting baseline: `d08502ec16764653df589894c7a1c6ecacc87ce9`.
-- Candidate: resolve the commit containing this file with `git rev-parse HEAD`.
+- Lane candidate: resolve the original Settings lane commit from its recorded evidence.
 - Branch: `codex/stage3-settings-live-closeout` in the isolated `609c` worktree.
 - Runtime: Node 22.23.1 on macOS arm64. Exact `Flapstack Dev 609c` MCP and
   shared-lease UI proof passed; current Preview build/inspect/smoke passed
@@ -14,7 +26,7 @@ remains blocked on recorded package, provider, dependency, and platform rows.
 - Main and integration worktrees were read-only. No push, merge, publish, or
   OpenSpec archive was done.
 
-## Safe closeout result
+## Historical Settings lane result
 
 - S3-F8-T4 and S3-F10-T3 are complete. Keyboard runtime/edit/conflict/reset,
   restart persistence, real key delivery/focus suppression, write-only
@@ -108,16 +120,24 @@ the release ledger covers 323 scenarios and 17 feature exits.
 The isolated `93ea` dev instance used authenticated test-control MCP for every
 functional product action. Both caller identities passed default-off,
 enable/connected, `ping`, and `describe`. Claude-to-Codex produced a successful
-real Codex child with exact lineage and response. Codex-to-Claude produced
-honest lineage but the real Claude child failed because the dev checkout lacked
-its bundled Claude binary/provider stream. Two-way denial, pending-call stop,
-stale identity, audit paging/filtering, restart persistence, and cleanup passed.
+real Codex child with exact lineage and response. Its initial Codex-to-Claude
+attempt produced honest lineage but failed because the checkout lacked its
+ignored bundled Claude binary. Two-way denial, pending-call stop, stale
+identity, audit paging/filtering, restart persistence, and cleanup passed.
+
+The integration repair now prefers the bundled Claude binary and falls back
+only for development to an executable Claude CLI from the shell PATH. Packaged
+resolution stays pinned and fail-closed. In verified `Flapstack Dev s3fix`,
+authenticated test-control MCP launched a real Claude child from a Codex
+initiating chat; task `92ef9d73-2bb4-4b42-9bd9-fdc43fb25bc6` completed with
+provider-reported usage and runtime logs recorded `source: path`.
 
 Computer Use was limited to background-approval accessibility/focus evidence
 while the shared UI lease was held. It did not drive functional actions. The
 lane stopped its app, released the lease, archived all test callers/children,
-and left no pending approvals. S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain open
-for the missing real-provider and complete visual/accessibility matrix.
+and left no pending approvals. The missing-Claude-binary blocker is resolved,
+but S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain open for their complete approval,
+renderer, provider-session, and visual/accessibility matrices.
 Node 22 `npm run check` passed lint, formatting, TypeScript, 117 test files with
 863 passed and 3 conditional skips, and the production build. The three
 affected strict changes and release-ledger coverage pass.

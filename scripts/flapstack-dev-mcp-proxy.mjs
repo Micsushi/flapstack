@@ -12,18 +12,24 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
-const expectedProfile =
+const expectedUserDataProfile =
   process.env.FLAPSTACK_DEV_MCP_PROFILE?.trim() ||
   (instance ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "Flapstack Dev")
 const descriptorPath =
   process.env.FLAPSTACK_DEV_MCP_DESCRIPTOR ||
-  join(homedir(), "Library", "Application Support", expectedProfile, "dev-test-control-mcp.json")
+  join(
+    homedir(),
+    "Library",
+    "Application Support",
+    expectedUserDataProfile,
+    "dev-test-control-mcp.json",
+  )
 
 let upstream = null
 
 async function readDescriptor() {
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"))
-  if (descriptor.profile !== expectedProfile) {
+  if (descriptor.profile !== "Flapstack Dev") {
     throw new Error(`Refusing non-dev Flapstack profile: ${descriptor.profile || "unknown"}`)
   }
   if (resolve(descriptor.checkout) !== checkout) {

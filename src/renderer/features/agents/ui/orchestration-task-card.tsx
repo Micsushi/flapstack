@@ -11,6 +11,10 @@ import type {
   OrchestrationStopConditions,
   OrchestrationTaskOverviewDto,
 } from "../../../../shared/agent-orchestration"
+import {
+  customPermissionCapabilityKeys,
+  disabledCustomPermissions,
+} from "../../../../shared/permission-capabilities"
 import { Button } from "../../../components/ui/button"
 import {
   Dialog,
@@ -38,6 +42,34 @@ const emptyDefinition: OrchestrationAgentDefinition = {
   worktreeStrategy: "inherit",
   dependencyAgentIds: [],
   completionCriteria: "Complete the assigned work and report verification evidence.",
+}
+
+const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[number], string> = {
+  projectWrite: "Project edits",
+  shell: "Shell",
+  network: "Network",
+  git: "Git",
+  browser: "Browser",
+  secrets: "Secrets",
+  subagents: "Subagents",
+  thirdPartyMcp: "Third-party MCP",
+  productMcpRead: "Product MCP reads",
+  productMcpWrite: "Product MCP writes",
+  productMcpTier3: "Product MCP Tier 3",
+}
+
+export function applyOrchestrationPermissionMode(
+  definition: OrchestrationAgentDefinition,
+  permissionMode: OrchestrationAgentDefinition["permissionMode"],
+): OrchestrationAgentDefinition {
+  return {
+    ...definition,
+    permissionMode,
+    customPermissions:
+      permissionMode === "custom"
+        ? (definition.customPermissions ?? { ...disabledCustomPermissions })
+        : undefined,
+  }
 }
 
 export function formatOrchestrationCost(
@@ -359,6 +391,9 @@ export function OrchestrationOverviewCard({
               )}
               {agent.blockerCount > 0 && <span>{agent.blockerCount} blockers</span>}
             </div>
+            <code className="mt-1 block select-all break-all text-[9px] text-muted-foreground">
+              {agent.id}
+            </code>
             {agent.resultSummary && (
               <p className="mt-1 line-clamp-2 text-[10px]">{agent.resultSummary}</p>
             )}
@@ -591,19 +626,44 @@ function AgentEditorDialog({
               className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
               value={definition.permissionMode}
               onChange={(event) =>
-                setDefinition({
-                  ...definition,
-                  permissionMode: event.target
-                    .value as OrchestrationAgentDefinition["permissionMode"],
-                })
+                setDefinition(
+                  applyOrchestrationPermissionMode(
+                    definition,
+                    event.target.value as OrchestrationAgentDefinition["permissionMode"],
+                  ),
+                )
               }
             >
               <option value="read-only">Read only</option>
               <option value="ask-before-edits">Ask before edits</option>
               <option value="auto-edit-project-only">Auto edit project</option>
               <option value="full-access">Full access</option>
+              <option value="custom">Custom</option>
             </select>
           </label>
+          {definition.permissionMode === "custom" && definition.customPermissions && (
+            <fieldset className="grid gap-2 rounded-lg border border-border/60 p-3 sm:col-span-2 sm:grid-cols-2">
+              <legend className="px-1 text-xs font-medium">Custom capabilities</legend>
+              {customPermissionCapabilityKeys.map((key) => (
+                <label key={key} className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={definition.customPermissions?.[key] ?? false}
+                    onChange={(event) =>
+                      setDefinition({
+                        ...definition,
+                        customPermissions: {
+                          ...definition.customPermissions!,
+                          [key]: event.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  {CUSTOM_PERMISSION_LABELS[key]}
+                </label>
+              ))}
+            </fieldset>
+          )}
           <label className="text-xs">
             Worktree
             <select

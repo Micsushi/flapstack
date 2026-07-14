@@ -1158,6 +1158,9 @@ describe("sidecar secret isolation", () => {
   })
 
   it("isolates global config/plugins and installs a tool environment guard", () => {
+    const previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
+    const credentialDir = mkdtempSync(join(tmpdir(), "flapstack-sidecar-secret-"))
+    process.env.FLAPSTACK_CONFIG_DIR = credentialDir
     setProviderKey("nanogpt", "nano-secret-key")
     const generated = writeIsolatedConfig("nanogpt", "deepseek-chat")
     try {
@@ -1172,6 +1175,9 @@ describe("sidecar secret isolation", () => {
     } finally {
       rmSync(generated.configDir, { recursive: true, force: true })
       clearProviderKey("nanogpt")
+      if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
+      else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
+      rmSync(credentialDir, { recursive: true, force: true })
     }
   })
 })

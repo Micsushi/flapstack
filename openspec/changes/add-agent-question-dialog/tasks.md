@@ -53,6 +53,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q0. Baseline fixtures and current-behavior lock
 
+- [x] Completion: acceptance and automated verification passed.
+
 - Blocked by: approved OpenSpec proposal. Blocks: Q1, Q4.
 - Scope:
   - Capture Claude's existing `AskUserQuestion` chunk, pending atom, answer mutation,
@@ -70,6 +72,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Fixture data contains no credentials, hidden reasoning, or machine paths.
 
 ### Q1. Shared input contract and capability registry
+
+- [x] Completion: acceptance and automated verification passed.
 
 - Blocked by: Q0. Blocks: Q2, Q3, Q4-Q8, Q11.
 - Scope:
@@ -94,6 +98,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q2. Pending-request lifecycle service
 
+- [x] Completion: acceptance and automated verification passed.
+
 - Blocked by: Q1. Blocks: Q3-Q10.
 - Scope:
   - Main-process owner for create, wait, answer, skip, cancel, expire, and dispose.
@@ -114,6 +120,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Multiple chats can wait independently.
 
 ### Q3. Shared transport and persistence bridge
+
+- [x] Completion: acceptance and automated verification passed.
 
 - Blocked by: Q1, Q2. Blocks: Q4-Q10.
 - Scope:
@@ -139,6 +147,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q4. Claude Agent SDK migration
 
+- [x] Completion: acceptance and automated verification passed; provider-live evidence remains in Q12.
+
 - Blocked by: Q0-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Translate native Claude `AskUserQuestion` to/from the shared contract.
@@ -158,6 +168,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Skip/cancel produces a readable tool denial/result and the run continues or ends safely.
 
 ### Q5. OpenCode adapter for OpenRouter and NanoGPT
+
+- [x] Completion: the inspected pinned surface is truthfully registered as continuation-only; provider-live evidence remains in Q12.
 
 - Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
@@ -182,6 +194,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q6. Codex ACP adapter
 
+- [x] Completion: the installed ACP surface is truthfully registered as continuation-only; provider-live evidence remains in Q12.
+
 - Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Inspect the installed `@zed-industries/codex-acp` event/request capabilities and lock
@@ -203,6 +217,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q7. Cursor CLI adapter
 
+- [x] Completion: the inspected CLI surface is truthfully registered as continuation-only; provider-live evidence remains in Q12.
+
 - Blocked by: Q1-Q3. Blocks: Q9, Q10, Q12.
 - Scope:
   - Inspect current `cursor-agent` stream-json tool events for a native/custom question path.
@@ -223,6 +239,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q8. Future, local, and custom harness registration
 
+- [x] Completion: unknown and future harnesses fail closed to unsupported without renderer changes.
+
 - Blocked by: Q1-Q3. Blocks: Q12.
 - Scope:
   - Document and test the adapter interface a future harness implements.
@@ -241,6 +259,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Unknown/local/custom capabilities are visible and safe.
 
 ### Q9. Universal question dialog
+
+- [x] Completion: component, accessibility, focus, and authenticated injected-live verification passed.
 
 - Blocked by: Q2, Q3, and one working adapter; Q4 recommended. Blocks: Q10-Q12.
 - Scope:
@@ -263,6 +283,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Closing/reopening never loses answers or submits accidentally.
 
 ### Q10. Answer-in-chat and transcript UX
+
+- [x] Completion: shared continuation, visible history, search, draft preservation, and terminal wording verification passed.
 
 - Blocked by: Q2, Q3, Q9. Blocks: Q11, Q12.
 - Scope:
@@ -288,6 +310,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ### Q11. Background-chat inbox, badges, and notifications
 
+- [ ] Completion: implementation and automated background-focus coverage pass; exact live notification navigation and multi-chat lifecycle proof remain.
+
 - Blocked by: Q1, Q9, Q10. Blocks: Q12.
 - Scope:
   - Reuse current needs-input desktop notification with shared request metadata.
@@ -308,6 +332,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - Multiple-chat counts remain correct through answer, cancel, stop, and reload.
 
 ### Q12. Automated and live provider matrix
+
+- [ ] Completion: automated matrix passes; credentialed provider-live stop, reload, and delivery rows remain.
 
 - Blocked by: Q4-Q11. Blocks: Q13.
 - Scope:
@@ -330,6 +356,8 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
   - No provider can leave the UI or run indefinitely deadlocked after user action.
 
 ### Q13. Final gate, docs, and rollout closure
+
+- [ ] Completion: blocked by Q11 and Q12 live evidence.
 
 - Blocked by: Q12. Blocks: feature exit.
 - Scope:

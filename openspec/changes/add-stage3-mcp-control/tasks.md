@@ -504,10 +504,15 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   drive real product stdio calls, expose bounded truth, restrict approvals and
   recovery to those fixtures, and clean pending/terminal children safely.
 - Live Claude-to-Codex target launch passed. The reverse real Claude target run
-  failed because the dev checkout lacked its bundled Claude binary/provider
-  stream. Full provider-session, active-dialog, keyboard/screen-reader,
-  session-grant, viewer-pixel, and platform rows remain open. Therefore
-  S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain unchecked.
+  initially failed because the dev checkout lacked its ignored bundled Claude
+  binary. The integration repair now prefers the pinned bundle and falls back
+  only in development to an executable Claude CLI from the shell PATH;
+  packaged resolution remains pinned and fail-closed. Verified
+  `Flapstack Dev s3fix` task `92ef9d73-2bb4-4b42-9bd9-fdc43fb25bc6`
+  successfully launched a real Claude child from a Codex initiating chat with
+  provider-reported usage. Full provider-session, active-dialog,
+  keyboard/screen-reader, session-grant, viewer-pixel, and platform rows remain
+  open. Therefore S3-F5-T3 and S3-F6-T1/T2/T3/T5/T4 remain unchecked.
 - Final focused MCP/management verification passes 54 tests across 11 files.
   Node 22 `npm run check` passes lint, formatting, TypeScript, 117 test files
   with 863 passed and 3 conditional skips, and the production build. The three

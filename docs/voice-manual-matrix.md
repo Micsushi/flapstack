@@ -36,10 +36,10 @@ Prompt injection and automatic read-aloud are removed behavior, not exit goals.
   as `Flapstack voice streaming works with committed and tentative text`; the
   sidecar emitted no tentative suffix for this short sample.
 - Strict OpenSpec validation passed for `complete-settings-reliability`.
-- The Node 22 full gate passed lint, formatting, and TypeScript, then reached 79
-  passing test files and 629 passing tests. It remains blocked by three unrelated
-  MCP tests: the base has `0016_glamorous_deathbird.sql`, while those tests expect
-  `0016_massive_ravenous.sql` and its append-only audit triggers.
+- The former three-test MCP migration mismatch is resolved on
+  `codex/stage3-integration`. The current Node 22 full gate passes lint,
+  formatting, TypeScript, tests, and the production build. This historical lane
+  blocker no longer blocks S3-F9; only the manual rows below remain open.
 - `npm run dev:verify` passed for this checkout and the `Flapstack Dev` profile;
   startup completed migrations and loaded the main window.
 - The arm64 `Flapstack Preview.app` package built successfully. Inspection and

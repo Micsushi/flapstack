@@ -8,6 +8,7 @@ import type {
   OrchestrationTaskOverviewDto,
 } from "../src/shared/agent-orchestration"
 import {
+  applyOrchestrationPermissionMode,
   ChatForkLineageLinks,
   formatOrchestrationCost,
   getLineageNavigation,
@@ -147,6 +148,16 @@ describe("orchestration task card", () => {
     expect(formatOrchestrationCost(0, 0, 0, "unknown")).toBeNull()
   })
 
+  it("creates and clears exact custom permission capabilities", () => {
+    const custom = applyOrchestrationPermissionMode(definition, "custom")
+    expect(custom.customPermissions).toMatchObject({
+      schemaVersion: 1,
+      projectWrite: false,
+      productMcpTier3: false,
+    })
+    expect(applyOrchestrationPermissionMode(custom, "read-only").customPermissions).toBeUndefined()
+  })
+
   it("resolves parent and child navigation without losing the initiating chat", () => {
     expect(getLineageNavigation(overview, lineage, "chat-parent")).toEqual({
       parentChatId: null,
@@ -180,6 +191,8 @@ describe("orchestration task card", () => {
     expect(container.textContent).toContain("1 active")
     expect(container.textContent).toContain("1 queued")
     expect(container.textContent).toContain("est. $0.13")
+    expect(container.textContent).toContain("agent-1")
+    expect(container.textContent).toContain("agent-2")
 
     const pause = container.querySelector<HTMLButtonElement>('[aria-label="Pause orchestration"]')
     expect(pause).not.toBeNull()

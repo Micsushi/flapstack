@@ -86,12 +86,20 @@ all functional actions through real product stdio children. Default-off,
 enable/connected truth, Codex and Claude `ping`/`describe`, two-way durable
 spawn lineage, approval/denial, stop/invalidation, audit filtering/paging,
 restart persistence, and isolated cleanup were observed. Claude-to-Codex
-launched a real Codex run successfully; Codex-to-Claude created honest lineage
-but the real Claude run failed because the dev checkout lacked its bundled
-Claude binary/provider stream. Computer Use was limited to accessibility/focus
-evidence for the background Review control under the shared UI lease. The full
-provider-session and visual matrix remains unchecked; S3-F5-T3 and S3-F6-T4
-are not complete.
+launched a real Codex run successfully. The initial Codex-to-Claude attempt
+created honest lineage but failed because that dev checkout lacked its ignored
+bundled Claude binary.
+
+2026-07-13 integration repair evidence: development Claude resolution now
+prefers the pinned bundle and otherwise uses an executable Claude CLI from the
+shell PATH; packaged builds remain pinned and fail closed. In verified
+`Flapstack Dev s3fix`, authenticated test-control MCP launched a real Claude
+child from a Codex initiating chat. Task
+`92ef9d73-2bb4-4b42-9bd9-fdc43fb25bc6` completed with 21 tokens and
+provider-reported usage; runtime logs recorded `source: path` and the global
+Claude binary. The binary/provider-stream blocker is resolved. S3-F5-T3 remains
+open because its complete approval, audit, renderer-state, navigation, and
+provider-session matrix has not all been observed on this candidate.
 
 2026-07-13 S3-F5 orchestration implementation evidence: migration 0022 and
 focused service, restart, concurrent-drain, budget/stop, lineage, permission,
@@ -116,6 +124,11 @@ release ledger covers 347 scenarios and 17 feature exits. Fresh and supported
 legacy migration coverage passes with security migration 0021 followed by
 orchestration migration 0022. Final integrated Dev, Preview, UI, provider, and
 cross-platform rows remain unchecked.
+
+2026-07-13 integration-fix gate: Node 22.23.1 `npm run check` passes 125 test
+files with 929 passed and 3 conditional skips plus lint, formatting,
+TypeScript, and production build. All 18 active OpenSpec changes strict-validate
+and the release ledger still covers 347 scenarios and 17 feature exits.
 
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
