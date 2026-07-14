@@ -31,13 +31,16 @@
 
 ### S4-F10-T3 — Add one-time pairing, device credentials, sessions, and revocation
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F10
 - Outcome: Each phone has a named revocable identity and replay-resistant session.
 - Scope: Device schema/migration; QR payload; short-lived single-use token; fingerprint confirmation; public-key registration; challenge/nonce auth; session expiry/rotation; device list/rename/revoke; connection termination; audit.
 - Out of scope: PWA screens and application controls.
 - Acceptance: Expired/reused/mismatched tokens fail; revoked device disconnects immediately; stolen session token cannot replay outside nonce/session rules.
 - Verification: `npm test -- mobile-pairing` with expiry, reuse, fingerprint mismatch, replay, rotation, concurrent pairing, revoke, and restart fixtures.
+- Automated evidence: Node 22 mobile-pairing passes 9/9; mobile-control contract, bridge, and shutdown regressions pass 23/23; Stage 3 migration-rebase passes 12/12. Full `npm run check` passes 170 files with 1323 tests passed and 3 skipped, including TypeScript, lint, formatting, and production build. Strict OpenSpec and idempotent Drizzle regeneration pass.
+- Migration evidence: canonical `0031_mobile_pairing_identity` is regenerated from `0030_extension_enablement_policy` on Stage 4 baseline `9491976`. Fresh, exact final Stage 3 `0023`, canonical Stage 4 `0030`, and representative pre-sync Stage 4 `0023`/`0030` profiles upgrade with seeded data preserved. Stage 3 `0023` and Stage 4 `0024`–`0030` remain unchanged.
+- Manual verification remaining: live listener, QR scan, browser/device, UI, real network, and packaged-app evidence stay intentionally open for S4-F10-T8.
 - Blocked by: S4-F10-T1, S4-F10-T2
 - Blocks: S4-F10-T4, S4-F10-T5, S4-F10-T6, S4-F10-T7, S4-F10-T8
 - Context: secure credential patterns, QR generation choice, audit storage, session grants.

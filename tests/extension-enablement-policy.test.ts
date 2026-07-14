@@ -401,17 +401,15 @@ describe("extension enablement policy", () => {
     },
   )
 
-  it("keeps the migration serialized as 0030 immediately after 0029", () => {
+  it("keeps 0030 serialized after 0029 and before mobile pairing 0031", () => {
     const journal = JSON.parse(readFileSync(join(migrations, "meta", "_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.slice(-2)).toEqual([
+    expect(journal.entries.slice(-3)).toEqual([
       expect.objectContaining({ idx: 29, tag: "0029_advanced_usage_contracts" }),
       expect.objectContaining({ idx: 30, tag: "0030_extension_enablement_policy" }),
+      expect.objectContaining({ idx: 31, tag: "0031_mobile_pairing_identity" }),
     ])
-    expect(journal.entries.some((entry) => entry.idx === 31 || entry.tag.startsWith("0031_"))).toBe(
-      false,
-    )
   })
 
   it("wires every supported native harness router to the policy run context", () => {

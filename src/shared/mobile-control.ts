@@ -222,6 +222,7 @@ const boundedText = (max: number = mobileControlLimits.stringBytes) =>
 const publicKeySchema = z.string().trim().min(32).max(8_192)
 const fingerprintSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const nonceSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/)
+const signatureSchema = z.string().regex(/^[A-Za-z0-9_-]{64,256}$/)
 
 export const mobileResourceKinds = [
   "project",
@@ -325,6 +326,41 @@ export const mobileSessionSchema = z
     if (value.absoluteExpiresAt - value.issuedAt > mobileControlLimits.sessionAbsoluteTtlMs)
       issue(context, ["absoluteExpiresAt"], "Absolute session TTL exceeds the contract limit.")
   })
+
+export const mobilePairingResultSchema = z
+  .object({
+    device: mobileDeviceRecordSchema,
+    challenge: mobileSessionChallengeSchema,
+  })
+  .strict()
+
+export const mobileChallengeProofSchema = z
+  .object({
+    sessionId: identifierSchema,
+    deviceId: identifierSchema,
+    challenge: nonceSchema,
+    signature: signatureSchema,
+  })
+  .strict()
+
+export const mobileSessionCredentialSchema = z
+  .object({
+    session: mobileSessionSchema,
+    sessionToken: nonceSchema,
+  })
+  .strict()
+
+export const mobileSessionProofSchema = z
+  .object({
+    sessionId: identifierSchema,
+    deviceId: identifierSchema,
+    sessionToken: nonceSchema,
+    nonce: nonceSchema,
+    issuedAt: timestampSchema,
+    rotation: z.number().int().nonnegative(),
+    signature: signatureSchema,
+  })
+  .strict()
 
 export const mobileRevocationSchema = z
   .object({
@@ -573,6 +609,12 @@ export const mobileCommandEnvelopeSchema = z
 
 export type MobileDeviceRecord = z.infer<typeof mobileDeviceRecordSchema>
 export type MobileSession = z.infer<typeof mobileSessionSchema>
+export type MobilePairingOffer = z.infer<typeof mobilePairingOfferSchema>
+export type MobilePairingRequest = z.infer<typeof mobilePairingRequestSchema>
+export type MobilePairingResult = z.infer<typeof mobilePairingResultSchema>
+export type MobileChallengeProof = z.infer<typeof mobileChallengeProofSchema>
+export type MobileSessionCredential = z.infer<typeof mobileSessionCredentialSchema>
+export type MobileSessionProof = z.infer<typeof mobileSessionProofSchema>
 export type MobileAuthorityGrant = z.infer<typeof mobileAuthorityGrantSchema>
 export type MobileSnapshotEnvelope = z.infer<typeof mobileSnapshotEnvelopeSchema>
 export type MobileEventEnvelope = z.infer<typeof mobileEventEnvelopeSchema>
@@ -613,6 +655,16 @@ export function parseMobileSnapshotEnvelope(
   input: unknown,
 ): MobileContractResult<MobileSnapshotEnvelope> {
   return parseEnvelope(input, mobileSnapshotEnvelopeSchema, mobileControlLimits.snapshotBytes)
+}
+
+export function encodeMobilePairingQrPayload(offer: MobilePairingOffer): string {
+  return JSON.stringify(mobilePairingOfferSchema.parse(offer))
+}
+
+export function parseMobilePairingQrPayload(input: string): MobilePairingOffer {
+  if (new TextEncoder().encode(input).byteLength > 4_096)
+    throw new Error("Pairing QR payload is oversized.")
+  return mobilePairingOfferSchema.parse(JSON.parse(input) as unknown)
 }
 
 export class MobileReplayWindow {
