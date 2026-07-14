@@ -20,7 +20,11 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { cn } from "../../lib/utils"
 import { trpc } from "../../lib/trpc"
-import type { ProjectPlanSnapshot } from "../../../shared/plan-sources"
+import type {
+  PlanCandidate,
+  PlanSourceSnapshot,
+  ProjectPlanSnapshot,
+} from "../../../shared/plan-sources"
 import {
   buildPlanOpenTarget,
   buildPlanViewModel,
@@ -32,6 +36,7 @@ import {
   type PlanWorkStatus,
 } from "../../../shared/plan-view"
 import { selectedProjectAtom } from "../agents/atoms"
+import { PlanPromotionDialog } from "./plan-promotion-dialog"
 
 const INITIAL_STATE: PlanViewState = { selectedSourceId: null, query: "", status: "all" }
 const STATUS_FILTERS: Array<{ value: PlanStatusFilter; label: string }> = [
@@ -48,6 +53,10 @@ export function PlanView() {
   const [liveSnapshot, setLiveSnapshot] = useState<ProjectPlanSnapshot | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [promotionTarget, setPromotionTarget] = useState<{
+    source: PlanSourceSnapshot
+    candidate: PlanCandidate
+  } | null>(null)
   const refreshQuery = trpc.planSources.refresh.useQuery(
     { projectId },
     { enabled: Boolean(projectId), refetchOnWindowFocus: false },
@@ -61,6 +70,7 @@ export function PlanView() {
     setLiveSnapshot(null)
     setWatchError(null)
     setCollapsedIds(new Set())
+    setPromotionTarget(null)
   }, [projectId])
 
   useEffect(() => {
@@ -367,6 +377,11 @@ export function PlanView() {
                         collapsedIds={collapsedIds}
                         onToggleCollapsed={toggleCollapsed}
                         onOpenSource={openSource}
+                        onPromote={
+                          source.status === "current"
+                            ? (candidate) => setPromotionTarget({ source, candidate })
+                            : undefined
+                        }
                       />
                     ))}
                   </ul>
@@ -391,6 +406,14 @@ export function PlanView() {
           </div>
         )}
       </div>
+      {promotionTarget && (
+        <PlanPromotionDialog
+          sourceProjectId={projectId}
+          source={promotionTarget.source}
+          candidate={promotionTarget.candidate}
+          onClose={() => setPromotionTarget(null)}
+        />
+      )}
     </main>
   )
 }
@@ -401,12 +424,14 @@ function PlanTreeNode({
   collapsedIds,
   onToggleCollapsed,
   onOpenSource,
+  onPromote,
 }: {
   node: PlanViewNode
   level: number
   collapsedIds: ReadonlySet<string>
   onToggleCollapsed: (candidateId: string) => void
   onOpenSource: (relativePath: string, line?: number) => void
+  onPromote?: (candidate: PlanCandidate) => void
 }) {
   const hasChildren = node.children.length > 0
   const isCollapsed = collapsedIds.has(node.candidate.id)
@@ -511,10 +536,11 @@ function PlanTreeNode({
               {isPromotableCandidate && (
                 <button
                   type="button"
-                  disabled
-                  className="cursor-not-allowed rounded border border-border px-1.5 py-0.5 opacity-55"
-                  aria-label={`Promote ${node.candidate.title} to task. Unavailable until task promotion is implemented.`}
-                  title="Task promotion is not part of this read-only view"
+                  disabled={!onPromote}
+                  className="rounded border border-border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-55"
+                  aria-label={`Promote ${node.candidate.title} to task`}
+                  title={onPromote ? "Review task and chat preview" : "Refresh this source first"}
+                  onClick={() => onPromote?.(node.candidate)}
                 >
                   Promote to task
                 </button>
@@ -533,6 +559,7 @@ function PlanTreeNode({
               collapsedIds={collapsedIds}
               onToggleCollapsed={onToggleCollapsed}
               onOpenSource={onOpenSource}
+              onPromote={onPromote}
             />
           ))}
         </ul>

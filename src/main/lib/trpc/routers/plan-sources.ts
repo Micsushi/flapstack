@@ -1,7 +1,12 @@
+import { TRPCError } from "@trpc/server"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
 import { z } from "zod"
 import type { PlanSourceRefreshEvent } from "../../../../shared/plan-sources"
+import {
+  planTaskPromotionConfirmInputSchema,
+  planTaskPromotionPreviewInputSchema,
+} from "../../../../shared/plan-task-promotion"
 import { getDatabase, planSourceRegistrations, projects } from "../../db"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import {
@@ -10,6 +15,11 @@ import {
   validateMarkdownPlanSource,
   type ProjectPlanSourceConfig,
 } from "../../plan-sources"
+import {
+  buildPlanTaskPromotionPreview,
+  PlanTaskPromotionError,
+  promotePlanCandidate,
+} from "../../plan-task-promotion"
 import { publicProcedure, router } from "../index"
 
 const sourcePathSchema = z.string().trim().min(1).max(4096)
@@ -29,6 +39,29 @@ export function getProjectPlanSourceConfig(projectId: string): ProjectPlanSource
     rootPath: root.canonicalPath,
     markdownPaths: registrations.map((registration) => registration.relativePath),
   }
+}
+
+function promotionError(error: unknown): never {
+  if (!(error instanceof PlanTaskPromotionError)) throw error
+  throw new TRPCError({
+    code:
+      error.code === "not-found"
+        ? "NOT_FOUND"
+        : error.code === "invalid-candidate"
+          ? "BAD_REQUEST"
+          : "CONFLICT",
+    message: error.message,
+  })
+}
+
+async function readPromotionSnapshot(reference: {
+  sourceProjectId: string
+  sourceId: string
+  sourceFingerprint: string
+}) {
+  return readProjectPlanSources(getProjectPlanSourceConfig(reference.sourceProjectId), {
+    expectedFingerprints: { [reference.sourceId]: reference.sourceFingerprint },
+  })
 }
 
 export const planSourcesRouter = router({
@@ -92,6 +125,28 @@ export const planSourcesRouter = router({
         expectedFingerprints: input.expectedFingerprints,
       }),
     ),
+
+  previewPromotion: publicProcedure
+    .input(planTaskPromotionPreviewInputSchema)
+    .query(async ({ input }) => {
+      try {
+        const snapshot = await readPromotionSnapshot(input.reference)
+        return buildPlanTaskPromotionPreview(getDatabase(), snapshot, input)
+      } catch (error) {
+        promotionError(error)
+      }
+    }),
+
+  promoteCandidate: publicProcedure
+    .input(planTaskPromotionConfirmInputSchema)
+    .mutation(async ({ input }) => {
+      try {
+        const snapshot = await readPromotionSnapshot(input.reference)
+        return promotePlanCandidate(getDatabase(), snapshot, input)
+      } catch (error) {
+        promotionError(error)
+      }
+    }),
 
   watch: publicProcedure
     .input(z.object({ projectId: z.string().min(1) }))
