@@ -67,28 +67,15 @@ the user manually refreshes usage data.
 
 ### Requirement: Provider Coverage
 
-The system SHALL support usage tracking for Codex/OpenAI, Claude/Anthropic,
-Cursor, OpenRouter, and NanoGPT, including general account usage where provider
-APIs and credentials allow it, not only usage from Flapstack-launched runs.
-
-#### Scenario: Codex/OpenAI usage is recorded
-
-- **WHEN** OpenAI/Codex credentials allow usage or cost API access
-- **THEN** usage and cost data are stored with provider/account tags
-- **AND** raw payloads are preserved for drift debugging
+The system SHALL support Stage 3 usage tracking for Codex, Claude, Cursor,
+OpenRouter, and NanoGPT through personal quota, local provider, and run-level
+sources. Organization Admin usage/cost APIs are deferred beyond Stage 3.
 
 #### Scenario: Personal Codex quota is recorded
 
 - **WHEN** a local Codex OAuth session exposes subscription rate-limit windows
 - **THEN** each quota window is stored as a distinct subscription metric
-- **AND** organization API-spend samples remain distinct when both sources exist
-
-#### Scenario: Claude/Anthropic usage is recorded
-
-- **WHEN** Anthropic credentials allow Admin Usage and Cost API access
-- **THEN** workspace/account usage and cost data are stored
-- **AND** limited local-credential paths are labeled honestly when admin API
-  access is unavailable
+- **AND** run-level API-spend samples remain distinct when both sources exist
 
 #### Scenario: Personal Claude quota is recorded
 

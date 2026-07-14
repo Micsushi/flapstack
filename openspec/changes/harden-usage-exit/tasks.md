@@ -92,8 +92,8 @@ authority for Usage exit work.
   and NanoGPT sources with low-value credentials; verify exact/estimated/unknown
   cost, account/provenance tags, generation reconciliation, filters, show-all
   paging, charts, alerts, refresh failure, and no-zero gaps.
-- Out of scope: Require unavailable admin APIs or infer complete account history
-  from run-only providers.
+- Out of scope: Validate deferred organization Admin APIs or infer complete
+  account history from run-only providers.
 - Acceptance:
   - UI values and states match SQLite and sanitized provider evidence.
   - Provider limitations are visible and absent APIs do not become zero usage.

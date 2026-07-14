@@ -9,8 +9,8 @@ suite alone cannot prove closed-app behavior or provider truthfulness.
 - Goals: deterministic process ownership, durable samples, safe secrets,
   bounded provider failures, strong cost provenance, visible limitations, and a
   reproducible exit matrix.
-- Non-goals: invent provider APIs, require paid/admin credentials the tester
-  cannot obtain, replace the existing Usage architecture, or fabricate
+- Non-goals: invent provider APIs, validate deferred organization Admin usage
+  credentials, replace the existing Usage architecture, or fabricate
   cross-platform parity.
 
 ## Decisions

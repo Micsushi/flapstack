@@ -79,8 +79,6 @@ Run `npm run check:usage-exit-matrix` to prove every migrated row and every
 | U3-04  | Required macOS Electron; T3                     | SDL           | no-TTY probe writes via stdin, reads, and deletes one unique Keychain item; secret absent from argv and output                                  | blocked by S3-F10-T4; never touch real Flapstack/provider entries | `macos/keychain-probe/`                                          |
 | U4-01  | Required; T2                                    | DUP, TUE      | WAL/busy retry succeeds after transient locks; exhausted lock/corruption rejects and surfaces an error                                          | disposable SQLite and forced faults                               | `automated/sqlite-faults.txt`                                    |
 | U5-01  | Required; T2 then T4                            | DUC, TUE      | tests prove persisted generation backoff/terminal/reset; verified dev gap refresh shows historical recovery and limited-provider gap text       | disposable profile; no invented history                           | `automated/reconciliation.txt`, `dev/gap-refresh/`               |
-| U6-01  | Conditional OpenAI Admin; T4                    | DUP, TUE      | live organization usage/cost matches sanitized API totals and opaque account tag                                                                | low-value Admin key; no key capture                               | `providers/openai-admin/`                                        |
-| U6-02  | Conditional Anthropic Admin; T4                 | DUP, TUE      | live cents-to-USD and two-page cursor totals match Console/API evidence exactly once                                                            | low-value Admin key; sanitized pages                              | `providers/anthropic-admin/`                                     |
 | U6-03  | Conditional personal OAuth; T4                  | DUP, TUE      | Codex and Claude quota windows remain distinct with opaque account tags and private-source labels                                               | existing test login; no OAuth token capture                       | `providers/personal-oauth/`                                      |
 | U7-01  | Conditional Cursor login; T4                    | DUC, TUE      | default-account card/state agree; `internal` remains provenance, not account identity                                                           | disposable Cursor profile if possible                             | `providers/cursor-internal/`                                     |
 | U7-02  | Conditional Cursor login/token; T4              | DUP, TUE      | plan, grants, balance, requests/models, refresh, and manual fallback match sanitized source evidence                                            | never expose local Cursor token                                   | `providers/cursor-sources/`                                      |
@@ -131,8 +129,8 @@ macOS no-TTY Keychain write/read/delete probe and a packaged LaunchAgent
 lifecycle smoke, but it did not prove a credentialed closed-app provider sample
 or the Windows/Linux secret stores. Those rows and locked-UI credential rows
 remain blocked rather than inferred. Windows and Linux remain UNAVAILABLE until
-observed on those targets. Paid/admin provider rows remain conditional on
-credentials actually available to the tester.
+observed on those targets. OpenAI and Anthropic Admin usage validation is
+deferred to `docs/future-release-considerations.md` and is not a Stage 3 row.
 
 ## 2026-07-13 safe headless and package evidence
 
@@ -140,7 +138,7 @@ credentials actually available to the tester.
   `/Users/michaelshi/.codex/worktrees/e899/flapstack`. The final commit is
   reported at handoff after verification.
 - Automated: 107 focused Usage/credential tests passed. Matrix coverage passed
-  with 31 rows and 14 scenarios. Production build passed. The daemon smoke
+  with 29 rows and 14 scenarios. Production build passed. The daemon smoke
   proved singleton ownership, duplicate rejection, forced-crash stale-lock
   recovery, restart, clean stop, cleared PID, and temporary-profile cleanup.
   Node 22 `npm run check` passed with 102 test files, 745 tests passed, and 3
@@ -165,7 +163,7 @@ credentials actually available to the tester.
 - Still open: visual dashboard/history/alerts/filter/paging/fault evidence on
   the locked Mac; persisted Keychain credential plus real LaunchAgent
   closed-app cadence and Discord delivery; packaged Preview main initialization
-  and migration; credentialed Cursor/OpenRouter/NanoGPT and admin-provider rows;
+  and migration; credentialed Cursor/OpenRouter/NanoGPT rows;
   Windows/Linux service, secret-store, and package evidence; final commit-bound
   rerun.
 
@@ -210,8 +208,8 @@ Discord, Windows, or Linux claim is added; S3-F14-T3 through S3-F14-T5 stay open
 - Final headless gates: Node 22 `npm run check` passed lint, Prettier,
   TypeScript, 125 test files with 931 passed and 3 credential-conditional
   skipped, and production build. Daemon smoke, packaged binary/sidecar smoke,
-  packaged LaunchAgent lifecycle smoke, the 31-row/14-scenario matrix check,
+  packaged LaunchAgent lifecycle smoke, the 29-row/14-scenario matrix check,
   strict OpenSpec validation, and `git diff --check` passed.
-- Conditional truth: Cursor login, OpenRouter/NanoGPT keys, admin-provider keys,
-  and a disposable Discord webhook were unavailable. No paid run or real
+- Conditional truth: Cursor login, OpenRouter/NanoGPT keys and a disposable
+  Discord webhook were unavailable. No paid run or real
   webhook send occurred. Windows/Linux U3-03 remains UNAVAILABLE.

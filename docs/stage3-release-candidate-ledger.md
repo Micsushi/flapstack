@@ -4,6 +4,10 @@ Status: integrated Stage 3 automation verified. This ledger does not claim
 Stage 3 release completion while real-provider, complete live UI, credential,
 package, or platform rows remain open.
 
+OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
+notarization are deferred to `docs/future-release-considerations.md`. Neither is
+a Stage 3 acceptance row.
+
 ## Candidate header
 
 - Candidate source: the exact commit containing this ledger, resolved with
@@ -30,7 +34,7 @@ different SHA is context only.
 | `S3-M01`-`S3-M12`, `M-01`-`M-20`                    | production MCP, approvals, audit, spawn, orchestration, restart            | full-feature matrix and headless audit |
 | `S3-S01`-`S3-S07`                                   | Settings, credentials, extensions, permissions, copy/search                | full-feature and credential matrices   |
 | `S3-V01`-`S3-V02`                                   | Voice automation and manual macOS/Windows behavior                         | Voice matrix                           |
-| `S3-U01`, `U1-01`-`U11-05`                          | Usage, daemon, provider, alert, dashboard                                  | Usage exit matrix                      |
+| `S3-U01`, Stage 3 rows in `U1-01`-`U11-05`          | Usage, daemon, provider, alert, dashboard                                  | Usage exit matrix                      |
 | `S3-H01`, `D0-01`-`D5-02`, `E1-01`-`E7-03`          | Cursor, OpenRouter, NanoGPT                                                | provider closeout matrix               |
 | `S3-R01`, `R-FIXTURE`, `R-LIVE`, `R-UI`, `R-RELOAD` | reasoning classification, controls, persistence, live providers            | reasoning capability matrix            |
 | `S3-C01`, `S3-A01`-`S3-A07`                         | Stage 1/2 carryover and supporting active changes                          | full gate plus focused live rows       |
@@ -92,7 +96,7 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 
 | Gate                                   | Result  | Evidence or blocker                                                                                                         |
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Release-ledger coverage                | PASS    | Node 22.23.1; 18 active changes, 347 normative scenarios, 17 feature exits                                                  |
+| Release-ledger coverage                | PASS    | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
 | Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
 | Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
@@ -251,9 +255,9 @@ this is not credentialed provider-live proof.
 
 The unsigned macOS arm64 Preview directory package built successfully. Binary
 inspection and smoke passed for Electron 39.8.10, Claude 2.1.207, Codex 0.144.1,
-Whisper, Parakeet, and better-sqlite3. No package acceptance row is promoted:
-this host has no Developer ID signing identity, and no packaged functional run
-was claimed.
+Whisper, Parakeet, and better-sqlite3. No package acceptance row was promoted by
+this historical run because no packaged functional run was claimed. The absent
+Developer ID identity is deferred public-distribution work, not a Stage 3 gate.
 
 No Usage, Voice, reasoning-provider, Windows, Linux, Keychain, microphone, or
 credentialed provider row is promoted by this addendum. Q12/Q13, `AQ-F4-T2`,
@@ -271,10 +275,10 @@ as completed implementation coverage.
 
 Final continuation gates: Node 22 `npm run check` passed 125 files, 932 tests,
 3 credential-conditional skips, lint, formatting, TypeScript, and production
-build. Ten affected strict OpenSpec changes, the 18-change/350-scenario/17-exit
-ledger, the 31-row/14-scenario Usage matrix, and daemon smoke pass. The unsigned
+build. Ten affected strict OpenSpec changes, the release ledger, the
+29-row/14-scenario Usage matrix, and daemon smoke pass. The unsigned
 macOS arm64 Preview build, binary inspection, and bundled runtime smoke pass;
-zero signing identities remain an explicit release blocker.
+zero signing identities remain a post-Stage-3 public-distribution consideration.
 
 Each run uses unique dev instance/profile, port, database, service label, test
 chat/run IDs, provider config, and temporary sidecar path. Cleanup must prove:

@@ -75,15 +75,12 @@ OpenCode-backed harness path in the same Stage 2 harness-adapter push.
   `cursorAuth/accessToken`); sources 2 (admin API) and 3 (CLI) are stubbed slots.
 - **Cursor harness**: stream-json child-process adapter modeled on `claude.ts`
   (NOT ACP); teal chip; permission mapping degrades honestly like Codex.
-- **Codex/OpenAI usage**: track general account usage where current OpenAI usage
-  and cost APIs plus credentials allow it, not only Flapstack runs. Preserve
-  onWatch Codex profile/account behavior where still useful. When a local Codex
-  OAuth session exists, also record personal subscription quota windows and
-  identify each window separately from API-spend metrics.
-- **Claude/Anthropic usage**: track general workspace/account usage through the
-  Anthropic Admin Usage and Cost APIs where credentials allow it. If only Claude
-  Code/local credential data is available, record personal subscription quota
-  windows from that local session and label the private-source limitation honestly.
+- **Codex/OpenAI usage**: Stage 3 records personal subscription quota windows
+  from a local Codex OAuth session and identifies each window separately from
+  run-level spend metrics. Organization Admin usage/cost validation is deferred.
+- **Claude/Anthropic usage**: Stage 3 records personal subscription quota
+  windows from the local Claude Code session and labels the private-source
+  limitation honestly. Organization Admin usage/cost validation is deferred.
 - **Harness-engine decision**: OpenCode sidecar first. OpenCode already has an
   agent session runner, model/tool continuation, OpenRouter provider support,
   generic OpenAI-compatible provider support for NanoGPT, permission rules, and

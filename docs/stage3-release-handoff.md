@@ -3,6 +3,10 @@
 Status: integrated implementation and automation are green; Stage 3 release
 remains blocked on recorded live UI, provider, package, and platform rows.
 
+OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
+notarization are explicitly deferred to `docs/future-release-considerations.md`
+and do not block Stage 3.
+
 ## Current candidate
 
 - Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
@@ -202,7 +206,8 @@ remain open for their stated provider, visual, platform, or prerequisite gates.
 Final headless gates pass on Node 22: 125 test files, 932 passed, 3 skipped,
 lint, formatting, TypeScript, production build, all ten affected strict OpenSpec
 changes, release-ledger and Usage-matrix coverage, and daemon smoke. Unsigned
-arm64 Preview build/inspection/runtime smoke pass; signing remains unavailable.
+arm64 Preview build/inspection/runtime smoke pass; public-distribution signing
+is deferred beyond Stage 3.
 
 The later `ee39-ux` live attempt passed exact-checkout Dev verification but was
 blocked by locked macOS before Computer Use could begin. Its shared UI lease was
