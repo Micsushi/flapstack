@@ -196,6 +196,70 @@ describe("durable agent task orchestration", () => {
     expect(service.listCancellationRequests()).toEqual([])
   })
 
+  it("does not let orchestration stop clobber a newer conversation run", () => {
+    const service = createAgentOrchestrationService(path)
+    const created = service.create(createInput({ count: 2, maxParallelAgents: 1 }))
+    const first = created.agents.find((agent) => agent.status === "active")!
+    sqlite
+      .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
+      .run(Date.now(), first.runId)
+    service.tickAll()
+    const firstSubChat = sqlite
+      .prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?")
+      .get(first.runId) as { sub_chat_id: string }
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, sub_chat_id, harness, permission_mode, status, started_at
+        ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode, 'running', ?
+          FROM agent_runs WHERE id = ?`,
+      )
+      .run(Date.now() + 1, first.runId)
+    sqlite
+      .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?")
+      .run(firstSubChat.sub_chat_id)
+
+    service.control(created.orchestration.taskId, "stop")
+
+    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'newer-run'").get()).toEqual({
+      status: "running",
+    })
+    expect(
+      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = ?").get(firstSubChat.sub_chat_id),
+    ).toEqual({ run_status: "running" })
+  })
+
+  it("does not launch stale queued work after an orchestration is terminal", () => {
+    const service = createAgentOrchestrationService(path)
+    const created = service.create(createInput({ count: 1 }))
+    service.control(created.orchestration.taskId, "stop")
+    const staleAgent = "stale-after-stop"
+    const now = Date.now()
+    sqlite
+      .prepare(
+        `INSERT INTO orchestration_agents (
+          id, task_id, ancestor_agent_ids, depth, definition, dependency_agent_ids,
+          status, queued_at, updated_at
+        ) VALUES (?, ?, '[]', 1, ?, '[]', 'queued', ?, ?)`,
+      )
+      .run(
+        staleAgent,
+        created.orchestration.taskId,
+        JSON.stringify(createInput({ count: 1 }).agents[0]),
+        now,
+        now,
+      )
+
+    const overview = service.getOverview(created.orchestration.taskId)!
+
+    expect(overview.orchestration.status).toBe("stopped")
+    expect(overview.agents.find((agent) => agent.id === staleAgent)).toMatchObject({
+      status: "stopped",
+      chatId: null,
+      runId: null,
+    })
+  })
+
   it("persists provider message usage into durable run samples", () => {
     const service = createAgentOrchestrationService(path)
     const created = service.create(createInput({ count: 1 }))

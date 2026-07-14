@@ -148,6 +148,14 @@ feature-local closeout gates.
   Node 22 focused attacks pass 60/60; the full gate passes 855 tests with 3
   conditional skips plus lint, format, TypeScript, and production build. All 18
   active changes and the 323-scenario ledger validate.
+- 2026-07-13 correctness/data pre-completion note: the delegated headless review
+  repaired four defects: the out-of-order 0010 Voice migration skipped by
+  post-0009 profiles; orchestration stop/replacement overwriting a newer run's
+  conversation status; interrupted-run recovery overwriting a newer queued
+  owner; and non-atomic orchestration add/progress/control paths that could race
+  terminal state. Migration, run-launch, orchestration, Usage store, scheduler,
+  and daemon lifecycle regressions pass under Node 22. T4 remains unchecked and
+  blocked by T2/T3; no UI, provider-live, package, or platform row is promoted.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

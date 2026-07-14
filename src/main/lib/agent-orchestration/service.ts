@@ -127,7 +127,11 @@ export function createAgentOrchestrationService(databasePath: string) {
       if (!parsed.success) invalid(parsed.error.issues[0]?.message)
       const db = open()
       try {
-        const result = addAgent(db, parsed.data)
+        let result!: OrchestrationAgentDto
+        const add = db.transaction(() => {
+          result = addAgent(db, parsed.data)
+        })
+        add.immediate()
         safeTickTask(db, parsed.data.taskId)
         return result
       } finally {
@@ -197,12 +201,7 @@ export function createAgentOrchestrationService(databasePath: string) {
                completed_at = ?, updated_at = ? WHERE id = ? AND task_id = ?`,
             ).run(now, now, agentId, taskId)
             if (source.run_id) {
-              db.prepare(
-                "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ? AND status IN ('pending','running')",
-              ).run(now, source.run_id)
-              db.prepare(
-                "UPDATE sub_chats SET run_status = 'cancelled', updated_at = ? WHERE id = (SELECT sub_chat_id FROM agent_runs WHERE id = ?)",
-              ).run(now, source.run_id)
+              cancelRunIfActive(db, String(source.run_id), now)
             }
           }
           result = addAgent(
@@ -229,32 +228,34 @@ export function createAgentOrchestrationService(databasePath: string) {
     control(taskId: string, action: "pause" | "resume" | "stop"): OrchestrationTaskOverviewDto {
       const db = open()
       try {
-        const orchestration = requireOrchestration(db, taskId)
-        const current = String(orchestration.status)
-        if (action === "pause") {
-          if (current !== "running" && current !== "queued") {
-            throw new AgentOrchestrationError("conflict", "Only active orchestration can pause.")
+        let shouldTick = false
+        const control = db.transaction(() => {
+          const orchestration = requireOrchestration(db, taskId)
+          const current = String(orchestration.status)
+          if (action === "pause") {
+            if (current !== "running" && current !== "queued") {
+              throw new AgentOrchestrationError("conflict", "Only active orchestration can pause.")
+            }
+            db.prepare(
+              "UPDATE task_orchestrations SET status = 'paused', updated_at = ? WHERE task_id = ?",
+            ).run(Date.now(), taskId)
+          } else if (action === "resume") {
+            if (current !== "paused") {
+              throw new AgentOrchestrationError("conflict", "Only paused orchestration can resume.")
+            }
+            const now = Date.now()
+            db.prepare(
+              `UPDATE task_orchestrations
+               SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
+               WHERE task_id = ?`,
+            ).run(now, now, taskId)
+            shouldTick = true
+          } else if (!["completed", "failed", "stopped"].includes(current)) {
+            stopTask(db, taskId, "manual-stop", "stopped")
           }
-          db.prepare(
-            "UPDATE task_orchestrations SET status = 'paused', updated_at = ? WHERE task_id = ?",
-          ).run(Date.now(), taskId)
-        } else if (action === "resume") {
-          if (current !== "paused") {
-            throw new AgentOrchestrationError("conflict", "Only paused orchestration can resume.")
-          }
-          const now = Date.now()
-          db.prepare(
-            `UPDATE task_orchestrations
-             SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
-             WHERE task_id = ?`,
-          ).run(now, now, taskId)
-          safeTickTask(db, taskId)
-        } else {
-          if (["completed", "failed", "stopped"].includes(current)) {
-            return requireOverview(db, taskId)
-          }
-          stopTask(db, taskId, "manual-stop", "stopped")
-        }
+        })
+        control.immediate()
+        if (shouldTick) safeTickTask(db, taskId)
         return requireOverview(db, taskId)
       } finally {
         db.close()
@@ -266,7 +267,8 @@ export function createAgentOrchestrationService(databasePath: string) {
       if (!parsed.success) invalid(parsed.error.issues[0]?.message)
       const db = open()
       try {
-        reportProgress(db, parsed.data)
+        const report = db.transaction(() => reportProgress(db, parsed.data))
+        report.immediate()
         safeTickTask(db, parsed.data.taskId)
         return requireOverview(db, parsed.data.taskId)
       } finally {
@@ -713,6 +715,15 @@ function tickTask(db: Sqlite, taskId: string): void {
     reconcileRunOutcomes(db, taskId)
     failUnrecoverableDependencies(db, taskId)
     orchestration = requireOrchestration(db, taskId)
+    if (["completed", "failed", "stopped"].includes(String(orchestration.status))) {
+      stopTask(
+        db,
+        taskId,
+        String(orchestration.stop_reason ?? `orchestration-${orchestration.status}`),
+        orchestration.status as "completed" | "failed" | "stopped",
+      )
+      return
+    }
     const stop = stopDecision(db, orchestration)
     if (stop) {
       stopTask(db, taskId, stop.reason, stop.status)
@@ -756,7 +767,8 @@ function safeTickTask(db: Sqlite, taskId: string): void {
     tickTask(db, taskId)
   } catch (error) {
     if (!(error instanceof AgentOrchestrationError)) throw error
-    stopTask(db, taskId, `scheduler-${error.code}`, "failed")
+    const stop = db.transaction(() => stopTask(db, taskId, `scheduler-${error.code}`, "failed"))
+    stop.immediate()
   }
 }
 
@@ -1013,13 +1025,31 @@ function stopTask(
     .prepare("SELECT run_id FROM orchestration_agents WHERE task_id = ? AND run_id IS NOT NULL")
     .all(taskId) as Row[]
   for (const run of runs) {
-    db.prepare(
-      "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ? AND status IN ('pending','running')",
-    ).run(now, run.run_id)
-    db.prepare(
-      "UPDATE sub_chats SET run_status = 'cancelled', updated_at = ? WHERE id = (SELECT sub_chat_id FROM agent_runs WHERE id = ?)",
-    ).run(now, run.run_id)
+    cancelRunIfActive(db, String(run.run_id), now)
   }
+}
+
+/** Cancel one owned run without letting an old orchestration overwrite a newer
+ * pending/running owner of the same conversation. */
+function cancelRunIfActive(db: Sqlite, runId: string, now: number): boolean {
+  const run = db.prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
+    Row | undefined
+  if (!run?.sub_chat_id) return false
+  const cancelled = db
+    .prepare(
+      "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ? AND status IN ('pending','running')",
+    )
+    .run(now, runId)
+  if (cancelled.changes !== 1) return false
+  db.prepare(
+    `UPDATE sub_chats SET run_status = COALESCE((
+       SELECT status FROM agent_runs
+       WHERE sub_chat_id = ? AND id <> ? AND status IN ('pending','running')
+       ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
+       LIMIT 1
+     ), 'cancelled'), updated_at = ? WHERE id = ?`,
+  ).run(run.sub_chat_id, runId, now, run.sub_chat_id)
+  return true
 }
 
 function dependenciesCompleted(db: Sqlite, taskId: string, dependencies: string[]): boolean {

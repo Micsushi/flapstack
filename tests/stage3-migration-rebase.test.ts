@@ -58,6 +58,37 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
+  it("repairs profiles frozen after 0009 despite the older 0010 timestamp", () => {
+    const { sqlite, directory } = database("post-0009")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 9),
+      })
+      expect(tableNames(sqlite)).not.toContain("voice_artifacts")
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(columns(sqlite, "voice_artifacts")).toEqual(
+        expect.arrayContaining([
+          "duration_ms",
+          "model_id",
+          "origin_kind",
+          "origin_id",
+          "origin_label",
+        ]),
+      )
+      const voiceEntry = migrationEntry("0010_voice_artifacts")
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+          .get(voiceEntry.when),
+      ).toEqual({ count: 1 })
+    } finally {
+      sqlite.close()
+    }
+  })
+
   it.each([
     { name: "pre-0020", lastMigration: 19 },
     { name: "current-0020", lastMigration: 20 },
@@ -301,11 +332,15 @@ function expectCanonicalInitialPromptMigration(sqlite: Database.Database): void 
 }
 
 function initialPromptMigrationEntry(): { tag: string; when: number } {
+  return migrationEntry("0020_silky_sphinx")
+}
+
+function migrationEntry(tag: string): { tag: string; when: number } {
   const journal = JSON.parse(
     readFileSync(join(sourceMigrations, "meta", "_journal.json"), "utf8"),
   ) as { entries: Array<{ tag: string; when: number }> }
-  const entry = journal.entries.find(({ tag }) => tag === "0020_silky_sphinx")
-  if (!entry) throw new Error("Missing 0020 migration metadata")
+  const entry = journal.entries.find((candidate) => candidate.tag === tag)
+  if (!entry) throw new Error(`Missing ${tag} migration metadata`)
   return entry
 }
 

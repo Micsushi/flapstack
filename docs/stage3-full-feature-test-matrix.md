@@ -383,6 +383,15 @@ promote them.
       stage routers, test matrices, and handoff all describe the same shipped
       behavior and remaining limitations.
 
+2026-07-13 correctness/data pre-completion review evidence: headless review
+repaired the skipped out-of-order 0010 Voice migration, stale run-status writes
+from orchestration stop and startup recovery, and orchestration mutation races
+against terminal task state. Focused Node 22 migration, run-launch,
+orchestration, Usage store/scheduler, and daemon lifecycle suites pass. S3-X05
+stays unchecked because this is pre-completion repair evidence and the full
+independent review sequence, live rows, package rows, and platform rows remain
+open.
+
 ### S3-F17 safe closeout evidence — 2026-07-13 PDT
 
 - Candidate: isolated `cf53` worktree from integration baseline
