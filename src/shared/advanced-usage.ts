@@ -170,6 +170,103 @@ export const usageRollupQuerySchema = z
     }
   })
 
+export const usageInsightMetrics = ["cost-usd-micros", "total-tokens", "request-count"] as const
+export const usageInsightMetricSchema = z.enum(usageInsightMetrics)
+
+export const usageInsightUnits = ["usd-micros", "tokens", "requests"] as const
+export const usageInsightUnitSchema = z.enum(usageInsightUnits)
+
+export const usageInsightResetWindowSchema = z
+  .object({
+    startMs: timestampSchema,
+    endMs: timestampSchema,
+    source: z.enum(["provider", "explicit"]),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.endMs <= value.startMs) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endMs"],
+        message: "Insight reset end must be later than its start.",
+      })
+    }
+  })
+
+export const usageInsightCapacitySchema = z
+  .object({
+    value: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+    unit: usageInsightUnitSchema,
+    source: z.enum(["provider-quota", "explicit"]),
+    resetWindow: usageInsightResetWindowSchema.nullable().optional(),
+  })
+  .strict()
+
+export const usageInsightQuerySchema = z
+  .object({
+    rollup: usageRollupQuerySchema,
+    metric: usageInsightMetricSchema.default("cost-usd-micros"),
+    nowMs: timestampSchema.optional(),
+    lookbackMs: z
+      .number()
+      .int()
+      .positive()
+      .max(366 * 24 * 60 * 60 * 1_000)
+      .default(30 * 24 * 60 * 60 * 1_000),
+    forecastHorizonMs: z
+      .number()
+      .int()
+      .positive()
+      .max(366 * 24 * 60 * 60 * 1_000)
+      .default(7 * 24 * 60 * 60 * 1_000),
+    capacity: usageInsightCapacitySchema.nullable().optional(),
+    coverage: z
+      .object({
+        minSamples: z.number().int().min(2).max(100).default(4),
+        minBuckets: z.number().int().min(2).max(100).default(3),
+        minRatio: z.number().min(0.05).max(1).default(0.5),
+      })
+      .strict()
+      .default({}),
+    anomaly: z
+      .object({
+        minBaselineBuckets: z.number().int().min(3).max(100).default(3),
+        spikeMultiplier: z.number().min(1.1).max(100).default(3),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.rollup.bucket !== "none" || value.rollup.groupBy !== "none") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rollup"],
+        message: "Insight queries own bucketing and do not accept grouped rollups.",
+      })
+    }
+    if (value.rollup.cursor) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rollup", "cursor"],
+        message: "Insight queries do not accept rollup cursors.",
+      })
+    }
+    if (value.capacity && value.capacity.unit !== metricUnit(value.metric)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capacity", "unit"],
+        message: "Insight capacity unit must match the selected metric.",
+      })
+    }
+  })
+
+function metricUnit(metric: z.infer<typeof usageInsightMetricSchema>) {
+  if (metric === "cost-usd-micros") return "usd-micros" as const
+  if (metric === "total-tokens") return "tokens" as const
+  return "requests" as const
+}
+
 export const usageBudgetScopeTypes = [
   "global",
   "provider-account",
@@ -287,6 +384,12 @@ export type UsageRollupBucketUnit = z.infer<typeof usageRollupBucketUnitSchema>
 export type UsageRollupQuality = z.infer<typeof usageRollupQualitySchema>
 export type UsageRollupQuery = z.infer<typeof usageRollupQuerySchema>
 export type UsageRollupQueryInput = z.input<typeof usageRollupQuerySchema>
+export type UsageInsightMetric = z.infer<typeof usageInsightMetricSchema>
+export type UsageInsightUnit = z.infer<typeof usageInsightUnitSchema>
+export type UsageInsightResetWindow = z.infer<typeof usageInsightResetWindowSchema>
+export type UsageInsightCapacity = z.infer<typeof usageInsightCapacitySchema>
+export type UsageInsightQuery = z.infer<typeof usageInsightQuerySchema>
+export type UsageInsightQueryInput = z.input<typeof usageInsightQuerySchema>
 export type UsageBudgetScope = z.infer<typeof usageBudgetScopeSchema>
 export type UsageBudgetThreshold = z.infer<typeof usageBudgetThresholdSchema>
 export type UsageBudgetAction = z.infer<typeof usageBudgetActionSchema>

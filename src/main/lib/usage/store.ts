@@ -117,7 +117,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       sourceClass: classification.sourceClass,
       dedupeStrategy: classification.dedupeStrategy,
       dedupeGroupKey: classification.dedupeGroupKey,
-      rawPayload: serializeRawPayload(normalizedSample.rawPayload),
+      rawPayload: serializeRawPayload(normalizedSample.rawPayload, normalizedSample.pricingVersion),
       dedupeKey,
     }
     const incomingQualityRank = costQualityRank(normalizedSample.costQuality)
@@ -300,7 +300,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
     totalCostUsdEstimated: usdToMicros(sample.costUsdEstimated),
     totalTokens: sample.totalTokens ?? null,
     costQuality: sample.costQuality,
-    rawPayload: serializeRawPayload(sample.rawPayload),
+    rawPayload: serializeRawPayload(sample.rawPayload, sample.pricingVersion),
     dedupeKey,
     updatedAt: new Date(),
   }
@@ -316,7 +316,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
     cycleStart,
     cycleEnd,
     resetAt: sample.resetAt ?? null,
-    rawPayload: serializeRawPayload(sample.rawPayload),
+    rawPayload: serializeRawPayload(sample.rawPayload, sample.pricingVersion),
     updatedAt: new Date(),
     ...(hasIncomingCost
       ? {
@@ -582,10 +582,20 @@ export async function upsertProviderState(
 
 /** Serialize provider diagnostics without allowing malformed/circular payloads
  * or common credential fields into the shared DB. */
-function serializeRawPayload(payload: unknown): string | null {
-  if (payload == null) return null
+function serializeRawPayload(payload: unknown, pricingVersion?: string | null): string | null {
+  const normalizedVersion = pricingVersion?.trim() || null
+  if (normalizedVersion && normalizedVersion.length > 256) {
+    throw new Error("Usage pricing version must be 256 characters or fewer.")
+  }
+  if (payload == null && normalizedVersion == null) return null
+  const normalizedPayload = normalizedVersion
+    ? {
+        flapstackProvenance: { pricingVersion: normalizedVersion },
+        payload: payload ?? null,
+      }
+    : payload
   try {
-    return JSON.stringify(payload, (key, value) =>
+    return JSON.stringify(normalizedPayload, (key, value) =>
       /^(authorization|credential|password|secret|api.?key|access.?token|refresh.?token|id.?token)$/i.test(
         key,
       )

@@ -66,6 +66,9 @@ export interface UsageSampleInput {
   costUsd?: number | null
   /** Derived estimate in USD when exact cost is unavailable. */
   costUsdEstimated?: number | null
+  /** Pricing catalog version used for an estimate. Persisted as normalized
+   * provenance inside rawPayload without adding a schema migration. */
+  pricingVersion?: string | null
   currency?: string
   percentUsed?: number | null
   quotaUsed?: number | null

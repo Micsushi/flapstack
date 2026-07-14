@@ -12,7 +12,7 @@
 // The key endpoint supplies current credit/limit state. E6 calls the exported
 // run-sample helper for exact per-generation usage after sidecar runs.
 
-import { estimateCostUsd, upsertModelPricing } from "../pricing"
+import { estimateCostWithProvenance, upsertModelPricing } from "../pricing"
 import { getProviderJson } from "./http"
 import {
   UsageProviderError,
@@ -38,7 +38,7 @@ export function buildEstimatedOpenRouterSample(params: {
   reasoningTokens?: number
   source: UsageSampleInput["source"]
 }): UsageSampleInput | null {
-  const estimated = estimateCostUsd("openrouter", params.model, params)
+  const estimated = estimateCostWithProvenance("openrouter", params.model, params)
   if (estimated == null) return null
   return {
     providerId: "openrouter",
@@ -49,7 +49,8 @@ export function buildEstimatedOpenRouterSample(params: {
     inputTokens: params.inputTokens ?? null,
     outputTokens: params.outputTokens ?? null,
     reasoningTokens: params.reasoningTokens ?? null,
-    costUsdEstimated: estimated,
+    costUsdEstimated: estimated.costUsd,
+    pricingVersion: estimated.pricingVersion,
     // Generation id is the natural dedupe key when present.
     dedupeKey: params.generationId ? `openrouter|gen|${params.generationId}` : undefined,
   }
