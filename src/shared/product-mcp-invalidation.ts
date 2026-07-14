@@ -12,6 +12,7 @@ export const productMcpInvalidationDomains = [
   "approvals",
   "audit",
   "orchestrations",
+  "vaults",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -94,6 +95,13 @@ export function invalidationForProductMcpMutation(
   const chatId = stringValue(request.chatId) ?? stringValue(result.chatId)
 
   switch (operation) {
+    case "create_vault_section":
+    case "update_vault_section":
+    case "update_vault_handoff":
+    case "record_vault_decision":
+      return event(["vaults"], {
+        projectIds: compactIds(stringValue(request.projectId), stringValue(result.projectId)),
+      })
     case "create_chat":
     case "spawn_thread":
       return event(["chats"], {

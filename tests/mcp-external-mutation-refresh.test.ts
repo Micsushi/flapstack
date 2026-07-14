@@ -44,6 +44,18 @@ describe("product MCP external mutation refresh", () => {
     ).toMatchObject({ domains: ["runs", "chats"], chatIds: ["chat-2"], runIds: ["run-2"] })
     expect(
       invalidationForProductMcpMutation(
+        "update_vault_handoff",
+        { projectId: "project-1", sectionId: "handoff", expectedVersion: 2 },
+        { ok: true, data: { projectId: "project-1", sectionId: "handoff", changed: true } },
+      ),
+    ).toEqual({
+      version: 1,
+      source: "product-mcp",
+      domains: ["vaults"],
+      projectIds: ["project-1"],
+    })
+    expect(
+      invalidationForProductMcpMutation(
         "orchestrate_task",
         {},
         {
@@ -137,6 +149,7 @@ describe("product MCP external mutation refresh", () => {
       audit: () => calls.push("audit"),
       orchestrationTask: (id) => calls.push(`orchestration:${id}`),
       chatLineage: (id) => calls.push(`lineage:${id}`),
+      projectVault: (id) => calls.push(`vault:${id}`),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate, 25)
     coalescer.push({
@@ -159,6 +172,12 @@ describe("product MCP external mutation refresh", () => {
       chatIds: ["chat-1"],
       taskIds: ["task-1"],
     })
+    coalescer.push({
+      version: 1,
+      source: "product-mcp",
+      domains: ["vaults"],
+      projectIds: ["project-1"],
+    })
 
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(25)
@@ -172,6 +191,7 @@ describe("product MCP external mutation refresh", () => {
       "audit",
       "orchestration:task-1",
       "lineage:chat-1",
+      "vault:project-1",
     ])
     coalescer.dispose()
   })

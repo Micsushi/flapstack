@@ -172,6 +172,77 @@ export function listProjectVaultSections(database: Database, projectId: string):
   )
 }
 
+export async function createProjectVaultSection(
+  database: Database,
+  input: {
+    projectId: string
+    sectionId: ProjectVaultSectionId
+    expectedVersion: 0
+    content: string
+  },
+): Promise<SectionRow> {
+  return withVaultMutationLock(input.projectId, async () => {
+    if (input.expectedVersion !== 0) {
+      throw new ProjectVaultConflictError(
+        "New project vault sections require expectedVersion 0.",
+        0,
+        "",
+      )
+    }
+    assertProjectVaultContentSafe(input.content)
+    const definition = getProjectVaultSectionDefinition(input.sectionId)
+    const vault = getVaultOrThrow(database, input.projectId)
+    const root = assertRegisteredFilesystemRoot(vault.rootPath, database)
+    const existing = database
+      .select()
+      .from(projectVaultSections)
+      .where(
+        and(
+          eq(projectVaultSections.projectId, input.projectId),
+          eq(projectVaultSections.sectionId, input.sectionId),
+        ),
+      )
+      .get()
+    if (existing || (await pathExists(join(root.canonicalPath, definition.fileName)))) {
+      throw new ProjectVaultConflictError(
+        "Project vault section already exists.",
+        existing?.version ?? 0,
+        existing?.contentHash ?? "",
+      )
+    }
+
+    const bytes = Buffer.from(input.content, "utf8")
+    if (bytes.byteLength > MAX_VAULT_SECTION_BYTES) {
+      throw new Error("Project vault section exceeds the storage size limit.")
+    }
+    const values = {
+      projectId: input.projectId,
+      sectionId: definition.id,
+      sectionType: definition.id,
+      title: definition.title,
+      relativePath: definition.fileName,
+      version: 1,
+      contentHash: sha256(bytes),
+      byteLength: bytes.byteLength,
+    }
+
+    await writeFileInsideRoot(root.canonicalPath, definition.fileName, { data: bytes })
+    try {
+      return database.transaction((tx) => {
+        const created = tx.insert(projectVaultSections).values(values).returning().get()
+        tx.update(projectVaults)
+          .set({ updatedAt: new Date() })
+          .where(eq(projectVaults.projectId, vault.projectId))
+          .run()
+        return created
+      })
+    } catch (error) {
+      await removeVaultFile(root.canonicalPath, definition.fileName)
+      throw error
+    }
+  })
+}
+
 export async function readProjectVaultSection(
   database: Database,
   input: { projectId: string; sectionId: ProjectVaultSectionId },
@@ -204,6 +275,7 @@ export async function writeProjectVaultSection(
   hooks: ProjectVaultWriteHooks = {},
 ): Promise<SectionRow> {
   return withVaultMutationLock(input.projectId, async () => {
+    assertProjectVaultContentSafe(input.content)
     const { vault, section, root } = getVerifiedSection(database, input)
     if (section.version !== input.expectedVersion) {
       throw new ProjectVaultConflictError(
