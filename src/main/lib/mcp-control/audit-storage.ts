@@ -67,6 +67,9 @@ const safeAuditKeys = new Set([
   "productMcpTier3",
   "productMcpWrite",
   "projectId",
+  "proposalCount",
+  "proposalId",
+  "proposalIds",
   "projectWrite",
   "prompt",
   "provider",
@@ -325,6 +328,52 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       }
     case "enable_automation":
       return safe("automationId", "expectedVersion", "enabled")
+    case "propose_task": {
+      const proposal = asRecord(input.proposal)
+      return {
+        ...safe("idempotencyKey"),
+        proposal: proposal
+          ? {
+              projectId: summarizeText(proposal.projectId),
+              name: summarizeText(proposal.name),
+              description: summarizeText(proposal.description),
+              targetStatus:
+                typeof proposal.targetStatus === "string"
+                  ? safeLiteral(proposal.targetStatus)
+                  : null,
+            }
+          : null,
+      }
+    }
+    case "list_task_proposals":
+      return safe("projectId", "includeArchived", "limit", "cursor")
+    case "read_task_proposal":
+    case "cancel_task_proposal":
+      return safe("proposalId", "expectedVersion")
+    case "update_task_proposal": {
+      const proposal = asRecord(input.proposal)
+      return {
+        ...safe("proposalId", "expectedVersion"),
+        proposal: proposal
+          ? {
+              projectId: summarizeText(proposal.projectId),
+              name: summarizeText(proposal.name),
+              description: summarizeText(proposal.description),
+              targetStatus:
+                typeof proposal.targetStatus === "string"
+                  ? safeLiteral(proposal.targetStatus)
+                  : null,
+            }
+          : null,
+      }
+    }
+    case "approve_task_proposal":
+    case "approve_task_proposals":
+    case "deny_task_proposal":
+      return {
+        ...safe("decision", "proposalId", "expectedVersion", "proposalCount"),
+        proposalIds: Array.isArray(input.proposalIds) ? input.proposalIds.map(summarizeText) : [],
+      }
     case "create_vault_section":
     case "update_vault_section":
     case "update_vault_handoff":
@@ -957,7 +1006,10 @@ function isRetrySafeClaim(claim: Pick<AuditRow, "tier" | "toolName" | "inputSumm
   if (
     claim.toolName === "create_automation_draft" ||
     claim.toolName === "update_automation" ||
-    claim.toolName === "enable_automation"
+    claim.toolName === "enable_automation" ||
+    claim.toolName === "propose_task" ||
+    claim.toolName === "update_task_proposal" ||
+    claim.toolName === "cancel_task_proposal"
   ) {
     return true
   }

@@ -83,6 +83,12 @@
 ### S4-F9-T6 — Add approval-gated AI task proposals
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. Node 22 focused
+  `ai-task-proposals`, task/plan Kanban, MCP gate/audit/transport, and invalidation suites pass
+  72 tests across 12 files; repo-wide ESLint, Prettier check, and strict TypeScript pass;
+  `npm run build` and strict OpenSpec validation pass. Live proposal-tray review, exact-preview,
+  capped-batch, denial, accessibility, and cross-window walkthroughs remain prohibited and
+  unverified, so completion and S4-PK03 stay open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Agents propose bounded task cards without creating live work until approval.
 - Scope: MCP propose/list/read/update/cancel; caller scope; proposal tray; exact task/chat preview; single and capped batch approval; denial/archive; audit; idempotency; rate/count limits.

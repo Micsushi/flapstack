@@ -14,6 +14,7 @@ export const productMcpInvalidationDomains = [
   "orchestrations",
   "vaults",
   "automations",
+  "task-proposals",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -27,6 +28,7 @@ export type ProductMcpRendererInvalidation = {
   projectIds?: string[]
   taskIds?: string[]
   automationIds?: string[]
+  proposalIds?: string[]
 }
 
 const allowedKeys = new Set([
@@ -38,6 +40,7 @@ const allowedKeys = new Set([
   "projectIds",
   "taskIds",
   "automationIds",
+  "proposalIds",
 ])
 const domains = new Set<string>(productMcpInvalidationDomains)
 
@@ -59,7 +62,14 @@ export function parseProductMcpRendererInvalidation(
     source: "product-mcp",
     domains: unique(record.domains as ProductMcpInvalidationDomain[]),
   }
-  for (const key of ["chatIds", "runIds", "projectIds", "taskIds", "automationIds"] as const) {
+  for (const key of [
+    "chatIds",
+    "runIds",
+    "projectIds",
+    "taskIds",
+    "automationIds",
+    "proposalIds",
+  ] as const) {
     const ids = record[key]
     if (ids === undefined) continue
     if (!isBoundedIds(ids)) return null
@@ -77,7 +87,14 @@ export function mergeProductMcpRendererInvalidations(
     source: "product-mcp",
     domains: unique(events.flatMap((event) => event.domains)),
   }
-  for (const key of ["chatIds", "runIds", "projectIds", "taskIds", "automationIds"] as const) {
+  for (const key of [
+    "chatIds",
+    "runIds",
+    "projectIds",
+    "taskIds",
+    "automationIds",
+    "proposalIds",
+  ] as const) {
     const ids = unique(events.flatMap((event) => event[key] ?? []))
     if (ids.length > 0) merged[key] = ids
   }
@@ -113,6 +130,20 @@ export function invalidationForProductMcpMutation(
           stringValue(request.automationId),
           stringValue(result.id),
           stringValue(objectValue(result.record).id),
+        ),
+      })
+    case "propose_task":
+    case "update_task_proposal":
+    case "cancel_task_proposal":
+      return event(["task-proposals"], {
+        proposalIds: compactIds(
+          stringValue(request.proposalId),
+          stringValue(result.id),
+          stringValue(objectValue(result.record).id),
+        ),
+        projectIds: compactIds(
+          stringValue(objectValue(request.proposal).projectId),
+          stringValue(objectValue(result.record).projectId),
         ),
       })
     case "create_chat":
@@ -167,7 +198,7 @@ function event(
   eventDomains: ProductMcpInvalidationDomain[],
   ids: Pick<
     ProductMcpRendererInvalidation,
-    "chatIds" | "runIds" | "projectIds" | "taskIds" | "automationIds"
+    "chatIds" | "runIds" | "projectIds" | "taskIds" | "automationIds" | "proposalIds"
   >,
 ): ProductMcpRendererInvalidation {
   return parseProductMcpRendererInvalidation({

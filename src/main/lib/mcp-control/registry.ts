@@ -7,6 +7,7 @@ import { createMcpReadService, type McpReadService } from "./read-service"
 import { evaluateMcpGateWithSelfReference } from "./self-reference"
 import { mcpProjectVaultToolNames, type McpProjectVaultService } from "./project-vault-service"
 import { mcpAutomationToolNames, type McpAutomationService } from "./automation-service"
+import { mcpTaskProposalToolNames, type McpTaskProposalService } from "./task-proposal-service"
 import type {
   McpCallerIdentity,
   McpControlResponse,
@@ -31,6 +32,7 @@ export type McpInvocationDependencies = {
   mutations?: McpMutationService
   projectVaults?: McpProjectVaultService
   automationControls?: McpAutomationService
+  taskProposalControls?: McpTaskProposalService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
     tool: McpControlTool
@@ -271,6 +273,41 @@ export const mcpControlTools: McpControlTool[] = [
     name: "enable_automation",
     description: "Enable or disable an exact automation version after user approval.",
     tier: 3,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "propose_task",
+    description: "Create one bounded, inert AI task proposal for later user review.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "list_task_proposals",
+    description: "List task proposals owned by this caller within its durable scope.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_task_proposal",
+    description: "Read one exact task proposal owned by this caller.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "update_task_proposal",
+    description: "Update one pending task proposal using its exact version.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "cancel_task_proposal",
+    description: "Terminally cancel and archive one pending task proposal.",
+    tier: 1,
     requiredCapabilities: [],
     status: "implemented",
   },
@@ -696,6 +733,7 @@ function dispatch(
       dependencies.mutations,
       dependencies.projectVaults,
       dependencies.automationControls,
+      dependencies.taskProposalControls,
       context,
     )
   )
@@ -709,6 +747,7 @@ function executeImplementedTool(
   mutations?: McpMutationService,
   projectVaults?: McpProjectVaultService,
   automationControls?: McpAutomationService,
+  taskProposalControls?: McpTaskProposalService,
   context: { invocationId: string; approved: boolean } = {
     invocationId: "untracked",
     approved: false,
@@ -739,6 +778,15 @@ function executeImplementedTool(
       : {
           ok: false,
           error: { code: "tool-unavailable", message: "Automation control is unavailable." },
+        }
+  }
+
+  if (mcpTaskProposalToolNames.has(name)) {
+    return taskProposalControls
+      ? taskProposalControls.invoke(name, caller, input)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Task proposals are unavailable." },
         }
   }
 

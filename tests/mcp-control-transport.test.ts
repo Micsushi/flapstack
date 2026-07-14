@@ -97,6 +97,11 @@ describe("Flapstack MCP stdio transport", () => {
       "create_automation_draft",
       "update_automation",
       "enable_automation",
+      "propose_task",
+      "list_task_proposals",
+      "read_task_proposal",
+      "update_task_proposal",
+      "cancel_task_proposal",
     ])
 
     const ping = await client.callTool({ name: "ping", arguments: {} })
