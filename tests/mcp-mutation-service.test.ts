@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { eq } from "drizzle-orm"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -64,6 +65,44 @@ describe("MCP mutation service", () => {
     expect(
       sqlite.prepare("SELECT count(*) count FROM tasks WHERE name = 'Follow-up'").get(),
     ).toEqual({ count: 1 })
+  })
+
+  it("stores MCP-created chat timestamps in Drizzle's Unix-second format", async () => {
+    const result = await createMcpMutationService(path).invoke(
+      "create_chat",
+      { chatId: "chat-1", permissionMode: "full-access" },
+      { name: "Timestamp-safe", scope: "task", taskId: "task-1", harness: "codex" },
+    )
+    expect(result).toMatchObject({ ok: true, data: { created: true } })
+    if (!result.ok) throw new Error("Expected chat creation to succeed")
+
+    const database = drizzle(sqlite, { schema })
+    const chat = database
+      .select()
+      .from(schema.chats)
+      .where(eq(schema.chats.id, String(result.data.id)))
+      .get()
+    expect(chat?.createdAt).toBeInstanceOf(Date)
+    expect(chat?.updatedAt).toBeInstanceOf(Date)
+    expect(Math.abs((chat?.updatedAt?.getTime() ?? 0) - Date.now())).toBeLessThan(5_000)
+  })
+
+  it("allows task callers to move chats within their task but not out of it", async () => {
+    const service = createMcpMutationService(path)
+    await expect(
+      service.invoke(
+        "move_chat",
+        { chatId: "chat-1" },
+        { id: "chat-2", scope: "task", taskId: "task-1" },
+      ),
+    ).resolves.toMatchObject({ ok: true, data: { moved: true } })
+    await expect(
+      service.invoke(
+        "move_chat",
+        { chatId: "chat-1" },
+        { id: "chat-2", scope: "project", projectId: "project-1" },
+      ),
+    ).resolves.toMatchObject({ ok: false, error: { code: "out-of-scope" } })
   })
 
   it("makes archive and restore safe to retry and rejects stale targets", async () => {
@@ -173,6 +212,28 @@ describe("MCP mutation service", () => {
     expect(sqlite.prepare("SELECT custom_permissions FROM agent_runs").get()).toEqual({
       custom_permissions: JSON.stringify(original),
     })
+  })
+
+  it("fails closed when a custom-mode conversation has no custom capability snapshot", async () => {
+    sqlite
+      .prepare(
+        "UPDATE chats SET harness = 'codex', permission_mode = 'custom', custom_permissions = NULL WHERE id = 'chat-2'",
+      )
+      .run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('sub-2', 'chat-2', 'codex', 'custom', '[]')",
+      )
+      .run()
+
+    await expect(
+      createMcpMutationService(path).invoke(
+        "launch_run",
+        { chatId: "chat-1" },
+        { chatId: "chat-2", initialPrompt: "Do not widen access.", idempotencyKey: "missing" },
+      ),
+    ).resolves.toMatchObject({ ok: false, error: { code: "permission-denied" } })
+    expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
   })
 
   it("gates launch_run and correlates execution failure to its audit invocation", async () => {

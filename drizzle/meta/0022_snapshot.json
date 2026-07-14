@@ -1,8 +1,8 @@
 {
-  "id": "ccf15341-75cd-4ce9-81dc-ce8897968aea",
-  "prevId": "cb5cbb2b-c87f-4e70-883d-488dbe515e03",
   "version": "6",
   "dialect": "sqlite",
+  "id": "cb5cbb2b-c87f-4e70-883d-488dbe515e03",
+  "prevId": "0ed7274d-2868-43ce-b0f7-d021357d5de1",
   "tables": {
     "agent_runs": {
       "name": "agent_runs",
@@ -125,20 +125,20 @@
         "agent_runs_chat_id_chats_id_fk": {
           "name": "agent_runs_chat_id_chats_id_fk",
           "tableFrom": "agent_runs",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "agent_runs_sub_chat_id_sub_chats_id_fk": {
           "name": "agent_runs_sub_chat_id_sub_chats_id_fk",
           "tableFrom": "agent_runs",
-          "columnsFrom": ["sub_chat_id"],
           "tableTo": "sub_chats",
+          "columnsFrom": ["sub_chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -319,20 +319,20 @@
         "attachments_chat_id_chats_id_fk": {
           "name": "attachments_chat_id_chats_id_fk",
           "tableFrom": "attachments",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "attachments_task_id_tasks_id_fk": {
           "name": "attachments_task_id_tasks_id_fk",
           "tableFrom": "attachments",
-          "columnsFrom": ["task_id"],
           "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -528,20 +528,20 @@
         "chats_project_id_projects_id_fk": {
           "name": "chats_project_id_projects_id_fk",
           "tableFrom": "chats",
-          "columnsFrom": ["project_id"],
           "tableTo": "projects",
+          "columnsFrom": ["project_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "chats_task_id_tasks_id_fk": {
           "name": "chats_task_id_tasks_id_fk",
           "tableFrom": "chats",
-          "columnsFrom": ["task_id"],
           "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -612,11 +612,11 @@
         "checkpoints_run_id_agent_runs_id_fk": {
           "name": "checkpoints_run_id_agent_runs_id_fk",
           "tableFrom": "checkpoints",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -735,11 +735,11 @@
         "file_change_manifests_run_id_agent_runs_id_fk": {
           "name": "file_change_manifests_run_id_agent_runs_id_fk",
           "tableFrom": "file_change_manifests",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1256,29 +1256,29 @@
         "orchestration_agents_task_id_task_orchestrations_task_id_fk": {
           "name": "orchestration_agents_task_id_task_orchestrations_task_id_fk",
           "tableFrom": "orchestration_agents",
-          "columnsFrom": ["task_id"],
           "tableTo": "task_orchestrations",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["task_id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "orchestration_agents_chat_id_chats_id_fk": {
           "name": "orchestration_agents_chat_id_chats_id_fk",
           "tableFrom": "orchestration_agents",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "orchestration_agents_run_id_agent_runs_id_fk": {
           "name": "orchestration_agents_run_id_agent_runs_id_fk",
           "tableFrom": "orchestration_agents",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1509,11 +1509,11 @@
         "sub_chats_chat_id_chats_id_fk": {
           "name": "sub_chats_chat_id_chats_id_fk",
           "tableFrom": "sub_chats",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1624,20 +1624,20 @@
         "task_orchestrations_task_id_tasks_id_fk": {
           "name": "task_orchestrations_task_id_tasks_id_fk",
           "tableFrom": "task_orchestrations",
-          "columnsFrom": ["task_id"],
           "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "task_orchestrations_initiating_chat_id_chats_id_fk": {
           "name": "task_orchestrations_initiating_chat_id_chats_id_fk",
           "tableFrom": "task_orchestrations",
-          "columnsFrom": ["initiating_chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["initiating_chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
+          "onDelete": "restrict",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1752,11 +1752,11 @@
         "tasks_project_id_projects_id_fk": {
           "name": "tasks_project_id_projects_id_fk",
           "tableFrom": "tasks",
-          "columnsFrom": ["project_id"],
           "tableTo": "projects",
+          "columnsFrom": ["project_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2587,11 +2587,11 @@
         "usage_samples_run_id_agent_runs_id_fk": {
           "name": "usage_samples_run_id_agent_runs_id_fk",
           "tableFrom": "usage_samples",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2774,20 +2774,20 @@
         "voice_artifacts_chat_id_chats_id_fk": {
           "name": "voice_artifacts_chat_id_chats_id_fk",
           "tableFrom": "voice_artifacts",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "voice_artifacts_sub_chat_id_sub_chats_id_fk": {
           "name": "voice_artifacts_sub_chat_id_sub_chats_id_fk",
           "tableFrom": "voice_artifacts",
-          "columnsFrom": ["sub_chat_id"],
           "tableTo": "sub_chats",
+          "columnsFrom": ["sub_chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2798,9 +2798,9 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "indexes": {}

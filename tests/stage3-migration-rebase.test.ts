@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { eq } from "drizzle-orm"
 import { createHash } from "node:crypto"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -32,6 +33,40 @@ describe("Stage 3 migration rebase", () => {
 
       expectStage3Schema(sqlite, "fresh-chat")
       expect(recoverInterruptedMcpRuns(path)).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("upgrades the exact final Stage 3 migration baseline into Stage 4", () => {
+    const { sqlite, directory } = database("final-stage3")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 23),
+      })
+      sqlite
+        .prepare(
+          `INSERT INTO projects (id, name, path, created_at, updated_at)
+           VALUES ('final-stage3-project', 'Final Stage 3', '/tmp/final-stage3', 1784030400, 1784030400)`,
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(tableNames(sqlite)).toEqual(
+        expect.arrayContaining([
+          "project_vault_policies",
+          "task_proposals",
+          "project_vaults",
+          "plan_source_registrations",
+          "automation_executions",
+          "usage_budgets",
+          "extension_enablement_policies",
+        ]),
+      )
+      expect(sqlite.prepare("SELECT name, created_at FROM projects").all()).toEqual([
+        { name: "Final Stage 3", created_at: 1784030400 },
+      ])
     } finally {
       sqlite.close()
     }
@@ -192,6 +227,116 @@ describe("Stage 3 migration rebase", () => {
       sqlite.close()
     }
   })
+
+  it("repairs millisecond and text timestamps before Drizzle reads shared rows", () => {
+    const { sqlite, directory } = database("timestamp-units")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 22),
+      })
+      const milliseconds = Date.UTC(2026, 6, 14, 12, 0, 0)
+      sqlite
+        .prepare(
+          `INSERT INTO projects (id, name, path, created_at, updated_at, pinned_at)
+           VALUES ('timestamp-project', 'Timestamp', '/tmp/timestamp', ?, '2026-07-14 12:00:00', ?)`,
+        )
+        .run(milliseconds, milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO tasks (id, project_id, name, created_at, updated_at)
+           VALUES ('timestamp-task', 'timestamp-project', 'Task', ?, ?)`,
+        )
+        .run(milliseconds, milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO chats (
+             id, name, scope, project_id, task_id, permission_mode, created_at, updated_at
+           ) VALUES (
+             'timestamp-chat', 'Chat', 'task', 'timestamp-project', 'timestamp-task',
+             'read-only', ?, '2026-07-14 12:00:00'
+           )`,
+        )
+        .run(milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO mcp_audit_records (
+             id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
+             chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
+           ) VALUES (
+             'timestamp-audit', 'timestamp-invocation', 'completed', 'timestamp-chat',
+             'ping', 0, '{}', '{}', '{}', '{}', '{}', 1, NULL
+           )`,
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(
+        sqlite
+          .prepare(
+            `SELECT typeof(created_at) created_type, created_at, typeof(updated_at) updated_type,
+              updated_at, pinned_at FROM projects WHERE id = 'timestamp-project'`,
+          )
+          .get(),
+      ).toEqual({
+        created_type: "integer",
+        created_at: 1784030400,
+        updated_type: "integer",
+        updated_at: 1784030400,
+        pinned_at: 1784030400,
+      })
+      const chat = drizzle(sqlite, { schema })
+        .select()
+        .from(schema.chats)
+        .where(eq(schema.chats.id, "timestamp-chat"))
+        .get()
+      expect(chat?.updatedAt?.toISOString()).toBe("2026-07-14T12:00:00.000Z")
+      expect(
+        sqlite
+          .prepare("SELECT typeof(created_at) type FROM mcp_audit_records WHERE id = ?")
+          .get("timestamp-audit"),
+      ).toEqual({ type: "integer" })
+      expect(() =>
+        sqlite
+          .prepare("UPDATE mcp_audit_records SET status = 'failed' WHERE id = ?")
+          .run("timestamp-audit"),
+      ).toThrow(/append-only/)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it.each([
+    { name: "old-0023", lastMigration: 23 },
+    { name: "old-0030", lastMigration: 30 },
+  ])(
+    "upgrades a pre-sync Stage 4 $name profile without losing feature data",
+    ({ name, lastMigration }) => {
+      const { sqlite, directory } = database(`stage4-${name}`)
+      try {
+        migrate(drizzle(sqlite, { schema }), {
+          migrationsFolder: preSyncStage4MigrationSubset(directory, lastMigration),
+        })
+        seedPreSyncStage4Data(sqlite, lastMigration)
+
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+        expectStage4Data(sqlite, lastMigration)
+        expect(
+          sqlite.prepare("SELECT created_at FROM projects WHERE id = 'stage4-project'").get(),
+        ).toEqual({ created_at: 1784030400 })
+        const timestampEntry = migrationEntry("0023_stage3_timestamp_seconds")
+        expect(
+          sqlite
+            .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+            .get(timestampEntry.when),
+        ).toEqual({ count: 1 })
+      } finally {
+        sqlite.close()
+      }
+    },
+  )
 })
 
 function database(name: string): {
@@ -223,6 +368,166 @@ function migrationSubset(directory: string, lastIndex: number): string {
     cpSync(join(sourceMigrations, `${entry.tag}.sql`), join(target, `${entry.tag}.sql`))
   }
   return target
+}
+
+function preSyncStage4MigrationSubset(directory: string, lastIndex: number): string {
+  const target = join(directory, `pre-sync-stage4-through-${lastIndex}`)
+  mkdirSync(join(target, "meta"), { recursive: true })
+  const journal = JSON.parse(
+    readFileSync(join(sourceMigrations, "meta", "_journal.json"), "utf8"),
+  ) as {
+    version: string
+    dialect: string
+    entries: Array<{
+      idx: number
+      version: string
+      when: number
+      tag: string
+      breakpoints: boolean
+    }>
+  }
+  const entries = journal.entries
+    .filter((entry) => entry.idx <= lastIndex)
+    .map((entry) =>
+      entry.idx === 23 ? { ...entry, when: 1784010172812, tag: "0023_equal_zzzax" } : entry,
+    )
+  writeFileSync(
+    join(target, "meta", "_journal.json"),
+    `${JSON.stringify({ ...journal, entries }, null, 2)}\n`,
+  )
+
+  for (const entry of entries) {
+    if (entry.idx === 23) {
+      writeFileSync(join(target, `${entry.tag}.sql`), PRE_SYNC_STAGE4_0023_SQL)
+      continue
+    }
+    const sql = readFileSync(join(sourceMigrations, `${entry.tag}.sql`), "utf8")
+    if (entry.idx === 24) {
+      const taskProposalStart = sql.indexOf("CREATE TABLE `task_proposals`")
+      if (taskProposalStart < 0) throw new Error("Missing Stage 4 0024 task proposal SQL")
+      writeFileSync(join(target, `${entry.tag}.sql`), sql.slice(taskProposalStart))
+      continue
+    }
+    writeFileSync(join(target, `${entry.tag}.sql`), sql)
+  }
+  return target
+}
+
+const PRE_SYNC_STAGE4_0023_SQL = `CREATE TABLE \`project_vault_policies\` (
+  \`project_id\` text PRIMARY KEY NOT NULL,
+  \`location_mode\` text DEFAULT 'app-managed' NOT NULL,
+  \`central_path\` text NOT NULL,
+  \`project_owned_path\` text,
+  \`git_tracking_enabled\` integer DEFAULT false NOT NULL,
+  \`portability_mode\` text DEFAULT 'export-required' NOT NULL,
+  \`worktree_mode\` text DEFAULT 'shared-across-worktrees' NOT NULL,
+  \`deletion_mode\` text DEFAULT 'retain-until-explicit-delete' NOT NULL,
+  \`created_at\` integer,
+  \`updated_at\` integer,
+  FOREIGN KEY (\`project_id\`) REFERENCES \`projects\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);\n`
+
+function seedPreSyncStage4Data(sqlite: Database.Database, lastMigration: number): void {
+  const milliseconds = Date.UTC(2026, 6, 14, 12, 0, 0)
+  sqlite
+    .prepare(
+      `INSERT INTO projects (id, name, path, created_at, updated_at)
+       VALUES ('stage4-project', 'Stage 4', '/tmp/stage4', ?, ?)`,
+    )
+    .run(milliseconds, milliseconds)
+  sqlite
+    .prepare(
+      `INSERT INTO project_vault_policies (
+        project_id, central_path, created_at, updated_at
+      ) VALUES ('stage4-project', '/tmp/stage4-vault', ?, ?)`,
+    )
+    .run(milliseconds, milliseconds)
+
+  if (lastMigration >= 24) {
+    sqlite
+      .prepare(
+        `INSERT INTO task_proposals (
+          id, project_id, proposed_by_chat_id, name, created_at, updated_at
+        ) VALUES ('stage4-proposal', 'stage4-project', 'stage4-chat', 'Keep me', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 25) {
+    sqlite
+      .prepare(
+        `INSERT INTO project_vaults (project_id, root_path, created_at, updated_at)
+         VALUES ('stage4-project', '/tmp/stage4-vault', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 26) {
+    sqlite
+      .prepare(
+        `INSERT INTO plan_source_registrations (
+          id, project_id, relative_path, created_at, updated_at
+        ) VALUES ('stage4-plan', 'stage4-project', 'PLAN.md', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 29) {
+    sqlite
+      .prepare(
+        `INSERT INTO usage_budgets (
+          id, name, scope_type, threshold_type, threshold_value, action, created_at, updated_at
+        ) VALUES (
+          'stage4-budget', 'Budget', 'global', 'total-tokens', 1000, 'soft-alert', ?, ?
+        )`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 30) {
+    sqlite
+      .prepare(
+        `INSERT INTO extension_enablement_policies (
+          extension_id, harness, kind, native_scope, scope_type, scope_id, enabled,
+          created_at, updated_at
+        ) VALUES ('stage4-extension', 'codex', 'skill', 'user', 'user', 'user', 1, ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+}
+
+function expectStage4Data(sqlite: Database.Database, lastMigration: number): void {
+  expect(tableNames(sqlite)).toEqual(
+    expect.arrayContaining([
+      "project_vault_policies",
+      "task_proposals",
+      "project_vaults",
+      "plan_source_registrations",
+      "automation_executions",
+      "usage_budgets",
+      "extension_enablement_policies",
+    ]),
+  )
+  expect(sqlite.prepare("SELECT central_path FROM project_vault_policies").all()).toEqual([
+    { central_path: "/tmp/stage4-vault" },
+  ])
+  if (lastMigration >= 24) {
+    expect(sqlite.prepare("SELECT name FROM task_proposals").all()).toEqual([{ name: "Keep me" }])
+  }
+  if (lastMigration >= 25) {
+    expect(sqlite.prepare("SELECT root_path FROM project_vaults").all()).toEqual([
+      { root_path: "/tmp/stage4-vault" },
+    ])
+  }
+  if (lastMigration >= 26) {
+    expect(sqlite.prepare("SELECT relative_path FROM plan_source_registrations").all()).toEqual([
+      { relative_path: "PLAN.md" },
+    ])
+  }
+  if (lastMigration >= 29) {
+    expect(sqlite.prepare("SELECT name FROM usage_budgets").all()).toEqual([{ name: "Budget" }])
+  }
+  if (lastMigration >= 30) {
+    expect(sqlite.prepare("SELECT extension_id FROM extension_enablement_policies").all()).toEqual([
+      { extension_id: "stage4-extension" },
+    ])
+  }
 }
 
 function expectStage3Schema(sqlite: Database.Database, chatId: string): void {

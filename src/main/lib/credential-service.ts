@@ -224,6 +224,7 @@ export class CredentialService {
   private readonly encryption: CredentialEncryption
   private readonly now: () => number
   private readonly sessionCredentials = new Map<CredentialId, SessionCredential>()
+  private readonly resolutionWarnings = new Map<CredentialId, string>()
 
   constructor(options: CredentialServiceOptions = {}) {
     this.storageDir = options.storageDir ?? defaultStorageDir()
@@ -275,6 +276,7 @@ export class CredentialService {
       }
       this.writeStoreAtomic(store)
       this.sessionCredentials.delete(id)
+      this.resolutionWarnings.delete(id)
       return {
         id,
         configured: true,
@@ -314,6 +316,7 @@ export class CredentialService {
     warning = "Secure credential persistence is unavailable. The credential is session-only.",
   ): CredentialWriteAcknowledgement {
     this.sessionCredentials.set(id, { secret, fingerprint, updatedAt, metadata, warning })
+    this.resolutionWarnings.delete(id)
     return {
       id,
       configured: true,
@@ -366,13 +369,31 @@ export class CredentialService {
 
   resolve(id: CredentialId): string | null {
     const session = this.sessionCredentials.get(id)
-    if (session) return session.secret
+    if (session) {
+      this.resolutionWarnings.delete(id)
+      return session.secret
+    }
     try {
       const stored = this.readStoreStrict().credentials[id]
-      if (!stored) return null
+      if (!stored) {
+        this.resolutionWarnings.delete(id)
+        return null
+      }
       const secret = this.encryption.decrypt(Buffer.from(stored.ciphertext, "base64"))
-      return credentialFingerprint(secret) === stored.fingerprint ? secret : null
+      if (credentialFingerprint(secret) !== stored.fingerprint) {
+        this.resolutionWarnings.set(
+          id,
+          "The encrypted credential failed integrity verification. Replace or remove it.",
+        )
+        return null
+      }
+      this.resolutionWarnings.delete(id)
+      return secret
     } catch {
+      this.resolutionWarnings.set(
+        id,
+        "The encrypted credential could not be decrypted. Replace or remove it before retrying.",
+      )
       return null
     }
   }
@@ -395,19 +416,18 @@ export class CredentialService {
     try {
       const stored = this.readStoreStrict().credentials[id]
       if (!stored) return this.emptyStatus(id)
-      const configured = this.resolve(id) !== null
       return {
         id,
-        configured,
+        // Status polling is metadata-only. Decrypting here can prompt for a
+        // locked OS keychain; actual credential consumers validate on resolve.
+        configured: true,
         persistence: "encrypted",
         source: "encrypted-store",
         fingerprint: stored.fingerprint,
         updatedAt: stored.updatedAt,
         encryptionBackend: stored.encryptionBackend,
         ...(stored.metadata ? { metadata: stored.metadata } : {}),
-        ...(!configured
-          ? { warning: "The encrypted credential could not be decrypted. Replace or remove it." }
-          : {}),
+        ...(this.resolutionWarnings.get(id) ? { warning: this.resolutionWarnings.get(id) } : {}),
       }
     } catch {
       return {
@@ -425,6 +445,7 @@ export class CredentialService {
   remove(id: CredentialId): CredentialStatus {
     const store = this.readStoreStrict()
     this.sessionCredentials.delete(id)
+    this.resolutionWarnings.delete(id)
     if (store.credentials[id]) {
       delete store.credentials[id]
       this.writeStoreAtomic(store)

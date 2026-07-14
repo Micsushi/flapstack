@@ -1,7 +1,7 @@
 # Stage 3 integrated candidate release notes
 
-Status: Stage 3 complete on `codex/stage3-integration`; ready for the user's
-merge decision. No push was performed.
+Status: Stage 3 complete at annotated tag `stage3-final`; local `main` is the
+exact-tree squash. No push was performed.
 
 ## Included
 
@@ -14,6 +14,9 @@ merge decision. No push was performed.
   reasoning classification, controls, persistence, and reload support.
 - Development test-control MCP, migration coverage, macOS Preview packaging,
   bundled runtime inspection, and release-ledger validation.
+- Final independent-review repairs for timestamp-unit integrity and migration,
+  task-scoped chat moves, fail-closed custom permissions, passive credential
+  status, and lossless inline envelope-marker prose.
 
 ## Completion evidence
 
@@ -26,7 +29,7 @@ merge decision. No push was performed.
   dictation pass.
 - Questions pass answer, cancel, timeout, stop, reload, native Claude, and
   continuation delivery across all credential-available providers.
-- The final Node 22 gate passes 129 test files, 969 tests, 3 conditional skips,
+- The final Node 22 gate passes 130 test files, 976 tests, 3 conditional skips,
   lint, Prettier, TypeScript, and production build. Strict OpenSpec, release
   ledger, Usage matrix, package smoke, and independent review gates pass.
 

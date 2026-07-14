@@ -1340,6 +1340,24 @@ describe("credentials + config", () => {
     expect(hasProviderKey("openrouter")).toBe(false)
   })
 
+  it("reports a legacy-file credential passively before first use", () => {
+    const legacyPath = join(dir, "opencode-provider-credentials.json")
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({ nanogpt: { value: "legacy-status-secret", encrypted: false } }),
+      { mode: 0o600 },
+    )
+
+    expect(getCredentialStatus("nanogpt")).toMatchObject({
+      configured: true,
+      source: "legacy-file",
+      warning: expect.stringMatching(/will migrate securely/i),
+    })
+    expect(JSON.parse(readFileSync(legacyPath, "utf8"))).toHaveProperty("nanogpt")
+
+    clearProviderKey("nanogpt")
+  })
+
   it("removes an unacknowledged legacy-file key before it can migrate later", () => {
     const legacyPath = join(dir, "opencode-provider-credentials.json")
     writeFileSync(

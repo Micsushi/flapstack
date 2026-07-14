@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
+import { nowEpochSeconds } from "./db/timestamps"
 
 export type QueuedAgentRun = {
   runId: string
@@ -37,7 +38,7 @@ export function recoverInterruptedMcpRuns(databasePath: string): number {
         .all() as Row[]
       const affectedSubChats = new Set<string>()
       let recovered = 0
-      const now = Date.now()
+      const now = nowEpochSeconds()
       for (const run of runs) {
         affectedSubChats.add(String(run.sub_chat_id))
         const isMcp =
@@ -192,8 +193,9 @@ function appendLaunchAudit(
   db.prepare(
     `INSERT INTO mcp_audit_records (
       id, invocation_id, status, caller_chat_id, caller_run_id, tool_name, tier,
-      caller_snapshot, chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      caller_snapshot, chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
   ).run(
     randomUUID(),
     source.invocation_id,
@@ -218,6 +220,7 @@ function appendLaunchAudit(
           }
         : {}),
     }),
+    nowEpochSeconds(),
   )
 }
 
@@ -307,7 +310,7 @@ function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
 }
 
 function markFailed(db: Database.Database, runId: string, subChatId: string): void {
-  const now = Date.now()
+  const now = nowEpochSeconds()
   db.prepare(
     "UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ? AND completed_at IS NULL",
   ).run(now, runId)

@@ -6,6 +6,25 @@ export type RequiredStartupDependencies = {
   report: (error: unknown) => void
 }
 
+export type IsolatedStartupTask = {
+  name: string
+  run: () => void | Promise<void>
+}
+
+/** Run optional startup tasks independently so one failure cannot skip later services. */
+export async function runIsolatedStartupTasks(
+  tasks: IsolatedStartupTask[],
+  report: (name: string, error: unknown) => void,
+): Promise<void> {
+  for (const task of tasks) {
+    try {
+      await task.run()
+    } catch (error) {
+      report(task.name, error)
+    }
+  }
+}
+
 /** Fail closed: a required startup failure cannot publish a database or window. */
 export async function runRequiredStartup(
   dependencies: RequiredStartupDependencies,

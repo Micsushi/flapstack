@@ -56,6 +56,58 @@ describe("main-process credential service", () => {
     expect(JSON.stringify(service.status("codex.api-key"))).not.toContain(secret)
   })
 
+  it("reports encrypted credential status without decrypting or prompting the OS store", () => {
+    let decryptions = 0
+    const service = new CredentialService({
+      storageDir: tempDir(),
+      encryption: {
+        ...encryptedBackend,
+        decrypt: (ciphertext) => {
+          decryptions += 1
+          return encryptedBackend.decrypt(ciphertext)
+        },
+      },
+    })
+    service.set("codex.api-key", "status-must-be-passive")
+    const afterVerifiedWrite = decryptions
+
+    expect(service.status("codex.api-key")).toMatchObject({
+      configured: true,
+      persistence: "encrypted",
+    })
+    expect(service.listStatuses().find((status) => status.id === "codex.api-key")).toMatchObject({
+      configured: true,
+    })
+    expect(decryptions).toBe(afterVerifiedWrite)
+  })
+
+  it("reports a cached warning after use discovers an undecryptable credential", () => {
+    const dir = tempDir()
+    new CredentialService({ storageDir: dir, encryption: encryptedBackend }).set(
+      "codex.api-key",
+      "machine-bound-secret",
+    )
+    let decryptions = 0
+    const migrated = new CredentialService({
+      storageDir: dir,
+      encryption: {
+        ...encryptedBackend,
+        decrypt: () => {
+          decryptions += 1
+          throw new Error("wrong machine")
+        },
+      },
+    })
+
+    expect(migrated.status("codex.api-key").warning).toBeUndefined()
+    expect(migrated.resolve("codex.api-key")).toBeNull()
+    expect(migrated.status("codex.api-key")).toMatchObject({
+      configured: true,
+      warning: expect.stringMatching(/could not be decrypted/i),
+    })
+    expect(decryptions).toBe(1)
+  })
+
   it("uses memory only when OS encryption is unavailable", () => {
     const dir = tempDir()
     const service = new CredentialService({

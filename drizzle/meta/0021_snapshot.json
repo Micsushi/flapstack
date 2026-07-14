@@ -1,8 +1,8 @@
 {
-  "id": "ccf15341-75cd-4ce9-81dc-ce8897968aea",
-  "prevId": "cb5cbb2b-c87f-4e70-883d-488dbe515e03",
   "version": "6",
   "dialect": "sqlite",
+  "id": "0ed7274d-2868-43ce-b0f7-d021357d5de1",
+  "prevId": "fc896396-2992-4653-9e4d-845bdb14c736",
   "tables": {
     "agent_runs": {
       "name": "agent_runs",
@@ -125,20 +125,20 @@
         "agent_runs_chat_id_chats_id_fk": {
           "name": "agent_runs_chat_id_chats_id_fk",
           "tableFrom": "agent_runs",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "agent_runs_sub_chat_id_sub_chats_id_fk": {
           "name": "agent_runs_sub_chat_id_sub_chats_id_fk",
           "tableFrom": "agent_runs",
-          "columnsFrom": ["sub_chat_id"],
           "tableTo": "sub_chats",
+          "columnsFrom": ["sub_chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -319,20 +319,20 @@
         "attachments_chat_id_chats_id_fk": {
           "name": "attachments_chat_id_chats_id_fk",
           "tableFrom": "attachments",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "attachments_task_id_tasks_id_fk": {
           "name": "attachments_task_id_tasks_id_fk",
           "tableFrom": "attachments",
-          "columnsFrom": ["task_id"],
           "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -528,20 +528,20 @@
         "chats_project_id_projects_id_fk": {
           "name": "chats_project_id_projects_id_fk",
           "tableFrom": "chats",
-          "columnsFrom": ["project_id"],
           "tableTo": "projects",
+          "columnsFrom": ["project_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "chats_task_id_tasks_id_fk": {
           "name": "chats_task_id_tasks_id_fk",
           "tableFrom": "chats",
-          "columnsFrom": ["task_id"],
           "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -612,11 +612,11 @@
         "checkpoints_run_id_agent_runs_id_fk": {
           "name": "checkpoints_run_id_agent_runs_id_fk",
           "tableFrom": "checkpoints",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -735,11 +735,11 @@
         "file_change_manifests_run_id_agent_runs_id_fk": {
           "name": "file_change_manifests_run_id_agent_runs_id_fk",
           "tableFrom": "file_change_manifests",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1031,260 +1031,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "orchestration_agents": {
-      "name": "orchestration_agents",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "task_id": {
-          "name": "task_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "chat_id": {
-          "name": "chat_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_agent_id": {
-          "name": "parent_agent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "replaced_agent_id": {
-          "name": "replaced_agent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "ancestor_agent_ids": {
-          "name": "ancestor_agent_ids",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "depth": {
-          "name": "depth",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "definition": {
-          "name": "definition",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "dependency_agent_ids": {
-          "name": "dependency_agent_ids",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'queued'"
-        },
-        "progress_percent": {
-          "name": "progress_percent",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "input_tokens": {
-          "name": "input_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "output_tokens": {
-          "name": "output_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "reasoning_tokens": {
-          "name": "reasoning_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "total_tokens": {
-          "name": "total_tokens",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "cost_usd_micros": {
-          "name": "cost_usd_micros",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cost_quality": {
-          "name": "cost_quality",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'unknown'"
-        },
-        "result_summary": {
-          "name": "result_summary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "stop_reason": {
-          "name": "stop_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "blocker_count": {
-          "name": "blocker_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "lease_owner": {
-          "name": "lease_owner",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "lease_expires_at": {
-          "name": "lease_expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "queued_at": {
-          "name": "queued_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "orchestration_agents_task_status_idx": {
-          "name": "orchestration_agents_task_status_idx",
-          "columns": ["task_id", "status"],
-          "isUnique": false
-        },
-        "orchestration_agents_chat_idx": {
-          "name": "orchestration_agents_chat_idx",
-          "columns": ["chat_id"],
-          "isUnique": false
-        },
-        "orchestration_agents_lease_idx": {
-          "name": "orchestration_agents_lease_idx",
-          "columns": ["status", "lease_expires_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "orchestration_agents_task_id_task_orchestrations_task_id_fk": {
-          "name": "orchestration_agents_task_id_task_orchestrations_task_id_fk",
-          "tableFrom": "orchestration_agents",
-          "columnsFrom": ["task_id"],
-          "tableTo": "task_orchestrations",
-          "columnsTo": ["task_id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "orchestration_agents_chat_id_chats_id_fk": {
-          "name": "orchestration_agents_chat_id_chats_id_fk",
-          "tableFrom": "orchestration_agents",
-          "columnsFrom": ["chat_id"],
-          "tableTo": "chats",
-          "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        },
-        "orchestration_agents_run_id_agent_runs_id_fk": {
-          "name": "orchestration_agents_run_id_agent_runs_id_fk",
-          "tableFrom": "orchestration_agents",
-          "columnsFrom": ["run_id"],
-          "tableTo": "agent_runs",
-          "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "projects": {
       "name": "projects",
       "columns": {
@@ -1509,135 +1255,11 @@
         "sub_chats_chat_id_chats_id_fk": {
           "name": "sub_chats_chat_id_chats_id_fk",
           "tableFrom": "sub_chats",
+          "tableTo": "chats",
           "columnsFrom": ["chat_id"],
-          "tableTo": "chats",
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "task_orchestrations": {
-      "name": "task_orchestrations",
-      "columns": {
-        "task_id": {
-          "name": "task_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "initiating_chat_id": {
-          "name": "initiating_chat_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'queued'"
-        },
-        "max_parallel_agents": {
-          "name": "max_parallel_agents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "max_depth": {
-          "name": "max_depth",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 8
-        },
-        "stop_conditions": {
-          "name": "stop_conditions",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'{}'"
-        },
-        "stop_reason": {
-          "name": "stop_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "blocker_count": {
-          "name": "blocker_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "task_orchestrations_status_idx": {
-          "name": "task_orchestrations_status_idx",
-          "columns": ["status"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "task_orchestrations_task_id_tasks_id_fk": {
-          "name": "task_orchestrations_task_id_tasks_id_fk",
-          "tableFrom": "task_orchestrations",
-          "columnsFrom": ["task_id"],
-          "tableTo": "tasks",
-          "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "task_orchestrations_initiating_chat_id_chats_id_fk": {
-          "name": "task_orchestrations_initiating_chat_id_chats_id_fk",
-          "tableFrom": "task_orchestrations",
-          "columnsFrom": ["initiating_chat_id"],
-          "tableTo": "chats",
-          "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1752,11 +1374,11 @@
         "tasks_project_id_projects_id_fk": {
           "name": "tasks_project_id_projects_id_fk",
           "tableFrom": "tasks",
-          "columnsFrom": ["project_id"],
           "tableTo": "projects",
+          "columnsFrom": ["project_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2587,11 +2209,11 @@
         "usage_samples_run_id_agent_runs_id_fk": {
           "name": "usage_samples_run_id_agent_runs_id_fk",
           "tableFrom": "usage_samples",
-          "columnsFrom": ["run_id"],
           "tableTo": "agent_runs",
+          "columnsFrom": ["run_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2774,20 +2396,20 @@
         "voice_artifacts_chat_id_chats_id_fk": {
           "name": "voice_artifacts_chat_id_chats_id_fk",
           "tableFrom": "voice_artifacts",
-          "columnsFrom": ["chat_id"],
           "tableTo": "chats",
+          "columnsFrom": ["chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "voice_artifacts_sub_chat_id_sub_chats_id_fk": {
           "name": "voice_artifacts_sub_chat_id_sub_chats_id_fk",
           "tableFrom": "voice_artifacts",
-          "columnsFrom": ["sub_chat_id"],
           "tableTo": "sub_chats",
+          "columnsFrom": ["sub_chat_id"],
           "columnsTo": ["id"],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2798,9 +2420,9 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "indexes": {}

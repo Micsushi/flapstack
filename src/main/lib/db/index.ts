@@ -7,6 +7,7 @@ import { migrateDatabase } from "./migrate"
 import { recoverPendingAllChatPermissionChange } from "../permissions"
 import { backfillUsageAttribution } from "../usage/attribution"
 import * as schema from "./schema"
+import { nowEpochSeconds } from "./timestamps"
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqlite: Database.Database | null = null
@@ -125,7 +126,7 @@ function backfillFilesystemRootRegistrations(database: Database.Database): void 
           realpathSync(path),
           hasIdentity ? info.dev.toString() : null,
           hasIdentity ? info.ino.toString() : null,
-          Date.now(),
+          nowEpochSeconds(),
         )
       } catch {
         // Missing/inaccessible legacy roots stay unbound and fail closed.
