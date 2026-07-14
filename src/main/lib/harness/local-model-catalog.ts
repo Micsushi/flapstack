@@ -1,6 +1,8 @@
 import {
+  DEFAULT_OLLAMA_BASE_URL,
   LOCAL_MODEL_CATALOG_CACHE_VERSION,
   LOCAL_MODEL_LIMITATION_CODES,
+  validateLocalModelEndpoint,
   type LocalModelCapabilities,
   type LocalModelCapability,
   type LocalModelCatalogEntry,
@@ -10,7 +12,7 @@ import {
   type LocalModelProviderIdentity,
 } from "../../../shared/local-model-contract"
 
-export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+export { DEFAULT_OLLAMA_BASE_URL }
 export const DEFAULT_LOCAL_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 
 export type OllamaEndpointConfig = {
@@ -50,23 +52,12 @@ export function getOllamaEndpointConfig(
   } = {},
 ): OllamaEndpointConfig {
   const requested = input.baseUrl?.trim() || process.env.FLAPSTACK_OLLAMA_BASE_URL?.trim()
-  const endpoint = new URL(requested || DEFAULT_OLLAMA_BASE_URL)
-  const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
-  if (
-    !["http:", "https:"].includes(endpoint.protocol) ||
-    !loopbackHosts.has(endpoint.hostname.toLowerCase()) ||
-    endpoint.username ||
-    endpoint.password ||
-    (endpoint.pathname !== "/" && endpoint.pathname !== "") ||
-    endpoint.search ||
-    endpoint.hash
-  ) {
-    throw new Error("Ollama endpoint must be an uncredentialed loopback HTTP(S) origin")
-  }
+  const validation = validateLocalModelEndpoint(requested || DEFAULT_OLLAMA_BASE_URL)
+  if (!validation.valid) throw new Error(validation.message)
 
   return {
     provider: "ollama",
-    baseUrl: endpoint.origin,
+    baseUrl: validation.endpoint,
     requestTimeoutMs: boundedPositive(input.requestTimeoutMs, 5_000, 100, 30_000),
     cacheTtlMs: boundedPositive(
       input.cacheTtlMs,

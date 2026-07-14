@@ -65,6 +65,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "local-models",
+    label: "Local Models",
+    description: "Connect Ollama and inspect local model capabilities and permissions",
+    keywords: ["ollama", "offline", "loopback", "local ai", "no cloud"],
+    section: "advanced",
+    released: true,
+  },
+  {
     id: "api-providers",
     label: "API Providers",
     description: "Configure direct model API providers",
@@ -171,6 +179,41 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "local-model-endpoint",
+    "local-models",
+    "Ollama endpoint",
+    "Configure a loopback-only Ollama origin",
+    ["localhost", "127.0.0.1", "port", "connect"],
+  ),
+  control(
+    "local-model-catalog",
+    "local-models",
+    "Local model catalog",
+    "Refresh Ollama availability and installed models",
+    ["refresh", "available", "empty", "stale", "error"],
+  ),
+  control(
+    "local-model-picker",
+    "local-models",
+    "Local model picker",
+    "Inspect declared chat, streaming, tool, and vision capabilities",
+    ["capability", "limitation", "chat only", "vision", "tools"],
+  ),
+  control(
+    "local-model-permission-preview",
+    "local-models",
+    "Local permission and tool preview",
+    "Preview permission-gated local chat and tool tiers before launch",
+    ["read only", "write", "shell", "git", "network", "approval"],
+  ),
+  control(
+    "local-model-no-cloud-fallback",
+    "local-models",
+    "No cloud fallback",
+    "Stop local launches instead of sending prompts to a cloud provider",
+    ["offline", "privacy", "credential", "fallback disabled"],
+  ),
   control(
     "preferences-reasoning",
     "preferences",

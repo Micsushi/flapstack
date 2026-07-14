@@ -69,6 +69,10 @@
 ### S4-F6-T6 — Build local model onboarding and controls
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. Node 22 local model UI, catalog, and
+  streaming tests pass 20 cases; strict TypeScript, focused ESLint, Prettier, and strict OpenSpec
+  validation pass. Live renderer accessibility and Ollama catalog/launch walkthroughs remain
+  prohibited and unverified, so completion stays open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Users connect Ollama, inspect models, choose capabilities, and launch local chats honestly.
 - Scope: Settings status/endpoint/model catalog; refresh; input-bar harness/model selection; capability/limitation preview; chat-only vs tool tiers; empty/error states; accessibility.

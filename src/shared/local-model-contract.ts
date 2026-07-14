@@ -3,6 +3,44 @@ import type { RunPermissionMode } from "./harness-types"
 
 export const LOCAL_MODEL_CONTRACT_VERSION = 1 as const
 export const LOCAL_MODEL_CATALOG_CACHE_VERSION = 1 as const
+export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+
+export type LocalModelEndpointValidation =
+  | { valid: true; endpoint: string; message: null }
+  | { valid: false; endpoint: null; message: string }
+
+export function validateLocalModelEndpoint(value: string): LocalModelEndpointValidation {
+  const requested = value.trim()
+  if (!requested) {
+    return { valid: false, endpoint: null, message: "Enter an Ollama loopback endpoint." }
+  }
+
+  let endpoint: URL
+  try {
+    endpoint = new URL(requested)
+  } catch {
+    return { valid: false, endpoint: null, message: "Enter a valid HTTP(S) URL." }
+  }
+
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
+  if (
+    !["http:", "https:"].includes(endpoint.protocol) ||
+    !loopbackHosts.has(endpoint.hostname.toLowerCase()) ||
+    endpoint.username ||
+    endpoint.password ||
+    (endpoint.pathname !== "/" && endpoint.pathname !== "") ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    return {
+      valid: false,
+      endpoint: null,
+      message: "Use an uncredentialed loopback HTTP(S) origin such as http://127.0.0.1:11434.",
+    }
+  }
+
+  return { valid: true, endpoint: endpoint.origin, message: null }
+}
 
 export type LocalModelProviderId = "ollama"
 export type LocalModelCapabilityName = "chat" | "streaming" | "tools" | "vision"
