@@ -82,6 +82,7 @@ import { usePastedTextFiles } from "../hooks/use-pasted-text-files"
 import { useFocusInputOnEnter } from "../hooks/use-focus-input-on-enter"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
+import { useLocalModelPickerSurface } from "../../local-models/use-local-model-picker-surface"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import {
   AgentsFileMention,
@@ -332,6 +333,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     hasCustomClaudeConfig
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const localModelPicker = useLocalModelPickerSurface()
   const handleOpenVoiceSettings = useCallback(() => {
     setSettingsActiveTab("voice")
     setSettingsDialogOpen(true)
@@ -2325,6 +2327,13 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                                 ...current,
                                 nanogpt: modelId,
                               })),
+                          },
+                        }}
+                        local={{
+                          ...localModelPicker,
+                          onOpenSettings: () => {
+                            setSettingsActiveTab("local-models")
+                            setSettingsDialogOpen(true)
                           },
                         }}
                       />

@@ -11,6 +11,7 @@ import { AgentsAppearanceTab } from "../../components/dialogs/settings-tabs/agen
 import { AgentsDebugTab } from "../../components/dialogs/settings-tabs/agents-debug-tab"
 import { AgentsMcpTab } from "../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-models-tab"
+import { AgentsLocalModelsTab } from "../../components/dialogs/settings-tabs/agents-local-models-tab"
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
 import { AgentsPermissionsTab } from "../../components/dialogs/settings-tabs/agents-permissions-tab"
 import { AgentsProjectsTab } from "../../components/dialogs/settings-tabs/agents-project-worktree-tab"
@@ -78,6 +79,8 @@ export function SettingsContent() {
         return <AgentsPermissionsTab />
       case "models":
         return <AgentsModelsTab />
+      case "local-models":
+        return <AgentsLocalModelsTab />
       case "api-providers":
         return <AgentsApiProvidersTab />
       case "voice":

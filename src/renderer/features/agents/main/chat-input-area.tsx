@@ -121,6 +121,7 @@ import type { PastedTextFile } from "../hooks/use-pasted-text-files"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import { customHotkeysAtom } from "../../../lib/atoms"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
+import { useLocalModelPickerSurface } from "../../local-models/use-local-model-picker-surface"
 import { toast } from "sonner"
 import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
@@ -1001,6 +1002,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const localModelPicker = useLocalModelPickerSurface()
   const handleOpenVoiceSettings = useCallback(() => {
     setSettingsTab("voice")
     setSettingsOpen(true)
@@ -2225,6 +2227,13 @@ export const ChatInputArea = memo(function ChatInputArea({
                           selectedModelId: selectedOpencodeModels.nanogpt,
                           onSelectModel: (modelId) =>
                             setSelectedOpencodeModels({ nanogpt: modelId }),
+                        },
+                      }}
+                      local={{
+                        ...localModelPicker,
+                        onOpenSettings: () => {
+                          setSettingsTab("local-models")
+                          setSettingsOpen(true)
                         },
                       }}
                     />
