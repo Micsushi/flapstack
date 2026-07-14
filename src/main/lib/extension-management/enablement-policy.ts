@@ -13,6 +13,12 @@ import {
   type ExtensionKind,
   type ExtensionScope,
 } from "./capability-registry"
+import {
+  buildExtensionLaunchPolicy,
+  getExtensionRuntimeEnforcementSupport,
+  type ExtensionLaunchPolicy,
+  type ExtensionRuntimeEnforcement,
+} from "./runtime-enforcement"
 
 type Database = ReturnType<typeof getDatabase>
 
@@ -56,6 +62,7 @@ export type ResolvedExtensionEnablement = {
   enabled: boolean
   source: ExtensionPolicySource | "unsupported"
   reason: string | null
+  runtimeEnforcement: ExtensionRuntimeEnforcement
 }
 
 export type ExtensionRunContextManifest = {
@@ -231,6 +238,7 @@ export function resolveExtensionEnablement(
       enabled: false,
       source: "unsupported",
       reason: support.reason,
+      runtimeEnforcement: getExtensionRuntimeEnforcementSupport(target),
     }
   }
 
@@ -272,6 +280,7 @@ export function resolveExtensionEnablement(
         enabled: row.enabled,
         source: candidate.source,
         reason: null,
+        runtimeEnforcement: getExtensionRuntimeEnforcementSupport(target),
       }
     }
   }
@@ -283,6 +292,7 @@ export function resolveExtensionEnablement(
     enabled: true,
     source: "fixed-default",
     reason: null,
+    runtimeEnforcement: getExtensionRuntimeEnforcementSupport(target),
   }
 }
 
@@ -333,7 +343,11 @@ export async function buildExtensionRunContext(
     cwd?: string
     homeDir?: string
   },
-): Promise<{ context: string; manifest: ExtensionRunContextManifest }> {
+): Promise<{
+  context: string
+  manifest: ExtensionRunContextManifest
+  launchPolicy: ExtensionLaunchPolicy
+}> {
   if (!managedRunPolicyHarnesses.includes(input.harness)) {
     throw new UnsupportedExtensionPolicyScopeError(
       {
@@ -388,7 +402,11 @@ export async function buildExtensionRunContext(
       .map((entry) => entry.extensionId),
     unsupported,
   }
-  return { context: formatRunContext(manifest), manifest }
+  return {
+    context: formatRunContext(manifest),
+    manifest,
+    launchPolicy: buildExtensionLaunchPolicy(input.harness, state),
+  }
 }
 
 function getCapability(target: ExtensionPolicyTarget) {
@@ -467,17 +485,17 @@ function formatRunContext(manifest: ExtensionRunContextManifest): string {
   const disabled = manifest.entries
     .filter((entry) => !entry.enabled)
     .map((entry) => `- ${singleLine(entry.extensionId)} | policy=${entry.source}`)
-  return `--- FLAPSTACK RESOLVED EXTENSION POLICY (DO NOT QUOTE) ---
+  return `--- FLAPSTACK ENFORCED EXTENSION POLICY (DO NOT QUOTE) ---
 Harness: ${manifest.harness}
-Only extensions listed under Enabled are available to this run. Do not load,
-invoke, or recommend an extension listed under Disabled.
+Flapstack applied native discovery controls before provider launch. A run whose
+disabled policy could not be enforced was blocked before this prompt existed.
 
 Enabled:
 ${enabled.length ? enabled.join("\n") : "- None"}
 
 Disabled:
 ${disabled.length ? disabled.join("\n") : "- None"}
---- END FLAPSTACK RESOLVED EXTENSION POLICY ---`
+--- END FLAPSTACK ENFORCED EXTENSION POLICY ---`
 }
 
 function unsupportedManifestState(

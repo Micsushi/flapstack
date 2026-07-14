@@ -80,7 +80,11 @@ import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
-import { buildExtensionRunContext } from "../../extension-management"
+import {
+  buildExtensionRunContext,
+  filterClaudeExtensionMcpServers,
+  getClaudeExtensionSdkOptions,
+} from "../../extension-management"
 import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
@@ -1892,6 +1896,10 @@ export const claudeRouter = router({
                 mcpServersFiltered = mcpServersForSdk
               }
             }
+            mcpServersFiltered = filterClaudeExtensionMcpServers(
+              mcpServersFiltered,
+              extensionContext.launchPolicy,
+            )
 
             // Log SDK configuration for debugging
             if (isUsingOllama) {
@@ -2052,6 +2060,7 @@ ${prompt}
                 ...(!isUsingOllama && {
                   settingSources: ["project" as const, "user" as const],
                 }),
+                ...getClaudeExtensionSdkOptions(extensionContext.launchPolicy),
                 canUseTool: async (
                   toolName: string,
                   toolInput: Record<string, unknown>,

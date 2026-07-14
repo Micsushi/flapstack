@@ -19,7 +19,8 @@ The resolver applies this exact order:
 
 Unsupported capability/scope combinations fail before insert or update. The
 resolved DTO returns `support: unsupported`, `enabled: false`, and a concrete
-reason instead of manufacturing provider state.
+reason instead of manufacturing provider state. It also exposes the native
+runtime-enforcement contract, including unsupported per-extension filters.
 
 ## Production surfaces
 
@@ -28,26 +29,41 @@ single-extension resolution procedures. Mutations resolve the extension from
 the current native inventory before storing policy.
 
 Managed Claude Code, Codex, and Cursor runs resolve policy from the chat's
-project/task ownership. Their internal startup context contains the enabled
-availability set, explicit disabled identities, and decision source. The same
-manifest is attached to run message metadata. OpenCode extension inventory is
-explicitly unsupported because managed sidecars do not consume it; disabled
-hooks and read-only/unknown runtime rows also reject policy writes.
+project/task ownership before provider launch. The same resolved manifest is
+attached to run message metadata, but prompt text is not treated as enforcement.
+
+- Claude skills use the pinned Agent SDK `options.skills` allowlist. Disabled
+  MCP names are removed from app-provided servers and `strictMcpConfig` prevents
+  native configuration from adding them back.
+- Codex skills use exact absolute `skills.config` disable records in the ACP
+  session `CODEX_CONFIG`. Disabled MCP names are removed from ACP session input
+  and set to `enabled: false` in the same session config. Policy fingerprints
+  invalidate cached providers so changed policy reaches resumed sessions.
+- Claude commands/custom agents and Cursor commands have no supported pinned
+  per-extension discovery filter. A resolved disable is exposed as unsupported
+  and throws `EXTENSION_POLICY_RUN_BLOCKED` before SDK/ACP/CLI launch.
+- Name-only filters fail closed when enabled and disabled native entries collide.
+
+OpenCode extension inventory remains explicitly unsupported because managed
+sidecars do not consume it; disabled hooks and read-only/unknown runtime rows
+also reject policy writes.
 
 ## Headless verification
 
-`tests/extension-enablement-policy.test.ts` covers:
+`tests/extension-enablement-policy.test.ts` covers 13 cases:
 
 - user/project/task/fixed-default precedence;
 - unsupported capability and mismatched task rejection before writes;
 - persisted resolution after close, reopen, and idempotent migration;
-- enabled-set run context for Claude Code, Codex, and Cursor;
+- Claude SDK skill/MCP launch filtering and Codex exact-path/MCP session config;
+- Cursor and unsupported Claude surface pre-launch blocking;
+- duplicate-name and native MCP adversarial exposure attempts;
 - router integration and the serialized `0029 -> 0030` journal with no `0031`.
 
 ## Remaining proof
 
-- Live provider runs must confirm each supported harness honors the resolved
-  enabled/disabled context with real native extensions.
+- Live provider runs must confirm Claude and Codex honor the applied native
+  filters and that unsupported Cursor/Claude surfaces show their launch block.
 - The unified Settings UI and accessibility walkthrough belong to S4-F1-T5.
 - Dev-profile restart and packaged-preview migration proof belong to S4-F1-T7.
 - Hook enablement remains owned by S4-F1-T6.
