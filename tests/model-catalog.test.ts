@@ -148,5 +148,17 @@ describe("OpenCode provider defaults", () => {
     expect(normalizeOpencodeModelId("nanogpt", "nanogpt/zai-org/glm-latest")).toBe(
       "nanogpt/zai-org/glm-latest",
     )
+    expect(normalizeOpencodeModelId("openrouter", "openai/gpt-oss-20b:free")).toBe(
+      "openrouter/openai/gpt-oss-20b:free",
+    )
+    expect(normalizeOpencodeModelId("nanogpt", "zai-org/glm-4.7-flash")).toBe(
+      "nanogpt/zai-org/glm-4.7-flash",
+    )
+    expect(() => normalizeOpencodeModelId("openrouter", "nanogpt/zai-org/glm-latest")).toThrow(
+      "does not belong to the openrouter provider",
+    )
+    expect(() => normalizeOpencodeModelId("nanogpt", "   ")).toThrow(
+      "Model cannot be empty for the nanogpt provider",
+    )
   })
 })

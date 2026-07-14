@@ -17,7 +17,7 @@ import {
   subChats,
 } from "../db"
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
-import { DEFAULT_CLAUDE_MODEL_ID } from "../../../shared/model-catalog"
+import { DEFAULT_CLAUDE_MODEL_ID, normalizeOpencodeModelId } from "../../../shared/model-catalog"
 import {
   OPENCODE_HARNESSES,
   type HarnessProvider,
@@ -1560,18 +1560,27 @@ export async function launchTestRun(input: {
   if (!credential.configured) {
     return { launched: false, reason: `${provider} is not configured in this app session.` }
   }
+  const normalizedModel = normalizeOpencodeModelId(provider as OpencodeHarness, model)
   const { runId } = await startOpencodeDevRun({
     subChatId: subChat.id,
     chatId: chat.id,
     provider: provider as OpencodeHarness,
-    model,
+    model: normalizedModel,
     prompt: input.prompt.trim(),
     cwd,
     projectPath: cwd,
     reasoningEnabled: input.reasoningEnabled,
     reasoningEffort: input.reasoningEffort,
   })
-  return { launched: true, runId, subChatId: subChat.id, chatId: chat.id, provider, model, cwd }
+  return {
+    launched: true,
+    runId,
+    subChatId: subChat.id,
+    chatId: chat.id,
+    provider,
+    model: normalizedModel,
+    cwd,
+  }
 }
 
 export async function launchHarnessTestRun(input: {

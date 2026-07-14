@@ -195,3 +195,71 @@ Sanitized logs/screenshots:
 Cleanup proof:
 Notes:
 ```
+
+## 2026-07-13 final provider credential-path evidence
+
+This is lane evidence, not final-SHA release closure. The running
+`Flapstack Dev stage3-finish` process used source commit `0ac08de916cb73712309c34c437b102e8c6f978d`
+from the scope-cleanup worktree. Its tree
+`5bc224f7500c8cd153d0161b3c68791fb4d66f5f` exactly matches this lane's base
+`f4c4ad485fe144240e4d9722946ae8f7a34eecff`. Later integrated
+security/correctness changes still require the rerun below.
+
+- Cursor `auto` run `2f3bae94-8927-4db4-bdf1-17f4aa8aeee6` succeeded with
+  persisted checkpoints, `reasoning` plus `text`, 18,240 input and 66 output
+  tokens, a 6.074-second timer, and an archived chat.
+- OpenRouter `openai/gpt-oss-20b:free` must reach the sidecar as
+  `openrouter/openai/gpt-oss-20b:free`. Enabled run
+  `74aa4718-3213-4b0f-a36c-2c25dfcdf609` succeeded after one transient runtime
+  startup timeout. Disabled run `aa7729cf-3acf-415b-a67a-03db9b48e7ab`
+  persisted the endpoint limitation `Reasoning is mandatory for this endpoint
+and cannot be disabled.` The disabled path is BLOCKED by the selected model,
+  not reported as a successful no-reasoning turn.
+- NanoGPT `nanogpt/zai-org/glm-4.7-flash` enabled run
+  `a701b14c-b672-40a4-9215-ddf54de0469b` persisted `reasoning` plus `text`;
+  disabled run `f4c763a1-94d0-4b14-a17a-1e92bcc5d3c1` persisted text only. Both
+  completed with exact reasoning-control resolution and archived chats.
+- Codex ChatGPT-quota runs `523c6d55-3497-4272-89ef-14ee9b87cf8c` (low) and
+  `00d25477-6a99-48e0-90e6-fed5d38cad80` (minimal) succeeded on
+  `gpt-5.3-codex-spark/high`. Claude personal-quota runs
+  `783c52ad-65e8-4db5-9056-71a27b0f95d7` (low) and
+  `5a8896f9-6fea-471a-99cb-e1ec209a3bec` (minimal) succeeded on
+  `claude-opus-4-8`.
+- Claude native question run `cfc20f79-88d3-43fb-88da-5a17b9f7b8da`
+  persisted terminal success but no request: read-only launches map Claude SDK
+  permissions to `dontAsk`, so `AskUserQuestion` was blocked. Codex, Cursor,
+  OpenRouter, and NanoGPT declare continuation-only input with no verified
+  pausable same-run structured request. The agent-question live row remains
+  BLOCKED.
+- Every lane chat was archived, each recorded run had zero pending approvals,
+  and no `/tmp/flapstack-opencode-*` directory remained.
+
+The first raw catalog-ID attempts exposed a dev-test launch bug: the renderer
+normalizes OpenCode model IDs, but `launch_test_run` did not. This lane now
+normalizes unprefixed catalog IDs before sidecar launch and rejects an
+explicitly wrong provider prefix before provider work starts.
+
+### Sanitized final-integration rerun recipe
+
+Use the authenticated dev-test MCP descriptor for the final verified checkout
+and profile; never print its token. For each provider, call:
+
+```text
+get_environment_state {}
+ensure_test_project {name: "Stage 3 provider closeout"}
+create_test_chat {projectId, name, provider, model, permissionMode: "read-only"}
+launch_test_run {subChatId, prompt, provider, model, cwd, reasoningEnabled, reasoningEffort}
+wait_for_run {runId, timeoutMs: 300000, pollMs: 1000}
+get_run_state {runId}
+get_reasoning_timer_state {runId}
+archive_test_chat {chatId}
+```
+
+Use exact prefixed models
+`openrouter/openai/gpt-oss-20b:free` and
+`nanogpt/zai-org/glm-4.7-flash`. Run enabled and disabled controls separately;
+retain an exact provider limitation as BLOCKED. Repeat the existing Cursor
+`auto`, Codex low/minimal, and Claude low/minimal harness launches with
+`launch_harness_test_run`. Finish by listing pending approvals, archiving every
+probe chat, and confirming zero isolated OpenCode temp directories. Do not copy
+IDs or pass claims from this base to the final integration SHA.

@@ -122,3 +122,31 @@ sub-chat selection was confirmed, but the synthetic transcript did not mount in
 the renderer. That failed observation is not relabeled as visual proof. No
 provider, timer, reload, search, accessibility, or screenshot row is promoted;
 S3-F16-T3 through S3-F16-T5 remain open.
+
+## 2026-07-13 credentialed headless reasoning continuation
+
+The live `stage3-finish` source tree matched base `f4c4ad4`, but predates the
+final integrated security/correctness fixes. These are provider/headless rows,
+not final-SHA UI/reload closure.
+
+- Cursor `2f3bae94...`: `auto`; persisted `reasoning` and `text`; completed
+  6.074-second timer.
+- OpenRouter `74aa4718...`: exact prefixed
+  `openrouter/openai/gpt-oss-20b:free`; requested/sent enabled + low exactly;
+  completed text with no fabricated reasoning tokens. Disabled
+  `aa7729cf...` returned the exact mandatory-reasoning limitation.
+- NanoGPT enabled `a701b14c...`: exact prefixed
+  `nanogpt/zai-org/glm-4.7-flash`; persisted reasoning + text. Disabled
+  `f4c763a1...`: text only; exact disabled control persisted.
+- Codex low `523c6d55...` and minimal `00d25477...` completed on
+  `gpt-5.3-codex-spark/high`; Claude low `783c52ad...` and minimal
+  `5a8896f9...` completed on `claude-opus-4-8` without inventing private
+  reasoning parts.
+- Claude question probe `cfc20f79...` proved the exact `dontAsk` blocker for
+  native `AskUserQuestion`. Other required providers remain declared
+  continuation-only. No structured-question row is promoted.
+
+All chats were archived, recorded pending approvals were zero, and no isolated
+sidecar directory remained. Repeat the provider recipe in
+`docs/provider-harness-closeout-matrix.md` on the final integration SHA and add
+same-SHA renderer/reload evidence before checking S3-F16-T4 or T5.

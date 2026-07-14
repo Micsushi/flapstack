@@ -213,3 +213,50 @@ Discord, Windows, or Linux claim is added; S3-F14-T3 through S3-F14-T5 stay open
 - Conditional truth: Cursor login, OpenRouter/NanoGPT keys and a disposable
   Discord webhook were unavailable. No paid run or real
   webhook send occurred. Windows/Linux U3-03 remains UNAVAILABLE.
+
+## 2026-07-13 credentialed provider refresh and Discord evidence
+
+This bounded run used `Flapstack Dev stage3-finish` on live commit `0ac08de9`
+whose source tree exactly matched lane base `f4c4ad4`. It is credential/path
+discovery evidence only; repeat it on the final integration SHA.
+
+- Manual Refresh succeeded for Codex, Anthropic, Cursor, and OpenRouter.
+  NanoGPT returned the honest `run-usage-only` state and inserted no fictional
+  account-history sample.
+- The post-run samples reported Codex personal OAuth `five_hour` at 16%, Claude
+  personal OAuth `five_hour` at 16%, Cursor internal `total_usage` at 63%, and
+  OpenRouter key limits at 66% / `$0.656436`. NanoGPT retained per-run estimated
+  provenance with a persisted run ID.
+- OpenRouter account cost moved from `$0.653684` to `$0.656436`. The full
+  `$0.002752` shared-account delta is charged conservatively to this lane even
+  though the selected model was free and concurrent account use cannot be
+  excluded.
+- NanoGPT token/pricing arithmetic for the two successful
+  `zai-org/glm-4.7-flash` runs is `$0.00110243`. Claude provider-reported run
+  costs total `$0.395231`, including the blocked native-question probe. The
+  conservative lane total is therefore `$0.39908543`; Cursor and Codex used
+  personal quota with no attributable USD value.
+- One Discord embed was delivered through the existing namespaced Keychain
+  credential with HTTP 204. The webhook stayed on stdin, never appeared in
+  argv/output, and was not copied. This proves one real transport delivery, not
+  a persisted threshold-crossing alert event or closed-app daemon delivery.
+- The Usage daemon remained healthy/running at 300-second cadence. No daemon,
+  app, Electron, Preview, or UI-lease action occurred in this lane.
+
+Final-integration rerun:
+
+```text
+refresh_usage_state {providerId: "codex"}
+refresh_usage_state {providerId: "anthropic"}
+refresh_usage_state {providerId: "cursor"}
+refresh_usage_state {providerId: "openrouter"}
+refresh_usage_state {providerId: "nanogpt"}
+get_usage_state {}
+```
+
+Record before/after OpenRouter key-limit cost, exact run-linked OpenRouter and
+NanoGPT samples, personal-quota percentages, daemon health, and limitations.
+For Discord, read `discord.webhook_url` from the final profile's namespaced OS
+credential store via stdin, post one bounded embed, emit only `{ok,status}`, and
+expect HTTP 204. Never place or print the webhook in argv, environment, logs, or
+evidence. U10 threshold/daemon persistence and Windows/Linux rows remain open.
