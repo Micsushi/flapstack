@@ -23,6 +23,11 @@ import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalida
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { runRequiredStartup } from "./lib/startup-gate"
 import { installBeforeQuitShutdown, runAppShutdown } from "./lib/app-shutdown"
+import {
+  createDefaultMobileBridgeService,
+  setAppMobileBridgeService,
+  type MobileBridgeService,
+} from "./lib/mobile-bridge"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -60,6 +65,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
+let mobileBridgeService: MobileBridgeService | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -878,6 +884,9 @@ if (gotTheLock) {
             checkout: app.getAppPath(),
             profile: app.getName(),
           })
+          mobileBridgeService = createDefaultMobileBridgeService()
+          setAppMobileBridgeService(mobileBridgeService)
+          await mobileBridgeService.startFromSettings()
           recoverInterruptedMcpRuns(getDatabasePath())
           const pendingRunLauncher = createMainRunLauncher()
           const orchestrationService = createAgentOrchestrationService(getDatabasePath())
@@ -916,6 +925,9 @@ if (gotTheLock) {
         devMcpServer = null
         await productMcpInvalidationBridge?.stop()
         productMcpInvalidationBridge = null
+        await mobileBridgeService?.stop("startup-cleanup")
+        mobileBridgeService = null
+        setAppMobileBridgeService(null)
         closeDatabase()
       },
       exit: (code) => app.exit(code),
@@ -985,6 +997,11 @@ if (gotTheLock) {
         stopProductMcpBridge: async () => {
           await productMcpInvalidationBridge?.stop()
           productMcpInvalidationBridge = null
+        },
+        stopMobileBridge: async () => {
+          await mobileBridgeService?.stop("app-quit")
+          mobileBridgeService = null
+          setAppMobileBridgeService(null)
         },
         cleanupGitWatchers,
         shutdownAnalytics,

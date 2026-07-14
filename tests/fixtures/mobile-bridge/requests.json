@@ -1,0 +1,5 @@
+{
+  "accepted": { "host": "192.168.50.24:4317", "origin": "https://192.168.50.24:4317" },
+  "wrongHost": { "host": "localhost:4317", "origin": "https://192.168.50.24:4317" },
+  "wrongOrigin": { "host": "192.168.50.24:4317", "origin": "https://attacker.invalid" }
+}
