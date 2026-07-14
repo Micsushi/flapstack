@@ -1059,6 +1059,162 @@ export const mcpAuditRecords = sqliteTable(
   ],
 )
 
+// ============ MOBILE DEVICE IDENTITY ============
+// Pairing and session secrets are stored only as hashes. Public-key material is
+// intentionally the only device credential persisted by the desktop.
+export const mobilePairingTokens = sqliteTable(
+  "mobile_pairing_tokens",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    certificateFingerprint: text("certificate_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_pairing_tokens_hash_idx").on(table.tokenHash),
+    index("mobile_pairing_tokens_expiry_idx").on(table.expiresAt),
+    check("mobile_pairing_tokens_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+  ],
+)
+
+export const mobileDevices = sqliteTable(
+  "mobile_devices",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    publicKeyAlgorithm: text("public_key_algorithm").notNull(),
+    publicKey: text("public_key").notNull(),
+    publicKeyFingerprint: text("public_key_fingerprint").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    revocationReason: text("revocation_reason"),
+    scopeVersion: integer("scope_version").notNull().default(1),
+  },
+  (table) => [
+    uniqueIndex("mobile_devices_public_key_idx").on(table.publicKeyFingerprint),
+    index("mobile_devices_revoked_idx").on(table.revokedAt),
+    check(
+      "mobile_devices_algorithm_check",
+      sql`${table.publicKeyAlgorithm} in ('Ed25519', 'P-256')`,
+    ),
+    check("mobile_devices_scope_version_check", sql`${table.scopeVersion} >= 1`),
+  ],
+)
+
+export const mobileAuthChallenges = sqliteTable(
+  "mobile_auth_challenges",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    challengeHash: text("challenge_hash").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_auth_challenges_hash_idx").on(table.challengeHash),
+    index("mobile_auth_challenges_device_idx").on(table.deviceId, table.expiresAt),
+    check("mobile_auth_challenges_expiry_check", sql`${table.expiresAt} > ${table.issuedAt}`),
+  ],
+)
+
+export const mobileDeviceSessions = sqliteTable(
+  "mobile_device_sessions",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    idleExpiresAt: integer("idle_expires_at", { mode: "timestamp" }).notNull(),
+    absoluteExpiresAt: integer("absolute_expires_at", { mode: "timestamp" }).notNull(),
+    scopeVersion: integer("scope_version").notNull(),
+    rotation: integer("rotation").notNull().default(0),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("mobile_device_sessions_token_idx").on(table.tokenHash),
+    index("mobile_device_sessions_device_idx").on(table.deviceId, table.revokedAt),
+    index("mobile_device_sessions_expiry_idx").on(table.idleExpiresAt, table.absoluteExpiresAt),
+    check("mobile_device_sessions_scope_version_check", sql`${table.scopeVersion} >= 1`),
+    check("mobile_device_sessions_rotation_check", sql`${table.rotation} >= 0`),
+    check(
+      "mobile_device_sessions_expiry_check",
+      sql`${table.idleExpiresAt} > ${table.lastSeenAt} and ${table.absoluteExpiresAt} > ${table.issuedAt} and ${table.idleExpiresAt} <= ${table.absoluteExpiresAt}`,
+    ),
+  ],
+)
+
+export const mobileSessionNonces = sqliteTable(
+  "mobile_session_nonces",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => mobileDeviceSessions.id, { onDelete: "cascade" }),
+    nonceHash: text("nonce_hash").notNull(),
+    usedAt: integer("used_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionId, table.nonceHash] }),
+    index("mobile_session_nonces_used_idx").on(table.usedAt),
+  ],
+)
+
+// Deliberately no foreign key: device audit survives later device cleanup.
+export const mobileDeviceAuditRecords = sqliteTable(
+  "mobile_device_audit_records",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id"),
+    event: text("event").notNull(),
+    outcome: text("outcome").notNull(),
+    summary: text("summary").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("mobile_device_audit_created_idx").on(table.createdAt),
+    index("mobile_device_audit_device_idx").on(table.deviceId, table.createdAt),
+    check(
+      "mobile_device_audit_outcome_check",
+      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
+    ),
+  ],
+)
+
+export const mobileDevicesRelations = relations(mobileDevices, ({ many }) => ({
+  challenges: many(mobileAuthChallenges),
+  sessions: many(mobileDeviceSessions),
+}))
+
+export const mobileAuthChallengesRelations = relations(mobileAuthChallenges, ({ one }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileAuthChallenges.deviceId],
+    references: [mobileDevices.id],
+  }),
+}))
+
+export const mobileDeviceSessionsRelations = relations(mobileDeviceSessions, ({ one, many }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileDeviceSessions.deviceId],
+    references: [mobileDevices.id],
+  }),
+  nonces: many(mobileSessionNonces),
+}))
+
+export const mobileSessionNoncesRelations = relations(mobileSessionNonces, ({ one }) => ({
+  session: one(mobileDeviceSessions, {
+    fields: [mobileSessionNonces.sessionId],
+    references: [mobileDeviceSessions.id],
+  }),
+}))
+
 // ============ MCP APPROVAL REQUESTS ============
 // Cross-process coordination only. The harness-owned MCP child keeps grants in
 // memory; this table lets the renderer see and resolve one pending decision.
