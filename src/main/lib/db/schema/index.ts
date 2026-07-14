@@ -1233,6 +1233,27 @@ export const usageSamples = sqliteTable(
     model: text("model"),
     generationId: text("generation_id"), // OpenRouter generation id for later reconciliation
     runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    // Immutable product-scope attribution. Null means unavailable, never an
+    // inferred current value. Snapshot ids deliberately have no foreign keys so
+    // rename/archive/delete cannot rewrite historical attribution.
+    attributionState: text("attribution_state").notNull().default("unknown"),
+    attributionHarness: text("attribution_harness"),
+    attributionProjectId: text("attribution_project_id"),
+    attributionProjectName: text("attribution_project_name"),
+    attributionTaskId: text("attribution_task_id"),
+    attributionTaskName: text("attribution_task_name"),
+    attributionChatId: text("attribution_chat_id"),
+    attributionChatName: text("attribution_chat_name"),
+    attributionAutomationId: text("attribution_automation_id"),
+    attributionAutomationName: text("attribution_automation_name"),
+    attributionOrchestrationId: text("attribution_orchestration_id"),
+    attributionOrchestrationName: text("attribution_orchestration_name"),
+    attributionRunId: text("attribution_run_id"),
+    // Source class separates provider totals from run facts. A dedupe group
+    // only exists when later reconciliation must compare overlapping classes.
+    sourceClass: text("source_class").notNull().default("unknown"),
+    dedupeStrategy: text("dedupe_strategy").notNull().default("unknown"),
+    dedupeGroupKey: text("dedupe_group_key"),
     rawPayload: text("raw_payload"), // JSON string of the normalized-from provider payload
     // Deterministic dedup key (providerId/accountTag/window/source) to prevent double-counting.
     dedupeKey: text("dedupe_key").notNull(),
@@ -1241,7 +1262,124 @@ export const usageSamples = sqliteTable(
   (table) => [
     index("usage_samples_provider_idx").on(table.providerId),
     index("usage_samples_captured_at_idx").on(table.capturedAt),
+    index("usage_samples_source_class_captured_idx").on(table.sourceClass, table.capturedAt),
+    index("usage_samples_project_captured_idx").on(table.attributionProjectId, table.capturedAt),
+    index("usage_samples_task_captured_idx").on(table.attributionTaskId, table.capturedAt),
+    index("usage_samples_chat_captured_idx").on(table.attributionChatId, table.capturedAt),
+    index("usage_samples_automation_captured_idx").on(
+      table.attributionAutomationId,
+      table.capturedAt,
+    ),
+    index("usage_samples_orchestration_captured_idx").on(
+      table.attributionOrchestrationId,
+      table.capturedAt,
+    ),
+    index("usage_samples_dedupe_group_idx").on(table.dedupeGroupKey),
     uniqueIndex("usage_samples_dedupe_key_idx").on(table.dedupeKey),
+    check(
+      "usage_samples_attribution_check",
+      sql`(
+        (${table.attributionState} = 'unknown' and
+          ${table.attributionHarness} is null and ${table.attributionProjectId} is null and ${table.attributionProjectName} is null and
+          ${table.attributionTaskId} is null and ${table.attributionTaskName} is null and
+          ${table.attributionChatId} is null and ${table.attributionChatName} is null and
+          ${table.attributionAutomationId} is null and ${table.attributionAutomationName} is null and
+          ${table.attributionOrchestrationId} is null and ${table.attributionOrchestrationName} is null and
+          ${table.attributionRunId} is null) or
+        (${table.attributionState} = 'attributed' and
+          (${table.attributionHarness} is not null or ${table.attributionProjectId} is not null or ${table.attributionProjectName} is not null or
+           ${table.attributionTaskId} is not null or ${table.attributionTaskName} is not null or
+           ${table.attributionChatId} is not null or ${table.attributionChatName} is not null or
+           ${table.attributionAutomationId} is not null or ${table.attributionAutomationName} is not null or
+           ${table.attributionOrchestrationId} is not null or ${table.attributionOrchestrationName} is not null or
+           ${table.attributionRunId} is not null))
+      )`,
+    ),
+    check(
+      "usage_samples_source_class_check",
+      sql`${table.sourceClass} in ('provider-account-total', 'flapstack-run', 'external-provider', 'unknown')`,
+    ),
+    check(
+      "usage_samples_dedupe_strategy_check",
+      sql`(
+        (${table.dedupeStrategy} = 'overlap-group' and ${table.dedupeGroupKey} is not null and length(trim(${table.dedupeGroupKey})) between 1 and 512) or
+        (${table.dedupeStrategy} in ('exact-fact', 'unknown') and ${table.dedupeGroupKey} is null)
+      )`,
+    ),
+  ],
+)
+
+// Saved policy only. Enforcement, alerting, precedence, and reset scheduling
+// belong to later S4-F7 tasks.
+export const usageBudgets = sqliteTable(
+  "usage_budgets",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+    scopeType: text("scope_type").notNull(),
+    providerId: text("provider_id"),
+    accountTag: text("account_tag"),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    automationId: text("automation_id").references(() => automations.id, { onDelete: "cascade" }),
+    orchestrationId: text("orchestration_id").references(() => taskOrchestrations.taskId, {
+      onDelete: "cascade",
+    }),
+    thresholdType: text("threshold_type").notNull(),
+    thresholdValue: integer("threshold_value").notNull(),
+    action: text("action").notNull(),
+    resetType: text("reset_type").notNull().default("none"),
+    resetTimezone: text("reset_timezone"),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("usage_budgets_scope_idx").on(
+      table.scopeType,
+      table.providerId,
+      table.accountTag,
+      table.projectId,
+      table.taskId,
+      table.automationId,
+      table.orchestrationId,
+    ),
+    index("usage_budgets_enabled_action_idx").on(table.enabled, table.action),
+    check("usage_budgets_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+    check(
+      "usage_budgets_scope_check",
+      sql`(
+        (${table.scopeType} = 'global' and ${table.providerId} is null and ${table.accountTag} is null and ${table.projectId} is null and ${table.taskId} is null and ${table.automationId} is null and ${table.orchestrationId} is null) or
+        (${table.scopeType} = 'provider-account' and length(trim(${table.providerId})) between 1 and 200 and (${table.accountTag} is null or length(trim(${table.accountTag})) between 1 and 256) and ${table.projectId} is null and ${table.taskId} is null and ${table.automationId} is null and ${table.orchestrationId} is null) or
+        (${table.scopeType} = 'project' and ${table.providerId} is null and ${table.accountTag} is null and ${table.projectId} is not null and ${table.taskId} is null and ${table.automationId} is null and ${table.orchestrationId} is null) or
+        (${table.scopeType} = 'task' and ${table.providerId} is null and ${table.accountTag} is null and ${table.projectId} is null and ${table.taskId} is not null and ${table.automationId} is null and ${table.orchestrationId} is null) or
+        (${table.scopeType} = 'automation' and ${table.providerId} is null and ${table.accountTag} is null and ${table.projectId} is null and ${table.taskId} is null and ${table.automationId} is not null and ${table.orchestrationId} is null) or
+        (${table.scopeType} = 'orchestration' and ${table.providerId} is null and ${table.accountTag} is null and ${table.projectId} is null and ${table.taskId} is null and ${table.automationId} is null and ${table.orchestrationId} is not null)
+      )`,
+    ),
+    check(
+      "usage_budgets_threshold_check",
+      sql`(
+        (${table.thresholdType} in ('cost-usd-micros', 'total-tokens', 'request-count') and ${table.thresholdValue} > 0) or
+        (${table.thresholdType} = 'quota-percent-micros' and ${table.thresholdValue} between 1 and 100000000 and ${table.scopeType} = 'provider-account')
+      )`,
+    ),
+    check(
+      "usage_budgets_action_check",
+      sql`${table.action} = 'soft-alert' or (${table.action} = 'hard-stop' and ${table.scopeType} != 'provider-account')`,
+    ),
+    check(
+      "usage_budgets_reset_check",
+      sql`(
+        (${table.resetType} = 'none' and ${table.resetTimezone} is null) or
+        (${table.resetType} in ('daily', 'weekly', 'monthly') and ${table.resetTimezone} is not null and length(trim(${table.resetTimezone})) between 1 and 200) or
+        (${table.resetType} = 'provider-cycle' and ${table.resetTimezone} is null and ${table.scopeType} = 'provider-account')
+      )`,
+    ),
+    check("usage_budgets_version_check", sql`${table.version} >= 1`),
   ],
 )
 
@@ -1441,6 +1579,8 @@ export type NewAnthropicAccount = typeof anthropicAccounts.$inferInsert
 export type AnthropicSettings = typeof anthropicSettings.$inferSelect
 export type UsageSample = typeof usageSamples.$inferSelect
 export type NewUsageSample = typeof usageSamples.$inferInsert
+export type UsageBudget = typeof usageBudgets.$inferSelect
+export type NewUsageBudget = typeof usageBudgets.$inferInsert
 export type UsageCycle = typeof usageCycles.$inferSelect
 export type NewUsageCycle = typeof usageCycles.$inferInsert
 export type UsageProviderState = typeof usageProviderStates.$inferSelect
