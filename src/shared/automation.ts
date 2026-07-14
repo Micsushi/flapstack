@@ -15,6 +15,29 @@ export const automationActionTypeSchema = z.enum(automationActionTypes)
 export const automationTriggerTypes = ["manual", "schedule", "run-complete", "file-change"] as const
 export const automationTriggerTypeSchema = z.enum(automationTriggerTypes)
 
+export const DEFAULT_AUTOMATION_FILE_TRIGGER_EXCLUDES = [
+  ".git/**",
+  "**/.git/**",
+  "node_modules/**",
+  "**/node_modules/**",
+  "dist/**",
+  "**/dist/**",
+  "build/**",
+  "**/build/**",
+  "out/**",
+  "**/out/**",
+  "target/**",
+  "**/target/**",
+  "coverage/**",
+  "**/coverage/**",
+  ".next/**",
+  "**/.next/**",
+  ".cache/**",
+  "**/.cache/**",
+  "*.log",
+  "**/*.log",
+] as const
+
 export const automationStates = ["draft", "active", "paused", "archived"] as const
 export const automationStateSchema = z.enum(automationStates)
 
@@ -124,7 +147,7 @@ export const automationTriggerSchema = z.union([
       excludeGlobs: z
         .array(z.string().trim().min(1).max(1_024))
         .max(100)
-        .default([".git/**", "node_modules/**", "dist/**", "build/**"]),
+        .default([...DEFAULT_AUTOMATION_FILE_TRIGGER_EXCLUDES]),
       debounceMs: z.number().int().min(100).max(60_000).default(1_000),
     })
     .strict(),
