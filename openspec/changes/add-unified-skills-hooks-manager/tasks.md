@@ -35,6 +35,18 @@
 - Blocked by: S4-F1-T1
 - Blocks: S4-F1-T3, S4-F1-T4, S4-F1-T6
 - Context: registered worktree validation and current filesystem routers.
+- Code-ready evidence: a schema-versioned native Markdown adapter registry now
+  covers every non-MCP mutable capability row for Claude Code, Codex, and Cursor
+  Agent. Production read/preview/apply/restore procedures retain unknown fields,
+  require preview hashes, use rooted atomic writes plus strict target-bound
+  backups, and reject malformed, stale, traversed, or symlinked targets. Node 22
+  focused adapter/capability/provider/path suites pass 40 tests and focused
+  ESLint passes. Full TypeScript reaches unrelated pre-existing local-model and
+  Codex ACP errors only; the combined repo gate is also blocked by the shared
+  heavy-job lock. Completion remains unchecked because the T1 Stage 3 exit
+  dependency plus live Settings, runtime/restart, package, and integrated
+  acceptance evidence remain unverified; see
+  `docs/stage4-s4-f1-t2-native-adapters.md`.
 
 ### S4-F1-T3 — Add project and task enablement policy
 

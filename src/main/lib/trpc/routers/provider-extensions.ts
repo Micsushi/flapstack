@@ -7,11 +7,27 @@ import {
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { publicProcedure, router } from "../index"
 import {
+  applyNativeExtensionMutation,
   extensionBaselineGaps,
   extensionCapabilityRegistry,
   extensionHarnessBaselines,
   EXTENSION_CAPABILITY_SCHEMA_VERSION,
+  nativeExtensionApplySchema,
+  nativeExtensionMutationSchema,
+  nativeExtensionRestoreSchema,
+  nativeExtensionTargetSchema,
+  previewNativeExtensionMutation,
+  readNativeExtension,
+  restoreNativeExtensionBackup,
 } from "../../extension-management"
+
+function registeredNativeTarget<T extends z.infer<typeof nativeExtensionTargetSchema>>(
+  target: T,
+): T {
+  if (target.scope !== "project") return { ...target, cwd: undefined }
+  if (!target.cwd) throw new Error("Project-scoped extensions require a registered project")
+  return { ...target, cwd: assertRegisteredWorktree(target.cwd).canonicalPath }
+}
 
 export const providerExtensionsRouter = router({
   getCapabilities: publicProcedure.query(() => ({
@@ -35,5 +51,30 @@ export const providerExtensionsRouter = router({
       return mutateProviderExtension({ ...input, cwd })
     }
     return mutateProviderExtension({ ...input, cwd: undefined })
+  }),
+
+  readNative: publicProcedure.input(nativeExtensionTargetSchema).query(({ input }) => {
+    return readNativeExtension(registeredNativeTarget(input))
+  }),
+
+  previewNativeMutation: publicProcedure.input(nativeExtensionMutationSchema).query(({ input }) => {
+    return previewNativeExtensionMutation({
+      ...input,
+      target: registeredNativeTarget(input.target),
+    })
+  }),
+
+  applyNativeMutation: publicProcedure.input(nativeExtensionApplySchema).mutation(({ input }) => {
+    return applyNativeExtensionMutation({
+      ...input,
+      target: registeredNativeTarget(input.target),
+    })
+  }),
+
+  restoreNativeBackup: publicProcedure.input(nativeExtensionRestoreSchema).mutation(({ input }) => {
+    return restoreNativeExtensionBackup({
+      ...input,
+      target: registeredNativeTarget(input.target),
+    })
   }),
 })
