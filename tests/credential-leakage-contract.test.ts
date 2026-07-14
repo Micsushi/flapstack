@@ -63,4 +63,26 @@ describe("credential leakage contracts", () => {
     expect(verifier).toContain("profileName")
     expect(verifier).toContain("release-preview")
   })
+
+  it("never logs credential fragments or binds OAuth callbacks beyond loopback", () => {
+    const main = source("../src/main/index.ts")
+    const claude = source("../src/main/lib/trpc/routers/claude.ts")
+    const mcpAuth = source("../src/main/lib/mcp-auth.ts")
+    const oauth = source("../src/main/lib/oauth.ts")
+
+    expect(main).not.toContain('console.log("[DeepLink] Received:", url)')
+    expect(main).not.toMatch(/callback with code/)
+    expect(main).not.toContain('console.log("[Protocol] process.argv:", process.argv)')
+    expect(main).toContain('server.listen(AUTH_SERVER_PORT, "127.0.0.1"')
+    expect(oauth).toContain('this.server.listen(CALLBACK_PORT, "127.0.0.1"')
+    expect(mcpAuth).not.toMatch(/state\.slice\(/)
+    expect(claude).not.toMatch(
+      /Token preview|tokenPreview|token\.slice\(|token total length|encryptedTokenLength/,
+    )
+    expect(claude).not.toMatch(/\[Ollama\].*Base URL|baseUrl: finalCustomConfig\.baseUrl/)
+    expect(claude).not.toMatch(/\[Ollama\].*Prompt:|input\.prompt\.slice\(/)
+    expect(mcpAuth).toContain("safeMcpErrorKind(error)")
+    expect(oauth).not.toContain("Failed to exchange code for tokens: ${error}")
+    expect(oauth).not.toContain("OAuth error: ${error}")
+  })
 })

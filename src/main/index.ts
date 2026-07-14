@@ -186,10 +186,9 @@ export async function handleAuthCode(code: string): Promise<void> {
 
 // Handle deep link
 function handleDeepLink(url: string): void {
-  console.log("[DeepLink] Received:", url)
-
   try {
     const parsed = new URL(url)
+    console.log("[DeepLink] Received protocol callback:", parsed.host || parsed.pathname)
 
     // Handle MCP OAuth callback: flapstack://mcp-oauth?code=xxx&state=yyy
     if (parsed.pathname === "/mcp-oauth" || parsed.host === "mcp-oauth") {
@@ -210,7 +209,7 @@ console.log("[Protocol] ========== PROTOCOL REGISTRATION ==========")
 console.log("[Protocol] Protocol:", PROTOCOL)
 console.log("[Protocol] Is dev mode (process.defaultApp):", process.defaultApp)
 console.log("[Protocol] process.execPath:", process.execPath)
-console.log("[Protocol] process.argv:", process.argv)
+console.log("[Protocol] process argument count:", process.argv.length)
 
 /**
  * Register the app as the handler for our custom protocol.
@@ -279,7 +278,7 @@ const server = createServer((req, res) => {
 
   if (url.pathname === "/auth/callback") {
     const code = url.searchParams.get("code")
-    console.log("[Auth Server] Received callback with code:", code?.slice(0, 8) + "...")
+    console.log("[Auth Server] Received hosted auth callback:", Boolean(code))
 
     if (code) {
       // Handle the auth code
@@ -358,12 +357,7 @@ const server = createServer((req, res) => {
     // Handle MCP OAuth callback
     const code = url.searchParams.get("code")
     const state = url.searchParams.get("state")
-    console.log(
-      "[Auth Server] Received MCP OAuth callback with code:",
-      code?.slice(0, 8) + "...",
-      "state:",
-      state?.slice(0, 8) + "...",
-    )
+    console.log("[Auth Server] Received MCP OAuth callback:", Boolean(code && state))
 
     if (code && state) {
       // Handle the MCP OAuth callback
@@ -455,8 +449,8 @@ server.on("error", (error: NodeJS.ErrnoException) => {
   console.error("[Auth Server] Failed:", error)
 })
 
-server.listen(AUTH_SERVER_PORT, () => {
-  console.log(`[Auth Server] Listening on http://localhost:${AUTH_SERVER_PORT}`)
+server.listen(AUTH_SERVER_PORT, "127.0.0.1", () => {
+  console.log(`[Auth Server] Listening on http://127.0.0.1:${AUTH_SERVER_PORT}`)
 })
 
 // Clean up stale lock files from crashed instances
