@@ -60,6 +60,16 @@
 - Blocked by: S4-F1-T2
 - Blocks: S4-F1-T5, S4-F1-T7, S4-F8-T1
 - Context: permission inheritance and run-context assembly patterns.
+- Code-ready evidence: migration `0030_extension_enablement_policy` adds only
+  additive SQLite policy state after `0029`; the resolver enforces task over
+  project over user over fixed-enabled precedence and rejects unsupported
+  capability/scope writes. Production resolved-state/set/clear APIs and Claude,
+  Codex, and Cursor run-context integration are present. Node 22 focused tests
+  pass nine migration, precedence, restart, unsupported-scope, router, and
+  supported-harness cases. Completion remains unchecked pending live provider
+  behavior plus Dev-profile and packaged restart proof; no provider-native
+  extension content was edited. See
+  `docs/stage4-s4-f1-t3-extension-policy.md`.
 
 ### S4-F1-T4 — Add explicit cross-harness copy and sharing
 

@@ -33,6 +33,7 @@ import {
   prependStartupContext,
 } from "../../harness/launch-context"
 import { getUsageSecret } from "../../usage/secrets"
+import { buildExtensionRunContext } from "../../extension-management"
 import {
   buildCursorPermissionApplication,
   getGlobalDefault,
@@ -459,7 +460,19 @@ export const cursorRouter = router({
               sessionMode: sessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: HARNESS,
+              cwd: input.cwd,
+            })
+            const runContextMetadata = {
+              ...contextBundle.metadata,
+              extensionPolicy: extensionContext.manifest,
+            }
+            const promptForModel = prependStartupContext(
+              input.prompt,
+              [contextBundle.context, extensionContext.context].filter(Boolean).join("\n\n"),
+            )
 
             // Persist the user message (dedupe a resent prompt like Codex).
             const reusablePromptMessage = findReusableCursorPromptMessage(
@@ -626,7 +639,7 @@ export const cursorRouter = router({
                   outputTokens: metadata.outputTokens,
                   totalTokens: metadata.totalTokens,
                   resultSubtype: metadata.resultSubtype,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
                 },
               }
               const latest = db
@@ -654,7 +667,7 @@ export const cursorRouter = router({
                 runId: input.runId,
                 sessionId: metadata.sessionId,
                 durationMs: metadata.durationMs ?? Date.now() - startedAt,
-                context: contextBundle.metadata,
+                context: runContextMetadata,
                 resultSubtype:
                   metadata.resultSubtype ?? (runStatus === "success" ? "success" : "error"),
               },

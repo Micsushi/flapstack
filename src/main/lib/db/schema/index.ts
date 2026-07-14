@@ -266,6 +266,65 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   }),
 }))
 
+// Provider-native extension content remains on disk. SQLite stores only the
+// user's additive enablement decisions so restart cannot change policy or
+// rewrite a harness configuration file.
+export const extensionEnablementPolicies = sqliteTable(
+  "extension_enablement_policies",
+  {
+    extensionId: text("extension_id").notNull(),
+    harness: text("harness").notNull(),
+    kind: text("kind").notNull(),
+    nativeScope: text("native_scope").notNull(),
+    scopeType: text("scope_type").notNull(),
+    scopeId: text("scope_id").notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.extensionId, table.scopeType, table.scopeId] }),
+    index("extension_enablement_policies_project_idx").on(table.projectId, table.extensionId),
+    index("extension_enablement_policies_task_idx").on(table.taskId, table.extensionId),
+    check(
+      "extension_enablement_policies_harness_check",
+      sql`${table.harness} in ('claude-code', 'codex', 'cursor-agent', 'opencode')`,
+    ),
+    check(
+      "extension_enablement_policies_kind_check",
+      sql`${table.kind} in ('skill', 'command', 'plugin', 'custom-agent', 'mcp', 'hook')`,
+    ),
+    check(
+      "extension_enablement_policies_native_scope_check",
+      sql`${table.nativeScope} in ('user', 'project', 'plugin')`,
+    ),
+    check(
+      "extension_enablement_policies_scope_check",
+      sql`(
+        (${table.scopeType} = 'user' and ${table.scopeId} = 'user' and ${table.projectId} is null and ${table.taskId} is null) or
+        (${table.scopeType} = 'project' and ${table.scopeId} = ${table.projectId} and ${table.projectId} is not null and ${table.taskId} is null) or
+        (${table.scopeType} = 'task' and ${table.scopeId} = ${table.taskId} and ${table.projectId} is not null and ${table.taskId} is not null)
+      )`,
+    ),
+  ],
+)
+
+export const extensionEnablementPoliciesRelations = relations(
+  extensionEnablementPolicies,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [extensionEnablementPolicies.projectId],
+      references: [projects.id],
+    }),
+    task: one(tasks, {
+      fields: [extensionEnablementPolicies.taskId],
+      references: [tasks.id],
+    }),
+  }),
+)
+
 // AI-authored work stays inert here until a later approval transaction creates
 // real task/chat state. Caller identity is stored as evidence rather than a
 // foreign key so deleting a chat cannot erase who proposed the work.

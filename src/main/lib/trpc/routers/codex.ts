@@ -73,6 +73,7 @@ import {
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import { buildExtensionRunContext } from "../../extension-management"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
 import {
   buildProjectVaultRunContext,
@@ -1961,9 +1962,20 @@ export const codexRouter = router({
               }
               throw error
             }
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: "codex",
+              cwd: input.cwd,
+            })
+            const runContextMetadata = {
+              ...contextBundle.metadata,
+              extensionPolicy: extensionContext.manifest,
+            }
             const promptForModel = prependStartupContext(
               input.prompt,
-              [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+              [contextBundle.context, vaultContext.context, extensionContext.context]
+                .filter(Boolean)
+                .join("\n\n"),
             )
             const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
@@ -2292,7 +2304,7 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
-                    context: contextBundle.metadata,
+                    context: runContextMetadata,
                     vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                     durationMs: Date.now() - startedAt,
@@ -2308,7 +2320,7 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
-                    context: contextBundle.metadata,
+                    context: runContextMetadata,
                     vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   }
@@ -2320,7 +2332,7 @@ export const codexRouter = router({
                   permissionMode,
                   permissionApplication,
                   runId: input.runId,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
                   vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                 }
@@ -2345,7 +2357,7 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
-                          context: contextBundle.metadata,
+                          context: runContextMetadata,
                           vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                           ...usageMetadata,
@@ -2360,7 +2372,7 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
-                          context: contextBundle.metadata,
+                          context: runContextMetadata,
                           vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         },
@@ -2386,7 +2398,7 @@ export const codexRouter = router({
                         permissionMode,
                         permissionApplication,
                         runId: input.runId,
-                        context: contextBundle.metadata,
+                        context: runContextMetadata,
                         vaultContext: vaultContext.manifest,
                         transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         resultSubtype: "empty-response",
@@ -2491,7 +2503,7 @@ export const codexRouter = router({
                 type: "message-metadata",
                 messageMetadata: {
                   runId: input.runId,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
                   vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   ...(usageMetadata ?? {}),

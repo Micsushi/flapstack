@@ -80,6 +80,7 @@ import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import { buildExtensionRunContext } from "../../extension-management"
 import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
@@ -1345,11 +1346,19 @@ export const claudeRouter = router({
               }
               throw error
             }
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: HARNESS,
+              cwd: input.cwd,
+            })
             metadata.context = contextBundle.metadata
             metadata.vaultContext = vaultContext.manifest
+            metadata.extensionPolicy = extensionContext.manifest
             const contextualPrompt = prependStartupContext(
               finalPrompt,
-              [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+              [contextBundle.context, vaultContext.context, extensionContext.context]
+                .filter(Boolean)
+                .join("\n\n"),
             )
 
             // Build prompt: if there are images, create an AsyncIterable<SDKUserMessage>
@@ -1720,7 +1729,9 @@ export const claudeRouter = router({
               const freshPrompt = buildPrompt(
                 prependStartupContext(
                   finalPrompt,
-                  [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+                  [contextBundle.context, vaultContext.context, extensionContext.context]
+                    .filter(Boolean)
+                    .join("\n\n"),
                 ),
               )
               if (
