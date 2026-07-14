@@ -73,9 +73,9 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
 - New/verified externals: MIT transcribe.cpp sidecar, Parakeet Unified EN model,
   whisper.cpp fallback binary+model, Kokoro model, Cursor usage
   endpoints (undocumented, best-effort), `cursor-agent` CLI (must be installed +
-  its surface verified before the adapter - see design/D0), OpenAI usage/cost
-  APIs, Anthropic Admin usage/cost APIs, OpenRouter API, NanoGPT API, Discord
-  webhooks.
+  its surface verified before the adapter - see design/D0), OpenRouter API,
+  NanoGPT API, Discord webhooks. OpenAI and Anthropic Admin organization-usage
+  validation is deferred beyond Stage 3.
 - Prerequisite: fix the native-module ABI toggle (Track C F2) first so the full
   `npm run check` gate runs cleanly for every track.
 
@@ -86,8 +86,8 @@ Stage 2 was extended to cover OpenRouter/NanoGPT in the same adapter push.
   per-task files, done criteria, and resolved S2.0 decisions.
 - Reuse repos: `agent-hotline` (filter + TTS engines), `onWatch` (usage math,
   storage, notification model, Discord sender, dashboard references, and full
-  Cursor usage client). External docs checked 2026-07-09/10: OpenAI usage/cost
-  APIs; Anthropic Admin usage/cost APIs; OpenRouter OpenAI-compatible chat API,
+  Cursor usage client). External docs checked 2026-07-09/10: OpenRouter
+  OpenAI-compatible chat API,
   usage accounting, generation stats, key credits/limits, and reasoning docs;
   NanoGPT OpenAI-compatible chat API, models/pricing, and reasoning-output docs;
   Discord webhook docs.

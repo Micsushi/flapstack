@@ -40,4 +40,7 @@ The agent-UX continuation adds authenticated development controls for bounded
 Voice/Usage state, stored response Review/Undo, and renderer disclosure state.
 It fixes canonical macOS temp-path reporting after Undo. These controls improve
 repeatable evidence collection; they do not promote credentialed provider,
-microphone, signed package, visual reasoning, or cross-platform acceptance.
+microphone, visual reasoning, or cross-platform acceptance. Apple signing and
+notarization are deferred public-distribution work; OpenAI and Anthropic Admin
+usage keys are also outside Stage 3 acceptance. See
+`docs/future-release-considerations.md`.

@@ -317,9 +317,9 @@ state without echoing the value.
 
 ### Provider coverage
 
-- **MIGRATED** **U6-01 CONDITIONAL (OpenAI Admin key)** Poll organization usage/cost.
+- **DEFERRED POST-STAGE3** **U6-01 (OpenAI Admin key)** Poll organization usage/cost.
       Expected: provider-reported/exact cost, account tag, raw payload without secret.
-- **MIGRATED** **U6-02 CONDITIONAL (Anthropic Admin key)** Poll Admin Usage/Cost APIs with
+- **DEFERRED POST-STAGE3** **U6-02 (Anthropic Admin key)** Poll Admin Usage/Cost APIs with
       the same provenance and secret rules. Confirm the API `amount` decimal-string
       cents value is divided by 100 exactly once and matches Claude Console USD.
       Force a two-page response and confirm `next_page` is sent back as the `page`
