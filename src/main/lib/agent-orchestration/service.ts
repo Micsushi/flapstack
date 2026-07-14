@@ -20,6 +20,7 @@ import {
   type OrchestrationUsageUpdate,
 } from "../../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
+import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
 
 type Row = Record<string, unknown>
 type Sqlite = Database.Database
@@ -858,12 +859,23 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
     const providerId = row.harness === "claude-code" ? "anthropic" : "codex"
     const dedupeKey = `flapstack-run:${runId}:persisted-message-usage`
     const costQuality = usage.costUsdMicros === null ? "unknown" : "provider-reported"
+    const attribution = resolveUsageAttributionFromSqlite(db, runId).snapshot
     db.prepare(
       `INSERT INTO usage_samples (
         id, provider_id, source, cost_quality, captured_at, input_tokens, output_tokens,
         reasoning_tokens, total_tokens, cost_usd_micros, currency, model, run_id,
-        raw_payload, dedupe_key
-      ) VALUES (?, ?, 'flapstack-run', ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)
+        attribution_state, attribution_harness,
+        attribution_project_id, attribution_project_name,
+        attribution_task_id, attribution_task_name,
+        attribution_chat_id, attribution_chat_name,
+        attribution_automation_id, attribution_automation_name,
+        attribution_orchestration_id, attribution_orchestration_name,
+        attribution_run_id, source_class, dedupe_strategy, raw_payload, dedupe_key
+      ) VALUES (
+        ?, ?, 'flapstack-run', ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        'flapstack-run', 'exact-fact', ?, ?
+      )
       ON CONFLICT(dedupe_key) DO UPDATE SET
         captured_at = excluded.captured_at,
         input_tokens = MAX(COALESCE(usage_samples.input_tokens, 0), COALESCE(excluded.input_tokens, 0)),
@@ -878,7 +890,7 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
           WHEN usage_samples.cost_quality IN ('exact','provider-reported') THEN usage_samples.cost_quality
           ELSE excluded.cost_quality
         END,
-        model = COALESCE(excluded.model, usage_samples.model)`,
+        model = COALESCE(usage_samples.model, excluded.model)`,
     ).run(
       randomUUID(),
       providerId,
@@ -891,6 +903,19 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       usage.costUsdMicros,
       stringOrNull(row.model),
       runId,
+      attribution.state,
+      attribution.harness,
+      attribution.projectId,
+      attribution.projectName,
+      attribution.taskId,
+      attribution.taskName,
+      attribution.chatId,
+      attribution.chatName,
+      attribution.automationId,
+      attribution.automationName,
+      attribution.orchestrationId,
+      attribution.orchestrationName,
+      attribution.runId,
       JSON.stringify({ origin: "persisted-message-metadata" }),
       dedupeKey,
     )

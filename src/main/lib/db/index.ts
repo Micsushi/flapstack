@@ -5,6 +5,7 @@ import { join } from "path"
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
 import { migrateDatabase } from "./migrate"
 import { recoverPendingAllChatPermissionChange } from "../permissions"
+import { backfillUsageAttribution } from "../usage/attribution"
 import * as schema from "./schema"
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
@@ -74,6 +75,7 @@ export function initDatabase() {
       recoverPendingAllChatPermissionChange(nextSqlite)
       console.log("[DB] Migrations completed")
     }
+    backfillUsageAttribution(nextDb)
 
     sqlite = nextSqlite
     db = nextDb

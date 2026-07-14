@@ -15,7 +15,7 @@
 
 ### S4-F7-T2 — Capture and backfill durable attribution
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: New run samples snapshot all known scopes and old samples recover safe dimensions.
 - Scope: Run/automation/orchestration capture; provider-account source classification; deterministic backfill; rename/archive/delete handling; unknown markers; dedupe migration.
