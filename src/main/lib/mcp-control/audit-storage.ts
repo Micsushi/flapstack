@@ -309,8 +309,22 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       }
     case "orchestrate_task":
       return summarizeOrchestrationAuthority(value)
+    case "list_automations":
+      return safe("includeArchived", "limit", "cursor")
+    case "read_automation":
+      return safe("automationId")
     case "create_automation_draft":
-      return { ...safe("trigger", "dryRun"), name: textDigest("name") }
+      return {
+        ...safe("idempotencyKey"),
+        draft: summarizeAutomationDraft(input.draft),
+      }
+    case "update_automation":
+      return {
+        ...safe("automationId", "expectedVersion"),
+        draft: summarizeAutomationDraft(input.draft),
+      }
+    case "enable_automation":
+      return safe("automationId", "expectedVersion", "enabled")
     case "create_vault_section":
     case "update_vault_section":
     case "update_vault_handoff":
@@ -350,6 +364,78 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return null
     default:
       return { keys: Object.keys(input).sort().slice(0, MAX_ENTRIES) }
+  }
+}
+
+function summarizeAutomationDraft(value: unknown): unknown {
+  const draft = asRecord(value)
+  if (!draft) return null
+  const scope = asRecord(draft.scope)
+  const action = asRecord(draft.action)
+  const trigger = asRecord(draft.trigger)
+  const run = asRecord(draft.run)
+  const retry = asRecord(draft.retry)
+  const budget = asRecord(draft.budget)
+  const capabilities = asRecord(run?.customPermissions)
+  const literal = (item: unknown) => (typeof item === "string" ? safeLiteral(item) : null)
+  const boundedNumbers = (record: Record<string, unknown> | null, keys: string[]) =>
+    Object.fromEntries(
+      keys.flatMap((key) =>
+        typeof record?.[key] === "number" || record?.[key] === null ? [[key, record[key]]] : [],
+      ),
+    )
+  return {
+    name: summarizeText(draft.name),
+    description: summarizeText(draft.description),
+    scope: scope
+      ? {
+          type: literal(scope.type),
+          projectId: summarizeText(scope.projectId),
+          taskId: summarizeText(scope.taskId),
+          chatId: summarizeText(scope.chatId),
+        }
+      : null,
+    action: action
+      ? {
+          type: literal(action.type),
+          taskName: summarizeText(action.taskName),
+          chatName: summarizeText(action.chatName),
+        }
+      : null,
+    trigger: trigger
+      ? {
+          type: literal(trigger.type),
+          cron: summarizeText(trigger.cron),
+          timezone: summarizeText(trigger.timezone),
+          catchUp: literal(trigger.catchUp),
+          projectId: summarizeText(trigger.projectId),
+          taskId: summarizeText(trigger.taskId),
+          chatId: summarizeText(trigger.chatId),
+          rootPath: summarizeText(trigger.rootPath),
+          statuses: Array.isArray(trigger.statuses) ? trigger.statuses.map(literal) : [],
+          includeGlobCount: Array.isArray(trigger.includeGlobs) ? trigger.includeGlobs.length : 0,
+          excludeGlobCount: Array.isArray(trigger.excludeGlobs) ? trigger.excludeGlobs.length : 0,
+          ...boundedNumbers(trigger, ["debounceMs"]),
+        }
+      : null,
+    run: run
+      ? {
+          prompt: summarizeText(run.prompt),
+          harness: literal(run.harness),
+          model: summarizeText(run.model),
+          permissionMode: literal(run.permissionMode),
+          worktreeStrategy: literal(run.worktreeStrategy),
+          worktreePath: summarizeText(run.worktreePath),
+          capabilityFlags: capabilities,
+        }
+      : null,
+    retry: boundedNumbers(retry, ["maxAttempts", "initialDelayMs", "maxDelayMs", "deadlineMs"]),
+    budget: boundedNumbers(budget, [
+      "maxDurationMs",
+      "maxTotalTokens",
+      "maxCostUsdMicros",
+      "maxConcurrentRuns",
+    ]),
   }
 }
 
@@ -868,9 +954,19 @@ function resultDigest(summary: string): string | null {
 
 function isRetrySafeClaim(claim: Pick<AuditRow, "tier" | "toolName" | "inputSummary">): boolean {
   if (claim.tier === 0) return true
-  if (claim.toolName !== "launch_run") return false
+  if (
+    claim.toolName === "create_automation_draft" ||
+    claim.toolName === "update_automation" ||
+    claim.toolName === "enable_automation"
+  ) {
+    return true
+  }
   try {
-    return Object.prototype.hasOwnProperty.call(JSON.parse(claim.inputSummary), "idempotencyKey")
+    const input = JSON.parse(claim.inputSummary) as Record<string, unknown>
+    if (claim.toolName === "launch_run") {
+      return Object.prototype.hasOwnProperty.call(input, "idempotencyKey")
+    }
+    return false
   } catch {
     return false
   }

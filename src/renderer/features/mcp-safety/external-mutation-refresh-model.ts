@@ -21,6 +21,7 @@ export type ProductMcpRendererInvalidators = {
   orchestrationTask: (taskId: string) => unknown | Promise<unknown>
   chatLineage: (chatId: string) => unknown | Promise<unknown>
   projectVault: (projectId: string) => unknown | Promise<unknown>
+  automations: Invalidate
 }
 
 export function createProductMcpRendererInvalidator(
@@ -55,6 +56,7 @@ export function createProductMcpRendererInvalidator(
     if (domains.has("vaults")) {
       pending.push(...(event.projectIds ?? []).map((id) => invalidators.projectVault(id)))
     }
+    if (domains.has("automations")) pending.push(invalidators.automations())
     await Promise.all(pending)
   }
 }

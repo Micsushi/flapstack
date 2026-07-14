@@ -6,6 +6,7 @@ import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./project-vault-service"
+import { createMcpAutomationService, mcpAutomationInputShapes } from "./automation-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import {
   appendMcpAuditRecord,
@@ -36,6 +37,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
   const projectVaults = createMcpProjectVaultService()
+  const automationControls = createMcpAutomationService()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
@@ -45,7 +47,8 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
         inputSchema:
           mcpReadInputShapes[tool.name] ??
           mcpMutationInputShapes[tool.name] ??
-          mcpProjectVaultInputShapes[tool.name],
+          mcpProjectVaultInputShapes[tool.name] ??
+          mcpAutomationInputShapes[tool.name],
         annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input, extra) => {
@@ -70,6 +73,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
           },
           mutations,
           projectVaults,
+          automationControls,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
         })
         const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
