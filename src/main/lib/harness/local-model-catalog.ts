@@ -460,23 +460,24 @@ function isCatalogSnapshot(value: unknown): value is LocalModelCatalogSnapshot {
 }
 
 function isCatalogEntry(value: unknown): value is LocalModelCatalogEntry {
-  if (!isRecord(value) || !isRecord(value.identity) || !isRecord(value.capabilities)) return false
+  if (!isRecord(value)) return false
+  const identity = value.identity
+  const capabilities = value.capabilities
+  if (!isRecord(identity) || !isRecord(capabilities)) return false
   if (
-    value.identity.provider !== "ollama" ||
-    typeof value.identity.modelId !== "string" ||
+    identity.provider !== "ollama" ||
+    typeof identity.modelId !== "string" ||
     !["digest", "modifiedAt", "family", "parameterSize", "quantizationLevel"].every(
-      (key) => typeof value.identity[key] === "string" || value.identity[key] === null,
+      (key) => typeof identity[key] === "string" || identity[key] === null,
     ) ||
     !(
-      value.identity.contextWindow === null ||
-      (typeof value.identity.contextWindow === "number" && value.identity.contextWindow > 0)
+      identity.contextWindow === null ||
+      (typeof identity.contextWindow === "number" && identity.contextWindow > 0)
     )
   )
     return false
   if (!Array.isArray(value.limitations) || !value.limitations.every(isLimitation)) return false
-  return ["chat", "streaming", "tools", "vision"].every((key) =>
-    isCapability(value.capabilities[key]),
-  )
+  return ["chat", "streaming", "tools", "vision"].every((key) => isCapability(capabilities[key]))
 }
 
 function isCapability(value: unknown): value is LocalModelCapability {
