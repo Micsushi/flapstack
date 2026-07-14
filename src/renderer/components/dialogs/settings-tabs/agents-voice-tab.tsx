@@ -67,7 +67,13 @@ export function AgentsVoiceTab() {
   const selectedSttAvailability = adapters.availability.stt?.[settings.sttAdapterId]
 
   return (
-    <div className="p-6 space-y-6">
+    <div
+      className="p-6 space-y-6"
+      data-dev-carryover-surface="voice"
+      data-stt-adapter={settings.sttAdapterId}
+      data-tts-adapter={settings.ttsAdapterId}
+      data-history-count={history?.length ?? 0}
+    >
       <div className="space-y-1.5">
         <h3 className="text-sm font-semibold text-foreground">Voice</h3>
         <p className="text-xs text-muted-foreground">

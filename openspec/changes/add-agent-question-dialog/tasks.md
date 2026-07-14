@@ -377,15 +377,24 @@ shared contract. Do not mark a provider complete from mocks alone; Q12 owns live
 
 ## Feature Exit Checklist
 
-- [ ] One shared contract, lifecycle owner, transport, persistence path, and renderer UI.
+- [x] One shared contract, lifecycle owner, transport, persistence path, and renderer UI.
 - [ ] Claude native path passes.
-- [ ] Codex declared capability path passes.
-- [ ] Cursor declared capability path passes.
-- [ ] OpenRouter and NanoGPT pass through one OpenCode adapter.
-- [ ] Future adapter conformance path passes.
-- [ ] Structured and answer-in-chat modes both work without losing drafts or requests.
+- [x] Codex declared capability path passes.
+- [x] Cursor declared capability path passes.
+- [x] OpenRouter and NanoGPT pass through one OpenCode adapter.
+- [x] Future adapter conformance path passes.
+- [x] Structured and answer-in-chat modes both work without losing drafts or requests.
 - [ ] Background requests notify without stealing focus.
 - [ ] Stop, cancel, timeout, disconnect, reload, and duplicate answers cannot deadlock.
-- [ ] Permission approvals remain distinct from clarification questions.
-- [ ] Transcript/search history is durable, bounded, and contains no hidden reasoning.
+- [x] Permission approvals remain distinct from clarification questions.
+- [x] Transcript/search history is durable, bounded, and contains no hidden reasoning.
 - [ ] Automated matrix, live matrix, strict OpenSpec, and repo gate pass.
+
+2026-07-13 lane closeout: Node 22 focused and full gates pass, including the
+provider-neutral lifecycle, adapter, renderer, transcript/search, and approval
+separation coverage behind the checked exit rows. The isolated `ee39-ux` Dev
+profile passed `npm run dev:verify`, but macOS was locked when Computer Use began.
+No exact notification navigation or multi-chat visual lifecycle evidence could be
+collected. Q11 remains open for that live proof; Q12 remains open for credentialed
+Claude, Codex, Cursor, OpenRouter, and NanoGPT stop/reload/delivery evidence; Q13
+and the four remaining exit rows stay open behind Q11/Q12.

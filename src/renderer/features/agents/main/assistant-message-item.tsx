@@ -460,9 +460,14 @@ function ReasoningTimeline({
           "overflow-hidden rounded-lg border border-border bg-muted/30 shadow-[0_0_0_1px_hsl(var(--border)/0.2)]",
       )}
       data-reasoning-timeline="true"
+      data-dev-carryover-surface="reasoning"
+      data-expanded={isExpanded ? "true" : "false"}
+      data-streaming={isStreaming ? "true" : "false"}
+      data-label={label}
     >
       <button
         type="button"
+        data-dev-carryover-action="toggle"
         className="group flex w-full items-center gap-2 border-b border-border/60 px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
         onClick={() => setIsExpanded((expanded) => !expanded)}
         aria-expanded={isExpanded}

@@ -43,6 +43,18 @@ export type DevRendererControlCommand =
       subChatId: string
       project: { id: string; name: string; path: string }
     }
+  | {
+      command: "carryover.get"
+      surface: "voice" | "usage" | "reasoning" | "run-change"
+      runId?: string
+    }
+  | {
+      command: "carryover.control"
+      surface: "reasoning" | "run-change"
+      operation: "toggle" | "open-review" | "show-all"
+      runId?: string
+      index?: number
+    }
 
 export type DevRendererControlRequest = DevRendererControlCommand & { requestId: string }
 
@@ -64,6 +76,8 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "settings.get",
       "settings.control",
       "chat.select",
+      "carryover.get",
+      "carryover.control",
     ].includes(String(value.command))
   ) {
     return null
@@ -141,6 +155,34 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       project.id.length > 200 ||
       project.name.length > 500 ||
       project.path.length > 4_096
+    ) {
+      return null
+    }
+  }
+  if (value.command === "carryover.get" || value.command === "carryover.control") {
+    const surfaces =
+      value.command === "carryover.get"
+        ? ["voice", "usage", "reasoning", "run-change"]
+        : ["reasoning", "run-change"]
+    if (!surfaces.includes(String(value.surface))) return null
+    if (
+      value.runId !== undefined &&
+      (typeof value.runId !== "string" || value.runId.length > 200)
+    ) {
+      return null
+    }
+    if (
+      value.index !== undefined &&
+      (typeof value.index !== "number" ||
+        !Number.isInteger(value.index) ||
+        value.index < 0 ||
+        value.index > 100)
+    ) {
+      return null
+    }
+    if (
+      value.command === "carryover.control" &&
+      !["toggle", "open-review", "show-all"].includes(String(value.operation))
     ) {
       return null
     }
