@@ -15,13 +15,14 @@
 
 ### S4-F6-T2 — Add streaming local chat and run persistence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Ollama chat streams through normal Flapstack messages and run lifecycle.
 - Scope: `/api/chat` adapter; normalized chunks; context assembly; session transcript strategy; abort/timeout; run creation/finalization; reconnect failure; error sanitization.
 - Out of scope: Tool calls and renderer onboarding.
 - Acceptance: Text streams incrementally; cancellation is bounded; restart never resumes an ordinary abandoned stream; run/model/context identity remains durable.
 - Verification: `npm test -- local-model-stream` with chunk, timeout, abort, malformed, disconnect, and persistence fixtures.
+- Manual verification remaining: live Ollama, renderer, package, and provider/device acceptance stays with S4-F6-T8; no such evidence is claimed here.
 - Blocked by: S4-F6-T1
 - Blocks: S4-F6-T3, S4-F6-T7
 - Context: OpenCode chunk mapper/persistence, launch context, agent run schema, active stream maps.
