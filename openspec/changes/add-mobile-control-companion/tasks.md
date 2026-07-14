@@ -2,7 +2,7 @@
 
 ### S4-F10-T1 — Define threat model, action catalog, and bridge contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F10
 - Outcome: Mobile scope, trust boundaries, DTOs, and allowed actions are explicit and testable.
 - Scope: Threat model; private-interface rules; device/session/snapshot/event/action DTOs; risk levels; action preconditions; sequence protocol; rate/size limits; redaction; capability registry.
