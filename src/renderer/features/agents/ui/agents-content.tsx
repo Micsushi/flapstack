@@ -69,6 +69,7 @@ import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-d
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { SettingsContent } from "../../settings/settings-content"
 import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
+import { PlanView } from "../../plan"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -1151,6 +1152,8 @@ function AgentsContentInner() {
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
           </div>
+        ) : desktopView === "plan" ? (
+          <PlanView />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1279,6 +1282,8 @@ function AgentsContentInner() {
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />
             </div>
+          ) : desktopView === "plan" ? (
+            <PlanView />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (
