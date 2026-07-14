@@ -108,6 +108,7 @@ export type AutomationExecutionServiceOptions = {
   createId?: () => string
   pollIntervalMs?: number
   sleep?: (delayMs: number) => Promise<void>
+  beforeConcurrencyClaim?: () => void | Promise<void>
 }
 
 type ExecutionPlan = {
@@ -190,14 +191,12 @@ export class AutomationExecutionService {
       return this.recordPreflightDenial(occurrence, error)
     }
 
-    const deferred = this.withDatabase((database) =>
-      this.deferForConcurrency(database, occurrence, prepared.plan),
+    await this.options.beforeConcurrencyClaim?.()
+    const claim = this.withDatabase((database) =>
+      this.claimExecution(database, occurrence, prepared),
     )
-    if (deferred) return deferred
-
-    const started = this.withDatabase((database) =>
-      this.startExecution(database, occurrence, prepared),
-    )
+    if (claim.kind === "deferred") return claim.outcome
+    const started = claim
     let materialized: MaterializedRun
     try {
       materialized = this.materializeRun(occurrence, started.attempt, prepared)
@@ -457,61 +456,69 @@ export class AutomationExecutionService {
     }
   }
 
-  private deferForConcurrency(
-    database: Sqlite,
-    occurrence: LeasedAutomationOccurrence,
-    plan: ExecutionPlan,
-  ): AutomationExecutionOutcome | null {
-    const active = database
-      .prepare(
-        `SELECT e.id FROM automation_executions e
-         JOIN automation_occurrences o ON o.id = e.occurrence_id
-         WHERE o.automation_id = ? AND o.id <> ? AND e.state IN ('pending','running')
-         LIMIT 1`,
-      )
-      .get(plan.id, occurrence.id)
-    if (!active) return null
-    const retryAt = this.now() + 1_000
-    const transaction = database.transaction(() => {
-      database
-        .prepare(
-          `UPDATE automation_occurrences SET state = 'pending', scheduled_for = ?, terminal_at = NULL
-           WHERE id = ? AND state = 'leased'`,
-        )
-        .run(retryAt, occurrence.id)
-      database.prepare("DELETE FROM automation_leases WHERE occurrence_id = ?").run(occurrence.id)
-    })
-    transaction.immediate()
-    return {
-      occurrenceId: occurrence.id,
-      executionId: null,
-      runId: null,
-      attempt: 0,
-      state: "deferred",
-      stopReason: "concurrency-limit",
-      retryScheduledAt: retryAt,
-      resultSummary: { outcome: "deferred", reason: "concurrency-limit", maxConcurrentRuns: 1 },
-    }
-  }
-
-  private startExecution(
+  private claimExecution(
     database: Sqlite,
     occurrence: LeasedAutomationOccurrence,
     prepared: PreparedExecution,
-  ): { executionId: string; attempt: number; firstAttemptAt: number } {
-    const attemptRow = database
-      .prepare(
-        `SELECT COALESCE(MAX(attempt), 0) + 1 attempt, MIN(created_at) first_attempt_at
-         FROM automation_executions WHERE occurrence_id = ?`,
-      )
-      .get(occurrence.id) as Row
-    const attempt = Number(attemptRow.attempt)
-    if (attempt > prepared.plan.retry.maxAttempts) {
-      fail("invalid-lease", "Automation retry limit is already exhausted.")
-    }
-    const executionId = this.createId()
-    const now = this.now()
+  ):
+    | {
+        kind: "started"
+        executionId: string
+        attempt: number
+        firstAttemptAt: number
+      }
+    | { kind: "deferred"; outcome: AutomationExecutionOutcome } {
     const transaction = database.transaction(() => {
+      this.requireLease(database, occurrence)
+      const active = database
+        .prepare(
+          `SELECT e.id FROM automation_executions e
+           JOIN automation_occurrences o ON o.id = e.occurrence_id
+           WHERE o.automation_id = ? AND o.id <> ? AND e.state IN ('pending','running')
+           LIMIT 1`,
+        )
+        .get(prepared.plan.id, occurrence.id)
+      if (active) {
+        const retryAt = this.now() + 1_000
+        database
+          .prepare(
+            `UPDATE automation_occurrences
+             SET state = 'pending', scheduled_for = ?, terminal_at = NULL
+             WHERE id = ? AND state = 'leased'`,
+          )
+          .run(retryAt, occurrence.id)
+        database.prepare("DELETE FROM automation_leases WHERE occurrence_id = ?").run(occurrence.id)
+        return {
+          kind: "deferred" as const,
+          outcome: {
+            occurrenceId: occurrence.id,
+            executionId: null,
+            runId: null,
+            attempt: 0,
+            state: "deferred" as const,
+            stopReason: "concurrency-limit",
+            retryScheduledAt: retryAt,
+            resultSummary: {
+              outcome: "deferred",
+              reason: "concurrency-limit",
+              maxConcurrentRuns: 1,
+            },
+          },
+        }
+      }
+
+      const attemptRow = database
+        .prepare(
+          `SELECT COALESCE(MAX(attempt), 0) + 1 attempt, MIN(created_at) first_attempt_at
+           FROM automation_executions WHERE occurrence_id = ?`,
+        )
+        .get(occurrence.id) as Row
+      const attempt = Number(attemptRow.attempt)
+      if (attempt > prepared.plan.retry.maxAttempts) {
+        fail("invalid-lease", "Automation retry limit is already exhausted.")
+      }
+      const executionId = this.createId()
+      const now = this.now()
       database
         .prepare(
           `INSERT INTO automation_executions (
@@ -533,13 +540,14 @@ export class AutomationExecutionService {
           "UPDATE automation_occurrences SET state = 'running' WHERE id = ? AND state = 'leased'",
         )
         .run(occurrence.id)
+      return {
+        kind: "started" as const,
+        executionId,
+        attempt,
+        firstAttemptAt: numberOrNull(attemptRow.first_attempt_at) ?? now,
+      }
     })
-    transaction.immediate()
-    return {
-      executionId,
-      attempt,
-      firstAttemptAt: numberOrNull(attemptRow.first_attempt_at) ?? now,
-    }
+    return transaction.immediate()
   }
 
   private materializeRun(

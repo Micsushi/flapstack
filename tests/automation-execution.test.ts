@@ -352,6 +352,66 @@ describe("bounded automation execution", () => {
     })
   })
 
+  it("atomically claims concurrency across competing execution services", async () => {
+    const fixture = database("concurrency-race")
+    const firstOccurrence = seedRunnable(fixture.sqlite, fixture.directory)
+    const secondOccurrence = seedSecondOccurrence(fixture.sqlite)
+    const launch = vi.fn(() => new Promise<void>(() => undefined))
+    let waiting = 0
+    let releaseClaims: (() => void) | null = null
+    const claimsReady = new Promise<void>((resolve) => {
+      releaseClaims = resolve
+    })
+    const beforeConcurrencyClaim = async () => {
+      waiting += 1
+      if (waiting === 2) releaseClaims?.()
+      await claimsReady
+    }
+    const options = {
+      launch,
+      now: () => 1_000,
+      pollIntervalMs: 10,
+      beforeConcurrencyClaim,
+    }
+    const first = execution(fixture.path, options).execute(firstOccurrence)
+    const second = execution(fixture.path, options).execute(secondOccurrence)
+
+    const deferred = await Promise.race([first, second])
+
+    expect(deferred).toMatchObject({
+      state: "deferred",
+      stopReason: "concurrency-limit",
+      retryScheduledAt: 2_000,
+    })
+    expect(launch).toHaveBeenCalledTimes(1)
+    expect(
+      fixture.sqlite
+        .prepare("SELECT state, COUNT(*) count FROM automation_occurrences GROUP BY state")
+        .all(),
+    ).toEqual([
+      { state: "pending", count: 1 },
+      { state: "running", count: 1 },
+    ])
+    expect(
+      fixture.sqlite
+        .prepare("SELECT state, COUNT(*) count FROM automation_executions GROUP BY state")
+        .all(),
+    ).toEqual([{ state: "running", count: 1 }])
+
+    const runningOccurrence = fixture.sqlite
+      .prepare("SELECT id FROM automation_occurrences WHERE state = 'running'")
+      .get() as { id: string }
+    expect(
+      await execution(fixture.path, { ...options, beforeConcurrencyClaim: undefined }).kill(
+        runningOccurrence.id,
+      ),
+    ).toBe(true)
+    expect((await Promise.all([first, second])).map((result) => result.state).sort()).toEqual([
+      "cancelled",
+      "deferred",
+    ])
+  })
+
   it("fails stale targets before launch and records the reason", async () => {
     const fixture = database("stale")
     const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
@@ -536,6 +596,33 @@ function leaseExisting(sqlite: Database.Database, now: number): LeasedAutomation
     )
     .run(now, now + 60_000)
   return leased(now, "lease-2")
+}
+
+function seedSecondOccurrence(sqlite: Database.Database): LeasedAutomationOccurrence {
+  sqlite
+    .prepare(
+      `INSERT INTO automation_occurrences (
+         id, automation_id, trigger_id, dedupe_key, state, scheduled_for, payload, created_at
+       ) VALUES ('occurrence-2', 'automation-1', 'trigger-1', 'manual:2', 'leased', 1000, '{}', 1000)`,
+    )
+    .run()
+  sqlite
+    .prepare(
+      `INSERT INTO automation_leases (occurrence_id, owner, token, acquired_at, expires_at)
+       VALUES ('occurrence-2', 'scheduler-2', 'lease-2', 1000, 61000)`,
+    )
+    .run()
+  return {
+    ...leased(1_000, "lease-2"),
+    id: "occurrence-2",
+    dedupeKey: "manual:2",
+    lease: {
+      owner: "scheduler-2",
+      token: "lease-2",
+      acquiredAt: 1_000,
+      expiresAt: 61_000,
+    },
+  }
 }
 
 function leased(now: number, token: string): LeasedAutomationOccurrence {
