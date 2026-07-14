@@ -1251,7 +1251,7 @@ export const floatingUserMessagesAtom = atomWithStorage<boolean>(
 // Desktop view mode - takes priority over chat-based rendering
 // null = default behavior (chat/new-chat/kanban)
 export type DesktopView =
-  "automations" | "automations-detail" | "inbox" | "settings" | "usage" | null
+  "automations" | "automations-detail" | "inbox" | "settings" | "usage" | "plan" | null
 export const desktopViewAtom = atom<DesktopView>(null)
 
 // Which automation is being viewed/edited (ID or "new" for creation)

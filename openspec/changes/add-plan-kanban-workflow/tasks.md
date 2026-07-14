@@ -31,6 +31,7 @@
 ### S4-F9-T3 — Build the read-only Plan view
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. Node 22 focused `plan-view` tests pass 6 pure selector/reducer/service cases; focused ESLint, Prettier, targeted strict TypeScript, and strict OpenSpec validation pass. The live OpenSpec/Markdown and accessibility walkthrough remains prohibited and unverified, so completion stays open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Users browse stage/feature/task plan hierarchy and distinguish proposed, active, built, stale, and malformed sources.
 - Scope: Project Plan navigation; source selector; hierarchy/requirements/task rendering; status/limitation badges; search/filter; source open; candidate promotion affordance; progress capsule; accessibility.
