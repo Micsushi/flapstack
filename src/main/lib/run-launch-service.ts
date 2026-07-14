@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
+import { claimPendingRunWithinUsageBudget } from "./usage/budgets"
 
 export type QueuedAgentRun = {
   runId: string
@@ -123,19 +124,8 @@ export async function drainPendingMcpRuns(
       .all() as Row[]
 
     for (const row of pending) {
-      const claimed = db
-        .prepare(
-          `UPDATE agent_runs SET status = 'running'
-           WHERE id = ? AND status = 'pending'
-             AND NOT EXISTS (
-               SELECT 1 FROM agent_runs active
-               WHERE active.sub_chat_id = agent_runs.sub_chat_id
-                 AND active.status = 'running'
-                 AND active.id <> agent_runs.id
-             )`,
-        )
-        .run(row.id)
-      if (claimed.changes !== 1) continue
+      const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
+      if (!claimed.claimed) continue
       db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
       const run = queuedRun(row)
       if (!run) {

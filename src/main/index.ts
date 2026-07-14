@@ -33,6 +33,7 @@ import {
   type MobileBridgeService,
 } from "./lib/mobile-bridge"
 import { getUsageSecret } from "./lib/usage/secrets"
+import { stopRunningRunsOverUsageBudget } from "./lib/usage/budgets"
 import {
   getLaunchDirectory,
   isCliInstalled,
@@ -54,8 +55,16 @@ import {
   abortAllCodexStreams,
   cancelActiveCodexRun,
 } from "./lib/trpc/routers/codex"
-import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
-import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
+import {
+  abortAllCursorStreams,
+  cancelActiveCursorRun,
+  hasActiveCursorStreams,
+} from "./lib/trpc/routers/cursor"
+import {
+  abortAllOpencodeStreams,
+  cancelActiveOpencodeRun,
+  hasActiveOpencodeStreams,
+} from "./lib/trpc/routers/opencode"
 import {
   createMainWindow,
   createWindow,
@@ -922,6 +931,14 @@ if (gotTheLock) {
                       if (request.harness === "codex") cancelActiveCodexRun(request)
                       else cancelActiveClaudeSession(request)
                       orchestrationService.acknowledgeCancellationRequest(request.runId)
+                    }
+                    for (const request of stopRunningRunsOverUsageBudget(initDatabase())) {
+                      if (request.harness === "codex") cancelActiveCodexRun(request)
+                      else if (request.harness === "claude-code") cancelActiveClaudeSession(request)
+                      else if (request.harness === "cursor-agent") cancelActiveCursorRun(request)
+                      else if (request.harness === "openrouter" || request.harness === "nanogpt") {
+                        cancelActiveOpencodeRun(request)
+                      }
                     }
                     await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
                   } catch (error) {

@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import {
   addOrchestrationAgentInputSchema,
   createOrchestrationInputSchema,
@@ -22,6 +23,13 @@ import {
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
+import * as dbSchema from "../db/schema"
+import {
+  UsageBudgetExceededError,
+  assertUsageBudgetAllowsLaunch,
+  providerForHarness,
+  resolveUsageBudgets,
+} from "../usage/budgets"
 
 type Row = Record<string, unknown>
 type Sqlite = Database.Database
@@ -38,6 +46,7 @@ export class AgentOrchestrationError extends Error {
       | "out-of-scope"
       | "forbidden-loop"
       | "permission-denied"
+      | "usage-budget-exhausted"
       | "conflict",
     message: string,
   ) {
@@ -996,6 +1005,21 @@ function stopDecision(
   const rows = listAgentRows(db, taskId)
   const stop = parseStopConditions(orchestration.stop_conditions)
   const aggregate = aggregateRows(rows)
+  const task = db.prepare("SELECT project_id FROM tasks WHERE id = ?").get(taskId) as
+    Row | undefined
+  const scopedBudget = resolveUsageBudgets(drizzle(db, { schema: dbSchema }), {
+    controlled: true,
+    providerId: null,
+    accountTag: null,
+    projectId: stringOrNull(task?.project_id),
+    taskId,
+    automationId: null,
+    orchestrationId: taskId,
+    runId: null,
+  })
+  if (scopedBudget.blocked) {
+    return { status: "stopped", reason: "scoped-usage-budget" }
+  }
   if (
     stop.maxWallClockMs &&
     orchestration.started_at &&
@@ -1195,6 +1219,26 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   if (!task) throw new AgentOrchestrationError("stale-target", "Orchestration task is stale.")
   const definition = parseDefinition(agent.definition)
   validateDefinitionPermissions(definition)
+  try {
+    assertUsageBudgetAllowsLaunch(drizzle(db, { schema: dbSchema }), {
+      controlled: true,
+      providerId: providerForHarness(definition.harness),
+      accountTag: null,
+      projectId: String(task.project_id),
+      taskId,
+      automationId: null,
+      orchestrationId: taskId,
+      runId: null,
+    })
+  } catch (error) {
+    if (error instanceof UsageBudgetExceededError) {
+      throw new AgentOrchestrationError(
+        "usage-budget-exhausted",
+        `Orchestration launch blocked by ${error.decision.hardStops.length} scoped usage budget(s).`,
+      )
+    }
+    throw error
+  }
   const parentAgent = agent.parent_agent_id
     ? requireAgent(db, taskId, String(agent.parent_agent_id))
     : null

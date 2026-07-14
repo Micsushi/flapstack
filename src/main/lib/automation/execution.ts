@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { isAbsolute, relative } from "node:path"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import {
   automationActionSchema,
   automationBudgetSchema,
@@ -19,6 +20,14 @@ import {
   createAgentOrchestrationService,
 } from "../agent-orchestration/service"
 import type { AgentRunLauncher, QueuedAgentRun } from "../run-launch-service"
+import * as dbSchema from "../db/schema"
+import {
+  UsageBudgetExceededError,
+  assertUsageBudgetAllowsLaunch,
+  providerForHarness,
+  resolveUsageBudgetContextForRun,
+  resolveUsageBudgets,
+} from "../usage/budgets"
 import {
   resolveAutomationTarget,
   type AutomationTargetReference,
@@ -52,6 +61,7 @@ export type AutomationExecutionErrorCode =
   | "unsupported-harness"
   | "invalid-lease"
   | "concurrency-limit"
+  | "usage-budget-exhausted"
 
 export class AutomationExecutionError extends Error {
   constructor(
@@ -146,7 +156,10 @@ type LaunchResult =
   | { kind: "completed" }
   | { kind: "crashed"; error: string }
   | { kind: "cancelled"; reason: string }
-  | { kind: "budget"; reason: "token-budget" | "cost-budget" | "time-budget" }
+  | {
+      kind: "budget"
+      reason: "token-budget" | "cost-budget" | "time-budget" | "scoped-usage-budget"
+    }
 
 export class AutomationExecutionService {
   private readonly now: () => number
@@ -390,6 +403,30 @@ export class AutomationExecutionService {
     }
     const worktree = resolveWorktree(database, target, plan.run)
     const launchKind = plan.action.type === "create-task-run" ? "orchestration" : "run"
+    try {
+      assertUsageBudgetAllowsLaunch(
+        drizzle(database, { schema: dbSchema }),
+        {
+          controlled: true,
+          providerId: providerForHarness(plan.run.harness),
+          accountTag: null,
+          projectId: target.projectId,
+          taskId: target.taskId,
+          automationId: plan.id,
+          orchestrationId: null,
+          runId: null,
+        },
+        { nowMs: this.now() },
+      )
+    } catch (error) {
+      if (error instanceof UsageBudgetExceededError) {
+        fail(
+          "usage-budget-exhausted",
+          `Automation launch blocked by ${error.decision.hardStops.length} scoped usage budget(s).`,
+        )
+      }
+      throw error
+    }
     const launchBlocker = launchBlockerFor(plan)
     const authoritySnapshot = {
       automationVersion: plan.approval.version,
@@ -721,6 +758,17 @@ export class AutomationExecutionService {
       if (budgetStop) {
         await this.options.cancel?.(run)
         return { kind: "budget", reason: budgetStop }
+      }
+      const scopedBudget = this.withDatabase((database) =>
+        resolveUsageBudgets(
+          drizzle(database, { schema: dbSchema }),
+          resolveUsageBudgetContextForRun(database, run.runId),
+          { nowMs: this.now() },
+        ),
+      )
+      if (scopedBudget.blocked) {
+        await this.options.cancel?.(run)
+        return { kind: "budget", reason: "scoped-usage-budget" }
       }
       this.refreshLease(occurrence, leaseDuration)
       const result = await Promise.race([settled, this.sleep(this.pollIntervalMs).then(() => null)])
