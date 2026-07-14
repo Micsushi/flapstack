@@ -1,10 +1,10 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { eq } from "drizzle-orm"
-import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { app } from "electron"
 import { join } from "path"
-import { existsSync, mkdirSync } from "fs"
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
+import { migrateDatabase } from "./migrate"
+import { recoverPendingAllChatPermissionChange } from "../permissions"
 import * as schema from "./schema"
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
@@ -14,6 +14,9 @@ let sqlite: Database.Database | null = null
  * Get the database path in the app's user data directory
  */
 export function getDatabasePath(): string {
+  const explicitPath = process.env.FLAPSTACK_DB_PATH
+  if (explicitPath) return explicitPath
+
   const userDataPath = app.getPath("userData")
   const dataDir = join(userDataPath, "data")
 
@@ -49,59 +52,85 @@ export function initDatabase() {
   const dbPath = getDatabasePath()
   console.log(`[DB] Initializing database at: ${dbPath}`)
 
-  // Create SQLite connection
-  sqlite = new Database(dbPath)
-  sqlite.pragma("journal_mode = WAL")
-  sqlite.pragma("foreign_keys = ON")
-  // The background usage daemon can write this same DB while the app is open.
-  sqlite.pragma("busy_timeout = 5000")
-
-  // Create Drizzle instance
-  db = drizzle(sqlite, { schema })
-
-  // Run migrations
-  const migrationsPath = getMigrationsPath()
-  console.log(`[DB] Running migrations from: ${migrationsPath}`)
-
+  // Do not publish either singleton until migrations and recovery succeed.
+  // Callers must never observe a database that has only partially initialized.
+  const nextSqlite = new Database(dbPath)
   try {
-    migrate(db, { migrationsFolder: migrationsPath })
-    console.log("[DB] Migrations completed")
+    nextSqlite.pragma("journal_mode = WAL")
+    nextSqlite.pragma("foreign_keys = ON")
+    // The background usage daemon can write this same DB while the app is open.
+    nextSqlite.pragma("busy_timeout = 5000")
 
-    // No run can still be live before this process has created a harness.
-    // Reconcile rows left behind by a crash or forced shutdown so the UI does
-    // not display an endless run after restart.
-    const interruptedAt = new Date()
-    const tableExists = (name: string) =>
-      Boolean(
-        sqlite
-          ?.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-          .get(name),
-      )
-    const cancelledRuns = tableExists("agent_runs")
-      ? db
-          .update(schema.agentRuns)
-          .set({ status: "cancelled", completedAt: interruptedAt })
-          .where(eq(schema.agentRuns.status, "running"))
-          .run().changes
-      : 0
-    const cancelledChats = tableExists("sub_chats")
-      ? db
-          .update(schema.subChats)
-          .set({ runStatus: "cancelled", updatedAt: interruptedAt })
-          .where(eq(schema.subChats.runStatus, "running"))
-          .run().changes
-      : 0
-    if (cancelledRuns || cancelledChats) {
-      console.log(
-        `[DB] Reconciled interrupted agent state: ${cancelledRuns} runs, ${cancelledChats} chats`,
-      )
+    const nextDb = drizzle(nextSqlite, { schema })
+    // The Electron app owns migrations. Headless MCP children receive its already
+    // migrated database explicitly and must not depend on Electron runtime state.
+    if (process.env.FLAPSTACK_DB_PATH) {
+      recoverPendingAllChatPermissionChange(nextSqlite)
+    } else {
+      const migrationsPath = getMigrationsPath()
+      console.log(`[DB] Running migrations from: ${migrationsPath}`)
+      migrateDatabase(nextDb, nextSqlite, migrationsPath)
+      backfillFilesystemRootRegistrations(nextSqlite)
+      recoverPendingAllChatPermissionChange(nextSqlite)
+      console.log("[DB] Migrations completed")
     }
+
+    sqlite = nextSqlite
+    db = nextDb
+    return db
   } catch (error) {
     console.error("[DB] Migration error:", error)
+    nextSqlite.close()
     throw error
   }
+}
 
-  return db
+function backfillFilesystemRootRegistrations(database: Database.Database): void {
+  const tableExists = database.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  )
+  if (
+    !tableExists.get("projects") ||
+    !tableExists.get("chats") ||
+    !tableExists.get("filesystem_root_registrations")
+  ) {
+    return
+  }
+  const paths = database
+    .prepare(
+      `SELECT path FROM projects
+       UNION
+       SELECT worktree_path AS path FROM chats WHERE worktree_path IS NOT NULL`,
+    )
+    .all() as Array<{ path: string }>
+  const exists = database.prepare(
+    "SELECT 1 FROM filesystem_root_registrations WHERE path = ? LIMIT 1",
+  )
+  const insert = database.prepare(
+    `INSERT INTO filesystem_root_registrations
+       (path, canonical_path, device_id, inode_id, bound_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+  const transaction = database.transaction(() => {
+    for (const { path } of paths) {
+      if (exists.get(path)) continue
+      try {
+        const info = lstatSync(path, { bigint: true })
+        if (info.isSymbolicLink() || !info.isDirectory()) continue
+        const hasIdentity = info.dev !== 0n || info.ino !== 0n
+        insert.run(
+          path,
+          realpathSync(path),
+          hasIdentity ? info.dev.toString() : null,
+          hasIdentity ? info.ino.toString() : null,
+          Date.now(),
+        )
+      } catch {
+        // Missing/inaccessible legacy roots stay unbound and fail closed.
+      }
+    }
+  })
+  transaction.immediate()
 }
 
 /**

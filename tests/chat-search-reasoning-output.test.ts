@@ -43,7 +43,35 @@ describe("chat search visible reasoning output", () => {
     ])
   })
 
-  it("indexes visible file-content parts so scoped results can highlight in chat", () => {
+  it("finds the same visible reasoning after persisted history reload", () => {
+    const persisted = JSON.stringify([
+      {
+        id: "assistant-reloaded",
+        role: "assistant",
+        metadata: { durationMs: 4_200 },
+        parts: [
+          {
+            type: "tool-ReasoningOutput",
+            input: { text: "Reloaded provider-visible reasoning." },
+            opaque: { encrypted: "private" },
+          },
+        ],
+      },
+    ])
+    const reloaded = JSON.parse(persisted)
+    const results = extractSearchableText(reloaded)
+    expect(results).toEqual([
+      {
+        messageId: "assistant-reloaded",
+        partIndex: 0,
+        partType: "tool-ReasoningOutput",
+        text: "Reloaded provider-visible reasoning.",
+      },
+    ])
+    expect(JSON.stringify(results)).not.toContain("private")
+  })
+
+  it("never indexes hidden file-content payloads", () => {
     const results = extractSearchableText([
       {
         id: "user-file",
@@ -51,11 +79,30 @@ describe("chat search visible reasoning output", () => {
         parts: [{ type: "file-content", content: "needle inside attachment" }],
       },
     ] as any)
-    expect(results).toContainEqual({
-      messageId: "user-file",
-      partIndex: 0,
-      partType: "text",
-      text: "needle inside attachment",
-    })
+    expect(results).toEqual([])
+  })
+
+  it("indexes visible structured questions and answers without arbitrary tool input", () => {
+    const results = extractSearchableText([
+      {
+        id: "assistant-question",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-AskUserQuestion",
+            input: {
+              questions: [{ question: "Which branch should I use?", secret: "hidden" }],
+              privatePrompt: "do not index",
+            },
+            result: { answers: { branch: "codex/feature" } },
+          },
+        ],
+      },
+    ] as any)
+
+    expect(results.map((result) => result.text)).toEqual([
+      "Which branch should I use?",
+      "codex/feature",
+    ])
   })
 })

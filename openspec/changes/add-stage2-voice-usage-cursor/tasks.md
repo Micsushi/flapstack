@@ -4,6 +4,10 @@ This checklist is the repo-local OpenSpec record for task scope, completion, and
 blockers. Machine-local `STAGE2-*.md` planning notes kept outside this
 repository carry implementation detail by track.
 
+Stage 2 testing is closed as a separate gate. Unfinished rows below are not
+marked complete; they are status-free migration records pointing to their new
+authoritative Stage 3 task boards.
+
 ## 0. Prerequisite
 
 - [x] 0.1 F2: native-module ABI toggle removal so `npm run check` runs cleanly
@@ -27,16 +31,19 @@ repository carry implementation detail by track.
 - [x] 1.11b V12 remove read-aloud prompt injection and verify reply-format independence
 - [x] 1.11c V13 optional machine-local vault context across all harnesses
 - [x] 1.11d V14 remove composer/global automatic read-aloud controls and playback
-- [ ] 1.11 V-exit voice tests + manual matrix
-- [ ] 1.12 V11 replace default batch STT with bundled warm Parakeet streaming
-      sidecar, pinned model lifecycle, committed/tentative PCM protocol,
-      cancellation, idle unload, and explicit whisper.cpp fallback
-- [ ] 1.13 V12 stream committed/tentative dictation directly into both chat
-      inputs while preserving the pre-dictation draft and review-before-send
-- [ ] 1.14 V13 persist finalized transcript, metadata, and optional local WAV;
-      add searchable Voice settings history with copy/insert/play/reveal/delete
-- [ ] 1.15 V14 verify streaming/package licenses, focused tests, full gate, model
-      download states, live dev identity, real inline dictation, and history CRUD
+- Migrated: 1.11 V-exit voice tests + manual matrix -> S3-F9.
+- Migrated: 1.12 replace default batch STT with bundled warm Parakeet streaming
+  sidecar, pinned model lifecycle, committed/tentative PCM protocol,
+  cancellation, idle unload, and explicit whisper.cpp fallback -> S3-F9.
+- Migrated: 1.13 stream committed/tentative dictation directly into both chat
+  inputs while preserving the pre-dictation draft and review-before-send
+  -> S3-F9.
+- Migrated: 1.14 persist finalized transcript, metadata, and optional local WAV;
+  add searchable Voice settings history with copy/insert/play/reveal/delete
+  -> S3-F9.
+- Migrated: 1.15 verify streaming/package licenses, focused tests, full gate, model
+  download states, live dev identity, real inline dictation, and history CRUD
+  -> S3-F9.
 - [x] 1.16 V15 bind typed and dictated drafts to immutable conversation origins;
       keep one app-level recording alive across app/chat/project navigation; add
       background recording return/stop capsule and ordered cross-chat handoff
@@ -56,7 +63,7 @@ repository carry implementation detail by track.
       estimate fallback; account-wide history only if current API exposes it)
 - [x] 2.10 U10 Threshold alerts + Discord webhook notifications from daemon
 - [x] 2.11 U11 Usage dashboard + historical charts + settings + daemon status
-- [ ] 2.12 U-exit usage tests + manual matrix
+- Migrated: 2.12 U-exit usage tests + manual matrix -> S3-F14.
 
 ## 3. Cursor harness (Track D)
 
@@ -68,7 +75,7 @@ repository carry implementation detail by track.
 - [x] 3.3 D3 Onboarding + login/token detect
 - [x] 3.4 D4 Permission mapping + honest limitations
 - [x] 3.5 D5 Chips, model catalog, UI wiring
-- [ ] 3.6 D-exit cursor harness tests + manual matrix
+- Migrated: 3.6 D-exit cursor harness tests + manual matrix -> S3-F15.
 
 ## 4. OpenRouter and NanoGPT OpenCode-backed Harnesses (Track E)
 
@@ -83,11 +90,12 @@ repository carry implementation detail by track.
 - [x] 4.6 E6 Run persistence, checkpoints, manifests, and usage hooks
 - [x] 4.7 E7 Provider onboarding, model catalog, chips, and settings
 - [x] 4.8 E8 Native harness spike + defer/continue decision
-- [ ] 4.9 E-exit OpenCode-backed harness tests + manual matrix
+- Migrated: 4.9 E-exit OpenCode-backed harness tests + manual matrix -> S3-F15.
 - [x] 4.10 Limit normal provider selectors to DeepSeek/GLM defaults with persistent Add model choices
 - [x] 4.10a Use provider-only identity chips with compact icons and limit Cursor
       selectors to Composer 2.5/Auto defaults with opt-in extra models
-- [ ] 4.11 Replace stale NanoGPT DeepSeek defaults and live-test a chat-capable model
+- Migrated: 4.11 Replace stale NanoGPT DeepSeek defaults and live-test a
+  chat-capable model -> S3-F15.
 
 ## 5. Reasoning Output Parity (Cross-track)
 
@@ -99,7 +107,7 @@ repository carry implementation detail by track.
 - [x] 5.5 T4 Codex/OpenAI/ACP reasoning handling
 - [x] 5.6 T5 Cursor reasoning-output stream integration
 - [x] 5.7 T6 OpenRouter/NanoGPT/local-model reasoning adapter contract
-- [ ] 5.8 T7 Reasoning-output fixtures, tests, and manual matrix
+- Migrated: 5.8 T7 Reasoning-output fixtures, tests, and manual matrix -> S3-F16.
 - [x] 5.8a T7a Persist a per-chat Reasoning toggle, default on, beside effort selection
 - [x] 5.8b T7b Map selected effort to the closest supported reasoning depth per provider
 - [x] 5.8c T7c Configure Codex detailed summaries/raw output and preserve App Server commentary phases
@@ -107,7 +115,8 @@ repository carry implementation detail by track.
 - [x] 5.8e T7e Request and preserve OpenRouter/NanoGPT reasoning fields and details
 - [x] 5.8f T7f Map Cursor reasoning on/off and effort where its CLI supports them
 - [x] 5.8g T7g Persist timers, token-only/private indicators, summaries, tools, and plans honestly
-- [ ] 5.8h T7h Add capability/fallback tests plus live provider evidence without fabricating reasoning
+- Migrated: 5.8h T7h Add capability/fallback tests plus live provider evidence
+  without fabricating reasoning -> S3-F16.
 
 ## 6. Fixes (Track C)
 
@@ -129,5 +138,6 @@ repository carry implementation detail by track.
 ## 7. Stage exit
 
 - [x] 7.1 `npm run check` green (lint, style, strict types, tests, build)
-- [ ] 7.2 OpenSpec change validated and archived
+- Migrated: 7.2 Stage 2 archive/closeout -> S3-F17 after every migrated owner is
+  complete and the historical Stage 2 change can be archived truthfully.
 - [x] 7.3 Handoff + `feature-todo.md` Stage 2 boxes updated with known limitations

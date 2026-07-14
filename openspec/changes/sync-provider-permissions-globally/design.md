@@ -62,8 +62,9 @@ checkout:
   best-effort.
 - Do not add a new database schema or duplicate provider-specific permission
   state.
-- Do not complete the existing custom-toggle scaffold in this change. Until
-  those toggles are real, `custom` remains conservative and visibly degraded.
+- Do not add global/project/task custom-toggle defaults in this change. Exact
+  per-chat toggles are allowed for `current-chat`; hierarchy-wide custom
+  inheritance and all-chat custom synchronization belong to S3-F12.
 
 ## Decisions
 
@@ -101,6 +102,14 @@ invalidation is global, not limited to the initiating chat.
 
 For `current-chat`, update only the selected `chats` row and all internal
 `sub_chats` rows owned by it. Parent defaults and other chats do not change.
+
+`current-chat` with `custom` requires one complete validated toggle object and
+stores it on that chat. Changing the chat to any non-custom mode clears its
+custom JSON. `all-chats` with `custom` is rejected until the global, project,
+and task default layers can persist the same exact schema; copying one chat's
+toggles to every chat while leaving parent defaults mode-only would create
+contradictory future-chat behavior. Non-custom all-chat changes clear stale
+custom JSON from every affected chat.
 
 `agent_runs.permission_mode` never changes. Active runs continue with their
 captured launch configuration. Any run started after the mutation resolves the
@@ -180,7 +189,24 @@ edit, shell, web, external-directory, and task/subagent behavior.
 OpenRouter and NanoGPT share this exact rule builder. Provider API choice does
 not alter local tool authority.
 
-### 8. Preview every provider honestly
+### 8. Provider and product MCP gates do not stack or bypass
+
+Provider-native permission mapping controls the harness's ordinary tools and
+third-party MCP clients. The Stage 3 product MCP registry separately classifies
+Flapstack app-control tools by Tier 0 through Tier 3.
+
+- `read-only` may invoke registry-classified product Tier 0 reads only;
+  third-party MCP remains denied unless separately authorized.
+- `ask-before-edits` correlates the provider request with the product invocation
+  and presents one Flapstack decision, not two consecutive prompts.
+- Tier 3 product operations always retain the Stage 3 approval gate, even when
+  the provider-native mode would allow the underlying tool call.
+- A denial, missing bridge, unknown tool, or uncorrelated request fails closed.
+
+The provider integration test proves this boundary; the product registry and
+approval implementation remain authoritative in `add-stage3-mcp-control`.
+
+### 9. Preview every provider honestly
 
 `permissions.previewHarness` accepts all supported harnesses and returns:
 
@@ -193,7 +219,7 @@ not alter local tool authority.
 The warning copy names the selected provider. It does not collapse every
 non-Claude provider into Claude semantics.
 
-### 9. Search Settings locally on every keystroke
+### 10. Search Settings locally on every keystroke
 
 Add a small static search registry containing one entry per visible Settings
 page and major control. Each entry owns a stable ID, tab ID, label, short
@@ -212,6 +238,12 @@ Selecting a result activates its tab, scrolls the stable target into view,
 focuses it when possible, and briefly highlights it. `Cmd/Ctrl+F` focuses the
 Settings search. Arrow keys and Enter navigate results. Escape clears a query
 before it closes Settings.
+
+Every successful scoped permission mutation invalidates preferences, global
+default, chat-mode resolution, active/archived chat lists, and affected
+project/task lists. The all-chat path invalidates globally; the current-chat
+path may use the same conservative superset. Failed mutations restore the
+selector and do not publish a success state.
 
 ## Risks / Trade-offs
 

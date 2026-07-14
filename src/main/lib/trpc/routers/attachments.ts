@@ -1,13 +1,13 @@
 import { and, desc, eq } from "drizzle-orm"
 import { app } from "electron"
-import { constants } from "node:fs"
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import { basename, dirname, join, resolve } from "node:path"
-import { randomUUID } from "node:crypto"
+import { realpathSync } from "node:fs"
+import { mkdir } from "node:fs/promises"
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
 import { attachments, chats, getDatabase, projects, tasks } from "../../db"
-import { prepareSafeWritePath } from "../../path-safety"
+import { readFileInsideRoot, writeFileInsideRoot } from "../../path-safety"
 import { publicProcedure, router } from "../index"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
 
 const attachmentKindSchema = z.enum(["file", "image", "pasted-text", "chat-history", "text"])
 
@@ -63,7 +63,7 @@ export const attachmentsRouter = router({
       z.object({
         chatId: z.string(),
         taskId: z.string().optional().nullable(),
-        sourcePath: z.string(),
+        dataBase64: z.string(),
         kind: attachmentKindSchema.default("file"),
         name: z.string().optional(),
         contentText: z.string().optional(),
@@ -72,8 +72,7 @@ export const attachmentsRouter = router({
     .mutation(async ({ input }) => {
       const db = getDatabase()
       const chat = getChatOrThrow(input.chatId)
-      const sourceStat = await stat(input.sourcePath)
-      if (!sourceStat.isFile()) throw new Error("Attachment source must be a file")
+      const data = Buffer.from(input.dataBase64, "base64")
 
       const attachment = db
         .insert(attachments)
@@ -81,17 +80,18 @@ export const attachmentsRouter = router({
           chatId: input.chatId,
           taskId: input.taskId ?? chat.taskId,
           kind: input.kind,
-          name: cleanName(input.name ?? basename(input.sourcePath)),
-          sourcePath: input.sourcePath,
+          name: cleanName(input.name ?? "attachment"),
           contentText: input.contentText,
         })
         .returning()
         .get()
 
-      const storageDir = join(attachmentRoot(), attachment.id)
-      await mkdir(storageDir, { recursive: true })
-      const storedPath = join(storageDir, attachment.name)
-      await copyFile(input.sourcePath, storedPath)
+      await mkdir(attachmentRoot(), { recursive: true })
+      const { targetPath: storedPath } = await writeFileInsideRoot(
+        attachmentRoot(),
+        join(attachment.id, attachment.name),
+        { data },
+      )
 
       return db
         .update(attachments)
@@ -176,47 +176,30 @@ export const attachmentsRouter = router({
       if (!allowedRoots.has(requestedRoot)) {
         throw new Error("Attachment target must be one of the chat's known worktree roots")
       }
+      const registeredRoot = assertRegisteredWorktree(input.worktreePath)
 
-      const targetPath = await prepareSafeWritePath(
-        input.worktreePath,
-        input.targetRelativePath ?? attachment.name,
-      )
-      const sourcePath = attachment.storedPath ?? attachment.sourcePath
-      const writeContent = async (destination: string, exclusive: boolean) => {
-        if (sourcePath) {
-          await copyFile(sourcePath, destination, exclusive ? constants.COPYFILE_EXCL : 0)
-        } else if (attachment.contentText !== null) {
-          await writeFile(destination, attachment.contentText, {
-            encoding: "utf-8",
-            flag: exclusive ? "wx" : "w",
-          })
-        } else {
-          throw new Error("Attachment has no stored content")
-        }
+      const storedTarget = attachment.storedPath
+        ? storedAttachmentTarget(attachment.storedPath)
+        : null
+      if (!storedTarget && attachment.contentText === null) {
+        throw new Error("Attachment has no stored content")
       }
-
-      if (!input.overwrite) {
-        try {
-          await writeContent(targetPath, true)
-        } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-            throw new Error("Target file already exists")
-          }
-          throw error
+      const storedData = storedTarget
+        ? await readFileInsideRoot(storedTarget.rootPath, storedTarget.relativePath)
+        : null
+      try {
+        return await writeFileInsideRoot(
+          registeredRoot.canonicalPath,
+          input.targetRelativePath ?? attachment.name,
+          storedData ? { data: storedData } : { data: attachment.contentText! },
+          { overwrite: input.overwrite },
+        )
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+          throw new Error("Target file already exists")
         }
-      } else {
-        const temporaryPath = join(dirname(targetPath), `.flapstack-${randomUUID()}.tmp`)
-        try {
-          await writeContent(temporaryPath, true)
-          await rm(targetPath, { force: true })
-          await rename(temporaryPath, targetPath)
-        } finally {
-          await rm(temporaryPath, { force: true })
-        }
+        throw error
       }
-
-      const resultStat = await stat(targetPath)
-      return { targetPath, byteLength: resultStat.size }
     }),
 
   get: publicProcedure.input(z.object({ id: z.string() })).query(({ input }) => {
@@ -230,10 +213,11 @@ export const attachmentsRouter = router({
     if (!attachment) throw new Error("Attachment not found")
 
     if (attachment.contentText !== null) return attachment.contentText
-    const sourcePath = attachment.storedPath ?? attachment.sourcePath
-    if (!sourcePath) throw new Error("Attachment has no readable text content")
-
-    return readFile(sourcePath, "utf-8")
+    if (!attachment.storedPath) throw new Error("Attachment has no readable text content")
+    const target = storedAttachmentTarget(attachment.storedPath)
+    return (
+      await readFileInsideRoot(target.rootPath, target.relativePath, { maxBytes: 2_000_000 })
+    ).toString("utf-8")
   }),
 
   delete: publicProcedure
@@ -247,3 +231,18 @@ export const attachmentsRouter = router({
         .get()
     }),
 })
+
+function storedAttachmentTarget(storedPath: string): { rootPath: string; relativePath: string } {
+  const rootPath = realpathSync(attachmentRoot())
+  const absolutePath = resolve(storedPath)
+  const relativePath = relative(rootPath, absolutePath)
+  if (
+    !isAbsolute(storedPath) ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error("Attachment storage path is outside the durable attachment namespace")
+  }
+  return { rootPath, relativePath }
+}

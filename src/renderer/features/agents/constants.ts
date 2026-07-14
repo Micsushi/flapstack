@@ -2,7 +2,12 @@
  * Agents feature constants
  */
 
-import type { HarnessChipKind, RunPermissionMode } from "../../../shared/harness-types"
+import type {
+  AgentHarness,
+  HarnessChipKind,
+  RunPermissionMode,
+} from "../../../shared/harness-types"
+import { getPermissionEligibility } from "../../../shared/permission-capabilities"
 
 export type DevicePreset = {
   name: string
@@ -142,14 +147,31 @@ export const RUN_PERMISSION_MODE_LABELS: Record<RunPermissionMode, string> = {
   custom: "Custom",
 } as const
 
-export const RUN_PERMISSION_MODE_OPTIONS = [
+const ALL_RUN_PERMISSION_MODE_OPTIONS = [
   "read-only",
   "ask-before-edits",
+  "auto-edit-project-only",
   "full-access",
+  "custom",
 ] as const satisfies readonly RunPermissionMode[]
 
-export function isSelectableRunPermissionMode(mode: RunPermissionMode): boolean {
-  return RUN_PERMISSION_MODE_OPTIONS.some((option) => option === mode)
+export const RUN_PERMISSION_MODE_OPTIONS = ALL_RUN_PERMISSION_MODE_OPTIONS.filter(
+  (mode) => getPermissionEligibility(null, mode).selectable,
+)
+
+export function getSelectableRunPermissionModes(
+  harness?: AgentHarness | null,
+): readonly RunPermissionMode[] {
+  return ALL_RUN_PERMISSION_MODE_OPTIONS.filter(
+    (mode) => getPermissionEligibility(harness, mode).selectable,
+  )
+}
+
+export function isSelectableRunPermissionMode(
+  mode: RunPermissionMode,
+  harness?: AgentHarness | null,
+): boolean {
+  return getPermissionEligibility(harness, mode).selectable
 }
 
 export function formatPermissionMode(mode?: string | null): string {

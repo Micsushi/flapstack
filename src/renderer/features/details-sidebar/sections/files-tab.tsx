@@ -533,7 +533,7 @@ export const FilesTab = memo(
             const label = node.type === "folder" ? "folder" : "file"
             if (window.confirm(`Move "${node.name}" to trash?`)) {
               deleteMutation.mutate(
-                { absolutePath },
+                { worktreePath: worktreePath!, relativePath: node.path },
                 {
                   onSuccess: () => {
                     toast.success(`${node.name} moved to trash`)
@@ -563,10 +563,13 @@ export const FilesTab = memo(
     const handleRenameSave = useCallback(
       async (newName: string) => {
         if (!renameTarget || !worktreePath) return
-        const absolutePath = toAbsolute(renameTarget.path)
         setRenameLoading(true)
         try {
-          await renameMutation.mutateAsync({ absolutePath, newName })
+          await renameMutation.mutateAsync({
+            worktreePath,
+            relativePath: renameTarget.path,
+            newName,
+          })
           toast.success(`Renamed to ${newName}`)
 
           // Update expanded paths: replace old path prefix with new
@@ -605,7 +608,7 @@ export const FilesTab = memo(
           setRenameLoading(false)
         }
       },
-      [renameTarget, worktreePath, toAbsolute, renameMutation, invalidateFiles, setExpandedPaths],
+      [renameTarget, worktreePath, renameMutation, invalidateFiles, setExpandedPaths],
     )
 
     // ---- Keyboard (VS Code behaviour) ----

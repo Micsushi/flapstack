@@ -1,3 +1,9 @@
+import type {
+  DevMcpSettingsInvalidation,
+  DevRendererControlRequest,
+  DevRendererControlResponse,
+} from "../shared/dev-renderer-control"
+
 export interface UpdateInfo {
   version: string
   releaseDate?: string
@@ -27,6 +33,25 @@ export interface WorktreeSetupFailurePayload {
 export interface NotificationNavigationPayload {
   chatId?: string
   subChatId?: string
+}
+
+export interface ProductMcpRendererInvalidation {
+  version: 1
+  source: "product-mcp"
+  domains: Array<
+    | "projects"
+    | "tasks"
+    | "chats"
+    | "runs"
+    | "attachments"
+    | "approvals"
+    | "audit"
+    | "orchestrations"
+  >
+  chatIds?: string[]
+  runIds?: string[]
+  projectIds?: string[]
+  taskIds?: string[]
 }
 
 export interface DesktopNotificationOptions extends NotificationNavigationPayload {
@@ -93,8 +118,20 @@ export interface DesktopApi {
 
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  onShortcutOpenSettings: (callback: () => void) => () => void
+  onDevRendererControlRequest: (
+    callback: (payload: DevRendererControlRequest) => void,
+  ) => () => void
+  respondDevRendererControl: (response: DevRendererControlResponse) => void
+  onDevMcpViewChanged: (
+    callback: (payload: import("../shared/dev-test-control").DevTestControlViewPayload) => void,
+  ) => () => void
+  onDevMcpAgentInput: (
+    callback: (payload: import("../shared/dev-agent-input").DevAgentInputPayload) => void,
+  ) => () => void
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
+  onProductMcpInvalidation: (
+    callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void
 
   // Worktree setup failures

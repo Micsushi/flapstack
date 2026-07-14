@@ -1,5 +1,26 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import { exposeElectronTRPC } from "trpc-electron/main"
+import {
+  parseProductMcpRendererInvalidation,
+  PRODUCT_MCP_INVALIDATION_CHANNEL,
+  type ProductMcpRendererInvalidation,
+} from "../shared/product-mcp-invalidation"
+import {
+  DEV_RENDERER_CONTROL_REQUEST_CHANNEL,
+  DEV_RENDERER_CONTROL_RESPONSE_CHANNEL,
+  DEV_MCP_SETTINGS_INVALIDATION_CHANNEL,
+  parseDevRendererControlRequest,
+  parseDevRendererControlResponse,
+  parseDevMcpSettingsInvalidation,
+  type DevMcpSettingsInvalidation,
+  type DevRendererControlRequest,
+  type DevRendererControlResponse,
+} from "../shared/dev-renderer-control"
+import { DEV_AGENT_INPUT_CHANNEL, type DevAgentInputPayload } from "../shared/dev-agent-input"
+import {
+  DEV_TEST_CONTROL_VIEW_CHANNEL,
+  type DevTestControlViewPayload,
+} from "../shared/dev-test-control"
 
 // Only initialize Sentry in production to avoid IPC errors in dev mode
 if (process.env.NODE_ENV === "production") {
@@ -135,15 +156,43 @@ contextBridge.exposeInMainWorld("desktopApi", {
     ipcRenderer.on("shortcut:open-settings", handler)
     return () => ipcRenderer.removeListener("shortcut:open-settings", handler)
   },
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
-  ) => {
-    const handler = (
-      _event: unknown,
-      payload: { action: "created" | "archived"; chatId: string },
-    ) => callback(payload)
-    ipcRenderer.on("dev-mcp:chats-changed", handler)
-    return () => ipcRenderer.removeListener("dev-mcp:chats-changed", handler)
+  onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => {
+    const handler = (_event: unknown, payload: DevTestControlViewPayload) => callback(payload)
+    ipcRenderer.on(DEV_TEST_CONTROL_VIEW_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_TEST_CONTROL_VIEW_CHANNEL, handler)
+  },
+  onDevMcpAgentInput: (callback: (payload: DevAgentInputPayload) => void) => {
+    const handler = (_event: unknown, payload: DevAgentInputPayload) => callback(payload)
+    ipcRenderer.on(DEV_AGENT_INPUT_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_AGENT_INPUT_CHANNEL, handler)
+  },
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseDevMcpSettingsInvalidation(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(DEV_MCP_SETTINGS_INVALIDATION_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_MCP_SETTINGS_INVALIDATION_CHANNEL, handler)
+  },
+  onDevRendererControlRequest: (callback: (payload: DevRendererControlRequest) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseDevRendererControlRequest(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(DEV_RENDERER_CONTROL_REQUEST_CHANNEL, handler)
+  },
+  respondDevRendererControl: (response: DevRendererControlResponse) => {
+    const safeResponse = parseDevRendererControlResponse(response)
+    if (safeResponse) ipcRenderer.send(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, safeResponse)
+  },
+  onProductMcpInvalidation: (callback: (payload: ProductMcpRendererInvalidation) => void) => {
+    const handler = (_event: unknown, raw: unknown) => {
+      const payload = parseProductMcpRendererInvalidation(raw)
+      if (payload) callback(payload)
+    }
+    ipcRenderer.on(PRODUCT_MCP_INVALIDATION_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(PRODUCT_MCP_INVALIDATION_CHANNEL, handler)
   },
 
   // File change events (from Claude Write/Edit tools)
@@ -315,8 +364,15 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
-  onDevMcpChatsChanged: (
-    callback: (payload: { action: "created" | "archived"; chatId: string }) => void,
+  onDevRendererControlRequest: (
+    callback: (payload: DevRendererControlRequest) => void,
+  ) => () => void
+  respondDevRendererControl: (response: DevRendererControlResponse) => void
+  onDevMcpSettingsChanged: (callback: (payload: DevMcpSettingsInvalidation) => void) => () => void
+  onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => () => void
+  onDevMcpAgentInput: (callback: (payload: DevAgentInputPayload) => void) => () => void
+  onProductMcpInvalidation: (
+    callback: (payload: ProductMcpRendererInvalidation) => void,
   ) => () => void
   // File changes
   onFileChanged: (

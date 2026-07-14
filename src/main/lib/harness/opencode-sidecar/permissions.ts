@@ -19,7 +19,8 @@ import type {
   HarnessPermissionApplication,
   HarnessPermissionLimitation,
 } from "../../../../shared/harness-types"
-import type { PermissionMode } from "../../permissions"
+import type { CustomPermissionToggles, PermissionMode } from "../../permissions"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import type { SidecarApprovalDecision } from "./contract"
 
 /** OpenCode per-tool permission verb. */
@@ -43,7 +44,10 @@ export type OpencodeSessionPermission = {
   action: OpencodePermissionRule
 }
 
-export function buildOpencodePermissionConfig(mode: PermissionMode): OpencodePermissionConfig {
+export function buildOpencodePermissionConfig(
+  mode: PermissionMode,
+  customPermissions?: CustomPermissionToggles | null,
+): OpencodePermissionConfig {
   switch (mode) {
     case "read-only":
       return { edit: "deny", bash: "deny", webfetch: "deny" }
@@ -55,18 +59,28 @@ export function buildOpencodePermissionConfig(mode: PermissionMode): OpencodePer
     case "full-access":
       return { edit: "allow", bash: "allow", webfetch: "allow" }
     case "custom":
+      if (customPermissions) {
+        return {
+          edit: customPermissions.projectWrite ? "allow" : "deny",
+          bash: customPermissions.shell && customPermissions.git ? "allow" : "deny",
+          webfetch: customPermissions.network ? "allow" : "deny",
+        }
+      }
+      return { edit: "deny", bash: "deny", webfetch: "deny" }
     default:
-      // Conservative default until custom toggles are wired to the config.
       return { edit: "ask", bash: "ask", webfetch: "ask" }
   }
 }
 
-export function buildOpencodeSessionPermissions(mode: PermissionMode): OpencodeSessionPermission[] {
-  const rules = buildOpencodePermissionConfig(mode)
+export function buildOpencodeSessionPermissions(
+  mode: PermissionMode,
+  customPermissions?: CustomPermissionToggles | null,
+): OpencodeSessionPermission[] {
+  const rules = buildOpencodePermissionConfig(mode, customPermissions)
   const externalDirectory: OpencodePermissionRule =
     mode === "read-only" ? "deny" : mode === "full-access" ? "allow" : "ask"
   const catchAll: OpencodePermissionRule =
-    mode === "read-only" ? "deny" : mode === "full-access" ? "allow" : "ask"
+    mode === "read-only" || mode === "custom" ? "deny" : mode === "full-access" ? "allow" : "ask"
   return [
     // OpenCode's built-in default is permissive. Start with a mode-level
     // catch-all so new, unknown, and MCP tool permissions cannot bypass the
@@ -85,9 +99,19 @@ export function buildOpencodeSessionPermissions(mode: PermissionMode): OpencodeS
     { permission: "bash", pattern: "*", action: rules.bash },
     { permission: "webfetch", pattern: "*", action: rules.webfetch },
     { permission: "websearch", pattern: "*", action: rules.webfetch },
-    { permission: "external_directory", pattern: "*", action: externalDirectory },
+    {
+      permission: "external_directory",
+      pattern: "*",
+      action:
+        mode === "custom" ? (customPermissions?.projectWrite ? "ask" : "deny") : externalDirectory,
+    },
     // A subagent can escape a narrow permission mode through its own tools.
-    { permission: "task", pattern: "*", action: externalDirectory },
+    {
+      permission: "task",
+      pattern: "*",
+      action:
+        mode === "custom" ? (customPermissions?.subagents ? "allow" : "deny") : externalDirectory,
+    },
   ]
 }
 
@@ -119,14 +143,31 @@ export function classifyPermission(
 export function decideAutoApproval(
   mode: PermissionMode,
   permission: string,
+  patterns: readonly string[] = [],
+  correlationId = permission,
+  customPermissions?: CustomPermissionToggles | null,
 ): SidecarApprovalDecision | null {
+  for (const providerToolName of [permission, ...patterns]) {
+    const mcpDecision = resolveProviderMcpPermission({
+      permissionMode: mode,
+      correlationId,
+      providerToolName,
+      customPermissions,
+    })
+    if (mcpDecision?.decision === "deny") {
+      return { reply: "reject", message: mcpDecision.reason }
+    }
+    if (mcpDecision?.decision === "allow") return { reply: "once" }
+    if (mcpDecision?.decision === "provider-approval") return null
+  }
+
   const bucket = classifyPermission(permission)
   // Read/search tools never mutate the workspace. OpenCode normally allows
   // them without prompting, but preserve that behavior if a request is raised.
   if (bucket === "read") return { reply: "once" }
   // Unknown tools are treated like shell (most conservative mutation bucket).
   const key: keyof OpencodePermissionConfig = bucket === "other" ? "bash" : bucket
-  const rule = buildOpencodePermissionConfig(mode)[key]
+  const rule = buildOpencodePermissionConfig(mode, customPermissions)[key]
   if (rule === "allow") return { reply: "once" }
   if (rule === "deny") {
     return { reply: "reject", message: `Blocked by Flapstack "${mode}" permission mode.` }
@@ -157,9 +198,9 @@ function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
     case "custom":
       return [
         limitation(
-          "mcp",
-          "custom per-tool toggles",
-          "Custom mode currently maps to a conservative ask-everything provider rule set; fine-grained toggles are not wired yet.",
+          "filesystem-write-scope",
+          "versioned custom capabilities",
+          "OpenCode maps edit, shell/git, network, subagent, external-directory, and MCP buckets conservatively; browser, secrets, and independent shell-versus-git parity are not claimed.",
         ),
       ]
     default:
@@ -170,11 +211,12 @@ function getLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
 export function buildOpencodePermissionApplication(params: {
   permissionMode: PermissionMode
   cwd?: string | null
+  customPermissions?: CustomPermissionToggles | null
 }): HarnessPermissionApplication {
   const cwd = params.cwd?.trim() || null
-  const rules = buildOpencodePermissionConfig(params.permissionMode)
+  const rules = buildOpencodePermissionConfig(params.permissionMode, params.customPermissions)
   const catchAll =
-    params.permissionMode === "read-only"
+    params.permissionMode === "read-only" || params.permissionMode === "custom"
       ? "deny"
       : params.permissionMode === "full-access"
         ? "allow"

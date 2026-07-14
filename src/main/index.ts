@@ -8,10 +8,21 @@ import {
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
-import { closeDatabase, initDatabase } from "./lib/db"
+import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
+import { createMainRunLauncher } from "./lib/main-run-launcher"
+import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
+import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
+import {
+  startProductMcpInvalidationBridge,
+  type ProductMcpInvalidationBridge,
+} from "./lib/mcp-control/invalidation-bridge"
+import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
+import { runRequiredStartup } from "./lib/startup-gate"
+import { installBeforeQuitShutdown, runAppShutdown } from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -26,11 +37,13 @@ import {
   getAllMcpConfigHandler,
   hasActiveClaudeSessions,
   abortAllClaudeSessions,
+  cancelActiveClaudeSession,
 } from "./lib/trpc/routers/claude"
 import {
   getAllCodexMcpConfigHandler,
   hasActiveCodexStreams,
   abortAllCodexStreams,
+  cancelActiveCodexRun,
 } from "./lib/trpc/routers/codex"
 import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
 import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
@@ -46,6 +59,7 @@ import { windowManager } from "./windows/window-manager"
 import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
+let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -80,6 +94,18 @@ function abortAllAgentSessions(): void {
   abortAllCodexStreams()
   abortAllCursorStreams()
   abortAllOpencodeStreams()
+}
+
+async function abortAndWaitForAgentSessions(): Promise<void> {
+  if (pendingRunTimer) clearInterval(pendingRunTimer)
+  pendingRunTimer = null
+  while (pendingRunDrainActive) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+  }
+  abortAllAgentSessions()
+  while (hasActiveAgentSessions()) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+  }
 }
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
@@ -137,6 +163,8 @@ export function getAppUrl(): string {
 
 // Auth manager singleton (use the one from auth-manager module)
 let authManager: AuthManager
+let pendingRunTimer: NodeJS.Timeout | null = null
+let pendingRunDrainActive = false
 
 export function getAuthManager(): AuthManager {
   // First try to get from module, fallback to local variable for backwards compat
@@ -825,26 +853,75 @@ if (gotTheLock) {
     // Track app opened without hosted account identity.
     trackAppOpened()
 
-    // Initialize database
-    try {
-      initDatabase()
-      console.log("[App] Database initialized")
-      devMcpServer = await startDevMcpServer({
-        enabled: IS_DEV,
-        userDataPath: app.getPath("userData"),
-        checkout: app.getAppPath(),
-        profile: app.getName(),
-      })
-      void runStartupCatchUp({
-        db: initDatabase(),
-        getSecret: getAppUsageSecret,
-      }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
-    } catch (error) {
-      console.error("[App] Failed to initialize database:", error)
-    }
-
-    // Create main window
-    createMainWindow()
+    const startupReady = await runRequiredStartup({
+      initialize: () => {
+        initDatabase()
+        console.log("[App] Database initialized")
+      },
+      continueStartup: async () => {
+        try {
+          await reconcileVoiceHistory().catch((error) =>
+            console.warn("[Voice] Startup history reconciliation failed:", error),
+          )
+          productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
+            onInvalidation: (payload) => {
+              for (const window of BrowserWindow.getAllWindows()) {
+                if (!window.isDestroyed()) {
+                  window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+                }
+              }
+            },
+          })
+          devMcpServer = await startDevMcpServer({
+            enabled: IS_DEV,
+            userDataPath: app.getPath("userData"),
+            checkout: app.getAppPath(),
+            profile: app.getName(),
+          })
+          recoverInterruptedMcpRuns(getDatabasePath())
+          const pendingRunLauncher = createMainRunLauncher()
+          const orchestrationService = createAgentOrchestrationService(getDatabasePath())
+          const launchPendingRuns = async () => {
+            if (pendingRunDrainActive) return
+            pendingRunDrainActive = true
+            try {
+              orchestrationService.tickAll()
+              for (const request of orchestrationService.listCancellationRequests()) {
+                if (request.harness === "codex") cancelActiveCodexRun(request)
+                else cancelActiveClaudeSession(request)
+                orchestrationService.acknowledgeCancellationRequest(request.runId)
+              }
+              await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+            } catch (error) {
+              console.error("[App] Pending run launch failed:", error)
+            } finally {
+              pendingRunDrainActive = false
+            }
+          }
+          pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+          void launchPendingRuns()
+          void runStartupCatchUp({
+            db: initDatabase(),
+            getSecret: getAppUsageSecret,
+          }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
+        } catch (error) {
+          console.error("[App] Optional startup service failed:", error)
+        }
+        createMainWindow()
+      },
+      cleanup: async () => {
+        if (pendingRunTimer) clearInterval(pendingRunTimer)
+        pendingRunTimer = null
+        await devMcpServer?.stop()
+        devMcpServer = null
+        await productMcpInvalidationBridge?.stop()
+        productMcpInvalidationBridge = null
+        closeDatabase()
+      },
+      exit: (code) => app.exit(code),
+      report: (error) => console.error("[App] Failed required startup:", error),
+    })
+    if (!startupReady) return
 
     // Hosted auto-update is disabled for local-first Flapstack builds.
 
@@ -892,16 +969,28 @@ if (gotTheLock) {
     }
   })
 
-  // Cleanup before quit
-  app.on("before-quit", async () => {
-    console.log("[App] Shutting down...")
-    abortAllAgentSessions()
-    cancelAllPendingOAuth()
-    await devMcpServer?.stop()
-    devMcpServer = null
-    await cleanupGitWatchers()
-    await shutdownAnalytics()
-    await closeDatabase()
+  // Electron does not await async event listeners. Hold quit until one guarded
+  // shutdown promise has finished, with SQLite closed only after stream
+  // finalizers and services can no longer write to it.
+  installBeforeQuitShutdown({
+    app,
+    shutdown: () =>
+      runAppShutdown({
+        persistProviderSessions: abortAndWaitForAgentSessions,
+        cancelPendingOAuth: () => cancelAllPendingOAuth(),
+        stopDevMcpServer: async () => {
+          await devMcpServer?.stop()
+          devMcpServer = null
+        },
+        stopProductMcpBridge: async () => {
+          await productMcpInvalidationBridge?.stop()
+          productMcpInvalidationBridge = null
+        },
+        cleanupGitWatchers,
+        shutdownAnalytics,
+        closeDatabase,
+      }),
+    reportError: (error) => console.error("[App] Shutdown error:", error),
   })
 
   // Handle uncaught exceptions

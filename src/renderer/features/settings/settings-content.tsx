@@ -14,12 +14,13 @@ import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-m
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
 import { AgentsPermissionsTab } from "../../components/dialogs/settings-tabs/agents-permissions-tab"
 import { AgentsProjectsTab } from "../../components/dialogs/settings-tabs/agents-project-worktree-tab"
-import { AgentsSkillsTab } from "../../components/dialogs/settings-tabs/agents-skills-tab"
-import { AgentsPluginsTab } from "../../components/dialogs/settings-tabs/agents-plugins-tab"
+import { AgentsProviderExtensionsTab } from "../../components/dialogs/settings-tabs/agents-provider-extensions-tab"
 import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/agents-api-providers-tab"
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
+import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
+import { revealSettingsTarget } from "./settings-target"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
@@ -60,19 +61,7 @@ export function SettingsContent() {
     if (!searchTarget) return
 
     const frame = requestAnimationFrame(() => {
-      const target = document.querySelector<HTMLElement>(`[data-settings-id="${searchTarget}"]`)
-      if (target) {
-        target.scrollIntoView({ block: "center", behavior: "smooth" })
-        target.focus({ preventScroll: true })
-        target.animate(
-          [
-            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-            { boxShadow: "0 0 0 2px rgba(245, 158, 11, 0.65)" },
-            { boxShadow: "0 0 0 0 rgba(245, 158, 11, 0)" },
-          ],
-          { duration: 1200, easing: "ease-out" },
-        )
-      }
+      revealSettingsTarget(searchTarget)
       setSearchTarget(null)
     })
 
@@ -93,12 +82,16 @@ export function SettingsContent() {
         return <AgentsApiProvidersTab />
       case "voice":
         return <AgentsVoiceTab />
+      case "keyboard":
+        return <AgentsKeyboardTab />
       case "skills":
-        return <AgentsSkillsTab />
+        return <AgentsProviderExtensionsTab initialKind="skill" />
+      case "agents":
+        return <AgentsProviderExtensionsTab initialKind="custom-agent" />
       case "mcp":
         return <AgentsMcpTab />
       case "plugins":
-        return <AgentsPluginsTab />
+        return <AgentsProviderExtensionsTab initialKind="plugin" />
       case "projects":
         return <AgentsProjectsTab />
       case "usage":
@@ -114,6 +107,7 @@ export function SettingsContent() {
   const isTwoPanelTab =
     activeTab === "mcp" ||
     activeTab === "skills" ||
+    activeTab === "agents" ||
     activeTab === "projects" ||
     activeTab === "plugins"
 

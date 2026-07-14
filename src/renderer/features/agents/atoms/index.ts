@@ -1,5 +1,6 @@
 import { atom } from "jotai"
 import { atomFamily, atomWithStorage } from "jotai/utils"
+import type { AgentInputRequest } from "../../../../shared/agent-input"
 import { atomWithWindowStorage } from "../../../lib/window-storage"
 import {
   CLAUDE_MODEL_ID_MAP,
@@ -1013,7 +1014,7 @@ export const compactingSubChatsAtom = atom<Set<string>>(new Set<string>())
 export const justCreatedIdsAtom = atom<Set<string>>(new Set<string>())
 
 // Pending user questions from AskUserQuestion tool
-// Set when Claude requests user input, cleared when answered or skipped
+// Set when an agent requests user input, cleared when answered or skipped
 export const QUESTIONS_SKIPPED_MESSAGE = "User skipped questions - proceed with defaults"
 export const QUESTIONS_TIMED_OUT_MESSAGE = "Timed out"
 
@@ -1021,11 +1022,14 @@ export type PendingUserQuestion = {
   subChatId: string
   parentChatId: string
   toolUseId: string
+  request?: AgentInputRequest
   questions: Array<{
+    id: string
     question: string
     header: string
-    options: Array<{ label: string; description: string }>
+    options: Array<{ id: string; label: string; description: string }>
     multiSelect: boolean
+    allowCustom: boolean
   }>
 }
 // Map<subChatId, PendingUserQuestion> - supports multiple pending questions across workspaces

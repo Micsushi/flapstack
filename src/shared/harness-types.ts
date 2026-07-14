@@ -37,6 +37,9 @@ export type HarnessPermissionControl =
   | "browser"
   | "mcp"
   | "secrets"
+  | "subagents"
+  | "third-party-mcp"
+  | "product-mcp"
 
 export type HarnessPermissionEnforcement = {
   control: HarnessPermissionControl

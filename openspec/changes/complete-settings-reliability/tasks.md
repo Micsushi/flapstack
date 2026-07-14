@@ -9,14 +9,18 @@ features. Stage and feature README files are navigation routers only.
 
 - [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Honest Settings Surface
-- Outcome: Keyboard, Legacy Beta, Custom Agents, and Future Scaffolds cannot be
-  reached through release navigation, search, or a stale stored tab ID.
-- Scope: Add typed hidden-tab policy; remove sidebar entries and content routes;
-  remove search entries; normalize hidden IDs to Preferences; remove the retired
-  Beta-click devtools unlock path while retaining normal development Debug.
+- Outcome: One typed release registry prevents Legacy Beta, Future Scaffolds,
+  and retired Profile/Worktree routes from being reached through navigation,
+  search, or stale stored IDs. Keyboard and Custom Agents are now visible only
+  because their S3-F8 and S3-F11 promotion contracts landed.
+- Scope: Add typed release metadata; derive sidebar, direct routing, and search
+  from it; normalize hidden IDs to Preferences; remove the retired Beta-click
+  devtools unlock path while retaining normal development Debug.
 - Out of scope: Delete tab components, atoms, or stored data.
 - Acceptance:
   - Hidden tabs are absent from sidebar and Settings search.
+  - Promoted Keyboard and Custom Agents routes remain visible and searchable
+    without weakening hidden-route normalization.
   - A hidden active tab normalizes to Preferences and updates the active tab.
   - Debug remains visible in development and hidden by the existing production
     gate.
@@ -98,9 +102,13 @@ features. Stage and feature README files are navigation routers only.
   - Existing stored data remains present and hidden legacy permission values
     show change-required without becoming selectable.
 - Verification: Node 22 full gate plus verified live dev smoke.
-- Remaining verification: Node 22 `npm run check` passes with 61 test files,
-  533 passing tests, 3 skipped tests, and a production build. The verified live
-  Settings smoke remains.
+- Remaining verification: this exact `609c` checkout passes Node 22
+  `npm run check` with 119 test files, 879 passing tests, 3 skipped tests, and a
+  production build. `npm run dev:verify` identifies this worktree and isolated
+  profile. Authenticated MCP proved hidden-route/search policy and preserved
+  project selection. Accessibility inspection proved the visible credential
+  search surface. A representative live legacy permission value and the final
+  post-lease visual matrix remain open.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F7-T1, S3-F7-T2, S3-F7-T3.
 - Blocks: S3-F8-T1 unless headless-only work is explicitly accepted;
@@ -111,7 +119,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T1 - Inventory actions and build the shortcut registry
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: One registry describes every real shortcut action, platform default,
   availability, focus policy, and runtime handler identity.
@@ -133,7 +141,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T2 - Implement binding validation and persistence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: Users can save, reset, and immediately inspect valid custom bindings
   without silent conflicts.
@@ -155,7 +163,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T3 - Route runtime hotkeys through resolved bindings
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: The runtime executes exactly the binding displayed in Settings and
   updates it without restart.
@@ -178,7 +186,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F8-T4 - Restore Keyboard Settings and verify platforms
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Keyboard Shortcuts
 - Outcome: The Keyboard tab returns only with working, conflict-safe shortcuts.
 - Scope: Rebuild page from registry; show platform notation, availability, and
@@ -191,6 +199,14 @@ features. Stage and feature README files are navigation routers only.
   - Verified dev smoke covers edit, invoke, conflict, reset, input focus, and
     restart persistence.
 - Verification: focused suite, full check, verified dev smoke, platform matrix.
+- Verification: registry/parser/runtime/editor tests, strict TypeScript and
+  OpenSpec, exact dev identity, Node 22 full check, custom binding set/read,
+  conflict rejection, restart persistence, and reset pass. Under the shared UI
+  lease, `cmd+shift+9` was delivered to the exact `609c` renderer: composer
+  focus suppressed it, workspace focus opened Keyboard Settings, and MCP
+  confirmed the resulting route. The Keyboard page passed pixel and
+  accessibility inspection with the reset `?` default. Windows/Linux package
+  checks remain explicitly unavailable and no parity claim is made.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F8-T2, S3-F8-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -198,94 +214,134 @@ features. Stage and feature README files are navigation routers only.
 
 ## S3-F9 - Voice Settings
 
-### S3-F9-T1 - Make adapter, model, and offline preference truthful
+S3-F9 now owns the unfinished Voice exit and streaming work formerly numbered
+Stage 2 tasks 1.11 through 1.15. No second checklist owns that work.
+
+### S3-F9-T1 - Replace default batch STT with warm Parakeet streaming
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Voice selectors resolve the labeled adapter/model and Prefer offline
-  changes actual adapter priority.
-- Scope: Trace Voice tab values through resolver and sidecar; separate Whisper
-  and Parakeet identities; expose installed/download/error states; wire Prefer
-  offline into canonical resolution; preserve compatible stored selections.
-- Out of scope: Replace the active streaming STT architecture.
+- Outcome: Local dictation uses a bundled warm Parakeet streaming sidecar with an
+  explicit whisper.cpp fallback.
+- Scope: Pinned model lifecycle; bundled native sidecar; committed/tentative PCM
+  protocol; cancellation; idle unload; download/install/error states; adapter
+  identity and fallback policy.
+- Out of scope: Silent engine substitution or cloud-only dictation.
 - Acceptance:
-  - Selected labels match the runtime adapter/model metadata.
-  - Prefer offline chooses an available local adapter and falls back visibly.
-  - Missing model/binary states never report ready.
-- Verification: resolver/model lifecycle tests and real dictation smoke.
-- Estimated effort: 1-1.5 days.
-- Blocked by: coordinate with `add-stage2-voice-usage-cursor` tasks 1.11-1.15.
-- Blocks: S3-F9-T4.
-- Relevant context: Voice tab, speech registry/resolver, STT sidecar/model store.
+  - Tentative and committed segments are ordered and cancellation-safe.
+  - The selected adapter/model matches runtime metadata.
+  - Missing binary/model states are visible; whisper fallback is explicit.
+- Verification: sidecar protocol/model lifecycle tests and real local dictation.
+- Remaining verification: Node protocol tests and Rust sidecar tests pass; a real
+  pinned-model load/start/chunked-speech/finalize/unload smoke passes with ordered
+  committed output. Microphone speech, visible tentative revision, and timed
+  idle-unload remain manual.
+- Estimated effort: 2-3 days.
+- Blocked by: none.
+- Blocks: S3-F9-T2, S3-F9-T5.
+- Relevant context: speech registry/resolver, STT sidecars, model store, package resources.
 
-### S3-F9-T2 - Unify voice and playback-rate consumption
+### S3-F9-T2 - Stream dictation into both immutable conversation drafts
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: One voice/rate preference controls assistant messages and Voice
-  History playback.
-- Scope: Define canonical preference service; migrate duplicate renderer/main
-  values; update ordinary message, history, and active playback consumers;
-  define restart/update policy when voice or rate changes.
+- Outcome: Tentative and committed speech updates the intended new-chat or active
+  chat draft without losing pre-dictation text or crossing conversation origin.
+- Scope: Wire streaming segments into both composers; preserve initial draft;
+  replace tentative text with committed text; review-before-send; cancellation;
+  navigation-safe immutable origin and background recording handoff.
+- Out of scope: Automatic send or cross-device dictation.
+- Acceptance:
+  - Both composers show ordered tentative/committed updates.
+  - Existing draft text survives start, cancel, and completion.
+  - Navigation never inserts into a different conversation.
+- Verification: streaming draft/origin tests and live navigation dictation smoke.
+- Remaining verification: focused draft/origin ownership tests pass. Live speech
+  in both composers and navigation/background handoff remain manual.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T1.
+- Blocks: S3-F9-T3, S3-F9-T5.
+- Relevant context: draft atoms, immutable dictation origins, recording capsule.
+
+### S3-F9-T3 - Persist searchable Voice History and reliable mutations
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
+- Outcome: Final transcripts, metadata, and optional local WAV files are
+  searchable and support reliable copy, insert, play, reveal, and delete.
+- Scope: Stable history IDs; transcript/origin/adapter/model/timing metadata;
+  optional WAV lifecycle; search; insertion after composer mount; missing-target
+  copy-and-warning fallback; atomic CRUD and error state.
+- Out of scope: Cloud or cross-device history sync.
+- Acceptance:
+  - Finalized records survive restart and search by transcript/context.
+  - Insert appends exactly once without replacing draft text.
+  - Failed/missing targets preserve transcript; CRUD never reports false success.
+- Verification: history store/component/CRUD tests and verified live history flow.
+- Remaining verification: schema migration, target-bound insertion, missing-target
+  preservation, search metadata, and focused tests pass. Live restart and all UI
+  actions remain manual.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T2.
+- Blocks: S3-F9-T5.
+- Relevant context: Voice History, desktop navigation, draft atoms, local WAV storage.
+
+### S3-F9-T4 - Make Voice settings control canonical runtime state
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
+- Outcome: Adapter, model, offline preference, playback voice, and playback rate
+  control the runtime behavior named by Settings.
+- Scope: One canonical preference service; adapter/model availability; Prefer
+  offline resolution; shared message/history playback voice and rate; migration
+  of duplicate values; active-playback update/restart policy.
 - Out of scope: Automatic read-aloud reintroduction.
 - Acceptance:
-  - New playback uses the same selected voice and rate from all entry points.
-  - Changing active voice/rate stops stale output and follows the documented
-    restart policy.
-  - Invalid persisted values resolve to supported defaults visibly.
-- Verification: playback controller tests, preference migration tests, manual
-  message/history playback.
-- Estimated effort: 1-1.5 days.
-- Blocked by: none; coordinate with active Voice ownership.
-- Blocks: S3-F9-T4.
-- Relevant context: message speech controls, Voice History player, speech atoms
-  and main speech services.
+  - Prefer offline changes adapter priority with a visible fallback.
+  - Message and history playback consume the same supported voice/rate.
+  - Invalid persisted values resolve visibly and safely.
+- Verification: resolver, preference migration, playback controller tests, and
+  manual message/history playback.
+- Remaining verification: resolver, invalid-value, legacy-rate migration, and
+  canonical playback tests pass. Manual message/history/preview playback remains.
+- Estimated effort: 1-2 days.
+- Blocked by: S3-F9-T1.
+- Blocks: S3-F9-T5.
+- Relevant context: Voice tab, speech settings service, message/history players.
 
-### S3-F9-T3 - Make Voice History insertion and mutation reliable
-
-- [ ] Completion: acceptance and verification passed
-- Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Insert closes Settings and changes one intended draft exactly once;
-  history CRUD reports real persistence results.
-- Scope: Capture chat/draft target; navigate out of Settings; append after
-  composer mount; handle missing target via copy-and-warning fallback; use stable
-  history IDs; verify copy/play/reveal/delete and origin metadata.
-- Out of scope: Cross-device history sync.
-- Acceptance:
-  - Insert appends once without replacing existing draft text.
-  - Missing/deleted target never silently drops transcript.
-  - CRUD failure leaves UI/storage consistent and shows an error.
-- Verification: history utility/store/component tests and verified live flow.
-- Estimated effort: 1-1.5 days.
-- Blocked by: active Voice history storage contract.
-- Blocks: S3-F9-T4.
-- Relevant context: Voice tab history, desktop view navigation, draft atoms,
-  immutable dictation origins.
-
-### S3-F9-T4 - Run Voice Settings release matrix
+### S3-F9-T5 - Run the complete Voice release matrix
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Voice Settings
-- Outcome: Voice remains visible only with proven Settings-to-runtime behavior.
-- Scope: Focused/full tests; dev identity; real microphone dictation; local/cloud
-  adapter states; message/history playback and rate; history insert/CRUD;
-  packaged macOS native binary/model checks; record Windows evidence honestly.
-- Out of scope: Fabricate unavailable cloud keys or Windows machines.
+- Outcome: Voice remains visible only when streaming, Settings, history, native
+  packaging, licenses, and manual behavior are proven together.
+- Scope: Focused/full tests; strict OpenSpec; dev identity; model download states;
+  real inline dictation in both composers; navigation/background recording;
+  playback; history CRUD; dependency/license review; packaged macOS sidecar/model
+  inspection; truthful Windows/Linux/provider gaps.
+- Out of scope: Fabricate unavailable cloud keys or platform evidence.
 - Acceptance:
-  - All F3 scenarios pass in the verified dev profile.
-  - Native sidecars/models are present in the package under test.
-  - Missing platform/provider evidence remains explicitly unchecked.
-- Verification: Voice suites, full check, dev and packaged matrix.
+  - All S3-F9 scenarios pass in the verified `Flapstack Dev` profile.
+  - Native binaries/models and license notices exist in the package under test.
+  - Unavailable platform/provider rows remain explicitly unchecked.
+- Verification: Voice suites, `npm run check`, `npm run dev:verify`, packaged
+  matrix, and recorded manual evidence.
+- Remaining verification: focused suites, Rust tests, strict OpenSpec, real
+  sidecar smoke, database migration, verified dev identity, and the current
+  Node 22 full gate pass on `codex/stage3-integration`. The former three-test MCP
+  migration mismatch is resolved and no longer blocks S3-F9. Packaged-app
+  launch, live Voice UI, and unavailable OS rows remain open until actually
+  observed; the arm64 Preview package binary/license inspection passes.
 - Estimated effort: 1 day.
-- Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3.
-- Blocks: S3-F13-T1, S3-F13-T4, and Voice stage exit.
-- Relevant context: Voice active change, live-dev rules, package inspection.
+- Blocked by: S3-F9-T1, S3-F9-T2, S3-F9-T3, S3-F9-T4.
+- Blocks: S3-F13-T1, S3-F13-T4, and Stage 3 exit.
+- Relevant context: live-dev rules, package resources/licenses, Voice manual matrix.
 
 ## S3-F10 - Secure Credentials
 
 ### S3-F10-T1 - Add encrypted main-process credential service
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Provider secrets have a write-only renderer API and encrypted,
   atomic main-process persistence.
@@ -298,7 +354,10 @@ features. Stage and feature README files are navigation routers only.
   - Renderer API cannot fetch plaintext.
   - Interrupted writes preserve the prior valid store.
   - Unsupported/weak storage follows an explicit safe policy.
-- Verification: service, IPC, permissions, redaction, and corruption tests.
+- Verification: credential service and leakage-contract suites cover ciphertext,
+  restrictive permissions, atomic/corrupt-store failure, weak/unavailable
+  storage, metadata redaction, and the write-only IPC surface; Node 22
+  TypeScript and production build pass.
 - Estimated effort: 2 days.
 - Blocked by: none.
 - Blocks: S3-F10-T2, S3-F10-T3.
@@ -306,7 +365,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F10-T2 - Migrate legacy renderer credentials safely
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Existing Codex, OpenAI Voice, and custom Claude credentials move to
   encrypted storage without loss or premature deletion.
@@ -321,17 +380,34 @@ features. Stage and feature README files are navigation routers only.
   - Failure keeps the source and reports retry/removal guidance.
   - Repeated startup cannot duplicate or corrupt a credential.
   - Provider transports consume the main-process credential path.
-- Verification: migration state-machine and transport integration tests with
-  success/failure/crash fixtures.
+- Verification: migration state-machine tests cover exact-key inventory,
+  acknowledgement/fingerprint matching, source retention on failure, and
+  idempotent retry; leakage contracts prove renderer transports no longer carry
+  Codex or Claude secrets; focused provider/usage suites pass.
 - Estimated effort: 1.5-2 days.
 - Blocked by: S3-F10-T1.
 - Blocks: S3-F10-T3, S3-F10-T4.
 - Relevant context: `codexApiKeyAtom`, `openaiApiKeyAtom`,
   `customClaudeConfigAtom`, onboarding and provider transports.
 
+2026-07-13 security repair evidence: when encrypted persistence is unavailable,
+the generic credential service durably removes the prior encrypted entry before
+accepting a session-only replacement. An unreadable store or failed retirement
+rejects the replacement. The direct Settings endpoint and a fresh service after
+restart prove that the old value cannot reappear. This is automated fixture
+evidence only; it does not claim actual Keychain, Windows Credential Manager, or
+Linux Secret Service proof.
+
+2026-07-13 security repair round-2 evidence: accepted encrypted and session-only
+replacements durably retire any retained failed-migration source. Restart
+fixtures cover Codex, Voice, and custom Claude, including an existing encrypted
+replacement winning over stale renderer localStorage. The tombstone is
+non-secret and intentionally survives later credential removal. Actual OS
+secret-store and unlocked Settings proof remain open.
+
 ### S3-F10-T3 - Add safe credential management UI
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Secure Credentials
 - Outcome: Users can add, replace, remove, and understand credential state
   without the renderer retrieving stored plaintext.
@@ -347,6 +423,12 @@ features. Stage and feature README files are navigation routers only.
   - Subscription/API-key priority is accurate per provider.
 - Verification: component and IPC integration tests plus verified live auth
   setup/removal with disposable test values.
+- Verification: provider-scoped rows, blank write-only fields, confirmations,
+  status/fingerprint/update time, session-only warnings, Voice/Models routing,
+  retained-source handling, search targets, and provider-specific removal pass
+  focused tests. Exact `609c` MCP add/status/migrate/remove used disposable
+  values and returned no plaintext. Accessibility inspection showed blank
+  secure fields and honest provider copy. No UI secret entry was used.
 - Estimated effort: 1-2 days.
 - Blocked by: S3-F7-T2, S3-F10-T1, S3-F10-T2.
 - Blocks: S3-F10-T4.
@@ -369,6 +451,14 @@ features. Stage and feature README files are navigation routers only.
   - Migration and removal behave safely in packaged app.
 - Verification: security tests, full check, package smoke and filesystem/log
   inspection.
+- Remaining verification: current macOS Preview arm64 build, binary/license
+  inspection, and bundled smoke pass; exact `609c` Dev verification and
+  rollback fixtures pass. A disposable Dev credential was acknowledged as
+  encrypted by the available Keychain backend; the `0600` store contained
+  ciphertext and no plaintext, then removal returned it to unconfigured.
+  Restart consumption, packaged migration/removal/restore, and Windows/Linux
+  evidence remain unavailable. See
+  `docs/credential-security-matrix.md`; this completion box stays unchecked.
 - Estimated effort: 1 day.
 - Blocked by: S3-F10-T2, S3-F10-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -378,17 +468,19 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F11-T1 - Define provider extension capability and identity contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Skills, commands, plugins, custom agents, and MCP entries have stable
   provider-scoped identities and explicit read/write/runtime capabilities.
 - Scope: Shared manifest, compound identity, capability states, limitations,
-  source metadata, schema versioning, and duplicate-name fixtures.
+  source metadata, schema versioning, duplicate-name fixtures, and an explicit
+  third-party MCP kind that cannot collide with product/dev-control MCP identity.
 - Out of scope: Implement every provider adapter.
 - Acceptance:
   - Same-name cross-provider items remain distinct.
   - Unknown capability fails closed.
   - Schema supports read-only discovery and provider-specific mutation.
+  - Product app-control and development test-control MCPs are excluded.
 - Verification: contract/schema/identity tests.
 - Estimated effort: 1-1.5 days.
 - Blocked by: none.
@@ -397,7 +489,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F11-T2 - Implement provider discovery adapters
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Claude, Codex, Cursor, and OpenCode-backed sources produce one honest
   inventory without format conflation.
@@ -417,7 +509,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F11-T3 - Rebuild extension Settings around provider scope
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Users can filter by provider and see accurate identity, source,
   availability, read-only status, and limitations.
@@ -437,7 +529,7 @@ features. Stage and feature README files are navigation routers only.
 
 ### S3-F11-T4 - Wire supported extension mutations to provider runtimes
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Enable/install/create/edit/delete actions affect the exact provider
   runtime or fail visibly without cross-provider corruption.
@@ -451,6 +543,12 @@ features. Stage and feature README files are navigation routers only.
   - Failed validation/write leaves prior state intact.
   - Enabled/created item is consumed by a real provider run before promotion.
 - Verification: fixture mutation/rollback tests and provider live smoke.
+- Evidence: atomic provider-scoped mutation, rollback, frontmatter-preservation,
+  bounded-discovery, and symlink-escape tests pass. Project-scoped items created
+  through the adapter were consumed on 2026-07-13 by Claude Code 2.1.207
+  (skill, command, and custom agent), Codex CLI 0.144.2 (skill), and Cursor Agent
+  2026.07.09-a3815c0 (command) in read-only/no-tool runs. Each emitted its exact
+  proof token; adapter deletion then removed every proof file and empty root.
 - Estimated effort: 2-4 days.
 - Blocked by: S3-F11-T1, S3-F11-T2.
 - Blocks: S3-F11-T5.
@@ -471,6 +569,27 @@ features. Stage and feature README files are navigation routers only.
   - Unsupported provider/kind combinations remain hidden or read-only.
   - Package contains required provider resources and discovers user-local items.
 - Verification: full check, verified dev and package/provider matrix.
+- Evidence: commit `b02055c56ac7a1c79fa49be49a2ba01730f66d5e`
+  passes the Node 22 full gate (99 files, 724 passed, 3 skipped), both scoped
+  strict OpenSpec validations, exact-checkout `npm run dev` plus
+  `npm run dev:verify`, content-redacted inventory of 74 user-local items,
+  create/update/delete through the production adapter for all five writable
+  provider/kind paths, fail-closed OpenCode mutation, exact Codex/Cursor runtime
+  tokens, cleanup, and macOS arm64 Preview build/launch/binary/resource smoke.
+  The package ran from its exact bundle and Preview profile and its absent dev
+  descriptor failed closed, preserving the product/dev MCP boundary.
+- Remaining verification: shared-lease UI proof now covers Settings search,
+  Keyboard, write-only credentials, and copy, but not provider-extension
+  inventory/mutations or packaged user-local discovery. Trigger user-local
+  discovery through the packaged Settings surface. The integrated
+  S3-F11-T4 evidence remains the current Claude skill/command/custom-agent
+  consumption proof because new budget-bounded Claude attempts did not return a
+  token. Windows/Linux package rows remain explicitly unavailable.
+- 2026-07-13 `609c` closeout: authenticated MCP listed 73 content-redacted
+  user/project items and project-ID-rooted Codex skill create/update/delete
+  passed with cleanup. Arbitrary paths are not accepted; nested symlink and
+  parent-swap regressions fail closed. Current Preview build/inspect/smoke pass.
+  Packaged user-local discovery and Windows/Linux remain open.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -484,7 +603,7 @@ features. Stage and feature README files are navigation routers only.
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The follow-on begins from the closed provider synchronization change
   and an evidence-backed provider/mode eligibility matrix.
-- Scope: Finish or explicitly hand off GPP-T4/GPP-T6; verify current five-mode
+- Scope: Finish or explicitly hand off GPP-T4/GPP-T6/GPP-T9/GPP-T10; verify current five-mode
   mappings; classify exact, conservative, best-effort, and unavailable controls;
   define global-default versus selected-chat eligibility.
 - Out of scope: Change provider enforcement before matrix approval.
@@ -494,30 +613,44 @@ features. Stage and feature README files are navigation routers only.
   - Exact project boundary evidence is distinguished from cwd/classifier hints.
 - Verification: strict spec review and existing provider permission suites.
 - Estimated effort: 0.5-1 day after dependency closeout.
-- Blocked by: S3-F7-T2 and `sync-provider-permissions-globally` GPP-T4 and
-  GPP-T6.
+- Blocked by: S3-F7-T2 and `sync-provider-permissions-globally` GPP-T4, GPP-T6,
+  GPP-T9, and GPP-T10.
 - Blocks: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Relevant context: active permission proposal/design/tasks and provider adapters.
+- 2026-07-13 implementation evidence: ownership is reconciled in code and the
+  five-mode matrix now distinguishes selectable from exact/conservative/
+  best-effort/unavailable. Project-only stays unselectable for every provider,
+  including Codex, until live outside-boundary proof closes GPP-T4. This task
+  remains open on its stated GPP dependencies and S3-F7-T2.
 
-### S3-F12-T2 - Define and persist custom permission capabilities
+### S3-F12-T2 - Add durable custom defaults across the permission hierarchy
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
-- Outcome: `custom` has explicit stored capabilities instead of a conservative
-  placeholder.
-- Scope: Capability schema for project edits, shell, network, external paths,
-  subagents, and MCP tiers; global/project/task/chat resolution; immutable run
-  snapshot; migration/defaults; Settings editor and previews.
+- Outcome: The existing exact per-chat custom schema gains coherent global,
+  project, and task defaults without changing future-chat behavior accidentally.
+- Scope: Versioned schema for project edits, shell, network, git, browser,
+  secrets, subagents, third-party MCP, and product MCP tiers; durable
+  global/project/task storage; copy-on-create resolution; immutable run snapshot;
+  migration/defaults; atomic all-chat custom; Settings editor and previews.
 - Out of scope: Mid-run permission mutation.
 - Acceptance:
   - Every custom selection stores a complete schema version.
+  - All-chat custom updates every default/chat atomically and future chats copy
+    the same resolved toggles.
   - Run metadata captures resolved capabilities.
   - Missing/invalid fields fail to ask/deny defaults.
 - Verification: schema/resolution/persistence/UI tests.
 - Estimated effort: 1.5-2 days.
-- Blocked by: S3-F12-T1.
+- Blocked by: S3-F12-T1, GPP-T10.
 - Blocks: S3-F12-T3, S3-F12-T5.
 - Relevant context: permission hierarchy, run snapshots, Settings Permissions.
+- 2026-07-13 implementation evidence: schema v1, legacy migration, durable
+  global/project/task/chat defaults, copy-on-create, immutable run snapshots,
+  atomic all-chat custom, fail-closed parsing, and current-chat capability UI
+  are implemented and covered by focused persistence tests. Acceptance remains
+  open because T1 is blocked and live Settings proof is unavailable while the
+  Mac is locked.
 
 ### S3-F12-T3 - Enforce custom capabilities across providers
 
@@ -526,18 +659,24 @@ features. Stage and feature README files are navigation routers only.
 - Outcome: Claude, Codex, Cursor, OpenRouter, and NanoGPT consume each custom
   capability through native controls or conservative Flapstack approvals.
 - Scope: Provider builders/bridges; unknown tool catch-all; network/external
-  path handling; subagents and MCP risk; preview and run metadata; fail-closed
-  missing bridge behavior.
+  path handling; subagents; separate third-party/product MCP policy; preview and
+  run metadata; fail-closed missing bridge behavior; one-prompt correlation.
 - Out of scope: Claim exact native parity where Flapstack must ask/deny.
 - Acceptance:
   - Full provider/capability matrix has allow/ask/deny tests.
   - Unknown tools cannot bypass a disabled capability.
+  - Product Tier 0, product Tier 3, and third-party MCP remain distinct.
   - Preview matches captured runtime application.
 - Verification: provider matrix, approval bridge, and run metadata tests.
 - Estimated effort: 2-3 days.
-- Blocked by: S3-F12-T1, S3-F12-T2.
+- Blocked by: S3-F12-T1, S3-F12-T2, GPP-T9, S3-F3-T5.
 - Blocks: S3-F12-T5.
 - Relevant context: provider permission adapters and pending approval UI.
+- 2026-07-13 implementation evidence: provider adapters consume custom state;
+  unknown/disabled capabilities deny conservatively; product read/write/Tier 3
+  and third-party MCP stay separate; Tier 3 still requires the Stage 3 gate.
+  Cursor and OpenCode mappings are explicitly conservative, not parity claims.
+  Acceptance remains open on T1/T2/GPP-T9 and provider-live proof.
 
 ### S3-F12-T4 - Prove exact project-only eligibility per provider
 
@@ -560,6 +699,16 @@ features. Stage and feature README files are navigation routers only.
 - Blocked by: S3-F12-T1.
 - Blocks: S3-F12-T5.
 - Relevant context: project/worktree roots, provider sandboxes, path safety.
+- 2026-07-13 implementation evidence: canonical path, traversal, symlink escape,
+  and dangling-symlink tests pass. Claude host callbacks use the boundary helper.
+  Codex ACP workspace-write mapping is unit-tested but remains best-effort and
+  unselectable until an unlocked live outside-project attempt proves exactness.
+- 2026-07-13 security repair evidence: project-boundary MCP and renderer
+  attachment writes now share no-follow/exclusive rooted writes, same-directory
+  atomic replacement, and immediate root/parent/final inode and realpath
+  revalidation. Parent and final swap attacks fail closed. Portable Node APIs do
+  not provide an exact directory-handle transaction across every platform, so
+  continuous namespace races and Windows reparse behavior remain platform gaps.
 
 ### S3-F12-T5 - Promote eligible permission modes and close the matrix
 
@@ -580,6 +729,12 @@ features. Stage and feature README files are navigation routers only.
 - Blocked by: S3-F12-T2, S3-F12-T3, S3-F12-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
 - Relevant context: permission Settings/chat selectors, previews and run records.
+- 2026-07-13 implementation evidence: provider-aware selectors, change-required
+  legacy rendering, custom capability controls, durable run snapshots, and
+  package bridge assertions are implemented. Full Node 22 `npm run check` and
+  unsigned macOS Preview packaging pass; the package includes migration 0019,
+  stale-session recovery, and Codex MCP identity preservation. The row remains
+  open because T2-T4 acceptance and unlocked live UI proof are not complete.
 
 ## S3-F13 - Copy and Search Consistency
 
@@ -599,9 +754,33 @@ features. Stage and feature README files are navigation routers only.
   - No visible copy claims exact permission/security behavior without evidence.
 - Verification: copy/source contract tests and UI review.
 - Estimated effort: 0.5-1 day.
-- Blocked by: S3-F8-T4, S3-F9-T4, S3-F10-T4, S3-F11-T5, and S3-F12-T5.
+- Blocked by: S3-F8-T4, S3-F9-T5, S3-F10-T4, S3-F11-T5, and S3-F12-T5.
 - Blocks: S3-F13-T2.
 - Relevant context: all visible Settings tabs and provider previews.
+- 2026-07-13 headless closeout: visible Settings copy now uses neutral
+  agent/provider language for shared behavior and exact provider names for
+  Claude commit attribution, Anthropic accounts, provider credentials,
+  provider extensions, and third-party MCP. Product app-control MCP,
+  development test-control MCP, and Claude Code/Codex third-party MCP remain
+  explicitly distinct. Full-history copy includes visible reasoning,
+  structured questions/answers, legacy message content, and allowlisted tool
+  summaries while excluding opaque/private payloads. Source/copy regressions
+  pass. Completion remains open on the blocked F8-F12 live gates and unlocked
+  visual copy review.
+- 2026-07-13 security repair evidence: hidden `file-content` payloads are
+  excluded from current and legacy visible extraction, active/cross-chat search,
+  handoff, full-history clipboard/export, and JSON export. Attachment search is
+  filename-only. Agent transport still receives hidden file content as intended.
+- 2026-07-13 security repair round-2 evidence: current, legacy, and nested dev
+  message JSON now uses the same recursive visible-content sanitizer before
+  syntax highlighting or clipboard copy. Reserved third-party MCP names remain
+  third-party and receive no product authority. Visual clipboard/UI and
+  cross-platform acceptance remain unchecked.
+- 2026-07-13 security repair round-3 evidence: every case-insensitive reserved
+  Claude MCP record collision receives a distinct third-party alias. Exact
+  launcher-owned registration metadata is required for product authority, so
+  duplicate case variants cannot elevate. Live Settings and provider UI rows
+  remain unchecked.
 
 ### S3-F13-T2 - Generate navigation and search from visibility metadata
 
@@ -622,6 +801,16 @@ features. Stage and feature README files are navigation routers only.
 - Blocked by: S3-F7-T1 and S3-F13-T1.
 - Blocks: S3-F13-T3.
 - Relevant context: current settings visibility/search/sidebar/content files.
+- 2026-07-13 headless closeout: the release registry now owns every indexed
+  major control, provider scope, dynamic provider availability, search copy,
+  and stable target. Sidebar tabs, direct-route normalization, Settings search,
+  credential rows, and provider-extension targets derive from or are checked
+  against that registry. Unavailable OpenRouter/NanoGPT cards produce no
+  provider search alias. Cross-chat database search and active-chat search use
+  the same visible-content rules for reasoning, structured questions/answers,
+  legacy content, and private/tool exclusions. Registry/search/navigation and
+  full-history regressions pass. Completion remains open because T1 and live
+  target review remain open.
 
 ### S3-F13-T3 - Verify Settings discovery and accessibility
 
@@ -642,6 +831,14 @@ features. Stage and feature README files are navigation routers only.
 - Blocked by: S3-F13-T2.
 - Blocks: S3-F13-T4.
 - Relevant context: Settings search input/result list/content focus handling.
+- 2026-07-13 headless closeout: one-character search, deterministic ranking,
+  Cmd/Ctrl+F, arrow/Enter selection, clear-first Escape, accessible listbox
+  state, hidden/development filtering, dynamic provider filtering, and
+  focusable credential/provider-extension targets are covered by focused
+  tests. Shared-lease live proof now covers Cmd+F focus, selected listbox state,
+  Down/Enter delivery, API Providers navigation, and focus transfer into the
+  selected provider card. Completion remains open on T1/T2 dependency truth
+  and the full every-visible-target matrix.
 
 ### S3-F13-T4 - Run the Settings Hardening release gate
 
@@ -661,7 +858,32 @@ features. Stage and feature README files are navigation routers only.
   - Rollback and recovery paths are documented and exercised proportionally.
 - Verification: all task-specific evidence plus final release checklist.
 - Estimated effort: 1-2 days after feature work.
-- Blocked by: S3-F7-T4, S3-F8-T4, S3-F9-T4, S3-F10-T4, S3-F11-T5,
+- Blocked by: S3-F7-T4, S3-F8-T4, S3-F9-T5, S3-F10-T4, S3-F11-T5,
   S3-F12-T5, and S3-F13-T3.
 - Blocks: archive `complete-settings-reliability`.
 - Relevant context: this task board, stage routers, root live-dev/package rules.
+- 2026-07-13 headless closeout: strict `complete-settings-reliability`
+  validation passed. Node 22.23.1 `npm run check` passed with 101 test files,
+  749 tests passed, 3 credential-conditional tests skipped, and the production
+  build complete. `npm run dev` loaded the final code and `npm run dev:verify`
+  passed for this exact worktree and the `Flapstack Dev` profile. Focused F13
+  coverage passed 43 tests across Settings registry,
+  search/navigation/visibility, current/legacy full-history copy, active-chat
+  reasoning/question search, and cross-chat database search. The task remains
+  open for verified-dev visual search/copy, F8-F12 live acceptance, packaged
+  credential/provider/Voice checks, and Windows/Linux evidence.
+- 2026-07-13 `609c` closeout: authenticated MCP controlled Settings
+  open/close/navigation/search/project selection and returned the live renderer
+  state. Accessibility inspection proved combobox/listbox semantics, keyboard
+  search focus, Enter navigation, and focus into the selected provider card.
+  Bounded visible-message search returned only the seeded visible text. Under
+  the shared UI lease, actual message and full-history clipboard contents
+  contained the visible sentinel and no private payload; Keyboard pixels/AX,
+  focus policy, custom-key delivery, Cmd+F focus, and Down/Enter search
+  navigation passed. Disposable chat state was archived and shortcut state was
+  reset. The task remains open on F7/F9/F10-F12 exits, packaged credential and
+  provider discovery, the every-visible-target sweep, and Windows/Linux.
+- Final candidate automation: Node 22.23.1 `npm run check` passed lint,
+  formatting, TypeScript, 119 test files with 879 passing and 3 skipped tests,
+  and the production build. All four affected strict OpenSpec validations and
+  release-ledger coverage for 18 changes, 323 scenarios, and 17 exits pass.

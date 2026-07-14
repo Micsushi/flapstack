@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { stripVTControlCharacters } from "node:util"
 import { getDefaultShell, isWindows, platform } from "../platform"
+import { resolveClaudeBinaryPath } from "./binary"
 
 // Cache the shell environment
 let cachedShellEnv: Record<string, string> | null = null
@@ -55,25 +56,25 @@ export function getBundledClaudeBinaryPath(): string {
   console.log("[claude-binary] arch:", arch)
   console.log("[claude-binary] appPath:", app.getAppPath())
 
-  // In dev: apps/desktop/resources/bin/{platform}-{arch}/claude
-  // In production: {resourcesPath}/bin/claude
-  const resourcesPath = isDev
-    ? path.join(app.getAppPath(), "resources/bin", `${currentPlatform}-${arch}`)
-    : path.join(process.resourcesPath, "bin")
-
-  console.log("[claude-binary] resourcesPath:", resourcesPath)
-
-  const binaryName = currentPlatform === "win32" ? "claude.exe" : "claude"
-  const binaryPath = path.join(resourcesPath, binaryName)
+  const resolution = resolveClaudeBinaryPath({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    platform: currentPlatform,
+    arch,
+    searchPath: isDev ? getClaudeShellEnvironment().PATH : undefined,
+  })
+  const binaryPath = resolution.path
 
   console.log("[claude-binary] binaryPath:", binaryPath)
+  console.log("[claude-binary] source:", resolution.source)
 
   // Check if binary exists
   const exists = fs.existsSync(binaryPath)
 
-  if (!exists) {
+  if (!exists || resolution.source === "missing") {
     console.error("[claude-binary] WARNING: Binary not found at path:", binaryPath)
-    console.error("[claude-binary] Run 'bun run claude:download' to download it")
+    console.error("[claude-binary] Run 'npm run claude:download' to download it")
   } else {
     const stats = fs.statSync(binaryPath)
     const sizeMB = (stats.size / 1024 / 1024).toFixed(1)

@@ -13,11 +13,13 @@ const readSource = (path: string) => readFileSync(path, "utf8")
 
 describe("Settings release visibility", () => {
   it("redirects hidden tabs without removing their stored identifiers", () => {
-    expect(HIDDEN_SETTINGS_TABS).toEqual(["keyboard", "beta", "agents", "future"])
+    expect(HIDDEN_SETTINGS_TABS).toEqual(["profile", "worktrees", "beta", "future"])
     for (const tab of HIDDEN_SETTINGS_TABS) {
       expect(normalizeVisibleSettingsTab(tab)).toBe("preferences")
     }
     expect(normalizeVisibleSettingsTab("voice")).toBe("voice")
+    expect(normalizeVisibleSettingsTab("agents")).toBe("agents")
+    expect(normalizeVisibleSettingsTab("keyboard")).toBe("keyboard")
     expect(normalizeVisibleSettingsTab("debug")).toBe("preferences")
     expect(normalizeVisibleSettingsTab("debug", { showDevelopment: true })).toBe("debug")
   })
@@ -35,16 +37,22 @@ describe("Settings release visibility", () => {
     expect(source).not.toContain("Override Model")
     expect(source).not.toContain("ANTHROPIC_AUTH_TOKEN")
     expect(source).toContain("Codex API key")
-    expect(source).toContain("handleRemoveCodexApiKey")
+    expect(source).toContain('setActiveSettingsTab("api-providers")')
+    expect(source).not.toContain("handleRemoveCodexApiKey")
   })
 
   it("keeps post-onboarding key controls available on their safe surfaces", () => {
     const codexLogin = readSource("src/renderer/features/agents/components/codex-login-content.tsx")
     const voice = readSource("src/renderer/components/dialogs/settings-tabs/agents-voice-tab.tsx")
+    const manager = readSource(
+      "src/renderer/components/dialogs/settings-tabs/credential-management.tsx",
+    )
     expect(codexLogin).toContain('nextMethod === "chatgpt" ? "ChatGPT" : "API key"')
     expect(voice).toContain("OpenAI transcription API key")
-    expect(voice).toContain("lasts for this app session")
-    expect(voice).toContain("trpc.voice.setOpenAIKey")
+    expect(voice).toContain('setActiveSettingsTab("api-providers")')
+    expect(voice).not.toContain("trpc.voice.setOpenAIKey")
+    expect(manager).toContain("Session only")
+    expect(manager).toContain("trpc.voice.setOpenAIKey")
 
     const claudeLogin = readSource("src/renderer/components/dialogs/claude-login-modal.tsx")
     expect(claudeLogin).not.toContain("Set a custom model in Settings")

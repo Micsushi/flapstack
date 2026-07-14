@@ -1,12 +1,20 @@
 import { spawnSync } from "node:child_process"
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)))
-const expectedElectron = `${root}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron`
-const expectedProfile = `--user-data-dir=${homedir()}/Library/Application Support/Flapstack Dev`
-const packagedPrefix = `${root}/release/`
+const expectedElectron = realpathSync(
+  `${root}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron`,
+)
+const expectedElectronRoot = realpathSync(`${root}/node_modules/electron/dist`)
+const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
+const profileName = instance
+  ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+  : "Flapstack Dev"
+const expectedProfile = `--user-data-dir=${homedir()}/Library/Application Support/${profileName}`
+const packagedPrefixes = [`${root}/release/`, `${root}/release-preview/`]
 
 if (process.platform !== "darwin") {
   console.error("[dev:verify] Live-instance verification currently supports macOS only.")
@@ -22,10 +30,14 @@ if (result.status !== 0) {
 const lines = result.stdout.split("\n").map((line) => line.trim())
 const devMain = lines.find((line) => line.includes(expectedElectron) && !line.includes("--type="))
 const devRenderer = lines.find(
-  (line) => line.includes(`${root}/node_modules/electron/dist/`) && line.includes(expectedProfile),
+  (line) =>
+    line.includes(expectedElectronRoot) &&
+    line.includes(expectedProfile) &&
+    line.includes(`--app-path=${root}`),
 )
 const packaged = lines.filter(
-  (line) => line.includes(packagedPrefix) && line.includes("Flapstack.app/Contents/"),
+  (line) =>
+    packagedPrefixes.some((prefix) => line.includes(prefix)) && line.includes(".app/Contents/"),
 )
 
 if (packaged.length > 0) {
@@ -44,5 +56,5 @@ if (!devMain || !devRenderer) {
 
 console.log("[dev:verify] PASS")
 console.log(`[dev:verify] checkout: ${root}`)
-console.log("[dev:verify] profile: ~/Library/Application Support/Flapstack Dev")
+console.log(`[dev:verify] profile: ~/Library/Application Support/${profileName}`)
 console.log(`[dev:verify] main: ${devMain}`)

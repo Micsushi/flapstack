@@ -3,6 +3,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
+import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 import { describe, expect, it } from "vitest"
 import {
   SAFE_CHATGPT_CODEX_MODEL,
@@ -22,6 +25,22 @@ import {
 } from "../src/main/lib/mcp-test-control/registry"
 import { redactSecretLikeText, resolveCommandPath } from "../src/main/lib/mcp-test-control/shell"
 import { hasValidBearerToken, startDevMcpServer } from "../src/main/lib/mcp-test-control/server"
+import { buildVisibleCopySearchState } from "../src/main/lib/mcp-test-control/settings"
+import {
+  parseDevMcpSettingsInvalidation,
+  parseDevRendererControlRequest,
+} from "../src/shared/dev-renderer-control"
+import {
+  listAgentInputRequests,
+  replyAgentInputRequest,
+} from "../src/main/lib/mcp-test-control/service"
+import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
+import {
+  listDevAgentInputRendererStates,
+  recordDevAgentInputRendererState,
+} from "../src/main/lib/mcp-test-control/renderer-state"
+import * as schema from "../src/main/lib/db/schema"
+import { closeDatabase } from "../src/main/lib/db"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -29,26 +48,114 @@ describe("dev MCP test-control registry", () => {
       "get_test_environment",
       "get_harness_status",
       "get_provider_status",
+      "get_credential_status",
+      "set_or_replace_credential",
+      "migrate_legacy_credential",
+      "remove_credential",
+      "get_settings_state",
+      "control_settings",
+      "get_visible_copy_search_state",
+      "select_test_chat",
+      "get_shortcut_state",
+      "mutate_shortcut_binding",
+      "list_provider_extensions",
       "list_test_targets",
       "get_chat_state",
       "get_run_state",
       "get_reasoning_timer_state",
       "list_pending_approvals",
       "get_opencode_logs",
+      "prepare_product_mcp_caller",
+      "set_product_mcp_exposure",
+      "start_product_mcp_call",
+      "get_product_mcp_call",
+      "reply_product_mcp_approval",
+      "get_product_mcp_state",
+      "manage_product_mcp_recovery",
+      "cleanup_product_mcp_caller",
+      "list_agent_input_requests",
+      "get_renderer_agent_input_state",
+      "ensure_test_project",
+      "archive_test_project",
       "create_test_chat",
+      "open_test_chat",
       "archive_test_chat",
+      "mutate_project_provider_extension",
+      "get_permission_state",
+      "set_permission_default",
+      "set_chat_permission",
+      "preview_permission",
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
+      "inject_agent_input_request",
+      "reply_agent_input_request",
       "reply_approval",
       "cancel_run",
       "wait_for_run",
       "verify_run_artifacts",
       "run_project_check",
       "openspec_validate",
+      "create_test_orchestration_fixture",
+      "create_test_orchestration",
+      "get_test_orchestration",
+      "mutate_test_orchestration",
     ])
     expect(getDevMcpTool("get_harness_status")?.tier).toBe(0)
     expect(getDevMcpTool("run_project_check")?.tier).toBe(2)
+  })
+})
+
+describe("dev renderer Settings control boundary", () => {
+  it("accepts bounded Settings commands and rejects malformed project payloads", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.control",
+        operation: "navigate",
+        tab: "permissions",
+        targetId: "permissions-default",
+      }),
+    ).toMatchObject({ operation: "navigate", tab: "permissions" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.control",
+        operation: "select-project",
+        project: { id: "project-id", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
+  })
+
+  it("accepts only known Settings invalidation domains", () => {
+    expect(
+      parseDevMcpSettingsInvalidation({
+        domains: ["credentials", "credentials", "permissions"],
+      }),
+    ).toEqual({ domains: ["credentials", "permissions"] })
+    expect(parseDevMcpSettingsInvalidation({ domains: ["credentials", "filesystem"] })).toBeNull()
+    expect(parseDevMcpSettingsInvalidation({ domains: [] })).toBeNull()
+  })
+
+  it("accepts only bounded chat-selection identities from the main process", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: "/registered/project" },
+      }),
+    ).toMatchObject({ command: "chat.select", chatId: "chat-1", subChatId: "sub-chat-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.select",
+        chatId: "chat-1",
+        subChatId: "sub-chat-1",
+        project: { id: "project-1", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
   })
 })
 
@@ -81,6 +188,7 @@ describe("dev MCP transport", () => {
     })
     expect(handle).not.toBeNull()
     try {
+      expect(handle!.descriptor.userDataPath).toBe(dir)
       const unauthorized = await fetch(handle!.descriptor.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -97,11 +205,208 @@ describe("dev MCP transport", () => {
       await client.connect(transport)
       const tools = await client.listTools()
       expect(tools.tools.map((tool) => tool.name)).toEqual(devMcpExposedToolNames)
+      const settings = await client.callTool({
+        name: "get_settings_state",
+        arguments: { query: "default permission", availableProviders: [] },
+      })
+      expect(settings.structuredContent).toMatchObject({
+        result: {
+          results: expect.arrayContaining([
+            expect.objectContaining({
+              tab: "permissions",
+              targetId: "permissions-default",
+            }),
+          ]),
+        },
+      })
+      const controlWithoutRenderer = await client.callTool({
+        name: "control_settings",
+        arguments: { operation: "open" },
+      })
+      expect(controlWithoutRenderer.isError).toBe(true)
+      expect(JSON.stringify(controlWithoutRenderer.content)).toContain("No live renderer")
+      const malformed = await client.callTool({
+        name: "set_or_replace_credential",
+        arguments: { id: "codex.api-key" },
+      })
+      expect(malformed.isError).toBe(true)
+      expect(JSON.stringify(malformed)).not.toContain('secret":')
       await transport.close()
     } finally {
       await handle?.stop()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it("creates, reads, and controls orchestration through the authenticated live API", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-orchestration-"))
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    const handle = await startDevMcpServer({
+      enabled: true,
+      userDataPath: dir,
+      checkout: "/repo",
+      profile: "Flapstack Dev Orchestration",
+    })
+    const client = new Client({ name: "flapstack-orchestration-test", version: "1.0.0" })
+    const transport = new StreamableHTTPClientTransport(new URL(handle!.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${handle!.descriptor.token}` },
+      },
+    })
+    try {
+      await client.connect(transport)
+      const fixture = await client.callTool({
+        name: "create_test_orchestration_fixture",
+        arguments: {
+          projectPath: dir,
+          projectName: "Project",
+          chatName: "Root",
+          harness: "codex",
+        },
+      })
+      expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
+      const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const created = await client.callTool({
+        name: "create_test_orchestration",
+        arguments: {
+          request: {
+            projectId: fixtureResult.projectId,
+            task: { mode: "create", name: "Live API orchestration" },
+            initiatingChatId: fixtureResult.chatId,
+            maxParallelAgents: 1,
+            maxDepth: 4,
+            stopConditions: { maxTotalTokens: 10_000 },
+            agents: [
+              {
+                role: "worker",
+                prompt: "Perform the live proof.",
+                harness: "codex",
+                permissionMode: "full-access",
+                worktreeStrategy: "none",
+                dependencyAgentIds: [],
+                completionCriteria: "Proof recorded",
+              },
+            ],
+          },
+        },
+      })
+      const createdResult = (created.structuredContent as { result: any }).result
+      const taskId = createdResult.orchestration.taskId as string
+      expect(createdResult.aggregate).toMatchObject({ active: 1, queued: 0 })
+
+      const read = await client.callTool({
+        name: "get_test_orchestration",
+        arguments: { taskId },
+      })
+      expect((read.structuredContent as { result: any }).result).toMatchObject({
+        overview: { orchestration: { taskId, status: "running" } },
+        lineage: { taskId },
+      })
+
+      const paused = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "pause" },
+      })
+      expect((paused.structuredContent as { result: any }).result.orchestration.status).toBe(
+        "paused",
+      )
+      const rejectedArchive = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "archive" },
+      })
+      expect(rejectedArchive.isError).toBe(true)
+
+      await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "stop" },
+      })
+      const archived = await client.callTool({
+        name: "mutate_test_orchestration",
+        arguments: { taskId, action: "archive" },
+      })
+      expect((archived.structuredContent as { result: any }).result).toMatchObject({
+        taskId,
+        archived: true,
+      })
+      expect(sqlite.prepare("SELECT archived_at FROM tasks WHERE id = ?").get(taskId)).toEqual({
+        archived_at: expect.any(Number),
+      })
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM chats WHERE task_id = ? AND archived_at IS NULL")
+          .get(taskId),
+      ).toEqual({ count: 0 })
+    } finally {
+      await transport.close().catch(() => undefined)
+      await handle?.stop()
+      closeDatabase()
+      sqlite.close()
+      delete process.env.FLAPSTACK_DB_PATH
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("dev MCP agent input control", () => {
+  it("lists and resolves a provider-neutral live request through the shared owner", async () => {
+    const resolution = agentInputLifecycle.create({
+      requestId: "dev-request-1",
+      chatId: "dev-chat-1",
+      runId: "dev-run-1",
+      origin: { harness: "claude-code", toolName: "request_user_input" },
+      capability: { mode: "native", sameRun: true },
+      questions: [
+        {
+          id: "question-1",
+          question: "Continue?",
+          options: [{ id: "yes", label: "Yes" }],
+          multiSelect: false,
+          allowCustom: true,
+        },
+      ],
+      status: "pending",
+      createdAt: Date.now(),
+    })
+
+    expect(listAgentInputRequests({ chatId: "dev-chat-1" })).toHaveLength(1)
+    expect(
+      replyAgentInputRequest({
+        requestId: "dev-request-1",
+        action: "answer",
+        answers: { "question-1": ["Yes"] },
+      }),
+    ).toEqual({ ok: true })
+    await expect(resolution).resolves.toMatchObject({ status: "answered" })
+    expect(listAgentInputRequests()).toEqual([])
+  })
+
+  it("reports bounded renderer ownership without transcript or secret content", () => {
+    recordDevAgentInputRendererState({
+      parentChatId: "parent-chat",
+      subChatId: "renderer-state-test",
+      pendingRequestIds: ["request-1"],
+      hydratedRequestIds: ["request-1"],
+      expiredRequestIds: [],
+      dialogOpen: true,
+      hydrationError: null,
+      observedAt: 42,
+    })
+
+    expect(
+      listDevAgentInputRendererStates().find((state) => state.subChatId === "renderer-state-test"),
+    ).toEqual({
+      parentChatId: "parent-chat",
+      subChatId: "renderer-state-test",
+      pendingRequestIds: ["request-1"],
+      hydratedRequestIds: ["request-1"],
+      expiredRequestIds: [],
+      dialogOpen: true,
+      hydrationError: null,
+      observedAt: 42,
+    })
   })
 })
 
@@ -146,6 +451,28 @@ describe("stored message helpers", () => {
 })
 
 describe("secret redaction", () => {
+  it("keeps dev copy/search inspection on the shared visible-content boundary", () => {
+    const state = buildVisibleCopySearchState(
+      JSON.stringify([
+        {
+          id: "message-1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "visible answer" },
+            { type: "reasoning", text: "visible reasoning" },
+            { type: "file-content", content: "never-return-file-secret" },
+            { type: "tool-Bash", input: { command: "never-return-command-secret" } },
+          ],
+        },
+      ]),
+      "reasoning",
+    )
+    expect(state).toMatchObject({ matchCount: 1 })
+    expect(state.messages[0]?.text).toContain("visible answer")
+    expect(state.messages[0]?.text).toContain("visible reasoning")
+    expect(JSON.stringify(state)).not.toContain("never-return")
+  })
+
   it("redacts common token shapes from command output", () => {
     expect(
       redactSecretLikeText(

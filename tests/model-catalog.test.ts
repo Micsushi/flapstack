@@ -119,7 +119,7 @@ describe("Claude model catalog", () => {
 describe("Cursor model catalog", () => {
   it("keeps the normal picker small and defaults to Composer", () => {
     expect(CURSOR_MODELS.map((model) => model.id)).toEqual(["auto", "composer-2.5"])
-    expect(DEFAULT_CURSOR_MODEL_ID).toBe("composer-2.5")
+    expect(DEFAULT_CURSOR_MODEL_ID).toBe("auto")
   })
 })
 

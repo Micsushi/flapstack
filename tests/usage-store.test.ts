@@ -16,6 +16,7 @@ import {
 import { mergeSidecarUsage } from "../src/main/lib/harness/opencode-sidecar/usage"
 import { normalizeUsageSettings } from "../src/main/lib/usage/settings"
 import {
+  applyUsageStorePragmas,
   insertSamples,
   listCurrentSamples,
   listPendingGenerationIds,
@@ -27,9 +28,14 @@ import {
   markGenerationReconciliation,
   upsertAlertArmStates,
   upsertProviderState,
+  withWriteRetry,
   type UsageDb,
 } from "../src/main/lib/usage/store"
-import type { UsageSampleInput } from "../src/main/lib/usage/types"
+import {
+  UsageProviderError,
+  type UsageProvider,
+  type UsageSampleInput,
+} from "../src/main/lib/usage/types"
 
 describe("usage SQLite integration", () => {
   let sqlite: Database.Database | null
@@ -37,6 +43,7 @@ describe("usage SQLite integration", () => {
 
   beforeEach(() => {
     sqlite = new Database(":memory:")
+    applyUsageStorePragmas(sqlite)
     sqlite.exec("CREATE TABLE agent_runs (id text PRIMARY KEY)")
     const migration = readFileSync(
       resolve(process.cwd(), "drizzle/0009_exotic_red_wolf.sql"),
@@ -260,6 +267,136 @@ describe("usage SQLite integration", () => {
       totalCostUsdEstimated: null,
       totalTokens: 321,
     })
+  })
+
+  it("keeps cost provenance when a metadata-only duplicate claims stronger quality", async () => {
+    const windowStart = new Date("2026-07-10T00:00:00Z")
+    const windowEnd = new Date("2026-07-11T00:00:00Z")
+    await insertSamples(db, [
+      sample({
+        costQuality: "estimated",
+        costUsdEstimated: 1.25,
+        windowStart,
+        windowEnd,
+        dedupeKey: "codex|metadata-only-quality",
+      }),
+    ])
+    await insertSamples(db, [
+      sample({
+        costQuality: "exact",
+        totalTokens: 99,
+        windowStart,
+        windowEnd,
+        dedupeKey: "codex|metadata-only-quality",
+      }),
+    ])
+
+    expect(await listRecentSamples(db)).toMatchObject([
+      {
+        costQuality: "estimated",
+        costUsd: null,
+        costUsdEstimated: 1_250_000,
+        totalTokens: 99,
+      },
+    ])
+    expect(await listRecentCycles(db)).toMatchObject([
+      {
+        costQuality: "estimated",
+        totalCostUsd: null,
+        totalCostUsdEstimated: 1_250_000,
+        totalTokens: 99,
+      },
+    ])
+  })
+
+  it("clears a weaker estimate when exact cost replaces it", async () => {
+    const windowStart = new Date("2026-07-10T00:00:00Z")
+    const windowEnd = new Date("2026-07-11T00:00:00Z")
+    const dedupeKey = "codex|exact-upgrade"
+    await insertSamples(db, [
+      sample({
+        costQuality: "estimated",
+        costUsdEstimated: 8,
+        windowStart,
+        windowEnd,
+        dedupeKey,
+      }),
+    ])
+    await insertSamples(db, [
+      sample({ costQuality: "exact", costUsd: 2, windowStart, windowEnd, dedupeKey }),
+    ])
+
+    expect(await listRecentSamples(db)).toMatchObject([
+      { costQuality: "exact", costUsd: 2_000_000, costUsdEstimated: null },
+    ])
+    expect(await listRecentCycles(db)).toMatchObject([
+      { costQuality: "exact", totalCostUsd: 2_000_000, totalCostUsdEstimated: null },
+    ])
+  })
+
+  it("retries transient SQLite locks but surfaces exhausted and corrupt writes", async () => {
+    let attempts = 0
+    await expect(
+      withWriteRetry(() => {
+        attempts++
+        if (attempts < 3) throw new Error("SQLITE_BUSY: database is locked")
+        return "stored"
+      }),
+    ).resolves.toBe("stored")
+    expect(attempts).toBe(3)
+
+    await expect(
+      withWriteRetry(() => {
+        throw new Error("SQLITE_CORRUPT: database disk image is malformed")
+      }),
+    ).rejects.toThrow("SQLITE_CORRUPT")
+  })
+
+  it("continues later providers after a provider deadline", async () => {
+    const settings = normalizeUsageSettings({})
+    for (const provider of Object.values(settings.providers)) provider.enabled = false
+    settings.providers.codex.enabled = true
+    settings.providers.anthropic.enabled = true
+    const providers: UsageProvider[] = [
+      testProvider("codex", async () => {
+        throw new UsageProviderError(
+          "codex",
+          "source-unavailable",
+          "deadline exceeded Authorization: Bearer sk-provider-secret-value",
+        )
+      }),
+      testProvider("anthropic", async (source) => [
+        sample({
+          providerId: "anthropic",
+          source,
+          costQuality: "unknown",
+          totalTokens: 7,
+          dedupeKey: "anthropic|after-codex-failure",
+        }),
+      ]),
+    ]
+    const engine = new UsageEngine("app", {
+      db,
+      getSecret: async () => "test",
+      loadSettings: () => settings,
+      loadProviders: () => providers,
+    })
+
+    await expect(engine.runOnce()).resolves.toMatchObject([
+      { providerId: "codex", status: "source-unavailable", inserted: 0 },
+      { providerId: "anthropic", status: "ok", inserted: 1 },
+    ])
+    expect(await listRecentSamples(db, { providerId: "anthropic" })).toHaveLength(1)
+    expect(await listProviderStates(db)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: "codex",
+          lastError: "deadline exceeded Authorization: [redacted]",
+        }),
+        expect.objectContaining({ providerId: "anthropic", lastSuccessAt: expect.any(Date) }),
+      ]),
+    )
+    expect(JSON.stringify(await listProviderStates(db))).not.toContain("provider-secret-value")
   })
 
   it("persists OpenCode token usage even when model pricing is unknown", async () => {
@@ -600,7 +737,16 @@ describe("usage SQLite integration", () => {
       loadSettings: () => settings,
     })
     await expect(engine.runProviderById("openrouter")).resolves.toMatchObject({ status: "ok" })
-    expect(await listPendingGenerationIds(db, "openrouter")).toEqual(["gen-reported"])
+    const reconciliation = await db
+      .select()
+      .from(schema.usageGenerationReconciliation)
+      .orderBy(schema.usageGenerationReconciliation.generationId)
+    expect(reconciliation).toMatchObject([
+      { generationId: "gen-exact", state: "resolved" },
+      { generationId: "gen-reported", state: "retry" },
+    ])
+    expect(reconciliation[1]?.nextAttemptAt?.getTime()).toBeGreaterThan(Date.now())
+    expect(await listPendingGenerationIds(db, "openrouter")).toEqual([])
     expect(await listRecentSamples(db, { providerId: "openrouter" })).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ generationId: "gen-exact", costQuality: "exact" }),
@@ -828,5 +974,28 @@ function cursorSample(percentUsed: number, capturedAt: Date): UsageSampleInput {
     costQuality: "provider-reported",
     percentUsed,
     capturedAt,
+  }
+}
+
+function testProvider(
+  id: "codex" | "anthropic",
+  poll: (source: UsageSampleInput["source"]) => Promise<UsageSampleInput[]>,
+): UsageProvider {
+  return {
+    id,
+    label: id,
+    billingKind: "api-spend",
+    isConfigured: async () => true,
+    getStatus: async () => ({
+      providerId: id,
+      status: "ok",
+      configured: true,
+      supportsDaemon: true,
+      supportsHistorical: true,
+    }),
+    pollLatest: async (ctx) => poll(ctx.source),
+    reconcileSince: async (ctx) => poll(ctx.source),
+    supportsDaemon: () => true,
+    supportsHistorical: () => true,
   }
 }

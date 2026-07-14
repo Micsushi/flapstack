@@ -332,7 +332,7 @@ function CreateMcpServerForm({
           ...(effectiveScope === "project" && projectPath ? { projectPath } : {}),
         })
       }
-      toast.success(`"${name.trim()}" is added, refreshing...`)
+      toast.success(`"${name.trim()}" added for ${provider === "codex" ? "Codex" : "Claude Code"}`)
       onCreated()
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add server"
@@ -829,7 +829,11 @@ export function AgentsMcpTab() {
             ) : totalServers === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <OriginalMCPIcon className="h-8 w-8 text-border mb-3" />
-                <p className="text-sm text-muted-foreground mb-1">No servers</p>
+                <p className="text-sm text-muted-foreground mb-1">No third-party MCP servers</p>
+                <p className="text-xs text-muted-foreground">
+                  Add a Claude Code or Codex server. Product app-control and development
+                  test-control stay separate.
+                </p>
                 <Button
                   variant="outline"
                   size="sm"
@@ -975,7 +979,9 @@ export function AgentsMcpTab() {
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <OriginalMCPIcon className="h-12 w-12 text-border mb-4" />
             <p className="text-sm text-muted-foreground">
-              {totalServers > 0 ? "Select a server to view details" : "No MCP servers configured"}
+              {totalServers > 0
+                ? "Select a third-party provider server to view details"
+                : "No third-party MCP servers configured for Claude Code or Codex"}
             </p>
             {totalServers === 0 && (
               <Button

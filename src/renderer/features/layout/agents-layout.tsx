@@ -17,7 +17,7 @@ import {
   isFullscreenAtom,
   anthropicOnboardingCompletedAtom,
   customHotkeysAtom,
-  betaKanbanEnabledAtom,
+  recordingHotkeyForActionAtom,
 } from "../../lib/atoms"
 import {
   selectedAgentChatIdAtom,
@@ -91,7 +91,7 @@ export function AgentsLayout() {
 
   const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
   const [sidebarWidth, setSidebarWidth] = useAtom(agentsSidebarWidthAtom)
-  const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const [settingsActiveTab, setSettingsActiveTab] = useAtom(agentsSettingsDialogActiveTabAtom)
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const desktopView = useAtomValue(desktopViewAtom)
   const setFileSearchDialogOpen = useSetAtom(fileSearchDialogOpenAtom)
@@ -99,7 +99,6 @@ export function AgentsLayout() {
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
   const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
-  const betaKanbanEnabled = useAtomValue(betaKanbanEnabledAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
@@ -250,23 +249,27 @@ export function AgentsLayout() {
   // Chat search toggle
   const toggleChatSearch = useSetAtom(toggleSearchAtom)
 
-  // Custom hotkeys config
   const customHotkeysConfig = useAtomValue(customHotkeysAtom)
+  const recordingHotkeyForAction = useAtomValue(recordingHotkeyForActionAtom)
 
   // Initialize hotkeys manager
-  useAgentsHotkeys({
-    setSelectedChatId,
-    setSelectedDraftId,
-    setShowNewChatForm,
-    setDesktopView,
-    setSidebarOpen,
-    setSettingsActiveTab,
-    setFileSearchDialogOpen,
-    toggleChatSearch,
-    selectedChatId,
-    customHotkeysConfig,
-    betaKanbanEnabled,
-  })
+  useAgentsHotkeys(
+    {
+      setSelectedChatId,
+      setSelectedDraftId,
+      setShowNewChatForm,
+      setDesktopView,
+      setSidebarOpen,
+      setSettingsActiveTab,
+      setFileSearchDialogOpen,
+      toggleChatSearch,
+      selectedChatId,
+      desktopView,
+      hasSelectedProject: Boolean(selectedProject),
+      customHotkeysConfig,
+    },
+    { enabled: recordingHotkeyForAction === null },
+  )
 
   const handleCloseSidebar = useCallback(() => {
     setSidebarOpen(false)

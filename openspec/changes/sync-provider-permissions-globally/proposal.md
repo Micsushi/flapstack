@@ -32,6 +32,12 @@ the mapping is not exact.
   Cursor, OpenRouter, and NanoGPT.
 - Route Codex ACP permission requests through a fail-closed Flapstack bridge;
   never accept the adapter client's first option implicitly.
+- Keep provider-native tool approval separate from Stage 3 product MCP risk
+  approval: product Tier 0 may run read-only, third-party MCP remains denied,
+  ask mode prompts once, and product Tier 3 always needs Stage 3 approval.
+- Make custom permission scope explicit: current-chat stores exact toggles;
+  leaving custom clears them; all-chat custom remains unavailable until durable
+  global/project/task defaults exist.
 - Expand pre-run permission previews and degradation detail to every supported
   provider.
 - Add instant Settings search that matches labels, descriptions, and curated
@@ -49,6 +55,9 @@ the mapping is not exact.
   when the user next makes an all-chat permission change.
 - Historical `agent_runs.permission_mode` values remain immutable audit
   snapshots.
+- Current limitation: the schema has durable custom toggles only on chats.
+  `all-chats` therefore supports non-custom modes only until S3-F12 adds durable
+  custom defaults across the inheritance hierarchy.
 
 ## Approved Decisions
 

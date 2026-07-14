@@ -13,6 +13,10 @@
 - [x] 2.5 Expose authoritative reasoning timer state for headless remount verification.
 - [x] 2.6 Create and reversibly archive provider test chats without UI interaction.
 - [x] 2.7 Notify the live renderer so MCP chat mutations appear without manual refresh.
+- [x] 2.8 Bootstrap and select canonical fixtures from a clean isolated profile.
+- [x] 2.9 Inspect and control provider-neutral question ownership and renderer state.
+- [x] 2.10 Create a read-only Codex/Claude orchestration fixture and expose production-service
+      orchestration reads and controls without UI input.
 
 ## 3. Verification
 
@@ -20,3 +24,5 @@
 - [x] 3.2 Run focused tests, lint, formatting, and strict TypeScript.
 - [x] 3.3 Connect with the MCP SDK and complete one live provider smoke.
 - [x] 3.4 Run the full repository gate and strict OpenSpec validation.
+- [x] 3.5 Cover clean-profile and structured-question controls with focused tests.
+- [x] 3.6 Re-run the exact candidate full gate and authenticated live orchestration proof.

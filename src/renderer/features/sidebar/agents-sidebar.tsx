@@ -51,12 +51,14 @@ import {
   FolderPlus,
   FolderOpen,
   GitBranch,
+  GitFork,
   MessageSquare,
   ClipboardList,
   Activity,
   Star,
   Plus,
   ArrowRightLeft,
+  Copy,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -878,6 +880,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatUpdatedAt,
   chatProjectId,
   chatTaskId,
+  parentChatId,
   chatScope,
   globalIndex,
   isSelected,
@@ -944,6 +947,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   chatUpdatedAt: Date | null
   chatProjectId: string
   chatTaskId: string | null
+  parentChatId?: string | null
   chatScope?: "global" | "project" | "task" | null
   globalIndex: number
   isSelected: boolean
@@ -1176,6 +1180,20 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 {isStarred && (
                   <Star className="h-3 w-3 flex-shrink-0 fill-amber-400 text-amber-400" />
                 )}
+                {parentChatId && (
+                  <button
+                    type="button"
+                    className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-violet-300 hover:bg-violet-500/15 hover:text-violet-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                    title="Open parent agent chat"
+                    aria-label="Open parent agent chat"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onChatClick(parentChatId, event)
+                    }}
+                  >
+                    <GitFork aria-hidden="true" className="h-3 w-3" />
+                  </button>
+                )}
                 <span
                   ref={(el) => nameRefCallback(chatId, el)}
                   className="truncate block text-sm leading-5 flex-1 text-white"
@@ -1359,6 +1377,19 @@ const AgentChatItem = React.memo(function AgentChatItem({
                             Copy branch name
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuItem
+                          className="gap-2"
+                          onSelect={() =>
+                            copyChat({
+                              chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                              format: "handoff",
+                              isRemote,
+                            })
+                          }
+                        >
+                          <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                          Copy full chat history
+                        </DropdownMenuItem>
                         <DropdownMenuSub>
                           <DropdownMenuSubTrigger>Export chat</DropdownMenuSubTrigger>
                           <DropdownMenuSubContent sideOffset={6} alignOffset={-4}>
@@ -1578,6 +1609,19 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 Copy branch name
               </ContextMenuItem>
             )}
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() =>
+                copyChat({
+                  chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,
+                  format: "handoff",
+                  isRemote,
+                })
+              }
+            >
+              <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+              Copy full chat history
+            </ContextMenuItem>
             <ContextMenuSub>
               <ContextMenuSubTrigger>Export chat</ContextMenuSubTrigger>
               <ContextMenuSubContent sideOffset={6} alignOffset={-4}>
@@ -1778,6 +1822,7 @@ interface ChatListSectionProps {
     updatedAt: Date | null
     projectId: string | null
     taskId: string | null
+    parentChatId?: string | null
     scope?: "global" | "project" | "task" | null
     isRemote: boolean
     harness?: string | null
@@ -2647,6 +2692,7 @@ const ChatListSection = React.memo(function ChatListSection({
                     chatUpdatedAt={chat.updatedAt}
                     chatProjectId={chat.projectId ?? ""}
                     chatTaskId={chat.taskId}
+                    parentChatId={chat.parentChatId}
                     chatScope={chat.scope}
                     globalIndex={globalIndex}
                     isSelected={isSelected}
@@ -3177,6 +3223,7 @@ export function AgentsSidebar({
       archivedAt: Date | null
       projectId: string | null
       taskId: string | null
+      parentChatId: string | null
       scope?: "global" | "project" | "task" | null
       harness?: string | null
       model?: string | null
@@ -3202,6 +3249,7 @@ export function AgentsSidebar({
           archivedAt: chat.archivedAt,
           projectId: chat.projectId,
           taskId: chat.taskId,
+          parentChatId: chat.parentChatId,
           scope: chat.scope as "global" | "project" | "task" | null,
           harness: chat.harness,
           model: chat.model,
@@ -3227,6 +3275,7 @@ export function AgentsSidebar({
           archivedAt: null,
           projectId: null,
           taskId: null,
+          parentChatId: null,
           scope: null,
           harness: null,
           model: null,
@@ -3349,14 +3398,6 @@ export function AgentsSidebar({
 
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
-
-  useEffect(
-    () =>
-      window.desktopApi.onDevMcpChatsChanged(() => {
-        void Promise.all([utils.chats.list.invalidate(), utils.chats.listArchived.invalidate()])
-      }),
-    [utils.chats.list, utils.chats.listArchived],
-  )
 
   // Unified undo stack for workspaces and sub-chats (Jotai atom)
   const [undoStack, setUndoStack] = useAtom(undoStackAtom)

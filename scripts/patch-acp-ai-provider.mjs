@@ -24,7 +24,42 @@ for (const filename of ["index.cjs", "index.mjs"]) {
     source = source.replace(clientCreation, handlerHook)
   }
 
-  if (source.includes("params.options[0]?.optionId") || !source.includes(handlerHook)) {
+  const staleSessionLoad =
+    /if \(this\.config\.existingSessionId\) \{\s*await this\.connection\.loadSession\(\{\s*sessionId: this\.config\.existingSessionId,\s*cwd: ([^,\n]+),\s*mcpServers\s*\}\);\s*this\.sessionId = this\.config\.existingSessionId;\s*this\.sessionResponse = \{\s*sessionId: this\.config\.existingSessionId\s*\};\s*this\.isFreshSession = false;\s*\} else \{\s*this\.sessionResponse = await this\.connection\.newSession\(\{\s*\.\.\.this\.config\.session,\s*cwd: ([^,\n]+),\s*mcpServers\s*\}\);\s*this\.sessionId = this\.sessionResponse\.sessionId;\s*this\.isFreshSession = true;\s*\}/
+  if (!source.includes("[acp-ai-provider] Stale ACP session; starting fresh.")) {
+    source = source.replace(staleSessionLoad, (_match, cwdExpression) => {
+      return `if (this.config.existingSessionId) {
+        try {
+          await this.connection.loadSession({
+            sessionId: this.config.existingSessionId,
+            cwd: ${cwdExpression},
+            mcpServers
+          });
+          this.sessionId = this.config.existingSessionId;
+          this.sessionResponse = { sessionId: this.config.existingSessionId };
+          this.isFreshSession = false;
+        } catch (error) {
+          this.debug.log("[acp-ai-provider] Stale ACP session; starting fresh.", error);
+          this.config.existingSessionId = undefined;
+        }
+      }
+      if (!this.sessionId) {
+        this.sessionResponse = await this.connection.newSession({
+          ...this.config.session,
+          cwd: ${cwdExpression},
+          mcpServers
+        });
+        this.sessionId = this.sessionResponse.sessionId;
+        this.isFreshSession = true;
+      }`
+    })
+  }
+
+  if (
+    source.includes("params.options[0]?.optionId") ||
+    !source.includes(handlerHook) ||
+    !source.includes("[acp-ai-provider] Stale ACP session; starting fresh.")
+  ) {
     throw new Error(`Could not apply fail-closed ACP permission patch to ${filename}`)
   }
 
@@ -48,4 +83,19 @@ if (!types.includes("permissionRequestHandler?:")) {
 }
 writeFileSync(typesPath, types)
 
-console.log("Patched @mcpc-tech/acp-ai-provider permission handling (fail closed).")
+const codexAcpPath = require.resolve("@agentclientprotocol/codex-acp")
+let codexAcpSource = readFileSync(codexAcpPath, "utf8")
+const correlatedMcpApproval =
+  /(toolCallId: context\.correlatedCallId,\s*kind: "execute",\s*status: "pending")(\s*\/\/ content:)/
+if (!codexAcpSource.includes("rawInput: { serverName: params.serverName }")) {
+  codexAcpSource = codexAcpSource.replace(
+    correlatedMcpApproval,
+    "$1,\n              rawInput: { serverName: params.serverName }$2",
+  )
+}
+if (!codexAcpSource.includes("rawInput: { serverName: params.serverName }")) {
+  throw new Error("Could not preserve MCP server identity in Codex ACP permission requests")
+}
+writeFileSync(codexAcpPath, codexAcpSource)
+
+console.log("Patched ACP permission handling (fail closed, product MCP identity preserved).")

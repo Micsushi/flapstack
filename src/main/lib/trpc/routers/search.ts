@@ -11,6 +11,7 @@ import {
   type Task,
 } from "../../db"
 import { publicProcedure, router } from "../index"
+import { extractVisibleMessageParts } from "../../../../shared/chat-visible-content"
 
 type SearchResult = {
   type: "project" | "task" | "chat" | "message" | "attachment"
@@ -32,7 +33,7 @@ function snippet(value: string | null | undefined, query: string): string {
 
 type IndexedMessageText = { messageId?: string; text: string }
 
-function extractMessageTexts(messagesJson: string): IndexedMessageText[] {
+export function extractMessageTexts(messagesJson: string): IndexedMessageText[] {
   try {
     const messages = JSON.parse(messagesJson) as unknown
     if (typeof messages === "string") return [{ text: messages }]
@@ -44,33 +45,11 @@ function extractMessageTexts(messagesJson: string): IndexedMessageText[] {
         const record = message as Record<string, unknown>
         const parts = record.parts
         const messageId = typeof record.id === "string" ? record.id : undefined
-        if (Array.isArray(parts)) {
-          const text = parts
-            .flatMap((part) => {
-              if (!part || typeof part !== "object") return []
-              const partRecord = part as Record<string, unknown>
-              if (
-                (partRecord.type === "text" ||
-                  partRecord.type === "reasoning" ||
-                  partRecord.type === "file-content") &&
-                typeof partRecord.text === "string"
-              ) {
-                return [partRecord.text]
-              }
-              if (partRecord.type === "file-content" && typeof partRecord.content === "string") {
-                return [partRecord.content]
-              }
-              if (
-                (partRecord.type === "tool-ReasoningOutput" ||
-                  partRecord.type === "tool-Thinking") &&
-                partRecord.input &&
-                typeof partRecord.input === "object" &&
-                typeof (partRecord.input as Record<string, unknown>).text === "string"
-              ) {
-                return [(partRecord.input as Record<string, string>).text]
-              }
-              return []
-            })
+        if (Array.isArray(parts) || Array.isArray(record.content)) {
+          const text = extractVisibleMessageParts({
+            parts: Array.isArray(parts) ? parts : record.content,
+          })
+            .map((part) => part.text)
             .join("\n")
           return text ? { messageId, text } : null
         }
@@ -227,9 +206,7 @@ export const searchRouter = router({
         }
       }
 
-      const attachmentConditions = [
-        or(like(attachments.name, pattern), like(attachments.contentText, pattern)),
-      ]
+      const attachmentConditions = [like(attachments.name, pattern)]
       if (input.scope === "task" && input.scopeId)
         attachmentConditions.push(eq(attachments.taskId, input.scopeId))
       if (input.scope === "chat" && input.scopeId)
@@ -247,7 +224,7 @@ export const searchRouter = router({
         results.push({
           type: "attachment",
           title: attachment.name,
-          snippet: snippet(attachment.contentText || attachment.name, input.query),
+          snippet: snippet(attachment.name, input.query),
           projectId: parent.projectId,
           taskId: attachment.taskId ?? parent.taskId,
           chatId: attachment.chatId,

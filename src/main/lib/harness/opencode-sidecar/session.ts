@@ -38,6 +38,33 @@ export function isAlreadyResolvedPermissionReplyError(error: unknown): boolean {
   return error instanceof Error && /permission reply failed:\s*HTTP 404/i.test(error.message)
 }
 
+const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 120_000
+
+export class SidecarEventIdleTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Provider event stream was idle for ${timeoutMs}ms.`)
+    this.name = "SidecarEventIdleTimeoutError"
+  }
+}
+
+async function readEventChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new SidecarEventIdleTimeoutError(timeoutMs)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function permissionScopeKey(
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
 ): string {
@@ -56,6 +83,7 @@ export async function* runSidecarSession(
   const permissionApplication = buildOpencodePermissionApplication({
     permissionMode: input.permissionMode,
     cwd: input.cwd,
+    customPermissions: input.customPermissions,
   })
   // Make the applied controls and limitations part of the run stream so every
   // exit path, including runtime-disabled and preflight failure, can persist an honest record.
@@ -86,6 +114,7 @@ export async function* runSidecarSession(
     modelId: model.modelId,
     reasoningEnabled: input.reasoningEnabled,
     reasoningEffort: input.reasoningEffort,
+    reasoningSupported: input.reasoningSupported,
     cwd: input.cwd,
     ...(input.signal ? { signal: input.signal } : {}),
   })
@@ -110,7 +139,10 @@ export async function* runSidecarSession(
     await client.waitForHealth(20_000, input.signal)
 
     yield { kind: "phase", phase: "creating-session" }
-    const permission = buildOpencodeSessionPermissions(input.permissionMode)
+    const permission = buildOpencodeSessionPermissions(
+      input.permissionMode,
+      input.customPermissions,
+    )
     let sessionId: string | null = null
     if (input.resumeSessionId) {
       try {
@@ -157,6 +189,7 @@ export async function* streamEvents(ctx: {
   input: SidecarLaunchInput
   onApproval?: SidecarApprovalCallback
   eventResponse: Response
+  eventIdleTimeoutMs?: number
 }): AsyncGenerator<NormalizedSidecarEvent> {
   const { client, sessionId, input, onApproval } = ctx
   const resp = ctx.eventResponse
@@ -181,7 +214,20 @@ export async function* streamEvents(ctx: {
         await client.abort(sessionId)
         break
       }
-      const { done, value } = await reader.read()
+      let result: ReadableStreamReadResult<Uint8Array>
+      try {
+        result = await readEventChunk(
+          reader,
+          ctx.eventIdleTimeoutMs ?? DEFAULT_EVENT_IDLE_TIMEOUT_MS,
+        )
+      } catch (error) {
+        if (!(error instanceof SidecarEventIdleTimeoutError)) throw error
+        await client.abort(sessionId).catch(() => undefined)
+        sawTerminalEvent = true
+        yield { kind: "error", errorText: error.message }
+        return
+      }
+      const { done, value } = result
       if (done) break
       const parsed = parseSseChunk(buffer, decoder.decode(value, { stream: true }))
       buffer = parsed.buffer
@@ -279,7 +325,13 @@ export async function handlePermissionRequest(
   request: Extract<NormalizedSidecarEvent, { kind: "permission-asked" }>,
   remembered?: SidecarPermissionResolution,
 ): Promise<SidecarPermissionResolution> {
-  const auto = decideAutoApproval(input.permissionMode, request.permission)
+  const auto = decideAutoApproval(
+    input.permissionMode,
+    request.permission,
+    request.patterns,
+    request.requestId,
+    input.customPermissions,
+  )
   const resolution: Omit<SidecarPermissionResolution, "replyStatus"> =
     remembered ??
     (auto

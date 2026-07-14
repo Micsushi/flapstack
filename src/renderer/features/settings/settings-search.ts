@@ -1,4 +1,11 @@
 import type { SettingsTab } from "../../lib/atoms"
+import {
+  isVisibleSettingsControl,
+  isVisibleSettingsTab,
+  SETTINGS_CONTROL_REGISTRY,
+  SETTINGS_TAB_REGISTRY,
+  type SettingsProviderScope,
+} from "./settings-visibility"
 
 export type SettingsSearchEntry = {
   id: string
@@ -8,206 +15,41 @@ export type SettingsSearchEntry = {
   keywords: string[]
   targetId: string
   developmentOnly?: boolean
+  providerScope?: readonly SettingsProviderScope[]
+  requiresAvailableProvider?: boolean
 }
 
-const entries: SettingsSearchEntry[] = [
-  page(
-    "preferences",
-    "Preferences",
-    "General agent, notification, navigation, and privacy settings",
-    ["behavior", "notifications", "editor", "analytics"],
-  ),
-  control(
-    "preferences-reasoning",
-    "preferences",
-    "Reasoning output",
-    "Show deeper model reasoning",
-    ["thinking", "streaming", "credits"],
-  ),
-  control(
-    "preferences-default-mode",
-    "preferences",
-    "Default mode",
-    "Plan or Agent for new agents",
-    ["plan", "agent", "read only"],
-  ),
-  control(
-    "preferences-coauthor",
-    "preferences",
-    "Include Co-Authored-By",
-    "Git commit attribution",
-    ["git", "commit", "claude", "author"],
-  ),
-  control(
-    "preferences-desktop-notifications",
-    "preferences",
-    "Desktop notifications",
-    "Notify when an agent needs input or completes",
-    ["alerts", "system notification"],
-  ),
-  control(
-    "preferences-sound-notifications",
-    "preferences",
-    "Sound notifications",
-    "Play completion sounds",
-    ["audio", "alerts"],
-  ),
-  control(
-    "preferences-focused-notifications",
-    "preferences",
-    "Notify when focused",
-    "Show notifications while Flapstack is active",
-    ["alerts", "foreground"],
-  ),
-  control(
-    "preferences-drag-chats",
-    "preferences",
-    "Drag chats between sections",
-    "Allow moving chats between Global, project, and task sections",
-    ["sidebar", "move chats", "drag and drop", "global", "project", "task"],
-  ),
-  control(
-    "preferences-auto-advance",
-    "preferences",
-    "Auto-advance",
-    "Choose where to go after archiving",
-    ["archive", "next chat"],
-  ),
-  control(
-    "preferences-editor",
-    "preferences",
-    "Preferred editor",
-    "Default app for opening project folders",
-    ["vscode", "cursor", "terminal", "ide"],
-  ),
-  control(
-    "preferences-analytics",
-    "preferences",
-    "Share usage analytics",
-    "Anonymous product usage and performance data",
-    ["privacy", "telemetry", "tracking"],
-  ),
-
-  page("permissions", "Permissions", "Manage permission prompts, defaults, providers, and chats", [
-    "access",
-    "approval",
-    "security",
-    "read only",
-    "full access",
-    "all chats",
-  ]),
-  control(
-    "permissions-change-behavior",
-    "permissions",
-    "Permission change behavior",
-    "Ask every time or remember all chats or this chat",
-    [
-      "remember my choice",
-      "undo remember",
-      "ask every time",
-      "always all chats",
-      "always this chat",
-      "approval",
-    ],
-  ),
-  control(
-    "permissions-default",
-    "permissions",
-    "Default permission",
-    "Choose the Global and fallback permission for new chats",
-    ["default", "new chats", "global", "fallback", "access", "read only"],
-  ),
-  control(
-    "permissions-chat-list",
-    "permissions",
-    "Chat permissions",
-    "Inspect and edit active or archived chat permissions",
-    ["different chats", "per chat", "archived", "all chats", "manage"],
-  ),
-
-  page("appearance", "Appearance", "Theme, workspace icons, and visual behavior", [
-    "theme",
-    "light",
-    "dark",
-    "colour",
-    "color",
-    "icon",
-  ]),
-  page("projects", "Projects", "Project paths, worktrees, setup commands, and removal", [
-    "repository",
-    "repo",
-    "worktree",
-    "setup command",
-    "danger zone",
-  ]),
-  page("models", "Models", "Claude, Anthropic, Codex, and Cursor model availability", [
-    "anthropic",
-    "claude",
-    "codex",
-    "cursor",
-    "account",
-    "reasoning",
-  ]),
-  page("api-providers", "API Providers", "Configure direct model API providers and keys", [
-    "openrouter",
-    "nanogpt",
-    "api key",
-    "credentials",
-    "provider",
-  ]),
-  page("voice", "Voice", "Dictation, transcription, text-to-speech, and voices", [
-    "microphone",
-    "speech",
-    "tts",
-    "stt",
-    "read aloud",
-    "openai api key",
-    "whisper key",
-  ]),
-  page("skills", "Skills", "Discover and manage installed agent skills", [
-    "skill",
-    "commands",
-    "slash command",
-  ]),
-  page("mcp", "MCP Servers", "Configure Model Context Protocol servers and tools", [
-    "model context protocol",
-    "server",
-    "tool",
-    "approval",
-  ]),
-  page("plugins", "Plugins", "Manage plugin-provided commands, skills, agents, and MCP servers", [
-    "extension",
-    "marketplace",
-    "install",
-  ]),
-  page("usage", "Usage", "Provider usage, limits, alerts, and history", [
-    "tokens",
-    "credits",
-    "cost",
-    "limits",
-    "billing",
-  ]),
-  {
-    ...page("debug", "Debug", "Developer diagnostics and internal controls", [
-      "logs",
-      "diagnostics",
-      "developer tools",
-    ]),
-    developmentOnly: true,
-  },
+export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...SETTINGS_TAB_REGISTRY.filter((entry) => entry.section !== "hidden").map((entry) => ({
+    id: `settings-page-${entry.id}`,
+    tab: entry.id,
+    label: entry.label,
+    description: entry.description,
+    keywords: entry.keywords,
+    targetId: `settings-tab-${entry.id}`,
+    developmentOnly: entry.section === "development" || undefined,
+  })),
+  ...SETTINGS_CONTROL_REGISTRY.map((entry) => ({ ...entry })),
 ]
 
 export function searchSettings(
   query: string,
-  options: { showDevelopment: boolean },
+  options: {
+    showDevelopment: boolean
+    availableProviders?: readonly SettingsProviderScope[]
+  },
 ): SettingsSearchEntry[] {
   const normalizedQuery = normalizeSettingsSearchText(query)
   if (!normalizedQuery) return []
 
   const queryTokens = normalizedQuery.split(" ").filter(Boolean)
 
-  return entries
-    .filter((entry) => options.showDevelopment || !entry.developmentOnly)
+  return SETTINGS_SEARCH_ENTRIES.filter((entry) => {
+    if (!options.showDevelopment && entry.developmentOnly) return false
+    if (!isVisibleSettingsTab(entry.tab, { showDevelopment: options.showDevelopment })) return false
+    if (!SETTINGS_CONTROL_REGISTRY.some((control) => control.id === entry.id)) return true
+    return isVisibleSettingsControl(entry, options)
+  })
     .map((entry, index) => ({
       entry,
       index,
@@ -263,30 +105,4 @@ function bestTokenScore(
   if (keywords.some((keyword) => keyword.includes(token))) return 6
   if (description.includes(token)) return 7
   return Number.POSITIVE_INFINITY
-}
-
-function page(
-  tab: SettingsTab,
-  label: string,
-  description: string,
-  keywords: string[],
-): SettingsSearchEntry {
-  return {
-    id: `settings-page-${tab}`,
-    tab,
-    label,
-    description,
-    keywords,
-    targetId: `settings-tab-${tab}`,
-  }
-}
-
-function control(
-  id: string,
-  tab: SettingsTab,
-  label: string,
-  description: string,
-  keywords: string[],
-): SettingsSearchEntry {
-  return { id, tab, label, description, keywords, targetId: id }
 }

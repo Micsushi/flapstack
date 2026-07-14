@@ -10,6 +10,7 @@ import { ChevronRight, Copy, Check } from "lucide-react"
 import { cn } from "../../../lib/utils"
 import { highlightCode } from "../../../lib/themes/shiki-theme-loader"
 import { useCodeTheme } from "../../../lib/hooks/use-code-theme"
+import { stringifyVisibleMessageJson } from "../../../../shared/chat-visible-content"
 
 interface MessageJsonDisplayProps {
   message: any
@@ -25,7 +26,7 @@ export const MessageJsonDisplay = memo(function MessageJsonDisplay({
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
   const themeId = useCodeTheme()
 
-  const jsonString = JSON.stringify(message, null, 2)
+  const jsonString = stringifyVisibleMessageJson(message)
 
   // Highlight JSON when expanded
   useEffect(() => {

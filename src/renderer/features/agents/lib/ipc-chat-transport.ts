@@ -4,11 +4,8 @@ import {
   agentsLoginModalOpenAtom,
   autoOfflineModeAtom,
   claudeLoginModalConfigAtom,
-  type CustomClaudeConfig,
-  customClaudeConfigAtom,
   enableTasksAtom,
   historyEnabledAtom,
-  normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
   sessionInfoAtom,
   showOfflineModeFeaturesAtom,
@@ -16,11 +13,8 @@ import {
 import { appStore } from "../../../lib/jotai-store"
 import { trpcClient } from "../../../lib/trpc"
 import {
-  askUserQuestionResultsAtom,
   compactingSubChatsAtom,
-  expiredUserQuestionsAtom,
   MODEL_ID_MAP,
-  pendingUserQuestionsAtom,
   pendingAuthRetryMessageAtom,
   subChatModelIdAtomFamily,
   subChatClaudeEffortAtomFamily,
@@ -28,6 +22,7 @@ import {
 } from "../atoms"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { handleAgentInputChunk } from "./agent-input-transport"
 
 function openClaudeLoginModal() {
   appStore.set(claudeLoginModalConfigAtom, {
@@ -179,9 +174,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     const modelString = MODEL_ID_MAP[selectedModelId] || MODEL_ID_MAP["opus"]
     const claudeEffort = appStore.get(subChatClaudeEffortAtomFamily(this.config.subChatId))
 
-    const storedCustomConfig = appStore.get(customClaudeConfigAtom) as CustomClaudeConfig
-    const customConfig = normalizeCustomClaudeConfig(storedCustomConfig)
-
     // Get selected Ollama model for offline mode
     const selectedOllamaModel = appStore.get(selectedOllamaModelAtom)
     // Check if offline mode is enabled in settings
@@ -200,7 +192,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
     let chunkCount = 0
     let lastChunkType = ""
     console.log(
-      `[SD] R:START sub=${subId} cwd=${this.config.cwd} projectPath=${this.config.projectPath || "(not set)"} customConfig=${customConfig ? "set" : "not set"}`,
+      `[SD] R:START sub=${subId} cwd=${this.config.cwd} projectPath=${this.config.projectPath || "(not set)"}`,
     )
 
     return new ReadableStream({
@@ -217,7 +209,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             reasoningEnabled: reasoningOutputEnabled,
             effort: claudeEffort,
             ...(modelString && { model: modelString }),
-            ...(customConfig && { customConfig }),
             ...(selectedOllamaModel && { selectedOllamaModel }),
             historyEnabled,
             offlineModeEnabled,
@@ -229,52 +220,10 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
               chunkCount++
               lastChunkType = chunk.type
 
-              // Handle AskUserQuestion - show question UI
-              if (chunk.type === "ask-user-question") {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                const newMap = new Map(currentMap)
-                newMap.set(this.config.subChatId, {
-                  subChatId: this.config.subChatId,
-                  parentChatId: this.config.chatId,
-                  toolUseId: chunk.toolUseId,
-                  questions: chunk.questions,
-                })
-                appStore.set(pendingUserQuestionsAtom, newMap)
-
-                // Clear any expired question (new question replaces it)
-                const currentExpired = appStore.get(expiredUserQuestionsAtom)
-                if (currentExpired.has(this.config.subChatId)) {
-                  const newExpiredMap = new Map(currentExpired)
-                  newExpiredMap.delete(this.config.subChatId)
-                  appStore.set(expiredUserQuestionsAtom, newExpiredMap)
-                }
-              }
-
-              // Handle AskUserQuestion timeout - move to expired (keep UI visible)
-              if (chunk.type === "ask-user-question-timeout") {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                const pending = currentMap.get(this.config.subChatId)
-                if (pending && pending.toolUseId === chunk.toolUseId) {
-                  // Remove from pending
-                  const newPendingMap = new Map(currentMap)
-                  newPendingMap.delete(this.config.subChatId)
-                  appStore.set(pendingUserQuestionsAtom, newPendingMap)
-
-                  // Move to expired (so UI keeps showing the question)
-                  const currentExpired = appStore.get(expiredUserQuestionsAtom)
-                  const newExpiredMap = new Map(currentExpired)
-                  newExpiredMap.set(this.config.subChatId, pending)
-                  appStore.set(expiredUserQuestionsAtom, newExpiredMap)
-                }
-              }
-
-              // Handle AskUserQuestion result - store for real-time updates
-              if (chunk.type === "ask-user-question-result") {
-                const currentResults = appStore.get(askUserQuestionResultsAtom)
-                const newResults = new Map(currentResults)
-                newResults.set(chunk.toolUseId, chunk.result)
-                appStore.set(askUserQuestionResultsAtom, newResults)
-              }
+              handleAgentInputChunk(chunk, {
+                chatId: this.config.chatId,
+                subChatId: this.config.subChatId,
+              })
 
               // Handle compacting status - track in atom for UI display
               if (
@@ -315,30 +264,6 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
                   plugins: chunk.plugins,
                   skills: chunk.skills,
                 })
-              }
-
-              // Clear pending questions ONLY when agent has moved on
-              // Don't clear on tool-input-* chunks (still building the question input)
-              // Clear when we get tool-output-* (answer received) or text-delta (agent moved on)
-              const shouldClearOnChunk =
-                chunk.type !== "ask-user-question" &&
-                chunk.type !== "ask-user-question-timeout" &&
-                chunk.type !== "ask-user-question-result" &&
-                !chunk.type.startsWith("tool-input") && // Don't clear while input is being built
-                chunk.type !== "start" &&
-                chunk.type !== "start-step"
-
-              if (shouldClearOnChunk) {
-                const currentMap = appStore.get(pendingUserQuestionsAtom)
-                if (currentMap.has(this.config.subChatId)) {
-                  const newMap = new Map(currentMap)
-                  newMap.delete(this.config.subChatId)
-                  appStore.set(pendingUserQuestionsAtom, newMap)
-                }
-                // NOTE: Do NOT clear expired questions here. After a timeout,
-                // the agent continues and emits new chunks - that's expected.
-                // Expired questions should persist until the user answers,
-                // dismisses, or sends a new message.
               }
 
               // Handle authentication errors - show Claude login modal

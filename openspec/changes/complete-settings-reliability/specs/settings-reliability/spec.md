@@ -100,6 +100,24 @@ assistant-message playback, and Voice History.
 - **THEN** the transcript is copied or otherwise preserved and the UI reports
   that it was not inserted
 
+#### Scenario: Stream tentative and committed dictation
+
+- **WHEN** the warm local streaming sidecar emits tentative and committed text
+- **THEN** both new-chat and active-chat composers replace tentative text in
+  order, preserve the pre-dictation draft, and never auto-send
+
+#### Scenario: Dictation origin survives navigation
+
+- **WHEN** recording continues while the user changes chat, project, or Settings
+- **THEN** committed text remains bound to the immutable origin and the app shows
+  a return/stop handoff instead of inserting into the newly visible composer
+
+#### Scenario: Final transcript enters history
+
+- **WHEN** dictation finalizes
+- **THEN** searchable transcript, origin, adapter/model, timing, and optional
+  local WAV metadata persist for copy, insert, play, reveal, and delete
+
 ### Requirement: Encrypted Main-Process Credential Storage
 
 The system SHALL keep provider credentials out of renderer-readable persistent
@@ -137,6 +155,30 @@ main-process boundary.
 - **THEN** it receives status, source, update time, and an optional short
   fingerprint but cannot retrieve plaintext through the exposed API
 
+#### Scenario: Replacement retires legacy provider sources
+
+- **WHEN** the user accepts a replacement provider credential, including a
+  session-only replacement
+- **THEN** legacy file and OS-store sources are removed or durably tombstoned
+  so restart cannot resurrect the replaced value
+- **AND** any retained failed-migration source for Codex, Voice, custom Claude,
+  or another supported provider is retired before the replacement becomes
+  authoritative
+
+#### Scenario: Concurrent credential mutations have one order
+
+- **WHEN** synchronous and asynchronous set or clear operations overlap for one
+  provider
+- **THEN** invocation order is authoritative and an older completion cannot
+  overwrite or resurrect the newest requested state
+
+#### Scenario: Newest credential mutation fails before acceptance
+
+- **WHEN** a newer set or clear cannot update the main credential state while
+  an older asynchronous OS-store write is still completing
+- **THEN** desired and OS-store state return to the last successfully applied
+  mutation instead of publishing the failed request
+
 ### Requirement: Provider-Scoped Extension Settings
 
 The system SHALL identify skills, commands, plugins, custom agents, and MCP
@@ -167,6 +209,20 @@ operations supported by that provider adapter.
 - **THEN** Settings fails closed, reports the limitation, and does not expose a
   mutation control
 
+#### Scenario: MCP extension kind is listed
+
+- **WHEN** Settings discovers an `mcp` provider extension
+- **THEN** it represents a third-party harness configuration and never merges
+  with the product app-control or development test-control MCP identity
+
+#### Scenario: Third-party MCP uses a reserved display name
+
+- **WHEN** a third-party server is named `flapstack`
+- **THEN** its trusted provider origin and registration keep it classified as
+  third-party without product privileges
+- **AND** an ambiguous collision fails closed or requires an explicit rename
+  instead of silently reclassifying or deleting the user entry
+
 ### Requirement: Permission Mode Eligibility
 
 The system SHALL offer a permission mode as a new selection only when the
@@ -186,6 +242,22 @@ offers a conservative ask/deny mapping allowed by that mode's specification.
 - **THEN** Settings exposes explicit project-edit, shell, network,
   external-path, subagent, and MCP-risk capabilities whose stored values are
   consumed by every supported provider mapping
+
+#### Scenario: Current-chat custom storage
+
+- **WHEN** the user selects custom for one chat with a complete capability set
+- **THEN** only that chat stores the exact toggles and subsequent runs reload
+  them from durable state
+
+#### Scenario: All-chat custom lacks hierarchy defaults
+
+- **WHEN** global, project, and task defaults cannot persist the custom schema
+- **THEN** all-chat custom remains unavailable and no chat/default is changed
+
+#### Scenario: Leave custom mode
+
+- **WHEN** the user selects a non-custom mode
+- **THEN** stale custom JSON for the affected chat scope is cleared
 
 #### Scenario: Exact project-only provider
 
@@ -228,3 +300,12 @@ render each control.
   curated alias
 - **THEN** search opens the same visible control and stable target represented
   by the registry
+
+#### Scenario: Hidden attachment content is represented as message JSON
+
+- **WHEN** current or legacy development-message JSON contains a hidden
+  `file-content` part
+- **THEN** visible rendering, Settings search, and clipboard/history export
+  sanitize the part before serialization or display
+- **AND** agent transport may retain the hidden payload only on its private
+  execution path

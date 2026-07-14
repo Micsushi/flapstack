@@ -14,19 +14,22 @@ what evidence is required before each feature can return.
 
 ## What Changes
 
-- Hide Keyboard, Legacy Beta, Custom Agents, and Future Scaffolds from Settings
-  navigation, content routing, and search until their promotion gates pass.
+- Hide Legacy Beta, Future Scaffolds, and retired Profile/Worktree routes from
+  Settings navigation, content routing, and search. Keyboard and Custom Agents
+  are visible only after their S3-F8 and S3-F11 promotion gates pass.
 - Hide the Models API-key/model-override editor, the retired Quick Switch
   preference, and incomplete permission modes while preserving existing data.
 - Add a single release-eligibility contract so navigation, direct tab IDs,
   search, and runtime behavior cannot disagree about visibility.
 - Rebuild editable keyboard shortcuts around one action/binding registry.
 - Repair Voice settings so adapter/model selection, offline preference, history
-  insertion, and playback speed affect the real runtime paths.
+  insertion, and playback speed affect the real runtime paths; absorb the
+  unfinished streaming, history, license, and Voice exit work into S3-F9.
 - Move renderer-stored credentials behind a main-process encrypted credential
   service with acknowledged migration and an honest session-only fallback.
 - Make skills, commands, plugins, and custom agents provider-scoped and prevent
-  duplicate or mislabeled identities.
+  duplicate or mislabeled identities. Third-party provider MCP entries remain
+  separate from Flapstack's product app-control and development test MCPs.
 - Promote `custom` and `auto-edit-project-only` permission modes only when their
   provider enforcement and limitations meet the specified eligibility gates.
 - Make visible copy and Settings search derive from the same provider and
@@ -52,7 +55,7 @@ when credentials or machines are unavailable.
 | ------------------------------------------ | -------------------------------------------: | -------------------------------------------------------- |
 | Honest Settings surface and release gating |                          0.5-1 day remaining | Verified live Settings evidence                          |
 | Working keyboard shortcut editor           |                                     3-5 days | OS-reserved keys and input-focus conflicts               |
-| Voice Settings reliability                 |                                     4-6 days | Streaming/history integration and packaged audio paths   |
+| Voice Settings reliability                 |                                     5-9 days | Streaming/history integration and packaged audio paths   |
 | Secure credential management               |                                     5-8 days | Cross-platform keychain behavior and legacy migration    |
 | Provider-scoped extensions                 |                                    7-12 days | Provider discovery/runtime parity and identity migration |
 | Complete permission modes                  | 6-10 days after the active permission change | Exact provider enforcement, especially Cursor            |
@@ -74,13 +77,32 @@ lanes after shared registries land: about 3-5 elapsed weeks.
 - Data: the hiding phase does not delete or rewrite persisted values. The later
   credential phase removes legacy plaintext only after encrypted persistence is
   acknowledged and verified.
-- Dependencies: voice work coordinates with
-  `add-stage2-voice-usage-cursor`; permission-mode promotion follows unfinished
-  closeout in `sync-provider-permissions-globally`.
+- Dependencies: S3-F9 is the sole authority for unfinished Voice streaming and
+  exit work; permission-mode promotion follows unfinished closeout and exact
+  scoped-custom semantics in `sync-provider-permissions-globally`.
 
 ## Current Status
 
 The hiding implementation, focused regression tests, strict OpenSpec
 validation, and the full Node 22 repository gate are complete in this checkout.
-A verified live Settings smoke remains unchecked. All feature repairs remain
-planned and unchecked.
+A verified live Settings smoke remains unchecked. S3-F9 now owns the migrated
+Voice remainder. Per-chat custom MCP toggles exist, but all-chat custom remains
+blocked until S3-F12 adds durable hierarchy defaults. Other feature repairs
+remain planned and unchecked. S3-F11 now has provider-scoped contracts,
+Claude/Codex/Cursor/OpenCode discovery, and provider-filtered Settings coverage.
+Mutation adapters are implemented only for documented provider paths, but
+OpenCode-backed paths remain explicitly read-only because managed sidecars do
+not consume those provider directories. S3-F11-T4 passed exact live consumption
+for every advertised writable provider/kind path. S3-F11-T5 remains open until
+the live Settings and package/platform matrix passes. Commit
+`b02055c56ac7a1c79fa49be49a2ba01730f66d5e` passes the Node 22 full gate,
+strict validation, verified dev inventory/mutation controls, and macOS arm64
+Preview build/launch/resource smoke. The Mac was locked, so visual Settings
+interaction and packaged user-local discovery remain unclaimed; Windows/Linux
+remain unavailable. S3-F13 headless closeout now derives indexed major controls,
+provider scope, provider availability, search copy, and stable targets from the
+release registry. Current and legacy full-history copy/search share visible
+reasoning and structured-question rules while excluding opaque/private payloads
+and arbitrary tool data. Focused regressions, strict validation, and the Node 22
+full gate pass. S3-F13 remains open for unlocked visual Settings review and the
+blocked F8-F12/package/platform acceptance rows.

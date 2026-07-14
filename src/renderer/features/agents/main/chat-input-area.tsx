@@ -46,12 +46,8 @@ import {
   agentsSettingsDialogOpenAtom,
   anthropicOnboardingCompletedAtom,
   apiKeyOnboardingCompletedAtom,
-  codexApiKeyAtom,
   codexOnboardingCompletedAtom,
-  customClaudeConfigAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
-  normalizeCustomClaudeConfig,
   selectedOllamaModelAtom,
   showOfflineModeFeaturesAtom,
 } from "../../../lib/atoms"
@@ -127,13 +123,33 @@ import { customHotkeysAtom } from "../../../lib/atoms"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { toast } from "sonner"
 import { useDictationSession } from "../voice/dictation-session"
+import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
+  customPermissionCapabilityKeys,
+  disabledCustomPermissions,
+  type CustomPermissionCapabilities,
+} from "../../../../shared/permission-capabilities"
+import {
   formatPermissionMode,
+  getSelectableRunPermissionModes,
   isSelectableRunPermissionMode,
-  RUN_PERMISSION_MODE_OPTIONS,
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
+
+const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[number], string> = {
+  projectWrite: "Project edits",
+  shell: "Shell",
+  network: "Network",
+  git: "Git",
+  browser: "Browser",
+  secrets: "Secrets",
+  subagents: "Subagents",
+  thirdPartyMcp: "Third-party MCP",
+  productMcpRead: "Product MCP reads",
+  productMcpWrite: "Product MCP writes",
+  productMcpTier3: "Product MCP Tier 3",
+}
 
 // Hook to get available models (including offline models if Ollama is available and debug enabled)
 function useAvailableModels() {
@@ -605,8 +621,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     setSelectedSubChatClaudeEffort(selectedClaudeEffort)
   }, [provider, selectedClaudeEffort, selectedSubChatClaudeEffort, setSelectedSubChatClaudeEffort])
 
-  const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
-  const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
 
@@ -654,7 +672,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === selectedSubChatCursorModelId) ||
-      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
     [cursorUiModels, selectedSubChatCursorModelId],
   )
 
@@ -724,9 +742,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     if (selectedCursorModel.id) setSelectedSubChatCursorModelId(selectedCursorModel.id)
   }, [provider, selectedCursorModel.id, setSelectedSubChatCursorModelId])
 
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const isClaudeConnected =
     Boolean(claudeCodeIntegration?.isConnected) ||
     anthropicOnboardingCompleted ||
@@ -802,11 +821,15 @@ export const ChatInputArea = memo(function ChatInputArea({
   const resolvedPermissionMode = permissionResolution?.mode ?? "ask-before-edits"
   const [requestedPermissionMode, setRequestedPermissionMode] =
     useState<RunPermissionMode>(resolvedPermissionMode)
+  const selectablePermissionModes = getSelectableRunPermissionModes(provider)
   const [pendingPermissionMode, setPendingPermissionMode] = useState<RunPermissionMode | null>(null)
   const [pendingPermissionScope, setPendingPermissionScope] = useState<
     "all-chats" | "current-chat"
   >("all-chats")
   const [rememberPermissionScope, setRememberPermissionScope] = useState(false)
+  const [pendingCustomPermissions, setPendingCustomPermissions] =
+    useState<CustomPermissionCapabilities>(disabledCustomPermissions)
+  const [pendingCustomReviewed, setPendingCustomReviewed] = useState(false)
   const permissionConfirmationInFlightRef = useRef(false)
   const setChatPermissionModeMutation = trpc.permissions.setChatMode.useMutation({
     onSuccess: (result) => {
@@ -841,15 +864,24 @@ export const ChatInputArea = memo(function ChatInputArea({
       mode: RunPermissionMode,
       scope: "all-chats" | "current-chat",
       rememberBehavior?: "all-chats" | "current-chat",
+      customPermissions?: CustomPermissionCapabilities,
     ) => {
       return setChatPermissionModeMutation.mutateAsync({
         chatId: parentChatId,
         mode,
         scope,
         ...(rememberBehavior ? { rememberBehavior } : {}),
+        ...(mode === "custom"
+          ? {
+              customPermissions:
+                customPermissions ??
+                permissionResolution?.customPermissions ??
+                disabledCustomPermissions,
+            }
+          : {}),
       })
     },
-    [parentChatId, setChatPermissionModeMutation],
+    [parentChatId, permissionResolution?.customPermissions, setChatPermissionModeMutation],
   )
 
   const handlePermissionModeChange = useCallback(
@@ -857,6 +889,16 @@ export const ChatInputArea = memo(function ChatInputArea({
       if (mode === requestedPermissionMode || setChatPermissionModeMutation.isPending) return
 
       const behavior = permissionPreferences?.changeBehavior ?? "ask"
+      if (mode === "custom") {
+        setPendingCustomPermissions(
+          permissionResolution?.customPermissions ?? disabledCustomPermissions,
+        )
+        setPendingCustomReviewed(false)
+        setPendingPermissionMode(mode)
+        setPendingPermissionScope(behavior === "current-chat" ? "current-chat" : "all-chats")
+        setRememberPermissionScope(false)
+        return
+      }
       if (behavior === "ask") {
         setPendingPermissionMode(mode)
         setPendingPermissionScope("all-chats")
@@ -869,6 +911,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     [
       applyPermissionMode,
       permissionPreferences?.changeBehavior,
+      permissionResolution?.customPermissions,
       requestedPermissionMode,
       setChatPermissionModeMutation.isPending,
     ],
@@ -882,13 +925,20 @@ export const ChatInputArea = memo(function ChatInputArea({
         pendingPermissionMode,
         pendingPermissionScope,
         rememberPermissionScope ? pendingPermissionScope : undefined,
+        pendingPermissionMode === "custom" ? pendingCustomPermissions : undefined,
       )
     } catch {
       // The mutation's onError handler restores the selector and reports the failure.
     } finally {
       permissionConfirmationInFlightRef.current = false
     }
-  }, [applyPermissionMode, pendingPermissionMode, pendingPermissionScope, rememberPermissionScope])
+  }, [
+    applyPermissionMode,
+    pendingCustomPermissions,
+    pendingPermissionMode,
+    pendingPermissionScope,
+    rememberPermissionScope,
+  ])
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },
     { enabled: !!parentChatId && !sandboxId },
@@ -1017,6 +1067,10 @@ export const ChatInputArea = memo(function ChatInputArea({
     mode: requestedPermissionMode,
     chatMode: subChatMode,
     cwd: selectedWorktreePath ?? null,
+    customPermissions:
+      requestedPermissionMode === "custom"
+        ? (permissionResolution?.customPermissions ?? disabledCustomPermissions)
+        : null,
   })
 
   // Helper to update mode (atomFamily + Zustand store sync)
@@ -1066,16 +1120,17 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   useEffect(() => {
     if (!isActive) return
-    const insert = (event: Event) => {
-      const text = (event as CustomEvent<string>).detail?.trim()
+    return registerVoiceHistoryInsertTarget(dictationTargetKey, (value) => {
+      const text = value.trim()
       if (!text) return
       const current = editorRef.current?.getValue() || ""
-      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      const next = `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`
+      currentDraftTextRef.current = next
+      updateSubChatDraftText(parentChatId, subChatId, next)
+      editorRef.current?.setValue(next)
       editorRef.current?.focus()
-    }
-    window.addEventListener("voice-history-insert", insert)
-    return () => window.removeEventListener("voice-history-insert", insert)
-  }, [editorRef, isActive])
+    })
+  }, [dictationTargetKey, editorRef, isActive, parentChatId, subChatId])
 
   // Get resolved voice input hotkey
   const customHotkeys = useAtomValue(customHotkeysAtom)
@@ -1692,7 +1747,7 @@ export const ChatInputArea = memo(function ChatInputArea({
 
           // Read and cache content (will be added to prompt on send)
           try {
-            const content = await trpcUtils.files.readFile.fetch({ filePath })
+            const content = await file.text()
             onCacheFileContent?.(mentionId, content)
           } catch (err) {
             // If reading fails, chip is still there - agent can try to read via path
@@ -2213,7 +2268,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       <DropdownMenuTrigger asChild>
                         <button className="flex max-w-[150px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
                           <span className="truncate">
-                            {isSelectableRunPermissionMode(requestedPermissionMode)
+                            {isSelectableRunPermissionMode(requestedPermissionMode, provider)
                               ? RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]
                               : "Legacy mode - change required"}
                           </span>
@@ -2226,7 +2281,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         className="!min-w-[220px]"
                         onCloseAutoFocus={(e) => e.preventDefault()}
                       >
-                        {RUN_PERMISSION_MODE_OPTIONS.map((mode) => (
+                        {selectablePermissionModes.map((mode) => (
                           <DropdownMenuItem
                             key={mode}
                             onClick={() => handlePermissionModeChange(mode)}
@@ -2257,8 +2312,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         </DropdownMenuItem>
                         {requestedPermissionMode === "custom" && (
                           <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
-                            Custom toggles are stored as a Stage 1 scaffold; this run will use the
-                            backend resolved mode below.
+                            New custom mode starts with every capability disabled until configured.
                           </div>
                         )}
                       </DropdownMenuContent>
@@ -2296,25 +2350,44 @@ export const ChatInputArea = memo(function ChatInputArea({
                           onOpenAutoFocus={(e) => e.preventDefault()}
                         >
                           <div className="space-y-2">
-                            <div className="font-medium text-foreground">
-                              Best-effort custom mode
-                            </div>
+                            <div className="font-medium text-foreground">Custom capabilities</div>
                             <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
-                              {[
-                                "file write",
-                                "shell",
-                                "network",
-                                "git",
-                                "browser",
-                                "MCP tools",
-                              ].map((label) => (
-                                <div key={label} className="rounded border bg-muted/20 px-2 py-1">
-                                  {label}
-                                </div>
-                              ))}
+                              {customPermissionCapabilityKeys.map((key) => {
+                                const capabilities =
+                                  permissionResolution?.customPermissions ??
+                                  disabledCustomPermissions
+                                const enabled = capabilities[key]
+                                return (
+                                  <button
+                                    type="button"
+                                    key={key}
+                                    aria-pressed={enabled}
+                                    className={cn(
+                                      "rounded border px-2 py-1 text-left",
+                                      enabled
+                                        ? "border-primary/40 bg-primary/10 text-foreground"
+                                        : "bg-muted/20",
+                                    )}
+                                    onClick={() => {
+                                      const next: CustomPermissionCapabilities = {
+                                        ...capabilities,
+                                        [key]: !enabled,
+                                      }
+                                      void setChatPermissionModeMutation.mutateAsync({
+                                        chatId: parentChatId,
+                                        mode: "custom",
+                                        scope: "current-chat",
+                                        customPermissions: next,
+                                      })
+                                    }}
+                                  >
+                                    {CUSTOM_PERMISSION_LABELS[key]}
+                                  </button>
+                                )
+                              })}
                             </div>
                             <p className="text-muted-foreground">
-                              Harness adapters may not enforce every toggle yet.
+                              Disabled capabilities fail closed. Provider limitations stay visible.
                             </p>
                           </div>
                         </PopoverContent>
@@ -2622,6 +2695,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         onOpenChange={(open) => {
           if (!open && !setChatPermissionModeMutation.isPending) {
             setPendingPermissionMode(null)
+            setPendingCustomReviewed(false)
           }
         }}
       >
@@ -2673,6 +2747,51 @@ export const ChatInputArea = memo(function ChatInputArea({
               </div>
             )}
 
+            {pendingPermissionMode === "custom" && (
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div>
+                  <div className="text-sm font-medium">Custom capabilities</div>
+                  <div className="text-xs text-muted-foreground">
+                    Review the exact capabilities before applying Custom. All chats uses this same
+                    set for every current and future chat.
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  {customPermissionCapabilityKeys.map((key) => {
+                    const enabled = pendingCustomPermissions[key]
+                    return (
+                      <button
+                        type="button"
+                        key={key}
+                        aria-pressed={enabled}
+                        onClick={() =>
+                          setPendingCustomPermissions((current) => ({
+                            ...current,
+                            [key]: !current[key],
+                          }))
+                        }
+                        className={cn(
+                          "rounded border px-2 py-1 text-left",
+                          enabled
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "bg-muted/20 text-muted-foreground",
+                        )}
+                      >
+                        {CUSTOM_PERMISSION_LABELS[key]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span>I reviewed this complete capability set.</span>
+                  <Switch
+                    checked={pendingCustomReviewed}
+                    onCheckedChange={setPendingCustomReviewed}
+                  />
+                </label>
+              </div>
+            )}
+
             <label className="flex items-center justify-between gap-4 text-sm">
               <span>
                 <span className="block font-medium">Remember my choice</span>
@@ -2693,7 +2812,10 @@ export const ChatInputArea = memo(function ChatInputArea({
             <Button
               type="button"
               onClick={() => void handleConfirmPermissionModeChange()}
-              disabled={setChatPermissionModeMutation.isPending}
+              disabled={
+                setChatPermissionModeMutation.isPending ||
+                (pendingPermissionMode === "custom" && !pendingCustomReviewed)
+              }
             >
               {setChatPermissionModeMutation.isPending ? "Applying..." : "Apply"}
             </Button>

@@ -1,5 +1,10 @@
 # Stage 2 readiness review - 2026-07-10 (implementation update 2026-07-11)
 
+Historical as of 2026-07-13. Stage 2 testing is closed as a separate gate;
+unfinished implementation and evidence are migrated to Stage 3 S3-F9 and
+S3-F14 through S3-F17. Use `docs/stage3-full-feature-test-matrix.md` for active
+status. Statements below describe the earlier checkpoint only.
+
 Status: **the integrated automated baseline is green and the implemented feature rows are ready for manual testing; Stage 2 exit is not yet proven.**
 
 "Implemented" here is limited to the approved OpenSpec and formally selected

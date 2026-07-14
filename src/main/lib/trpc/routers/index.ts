@@ -18,6 +18,7 @@ import { filesRouter } from "./files"
 import { debugRouter } from "./debug"
 import { skillsRouter } from "./skills"
 import { agentsRouter } from "./agents"
+import { agentInputRouter } from "./agent-input"
 import { worktreeConfigRouter } from "./worktree-config"
 import { sandboxImportRouter } from "./sandbox-import"
 import { commandsRouter } from "./commands"
@@ -36,6 +37,9 @@ import { importExportRouter } from "./import-export"
 import { hooksManagementRouter } from "./hooks-management"
 import { spawnedAgentsRouter } from "./spawned-agents"
 import { devMcpTestControlRouter } from "./dev-mcp-test-control"
+import { providerExtensionsRouter } from "./provider-extensions"
+import { providerCapabilitiesRouter } from "./provider-capabilities"
+import { credentialsRouter } from "./credentials"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 
@@ -48,6 +52,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     !app.isPackaged || process.env.FLAPSTACK_ENABLE_DEV_TEST_CONTROL === "1"
 
   return router({
+    agentInput: agentInputRouter,
     projects: projectsRouter,
     tasks: tasksRouter,
     chats: chatsRouter,
@@ -84,6 +89,9 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     importExport: importExportRouter,
     hooksManagement: hooksManagementRouter,
     spawnedAgents: spawnedAgentsRouter,
+    providerExtensions: providerExtensionsRouter,
+    providerCapabilities: providerCapabilitiesRouter,
+    credentials: credentialsRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),

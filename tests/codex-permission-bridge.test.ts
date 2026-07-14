@@ -100,7 +100,12 @@ describe("Codex ACP permission bridge", () => {
       expect(source).toContain(
         "this.client.setPermissionRequestHandler(this.config.permissionRequestHandler)",
       )
+      expect(source).toContain("[acp-ai-provider] Stale ACP session; starting fresh.")
+      expect(source).toContain("if (!this.sessionId)")
       expect(source).toContain('outcome: "cancelled"')
     }
+
+    const codexAcpSource = readFileSync(require.resolve("@agentclientprotocol/codex-acp"), "utf8")
+    expect(codexAcpSource).toContain("rawInput: { serverName: params.serverName }")
   })
 })

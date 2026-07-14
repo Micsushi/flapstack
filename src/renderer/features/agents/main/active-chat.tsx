@@ -14,16 +14,13 @@ import {
   IconCloseSidebarRight,
   IconOpenSidebarRight,
   IconSpinner,
-  PauseIcon,
   UnarchiveIcon,
-  VolumeIcon,
 } from "../../../components/ui/icons"
 import { Kbd } from "../../../components/ui/kbd"
 import { PromptInput, PromptInputActions } from "../../../components/ui/prompt-input"
 import { ResizableSidebar } from "../../../components/ui/resizable-sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 // e2b API routes are used instead of useSandboxManager for agents
-// import { clearSubChatSelectionAtom, isSubChatMultiSelectModeAtom, selectedSubChatIdsAtom } from "@/lib/atoms/agent-subchat-selection"
 import { ResizableBottomPanel } from "@/components/ui/resizable-bottom-panel"
 import { Chat, useChat } from "@ai-sdk/react"
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
@@ -48,11 +45,9 @@ import { getQueryClient } from "../../../contexts/TRPCProvider"
 import { trackMessageSent } from "../../../lib/analytics"
 import {
   chatSourceModeAtom,
-  customClaudeConfigAtom,
   defaultAgentModeAtom,
   isDesktopAtom,
   isFullscreenAtom,
-  normalizeCustomClaudeConfig,
   sessionInfoAtom,
   selectedOllamaModelAtom,
   soundNotificationsEnabledAtom,
@@ -63,7 +58,7 @@ import { useResolvedHotkeyDisplay } from "../../../lib/hotkeys"
 import { appStore } from "../../../lib/jotai-store"
 import { api } from "../../../lib/mock-api"
 import { trpc, trpcClient } from "../../../lib/trpc"
-import { playManagedSpeech, stopManagedSpeech } from "../../../lib/speech-playback"
+import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
@@ -162,6 +157,7 @@ import { usePastedTextFiles, type PastedTextFile } from "../hooks/use-pasted-tex
 import { useTextContextSelection } from "../hooks/use-text-context-selection"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { ACPChatTransport } from "../lib/acp-chat-transport"
+import { handleAgentInputChunk, toPendingAgentInput } from "../lib/agent-input-transport"
 import { CursorChatTransport } from "../lib/cursor-chat-transport"
 import { copyChat, formatHistoryForContext } from "../lib/export-chat"
 import { clearSubChatDraft, getSubChatDraftFull } from "../lib/drafts"
@@ -212,7 +208,7 @@ import { AgentToolRegistry } from "../ui/agent-tool-registry"
 import { AttachmentTray } from "../ui/attachment-tray"
 import { isPlanFile } from "../ui/agent-tool-utils"
 import { AgentUserMessageBubble } from "../ui/agent-user-message-bubble"
-import { AgentUserQuestion, type AgentUserQuestionHandle } from "../ui/agent-user-question"
+import { AgentInputDialog } from "../ui/agent-input-dialog"
 import { AgentsHeaderControls } from "../ui/agents-header-controls"
 import { ChatTitleEditor } from "../ui/chat-title-editor"
 import { getHarnessChipMeta } from "../constants"
@@ -230,9 +226,6 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection } from "./isolated-messages-section"
-const clearSubChatSelectionAtom = atom(null, () => {})
-const isSubChatMultiSelectModeAtom = atom(false)
-const selectedSubChatIdsAtom = atom(new Set<string>())
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
 // import type { PlanType } from "@/lib/config/subscription-plans"
@@ -413,7 +406,8 @@ function CopyButton({ onCopy, isMobile = false }: { onCopy: () => void; isMobile
   return (
     <button
       onClick={handleCopy}
-      tabIndex={-1}
+      aria-label="Copy message"
+      title="Copy message"
       className="p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]"
     >
       <div className="relative w-3.5 h-3.5">
@@ -432,319 +426,6 @@ function CopyButton({ onCopy, isMobile = false }: { onCopy: () => void; isMobile
       </div>
     </button>
   )
-}
-
-// Play button component for TTS (text-to-speech) with streaming support
-type PlayButtonState = "idle" | "loading" | "playing"
-
-const PLAYBACK_SPEEDS = [1, 2, 3] as const
-type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number]
-
-function PlayButton({
-  text,
-  isMobile = false,
-  playbackRate = 1,
-  onPlaybackRateChange,
-}: {
-  text: string
-  isMobile?: boolean
-  playbackRate?: PlaybackSpeed
-  onPlaybackRateChange?: (rate: PlaybackSpeed) => void
-}) {
-  const [state, setState] = useState<PlayButtonState>("idle")
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const mediaSourceRef = useRef<MediaSource | null>(null)
-  const sourceBufferRef = useRef<SourceBuffer | null>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const chunkCountRef = useRef(0)
-
-  // Update playback rate when it changes
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = playbackRate
-    }
-  }, [playbackRate])
-
-  const cleanup = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      abortControllerRef.current = null
-    }
-    if (audioRef.current) {
-      audioRef.current.pause()
-      if (audioRef.current.src) {
-        URL.revokeObjectURL(audioRef.current.src)
-      }
-    }
-    if (mediaSourceRef.current && mediaSourceRef.current.readyState === "open") {
-      try {
-        mediaSourceRef.current.endOfStream()
-      } catch {
-        // Ignore errors during cleanup
-      }
-    }
-    audioRef.current = null
-    mediaSourceRef.current = null
-    sourceBufferRef.current = null
-    chunkCountRef.current = 0
-  }, [])
-
-  const handlePlay = async () => {
-    // If playing, stop the audio
-    if (state === "playing") {
-      cleanup()
-      void trpcClient.speech.stopSpeaking.mutate()
-      setState("idle")
-      return
-    }
-
-    // If loading, cancel and reset
-    if (state === "loading") {
-      cleanup()
-      void trpcClient.speech.stopSpeaking.mutate()
-      setState("idle")
-      return
-    }
-
-    // Start loading
-    setState("loading")
-    chunkCountRef.current = 0
-
-    try {
-      await playWithFallback()
-    } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        console.error("[PlayButton] TTS error:", error)
-      }
-      cleanup()
-      setState("idle")
-    }
-  }
-
-  const playWithStreaming = async () => {
-    const mediaSource = new MediaSource()
-    mediaSourceRef.current = mediaSource
-
-    const audio = new Audio()
-    audioRef.current = audio
-
-    audio.src = URL.createObjectURL(mediaSource)
-
-    audio.onended = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    audio.onerror = () => {
-      cleanup()
-      setState("idle")
-    }
-
-    // Track if we've already started playing
-    let hasStartedPlaying = false
-
-    // Start playback when browser has enough data (canplay event)
-    audio.oncanplay = async () => {
-      if (hasStartedPlaying) return
-      hasStartedPlaying = true
-      try {
-        await audio.play()
-        audio.playbackRate = playbackRate
-        setState("playing")
-      } catch {
-        cleanup()
-        setState("idle")
-      }
-    }
-
-    // Wait for MediaSource to open
-    await new Promise<void>((resolve, reject) => {
-      mediaSource.addEventListener("sourceopen", () => resolve(), {
-        once: true,
-      })
-      mediaSource.addEventListener("error", () => reject(new Error("MediaSource error")), {
-        once: true,
-      })
-    })
-
-    const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg")
-    sourceBufferRef.current = sourceBuffer
-
-    // Create abort controller for this request
-    abortControllerRef.current = new AbortController()
-
-    const result = await trpcClient.speech.speak.mutate(
-      { text, rate: 1 },
-      { signal: abortControllerRef.current.signal },
-    )
-    if (result.skipped) {
-      cleanup()
-      setState("idle")
-      return
-    }
-    const response = new Response(base64ToBlob(result.audioBase64, result.mimeType))
-
-    if (!response.ok) {
-      throw new Error("TTS request failed")
-    }
-
-    if (!response.body) {
-      throw new Error("No response body")
-    }
-
-    const reader = response.body.getReader()
-    const pendingChunks: Uint8Array[] = []
-    let isAppending = false
-
-    const appendNextChunk = () => {
-      if (
-        isAppending ||
-        pendingChunks.length === 0 ||
-        !sourceBufferRef.current ||
-        sourceBufferRef.current.updating
-      ) {
-        return
-      }
-
-      isAppending = true
-      const chunk = pendingChunks.shift()!
-      try {
-        // Use ArrayBuffer.isView to ensure TypeScript knows this is a valid BufferSource
-        const buffer = new Uint8Array(chunk.buffer.slice(0)) as BufferSource
-        sourceBufferRef.current.appendBuffer(buffer)
-      } catch {
-        // Buffer might be full or source closed
-        isAppending = false
-      }
-    }
-
-    sourceBuffer.addEventListener("updateend", () => {
-      isAppending = false
-      appendNextChunk()
-    })
-
-    // Read stream chunks
-    const processStream = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          // Wait for all pending chunks to be appended
-          while (pendingChunks.length > 0 || sourceBuffer.updating) {
-            await new Promise((r) => setTimeout(r, 50))
-          }
-          if (mediaSource.readyState === "open") {
-            try {
-              mediaSource.endOfStream()
-            } catch {
-              // Ignore
-            }
-          }
-          break
-        }
-
-        if (value) {
-          chunkCountRef.current++
-          pendingChunks.push(value)
-          appendNextChunk()
-
-          // Just accumulate data, don't try to play yet
-          // Playback will start via canplay event listener
-        }
-      }
-    }
-
-    // Start processing stream - playback will start via canplay event
-    processStream()
-  }
-
-  const playWithFallback = async () => {
-    abortControllerRef.current = new AbortController()
-
-    const result = await trpcClient.speech.speak.mutate(
-      { text, rate: playbackRate },
-      { signal: abortControllerRef.current.signal },
-    )
-    if (result.skipped) {
-      setState("idle")
-      return
-    }
-    const audio = await playManagedSpeech(result, {
-      rate: playbackRate,
-      onEnded: () => setState("idle"),
-      onError: () => setState("idle"),
-      onStopped: () => setState("idle"),
-    })
-    audioRef.current = audio
-    setState("playing")
-  }
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return cleanup
-  }, [cleanup])
-
-  return (
-    <div className="relative flex items-center">
-      <button
-        onClick={handlePlay}
-        tabIndex={-1}
-        className={cn(
-          "p-1.5 rounded-md transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]",
-          state === "loading" && "cursor-wait",
-        )}
-      >
-        <div className="relative w-3.5 h-3.5">
-          {state === "loading" ? (
-            <IconSpinner className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
-          ) : state === "playing" ? (
-            <PauseIcon className="w-3.5 h-3.5 text-muted-foreground" />
-          ) : (
-            <VolumeIcon className="w-3.5 h-3.5 text-muted-foreground" />
-          )}
-        </div>
-      </button>
-
-      {/* Speed selector - cyclic button with animation, only visible when playing */}
-      {state === "playing" && (
-        <button
-          onClick={() => {
-            const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackRate)
-            const nextIndex = (currentIndex + 1) % PLAYBACK_SPEEDS.length
-            onPlaybackRateChange?.(PLAYBACK_SPEEDS[nextIndex])
-          }}
-          tabIndex={-1}
-          className={cn(
-            "p-1.5 rounded-md transition-[background-color,opacity,transform] duration-150 ease-out hover:bg-accent active:scale-[0.97]",
-            isMobile ? "opacity-100" : "opacity-0 group-hover/message:opacity-100",
-          )}
-        >
-          <div className="relative w-4 h-3.5 flex items-center justify-center">
-            {PLAYBACK_SPEEDS.map((speed) => (
-              <span
-                key={speed}
-                className={cn(
-                  "absolute inset-0 flex items-center justify-center text-xs font-medium text-muted-foreground transition-[opacity,transform] duration-200 ease-out",
-                  speed === playbackRate ? "opacity-100 scale-100" : "opacity-0 scale-50",
-                )}
-              >
-                {speed}x
-              </span>
-            ))}
-          </div>
-        </button>
-      )}
-    </div>
-  )
-}
-
-function base64ToBlob(base64: string, mimeType: string) {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return new Blob([bytes], { type: mimeType })
 }
 
 // Isolated scroll-to-bottom button - uses own scroll listener to avoid re-renders of parent
@@ -2109,7 +1790,6 @@ const ChatViewInner = memo(function ChatViewInner({
 
   const editorRef = useRef<AgentsMentionsEditorHandle>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const questionRef = useRef<AgentUserQuestionHandle>(null)
   const prevChatKeyRef = useRef<string | null>(null)
   const prevSubChatIdRef = useRef<string | null>(null)
 
@@ -2123,23 +1803,6 @@ const ChatViewInner = memo(function ChatViewInner({
     editorRef.current?.focus()
     setPendingMention(null)
   }, [isActive, pendingMention, setPendingMention])
-
-  // TTS playback rate state (persists across messages and sessions via localStorage)
-  const [ttsPlaybackRate, setTtsPlaybackRate] = useState<PlaybackSpeed>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("tts-playback-rate")
-      if (saved && PLAYBACK_SPEEDS.includes(Number(saved) as PlaybackSpeed)) {
-        return Number(saved) as PlaybackSpeed
-      }
-    }
-    return 1
-  })
-
-  // Save playback rate to localStorage when it changes
-  const handlePlaybackRateChange = useCallback((rate: PlaybackSpeed) => {
-    setTtsPlaybackRate(rate)
-    localStorage.setItem("tts-playback-rate", String(rate))
-  }, [])
 
   // PR creation loading state - from atom to allow resetting after message sent
   const setIsCreatingPr = useSetAtom(isCreatingPrAtom)
@@ -2297,7 +1960,7 @@ const ChatViewInner = memo(function ChatViewInner({
   )
 
   const handleCopyFullChat = useCallback(() => {
-    void copyChat({ chatId: parentChatId, format: "markdown" })
+    void copyChat({ chatId: parentChatId, format: "handoff" })
   }, [parentChatId])
   const projectColor = useMemo(() => {
     if (!projectId) return null
@@ -2450,35 +2113,31 @@ const ChatViewInner = memo(function ChatViewInner({
     },
   })
 
-  const getPathForBrowserFile = useCallback((file: File) => {
-    return (
-      window.webUtils?.getPathForFile?.(file) ||
-      (file as File & { path?: string }).path ||
-      undefined
-    )
-  }, [])
-
   const persistAttachments = useCallback(
-    (inputFiles: File[]) => {
+    async (inputFiles: File[]) => {
       for (const file of inputFiles) {
-        const sourcePath = getPathForBrowserFile(file)
-        if (!sourcePath) continue
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ""
+        for (let offset = 0; offset < bytes.length; offset += 32_768) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+        }
+        const dataBase64 = btoa(binary)
         attachmentImportMutation.mutate({
           chatId: parentChatId,
           taskId: taskId ?? undefined,
-          sourcePath,
-          kind: file.type.startsWith("image/") ? "image" : "file",
+          dataBase64,
           name: file.name,
+          kind: file.type.startsWith("image/") ? "image" : "file",
         })
       }
     },
-    [attachmentImportMutation, getPathForBrowserFile, parentChatId, taskId],
+    [attachmentImportMutation, parentChatId, taskId],
   )
 
   const handleAddAttachments = useCallback(
     async (inputFiles: File[]) => {
       await handleAddPreviewAttachments(inputFiles)
-      persistAttachments(inputFiles)
+      await persistAttachments(inputFiles)
     },
     [handleAddPreviewAttachments, persistAttachments],
   )
@@ -2873,17 +2532,111 @@ const ChatViewInner = memo(function ChatViewInner({
   )
 
   // Pending user questions from AskUserQuestion tool
-  const [pendingQuestionsMap, setPendingQuestionsMap] = useAtom(pendingUserQuestionsAtom)
+  const [pendingQuestionsMap, setPendingQuestionsMap] = useAtom(pendingUserQuestionsAtom, {
+    store: appStore,
+  })
   // Get pending questions for this specific subChat
   const pendingQuestions = pendingQuestionsMap.get(subChatId) ?? null
 
   // Expired user questions (timed out but still answerable as normal messages)
-  const [expiredQuestionsMap, setExpiredQuestionsMap] = useAtom(expiredUserQuestionsAtom)
+  const [expiredQuestionsMap, setExpiredQuestionsMap] = useAtom(expiredUserQuestionsAtom, {
+    store: appStore,
+  })
   const expiredQuestions = expiredQuestionsMap.get(subChatId) ?? null
+  const [agentInputHydrationError, setAgentInputHydrationError] = useState<string | null>(null)
+  const [hydratedAgentInputRequestIds, setHydratedAgentInputRequestIds] = useState<string[]>([])
+
+  useEffect(() => {
+    let disposed = false
+    const hydrate = () => {
+      void trpcClient.agentInput.list
+        .query({ chatId: subChatId })
+        .then((requests) => {
+          if (disposed) return
+          setAgentInputHydrationError(null)
+          setHydratedAgentInputRequestIds(requests.map((request) => request.requestId))
+          for (const request of requests) {
+            const nextPending = new Map(appStore.get(pendingUserQuestionsAtom))
+            nextPending.set(
+              subChatId,
+              toPendingAgentInput(request, { chatId: parentChatId, subChatId }),
+            )
+            appStore.set(pendingUserQuestionsAtom, nextPending)
+
+            const expired = appStore.get(expiredUserQuestionsAtom)
+            if (expired.has(subChatId)) {
+              const nextExpired = new Map(expired)
+              nextExpired.delete(subChatId)
+              appStore.set(expiredUserQuestionsAtom, nextExpired)
+            }
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            setAgentInputHydrationError(error instanceof Error ? error.message : String(error))
+          }
+        })
+    }
+    hydrate()
+    const interval = import.meta.env.DEV ? window.setInterval(hydrate, 500) : null
+    return () => {
+      disposed = true
+      if (interval !== null) window.clearInterval(interval)
+    }
+  }, [parentChatId, subChatId])
+
+  useEffect(() => {
+    if (!window.desktopApi?.onDevMcpAgentInput) return
+    return window.desktopApi.onDevMcpAgentInput((payload) => {
+      handleAgentInputChunk(payload, { chatId: parentChatId, subChatId })
+    })
+  }, [parentChatId, subChatId])
 
   // Unified display questions: prefer pending (live), fall back to expired
   const displayQuestions = pendingQuestions ?? expiredQuestions
   const isQuestionExpired = !pendingQuestions && !!expiredQuestions
+  const isQuestionContinuation =
+    isQuestionExpired ||
+    displayQuestions?.request?.capability.mode === "continuation" ||
+    displayQuestions?.request?.capability.mode === "unsupported"
+  const [questionDialogOpen, setQuestionDialogOpen] = useState(false)
+  const autoOpenedQuestionIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!displayQuestions) {
+      setQuestionDialogOpen(false)
+      return
+    }
+    if (!isActive || autoOpenedQuestionIdRef.current === displayQuestions.toolUseId) return
+    autoOpenedQuestionIdRef.current = displayQuestions.toolUseId
+    setQuestionDialogOpen(true)
+  }, [displayQuestions, isActive])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !trpcClient.devMcpTestControl) return
+    void trpcClient.devMcpTestControl.reportAgentInputRendererState.mutate({
+      parentChatId,
+      subChatId,
+      pendingRequestIds: [...appStore.get(pendingUserQuestionsAtom).values()].map(
+        (request) => request.toolUseId,
+      ),
+      hydratedRequestIds: hydratedAgentInputRequestIds,
+      expiredRequestIds: [...appStore.get(expiredUserQuestionsAtom).values()].map(
+        (request) => request.toolUseId,
+      ),
+      dialogOpen: questionDialogOpen,
+      hydrationError: agentInputHydrationError,
+      observedAt: Date.now(),
+    })
+  }, [
+    agentInputHydrationError,
+    hydratedAgentInputRequestIds,
+    expiredQuestionsMap,
+    parentChatId,
+    pendingQuestionsMap,
+    questionDialogOpen,
+    subChatId,
+  ])
 
   useEffect(() => {
     if (!pendingQuestions) return
@@ -2901,7 +2654,7 @@ const ChatViewInner = memo(function ChatViewInner({
   }, [notifyAgentNeedsInput, parentChatId, pendingQuestions, subChatId, workspaceName])
 
   // Track whether chat input has content (for custom text with questions)
-  const [inputHasContent, setInputHasContent] = useState(false)
+  const [, setInputHasContent] = useState(false)
 
   // Memoize the last assistant message to avoid unnecessary recalculations
   const lastAssistantMessage = useMemo(
@@ -2998,6 +2751,10 @@ const ChatViewInner = memo(function ChatViewInner({
     const wasStreaming = prevIsStreamingRef.current
     prevIsStreamingRef.current = isStreaming
 
+    // Provider-neutral requests are cleared only by lifecycle status events.
+    // The legacy stream transition heuristic predates the shared owner.
+    if (pendingQuestions?.request) return
+
     // Detect streaming stop transition
     if (wasStreaming && !isStreaming) {
       // Mark that we recently stopped streaming
@@ -3033,6 +2790,10 @@ const ChatViewInner = memo(function ChatViewInner({
   // Sync pending questions with messages state
   // This handles: 1) restoring on chat switch, 2) clearing when question is answered/timed out
   useEffect(() => {
+    // Provider-neutral requests are authoritative even when a continuation
+    // harness has no active paused stream. Status events own their cleanup.
+    if (pendingQuestions?.request) return
+
     // Check if there's a pending AskUserQuestion in the last assistant message
     const pendingQuestionPart = lastAssistantMessage?.parts?.find(
       (part: any) =>
@@ -3118,11 +2879,11 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Shared helpers for question answer handlers
   const formatAnswersAsText = useCallback(
-    (answers: Record<string, string>): string =>
-      Object.entries(answers)
-        .map(([question, answer]) => `${question}: ${answer}`)
-        .join("\n"),
-    [],
+    (answers: Record<string, string[]>): string =>
+      displayQuestions?.questions
+        .map((question) => `${question.question}: ${(answers[question.id] ?? []).join(", ")}`)
+        .join("\n") ?? "",
+    [displayQuestions],
   )
 
   const clearInputAndDraft = useCallback(() => {
@@ -3142,26 +2903,47 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Handle answering questions
   const handleQuestionsAnswer = useCallback(
-    async (answers: Record<string, string>) => {
+    async (answers: Record<string, string[]>) => {
       if (!displayQuestions) return
 
-      if (isQuestionExpired) {
-        // Question timed out - send answers as a normal user message
-        clearPendingQuestionCallback()
-        await sendUserMessage(formatAnswersAsText(answers))
-      } else {
-        // Question is still live - use tool approval path
-        await trpcClient.claude.respondToolApproval.mutate({
-          toolUseId: displayQuestions.toolUseId,
-          approved: true,
-          updatedInput: { questions: displayQuestions.questions, answers },
+      try {
+        if (isQuestionContinuation) {
+          const questions = displayQuestions.questions
+            .map((question, index) => `${index + 1}. ${question.question}`)
+            .join("\n")
+          await sendUserMessage(
+            `${questions}\n\nAnswer (normal continuation):\n${formatAnswersAsText(answers)}`,
+          )
+          await trpcClient.agentInput.respond
+            .mutate({
+              requestId: displayQuestions.toolUseId,
+              mode: "chat",
+              answers,
+              submittedAt: Date.now(),
+            })
+            .catch(() => ({ ok: false }))
+          clearPendingQuestionCallback()
+          return
+        }
+
+        const result = await trpcClient.agentInput.respond.mutate({
+          requestId: displayQuestions.toolUseId,
+          mode: "structured",
+          answers,
+          submittedAt: Date.now(),
         })
+        if (!result.ok) throw new Error("The question request is no longer waiting.")
         clearPendingQuestionCallback()
+      } catch (error) {
+        toast.error("Could not submit agent answers", {
+          description: error instanceof Error ? error.message : String(error),
+        })
+        throw error
       }
     },
     [
       displayQuestions,
-      isQuestionExpired,
+      isQuestionContinuation,
       clearPendingQuestionCallback,
       sendUserMessage,
       formatAnswersAsText,
@@ -3172,34 +2954,36 @@ const ChatViewInner = memo(function ChatViewInner({
   const handleQuestionsSkip = useCallback(async () => {
     if (!displayQuestions) return
 
-    if (isQuestionExpired) {
-      // Expired question - just clear the UI, no backend call needed
+    if (isQuestionContinuation) {
+      await trpcClient.agentInput.skip
+        .mutate({
+          requestId: displayQuestions.toolUseId,
+          message: QUESTIONS_SKIPPED_MESSAGE,
+        })
+        .catch(() => ({ ok: false }))
       clearPendingQuestionCallback()
       return
     }
 
-    const toolUseId = displayQuestions.toolUseId
-
-    // Clear UI immediately - don't wait for backend
-    // This ensures dialog closes even if stream was already aborted
-    clearPendingQuestionCallback()
-
-    // Try to notify backend (may fail if already aborted - that's ok)
     try {
-      await trpcClient.claude.respondToolApproval.mutate({
-        toolUseId,
-        approved: false,
+      const result = await trpcClient.agentInput.skip.mutate({
+        requestId: displayQuestions.toolUseId,
         message: QUESTIONS_SKIPPED_MESSAGE,
       })
-    } catch {
-      // Stream likely already aborted - ignore
+      if (!result.ok) throw new Error("The question request is no longer waiting.")
+      clearPendingQuestionCallback()
+    } catch (error) {
+      toast.error("Could not skip agent questions", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     }
-  }, [displayQuestions, isQuestionExpired, clearPendingQuestionCallback])
+  }, [displayQuestions, isQuestionContinuation, clearPendingQuestionCallback])
 
   // Ref to prevent double submit of question answer
   const isSubmittingQuestionAnswerRef = useRef(false)
 
-  // Handle answering questions with custom text from input (called on Enter in input)
+  // Answer-in-chat uses the normal composer without starting a second turn when
+  // the originating native request is still pending.
   const handleSubmitWithQuestionAnswer = useCallback(async () => {
     if (!displayQuestions) return
     if (isSubmittingQuestionAnswerRef.current) return
@@ -3213,61 +2997,48 @@ const ChatViewInner = memo(function ChatViewInner({
         return
       }
 
-      // 2. Get already selected answers from question component
-      const selectedAnswers = questionRef.current?.getAnswers() || {}
-      const formattedAnswers: Record<string, string> = { ...selectedAnswers }
+      const formattedAnswers = Object.fromEntries(
+        displayQuestions.questions.map((question) => [question.id, [customText]]),
+      )
 
-      // 3. Add custom text to the last question as "Other"
-      const lastQuestion = displayQuestions.questions[displayQuestions.questions.length - 1]
-      if (lastQuestion) {
-        const existingAnswer = formattedAnswers[lastQuestion.question]
-        if (existingAnswer) {
-          // Append to existing answer
-          formattedAnswers[lastQuestion.question] = `${existingAnswer}, Other: ${customText}`
-        } else {
-          formattedAnswers[lastQuestion.question] = `Other: ${customText}`
-        }
-      }
-
-      if (isQuestionExpired) {
-        // Expired: send user's custom text as-is (don't format)
-        clearPendingQuestionCallback()
-        clearInputAndDraft()
-        // await sendUserMessage(formatAnswersAsText(formattedAnswers))
-        await sendUserMessage(customText)
-      } else {
-        // Live: use existing tool approval flow
-        await trpcClient.claude.respondToolApproval.mutate({
-          toolUseId: displayQuestions.toolUseId,
-          approved: true,
-          updatedInput: {
-            questions: displayQuestions.questions,
+      if (isQuestionContinuation) {
+        await sendUserMessage(
+          `${displayQuestions.questions.map((question, index) => `${index + 1}. ${question.question}`).join("\n")}\n\nAnswer (normal continuation):\n${customText}`,
+        )
+        await trpcClient.agentInput.respond
+          .mutate({
+            requestId: displayQuestions.toolUseId,
+            mode: "chat",
             answers: formattedAnswers,
-          },
-        })
+            submittedAt: Date.now(),
+          })
+          .catch(() => ({ ok: false }))
         clearPendingQuestionCallback()
-
-        // Stop stream if currently streaming
-        if (isStreamingRef.current) {
-          agentChatStore.setManuallyAborted(subChatId, true)
-          await stopRef.current()
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-
         clearInputAndDraft()
-        await sendUserMessage(customText)
+      } else {
+        const result = await trpcClient.agentInput.respond.mutate({
+          requestId: displayQuestions.toolUseId,
+          mode: "chat",
+          answers: formattedAnswers,
+          submittedAt: Date.now(),
+        })
+        if (!result.ok) throw new Error("The question request is no longer waiting.")
+        clearPendingQuestionCallback()
+        clearInputAndDraft()
       }
+    } catch (error) {
+      toast.error("Could not submit agent answer", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       isSubmittingQuestionAnswerRef.current = false
     }
   }, [
     displayQuestions,
-    isQuestionExpired,
+    isQuestionContinuation,
     clearPendingQuestionCallback,
     clearInputAndDraft,
     sendUserMessage,
-    formatAnswersAsText,
-    subChatId,
   ])
 
   // Memoize the callback to prevent ChatInputArea re-renders
@@ -4948,19 +4719,49 @@ const ChatViewInner = memo(function ChatViewInner({
           </div>
         </div>
 
-        {/* User questions panel - shows for both live (pending) and expired (timed out) questions */}
+        {/* Shared question dialog. Background chats never open it automatically. */}
         {displayQuestions && (
-          <div className="px-4 relative z-20">
-            <div className="w-full px-2 max-w-2xl mx-auto">
-              <AgentUserQuestion
-                ref={questionRef}
-                pendingQuestions={displayQuestions}
-                onAnswer={handleQuestionsAnswer}
-                onSkip={handleQuestionsSkip}
-                hasCustomText={inputHasContent}
-              />
-            </div>
-          </div>
+          <>
+            <AgentInputDialog
+              request={displayQuestions}
+              open={isActive && questionDialogOpen}
+              onOpenChange={setQuestionDialogOpen}
+              onAnswer={handleQuestionsAnswer}
+              onSkip={handleQuestionsSkip}
+              onAnswerInChat={() => {
+                setQuestionDialogOpen(false)
+                queueMicrotask(() => editorRef.current?.focus())
+              }}
+            />
+            {!questionDialogOpen && (
+              <div className="relative z-20 px-4">
+                <div className="mx-auto flex w-full max-w-2xl items-start justify-between gap-3 rounded-t-xl border border-b-0 border-border bg-muted/30 px-3 py-2">
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">Agent questions</div>
+                    {displayQuestions.questions.map((question, index) => (
+                      <div key={`${displayQuestions.toolUseId}-${index}`} className="truncate">
+                        {index + 1}. {question.question}
+                      </div>
+                    ))}
+                    {isQuestionContinuation && (
+                      <div className="mt-1 text-amber-600 dark:text-amber-400">
+                        This harness cannot resume a paused structured request. Your reply will
+                        continue as a normal chat turn.
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setQuestionDialogOpen(true)}
+                  >
+                    Reopen questions
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Stacked cards container - queue + status */}
@@ -5106,16 +4907,18 @@ export function ChatView({
   const isDesktop = useAtomValue(isDesktopAtom)
   const isFullscreen = useAtomValue(isFullscreenAtom)
   const sidebarOpen = useAtomValue(agentsSidebarOpenAtom)
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
   const selectedOllamaModel = useAtomValue(selectedOllamaModelAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   const setLoadingSubChats = useSetAtom(loadingSubChatsAtom)
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom)
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom)
   const setJustCreatedIds = useSetAtom(justCreatedIdsAtom)
   const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setUndoStack = useSetAtom(undoStackAtom)
   const setSelectedFilePath = useSetAtom(selectedDiffFilePathAtom)
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtom)
@@ -5603,6 +5406,8 @@ export function ChatView({
         updatedAt: new Date(remoteAgentChat.updated_at),
         archivedAt: null,
         projectId: null,
+        taskId: null,
+        parentChatId: null,
         worktreePath: null,
         branch: null,
         baseBranch: null,
@@ -7408,84 +7213,6 @@ Make sure to preserve all functionality from both branches when resolving confli
   // in ipc-chat-transport.ts when the ask-user-question chunk arrives.
   // This prevents duplicate notifications from multiple ChatView instances.
 
-  // Multi-select state for sub-chats (for Cmd+W bulk close)
-  const selectedSubChatIds = useAtomValue(selectedSubChatIdsAtom)
-  const isSubChatMultiSelectMode = useAtomValue(isSubChatMultiSelectModeAtom)
-  const clearSubChatSelection = useSetAtom(clearSubChatSelectionAtom)
-
-  // Helper to add sub-chat to undo stack
-  const addSubChatToUndoStack = useCallback(
-    (subChatId: string) => {
-      const timeoutId = setTimeout(() => {
-        setUndoStack((prev) =>
-          prev.filter((item) => !(item.type === "subchat" && item.subChatId === subChatId)),
-        )
-      }, 10000)
-
-      setUndoStack((prev) => [
-        ...prev,
-        {
-          type: "subchat",
-          subChatId,
-          chatId,
-          timeoutId,
-        },
-      ])
-    },
-    [chatId, setUndoStack],
-  )
-
-  // Keyboard shortcut: Close active sub-chat (or bulk close if multi-select mode)
-  // Web: Opt+Cmd+W (browser uses Cmd+W to close tab)
-  // Desktop: Cmd+W
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isDesktop = isDesktopApp()
-
-      // Desktop: Cmd+W (without Alt)
-      const isDesktopShortcut =
-        isDesktop && e.metaKey && e.code === "KeyW" && !e.altKey && !e.shiftKey && !e.ctrlKey
-      // Web: Opt+Cmd+W (with Alt)
-      const isWebShortcut = e.altKey && e.metaKey && e.code === "KeyW"
-
-      if (isDesktopShortcut || isWebShortcut) {
-        e.preventDefault()
-
-        const store = useAgentSubChatStore.getState()
-
-        // If multi-select mode, bulk close selected sub-chats
-        if (isSubChatMultiSelectMode && selectedSubChatIds.size > 0) {
-          const idsToClose = Array.from(selectedSubChatIds)
-          const remainingOpenIds = store.openSubChatIds.filter((id) => !idsToClose.includes(id))
-
-          // Don't close all tabs via hotkey - user should use sidebar dialog for last tab
-          if (remainingOpenIds.length > 0) {
-            idsToClose.forEach((id) => {
-              store.removeFromOpenSubChats(id)
-              addSubChatToUndoStack(id)
-            })
-          }
-          clearSubChatSelection()
-          return
-        }
-
-        // Otherwise close active sub-chat
-        const activeId = store.activeSubChatId
-        const openIds = store.openSubChatIds
-
-        // Only close if we have more than one tab open and there's an active tab
-        // removeFromOpenSubChats automatically switches to the last remaining tab
-        if (activeId && openIds.length > 1) {
-          store.removeFromOpenSubChats(activeId)
-          addSubChatToUndoStack(activeId)
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [isSubChatMultiSelectMode, selectedSubChatIds, clearSubChatSelection, addSubChatToUndoStack])
-
   // Keyboard shortcut: Navigate between sub-chats
   // Web: Opt+Cmd+[ and Opt+Cmd+] (browser uses Cmd+[ for back)
   // Desktop: Cmd+[ and Cmd+]
@@ -7805,6 +7532,22 @@ Make sure to preserve all functionality from both branches when resolving confli
                             isTerminalOpen={isTerminalSidebarOpen}
                             chatId={chatId}
                           />
+                          {agentChat?.parentChatId && (
+                            <Tooltip delayDuration={300}>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="ml-1 h-6 w-6 text-violet-300"
+                                  onClick={() => setSelectedChatId(agentChat.parentChatId!)}
+                                  aria-label="Open parent agent chat"
+                                >
+                                  <GitFork aria-hidden="true" className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Open parent agent chat</TooltipContent>
+                            </Tooltip>
+                          )}
                           {/* Open Locally button - desktop only, sandbox mode */}
                           {showOpenLocally && (
                             <Tooltip delayDuration={500}>
@@ -8231,6 +7974,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                 <AgentPlanSidebar
                   chatId={activeSubChatIdForPlan}
                   planPath={currentPlanPath}
+                  worktreePath={worktreePath}
                   onClose={() => setIsPlanSidebarOpen(false)}
                   onBuildPlan={handleApprovePlanFromSidebar}
                   refetchTrigger={planEditRefetchTrigger}
@@ -8439,45 +8183,49 @@ Make sure to preserve all functionality from both branches when resolving confli
 
             {/* Unified Details Sidebar - combines all right sidebars into one (rightmost) */}
             {/* Show for both local (worktreePath) and remote (sandboxId) chats */}
-            {isUnifiedSidebarEnabled && !isMobileFullscreen && (worktreePath || sandboxId) && (
-              <DetailsSidebar
-                chatId={chatId}
-                worktreePath={worktreePath}
-                planPath={currentPlanPath}
-                mode={currentMode}
-                onBuildPlan={handleApprovePlanFromSidebar}
-                planRefetchTrigger={planEditRefetchTrigger}
-                activeSubChatId={activeSubChatIdForPlan}
-                isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
-                isTerminalSidebarOpen={isTerminalSidebarOpen}
-                isDiffSidebarOpen={isDiffSidebarOpen}
-                diffDisplayMode={diffDisplayMode}
-                canOpenDiff={canOpenDiff}
-                setIsDiffSidebarOpen={setIsDiffSidebarOpen}
-                diffStats={diffStats}
-                parsedFileDiffs={parsedFileDiffs}
-                onCommit={worktreePath ? handleCommitChanges : undefined}
-                onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
-                isCommitting={isCommittingCombined}
-                gitStatus={gitStatus}
-                isGitStatusLoading={isGitStatusLoading}
-                currentBranch={branchData?.current}
-                onExpandTerminal={() => setIsTerminalSidebarOpen(true)}
-                onExpandPlan={() => setIsPlanSidebarOpen(true)}
-                onExpandDiff={() => setIsDiffSidebarOpen(true)}
-                onFileSelect={(filePath) => {
-                  // Set the selected file path
-                  setSelectedFilePath(filePath)
-                  // Set filtered files to just this file
-                  setFilteredDiffFiles([filePath])
-                  // Open the diff sidebar
-                  setIsDiffSidebarOpen(true)
-                }}
-                onOpenFile={setFileViewerPath}
-                remoteInfo={remoteInfo}
-                isRemoteChat={!!remoteInfo}
-              />
-            )}
+            {isUnifiedSidebarEnabled &&
+              !isMobileFullscreen &&
+              (worktreePath || sandboxId || agentChat?.projectId || agentChat?.taskId) && (
+                <DetailsSidebar
+                  chatId={chatId}
+                  taskId={agentChat?.taskId}
+                  projectId={agentChat?.projectId}
+                  worktreePath={worktreePath}
+                  planPath={currentPlanPath}
+                  mode={currentMode}
+                  onBuildPlan={handleApprovePlanFromSidebar}
+                  planRefetchTrigger={planEditRefetchTrigger}
+                  activeSubChatId={activeSubChatIdForPlan}
+                  isPlanSidebarOpen={isPlanSidebarOpen && !!currentPlanPath}
+                  isTerminalSidebarOpen={isTerminalSidebarOpen}
+                  isDiffSidebarOpen={isDiffSidebarOpen}
+                  diffDisplayMode={diffDisplayMode}
+                  canOpenDiff={canOpenDiff}
+                  setIsDiffSidebarOpen={setIsDiffSidebarOpen}
+                  diffStats={diffStats}
+                  parsedFileDiffs={parsedFileDiffs}
+                  onCommit={worktreePath ? handleCommitChanges : undefined}
+                  onCommitAndPush={worktreePath ? handleCommitAndPush : undefined}
+                  isCommitting={isCommittingCombined}
+                  gitStatus={gitStatus}
+                  isGitStatusLoading={isGitStatusLoading}
+                  currentBranch={branchData?.current}
+                  onExpandTerminal={() => setIsTerminalSidebarOpen(true)}
+                  onExpandPlan={() => setIsPlanSidebarOpen(true)}
+                  onExpandDiff={() => setIsDiffSidebarOpen(true)}
+                  onFileSelect={(filePath) => {
+                    // Set the selected file path
+                    setSelectedFilePath(filePath)
+                    // Set filtered files to just this file
+                    setFilteredDiffFiles([filePath])
+                    // Open the diff sidebar
+                    setIsDiffSidebarOpen(true)
+                  }}
+                  onOpenFile={setFileViewerPath}
+                  remoteInfo={remoteInfo}
+                  isRemoteChat={!!remoteInfo}
+                />
+              )}
           </div>
 
           {/* Terminal Bottom Panel - renders below the main row when displayMode is "bottom" */}

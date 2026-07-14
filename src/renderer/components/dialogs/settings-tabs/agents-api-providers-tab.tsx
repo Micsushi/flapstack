@@ -22,6 +22,7 @@ import { Badge } from "../../ui/badge"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
 import { Label } from "../../ui/label"
+import { CredentialManagement } from "./credential-management"
 
 function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) {
   const setLastSelectedAgentId = useSetAtom(lastSelectedAgentIdAtom)
@@ -54,18 +55,33 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
       trpcUtils.opencode.listProviders.invalidate()
       trpcUtils.opencode.getKeyStatus.invalidate()
       if (status.sessionOnly) {
-        toast.info(`${provider?.label ?? providerId} key added for this session`)
+        toast.warning(`${provider?.label ?? providerId} key is available for this session only`, {
+          description: status.warning,
+        })
+      } else {
+        toast.success(`${provider?.label ?? providerId} key saved`)
       }
       const pending = appStore.get(pendingAuthRetryMessageAtom)
       if (pending?.provider === providerId) {
         appStore.set(pendingAuthRetryMessageAtom, { ...pending, readyToRetry: true })
       }
     },
+    onError: (error) => {
+      toast.error(`${provider?.label ?? providerId} key was not saved`, {
+        description: error.message,
+      })
+    },
   })
   const clearKey = trpc.opencode.clearKey.useMutation({
     onSuccess: () => {
       trpcUtils.opencode.listProviders.invalidate()
       trpcUtils.opencode.getKeyStatus.invalidate()
+      toast.success(`${provider?.label ?? providerId} key removed`)
+    },
+    onError: (error) => {
+      toast.error(`${provider?.label ?? providerId} key was not removed`, {
+        description: error.message,
+      })
     },
   })
   const refreshModels = trpc.opencode.refreshModels.useMutation({
@@ -87,14 +103,44 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
 
   if (!provider) return null
 
+  const saveKey = () => {
+    if (
+      provider.configured &&
+      !window.confirm(`Replace the ${provider.label} API key? The prior value cannot be recovered.`)
+    ) {
+      return
+    }
+    setKey.mutate({
+      provider: providerId,
+      apiKey: apiKey.trim(),
+      ...(provider.allowsCustomBaseUrl ? { baseUrl: baseUrl.trim() } : {}),
+    })
+  }
+
+  const removeKey = () => {
+    if (!window.confirm(`Remove the ${provider.label} API key? Provider runs will stop working.`)) {
+      return
+    }
+    clearKey.mutate({ provider: providerId })
+  }
+
   return (
-    <div id={`${providerId}-provider-card`} className="rounded-lg border border-border p-4">
+    <div
+      id={`${providerId}-provider-card`}
+      data-settings-id={`${providerId}-provider-card`}
+      tabIndex={-1}
+      className="rounded-lg border border-border p-4 outline-none"
+    >
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-medium">{provider.label}</span>
           {provider.configured ? (
             <Badge variant="secondary">
-              {provider.sessionOnly ? "Connected for this session" : "Connected"}
+              {provider.sessionOnly
+                ? "Session only"
+                : provider.source === "environment"
+                  ? "Configured in environment"
+                  : "Encrypted on this device"}
             </Badge>
           ) : (
             <Badge variant="outline">Not configured</Badge>
@@ -114,6 +160,26 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
         Base URL: <code>{provider.baseUrl}</code>
       </p>
 
+      <p className="mb-3 text-xs text-muted-foreground">
+        An API key is required; there is no subscription fallback for {provider.label}.
+        {provider.fingerprint ? ` Fingerprint ${provider.fingerprint}.` : ""}
+        {provider.updatedAt ? ` Updated ${new Date(provider.updatedAt).toLocaleString()}.` : ""}
+      </p>
+      {provider.sessionOnly && (
+        <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+          Session only. This key disappears when this app process exits. {provider.warning}
+        </p>
+      )}
+      {provider.source === "environment" && (
+        <p className="mb-3 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+          This external environment value cannot be removed from Flapstack. Saving below adds an
+          app-managed credential instead.
+        </p>
+      )}
+      {provider.warning && !provider.sessionOnly && (
+        <p className="mb-3 text-xs text-destructive">{provider.warning}</p>
+      )}
+
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <Label htmlFor={`${providerId}-key`} className="text-xs">
@@ -123,30 +189,21 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
             id={`${providerId}-key`}
             type="password"
             value={apiKey}
-            placeholder={provider.configured ? "•••••••• (stored, encrypted)" : "Enter API key"}
+            placeholder={
+              provider.configured
+                ? "Enter a replacement; stored values are never shown"
+                : "Enter API key"
+            }
             onChange={(e) => setApiKey(e.target.value)}
             autoComplete="new-password"
           />
         </div>
-        <Button
-          disabled={!apiKey.trim() || setKey.isPending}
-          onClick={() =>
-            setKey.mutate({
-              provider: providerId,
-              apiKey: apiKey.trim(),
-              ...(provider.allowsCustomBaseUrl ? { baseUrl: baseUrl.trim() } : {}),
-            })
-          }
-        >
-          Save
+        <Button disabled={!apiKey.trim() || setKey.isPending} onClick={saveKey}>
+          {provider.configured ? "Replace" : "Save"}
         </Button>
-        {provider.configured && (
-          <Button
-            variant="outline"
-            disabled={clearKey.isPending}
-            onClick={() => clearKey.mutate({ provider: providerId })}
-          >
-            Clear
+        {provider.configured && provider.source !== "environment" && (
+          <Button variant="outline" disabled={clearKey.isPending} onClick={removeKey}>
+            Remove
           </Button>
         )}
       </div>
@@ -276,9 +333,7 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
         Use for new chats
       </Button>
       <p className="mt-2 text-xs text-muted-foreground">
-        Chat keys are stored in an encrypted local file using the operating system's secure
-        encryption. If secure encryption is unavailable, the key remains in memory for this app
-        session only. No plaintext fallback or hosted sync.
+        Secret fields stay blank after save. Flapstack never returns stored plaintext to Settings.
       </p>
     </div>
   )
@@ -295,6 +350,8 @@ export function AgentsApiProvidersTab() {
           Connect OpenRouter and NanoGPT directly with your own API keys.
         </p>
       </div>
+
+      <CredentialManagement />
 
       {runtime && (
         <div

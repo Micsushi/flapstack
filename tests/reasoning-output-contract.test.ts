@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest"
 import {
   ReasoningOutputAccumulator,
   REASONING_OUTPUT_PROVIDERS,
+  classifyReasoningVisibility,
   classifyReasoningOutputPersistence,
   isDisplayableReasoningOutput,
   normalizeReasoningOutput,
   reasoningOutputLabel,
+  resolveReasoningControls,
   type ReasoningOutputEvent,
   type ReasoningOutputProvider,
 } from "../src/shared/reasoning-output"
@@ -143,6 +145,44 @@ describe("ReasoningOutputAccumulator (Track T2 incremental behavior)", () => {
     expect(part.input.text).toBe("Streamed thought.")
   })
 
+  it("adopts a cumulative final extension without duplicating the streamed prefix", () => {
+    const acc = new ReasoningOutputAccumulator()
+    acc.apply({
+      provider: "openrouter",
+      kind: "reasoning-output",
+      phase: "delta",
+      id: "b1",
+      text: "Checked files.",
+    })
+    acc.apply({
+      provider: "openrouter",
+      kind: "reasoning-output",
+      phase: "final",
+      id: "b1",
+      text: "Checked files. Ran tests.",
+    })
+    expect(acc.toParts()[0].input.text).toBe("Checked files. Ran tests.")
+  })
+
+  it("preserves an independent later reasoning part", () => {
+    const acc = new ReasoningOutputAccumulator()
+    acc.apply({
+      provider: "codex",
+      kind: "thought",
+      phase: "final",
+      id: "part-1",
+      text: "First part.",
+    })
+    acc.apply({
+      provider: "codex",
+      kind: "thought",
+      phase: "final",
+      id: "part-2",
+      text: "First part.",
+    })
+    expect(acc.toParts().map((part) => part.input.text)).toEqual(["First part.", "First part."])
+  })
+
   it("keeps separate blocks ordered by first appearance", () => {
     const acc = new ReasoningOutputAccumulator()
     acc.apply({ provider: "codex", kind: "thought", phase: "delta", id: "b2", text: "second" })
@@ -243,6 +283,82 @@ describe("persistence + display classification (Track T1)", () => {
     expect(classifyReasoningOutputPersistence(event)).toBe("usage-metadata")
     expect(isDisplayableReasoningOutput(event)).toBe(false)
     expect(reasoningOutputLabel(event)).toBe("Reasoning tokens")
+  })
+
+  it("classifies every visible, private, absent, and unsupported state honestly", () => {
+    expect(
+      classifyReasoningVisibility({
+        provider: "cursor",
+        kind: "reasoning-output",
+        phase: "delta",
+        id: "visible",
+        text: "Inspecting files.",
+      }),
+    ).toBe("visible-text")
+    expect(
+      classifyReasoningVisibility({
+        provider: "codex",
+        kind: "reasoning-summary",
+        phase: "final",
+        id: "summary",
+        text: "Inspected files.",
+      }),
+    ).toBe("visible-summary")
+    expect(
+      classifyReasoningVisibility({
+        provider: "openrouter",
+        kind: "reasoning-tokens",
+        phase: "final",
+        id: "tokens",
+        tokens: 12,
+      }),
+    ).toBe("token-only")
+    expect(
+      classifyReasoningVisibility({
+        provider: "openrouter",
+        kind: "opaque",
+        phase: "final",
+        id: "private",
+        opaque: "encrypted",
+      }),
+    ).toBe("opaque-private")
+    expect(classifyReasoningVisibility()).toBe("absent")
+    expect(classifyReasoningVisibility(undefined, false)).toBe("unsupported")
+  })
+})
+
+describe("provider-aware reasoning controls", () => {
+  it("passes supported native controls exactly", () => {
+    expect(
+      resolveReasoningControls(
+        { toggle: true, efforts: ["low", "medium", "high"] },
+        { enabled: true, effort: "medium" },
+      ),
+    ).toEqual({
+      requested: { enabled: true, effort: "medium" },
+      sent: { enabled: true, effort: "medium" },
+      exact: true,
+      limitations: [],
+    })
+  })
+
+  it("omits unsupported fields and records the limitation", () => {
+    const result = resolveReasoningControls({ toggle: false }, { enabled: true, effort: "xhigh" })
+    expect(result.sent).toEqual({})
+    expect(result.exact).toBe(false)
+    expect(result.limitations).toEqual([
+      "Reasoning on is not a verified native control and was omitted.",
+      "Reasoning effort xhigh is unsupported and was omitted.",
+    ])
+  })
+
+  it("maps unsupported depth to the closest declared effort", () => {
+    const result = resolveReasoningControls(
+      { toggle: true, efforts: ["low", "high"] },
+      { enabled: true, effort: "xhigh" },
+    )
+    expect(result.sent).toEqual({ enabled: true, effort: "high" })
+    expect(result.limitations).toEqual(["Reasoning effort xhigh mapped to high."])
   })
 })
 

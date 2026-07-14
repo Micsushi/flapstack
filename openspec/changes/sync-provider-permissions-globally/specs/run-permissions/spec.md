@@ -69,14 +69,21 @@ applying remembered global behavior.
 - **THEN** only that chat and its internal canonical-conversation rows change,
   regardless of the remembered chat-selector behavior
 
+#### Scenario: Permission mutation refreshes visible state
+
+- **WHEN** a scoped permission mutation succeeds
+- **THEN** Settings, active and archived chat lists, input-bar resolution, and
+  affected project/task defaults refetch without a manual reload
+
 ## MODIFIED Requirements
 
 ### Requirement: Permission Modes
 
 The system SHALL support the permission modes `read-only`,
-`ask-before-edits`, `auto-edit-project-only`, `full-access`, and `custom`
-(with stored toggles for file write, shell, network, git, browser, MCP tools,
-and secrets access), SHALL map each mode to the closest conservative native
+`ask-before-edits`, `auto-edit-project-only`, `full-access`, and `custom`.
+Current-chat custom changes SHALL store an exact validated toggle object for
+file write, shell, network, git, browser, MCP tools, and secrets access. The
+system SHALL map each mode to the closest conservative native
 controls of the launching harness, and SHALL record the effective mapping and
 any limitations for every run. An unavailable or unknown native control MUST
 fail closed or degrade conservatively; it MUST NOT silently widen access.
@@ -119,6 +126,31 @@ fail closed or degrade conservatively; it MUST NOT silently widen access.
   evaluates an unknown or MCP tool name
 - **THEN** the mode's catch-all rule denies or asks instead of inheriting a
   permissive provider default
+
+#### Scenario: Read-only caller uses product MCP
+
+- **WHEN** a read-only run calls a registry-classified Tier 0 Flapstack product
+  MCP tool
+- **THEN** that read may run while third-party MCP and product mutation tools
+  remain denied
+
+#### Scenario: Product classification ignores an untrusted display-name collision
+
+- **WHEN** a third-party MCP server uses the `flapstack` display name
+- **THEN** provider permissions classify it from trusted registration and
+  origin identity, not the name
+- **AND** it remains third-party and receives no product Tier 0 privilege
+
+#### Scenario: Product MCP approval is correlated
+
+- **WHEN** an ask-before-edits run invokes a Tier 1 or Tier 2 product MCP tool
+- **THEN** the provider and product gates produce one correlated user decision
+  and never two prompts for the same invocation
+
+#### Scenario: Product Tier 3 remains mandatory
+
+- **WHEN** a provider-native mode would allow a Tier 3 product MCP call
+- **THEN** the separate Stage 3 product approval is still required
 
 ### Requirement: Resolved Mode Visibility
 
@@ -175,6 +207,24 @@ the permission change according to that scope.
   permission change
 - **THEN** only that chat and its internal canonical-conversation rows change
   and parent defaults and other chats remain unchanged
+
+#### Scenario: Apply current-chat custom capabilities
+
+- **WHEN** the user applies `custom` with a complete exact toggle object to the
+  current chat
+- **THEN** that chat stores the mode and toggles and later runs/MCP calls reload
+  the stored values instead of trusting launcher claims
+
+#### Scenario: Leave custom mode
+
+- **WHEN** a chat changes from `custom` to any non-custom mode
+- **THEN** its stale custom JSON is cleared and cannot affect later runs
+
+#### Scenario: Attempt all-chat custom without durable defaults
+
+- **WHEN** the global, project, and task layers cannot persist the exact custom
+  toggle schema and the user requests `all-chats` with `custom`
+- **THEN** the operation is rejected without changing any permission row
 
 #### Scenario: Historical and in-flight runs
 

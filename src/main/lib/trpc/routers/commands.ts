@@ -7,6 +7,8 @@ import matter from "gray-matter"
 import { discoverInstalledPlugins, getPluginComponentPaths } from "../../plugins"
 import { resolveDirentType } from "../../fs/dirent"
 import { getEnabledPlugins } from "./claude-settings"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
+import { resolveInsideRoot } from "../../path-safety"
 
 export interface FileCommand {
   name: string
@@ -153,13 +155,26 @@ function generateCommandMd(command: {
  * Resolve the absolute filesystem path of a command given its display path
  */
 function resolveCommandPath(displayPath: string, projectPath?: string): string {
-  if (displayPath.startsWith("~")) {
-    return path.join(os.homedir(), displayPath.slice(1))
+  if (projectPath) {
+    const root = assertRegisteredWorktree(projectPath).canonicalPath
+    const target = resolveInsideRoot(root, displayPath)
+    const allowed = [path.join(root, ".claude", "commands"), path.join(root, ".codex", "commands")]
+    if (!allowed.some((dir) => target === dir || target.startsWith(dir + path.sep))) {
+      throw new Error("Command path is outside registered command roots")
+    }
+    return target
   }
-  if (projectPath && !displayPath.startsWith("/")) {
-    return path.join(projectPath, displayPath)
+  const target = displayPath.startsWith("~")
+    ? path.join(os.homedir(), displayPath.slice(1))
+    : path.resolve(displayPath)
+  const allowed = [
+    path.join(os.homedir(), ".claude", "commands"),
+    path.join(os.homedir(), ".codex", "commands"),
+  ]
+  if (!allowed.some((dir) => target === dir || target.startsWith(dir + path.sep))) {
+    throw new Error("Command path is outside user command roots")
   }
-  return displayPath
+  return target
 }
 
 export const commandsRouter = router({
@@ -187,14 +202,13 @@ export const commandsRouter = router({
 
       let projectCommandsPromise = Promise.resolve<FileCommand[]>([])
       if (input?.projectPath) {
+        const projectRoot = assertRegisteredWorktree(input.projectPath).canonicalPath
         const projectCommandsDirs = [
-          path.join(input.projectPath, ".claude", "commands"),
-          path.join(input.projectPath, ".codex", "commands"),
+          path.join(projectRoot, ".claude", "commands"),
+          path.join(projectRoot, ".codex", "commands"),
         ]
         projectCommandsPromise = Promise.all(
-          projectCommandsDirs.map((dir) =>
-            scanCommandsDirectory(dir, "project", "", input.projectPath),
-          ),
+          projectCommandsDirs.map((dir) => scanCommandsDirectory(dir, "project", "", projectRoot)),
         ).then((groups) => dedupeCommands(groups.flat()))
       }
 
@@ -274,7 +288,11 @@ export const commandsRouter = router({
         if (!input.projectPath) {
           throw new Error("Project path required for project commands")
         }
-        targetDir = path.join(input.projectPath, ".claude", "commands")
+        targetDir = path.join(
+          assertRegisteredWorktree(input.projectPath).canonicalPath,
+          ".claude",
+          "commands",
+        )
       } else {
         targetDir = path.join(os.homedir(), ".claude", "commands")
       }

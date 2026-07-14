@@ -10,9 +10,9 @@ ID, search result, shortcut, or provider-specific path.
 
 Three active areas need explicit coordination:
 
-- Voice is owned by `add-stage2-voice-usage-cursor`; this change owns the
-  Settings-facing correctness and promotion evidence, not a second speech
-  architecture.
+- S3-F9 owns the unfinished Voice streaming, history, Settings, and exit work
+  migrated from Stage 2. It extends the existing speech architecture instead of
+  creating a second store or sidecar family.
 - Provider permission synchronization is owned by
   `sync-provider-permissions-globally`; this change keeps incomplete choices
   hidden and defines the follow-on eligibility gates.
@@ -107,8 +107,10 @@ the same resolved state.
   of silently succeeding.
 - History mutation uses stable IDs and reports persistence errors.
 
-The work extends the active Voice change and its storage contracts rather than
-introducing a parallel speech store.
+The work extends the existing speech services and storage contracts. S3-F9 is
+the single task authority for the warm Parakeet sidecar, committed/tentative
+streaming, both composer integrations, finalized history/WAV persistence,
+Settings consumption, licensing, and final dev/package evidence.
 
 ### 4. Secrets live behind main-process IPC
 
@@ -141,6 +143,11 @@ Define a provider extension manifest with provider, kind (`skill`, `command`,
 `plugin`, `custom-agent`, `mcp`), source, stable source path/ID, display name,
 read/write support, runtime availability, and limitations.
 
+Here `mcp` means a third-party provider MCP configuration consumed by a harness.
+It never means the per-chat product app-control stdio MCP or the authenticated
+development-only HTTP test-control MCP. Those surfaces keep separate identity,
+transport, registry, permissions, credentials, and lifecycle.
+
 Compound identity is `(provider, kind, sourceId)`. Same-name items from two
 providers remain distinct. Discovery adapters map Claude, Codex, Cursor, and
 OpenCode-backed providers into the shared manifest without pretending they use
@@ -159,9 +166,12 @@ The universally selectable release set remains `read-only`,
 finishes. Existing stored legacy modes remain valid backend values, but the UI
 shows `Legacy mode - change required` and does not offer them as new choices.
 
-`custom` returns only after Flapstack stores explicit capabilities such as
-project edits, shell, network, external paths, subagents, and MCP risk tiers;
-every provider adapter must map or conservatively ask/deny each capability.
+Exact per-chat custom toggles already persist for the selected chat and are
+revalidated by product MCP calls. `custom` returns as a selectable mode only
+after Flapstack also stores durable global/project/task defaults, rejects
+partial schemas, clears stale JSON when leaving custom, and maps each capability
+through every provider or a conservative ask/deny bridge. Until those defaults
+exist, all-chat custom is unavailable.
 
 `auto-edit-project-only` is selectable for a chat only when the selected
 provider has a tested exact project boundary. It cannot be a global default
@@ -186,8 +196,8 @@ Tests compare the visible registry with navigation and search coverage.
 2. S3-F8 Keyboard, S3-F9 Voice, and S3-F10 Credentials can proceed
    independently.
 3. S3-F11 Provider Extensions follows its manifest/discovery contract.
-4. S3-F12 Permission Modes starts after GPP-T4 and GPP-T6 close or the
-   active permission change explicitly hands off ownership.
+4. S3-F12 Permission Modes starts after GPP-T4, GPP-T6, GPP-T9, and GPP-T10
+   close or the active permission change explicitly hands off ownership.
 5. S3-F13 consolidates final copy/search metadata, runs the Settings matrix, and
    promotes only the features whose gates pass.
 

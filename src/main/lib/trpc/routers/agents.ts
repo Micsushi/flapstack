@@ -12,6 +12,7 @@ import {
 } from "./agent-utils"
 import { discoverInstalledPlugins, getPluginComponentPaths } from "../../plugins"
 import { getEnabledPlugins } from "./claude-settings"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
 
 // Shared procedure for listing agents
 const listAgentsProcedure = publicProcedure
@@ -28,8 +29,9 @@ const listAgentsProcedure = publicProcedure
 
     let projectAgentsPromise = Promise.resolve<FileAgent[]>([])
     if (input?.cwd) {
-      const projectAgentsDir = path.join(input.cwd, ".claude", "agents")
-      projectAgentsPromise = scanAgentsDirectory(projectAgentsDir, "project", input.cwd)
+      const projectRoot = assertRegisteredWorktree(input.cwd).canonicalPath
+      const projectAgentsDir = path.join(projectRoot, ".claude", "agents")
+      projectAgentsPromise = scanAgentsDirectory(projectAgentsDir, "project", projectRoot)
     }
 
     // Discover plugin agents
@@ -78,15 +80,17 @@ export const agentsRouter = router({
   get: publicProcedure
     .input(z.object({ name: z.string(), cwd: z.string().optional() }))
     .query(async ({ input }) => {
+      if (!/^[a-zA-Z0-9_-]+$/.test(input.name)) throw new Error("Invalid agent name")
+      const projectRoot = input.cwd ? assertRegisteredWorktree(input.cwd).canonicalPath : undefined
       const locations = [
         {
           dir: path.join(os.homedir(), ".claude", "agents"),
           source: "user" as const,
         },
-        ...(input.cwd
+        ...(projectRoot
           ? [
               {
-                dir: path.join(input.cwd, ".claude", "agents"),
+                dir: path.join(projectRoot, ".claude", "agents"),
                 source: "project" as const,
               },
             ]
@@ -162,7 +166,11 @@ export const agentsRouter = router({
         if (!input.cwd) {
           throw new Error("Project path (cwd) required for project agents")
         }
-        targetDir = path.join(input.cwd, ".claude", "agents")
+        targetDir = path.join(
+          assertRegisteredWorktree(input.cwd).canonicalPath,
+          ".claude",
+          "agents",
+        )
       } else {
         targetDir = path.join(os.homedir(), ".claude", "agents")
       }
@@ -232,7 +240,11 @@ export const agentsRouter = router({
         if (!input.cwd) {
           throw new Error("Project path (cwd) required for project agents")
         }
-        targetDir = path.join(input.cwd, ".claude", "agents")
+        targetDir = path.join(
+          assertRegisteredWorktree(input.cwd).canonicalPath,
+          ".claude",
+          "agents",
+        )
       } else {
         targetDir = path.join(os.homedir(), ".claude", "agents")
       }
@@ -305,7 +317,11 @@ export const agentsRouter = router({
         if (!input.cwd) {
           throw new Error("Project path (cwd) required for project agents")
         }
-        targetDir = path.join(input.cwd, ".claude", "agents")
+        targetDir = path.join(
+          assertRegisteredWorktree(input.cwd).canonicalPath,
+          ".claude",
+          "agents",
+        )
       } else {
         targetDir = path.join(os.homedir(), ".claude", "agents")
       }

@@ -26,6 +26,8 @@ export interface AgentActionContext {
   setSettingsActiveTab?: (tab: SettingsTab) => void
   setFileSearchDialogOpen?: (open: boolean) => void
   toggleChatSearch?: () => void
+  desktopView?: DesktopView
+  hasSelectedProject?: boolean
 
   // Data
   selectedChatId?: string | null
@@ -122,25 +124,9 @@ const toggleChatSearchAction: AgentActionDefinition = {
   description: "Search through chat history",
   category: "view",
   hotkey: ["cmd+f", "ctrl+f"],
+  isAvailable: (context) => Boolean(context.selectedChatId) && context.desktopView !== "settings",
   handler: async (context) => {
     context.toggleChatSearch?.()
-    return { success: true }
-  },
-}
-
-const openKanbanAction: AgentActionDefinition = {
-  id: "open-kanban",
-  label: "Open Kanban board",
-  description: "Open the Kanban board view",
-  category: "view",
-  hotkey: "cmd+shift+k",
-  handler: async (context) => {
-    // Clear selected chat, draft, and new form state to show Kanban view
-    context.setSelectedChatId?.(null)
-    context.setSelectedDraftId?.(null)
-    context.setShowNewChatForm?.(false)
-    // Clear automations/inbox view
-    context.setDesktopView?.(null)
     return { success: true }
   },
 }
@@ -159,19 +145,6 @@ const openAutomationsAction: AgentActionDefinition = {
   },
 }
 
-const openInEditorAction: AgentActionDefinition = {
-  id: "open-in-editor",
-  label: "Open in editor",
-  description: "Open worktree in preferred editor",
-  category: "general",
-  hotkey: "cmd+o",
-  handler: async () => {
-    // Handled by the info-section component via event dispatch
-    window.dispatchEvent(new CustomEvent("open-in-editor"))
-    return { success: true }
-  },
-}
-
 const openInboxAction: AgentActionDefinition = {
   id: "open-inbox",
   label: "Inbox",
@@ -186,24 +159,14 @@ const openInboxAction: AgentActionDefinition = {
   },
 }
 
-const openFileInEditorAction: AgentActionDefinition = {
-  id: "open-file-in-editor",
-  label: "Open file in editor",
-  description: "Open currently previewed file in preferred editor",
-  category: "general",
-  hotkey: "cmd+shift+o",
-  handler: async () => {
-    window.dispatchEvent(new CustomEvent("open-file-in-editor"))
-    return { success: true }
-  },
-}
-
 const fileSearchAction: AgentActionDefinition = {
   id: "file-search",
   label: "Go to file",
   description: "Search and open a file in the workspace",
   category: "navigation",
   hotkey: "cmd+p",
+  isAvailable: (context) =>
+    Boolean(context.hasSelectedProject) && context.desktopView !== "settings",
   handler: async (context) => {
     context.setFileSearchDialogOpen?.(true)
     return { success: true }
@@ -220,11 +183,8 @@ export const AGENT_ACTIONS: Record<string, AgentActionDefinition> = {
   "open-settings": openSettingsAction,
   "toggle-sidebar": toggleSidebarAction,
   "toggle-chat-search": toggleChatSearchAction,
-  "open-kanban": openKanbanAction,
   "open-automations": openAutomationsAction,
   "open-inbox": openInboxAction,
-  "open-in-editor": openInEditorAction,
-  "open-file-in-editor": openFileInEditorAction,
   "file-search": fileSearchAction,
 }
 

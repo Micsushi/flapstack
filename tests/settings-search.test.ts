@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 import {
+  SETTINGS_SEARCH_ENTRIES,
   normalizeSettingsSearchText,
   searchSettings,
 } from "../src/renderer/features/settings/settings-search"
+import { SETTINGS_CONTROL_REGISTRY } from "../src/renderer/features/settings/settings-visibility"
 
 describe("Settings search", () => {
   it("matches from the first typed character", () => {
@@ -45,14 +47,76 @@ describe("Settings search", () => {
 
   it("does not rediscover hidden or retired settings", () => {
     for (const query of [
-      "keyboard shortcuts",
       "legacy beta ollama",
-      "custom agents subagent",
       "future scaffolds roadmap",
       "quick switch ctrl tab agents",
       "model override",
     ]) {
       expect(searchSettings(query, { showDevelopment: true })).toEqual([])
     }
+  })
+
+  it("routes provider-scoped extension searches to promoted surfaces", () => {
+    expect(searchSettings("codex skills", { showDevelopment: false })[0]?.tab).toBe("skills")
+    expect(searchSettings("custom agents subagent", { showDevelopment: false })[0]?.tab).toBe(
+      "agents",
+    )
+  })
+
+  it("routes Keyboard search after its promotion gate passes", () => {
+    expect(searchSettings("keyboard shortcuts", { showDevelopment: false })[0]).toMatchObject({
+      tab: "keyboard",
+      targetId: "settings-tab-keyboard",
+    })
+  })
+
+  it("routes credential aliases to the exact write-only provider rows", () => {
+    expect(searchSettings("openai whisper key", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "credential-openai-voice-api-key",
+    })
+    expect(searchSettings("codex api key", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "credential-codex-api-key",
+    })
+    expect(searchSettings("nanogpt credential", { showDevelopment: false })[0]).toMatchObject({
+      tab: "api-providers",
+      targetId: "nanogpt-provider-card",
+    })
+  })
+
+  it("derives every control entry from the release registry with a stable target", () => {
+    expect(new Set(SETTINGS_CONTROL_REGISTRY.map((entry) => entry.id)).size).toBe(
+      SETTINGS_CONTROL_REGISTRY.length,
+    )
+    for (const control of SETTINGS_CONTROL_REGISTRY) {
+      expect(SETTINGS_SEARCH_ENTRIES).toContainEqual(expect.objectContaining(control))
+      expect(control.targetId).toBeTruthy()
+    }
+  })
+
+  it("does not expose dynamic provider cards when that provider is unavailable", () => {
+    expect(
+      searchSettings("openrouter", { showDevelopment: false, availableProviders: [] }),
+    ).toEqual([])
+    expect(
+      searchSettings("openrouter", {
+        showDevelopment: false,
+        availableProviders: ["openrouter"],
+      })[0],
+    ).toMatchObject({ id: "openrouter-provider-card", targetId: "openrouter-provider-card" })
+  })
+
+  it("keeps provider extension aliases scoped to supported inventories", () => {
+    expect(searchSettings("cursor commands", { showDevelopment: false })[0]).toMatchObject({
+      id: "skills-provider-extensions",
+      providerScope: expect.arrayContaining(["cursor"]),
+      targetId: "provider-extensions",
+    })
+    expect(searchSettings("opencode plugins", { showDevelopment: false })[0]).toMatchObject({
+      id: "plugins-provider-extensions",
+      providerScope: ["claude", "opencode"],
+      targetId: "provider-extensions",
+    })
   })
 })

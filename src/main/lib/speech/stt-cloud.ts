@@ -1,25 +1,19 @@
 import { execSync } from "node:child_process"
 import os from "node:os"
 import type { SttAdapter, SttInput, SttResult } from "./types"
+import { getCredentialService } from "../credential-service"
 
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024
 const API_TIMEOUT_MS = 30000
 
 let cachedOpenAIKey: string | null | undefined = undefined
-let userConfiguredOpenAIKey: string | null = null
-
-export function setUserOpenAIKey(key: string | null): void {
-  userConfiguredOpenAIKey = key?.trim() || null
-  cachedOpenAIKey = undefined
-}
-
 export function clearOpenAIKeyCache(): void {
   cachedOpenAIKey = undefined
 }
 
 export function getOpenAIApiKey(): string | null {
-  if (userConfiguredOpenAIKey && userConfiguredOpenAIKey.startsWith("sk-"))
-    return userConfiguredOpenAIKey
+  const stored = getCredentialService().resolve("openai.voice-api-key")
+  if (stored?.startsWith("sk-")) return stored
   if (cachedOpenAIKey !== undefined) return cachedOpenAIKey
 
   const viteKey = (import.meta.env as Record<string, string | undefined>).MAIN_VITE_OPENAI_API_KEY
@@ -68,7 +62,7 @@ export const cloudWhisperAdapter: SttAdapter = {
       : {
           available: false,
           status: "not-configured" as const,
-          reason: "Add an OpenAI API key in Settings > Voice or set OPENAI_API_KEY.",
+          reason: "Add an OpenAI API key in Settings > API Providers or set OPENAI_API_KEY.",
         }
   },
 

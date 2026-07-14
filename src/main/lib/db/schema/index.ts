@@ -19,6 +19,7 @@ export const projects = sqliteTable("projects", {
   // Custom project icon (absolute path to local image file)
   iconPath: text("icon_path"),
   defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+  defaultCustomPermissions: text("default_custom_permissions"),
   pinnedAt: integer("pinned_at", { mode: "timestamp" }),
   archivedAt: integer("archived_at", { mode: "timestamp" }),
 })
@@ -27,6 +28,17 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   chats: many(chats),
   tasks: many(tasks),
 }))
+
+// Durable filesystem identity for project and worktree roots. The pathname is
+// only the lookup key; security decisions also require the canonical path and,
+// where the platform exposes them, the device/inode pair captured at binding.
+export const filesystemRootRegistrations = sqliteTable("filesystem_root_registrations", {
+  path: text("path").primaryKey(),
+  canonicalPath: text("canonical_path").notNull(),
+  deviceId: text("device_id"),
+  inodeId: text("inode_id"),
+  boundAt: integer("bound_at", { mode: "timestamp" }).notNull(),
+})
 
 // ============ TASKS ============
 export const tasks = sqliteTable(
@@ -42,6 +54,7 @@ export const tasks = sqliteTable(
     description: text("description"),
     status: text("status").notNull().default("active"),
     defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
+    defaultCustomPermissions: text("default_custom_permissions"),
     primaryWorktreePath: text("primary_worktree_path"),
     primaryBranch: text("primary_branch"),
     pinnedAt: integer("pinned_at", { mode: "timestamp" }),
@@ -59,6 +72,96 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   }),
   chats: many(chats),
   attachments: many(attachments),
+  orchestration: one(taskOrchestrations, {
+    fields: [tasks.id],
+    references: [taskOrchestrations.taskId],
+  }),
+}))
+
+// ============ AGENT TASK ORCHESTRATION ============
+// The task remains the user-facing container. These rows own durable queue,
+// budgets, worker definitions, and lineage so restart never loses control state.
+export const taskOrchestrations = sqliteTable(
+  "task_orchestrations",
+  {
+    taskId: text("task_id")
+      .primaryKey()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    initiatingChatId: text("initiating_chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("queued"),
+    maxParallelAgents: integer("max_parallel_agents").notNull().default(1),
+    maxDepth: integer("max_depth").notNull().default(8),
+    stopConditions: text("stop_conditions").notNull().default("{}"),
+    stopReason: text("stop_reason"),
+    blockerCount: integer("blocker_count").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+  },
+  (table) => [index("task_orchestrations_status_idx").on(table.status)],
+)
+
+export const taskOrchestrationsRelations = relations(taskOrchestrations, ({ one, many }) => ({
+  task: one(tasks, { fields: [taskOrchestrations.taskId], references: [tasks.id] }),
+  initiatingChat: one(chats, {
+    fields: [taskOrchestrations.initiatingChatId],
+    references: [chats.id],
+  }),
+  agents: many(orchestrationAgents),
+}))
+
+export const orchestrationAgents = sqliteTable(
+  "orchestration_agents",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    chatId: text("chat_id").references(() => chats.id, { onDelete: "set null" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    parentAgentId: text("parent_agent_id"),
+    replacedAgentId: text("replaced_agent_id"),
+    ancestorAgentIds: text("ancestor_agent_ids").notNull().default("[]"),
+    depth: integer("depth").notNull().default(1),
+    definition: text("definition").notNull(),
+    dependencyAgentIds: text("dependency_agent_ids").notNull().default("[]"),
+    status: text("status").notNull().default("queued"),
+    progressPercent: integer("progress_percent").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    reasoningTokens: integer("reasoning_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    costUsdMicros: integer("cost_usd_micros"),
+    costQuality: text("cost_quality").notNull().default("unknown"),
+    resultSummary: text("result_summary"),
+    stopReason: text("stop_reason"),
+    blockerCount: integer("blocker_count").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp" }),
+    queuedAt: integer("queued_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("orchestration_agents_task_status_idx").on(table.taskId, table.status),
+    index("orchestration_agents_chat_idx").on(table.chatId),
+    index("orchestration_agents_lease_idx").on(table.status, table.leaseExpiresAt),
+  ],
+)
+
+export const orchestrationAgentsRelations = relations(orchestrationAgents, ({ one }) => ({
+  orchestration: one(taskOrchestrations, {
+    fields: [orchestrationAgents.taskId],
+    references: [taskOrchestrations.taskId],
+  }),
+  chat: one(chats, { fields: [orchestrationAgents.chatId], references: [chats.id] }),
+  run: one(agentRuns, { fields: [orchestrationAgents.runId], references: [agentRuns.id] }),
 }))
 
 // ============ CHATS ============
@@ -73,8 +176,18 @@ export const chats = sqliteTable(
     taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
     scope: text("scope").notNull().default("project"),
     permissionMode: text("permission_mode").notNull().default("ask-before-edits"),
+    customPermissions: text("custom_permissions"),
+    mcpExposureEnabled: integer("mcp_exposure_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
     harness: text("harness"),
     model: text("model"),
+    // Cross-harness spawning keeps enough durable lineage to reject loops and
+    // explain where a thread came from without depending on a live process.
+    parentChatId: text("parent_chat_id"),
+    initiatorChatId: text("initiator_chat_id"),
+    parentRunId: text("parent_run_id"),
+    ancestorChatIds: text("ancestor_chat_ids"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     archivedAt: integer("archived_at", { mode: "timestamp" }),
@@ -152,8 +265,10 @@ export const agentRuns = sqliteTable(
     harness: text("harness").notNull(),
     model: text("model"),
     permissionMode: text("permission_mode").notNull(),
+    customPermissions: text("custom_permissions"),
     worktreePath: text("worktree_path"),
     promptMessageId: text("prompt_message_id"),
+    initialPrompt: text("initial_prompt"),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
@@ -175,6 +290,62 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   checkpoints: many(checkpoints),
   manifest: many(fileChangeManifests),
 }))
+
+// ============ MCP AUDIT RECORDS ============
+// Deliberately no foreign keys: audit history must survive chat/run lifecycle changes.
+export const mcpAuditRecords = sqliteTable(
+  "mcp_audit_records",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    invocationId: text("invocation_id").notNull(),
+    status: text("status").notNull(),
+    callerChatId: text("caller_chat_id").notNull(),
+    callerRunId: text("caller_run_id"),
+    toolName: text("tool_name").notNull(),
+    tier: integer("tier").notNull(),
+    callerSnapshot: text("caller_snapshot").notNull(),
+    chatSnapshot: text("chat_snapshot").notNull(),
+    runSnapshot: text("run_snapshot").notNull(),
+    inputSummary: text("input_summary").notNull(),
+    resultSummary: text("result_summary").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_audit_records_created_at_idx").on(table.createdAt),
+    index("mcp_audit_records_caller_chat_id_idx").on(table.callerChatId),
+    index("mcp_audit_records_tool_name_idx").on(table.toolName),
+    index("mcp_audit_records_status_idx").on(table.status),
+    index("mcp_audit_records_invocation_id_idx").on(table.invocationId),
+  ],
+)
+
+// ============ MCP APPROVAL REQUESTS ============
+// Cross-process coordination only. The harness-owned MCP child keeps grants in
+// memory; this table lets the renderer see and resolve one pending decision.
+export const mcpApprovalRequests = sqliteTable(
+  "mcp_approval_requests",
+  {
+    id: text("id").primaryKey(),
+    invocationId: text("invocation_id").notNull(),
+    callerChatId: text("caller_chat_id").notNull(),
+    callerRunId: text("caller_run_id"),
+    toolName: text("tool_name").notNull(),
+    tier: integer("tier").notNull(),
+    targetSummary: text("target_summary").notNull(),
+    inputSummary: text("input_summary").notNull(),
+    decision: text("decision"),
+    grantSession: integer("grant_session", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("mcp_approval_requests_pending_idx").on(table.decision, table.expiresAt),
+    index("mcp_approval_requests_chat_id_idx").on(table.callerChatId),
+  ],
+)
 
 // ============ CHECKPOINTS ============
 export const checkpoints = sqliteTable(
@@ -279,6 +450,10 @@ export const voiceArtifacts = sqliteTable(
     kind: text("kind").notNull(), // transcription | speech
     text: text("text").notNull(),
     adapterId: text("adapter_id").notNull(),
+    modelId: text("model_id"),
+    originKind: text("origin_kind"),
+    originId: text("origin_id"),
+    originLabel: text("origin_label"),
     synthesisKey: text("synthesis_key"),
     voiceId: text("voice_id"),
     rate: integer("rate_milli"),
@@ -294,6 +469,7 @@ export const voiceArtifacts = sqliteTable(
     index("voice_artifacts_message_idx").on(table.messageId),
     index("voice_artifacts_synthesis_idx").on(table.messageId, table.synthesisKey),
     index("voice_artifacts_kind_created_idx").on(table.kind, table.createdAt),
+    index("voice_artifacts_origin_idx").on(table.originKind, table.originId),
   ],
 )
 

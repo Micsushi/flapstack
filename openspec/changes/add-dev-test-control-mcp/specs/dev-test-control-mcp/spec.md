@@ -67,8 +67,15 @@ approvals, cancel a matching active run, and wait with a bounded timeout.
 
 ### Requirement: Reversible test-chat setup
 
-The MCP SHALL create local provider test chats and reversibly archive idle test
-chats without deleting their history.
+The MCP SHALL register or restore the active development checkout as a test
+project, create local provider test chats, select their canonical conversation,
+and reversibly archive idle fixtures without deleting their history.
+
+#### Scenario: Start from a clean isolated profile
+
+- **WHEN** an authorized client requests a fixture and the profile has no project
+- **THEN** the MCP registers only the active development checkout as a test project
+- **AND** can select the created chat and canonical conversation without UI input
 
 #### Scenario: Replace provider fixtures
 
@@ -80,3 +87,34 @@ chats without deleting their history.
 
 - **WHEN** the MCP creates or archives a test chat while the renderer is open
 - **THEN** the live chat and archived-chat queries are invalidated and refetched
+
+### Requirement: Provider-neutral question control
+
+The MCP SHALL inspect, inject, answer, skip, and cancel bounded provider-neutral
+question requests through the same lifecycle owner used by production adapters.
+
+#### Scenario: Assert a live structured question without synthetic UI input
+
+- **WHEN** an authorized client injects a question into an existing sub-chat
+- **THEN** the lifecycle owner reports the pending request
+- **AND** renderer test state reports whether the matching dialog is open
+- **AND** an MCP answer, skip, or cancel produces one terminal resolution
+
+### Requirement: Reversible orchestration control
+
+The development MCP SHALL create a bounded read-only Codex or Claude fixture and
+exercise orchestration through the same durable service used by the product,
+without requiring UI input or a provider launch.
+
+#### Scenario: Prepare an orchestration fixture
+
+- **WHEN** an authenticated development client supplies an existing local project path
+- **THEN** Flapstack creates or reuses that project and creates one read-only initiating
+  chat with no credential, prompt, or provider result fabrication
+
+#### Scenario: Control an orchestration without UI input
+
+- **WHEN** an authenticated development client creates, reads, pauses, resumes, stops,
+  retries, replaces, adds, reports progress, or archives an orchestration fixture
+- **THEN** the action uses the production orchestration service and returns durable state
+  suitable for functional assertions

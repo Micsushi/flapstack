@@ -11,10 +11,10 @@ This is the sole task checklist for the change.
   preference records whether the UI should ask or reuse a prior scope.
 - Scope: Persist `ask | all-chats | current-chat`; default missing values to
   `ask`; accept an explicit mutation scope; update
-  global/project/task/chat/internal-conversation values for all-chat changes;
+  global/project/task/chat/internal-conversation values for non-custom all-chat changes;
   preserve archived chats, historical runs, and in-flight runs; restore the
   prior file config on database failure.
-- Out of scope: New database columns and historical run rewrites.
+- Out of scope: New database columns, all-chat custom toggles, and historical run rewrites.
 - Acceptance:
   - A fresh or invalid config resolves change behavior to `ask`.
   - All-chat updates change every active and archived default/conversation row.
@@ -24,7 +24,7 @@ This is the sole task checklist for the change.
   - Partial failures do not report success or leave silently divergent state.
 - Verification: focused permission service/router tests under Node 22.
 - Blocked by: none
-- Blocks: GPP-T2, GPP-T5, GPP-T7
+- Blocks: GPP-T2, GPP-T5, GPP-T7, GPP-T10
 - Relevant context: `src/main/lib/permissions.ts`, permission tRPC router,
   SQLite project/task/chat/sub-chat tables.
 
@@ -46,6 +46,8 @@ This is the sole task checklist for the change.
   - Checking remember stores the chosen behavior and skips later popups.
   - Leaving remember unchecked causes the next change to ask again.
   - All-chat full access is visibly identified before and after mutation.
+  - Successful current/all-chat mutations refresh every affected Settings,
+    input-bar, active/archive chat, project, and task query.
 - Verification: renderer dialog/state tests plus manual dev-app interaction.
 - Blocked by: GPP-T1
 - Blocks: GPP-T6
@@ -72,7 +74,7 @@ This is the sole task checklist for the change.
     enforcement.
 - Verification: provider permission matrix tests under Node 22.
 - Blocked by: none
-- Blocks: GPP-T5
+- Blocks: GPP-T5, GPP-T9
 - Relevant context: shared permission builders, Cursor args, Claude
   `canUseTool`, OpenCode session permission builder and approval bridge.
 
@@ -96,10 +98,14 @@ This is the sole task checklist for the change.
   - The callback remains present after install and in packaged output.
 - Verification: Codex mode/approval unit tests, install-patch verification, and
   one low-risk live Codex permission smoke under the verified dev profile.
-- Remaining verification: The live smoke reached Codex ACP, but the resumed
-  provider session was archived and failed before it could request permission.
+- 2026-07-13 closeout: installed/provider-package patching now treats a stale or
+  archived ACP session as recoverable and starts a fresh session; focused bridge
+  tests pass. The macOS Preview package contains both patched provider bundles
+  and the Codex product-MCP identity patch. `Flapstack Dev` and Codex login were
+  verified, but the Mac was locked before a fresh Codex permission request could
+  be exercised. Live smoke remains open.
 - Blocked by: none
-- Blocks: GPP-T5, GPP-T6
+- Blocks: GPP-T6, GPP-T9
 - Relevant context: Codex ACP provider lifecycle, `@mcpc-tech/acp-ai-provider`,
   installed `@agentclientprotocol/codex-acp` mode definitions, existing Claude
   and OpenCode pending-approval patterns.
@@ -121,7 +127,7 @@ This is the sole task checklist for the change.
   - Tests fail if a mapping becomes more permissive or a sync layer is skipped.
 - Verification: focused tests, `npm run lint`, `npm run style:check`, and
   `npm run ts:check` under Node 22.
-- Blocked by: GPP-T1, GPP-T3, GPP-T4
+- Blocked by: GPP-T1, GPP-T3
 - Blocks: GPP-T6
 - Relevant context: `HarnessPermissionApplication`, permissions preview tRPC,
   input-bar warning popover, `tests/permissions.test.ts`, provider tests.
@@ -184,6 +190,59 @@ This is the sole task checklist for the change.
 - Relevant context: `settings-sidebar.tsx`, `settings-content.tsx`, SettingsTab
   atom, new Permissions tab anchors, visible development-tab gate.
 
+### GPP-T9 - Integrate provider permission mapping with product MCP approval
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Flapstack / Provider permissions / Product MCP integration
+- Outcome: Provider-native tool authority and Stage 3 product MCP tiers combine
+  without authorizing third-party MCP, double prompting, or bypassing Tier 3.
+- Scope: Identify product-registry calls at the provider bridge; allow only Tier
+  0 product reads in read-only mode; correlate ask-mode requests to one product
+  approval; pass Tier 3 through the mandatory Stage 3 decision; fail closed for
+  unknown or uncorrelated MCP tools.
+- Out of scope: Product registry tiers, audit storage, and approval UI, which are
+  owned by `add-stage3-mcp-control` S3-F3/S3-F6.
+- Acceptance:
+  - Read-only permits product Tier 0 and denies third-party MCP/product writes.
+  - Ask mode emits one approval for one invocation.
+  - Provider allow cannot skip product Tier 3 approval.
+  - Provider/product denial and bridge failure never widen access.
+- Verification: `tests/mcp-provider-permission-integration.test.ts`.
+- 2026-07-13 closeout: the named provider/product matrix passes, including
+  separate product/third-party capabilities, no-double-prompt, fail-closed, and
+  mandatory Tier 3 cases. Completion remains blocked by GPP-T4 live Codex proof.
+- Blocked by: GPP-T3, GPP-T4, S3-F3-T5
+- Blocks: GPP-T6, S3-F12-T3
+- Relevant context: provider permission builders/bridges, product registry tier,
+  approval invocation correlation.
+
+### GPP-T10 - Enforce exact scoped custom-permission persistence
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / Provider permissions / Scoped permission synchronization
+- Outcome: Per-chat custom toggles are exact and durable without creating false
+  hierarchy-wide custom defaults.
+- Scope: Require a complete validated toggle object for current-chat custom;
+  persist it only on the selected chat; clear custom JSON when moving away from
+  custom; reject all-chat custom until S3-F12 adds durable global/project/task
+  custom defaults; keep non-custom all-chat sync atomic and clear stale chat JSON.
+- Out of scope: Add the durable custom default hierarchy or provider enforcement
+  matrix owned by S3-F12.
+- Acceptance:
+  - Current-chat custom round-trips exact toggles across restart.
+  - Missing, partial, malformed, or extra-key toggles fail closed.
+  - Non-custom selection clears prior custom JSON.
+  - All-chat custom changes nothing and explains the S3-F12 prerequisite.
+- Verification: `tests/mcp-custom-permissions-persistence.test.ts` and scoped
+  permission router/service tests.
+- Blocked by: GPP-T1
+- Blocks: GPP-T6, S3-F12-T2
+- Relevant context: `chats.custom_permissions`, permission router, custom schema,
+  S3-F12 durable-default design.
+- 2026-07-13 ownership note: S3-F12 now owns and implements versioned durable
+  hierarchy defaults plus atomic all-chat custom. The earlier fail-closed
+  all-chat rejection remains valid only for pre-promotion builds.
+
 ### GPP-T6 - Run full and live verification
 
 - [ ] Completion: acceptance and verification passed
@@ -207,11 +266,14 @@ This is the sole task checklist for the change.
     not fabricated as passed.
 - Verification: strict OpenSpec validation, Node 22 `npm run check`,
   `npm run dev:verify`, and the documented manual matrix.
-- Remaining verification: The live all-chat Apply was not run against the
-  existing 312-chat profile; atomic all-chat behavior is covered by isolated
-  router/service tests. The Codex smoke remains blocked by the archived
-  provider session noted in GPP-T4.
-- Blocked by: GPP-T2, GPP-T5, GPP-T7, GPP-T8
+- 2026-07-13 closeout: `npm run dev:verify` passed for this checkout and
+  `Flapstack Dev` on Node 22. Fresh OpenRouter and NanoGPT runs succeeded through
+  dev-test-control and both test chats were archived. The live all-chat Apply
+  was not run against the existing 312-chat profile; atomic all-chat behavior is
+  covered by isolated router/service tests. The Mac lock blocks visual Settings
+  rows and the fresh Codex smoke in GPP-T4. Full Node 22 `npm run check` passed
+  with 730 tests passed and 3 skipped; macOS Preview packaging passed unsigned.
+- Blocked by: GPP-T2, GPP-T4, GPP-T5, GPP-T7, GPP-T8, GPP-T9, GPP-T10
 - Blocks: none
 - Relevant context: root `AGENTS.md` live-dev rules, run metadata, provider
   authentication state, manual evidence conventions.

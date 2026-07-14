@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { Button } from "../../../components/ui/button"
 import { trpc } from "../../../lib/trpc"
+import { composeDictationDraft } from "../../../../shared/streaming-transcript"
 import {
   blobToBase64,
   float32ToBase64,
@@ -44,12 +45,8 @@ type DictationSessionValue = {
 
 const DictationSessionContext = createContext<DictationSessionValue | null>(null)
 
-function appendSpeech(draft: string, speech: string): string {
-  const clean = speech.replace(/[\r\n\t]+/g, " ")
-  return `${draft}${draft && clean && !/\s$/.test(draft) ? " " : ""}${clean}`
-}
-
 export function DictationSessionProvider({ children }: { children: React.ReactNode }) {
+  const utils = trpc.useUtils()
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const selectedChatId = useAtomValue(selectedAgentChatIdAtom)
   const setSelectedChatIsRemote = useSetAtom(selectedChatIsRemoteAtom)
@@ -63,6 +60,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   const finalizeStreamingMutation = trpc.voice.finalizeStreaming.useMutation()
   const cancelStreamingMutation = trpc.voice.cancelStreaming.useMutation()
   const transcribeMutation = trpc.voice.transcribe.useMutation()
+  const updateSettingsMutation = trpc.speech.updateSettings.useMutation()
   const [activeTarget, setActiveTarget] = useState<DictationTarget | null>(null)
   const [isStarting, setIsStarting] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -72,6 +70,10 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   const baseDraftRef = useRef("")
   const streamStartRef = useRef<Promise<unknown> | null>(null)
   const operationRef = useRef<Promise<void> | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const startGenerationRef = useRef(0)
+  const startingRef = useRef(false)
+  const migratedLegacyRateRef = useRef(false)
 
   const publish = useCallback((text: string) => {
     const target = activeTargetRef.current
@@ -82,17 +84,35 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
 
   const applyStreamingTranscript = useCallback(
     (committed: string, tentative: string) => {
-      publish(appendSpeech(baseDraftRef.current, `${committed}${tentative}`))
+      publish(composeDictationDraft(baseDraftRef.current, committed, tentative))
     },
     [publish],
   )
+
+  useEffect(() => {
+    if (!voiceSettings || migratedLegacyRateRef.current) return
+    migratedLegacyRateRef.current = true
+    const legacy = window.localStorage.getItem("tts-playback-rate")
+    const rate = Number(legacy)
+    if (!legacy || !Number.isFinite(rate)) return
+    void updateSettingsMutation
+      .mutateAsync({ rate: Math.max(0.5, Math.min(2, rate)) })
+      .then(async () => {
+        window.localStorage.removeItem("tts-playback-rate")
+        await utils.speech.getSettings.invalidate()
+      })
+      .catch((error) => console.warn("[Voice] Legacy playback rate migration failed", error))
+  }, [updateSettingsMutation, utils.speech.getSettings, voiceSettings])
 
   const { isRecording, audioLevel, startRecording, stopRecording, cancelRecording, waitForPcm } =
     useVoiceRecording({
       normalizeRecording: voiceSettings?.sttAdapterId !== "local-parakeet",
       onPcmChunk: async (chunk) => {
         if (streamStartRef.current) await streamStartRef.current
+        const sessionId = sessionIdRef.current
+        if (!sessionId) return
         const update = await feedStreamingMutation.mutateAsync({
+          sessionId,
           pcmBase64: float32ToBase64(chunk),
         })
         applyStreamingTranscript(update.committed, update.tentative)
@@ -110,6 +130,20 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   const stop = useCallback(async () => {
     if (operationRef.current) return operationRef.current
     if (!activeTargetRef.current) return
+    if (startingRef.current) {
+      const sessionId = sessionIdRef.current
+      startGenerationRef.current += 1
+      startingRef.current = false
+      activeTargetRef.current = null
+      sessionIdRef.current = null
+      setActiveTarget(null)
+      setIsStarting(false)
+      cancelRecording()
+      if (sessionId) await cancelStreamingMutation.mutateAsync({ sessionId }).catch(() => undefined)
+      streamStartRef.current = null
+      return
+    }
+    const sessionId = sessionIdRef.current
     const operation = (async () => {
       setIsTranscribing(true)
       try {
@@ -117,8 +151,14 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
         const blob = await stopRecording()
         if (voiceSettings?.sttAdapterId === "local-parakeet") {
           await waitForPcm()
-          const result = await finalizeStreamingMutation.mutateAsync()
-          publish(appendSpeech(baseDraftRef.current, result.text.trim()))
+          const result = await finalizeStreamingMutation.mutateAsync({
+            sessionId: sessionIdRef.current ?? "",
+          })
+          publish(composeDictationDraft(baseDraftRef.current, result.text.trim()))
+          if (!result.historySaved)
+            toast.warning("Transcript kept in the draft but Voice History could not save", {
+              description: result.historyError || undefined,
+            })
           if (!result.text.trim()) toast.info("No speech detected")
         } else if (blob.size >= 1000 && target) {
           const result = await transcribeMutation.mutateAsync({
@@ -126,11 +166,21 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
             format: getAudioFormat(blob.type),
             chatId: target.chatId,
             subChatId: target.subChatId,
+            originKind: target.chatId ? "chat" : "new-chat",
+            originId: target.chatId ?? target.draftId,
+            originLabel: `${target.projectLabel} / ${target.chatLabel}`,
           })
-          if (result.text.trim()) publish(appendSpeech(baseDraftRef.current, result.text.trim()))
+          if (result.text.trim())
+            publish(composeDictationDraft(baseDraftRef.current, result.text.trim()))
           else toast.info("No speech detected")
+          if (!result.historySaved)
+            toast.warning("Transcript kept in the draft but Voice History could not save", {
+              description: result.historyError || undefined,
+            })
         }
       } catch (error) {
+        if (voiceSettings?.sttAdapterId === "local-parakeet" && sessionId)
+          await cancelStreamingMutation.mutateAsync({ sessionId }).catch(() => undefined)
         console.error("[DictationSession] Finalization failed:", error)
         toast.error("Voice transcription failed", {
           description: error instanceof Error ? error.message : "Could not finish dictation.",
@@ -142,6 +192,7 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
         setElapsed(0)
         setIsTranscribing(false)
         streamStartRef.current = null
+        sessionIdRef.current = null
       }
     })()
     operationRef.current = operation
@@ -149,6 +200,8 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       if (operationRef.current === operation) operationRef.current = null
     })
   }, [
+    cancelRecording,
+    cancelStreamingMutation,
     finalizeStreamingMutation,
     publish,
     stopRecording,
@@ -160,6 +213,10 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
   const start = useCallback(
     async (target: DictationTarget) => {
       if (activeTargetRef.current || operationRef.current) await stop()
+      const generation = ++startGenerationRef.current
+      const sessionId = window.crypto.randomUUID()
+      sessionIdRef.current = sessionId
+      startingRef.current = true
       setIsStarting(true)
       activeTargetRef.current = target
       setActiveTarget(target)
@@ -168,24 +225,33 @@ export function DictationSessionProvider({ children }: { children: React.ReactNo
       try {
         if (voiceSettings?.sttAdapterId === "local-parakeet") {
           const streamStart = startStreamingMutation.mutateAsync({
+            sessionId,
             chatId: target.chatId,
             subChatId: target.subChatId,
+            originKind: target.chatId ? "chat" : "new-chat",
+            originId: target.chatId ?? target.draftId,
+            originLabel: `${target.projectLabel} / ${target.chatLabel}`,
           })
           streamStartRef.current = streamStart
           await Promise.all([streamStart, startRecording()])
         } else {
           await startRecording()
         }
+        if (generation !== startGenerationRef.current) return
         setStartedAt(Date.now())
       } catch (error) {
+        if (generation !== startGenerationRef.current) return
         activeTargetRef.current = null
         setActiveTarget(null)
         cancelRecording()
-        cancelStreamingMutation.mutate()
+        cancelStreamingMutation.mutate({ sessionId })
         toast.error(error instanceof Error ? error.message : "Failed to start recording")
       } finally {
-        streamStartRef.current = null
-        setIsStarting(false)
+        if (generation === startGenerationRef.current) {
+          startingRef.current = false
+          streamStartRef.current = null
+          setIsStarting(false)
+        }
       }
     },
     [
