@@ -73,6 +73,18 @@
 - Blocked by: S4-F1-T1, S4-F1-T2
 - Blocks: S4-F1-T5, S4-F1-T7
 - Context: native adapter DTOs and Settings dialogs.
+- Code-ready evidence: a schema-versioned cross-harness copy service now returns
+  exact, converted, or unsupported previews with explicit source/target
+  capability rows, stateless cancellation, collision policy, exact target diff,
+  stale-preview confirmation hashes, and native-adapter rollback. Portable
+  manifests omit host paths/runtime state, reject unsafe data, and never export
+  unsupported source fields; target-only unknown native fields survive
+  overwrites. Node 22 focused copy/native/capability/provider/path suites pass 51
+  tests; focused and repository ESLint, repository formatting, and strict
+  OpenSpec pass. Full TypeScript reaches only two unrelated pre-existing Codex
+  ACP provider-setting errors. Completion remains unchecked because declared T1
+  and T2 completion dependencies remain unchecked; see
+  `docs/stage4-s4-f1-t4-cross-harness-sharing.md`.
 
 ### S4-F1-T5 — Build the unified manager UI
 
