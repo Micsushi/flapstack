@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { z } from "zod"
+import { projectVaultSectionIds } from "../project-vaults/registry"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getPermissionPreferences } from "../permissions"
@@ -83,6 +84,7 @@ const schemas = {
       chatId: id,
       initialPrompt: z.string().trim().min(1).max(100_000),
       idempotencyKey: id,
+      vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
     })
     .strict(),
 } as const
@@ -224,8 +226,8 @@ function launchRun(
     db.prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-        worktree_path, prompt_message_id, initial_prompt, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        worktree_path, prompt_message_id, initial_prompt, vault_context_sections, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
@@ -237,6 +239,9 @@ function launchRun(
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
       input.initialPrompt,
+      input.vaultContextSectionIds === undefined
+        ? null
+        : JSON.stringify(input.vaultContextSectionIds),
       Date.now(),
     )
   })

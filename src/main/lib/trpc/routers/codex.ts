@@ -70,6 +70,12 @@ import {
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import { projectVaultSectionIds } from "../../project-vaults/registry"
+import {
+  buildProjectVaultRunContext,
+  persistProjectVaultContextManifest,
+  ProjectVaultContextRejectedError,
+} from "../../project-vaults/run-context"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -1831,6 +1837,7 @@ export const codexRouter = router({
         reasoningEnabled: z.boolean().default(true),
         reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
         images: z.array(imageAttachmentSchema).optional(),
+        vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1955,7 +1962,32 @@ export const codexRouter = router({
               sessionMode: ownedSessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
+            let vaultContext
+            try {
+              vaultContext = await buildProjectVaultRunContext(db, {
+                chatId: input.chatId,
+                runId: input.runId,
+                harness: "codex",
+                ...(input.vaultContextSectionIds
+                  ? { runSectionIds: input.vaultContextSectionIds }
+                  : {}),
+              })
+            } catch (error) {
+              if (error instanceof ProjectVaultContextRejectedError) {
+                persistProjectVaultContextManifest(db, {
+                  runId: input.runId,
+                  manifest: error.manifest,
+                  ...(input.vaultContextSectionIds
+                    ? { runSectionIds: input.vaultContextSectionIds }
+                    : {}),
+                })
+              }
+              throw error
+            }
+            const promptForModel = prependStartupContext(
+              input.prompt,
+              [contextBundle.context, vaultContext.context].filter(Boolean).join("\n\n"),
+            )
             const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
@@ -2090,6 +2122,13 @@ export const codexRouter = router({
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
               worktreePath: input.cwd || null,
               promptMessageId,
+            })
+            persistProjectVaultContextManifest(db, {
+              runId: input.runId,
+              manifest: vaultContext.manifest,
+              ...(input.vaultContextSectionIds
+                ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
             })
 
             if (input.forceNewSession) {
@@ -2277,6 +2316,7 @@ export const codexRouter = router({
                     runId: input.runId,
                     sessionId,
                     context: contextBundle.metadata,
+                    vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                     durationMs: Date.now() - startedAt,
                     resultSubtype: part.finishReason === "error" ? "error" : "success",
@@ -2292,6 +2332,7 @@ export const codexRouter = router({
                     runId: input.runId,
                     sessionId,
                     context: contextBundle.metadata,
+                    vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   }
                 }
@@ -2303,6 +2344,7 @@ export const codexRouter = router({
                   permissionApplication,
                   runId: input.runId,
                   context: contextBundle.metadata,
+                  vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                 }
               },
@@ -2327,6 +2369,7 @@ export const codexRouter = router({
                           permissionApplication,
                           runId: input.runId,
                           context: contextBundle.metadata,
+                          vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                           ...usageMetadata,
                         },
@@ -2341,6 +2384,7 @@ export const codexRouter = router({
                           permissionApplication,
                           runId: input.runId,
                           context: contextBundle.metadata,
+                          vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         },
                       }
@@ -2366,6 +2410,7 @@ export const codexRouter = router({
                         permissionApplication,
                         runId: input.runId,
                         context: contextBundle.metadata,
+                        vaultContext: vaultContext.manifest,
                         transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         resultSubtype: "empty-response",
                         ...usageMetadata,
@@ -2470,6 +2515,7 @@ export const codexRouter = router({
                 messageMetadata: {
                   runId: input.runId,
                   context: contextBundle.metadata,
+                  vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   ...(usageMetadata ?? {}),
                 },

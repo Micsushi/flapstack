@@ -102,6 +102,7 @@ describe("MCP mutation service", () => {
       chatId: "chat-2",
       initialPrompt: "Run the tests.",
       idempotencyKey: "launch-1",
+      vaultContextSectionIds: ["index", "handoff"] as const,
     }
     const first = await service.invoke("launch_run", { chatId: "chat-1" }, input)
     const second = await service.invoke("launch_run", { chatId: "chat-1" }, input)
@@ -109,9 +110,12 @@ describe("MCP mutation service", () => {
     expect(first).toMatchObject({ ok: true, data: { created: true } })
     expect(second).toMatchObject({ ok: true, data: { created: false } })
     expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
-    expect(sqlite.prepare("SELECT status, initial_prompt FROM agent_runs").get()).toEqual({
+    expect(
+      sqlite.prepare("SELECT status, initial_prompt, vault_context_sections FROM agent_runs").get(),
+    ).toEqual({
       status: "pending",
       initial_prompt: "Run the tests.",
+      vault_context_sections: '["index","handoff"]',
     })
     expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'sub-2'").get()).toEqual({
       messages: "[]",
