@@ -36,8 +36,14 @@ and do not block Stage 3.
 - Credential status is metadata-only and cannot trigger legacy migration or OS
   keychain decryption. Provider resolution still performs migration when a
   credential is actually needed.
-- Prompt-envelope filtering requires a marker to start its own line, preserving
-  ordinary inline discussion such as `[USER REQUEST]` and `[FILE:demo]`.
+- Shutdown clears the pending scheduler, aborts every provider immediately, then
+  spends one bounded deadline waiting for both the drain and sessions to stop
+  before SQLite cleanup.
+- Prompt-envelope filtering requires a marker to start its own line and a
+  distinctive streaming prefix, preserving inline marker discussion and
+  ordinary trailing Markdown such as `-`, `---`, and `[`.
+- The cold-load real two-way product-MCP spawn cases use a focused 30-second
+  timeout; the rest of the suite keeps the default timeout.
 
 ## Historical Settings lane candidate
 

@@ -32,6 +32,9 @@ describe("harness envelope sanitizer", () => {
     expect(sanitizeHarnessEnvelopeEcho("Visible first.\n--- Budget note ---")).toBe(
       "Visible first.\n--- Budget note ---",
     )
+    for (const line of ["-", "--", "---", "["]) {
+      expect(sanitizeHarnessEnvelopeEcho(`Visible first.\n${line}`)).toBe(`Visible first.\n${line}`)
+    }
   })
 
   it("still hides genuine partial trailing envelope markers", () => {

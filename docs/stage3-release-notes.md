@@ -16,7 +16,7 @@ exact-tree squash. No push was performed.
   bundled runtime inspection, and release-ledger validation.
 - Final independent-review repairs for timestamp-unit integrity and migration,
   task-scoped chat moves, fail-closed custom permissions, passive credential
-  status, and lossless inline envelope-marker prose.
+  status, abort-first bounded shutdown, and lossless Markdown/envelope handling.
 
 ## Completion evidence
 
@@ -29,9 +29,11 @@ exact-tree squash. No push was performed.
   dictation pass.
 - Questions pass answer, cancel, timeout, stop, reload, native Claude, and
   continuation delivery across all credential-available providers.
-- The final Node 22 gate passes 130 test files, 976 tests, 3 conditional skips,
+- The final Node 22 gate passes 130 test files, 984 tests, 3 conditional skips,
   lint, Prettier, TypeScript, and production build. Strict OpenSpec, release
   ledger, Usage matrix, package smoke, and independent review gates pass.
+- Cold-load two-way product-MCP spawn cases have a focused 30-second test
+  budget; ordinary tests retain the default timeout.
 
 Exact-candidate Cursor, OpenRouter, NanoGPT, Codex, Claude, native Claude
 question, Usage refresh, Discord HTTP 204, Dev identity, model-tuning UI, and

@@ -24,11 +24,24 @@ const FIXED_OPENING_MARKERS = [
   "--- USER REQUEST ---",
 ]
 
+const DISTINCTIVE_MARKER_PREFIXES = [
+  "[FLAP",
+  "[USER",
+  "[FILE:",
+  "--- FLAP",
+  "--- USER",
+  "--- BEGIN",
+]
+
 function stripTrailingMarkerPrefix(text: string): string {
   const markerStart = text.lastIndexOf("\n") + 1
   const line = text.slice(markerStart)
   if (!line) return text
   const upperLine = line.toUpperCase()
+  const hasDistinctivePrefix = DISTINCTIVE_MARKER_PREFIXES.some((prefix) =>
+    upperLine.startsWith(prefix),
+  )
+  if (!hasDistinctivePrefix) return text
   const fixedPrefix = FIXED_OPENING_MARKERS.some((marker) => marker.startsWith(upperLine))
   const variablePrefix =
     /^\[FILE(?::[^\]\n]*)?$/i.test(line) ||

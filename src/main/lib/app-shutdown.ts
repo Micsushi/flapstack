@@ -26,6 +26,10 @@ export type ShutdownWaitOptions = {
   sleep?: (milliseconds: number) => Promise<void>
 }
 
+export type AbortAndWaitOptions = ShutdownWaitOptions & {
+  abort(): void
+}
+
 /** Bound shutdown waits so a stuck provider cannot prevent the process from exiting forever. */
 export async function waitForShutdownIdle(options: ShutdownWaitOptions): Promise<boolean> {
   const now = options.now ?? Date.now
@@ -42,6 +46,12 @@ export async function waitForShutdownIdle(options: ShutdownWaitOptions): Promise
     await sleep(Math.min(options.pollMs ?? 10, Math.max(0, deadline - now())))
   }
   return true
+}
+
+/** Send aborts before spending the shared shutdown deadline waiting for finalizers. */
+export async function abortAndWaitForShutdownIdle(options: AbortAndWaitOptions): Promise<boolean> {
+  options.abort()
+  return waitForShutdownIdle(options)
 }
 
 /** Run every cleanup step in order. SQLite is always attempted last. */
