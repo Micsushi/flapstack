@@ -17,6 +17,8 @@ import { updateSubChatRunStatusIfAuthoritative } from "../src/main/lib/run-statu
 const harnessMocks = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
+  cursor: vi.fn(),
+  opencode: vi.fn(),
 }))
 
 vi.mock("../src/main/lib/trpc/routers", () => ({
@@ -24,6 +26,8 @@ vi.mock("../src/main/lib/trpc/routers", () => ({
     createCaller: () => ({
       codex: { chat: harnessMocks.codex },
       claude: { chat: harnessMocks.claude },
+      cursor: { chat: harnessMocks.cursor },
+      opencode: { chat: harnessMocks.opencode },
     }),
   }),
 }))
@@ -41,6 +45,8 @@ beforeEach(() => {
   migrateDatabase(drizzle(sqlite, { schema }), sqlite, resolve(process.cwd(), "drizzle"))
   harnessMocks.codex.mockReset().mockResolvedValue(emptyStream())
   harnessMocks.claude.mockReset().mockResolvedValue(emptyStream())
+  harnessMocks.cursor.mockReset().mockResolvedValue(emptyStream())
+  harnessMocks.opencode.mockReset().mockResolvedValue(emptyStream())
 })
 
 afterEach(() => {
@@ -82,6 +88,28 @@ describe("MCP main run launcher", () => {
       expect.objectContaining({ reasoningEnabled: false }),
     )
     expect(harnessMocks.claude.mock.calls.at(-1)?.[0]).not.toHaveProperty("effort")
+  })
+
+  it("uses the normal Cursor and OpenCode-backed launch paths", async () => {
+    const launch = createMainRunLauncher()
+    await launch({ ...queuedRun("queued-cursor", "cursor-agent"), model: "cursor-model" })
+    await launch({ ...queuedRun("queued-openrouter", "openrouter"), model: "openai/gpt-5" })
+
+    expect(harnessMocks.cursor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "queued-cursor",
+        model: "cursor-model",
+        reasoningEnabled: true,
+      }),
+    )
+    expect(harnessMocks.opencode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "queued-openrouter",
+        provider: "openrouter",
+        model: "openai/gpt-5",
+        reasoningEffort: "high",
+      }),
+    )
   })
 
   it("maps disabled Codex reasoning to the lowest provider-supported model variant", async () => {
@@ -429,7 +457,7 @@ describe("MCP main run launcher", () => {
   })
 })
 
-function queuedRun(runId: string, harness: "codex" | "claude-code"): QueuedAgentRun {
+function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAgentRun {
   return {
     runId,
     chatId: "chat",
