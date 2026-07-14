@@ -55,6 +55,7 @@ import {
   MessageSquare,
   ClipboardList,
   Activity,
+  BookOpenText,
   Star,
   Plus,
   ArrowRightLeft,
@@ -6480,6 +6481,23 @@ export function AgentsSidebar({
           <Activity className="h-4 w-4" />
           <span>Usage</span>
         </ButtonCustom>
+        {selectedProject && (
+          <ButtonCustom
+            variant={desktopView === "plan" ? "secondary" : "ghost"}
+            size="sm"
+            className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+            aria-current={desktopView === "plan" ? "page" : undefined}
+            onClick={() => {
+              setSelectedDraftId(null)
+              setShowNewChatForm(false)
+              setDesktopView("plan")
+              setSearchQuery("")
+            }}
+          >
+            <BookOpenText className="h-4 w-4" />
+            <span>Plan</span>
+          </ButtonCustom>
+        )}
       </div>
 
       {/* Search and project actions */}
