@@ -59,6 +59,7 @@ import {
   replyPendingOpencodeApproval,
   startOpencodeDevRun,
 } from "../trpc/routers/opencode"
+import { cancelActiveCursorRun, startCursorDevRun } from "../trpc/routers/cursor"
 import { SAFE_CHATGPT_CODEX_MODEL } from "./codex-status"
 import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
@@ -1184,7 +1185,7 @@ export function getOpencodeLogs(input?: { sessionId?: string; maxLines?: number 
 export function createTestChat(input: {
   projectId: string
   name: string
-  provider: OpencodeHarness
+  provider: OpencodeHarness | "cursor-agent"
   model: string
   permissionMode?: string
 }) {
@@ -1280,7 +1281,7 @@ export function archiveTestChat(input: { chatId: string }) {
 export async function launchTestRun(input: {
   subChatId: string
   prompt: string
-  provider?: OpencodeHarness
+  provider?: OpencodeHarness | "cursor-agent"
   model?: string
   cwd?: string
   reasoningEnabled?: boolean
@@ -1292,10 +1293,10 @@ export async function launchTestRun(input: {
   const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
   if (!chat) throw new Error("Chat not found")
   const provider = input.provider ?? subChat.harness ?? chat.harness
-  if (!OPENCODE_HARNESSES.includes(provider as OpencodeHarness)) {
+  if (provider !== "cursor-agent" && !OPENCODE_HARNESSES.includes(provider as OpencodeHarness)) {
     return {
       launched: false,
-      supportedHarnesses: [...OPENCODE_HARNESSES],
+      supportedHarnesses: ["cursor-agent", ...OPENCODE_HARNESSES],
       reason: `Harness ${provider ?? "unknown"} does not expose a reusable dev launch service.`,
     }
   }
@@ -1304,6 +1305,17 @@ export async function launchTestRun(input: {
   if (!model) throw new Error("No model configured for this chat")
   if (!cwd) throw new Error("No worktree path configured for this chat")
   if (!input.prompt.trim()) throw new Error("Prompt cannot be empty")
+  if (provider === "cursor-agent") {
+    const { runId } = await startCursorDevRun({
+      subChatId: subChat.id,
+      chatId: chat.id,
+      model,
+      prompt: input.prompt.trim(),
+      cwd,
+      projectPath: cwd,
+    })
+    return { launched: true, runId, subChatId: subChat.id, chatId: chat.id, provider, model, cwd }
+  }
   const credential = await getCredentialStatusAsync(provider as OpencodeHarness)
   if (!credential.configured) {
     return { launched: false, reason: `${provider} is not configured in this app session.` }
@@ -1331,6 +1343,8 @@ export function replyApproval(input: {
 }
 
 export function cancelRun(input: { subChatId: string; runId: string }) {
+  const run = getDatabase().select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+  if (run?.harness === "cursor-agent") return cancelActiveCursorRun(input)
   return cancelActiveOpencodeRun(input)
 }
 

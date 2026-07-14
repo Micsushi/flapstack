@@ -269,6 +269,21 @@ describe("dev MCP transport", () => {
       })
       expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
       const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const cursorChat = await client.callTool({
+        name: "create_test_chat",
+        arguments: {
+          projectId: fixtureResult.projectId,
+          name: "Cursor live proof",
+          provider: "cursor-agent",
+          model: "auto",
+        },
+      })
+      expect(cursorChat, JSON.stringify(cursorChat.content)).not.toMatchObject({ isError: true })
+      expect((cursorChat.structuredContent as { result: any }).result).toMatchObject({
+        projectId: fixtureResult.projectId,
+        provider: "cursor-agent",
+        model: "auto",
+      })
       const created = await client.callTool({
         name: "create_test_orchestration",
         arguments: {

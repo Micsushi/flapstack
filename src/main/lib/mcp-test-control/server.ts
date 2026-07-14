@@ -674,11 +674,11 @@ function registerTools(server: McpServer): void {
   server.registerTool(
     "create_test_chat",
     {
-      description: "Create one local OpenRouter or NanoGPT project test chat.",
+      description: "Create one local Cursor, OpenRouter, or NanoGPT project test chat.",
       inputSchema: {
         projectId: z.string().min(1),
         name: z.string().min(1).max(200),
-        provider: z.enum(["openrouter", "nanogpt"]),
+        provider: z.enum(["cursor-agent", "openrouter", "nanogpt"]),
         model: z.string().min(1),
         permissionMode: z
           .enum([
@@ -938,11 +938,12 @@ function registerTools(server: McpServer): void {
   server.registerTool(
     "launch_test_run",
     {
-      description: "Launch a real OpenRouter or NanoGPT run through Flapstack persistence.",
+      description:
+        "Launch a real Cursor, OpenRouter, or NanoGPT run through Flapstack persistence.",
       inputSchema: {
         subChatId: z.string().min(1),
         prompt: z.string().min(1).max(20_000),
-        provider: z.enum(["openrouter", "nanogpt"]).optional(),
+        provider: z.enum(["cursor-agent", "openrouter", "nanogpt"]).optional(),
         model: z.string().min(1).optional(),
         cwd: z.string().min(1).optional(),
         reasoningEnabled: z.boolean().optional(),

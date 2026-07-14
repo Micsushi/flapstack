@@ -67,6 +67,11 @@ For each required provider, record:
   F16 tree. Prior Claude, Codex, and Cursor provider-live records also reloaded
   correctly, but their source commit was not recorded, so same-SHA live
   recapture remains open.
+- An unlocked same-tree Cursor follow-up now has provider-live, UI-live, and
+  reload evidence for two clean `auto` turns with one persisted session, exact
+  model identity, completed 18-second/2-second disclosures, and visible
+  reasoning search. Claude, Codex, OpenRouter, and NanoGPT same-tree UI recapture
+  remains open.
 - macOS was locked. Visual disclosure, keyboard, screen-reader, search, and
   screenshot rows remain open; headless/runtime proof is not relabeled UI-live.
 

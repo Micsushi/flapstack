@@ -76,6 +76,11 @@ completion authority for remaining reasoning parity work.
   current and legacy search/private-exclusion suites pass; verified dev restart
   restores authoritative completed timers and message identities. The Mac is
   locked, so visual keyboard/screen-reader/disclosure/search proof remains open.
+- 2026-07-13 unlocked follow-up: a clean same-tree Cursor chat rendered two
+  completed reasoning disclosures with authoritative 18-second and 2-second
+  labels, exact `auto` model identity, visible reasoning search, and persisted
+  output after a real renderer reload. T3 remains open behind the full reasoning
+  live-closeout prerequisites and remaining provider/accessibility rows.
 
 ### S3-F16-T4 — Capture live provider reasoning and no-fabrication evidence
 
@@ -108,6 +113,9 @@ completion authority for remaining reasoning parity work.
   restored prior Claude/Codex/Cursor visible and absent records, but those
   provider calls lack a recorded same-tree SHA. UI-live and same-SHA
   Claude/Codex/Cursor recapture remain open. Probe chats and approvals are clean.
+- 2026-07-13 unlocked follow-up: Cursor same-tree provider-live, UI-live, and
+  reload evidence now passes without private reasoning capture. Claude, Codex,
+  OpenRouter, and NanoGPT same-tree UI rows remain unavailable, so T4 stays open.
 
 ### S3-F16-T5 — Publish and pass the reasoning parity gate
 
