@@ -8,6 +8,7 @@ vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }))
 
 import {
   buildWindowsCredentialScript,
+  getUsageCredentialNamespace,
   getUsageSecret,
   setUsageSecret,
 } from "../src/main/lib/usage/secrets"
@@ -33,6 +34,7 @@ describe("usage credential hardening", () => {
     else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
     rmSync(temp, { recursive: true, force: true })
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it("clears stale fallback values and repairs the secrets file to mode 0600", () => {
@@ -62,7 +64,19 @@ describe("usage credential hardening", () => {
     setUsageSecret("openrouter.api_key", "super-secret-value")
     const [, args, options] = vi.mocked(spawnSync).mock.calls.at(-1)!
     expect(args).not.toContain("super-secret-value")
-    expect(options).toMatchObject({ input: "super-secret-value\n", timeout: 10_000 })
+    expect(options).toMatchObject({
+      input: "super-secret-value\nsuper-secret-value\n",
+      timeout: 10_000,
+    })
+  })
+
+  it("uses an explicit secret namespace for isolated daemon evidence", () => {
+    vi.stubEnv("FLAPSTACK_USAGE_SECRET_NAMESPACE", "Usage Exit C100")
+    expect(getUsageCredentialNamespace()).toBe("usage-exit-c100")
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: "", stderr: "" } as never)
+    setUsageSecret("openrouter.api_key", "super-secret-value")
+    const [, args] = vi.mocked(spawnSync).mock.calls.at(-1)!
+    expect(args).toContain("dev.flapstack.usage.usage-exit-c100")
   })
 
   it("builds a Credential Manager script without embedding the plaintext value", () => {

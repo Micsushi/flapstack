@@ -126,9 +126,10 @@ Notes:
 ## Current dependency truth
 
 S3-F14-T1 and deterministic S3-F14-T2 are complete. S3-F10 credential code is
-integrated, but S3-F10-T4 remains open for this Mac's actual Keychain-backed
-restart/removal proof and Windows/Linux secret stores. Therefore persisted
-credential, real LaunchAgent closed-app provider, and locked-UI credential rows
+integrated, but S3-F10-T4 remains formally open. This lane passed an isolated
+macOS no-TTY Keychain write/read/delete probe and a packaged LaunchAgent
+lifecycle smoke, but it did not prove a credentialed closed-app provider sample
+or the Windows/Linux secret stores. Those rows and locked-UI credential rows
 remain blocked rather than inferred. Windows and Linux remain UNAVAILABLE until
 observed on those targets. Paid/admin provider rows remain conditional on
 credentials actually available to the tester.
@@ -167,3 +168,41 @@ credentials actually available to the tester.
   and migration; credentialed Cursor/OpenRouter/NanoGPT and admin-provider rows;
   Windows/Linux service, secret-store, and package evidence; final commit-bound
   rerun.
+
+## 2026-07-13 c100 Usage closeout evidence
+
+- Base: `821c9cd`; branch `codex/stage3-usage-exit-closeout`; worktree
+  `/Users/michaelshi/.codex/worktrees/c100/flapstack`. The final commit is
+  reported at handoff.
+- macOS Keychain: a random unique value used service namespace
+  `dev.flapstack.usage.usage-exit-c100`; the no-TTY write/read/delete probe
+  passed, the value was absent from argv/output, and cleanup confirmed no item.
+- Packaged daemon: the exact arm64 `Flapstack Preview.app` daemon bundle passed
+  LaunchAgent closed-app start, heartbeat/poll, stop, new-PID restart, and exact
+  job/plist/PID cleanup under the isolated
+  `flapstack-preview-usage-exit-smoke` service. This proves U3-02 and the
+  non-credentialed portion of U3-01 on macOS; it does not invent a provider
+  sample or close S3-F10-T4.
+- Provider truth: a fresh read-only probe returned one Codex `five_hour` and two
+  Claude `five_hour`/`seven_day` personal-OAuth quota samples. All used
+  provider-reported quality, private-source tags, and opaque account tags; no
+  token or raw payload was printed.
+- Verified dev: port 5175 with `FLAPSTACK_DEV_INSTANCE=c100` passed
+  `dev:verify` for this checkout and the `Flapstack Dev c100` profile. Main
+  initialized its database and migrations, then shut down cleanly. The Mac was
+  locked during that dev run, so U11 visual/settings/history/fault comparisons
+  remain BLOCKED.
+- Preview startup: the exact arm64 Preview executable initialized the exact
+  `Flapstack Preview` profile, applied 23 migrations, exposed the main window,
+  and shut down cleanly. The window was inspectable, but clean no-project
+  onboarding made Usage Settings unreachable; this is package startup PASS, not
+  a U11 UI PASS. Cleanup found no exact Preview process, Usage job/plist, project
+  row, or Usage sample.
+- Final headless gates: Node 22 `npm run check` passed lint, Prettier,
+  TypeScript, 125 test files with 931 passed and 3 credential-conditional
+  skipped, and production build. Daemon smoke, packaged binary/sidecar smoke,
+  packaged LaunchAgent lifecycle smoke, the 31-row/14-scenario matrix check,
+  strict OpenSpec validation, and `git diff --check` passed.
+- Conditional truth: Cursor login, OpenRouter/NanoGPT keys, admin-provider keys,
+  and a disposable Discord webhook were unavailable. No paid run or real
+  webhook send occurred. Windows/Linux U3-03 remains UNAVAILABLE.
