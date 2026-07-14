@@ -65,6 +65,11 @@
 ### S4-F9-T5 — Add idempotent plan-candidate promotion
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. Node 22 focused
+  `plan-task-promotion`, schema, source-reader, Plan-view, and task-Kanban tests pass 29 cases;
+  focused ESLint, Prettier, full strict TypeScript, and strict OpenSpec validation pass. Live UI
+  confirmation, navigation, accessibility, and stale-error walkthroughs remain prohibited and
+  unverified, so completion stays open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: One confirmed candidate creates exactly one task and one seeded chat without a run.
 - Scope: Preview DTO; project/task fields; status selection; permission/worktree defaults; source fingerprint precondition; idempotency key; transaction; seed message; navigation; rollback.
