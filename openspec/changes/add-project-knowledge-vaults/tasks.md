@@ -36,6 +36,14 @@
 - Out of scope: Full Obsidian plugin or graph support.
 - Acceptance: Search stays inside the selected vault; stale saves preserve both versions; secrets never appear in snippets.
 - Verification: Component/accessibility, search-scope, stale-save, redaction, and live edit tests.
+- Evidence (2026-07-14): Code-ready/manual-verification-remaining. Added the
+  project entry, typed accessible section tree, Markdown preview/editor,
+  project-only redacted search, dirty/external indicators, optimistic conflict
+  diff and explicit resolution, and verified backup preview/restore services.
+  Headless service/reducer coverage, Node 22 TypeScript, focused ESLint/Prettier,
+  strict OpenSpec, and `git diff --check` pass. Renderer component/accessibility
+  and live edit proof remain unrun under the lane restriction, so completion
+  stays unchecked.
 - Blocked by: S4-F2-T2
 - Blocks: S4-F2-T6
 - Context: file viewer, scoped search, diff components, project details surfaces.
