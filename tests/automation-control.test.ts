@@ -260,6 +260,75 @@ describe("automation CRUD control", () => {
       }),
     ).toThrowError(expect.objectContaining({ code: "conflict" }))
   })
+
+  it("does not overwrite trigger or budget children after losing the update CAS", () => {
+    const created = service.createDraft(user, {
+      draft: taskDraft({ maxTotalTokens: 100 }),
+    }).record
+    const racingService = new AutomationControlService(databasePath, {
+      beforeUpdateCas: () => {
+        sqlite.prepare("UPDATE automations SET version = version + 1 WHERE id = ?").run(created.id)
+      },
+    })
+    const proposed: AutomationDraft = {
+      ...taskDraft({ maxTotalTokens: 200 }),
+      trigger: {
+        type: "schedule",
+        cron: "0 * * * *",
+        timezone: "UTC",
+        catchUp: "one",
+      },
+    }
+
+    expect(() =>
+      racingService.update(user, {
+        automationId: created.id,
+        expectedVersion: 1,
+        draft: proposed,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "conflict" }))
+    expect(
+      sqlite
+        .prepare(
+          `SELECT a.version, t.type trigger_type, b.max_total_tokens
+           FROM automations a
+           JOIN automation_triggers t ON t.automation_id = a.id
+           JOIN automation_budgets b ON b.automation_id = a.id
+           WHERE a.id = ?`,
+        )
+        .get(created.id),
+    ).toEqual({ version: 2, trigger_type: "manual", max_total_tokens: 100 })
+  })
+
+  it("reports conflict instead of archive success after losing the archive CAS", () => {
+    const created = service.createDraft(user, { draft: taskDraft() }).record
+    const racingService = new AutomationControlService(databasePath, {
+      beforeArchiveCas: () => {
+        sqlite.prepare("UPDATE automations SET version = version + 1 WHERE id = ?").run(created.id)
+      },
+    })
+
+    expect(() =>
+      racingService.archive(user, {
+        automationId: created.id,
+        expectedVersion: 1,
+        auditId: "lost-archive",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "conflict" }))
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, state, enabled, approval_state, archived_at FROM automations WHERE id = ?",
+        )
+        .get(created.id),
+    ).toEqual({
+      version: 2,
+      state: "draft",
+      enabled: 0,
+      approval_state: "pending",
+      archived_at: null,
+    })
+  })
 })
 
 describe("automation MCP management", () => {
