@@ -28,7 +28,7 @@
 
 ### S4-F5-T3 — Add manual, schedule, and run-complete triggers
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Three deterministic trigger sources create deduplicated occurrences.
 - Scope: Manual fire, cron parser/timezone, next-fire calculation, run-terminal event bridge, target filters, occurrence dedupe key, one-catch-up behavior.

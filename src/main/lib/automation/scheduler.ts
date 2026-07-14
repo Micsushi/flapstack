@@ -1,5 +1,7 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
+import { isAutomationTargetActive } from "./targets"
+import { scheduleDedupeKey } from "./triggers"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -258,7 +260,8 @@ export class AutomationScheduler {
         }
         const triggers = database
           .prepare(
-            `SELECT t.id, t.automation_id, t.cron, t.timezone, t.catch_up, t.next_fire_at
+            `SELECT t.id, t.automation_id, t.cron, t.timezone, t.catch_up, t.next_fire_at,
+                    a.scope_type, a.project_id, a.task_id, a.chat_id
              FROM automation_triggers t
              JOIN automations a ON a.id = t.automation_id
              WHERE t.type = 'schedule' AND t.enabled = 1
@@ -288,14 +291,34 @@ export class AutomationScheduler {
             continue
           }
 
+          if (
+            !isAutomationTargetActive(database, {
+              scopeType: String(row.scope_type),
+              projectId: nullableString(row.project_id),
+              taskId: nullableString(row.task_id),
+              chatId: nullableString(row.chat_id),
+            })
+          ) {
+            const nextFireAt = this.calculateNextFire(trigger, now)
+            database
+              .prepare(
+                `UPDATE automation_triggers SET next_fire_at = ?, updated_at = ?
+                 WHERE id = ? AND next_fire_at = ?`,
+              )
+              .run(nextFireAt, now, trigger.id, currentFireAt)
+            result.skipped += 1
+            continue
+          }
+
           const shouldQueue = mode !== "startup" || String(row.catch_up) === "one"
           if (shouldQueue) {
             const inserted = database
               .prepare(
-                `INSERT OR IGNORE INTO automation_occurrences (
+                `INSERT INTO automation_occurrences (
                    id, automation_id, trigger_id, dedupe_key, state,
                    scheduled_for, payload, created_at
-                 ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+                 ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+                 ON CONFLICT(automation_id, dedupe_key) DO NOTHING`,
               )
               .run(
                 this.createId(),
@@ -341,10 +364,12 @@ export class AutomationScheduler {
     const now = this.clock.now()
     return this.withDatabase((database) => {
       const acquire = database.transaction(() => {
-        const row = database
-          .prepare(
-            `SELECT o.id, o.automation_id, o.trigger_id, o.dedupe_key,
-                    o.scheduled_for, o.payload
+        while (true) {
+          const row = database
+            .prepare(
+              `SELECT o.id, o.automation_id, o.trigger_id, o.dedupe_key,
+                    o.scheduled_for, o.payload,
+                    a.scope_type, a.project_id, a.task_id, a.chat_id
              FROM automation_occurrences o
              JOIN automations a ON a.id = o.automation_id
              JOIN automation_triggers t ON t.id = o.trigger_id
@@ -354,41 +379,60 @@ export class AutomationScheduler {
                AND a.enabled = 1 AND a.state = 'active' AND a.approval_state = 'approved'
              ORDER BY o.scheduled_for, o.id
              LIMIT 1`,
-          )
-          .get(now) as Row | undefined
-        if (!row) return null
+            )
+            .get(now) as Row | undefined
+          if (!row) return null
 
-        const occurrenceId = String(row.id)
-        const token = this.createId()
-        const expiresAt = now + this.leaseDurationMs
-        const updated = database
-          .prepare(
-            `UPDATE automation_occurrences
+          if (
+            !isAutomationTargetActive(database, {
+              scopeType: String(row.scope_type),
+              projectId: nullableString(row.project_id),
+              taskId: nullableString(row.task_id),
+              chatId: nullableString(row.chat_id),
+            })
+          ) {
+            database
+              .prepare(
+                `UPDATE automation_occurrences
+                 SET state = 'skipped', terminal_at = ?
+                 WHERE id = ? AND state = 'pending'`,
+              )
+              .run(now, String(row.id))
+            continue
+          }
+
+          const occurrenceId = String(row.id)
+          const token = this.createId()
+          const expiresAt = now + this.leaseDurationMs
+          const updated = database
+            .prepare(
+              `UPDATE automation_occurrences
              SET state = 'leased'
              WHERE id = ? AND state = 'pending' AND scheduled_for <= ?`,
-          )
-          .run(occurrenceId, now)
-        if (updated.changes !== 1) return null
-        database
-          .prepare(
-            `INSERT INTO automation_leases (occurrence_id, owner, token, acquired_at, expires_at)
+            )
+            .run(occurrenceId, now)
+          if (updated.changes !== 1) continue
+          database
+            .prepare(
+              `INSERT INTO automation_leases (occurrence_id, owner, token, acquired_at, expires_at)
              VALUES (?, ?, ?, ?, ?)`,
-          )
-          .run(occurrenceId, this.options.owner, token, now, expiresAt)
+            )
+            .run(occurrenceId, this.options.owner, token, now, expiresAt)
 
-        return {
-          id: occurrenceId,
-          automationId: String(row.automation_id),
-          triggerId: String(row.trigger_id),
-          dedupeKey: String(row.dedupe_key),
-          scheduledFor: Number(row.scheduled_for),
-          payload: parsePayload(row.payload),
-          lease: {
-            owner: this.options.owner,
-            token,
-            acquiredAt: now,
-            expiresAt,
-          },
+          return {
+            id: occurrenceId,
+            automationId: String(row.automation_id),
+            triggerId: String(row.trigger_id),
+            dedupeKey: String(row.dedupe_key),
+            scheduledFor: Number(row.scheduled_for),
+            payload: parsePayload(row.payload),
+            lease: {
+              owner: this.options.owner,
+              token,
+              acquiredAt: now,
+              expiresAt,
+            },
+          }
         }
       })
       return acquire.immediate()
@@ -475,10 +519,6 @@ export class AutomationScheduler {
   }
 }
 
-function scheduleDedupeKey(triggerId: string, scheduledFor: number): string {
-  return `schedule:${triggerId}:${scheduledFor}`
-}
-
 function parsePayload(value: unknown): Record<string, unknown> {
   if (typeof value !== "string") return {}
   try {
@@ -495,6 +535,10 @@ function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function nullableString(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value)
 }
 
 function positiveInteger(value: number, field: string): number {
