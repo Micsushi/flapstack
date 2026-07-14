@@ -10,6 +10,7 @@ import {
 } from "../../lib/atoms"
 import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
+import { trpc } from "../../lib/trpc"
 import { desktopViewAtom, selectedAgentChatIdAtom, selectedProjectAtom } from "../agents/atoms"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
 import { invokePermissionUiTestControl } from "../agents/lib/permission-ui-test-control"
@@ -54,9 +55,11 @@ function boundedCarryoverDataset(
 
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
 export function DevTestControlBridge() {
+  const trpcUtils = trpc.useUtils()
+
   useEffect(() => {
     if (!window.desktopApi?.onDevRendererControlRequest) return
-    return window.desktopApi.onDevRendererControlRequest((request) => {
+    return window.desktopApi.onDevRendererControlRequest(async (request) => {
       const desktopView = appStore.get(desktopViewAtom)
       const settingsActiveTab = appStore.get(agentsSettingsDialogActiveTabAtom)
       const settingsSearchQuery = appStore.get(settingsSearchQueryAtom)
@@ -154,6 +157,8 @@ export function DevTestControlBridge() {
         return
       }
       if (request.command === "chat.select") {
+        await trpcUtils.chats.list.invalidate()
+        await trpcUtils.chats.list.fetch({})
         const store = useAgentSubChatStore.getState()
         store.queueNavigation(request.chatId, request.subChatId)
         appStore.set(selectedProjectAtom, request.project)
@@ -165,7 +170,7 @@ export function DevTestControlBridge() {
           requestId: request.requestId,
           ok: true,
           state: {
-            chatId: request.chatId,
+            chatId: appStore.get(selectedAgentChatIdAtom),
             subChatId: selectedSubChatId,
             selectedProject: request.project,
             settingsOpen: false,
@@ -274,7 +279,7 @@ export function DevTestControlBridge() {
       })
       if (mutation.ok) appStore.set(customHotkeysAtom, mutation.config)
     })
-  }, [])
+  }, [trpcUtils])
 
   return null
 }

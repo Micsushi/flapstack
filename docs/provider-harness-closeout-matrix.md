@@ -156,6 +156,26 @@ Injected question requests proved provider-adapter capability declarations and
 shared lifecycle cleanup, not provider runtime behavior. No credential was
 created or copied and no paid call ran. S3-F15-T2 through S3-F15-T5 remain open.
 
+## 2026-07-13 unlocked Cursor follow-up
+
+- Evidence tree: this commit; parent `821c9cd`. Exact verified profile:
+  `Flapstack Dev provider-reasoning` from this worktree under Node 22.
+- The authenticated Cursor `auto` path completed clean run `6181f7b5...` and
+  continuation `13d01d72...`; both persisted before/after checkpoints,
+  terminal success, read-only degraded permission truth, and one user/assistant
+  pair. Both assistant records reused session `92ec7f7d...`.
+- Renderer accessibility and screenshot inspection showed `Cursor · auto`,
+  read-only limitations, completed 18-second and 2-second reasoning
+  disclosures, exact result tokens, and the same transcript after reload.
+- One deliberately discarded ordering probe exposed a renderer-selection race;
+  it was not counted as pass evidence. The dev renderer control now refreshes
+  chat inventory before exact selection.
+- Both probe chats were archived, pending approvals were empty, the exact Dev
+  instance was stopped, and the shared UI lease was released.
+- T2-T5 remain open: S3-F10-T4, S3-F12-T5, S3-F6-T2, auth-retry/Stop, missing
+  OpenRouter/NanoGPT credentials, remaining provider UI rows, and cross-platform
+  package evidence are not proven by this Cursor subset.
+
 ## Evidence record
 
 ```text

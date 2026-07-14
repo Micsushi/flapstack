@@ -422,7 +422,7 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
   },
   {
     name: "launch_test_run",
-    description: "Launch a real OpenRouter or NanoGPT run through the app runtime.",
+    description: "Launch a real Cursor, OpenRouter, or NanoGPT run through the app runtime.",
     tier: 1,
     mutates: true,
     status: "implemented",

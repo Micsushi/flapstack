@@ -492,6 +492,21 @@ describe("dev MCP transport", () => {
         permission_mode: "custom",
         custom_permissions: JSON.stringify(inheritedCustomPermissions),
       })
+      const cursorChat = await client.callTool({
+        name: "create_test_chat",
+        arguments: {
+          projectId: fixtureResult.projectId,
+          name: "Cursor live proof",
+          provider: "cursor-agent",
+          model: "auto",
+        },
+      })
+      expect(cursorChat, JSON.stringify(cursorChat.content)).not.toMatchObject({ isError: true })
+      expect((cursorChat.structuredContent as { result: any }).result).toMatchObject({
+        projectId: fixtureResult.projectId,
+        provider: "cursor-agent",
+        model: "auto",
+      })
       const created = await client.callTool({
         name: "create_test_orchestration",
         arguments: {

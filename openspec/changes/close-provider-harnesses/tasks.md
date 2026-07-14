@@ -52,6 +52,12 @@ sole completion authority for their remaining provider-harness work.
   reuses the existing logical user turn during auth recovery. Completion stays
   open because the locked Mac prevented Flapstack UI/database auth-retry,
   stop/restart, exact-model persistence, and S3-F12 live enforcement proof.
+- 2026-07-13 unlocked follow-up: exact-worktree `Flapstack Dev` completed a
+  clean `auto` turn and same-session continuation through production Cursor
+  persistence. Both runs kept one user/assistant pair, the same session ID,
+  before/after checkpoints, read-only limitation truth, reasoning disclosure,
+  and reload-visible output. T2 remains open for auth-retry, Stop/restart, and
+  the hard S3-F10-T4/S3-F12-T5 prerequisites.
 
 ### S3-F15-T3 — Close OpenRouter and NanoGPT runtime and model defaults
 

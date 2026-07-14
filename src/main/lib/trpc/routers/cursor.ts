@@ -55,6 +55,7 @@ type ActiveCursorStream = {
 }
 
 const activeStreams = new Map<string, ActiveCursorStream>()
+const devRunSubscriptions = new Map<string, { unsubscribe?: () => void }>()
 
 function terminateCursorStream(stream: ActiveCursorStream): void {
   stream.cancelRequested = true
@@ -85,6 +86,15 @@ export function abortAllCursorStreams(): void {
   }
   // Keep each entry until its async finalizer observes cancelRequested. Clearing
   // here loses that signal and can incorrectly mark a killed run as successful.
+}
+
+export function cancelActiveCursorRun(input: { subChatId: string; runId: string }) {
+  const activeStream = activeStreams.get(input.subChatId)
+  if (!activeStream) return { cancelled: false, ignoredStale: false }
+  if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
+
+  terminateCursorStream(activeStream)
+  return { cancelled: true, ignoredStale: false }
 }
 
 const imageAttachmentSchema = z.object({
@@ -689,14 +699,7 @@ export const cursorRouter = router({
 
   cancel: publicProcedure
     .input(z.object({ subChatId: z.string(), runId: z.string() }))
-    .mutation(({ input }) => {
-      const activeStream = activeStreams.get(input.subChatId)
-      if (!activeStream) return { cancelled: false, ignoredStale: false }
-      if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
-
-      terminateCursorStream(activeStream)
-      return { cancelled: true, ignoredStale: false }
-    }),
+    .mutation(({ input }) => cancelActiveCursorRun(input)),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     const activeStream = activeStreams.get(input.subChatId)
@@ -716,3 +719,55 @@ export const cursorRouter = router({
     return { success: true }
   }),
 })
+
+export async function startCursorDevRun(input: {
+  subChatId: string
+  chatId: string
+  model: string
+  prompt: string
+  cwd: string
+  projectPath?: string
+  forceNewSession?: boolean
+}): Promise<{ runId: string }> {
+  const runId = crypto.randomUUID()
+  const stream = (await cursorRouter.createCaller({ getWindow: () => null }).chat({
+    ...input,
+    runId,
+    reasoningEnabled: true,
+  })) as unknown as {
+    subscribe?: (observer: {
+      next?: (value: unknown) => void
+      error?: (error: unknown) => void
+      complete?: () => void
+    }) => { unsubscribe?: () => void }
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>
+  }
+
+  const finish = () => devRunSubscriptions.delete(runId)
+  if (typeof stream.subscribe === "function") {
+    const subscription = stream.subscribe({
+      error: (error) => {
+        console.error(`[dev-mcp] Cursor run ${runId} failed`, error)
+        finish()
+      },
+      complete: finish,
+    })
+    devRunSubscriptions.set(runId, subscription)
+  } else if (stream[Symbol.asyncIterator]) {
+    void (async () => {
+      try {
+        for await (const _chunk of stream as AsyncIterable<unknown>) {
+          // Consuming the stream drives the production Cursor subscription lifecycle.
+        }
+      } catch (error) {
+        console.error(`[dev-mcp] Cursor run ${runId} failed`, error)
+      } finally {
+        finish()
+      }
+    })()
+  } else {
+    throw new Error("Cursor chat subscription did not return a consumable stream")
+  }
+
+  return { runId }
+}
