@@ -8,6 +8,17 @@ import type { LocalModelRunMetadata } from "../../../shared/local-model-contract
 import type { RunPermissionMode } from "../../../shared/harness-types"
 import { buildHarnessContextBundle, type HarnessContextBundle } from "./launch-context"
 import { getOllamaEndpointConfig, type OllamaEndpointConfig } from "./local-model-catalog"
+import {
+  createReadOnlyLocalModelToolExecutor,
+  LocalModelToolLoopError,
+  runBoundedLocalModelToolLoop,
+  type LocalModelLoopMessage,
+  type LocalModelProviderTurnEvent,
+  type LocalModelReadToolExecutor,
+  type LocalModelToolEvidence,
+  type LocalModelToolLoopLimits,
+  type LocalModelToolProvider,
+} from "./local-model-read-tools"
 
 const DEFAULT_STREAM_TIMEOUT_MS = 120_000
 const DEFAULT_TRANSCRIPT_CHARS = 48_000
@@ -18,24 +29,13 @@ type AppDatabase = BetterSQLite3Database<typeof schema>
 export type LocalModelTranscriptMessage = {
   id: string
   role: "user" | "assistant"
-  parts: Array<{ type: string; text?: string }>
+  parts: Array<{ type: string; text?: string; [key: string]: unknown }>
   metadata?: Record<string, unknown>
 }
 
-export type OllamaChatMessage = {
-  role: "system" | "user" | "assistant"
-  content: string
-}
+export type OllamaChatMessage = LocalModelLoopMessage
 
-export type NormalizedLocalModelEvent =
-  | { kind: "text-delta"; delta: string }
-  | {
-      kind: "done"
-      inputTokens?: number
-      outputTokens?: number
-      totalTokens?: number
-      reason?: string
-    }
+export type NormalizedLocalModelEvent = LocalModelProviderTurnEvent
 
 export type LocalModelTerminalStatus = "success" | "failure" | "cancelled"
 
@@ -47,6 +47,12 @@ export type LocalModelRunPersistence = {
     streamId: string
     assistantMessageId: string
     delta: string
+  }): boolean
+  appendToolEvidence(input: {
+    subChatId: string
+    streamId: string
+    assistantMessageId: string
+    evidence: LocalModelToolEvidence
   }): boolean
   finalize(input: LocalModelPersistedRunFinish): void
   recoverAbandoned(now?: Date): number
@@ -99,12 +105,14 @@ export type StreamLocalModelChatInput = {
   endpoint?: OllamaEndpointConfig
   timeoutMs?: number
   maxTranscriptChars?: number
+  toolLoopLimits?: Partial<LocalModelToolLoopLimits>
 }
 
 export type LocalModelChatServiceDependencies = {
   persistence: LocalModelRunPersistence
   fetchImpl?: typeof fetch
   buildContext?: (input: StreamLocalModelChatInput) => Promise<HarnessContextBundle>
+  createReadToolExecutor?: (rootPath: string) => LocalModelReadToolExecutor
   now?: () => number
 }
 
@@ -123,6 +131,7 @@ export type LocalModelStreamErrorCode =
   | "abandoned-stream"
   | "consumer-disconnected"
   | "run-not-startable"
+  | LocalModelToolLoopError["code"]
 
 const SAFE_ERROR_TEXT: Record<LocalModelStreamErrorCode, string> = {
   "provider-unavailable": "Ollama is not reachable on the configured local endpoint.",
@@ -133,6 +142,12 @@ const SAFE_ERROR_TEXT: Record<LocalModelStreamErrorCode, string> = {
   "abandoned-stream": "The local model stream was abandoned when Flapstack stopped.",
   "consumer-disconnected": "The local model stream ended when its consumer disconnected.",
   "run-not-startable": "This local model run is already active or terminal and cannot resume.",
+  "tool-iteration-limit": "The local model tool loop reached its iteration limit.",
+  "tool-call-limit": "The local model tool loop reached its tool-call limit.",
+  "tool-context-limit": "The local model tool loop reached its context limit.",
+  "tool-output-limit": "The local model tool loop reached its output limit.",
+  "tool-time-limit": "The local model tool loop reached its wall-time limit.",
+  "tool-recursion-limit": "The local model repeated the same tool call too many times.",
 }
 
 class LocalModelStreamError extends Error {
@@ -191,7 +206,6 @@ export class LocalModelChatService {
     let began = false
     let terminal = false
     let textStarted = false
-    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     let usage: LocalModelPersistedRunFinish["usage"]
 
     try {
@@ -215,35 +229,44 @@ export class LocalModelChatService {
       began = true
 
       const endpoint = input.endpoint ?? getOllamaEndpointConfig()
-      const response = await raceAbort(
-        (this.dependencies.fetchImpl ?? fetch)(`${endpoint.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            model: input.model,
-            stream: true,
-            messages: assembleLocalModelMessages({
-              context: context.context,
-              transcript,
-              prompt: input.prompt,
-              maxTranscriptChars: input.maxTranscriptChars,
-            }),
-          }),
-          signal: controller.signal,
-        }),
-        controller.signal,
-      )
-      if (!response.ok) throw new LocalModelStreamError("provider-endpoint-error")
-      if (!response.body) throw new LocalModelStreamError("provider-response-invalid")
+      const messages = assembleLocalModelMessages({
+        context: context.context,
+        transcript,
+        prompt: input.prompt,
+        maxTranscriptChars: input.maxTranscriptChars,
+      })
+      const toolsEnabled = localReadToolsEnabled(input.metadata)
+      const provider = createOllamaToolProvider({
+        endpoint,
+        model: input.model,
+        fetchImpl: this.dependencies.fetchImpl ?? fetch,
+      })
+      const executor = toolsEnabled
+        ? (this.dependencies.createReadToolExecutor?.(input.worktreePath ?? input.cwd) ??
+          createReadOnlyLocalModelToolExecutor({ rootPath: input.worktreePath ?? input.cwd }))
+        : undefined
 
-      reader = response.body.getReader()
       yield { type: "start", messageId: assistantMessageId }
-      yield { type: "text-start", id: LOCAL_TEXT_PART_ID }
-      textStarted = true
 
       let sawDone = false
-      for await (const event of readOllamaChatEvents(reader, controller.signal)) {
+      for await (const event of runBoundedLocalModelToolLoop({
+        runId,
+        messages,
+        toolsEnabled,
+        provider,
+        executor,
+        signal: controller.signal,
+        limits: {
+          ...input.toolLoopLimits,
+          maxWallTimeMs: Math.min(input.toolLoopLimits?.maxWallTimeMs ?? timeoutMs, timeoutMs),
+        },
+        now: this.dependencies.now,
+      })) {
         if (event.kind === "text-delta") {
+          if (!textStarted) {
+            yield { type: "text-start", id: LOCAL_TEXT_PART_ID }
+            textStarted = true
+          }
           const persisted = this.dependencies.persistence.appendAssistantText({
             subChatId: input.subChatId,
             streamId,
@@ -252,6 +275,41 @@ export class LocalModelChatService {
           })
           if (!persisted) throw new LocalModelStreamError("consumer-disconnected")
           yield { type: "text-delta", id: LOCAL_TEXT_PART_ID, delta: event.delta }
+          continue
+        }
+        if (event.kind === "tool-input" || event.kind === "tool-output") {
+          const persisted = this.dependencies.persistence.appendToolEvidence({
+            subChatId: input.subChatId,
+            streamId,
+            assistantMessageId,
+            evidence: event.evidence,
+          })
+          if (!persisted) throw new LocalModelStreamError("consumer-disconnected")
+          if (event.kind === "tool-input") {
+            yield {
+              type: "tool-input-start",
+              toolCallId: event.evidence.callId,
+              toolName: event.evidence.tool,
+            }
+            yield {
+              type: "tool-input-available",
+              toolCallId: event.evidence.callId,
+              toolName: event.evidence.tool,
+              input: event.evidence.input,
+            }
+          } else if (event.evidence.result?.ok) {
+            yield {
+              type: "tool-output-available",
+              toolCallId: event.evidence.callId,
+              output: event.evidence.result,
+            }
+          } else {
+            yield {
+              type: "tool-output-error",
+              toolCallId: event.evidence.callId,
+              errorText: event.evidence.result?.content ?? "The read-only tool failed safely.",
+            }
+          }
           continue
         }
         sawDone = true
@@ -273,7 +331,7 @@ export class LocalModelChatService {
         completedAt: new Date((this.dependencies.now ?? Date.now)()),
       })
       terminal = true
-      yield { type: "text-end", id: LOCAL_TEXT_PART_ID }
+      if (textStarted) yield { type: "text-end", id: LOCAL_TEXT_PART_ID }
       if (usage && Object.keys(usage).length > 0) {
         yield { type: "message-metadata", messageMetadata: usage }
       }
@@ -312,7 +370,6 @@ export class LocalModelChatService {
           completedAt: new Date((this.dependencies.now ?? Date.now)()),
         })
       }
-      if (reader) void reader.cancel().catch(() => undefined)
       this.activeByRun.delete(runId)
       if (this.activeRunBySubChat.get(input.subChatId) === runId) {
         this.activeRunBySubChat.delete(input.subChatId)
@@ -371,12 +428,31 @@ export function parseOllamaChatLine(line: string): NormalizedLocalModelEvent[] {
   }
 
   const events: NormalizedLocalModelEvent[] = []
-  if (isRecord(parsed.message) && Array.isArray(parsed.message.tool_calls)) {
+  if (isRecord(parsed.message)) {
+    if (parsed.message.tool_calls !== undefined && !Array.isArray(parsed.message.tool_calls)) {
+      throw new LocalModelStreamError("provider-response-invalid")
+    }
+    if (typeof parsed.message.content === "string" && parsed.message.content) {
+      events.push({ kind: "text-delta", delta: parsed.message.content })
+    }
+    if (Array.isArray(parsed.message.tool_calls)) {
+      for (const rawCall of parsed.message.tool_calls) {
+        const call = isRecord(rawCall) ? rawCall : {}
+        const fn = isRecord(call.function) ? call.function : {}
+        events.push({
+          kind: "tool-call",
+          call: {
+            id: call.id,
+            name: fn.name,
+            arguments: fn.arguments,
+          },
+        })
+      }
+    }
+  } else if (!parsed.done) {
     throw new LocalModelStreamError("provider-response-invalid")
   }
-  if (isRecord(parsed.message) && typeof parsed.message.content === "string") {
-    if (parsed.message.content) events.push({ kind: "text-delta", delta: parsed.message.content })
-  } else if (!parsed.done) {
+  if (!parsed.done && events.length === 0) {
     throw new LocalModelStreamError("provider-response-invalid")
   }
   if (parsed.done) {
@@ -393,6 +469,66 @@ export function parseOllamaChatLine(line: string): NormalizedLocalModelEvent[] {
     })
   }
   return events
+}
+
+function createOllamaToolProvider(input: {
+  endpoint: OllamaEndpointConfig
+  model: string
+  fetchImpl: typeof fetch
+}): LocalModelToolProvider {
+  return {
+    async *streamTurn(request) {
+      const response = await raceAbort(
+        input.fetchImpl(`${input.endpoint.baseUrl}/api/chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: input.model,
+            stream: true,
+            messages: request.messages.map(toOllamaRequestMessage),
+            ...(request.tools.length > 0 ? { tools: request.tools } : {}),
+          }),
+          signal: request.signal,
+        }),
+        request.signal,
+      )
+      if (!response.ok) throw new LocalModelStreamError("provider-endpoint-error")
+      if (!response.body) throw new LocalModelStreamError("provider-response-invalid")
+      const reader = response.body.getReader()
+      try {
+        let sawDone = false
+        for await (const event of readOllamaChatEvents(reader, request.signal)) {
+          if (event.kind === "done") sawDone = true
+          yield event
+        }
+        if (!sawDone) throw new LocalModelStreamError("provider-disconnected")
+      } finally {
+        void reader.cancel().catch(() => undefined)
+      }
+    },
+  }
+}
+
+function toOllamaRequestMessage(message: LocalModelLoopMessage): Record<string, unknown> {
+  return {
+    role: message.role,
+    content: message.content,
+    ...(message.toolCalls?.length
+      ? {
+          tool_calls: message.toolCalls.map((call) => ({
+            function: { name: call.name, arguments: call.arguments },
+          })),
+        }
+      : {}),
+    ...(message.toolName ? { tool_name: message.toolName } : {}),
+  }
+}
+
+function localReadToolsEnabled(metadata: LocalModelRunMetadata): boolean {
+  return (
+    metadata.capabilities.tools.state === "supported" &&
+    metadata.permission.toolTiers.some((tier) => tier.tier === "read" && tier.available)
+  )
 }
 
 export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalModelRunPersistence {
@@ -497,6 +633,60 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
       const textPart = message?.parts.find((part) => part.type === "text")
       if (!message || !textPart) return false
       textPart.text = `${textPart.text ?? ""}${input.delta}`
+      const updated = db
+        .update(subChats)
+        .set({ messages: JSON.stringify(messages), updatedAt: new Date() })
+        .where(and(eq(subChats.id, input.subChatId), eq(subChats.streamId, input.streamId)))
+        .run()
+      return updated.changes === 1
+    },
+    appendToolEvidence(input) {
+      const row = db
+        .select({ messages: subChats.messages })
+        .from(subChats)
+        .where(and(eq(subChats.id, input.subChatId), eq(subChats.streamId, input.streamId)))
+        .get()
+      if (!row) return false
+      const messages = parseTranscript(row.messages)
+      const message = messages.find((candidate) => candidate.id === input.assistantMessageId)
+      if (!message) return false
+
+      const evidenceRows = Array.isArray(message.metadata?.toolEvidence)
+        ? message.metadata.toolEvidence.filter(isRecord)
+        : []
+      const evidenceIndex = evidenceRows.findIndex(
+        (candidate) => candidate.callId === input.evidence.callId,
+      )
+      if (evidenceIndex >= 0) evidenceRows[evidenceIndex] = input.evidence
+      else evidenceRows.push(input.evidence)
+      message.metadata = { ...(message.metadata ?? {}), toolEvidence: evidenceRows.slice(-256) }
+
+      let part = message.parts.find((candidate) => candidate.toolCallId === input.evidence.callId)
+      if (!part) {
+        part = {
+          type: `tool-${input.evidence.tool}`,
+          toolCallId: input.evidence.callId,
+          toolName: input.evidence.tool,
+          input: input.evidence.input,
+          state: "call",
+          startedAt: Date.parse(input.evidence.startedAt),
+        }
+        message.parts.push(part)
+      }
+      if (input.evidence.result) {
+        if (input.evidence.result.ok) {
+          part.result = input.evidence.result
+          part.output = input.evidence.result
+          part.state = "result"
+        } else {
+          part.errorText = input.evidence.result.content
+          part.state = "error"
+        }
+        part.completedAt = input.evidence.completedAt
+          ? Date.parse(input.evidence.completedAt)
+          : undefined
+      }
+
       const updated = db
         .update(subChats)
         .set({ messages: JSON.stringify(messages), updatedAt: new Date() })
@@ -661,6 +851,7 @@ function isTranscriptMessage(value: unknown): value is LocalModelTranscriptMessa
 function normalizeStreamError(error: unknown, timedOut: boolean): LocalModelStreamError {
   if (timedOut) return new LocalModelStreamError("provider-timeout")
   if (error instanceof LocalModelStreamError) return error
+  if (error instanceof LocalModelToolLoopError) return new LocalModelStreamError(error.code)
   return new LocalModelStreamError("provider-unavailable")
 }
 

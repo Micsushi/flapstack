@@ -10,6 +10,7 @@ import {
 } from "../src/main/lib/harness/local-model-stream"
 import * as schema from "../src/main/lib/db/schema"
 import type { LocalModelRunMetadata } from "../src/shared/local-model-contract"
+import type { LocalModelReadToolExecutor } from "../src/main/lib/harness/local-model-read-tools"
 
 const NOW = Date.parse("2026-07-14T12:00:00.000Z")
 const databases: Database.Database[] = []
@@ -58,6 +59,7 @@ describe("local model stream", () => {
         { role: "user", content: "new question" },
       ],
     })
+    expect(requests[0]).not.toHaveProperty("tools")
     expect(fixture.run("run-1")).toMatchObject({
       harness: "local",
       model: "fixture:latest",
@@ -89,6 +91,120 @@ describe("local model stream", () => {
       harness: "local",
       model: "fixture:latest",
       run_status: "success",
+    })
+  })
+
+  it("runs declared read tools and keeps normalized tool evidence durable", async () => {
+    const fixture = setup()
+    const requests: Array<Record<string, unknown>> = []
+    const executor: LocalModelReadToolExecutor = {
+      execute: async (call) => ({
+        ok: true,
+        tool: call.name,
+        content: "hello project",
+        truncated: false,
+      }),
+    }
+    const service = fixture.service(
+      async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)))
+        return requests.length === 1
+          ? byteStreamResponse([
+              '{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":true,"prompt_eval_count":2,"eval_count":1}\n',
+            ])
+          : byteStreamResponse([
+              '{"message":{"role":"assistant","content":"Found it."},"done":true,"prompt_eval_count":3,"eval_count":2}\n',
+            ])
+      },
+      contextBundle,
+      () => executor,
+    )
+
+    const chunks = await collect(
+      service.stream(input({ runId: "run-tools", metadata: toolMetadata })),
+    )
+
+    expect(requests[0]).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({ function: expect.objectContaining({ name: "read_file" }) }),
+      ]),
+    })
+    expect(requests[1]).toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", tool_calls: expect.any(Array) }),
+        expect.objectContaining({ role: "tool", tool_name: "read_file" }),
+      ]),
+    })
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "tool-input-available", toolName: "read_file" }),
+        expect.objectContaining({ type: "tool-output-available" }),
+        { type: "text-delta", id: "local-response", delta: "Found it." },
+        {
+          type: "finish",
+          messageMetadata: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        },
+      ]),
+    )
+    expect(fixture.run("run-tools")).toMatchObject({ status: "success" })
+    const assistant = fixture.messages().at(-1) as {
+      parts: Array<Record<string, unknown>>
+      metadata: { streamState: string; toolEvidence: Array<Record<string, unknown>> }
+    }
+    expect(assistant.parts[0]).toEqual({ type: "text", text: "Found it." })
+    expect(assistant.parts[1]).toMatchObject({
+      type: "tool-read_file",
+      toolName: "read_file",
+      state: "result",
+      output: { ok: true, content: "hello project" },
+    })
+    expect(assistant.metadata.streamState).toBe("success")
+    expect(assistant.metadata.toolEvidence[0]).toMatchObject({
+      tool: "read_file",
+      status: "succeeded",
+      result: { ok: true },
+    })
+  })
+
+  it("persists a bounded terminal reason when a tool loop reaches its limit", async () => {
+    const fixture = setup()
+    const service = fixture.service(
+      async () =>
+        byteStreamResponse([
+          '{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":true}\n',
+        ]),
+      contextBundle,
+      () => ({
+        execute: async (call) => ({
+          ok: true,
+          tool: call.name,
+          content: "hello project",
+          truncated: false,
+        }),
+      }),
+    )
+
+    const chunks = await collect(
+      service.stream(
+        input({
+          runId: "run-tool-limit",
+          metadata: toolMetadata,
+          toolLoopLimits: { maxIterations: 1 },
+        }),
+      ),
+    )
+
+    expect(chunks).toContainEqual({
+      type: "error",
+      errorText: "The local model tool loop reached its iteration limit.",
+    })
+    expect(fixture.run("run-tool-limit")).toMatchObject({ status: "failure" })
+    expect(fixture.messages().at(-1)).toMatchObject({
+      metadata: {
+        streamState: "failure",
+        errorCode: "tool-iteration-limit",
+        toolEvidence: [expect.objectContaining({ status: "succeeded" })],
+      },
     })
   })
 
@@ -345,11 +461,16 @@ function setup() {
   const persistence = createDatabaseLocalModelRunPersistence(db)
   return {
     persistence,
-    service(fetchImpl: typeof fetch, context = contextBundle) {
+    service(
+      fetchImpl: typeof fetch,
+      context = contextBundle,
+      createReadToolExecutor?: (rootPath: string) => LocalModelReadToolExecutor,
+    ) {
       return new LocalModelChatService({
         persistence,
         fetchImpl,
-        buildContext: async () => contextBundle,
+        buildContext: async () => context,
+        createReadToolExecutor,
         now: () => NOW,
       })
     },
@@ -406,6 +527,27 @@ const metadata: LocalModelRunMetadata = {
     expiresAt: "2026-07-14T12:04:00.000Z",
   },
   fallback: { mode: "none", cloudAllowed: false, reason: "cloud-fallback-disabled" },
+}
+
+const toolMetadata: LocalModelRunMetadata = {
+  ...metadata,
+  capabilities: {
+    ...metadata.capabilities,
+    tools: { state: "supported", source: "provider-declared", evidence: "tools" },
+  },
+  permission: {
+    ...metadata.permission,
+    toolTiers: [
+      {
+        tier: "read",
+        requiredCapability: "tools",
+        mutates: false,
+        customPermission: null,
+        available: true,
+        limitation: null,
+      },
+    ],
+  },
 }
 
 const contextBundle = {
