@@ -12,3 +12,5 @@ export type {
   RunPermissionMode,
   RunPromptPart,
 } from "../../../shared/harness-types"
+
+export type { LocalModelRunMetadata } from "../../../shared/local-model-contract"
