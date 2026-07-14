@@ -9,6 +9,7 @@ import type {
   MobileBridgeTransportHandle,
   MobileBridgeTransportSession,
 } from "./types"
+import { MOBILE_BRIDGE_MAX_BUFFERED_BYTES } from "./types"
 
 export class NodeMobileBridgeTransportFactory implements MobileBridgeTransportFactory {
   async start(input: Parameters<MobileBridgeTransportFactory["start"]>[0]) {
@@ -114,20 +115,34 @@ function handleWebSocketUpgrade(
 
   webSockets.handleUpgrade(request, socket, head, (webSocket) => {
     const messageListeners = new Set<(data: Uint8Array) => void>()
+    const closeListeners = new Set<() => void>()
     let closed = false
     const session: MobileBridgeTransportSession = {
       id: randomUUID(),
       remoteAddress,
       send(data) {
-        if (Buffer.byteLength(data) > mobileControlLimits.snapshotBytes) {
+        const bytes = Buffer.byteLength(data)
+        if (bytes > mobileControlLimits.snapshotBytes) {
           session.close(1009, "payload-too-large")
-          return
+          return false
         }
-        if (webSocket.readyState === webSocket.OPEN) webSocket.send(data)
+        if (
+          webSocket.readyState !== webSocket.OPEN ||
+          webSocket.bufferedAmount + bytes > MOBILE_BRIDGE_MAX_BUFFERED_BYTES
+        ) {
+          session.close(1013, "client-too-slow")
+          return false
+        }
+        webSocket.send(data)
+        return true
       },
       onMessage(listener) {
         messageListeners.add(listener)
         return () => messageListeners.delete(listener)
+      },
+      onClose(listener) {
+        closeListeners.add(listener)
+        return () => closeListeners.delete(listener)
       },
       close(code = 1001, reason = "bridge-stopped") {
         if (
@@ -147,6 +162,8 @@ function handleWebSocketUpgrade(
       closed = true
       sessions.delete(webSocket)
       messageListeners.clear()
+      for (const listener of closeListeners) listener()
+      closeListeners.clear()
       input.admission.closeConnection(remoteAddress)
     })
     webSocket.once("error", () => webSocket.terminate())

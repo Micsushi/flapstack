@@ -20,6 +20,7 @@ import {
   providerForHarness,
 } from "../../usage/budgets"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 
 const permissionModeSchema = z.enum(permissionModes)
 
@@ -101,12 +102,14 @@ export const runsRouter = router({
       }
 
       const before = await captureCheckpoint(run.id, checkpointRoot, "before")
-      return db
+      const created = db
         .update(agentRuns)
         .set({ beforeCheckpointId: before.id })
         .where(eq(agentRuns.id, run.id))
         .returning()
         .get()
+      publishRunInvalidation(created.id, created.chatId)
+      return created
     }),
 
   completeRun: publicProcedure
@@ -127,7 +130,7 @@ export const runsRouter = router({
       const after = await captureCheckpoint(run.id, checkpointRoot, "after")
       await captureRunManifest(run.id)
 
-      return db
+      const completed = db
         .update(agentRuns)
         .set({
           status: input.status,
@@ -137,6 +140,8 @@ export const runsRouter = router({
         .where(eq(agentRuns.id, input.runId))
         .returning()
         .get()
+      publishRunInvalidation(completed.id, completed.chatId)
+      return completed
     }),
 
   listByChat: publicProcedure.input(z.object({ chatId: z.string() })).query(({ input }) => {
@@ -181,3 +186,13 @@ export const runsRouter = router({
     .input(z.object({ runId: z.string() }))
     .mutation(({ input }) => undoRunChangeSet(input.runId)),
 })
+
+function publishRunInvalidation(runId: string, chatId: string): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["runs", "chats"],
+    runIds: [runId],
+    chatIds: [chatId],
+  })
+}

@@ -310,6 +310,7 @@ describe("mobile-control-contract", () => {
       scopeVersion: 1,
       sequence: 10,
       generatedAt: now,
+      freshUntil: now + mobileControlLimits.snapshotFreshnessMs,
       items: [
         {
           kind: "run",

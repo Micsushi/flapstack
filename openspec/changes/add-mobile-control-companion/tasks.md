@@ -47,13 +47,16 @@
 
 ### S4-F10-T4 — Build sequenced snapshots, events, and reconnect
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F10
 - Outcome: Authorized devices receive bounded current state and recover safely from gaps.
 - Scope: Scope grants; snapshot projection; monotonic event log/sequence; WebSocket subscribe; resume cursor; gap detection; resnapshot; timestamps/freshness; pagination; backpressure; redaction; authorization changes.
 - Out of scope: Mutations and client UI.
 - Acceptance: Devices see only granted scopes; gaps force resnapshot; slow clients cannot exhaust memory; revoked/changed grants apply immediately.
 - Verification: `npm test -- mobile-events` with scope, gap, reconnect, backpressure, pagination, redaction, revoke, and restart cases.
+- Automated evidence: Node 22 `npm test -- mobile-events mobile-control-contract mobile-pairing mobile-bridge` passes 38/38; migration/rebase focus passes 32/32. Full `npm run check` passes 171 files with 1,335 tests passed and 3 skipped, including TypeScript, lint, formatting, and production build. Strict OpenSpec passes.
+- Migration evidence: additive `0032_mobile_sequenced_events` follows canonical `0031_mobile_pairing_identity`; `0023` through `0031` remain unchanged. Snapshot metadata and Stage 3 migration-rebase fixtures pass.
+- Manual verification remaining: live HTTPS/WebSocket listener, real reconnect/network behavior, browser/device, PWA UI, and packaged-app evidence stay intentionally open for S4-F10-T8.
 - Blocked by: S4-F10-T1, S4-F10-T2, S4-F10-T3
 - Blocks: S4-F10-T5, S4-F10-T6, S4-F10-T7, S4-F10-T8
 - Context: product invalidation events, run/orchestration/automation queries, diffs/artifacts/tests, question lifecycle.

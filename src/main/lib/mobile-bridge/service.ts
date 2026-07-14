@@ -227,12 +227,15 @@ export class MobileBridgeService {
   }
 }
 
-export function createDefaultMobileBridgeService(): MobileBridgeService {
+export function createDefaultMobileBridgeService(
+  handlers: Pick<MobileBridgeServiceOptions, "onRequest" | "onWebSocket"> = {},
+): MobileBridgeService {
   return new MobileBridgeService({
     settings: new FileMobileBridgeSettingsStore(),
     certificates: new FileMobileBridgeCertificateProvider(),
     network: new PollingMobileNetworkSource(),
     transport: new NodeMobileBridgeTransportFactory(),
+    ...handlers,
   })
 }
 

@@ -80,9 +80,13 @@ describe("mobile-pairing", () => {
           "mobile_device_audit_records",
         ]),
       )
-      expect(sqliteJournal().entries.at(-1)).toMatchObject({
+      expect(sqliteJournal().entries.find((entry) => entry.idx === 31)).toMatchObject({
         idx: 31,
         tag: "0031_mobile_pairing_identity",
+      })
+      expect(sqliteJournal().entries.at(-1)).toMatchObject({
+        idx: 32,
+        tag: "0032_mobile_sequenced_events",
       })
       expect(
         legacy

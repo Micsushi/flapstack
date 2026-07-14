@@ -19,6 +19,9 @@ export const mobileControlLimits = {
   commandsPerMinute: 30,
   connectionsPerDevice: 2,
   eventBacklog: 1_000,
+  eventBatchItems: 100,
+  snapshotFreshnessMs: 30_000,
+  snapshotPageSize: 100,
   stringBytes: 8_000,
 } as const
 
@@ -362,6 +365,33 @@ export const mobileSessionProofSchema = z
   })
   .strict()
 
+export const mobileEventCursorSchema = z
+  .object({
+    snapshotId: identifierSchema,
+    scopeVersion: versionSchema,
+    sequence: sequenceSchema,
+  })
+  .strict()
+
+export const mobileSubscribeRequestSchema = z
+  .object({
+    protocolVersion: z.literal(MOBILE_CONTROL_PROTOCOL_VERSION),
+    kind: z.literal("subscribe"),
+    proof: mobileSessionProofSchema,
+    authorityGrantId: identifierSchema,
+    resume: mobileEventCursorSchema.optional(),
+    pageSize: z.number().int().min(1).max(mobileControlLimits.snapshotPageSize).optional(),
+  })
+  .strict()
+
+export const mobileSnapshotPageRequestSchema = z
+  .object({
+    protocolVersion: z.literal(MOBILE_CONTROL_PROTOCOL_VERSION),
+    kind: z.literal("snapshot.page"),
+    cursor: z.string().trim().min(1).max(512),
+  })
+  .strict()
+
 export const mobileRevocationSchema = z
   .object({
     deviceId: identifierSchema,
@@ -457,7 +487,7 @@ export const mobileSnapshotItemSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("automation"),
       ...entityBase,
-      projectId: identifierSchema,
+      projectId: identifierSchema.optional(),
       name: boundedText(240),
       status: boundedText(80),
       nextRunAt: timestampSchema.optional(),
@@ -518,10 +548,17 @@ export const mobileSnapshotEnvelopeSchema = z
     scopeVersion: versionSchema,
     sequence: sequenceSchema,
     generatedAt: timestampSchema,
+    freshUntil: timestampSchema,
     items: z.array(mobileSnapshotItemSchema).max(mobileControlLimits.snapshotItems),
     nextCursor: z.string().trim().min(1).max(512).optional(),
   })
   .strict()
+  .superRefine((value, context) => {
+    if (value.freshUntil <= value.generatedAt)
+      issue(context, ["freshUntil"], "Snapshot freshness must follow generation time.")
+    if (value.freshUntil - value.generatedAt > mobileControlLimits.snapshotFreshnessMs)
+      issue(context, ["freshUntil"], "Snapshot freshness exceeds the contract limit.")
+  })
 
 const eventPayloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("entity.upsert"), item: mobileSnapshotItemSchema }).strict(),
@@ -615,7 +652,11 @@ export type MobilePairingResult = z.infer<typeof mobilePairingResultSchema>
 export type MobileChallengeProof = z.infer<typeof mobileChallengeProofSchema>
 export type MobileSessionCredential = z.infer<typeof mobileSessionCredentialSchema>
 export type MobileSessionProof = z.infer<typeof mobileSessionProofSchema>
+export type MobileEventCursor = z.infer<typeof mobileEventCursorSchema>
+export type MobileSubscribeRequest = z.infer<typeof mobileSubscribeRequestSchema>
+export type MobileSnapshotPageRequest = z.infer<typeof mobileSnapshotPageRequestSchema>
 export type MobileAuthorityGrant = z.infer<typeof mobileAuthorityGrantSchema>
+export type MobileSnapshotItem = z.infer<typeof mobileSnapshotItemSchema>
 export type MobileSnapshotEnvelope = z.infer<typeof mobileSnapshotEnvelopeSchema>
 export type MobileEventEnvelope = z.infer<typeof mobileEventEnvelopeSchema>
 export type MobileCommandEnvelope = z.infer<typeof mobileCommandEnvelopeSchema>

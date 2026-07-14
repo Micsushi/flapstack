@@ -1208,6 +1208,140 @@ export const mobileDeviceSessionsRelations = relations(mobileDeviceSessions, ({ 
   nonces: many(mobileSessionNonces),
 }))
 
+// ============ MOBILE READ AUTHORITY AND EVENT STREAMS ============
+// Grants contain only the narrow, validated mobile contract projection. Event
+// rows store resource references, never provider payloads, prompts, or secrets.
+export const mobileAuthorityGrants = sqliteTable(
+  "mobile_authority_grants",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => mobileDevices.id, { onDelete: "cascade" }),
+    authority: text("authority").notNull(),
+    capabilities: text("capabilities").notNull(),
+    resources: text("resources").notNull(),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp" }),
+    scopeVersion: integer("scope_version").notNull(),
+  },
+  (table) => [
+    index("mobile_authority_grants_device_idx").on(
+      table.deviceId,
+      table.revokedAt,
+      table.expiresAt,
+    ),
+    check("mobile_authority_grants_scope_version_check", sql`${table.scopeVersion} >= 1`),
+    check(
+      "mobile_authority_grants_expiry_check",
+      sql`${table.expiresAt} is null or ${table.expiresAt} > ${table.issuedAt}`,
+    ),
+  ],
+)
+
+export const mobileEventStreams = sqliteTable(
+  "mobile_event_streams",
+  {
+    grantId: text("grant_id")
+      .primaryKey()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    lastSequence: integer("last_sequence").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    check(
+      "mobile_event_streams_sequence_check",
+      sql`${table.lastSequence} >= 0 and ${table.lastSequence} <= 9007199254740991`,
+    ),
+  ],
+)
+
+export const mobileEventLog = sqliteTable(
+  "mobile_event_log",
+  {
+    grantId: text("grant_id")
+      .notNull()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    eventId: text("event_id").notNull(),
+    resourceKind: text("resource_kind"),
+    resourceId: text("resource_id"),
+    occurredAt: integer("occurred_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.grantId, table.sequence] }),
+    uniqueIndex("mobile_event_log_event_id_idx").on(table.eventId),
+    index("mobile_event_log_occurred_idx").on(table.occurredAt),
+    check(
+      "mobile_event_log_sequence_check",
+      sql`${table.sequence} >= 1 and ${table.sequence} <= 9007199254740991`,
+    ),
+    check(
+      "mobile_event_log_resource_check",
+      sql`(${table.resourceKind} is null and ${table.resourceId} is null) or (${table.resourceKind} in ('project', 'task', 'chat', 'run', 'orchestration', 'automation') and length(trim(${table.resourceId})) between 1 and 200)`,
+    ),
+  ],
+)
+
+export const mobileProjectedResources = sqliteTable(
+  "mobile_projected_resources",
+  {
+    grantId: text("grant_id")
+      .notNull()
+      .references(() => mobileAuthorityGrants.id, { onDelete: "cascade" }),
+    resourceKind: text("resource_kind").notNull(),
+    resourceId: text("resource_id").notNull(),
+    projectedAt: integer("projected_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.grantId, table.resourceKind, table.resourceId] }),
+    index("mobile_projected_resources_time_idx").on(table.projectedAt),
+    check(
+      "mobile_projected_resources_kind_check",
+      sql`${table.resourceKind} in ('project', 'task', 'chat', 'run', 'orchestration', 'automation')`,
+    ),
+    check(
+      "mobile_projected_resources_id_check",
+      sql`length(trim(${table.resourceId})) between 1 and 200`,
+    ),
+  ],
+)
+
+export const mobileAuthorityGrantsRelations = relations(mobileAuthorityGrants, ({ one, many }) => ({
+  device: one(mobileDevices, {
+    fields: [mobileAuthorityGrants.deviceId],
+    references: [mobileDevices.id],
+  }),
+  events: many(mobileEventLog),
+  projectedResources: many(mobileProjectedResources),
+  stream: one(mobileEventStreams, {
+    fields: [mobileAuthorityGrants.id],
+    references: [mobileEventStreams.grantId],
+  }),
+}))
+
+export const mobileEventStreamsRelations = relations(mobileEventStreams, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileEventStreams.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
+export const mobileEventLogRelations = relations(mobileEventLog, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileEventLog.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
+export const mobileProjectedResourcesRelations = relations(mobileProjectedResources, ({ one }) => ({
+  grant: one(mobileAuthorityGrants, {
+    fields: [mobileProjectedResources.grantId],
+    references: [mobileAuthorityGrants.id],
+  }),
+}))
+
 export const mobileSessionNoncesRelations = relations(mobileSessionNonces, ({ one }) => ({
   session: one(mobileDeviceSessions, {
     fields: [mobileSessionNonces.sessionId],

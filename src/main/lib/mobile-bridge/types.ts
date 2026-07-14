@@ -4,6 +4,7 @@ export const MOBILE_BRIDGE_DEFAULT_PORT = 4317
 export const MOBILE_BRIDGE_REQUESTS_PER_MINUTE = 120
 export const MOBILE_BRIDGE_MAX_CONNECTIONS = 32
 export const MOBILE_BRIDGE_MAX_CONNECTIONS_PER_ADDRESS = 4
+export const MOBILE_BRIDGE_MAX_BUFFERED_BYTES = 1024 * 1024
 
 export type MobileBridgeSettings = {
   version: 1
@@ -30,8 +31,9 @@ export type MobileBridgeCertificate = {
 export type MobileBridgeTransportSession = {
   id: string
   remoteAddress: string
-  send(data: string | Uint8Array): void
+  send(data: string | Uint8Array): boolean
   onMessage(listener: (data: Uint8Array) => void): () => void
+  onClose(listener: () => void): () => void
   close(code?: number, reason?: string): void
 }
 

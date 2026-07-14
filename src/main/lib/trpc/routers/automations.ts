@@ -7,6 +7,7 @@ import { AutomationTriggerService } from "../../automation/triggers"
 import { AutomationUiService } from "../../automation/ui-service"
 import { getDatabasePath } from "../../db"
 import { publicProcedure, router } from "../index"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 
 const user = { type: "user" as const, id: "local-user" }
 const service = () => new AutomationControlService(getDatabasePath())
@@ -72,12 +73,16 @@ export const automationsRouter = router({
     service().read(user, input.automationId)
     const triggerId = ui().manualTriggerId(input.automationId)
     if (!triggerId) throw new Error("This automation has no enabled manual trigger.")
-    return triggers().fireManual({ triggerId, idempotencyKey: randomUUID() })
+    const result = triggers().fireManual({ triggerId, idempotencyKey: randomUUID() })
+    publishAutomation(input.automationId)
+    return result
   }),
 
   pause: publicProcedure.input(z.object({ automationId })).mutation(({ input }) => {
     service().read(user, input.automationId)
-    return { changed: execution().pause(input.automationId) }
+    const result = { changed: execution().pause(input.automationId) }
+    if (result.changed) publishAutomation(input.automationId)
+    return result
   }),
 
   kill: publicProcedure
@@ -86,9 +91,11 @@ export const automationsRouter = router({
       service().read(user, input.automationId)
       ui().assertOccurrenceOwner(input.automationId, input.occurrenceId)
       const { createAutomationExecutionRuntime } = await import("../../automation/runtime")
-      return {
+      const result = {
         changed: await createAutomationExecutionRuntime(getDatabasePath()).kill(input.occurrenceId),
       }
+      if (result.changed) publishAutomation(input.automationId)
+      return result
     }),
 
   markInboxRead: publicProcedure
@@ -109,7 +116,11 @@ export const automationsRouter = router({
         idempotencyKey: z.string().trim().min(1).max(128).optional(),
       }),
     )
-    .mutation(({ input }) => service().createDraft(user, input)),
+    .mutation(({ input }) => {
+      const result = service().createDraft(user, input)
+      if (result.created) publishAutomation(result.record.id)
+      return result
+    }),
 
   classifyImpact: publicProcedure
     .input(z.object({ automationId, draft: automationDraftSchema }))
@@ -117,7 +128,11 @@ export const automationsRouter = router({
 
   update: publicProcedure
     .input(z.object({ automationId, expectedVersion, draft: automationDraftSchema }))
-    .mutation(({ input }) => service().update(user, input)),
+    .mutation(({ input }) => {
+      const result = service().update(user, input)
+      if (result.changed) publishAutomation(input.automationId)
+      return result
+    }),
 
   reviewDraft: publicProcedure
     .input(
@@ -128,22 +143,30 @@ export const automationsRouter = router({
         enable: z.boolean().default(false),
       }),
     )
-    .mutation(({ input }) => service().reviewDraft(user, { ...input, approval: approval() })),
+    .mutation(({ input }) => {
+      const result = service().reviewDraft(user, { ...input, approval: approval() })
+      if (result.changed) publishAutomation(input.automationId)
+      return result
+    }),
 
   setEnabled: publicProcedure
     .input(z.object({ automationId, expectedVersion, enabled: z.boolean() }))
-    .mutation(({ input }) =>
-      service().setEnabled(user, {
+    .mutation(({ input }) => {
+      const result = service().setEnabled(user, {
         ...input,
         ...(input.enabled ? { approval: approval() } : {}),
-      }),
-    ),
+      })
+      if (result.changed) publishAutomation(input.automationId)
+      return result
+    }),
 
   delete: publicProcedure
     .input(z.object({ automationId, expectedVersion }))
-    .mutation(({ input }) =>
-      service().archive(user, { ...input, auditId: `trpc:${randomUUID()}` }),
-    ),
+    .mutation(({ input }) => {
+      const result = service().archive(user, { ...input, auditId: `trpc:${randomUUID()}` })
+      if (result.changed) publishAutomation(input.automationId)
+      return result
+    }),
 
   validateDraft: publicProcedure.input(automationDraftSchema).mutation(({ input }) => {
     return {
@@ -154,3 +177,12 @@ export const automationsRouter = router({
     }
   }),
 })
+
+function publishAutomation(automationId: string): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["automations"],
+    automationIds: [automationId],
+  })
+}

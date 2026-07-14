@@ -36,6 +36,7 @@ import {
   setAppMobileBridgeService,
   type MobileBridgeService,
 } from "./lib/mobile-bridge"
+import { MobileControlRuntime, setAppMobileControlRuntime } from "./lib/mobile-events"
 import { getUsageSecret } from "./lib/usage/secrets"
 import { stopRunningRunsOverUsageBudget } from "./lib/usage/budgets"
 import {
@@ -83,6 +84,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 let mobileBridgeService: MobileBridgeService | null = null
+let mobileControlRuntime: MobileControlRuntime | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -877,7 +879,8 @@ if (gotTheLock) {
 
     const startupReady = await runRequiredStartup({
       initialize: () => {
-        initDatabase()
+        mobileControlRuntime = new MobileControlRuntime(initDatabase())
+        setAppMobileControlRuntime(mobileControlRuntime)
         console.log("[App] Database initialized")
       },
       continueStartup: async () => {
@@ -892,6 +895,7 @@ if (gotTheLock) {
               run: async () => {
                 productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
                   onInvalidation: (payload) => {
+                    mobileControlRuntime?.ingestInvalidation(payload)
                     for (const window of BrowserWindow.getAllWindows()) {
                       if (!window.isDestroyed()) {
                         window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
@@ -953,7 +957,9 @@ if (gotTheLock) {
             {
               name: "Mobile bridge",
               run: async () => {
-                mobileBridgeService = createDefaultMobileBridgeService()
+                mobileBridgeService = createDefaultMobileBridgeService({
+                  onWebSocket: mobileControlRuntime?.handleWebSocket,
+                })
                 setAppMobileBridgeService(mobileBridgeService)
                 await mobileBridgeService.startFromSettings()
               },
@@ -982,6 +988,9 @@ if (gotTheLock) {
         await mobileBridgeService?.stop("startup-cleanup")
         mobileBridgeService = null
         setAppMobileBridgeService(null)
+        mobileControlRuntime?.stop()
+        mobileControlRuntime = null
+        setAppMobileControlRuntime(null)
         closeDatabase()
       },
       exit: (code) => app.exit(code),
@@ -1056,6 +1065,9 @@ if (gotTheLock) {
           await mobileBridgeService?.stop("app-quit")
           mobileBridgeService = null
           setAppMobileBridgeService(null)
+          mobileControlRuntime?.stop()
+          mobileControlRuntime = null
+          setAppMobileControlRuntime(null)
         },
         cleanupGitWatchers,
         shutdownAnalytics,
