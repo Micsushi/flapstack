@@ -111,6 +111,15 @@
 - Blocked by: S4-F1-T1, S4-F1-T3, S4-F1-T4
 - Blocks: S4-F1-T7
 - Context: existing Agents Skills/Plugins/MCP tabs and Settings search registry.
+- Code-ready evidence: the shared Settings extension manager now consumes the
+  capability registry, native adapter previews, resolved user/project/task
+  policy, cross-harness copy previews, and managed-hook inventory/preview APIs.
+  Harness, kind, source, scope, and normalized search selectors; exact
+  preview/diff confirmations; honest unsupported states; and keyboard/screen-
+  reader contracts are covered headlessly. Completion remains unchecked because
+  the required live user/project/task walkthrough, Dev restart/runtime proof,
+  screen-reader observation, and packaged UI evidence remain manual verification
+  remaining; see `docs/stage4-s4-f1-t5-unified-manager.md`.
 
 ### S4-F1-T6 — Add hook validation, dry-run, and enablement
 
