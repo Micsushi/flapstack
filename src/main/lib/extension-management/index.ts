@@ -1,4 +1,5 @@
 export * from "./capability-registry"
 export * from "./cross-harness-copy"
+export * from "./enablement-policy"
 export * from "./hooks"
 export * from "./native-adapters"
