@@ -1,20 +1,17 @@
 "use client"
 
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { useState, useEffect } from "react"
+import { useAtomValue, useSetAtom } from "jotai"
+import { useState } from "react"
 import { ChevronLeft } from "lucide-react"
+import { toast } from "sonner"
 
 import { IconSpinner, KeyFilledIcon, SettingsFilledIcon } from "../../components/ui/icons"
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Logo } from "../../components/ui/logo"
-import {
-  apiKeyOnboardingCompletedAtom,
-  billingMethodAtom,
-  customClaudeConfigAtom,
-  type CustomClaudeConfig,
-} from "../../lib/atoms"
+import { apiKeyOnboardingCompletedAtom, billingMethodAtom } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
+import { trpc } from "../../lib/trpc"
 
 // Check if the key looks like a valid Anthropic API key
 const isValidApiKey = (key: string) => {
@@ -23,7 +20,6 @@ const isValidApiKey = (key: string) => {
 }
 
 export function ApiKeyOnboardingPage() {
-  const [storedConfig, setStoredConfig] = useAtom(customClaudeConfigAtom)
   const billingMethod = useAtomValue(billingMethodAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
@@ -34,45 +30,45 @@ export function ApiKeyOnboardingPage() {
   const defaultModel = "claude-sonnet-5"
   const defaultBaseUrl = "https://api.anthropic.com"
 
-  const [apiKey, setApiKey] = useState(storedConfig.token)
-  const [model, setModel] = useState(storedConfig.model || "")
-  const [token, setToken] = useState(storedConfig.token)
-  const [baseUrl, setBaseUrl] = useState(storedConfig.baseUrl || "")
+  const [apiKey, setApiKey] = useState("")
+  const [model, setModel] = useState("")
+  const [token, setToken] = useState("")
+  const [baseUrl, setBaseUrl] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Sync from stored config on mount
-  useEffect(() => {
-    if (storedConfig.token) {
-      setApiKey(storedConfig.token)
-      setToken(storedConfig.token)
-    }
-    if (storedConfig.model) setModel(storedConfig.model)
-    if (storedConfig.baseUrl) setBaseUrl(storedConfig.baseUrl)
-  }, [])
+  const setCredential = trpc.credentials.set.useMutation()
 
   const handleBack = () => {
     setBillingMethod(null)
   }
 
   // Submit for API key mode (simple - just the key)
-  const submitApiKey = (key: string) => {
+  const submitApiKey = async (key: string) => {
     if (!isValidApiKey(key)) return
 
     setIsSubmitting(true)
 
-    const config: CustomClaudeConfig = {
-      model: defaultModel,
-      token: key.trim(),
-      baseUrl: defaultBaseUrl,
+    try {
+      const status = await setCredential.mutateAsync({
+        id: "claude.custom-api-token",
+        secret: key.trim(),
+        metadata: { model: defaultModel, baseUrl: defaultBaseUrl },
+      })
+      setApiKey("")
+      setApiKeyOnboardingCompleted(true)
+      if (status.persistence === "session") {
+        toast.warning("Claude API key is available for this session only", {
+          description: status.warning,
+        })
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save Claude API key")
+    } finally {
+      setIsSubmitting(false)
     }
-    setStoredConfig(config)
-    setApiKeyOnboardingCompleted(true)
-
-    setIsSubmitting(false)
   }
 
   // Submit for custom model mode (all three fields)
-  const submitCustomModel = () => {
+  const submitCustomModel = async () => {
     const trimmedModel = model.trim()
     const trimmedToken = token.trim()
     const trimmedBaseUrl = baseUrl.trim()
@@ -81,15 +77,24 @@ export function ApiKeyOnboardingPage() {
 
     setIsSubmitting(true)
 
-    const config: CustomClaudeConfig = {
-      model: trimmedModel,
-      token: trimmedToken,
-      baseUrl: trimmedBaseUrl,
+    try {
+      const status = await setCredential.mutateAsync({
+        id: "claude.custom-api-token",
+        secret: trimmedToken,
+        metadata: { model: trimmedModel, baseUrl: trimmedBaseUrl },
+      })
+      setToken("")
+      setApiKeyOnboardingCompleted(true)
+      if (status.persistence === "session") {
+        toast.warning("Custom Claude credential is available for this session only", {
+          description: status.warning,
+        })
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save custom credential")
+    } finally {
+      setIsSubmitting(false)
     }
-    setStoredConfig(config)
-    setApiKeyOnboardingCompleted(true)
-
-    setIsSubmitting(false)
   }
 
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {

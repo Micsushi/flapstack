@@ -5,10 +5,18 @@ import { z } from "zod"
 import { chats, getDatabase, projects, tasks } from "../../db"
 import { createWorktree, getDefaultBranch } from "../../git/worktree"
 import { sanitizeProjectName } from "../../git/worktree-naming"
-import { permissionModes } from "../../permissions"
+import {
+  parseCustomPermissionToggles,
+  permissionModes,
+  type CustomPermissionToggles,
+} from "../../permissions"
 import { publicProcedure, router } from "../index"
 
 const permissionModeSchema = z.enum(permissionModes)
+const customPermissionsSchema = z.custom<CustomPermissionToggles>(
+  (value) => parseCustomPermissionToggles(value) !== null,
+  "Expected complete versioned custom permission capabilities",
+)
 
 function taskWorktreeSlug(task: { id: string; name: string }): string {
   const nameSlug = sanitizeProjectName(task.name) || "task"
@@ -70,6 +78,7 @@ export const tasksRouter = router({
           name: input.name,
           description: input.description,
           defaultPermissionMode: project.defaultPermissionMode,
+          defaultCustomPermissions: project.defaultCustomPermissions,
         })
         .returning()
         .get()
@@ -121,14 +130,37 @@ export const tasksRouter = router({
         description: z.string().optional().nullable(),
         status: z.string().optional(),
         defaultPermissionMode: permissionModeSchema.optional(),
+        defaultCustomPermissions: customPermissionsSchema.optional().nullable(),
       }),
     )
     .mutation(({ input }) => {
       const db = getDatabase()
       const { id, ...updates } = input
+      if (updates.defaultCustomPermissions !== undefined && !updates.defaultPermissionMode) {
+        throw new Error("Updating custom capability toggles also requires a permission mode.")
+      }
+      if (updates.defaultPermissionMode === "custom" && !updates.defaultCustomPermissions) {
+        throw new Error("Custom permission mode requires explicit capability toggles.")
+      }
+      if (
+        updates.defaultPermissionMode &&
+        updates.defaultPermissionMode !== "custom" &&
+        updates.defaultCustomPermissions
+      ) {
+        throw new Error("Custom capability toggles require custom permission mode.")
+      }
       return db
         .update(tasks)
-        .set({ ...updates, updatedAt: new Date() })
+        .set({
+          ...updates,
+          defaultCustomPermissions:
+            updates.defaultPermissionMode === undefined
+              ? undefined
+              : updates.defaultCustomPermissions
+                ? JSON.stringify(updates.defaultCustomPermissions)
+                : null,
+          updatedAt: new Date(),
+        })
         .where(eq(tasks.id, id))
         .returning()
         .get()

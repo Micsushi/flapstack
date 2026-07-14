@@ -67,6 +67,7 @@ export async function startSidecar(params: {
   modelId?: string
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh"
+  reasoningSupported: boolean | null
   cwd: string
   startupTimeoutMs?: number
   signal?: AbortSignal
@@ -90,6 +91,7 @@ export async function startSidecar(params: {
       generationProxy?.baseUrl,
       params.reasoningEnabled,
       params.reasoningEffort,
+      params.reasoningSupported,
     )
     configDir = generated.configDir
     configEnv = generated.env

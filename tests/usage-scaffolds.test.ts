@@ -17,6 +17,7 @@ import {
   buildLaunchAgentPlist,
   buildSystemdUserUnit,
   buildWindowsDaemonScript,
+  daemonServiceIdForConfig,
   uninstallLaunchAgent,
 } from "../src/main/lib/usage-daemon/platform"
 import {
@@ -27,10 +28,13 @@ import { selectNewestCredentials } from "../src/main/lib/usage/providers/cursor/
 import { getProviderJson } from "../src/main/lib/usage/providers/http"
 import { credentialAccountTag } from "../src/main/lib/usage/provider-identity"
 import { elapsedWindowHours } from "../src/main/lib/usage/alert-runner"
+import { UsageScheduler } from "../src/main/lib/usage/scheduler"
+import type { UsageEngine } from "../src/main/lib/usage/engine"
 import { pollCodexPersonal } from "../src/main/lib/usage/providers/codex-personal"
 import { pollAnthropicPersonal } from "../src/main/lib/usage/providers/anthropic-personal"
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
 })
@@ -360,6 +364,55 @@ describe("usage Track B scaffolds", () => {
       "unavailable",
       "OpenRouter returned HTTP 404",
     )
+  })
+
+  it("continues OpenRouter reconciliation after malformed generation responses", async () => {
+    const mark = vi.fn().mockResolvedValue(undefined)
+    const log = vi.fn()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        const parsed = new URL(url)
+        if (parsed.pathname.endsWith("/models"))
+          return Promise.resolve(new Response(JSON.stringify({ data: [] })))
+        if (parsed.pathname.endsWith("/key"))
+          return Promise.resolve(new Response(JSON.stringify({ data: { usage: 1 } })))
+        const id = parsed.searchParams.get("id")
+        if (id === "gen-missing-data")
+          return Promise.resolve(new Response(JSON.stringify({ data: null })))
+        if (id === "gen-mismatch")
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: { id: "different-generation", total_cost: 9 } })),
+          )
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: { id, total_cost: 0.25, tokens_prompt: 3 } })),
+        )
+      }),
+    )
+
+    const samples = await getUsageProvider("openrouter")!.pollLatest({
+      now: new Date("2026-07-10T12:00:00Z"),
+      source: "startup-reconcile",
+      getSecret: async () => "sk-or-test",
+      getPendingGenerationIds: async () => ["gen-missing-data", "gen-mismatch", "gen-valid"],
+      markGenerationReconciliation: mark,
+      log,
+    })
+
+    expect(samples.map((sample) => sample.generationId).filter(Boolean)).toEqual(["gen-valid"])
+    expect(mark).toHaveBeenCalledWith(
+      "openrouter",
+      "gen-missing-data",
+      "retry",
+      "OpenRouter generation response omitted data",
+    )
+    expect(mark).toHaveBeenCalledWith(
+      "openrouter",
+      "gen-mismatch",
+      "retry",
+      "OpenRouter generation response id did not match the requested generation",
+    )
+    expect(log).toHaveBeenCalledTimes(2)
   })
 
   it("times out provider HTTP requests with a sanitized source error", async () => {
@@ -736,6 +789,26 @@ describe("usage Track B scaffolds", () => {
     expect(plist).toContain("<key>KeepAlive</key><false/>")
   })
 
+  it("isolates preview and dev daemon services and secret namespaces", () => {
+    expect(
+      daemonServiceIdForConfig("/Users/test/Library/Application Support/Flapstack/data"),
+    ).toBeNull()
+    expect(
+      daemonServiceIdForConfig("/Users/test/Library/Application Support/Flapstack Dev c100/data"),
+    ).toBe("flapstack-dev-c100")
+    const plist = buildLaunchAgentPlist({
+      nodePath: "/app/Flapstack",
+      daemonEntryPath: "/app/usage-daemon.js",
+      dbPath: "/profile/data/agents.db",
+      configDir: "/profile/data",
+      cadenceSeconds: 30,
+      serviceId: "flapstack-dev-c100",
+      secretNamespace: "flapstack-dev-c100",
+    })
+    expect(plist).toContain("dev.flapstack.usage-daemon.flapstack-dev-c100")
+    expect(plist).toContain("FLAPSTACK_USAGE_SECRET_NAMESPACE")
+  })
+
   it("builds Windows and Linux per-user daemon launch definitions", () => {
     const params = {
       nodePath: "/Applications/Flapstack.app/Contents/MacOS/Flapstack",
@@ -743,6 +816,7 @@ describe("usage Track B scaffolds", () => {
       dbPath: "/tmp/data/agents.db",
       configDir: "/tmp/data",
       cadenceSeconds: 300,
+      secretNamespace: "flapstack-preview",
     }
     const windows = buildWindowsDaemonScript({
       ...params,
@@ -752,9 +826,11 @@ describe("usage Track B scaffolds", () => {
       configDir: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack",
     })
     expect(windows).toContain('set "ELECTRON_RUN_AS_NODE=1"')
+    expect(windows).toContain('set "FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
     expect(windows).toContain('"C:\\Program Files\\Flapstack\\Flapstack.exe"')
     const systemd = buildSystemdUserUnit(params)
     expect(systemd).toContain('Environment="FLAPSTACK_DB_PATH=/tmp/data/agents.db"')
+    expect(systemd).toContain('Environment="FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
     expect(systemd).toContain("WantedBy=default.target")
     expect(systemd).toContain('ExecStart="/Applications/Flapstack.app/Contents/MacOS/Flapstack"')
   })
@@ -766,9 +842,19 @@ describe("usage Track B scaffolds", () => {
       return undefined
     })
     expect(() =>
-      uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove }),
+      uninstallLaunchAgent({
+        path: "/tmp/test.plist",
+        domain: "gui/501",
+        label: "dev.flapstack.usage-daemon.flapstack-dev-c100",
+        run,
+        remove,
+      }),
     ).toThrow(/still loaded/)
     expect(remove).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledWith(
+      ["print", "gui/501/dev.flapstack.usage-daemon.flapstack-dev-c100"],
+      { stdio: "ignore" },
+    )
   })
 
   it("removes a stale daemon plist only after launchctl confirms no job is loaded", () => {
@@ -788,6 +874,25 @@ describe("usage Track B scaffolds", () => {
         new Date("2026-07-10T06:00:00Z"),
       ),
     ).toBe(6)
+  })
+
+  it("keeps one cadence timer after a forced scheduler tick", async () => {
+    vi.useFakeTimers()
+    const runOnce = vi.fn().mockResolvedValue([])
+    const scheduler = new UsageScheduler({ runOnce } as unknown as UsageEngine, {
+      getCadenceSeconds: () => 30,
+    })
+
+    scheduler.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(runOnce).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+
+    await scheduler.tick()
+    expect(runOnce).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(1)
+    scheduler.stop()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it("normalizes Cursor epoch seconds and prefers the newer Cursor login", () => {

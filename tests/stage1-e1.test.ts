@@ -125,6 +125,7 @@ function createTestSchema() {
       git_repo text,
       icon_path text,
       default_permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      default_custom_permissions text,
       pinned_at integer,
       archived_at integer
     )`,
@@ -135,6 +136,7 @@ function createTestSchema() {
       description text,
       status text DEFAULT 'active' NOT NULL,
       default_permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      default_custom_permissions text,
       primary_worktree_path text,
       primary_branch text,
       pinned_at integer,
@@ -150,6 +152,7 @@ function createTestSchema() {
       task_id text REFERENCES tasks(id) ON DELETE cascade,
       scope text DEFAULT 'project' NOT NULL,
       permission_mode text DEFAULT 'ask-before-edits' NOT NULL,
+      custom_permissions text,
       harness text,
       model text,
       created_at integer,
@@ -160,7 +163,12 @@ function createTestSchema() {
       branch text,
       base_branch text,
       pr_url text,
-      pr_number integer
+      pr_number integer,
+      mcp_exposure_enabled integer DEFAULT false NOT NULL,
+      parent_chat_id text,
+      initiator_chat_id text,
+      parent_run_id text,
+      ancestor_chat_ids text
     )`,
     "CREATE INDEX chats_worktree_path_idx ON chats(worktree_path)",
     "CREATE INDEX chats_task_id_idx ON chats(task_id)",
@@ -188,8 +196,10 @@ function createTestSchema() {
       harness text NOT NULL,
       model text,
       permission_mode text NOT NULL,
+      custom_permissions text,
       worktree_path text,
       prompt_message_id text,
+      initial_prompt text,
       status text DEFAULT 'running' NOT NULL,
       started_at integer,
       completed_at integer,
@@ -329,6 +339,46 @@ describe("top-level chat forks", () => {
       sdkMessageUuid: "sdk-1",
       shouldForkResume: true,
     })
+  })
+})
+
+describe("chat export visibility", () => {
+  it("excludes hidden file payloads from local JSON clipboard/export data", async () => {
+    const db = getDatabase()
+    const chat = insertChat({ scope: "global", name: "Hidden file export" })
+    const secret = "sk-proj-hidden-export-secret"
+    db.insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify([
+          {
+            id: "current",
+            role: "user",
+            parts: [
+              { type: "text", text: "visible current" },
+              { type: "file-content", content: secret, name: "current.txt" },
+            ],
+          },
+          {
+            id: "legacy",
+            role: "user",
+            content: [
+              { type: "text", text: "visible legacy" },
+              { type: "file-content", text: secret, name: "legacy.txt" },
+            ],
+          },
+        ]),
+      })
+      .run()
+
+    const exported = await chatsRouter.createCaller(ctx).exportChat({
+      chatId: chat.id,
+      format: "json",
+    })
+    expect(exported.content).toContain("visible current")
+    expect(exported.content).toContain("visible legacy")
+    expect(exported.content).not.toContain(secret)
+    expect(exported.content).not.toContain("file-content")
   })
 })
 
@@ -888,6 +938,7 @@ describe("Stage 1 E1 search archive and scope filters", () => {
         expect.objectContaining({ title: "needle hidden project-parent chat" }),
       ]),
     )
+    expect(await caller.query({ query: "attachment text" })).toEqual([])
 
     const projectScoped = await caller.query({
       query: "needle",
@@ -1025,6 +1076,32 @@ describe("Stage 1 E1 search archive and scope filters", () => {
       })
       .returning()
       .get()
+    const structuredQuestionMatch = db
+      .insert(subChats)
+      .values({
+        chatId: chat.id,
+        messages: JSON.stringify([
+          {
+            id: "message-structured-question",
+            role: "assistant",
+            metadata: { privateValue: "private-jsonneedle" },
+            parts: [
+              {
+                type: "tool-AskUserQuestion",
+                input: {
+                  questions: [
+                    { question: "Which jsonneedle branch?", secret: "private-jsonneedle" },
+                  ],
+                  privatePrompt: "private-jsonneedle",
+                },
+                result: { answers: { branch: "codex/jsonneedle" } },
+              },
+            ],
+          },
+        ]),
+      })
+      .returning()
+      .get()
 
     const results = await searchRouter.createCaller(ctx).query({ query: "jsonneedle" })
 
@@ -1044,9 +1121,16 @@ describe("Stage 1 E1 search archive and scope filters", () => {
           messageId: "message-legacy-reasoning",
           snippet: "legacy jsonneedle reasoning",
         }),
+        expect.objectContaining({
+          type: "message",
+          chatId: chat.id,
+          subChatId: structuredQuestionMatch.id,
+          messageId: "message-structured-question",
+          snippet: expect.stringContaining("Which jsonneedle branch?"),
+        }),
       ]),
     )
-    expect(results).toHaveLength(2)
+    expect(results).toHaveLength(3)
     expect(results).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ subChatId: falsePositive.id }),
@@ -1060,6 +1144,7 @@ describe("Stage 1 E1 search archive and scope filters", () => {
         }),
       ]),
     )
+    expect(await searchRouter.createCaller(ctx).query({ query: "private-jsonneedle" })).toEqual([])
   })
 })
 

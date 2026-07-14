@@ -1,7 +1,16 @@
 import { desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { captureCheckpoint, captureRunManifest } from "../../checkpoints"
-import { agentRuns, checkpoints, fileChangeManifests, getDatabase } from "../../db"
+import {
+  agentRuns,
+  chats,
+  checkpoints,
+  fileChangeManifests,
+  getDatabase,
+  projects,
+  tasks,
+} from "../../db"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { permissionModes } from "../../permissions"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
@@ -23,6 +32,26 @@ export const runsRouter = router({
     )
     .mutation(async ({ input }) => {
       const db = getDatabase()
+      const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+      if (!chat) throw new Error("Chat not found")
+      let checkpointRoot: string | null = null
+      if (input.worktreePath) {
+        const project = chat.projectId
+          ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+          : null
+        const task = chat.taskId
+          ? db.select().from(tasks).where(eq(tasks.id, chat.taskId)).get()
+          : null
+        const allowedRoots = new Set(
+          [chat.worktreePath, project?.path, task?.primaryWorktreePath].filter(
+            (path): path is string => Boolean(path),
+          ),
+        )
+        if (!allowedRoots.has(input.worktreePath)) {
+          throw new Error("Run worktree must be a registered root owned by its chat")
+        }
+        checkpointRoot = assertRegisteredWorktree(input.worktreePath).canonicalPath
+      }
       const run = db
         .insert(agentRuns)
         .values({
@@ -31,6 +60,7 @@ export const runsRouter = router({
           harness: input.harness,
           model: input.model,
           permissionMode: input.permissionMode,
+          customPermissions: input.permissionMode === "custom" ? chat.customPermissions : null,
           worktreePath: input.worktreePath ?? null,
           promptMessageId: input.promptMessageId,
           status: "running",
@@ -38,7 +68,7 @@ export const runsRouter = router({
         .returning()
         .get()
 
-      const before = await captureCheckpoint(run.id, input.worktreePath ?? null, "before")
+      const before = await captureCheckpoint(run.id, checkpointRoot, "before")
       return db
         .update(agentRuns)
         .set({ beforeCheckpointId: before.id })
@@ -59,7 +89,10 @@ export const runsRouter = router({
       const run = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
       if (!run) throw new Error("Run not found")
 
-      const after = await captureCheckpoint(run.id, run.worktreePath, "after")
+      const checkpointRoot = run.worktreePath
+        ? assertRegisteredWorktree(run.worktreePath).canonicalPath
+        : null
+      const after = await captureCheckpoint(run.id, checkpointRoot, "after")
       await captureRunManifest(run.id)
 
       return db

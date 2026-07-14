@@ -1,0 +1,186 @@
+# S3-F15 Provider Harness Closeout Board
+
+This board replaces former Stage 2 tasks `3.6`, `4.9`, and `4.11`. It is the
+sole completion authority for their remaining provider-harness work.
+
+### S3-F15-T1 — Reconcile provider contracts and freeze the closeout matrix
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
+- Outcome: Current Cursor, OpenCode, OpenRouter, and NanoGPT surfaces map to one
+  exact fixture/live/package evidence matrix.
+- Scope: Probe versions/help/status/models/events; reconcile D0-D5 and E1-E7
+  rows; classify required/conditional/unsupported behavior; define evidence
+  headers, low-cost credentials/models, cleanup, and pass/fail/block semantics.
+- Out of scope: Preserve a stale assumption solely because an old fixture used it.
+- Acceptance:
+  - Every spec scenario maps to stable matrix rows and current capability data.
+  - CLI headers/errors cannot parse as models and all probes have deadlines.
+  - Fixture, CLI-live, provider-live, UI-live, and package evidence are distinct.
+- Verification: capability probes; parser/timeout tests; strict spec/coverage
+  review; `openspec validate close-provider-harnesses --strict`.
+- Blocked by: none.
+- Blocks: S3-F15-T2, S3-F15-T3.
+- Relevant context: Cursor/OpenCode adapters, provider catalogs,
+  `docs/stage2-full-feature-test-matrix.md` tracks D and E.
+
+### S3-F15-T2 — Close Cursor auth, lifecycle, and persistence behavior
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
+- Outcome: Cursor reliably runs, retries, stops, resumes, and records one honest
+  turn with exact provider/model and limitation state.
+- Scope: Harden CLI parse/timeouts/status; browser/API-key auth; blocked-turn
+  retry; stream/final dedupe; structured error/zero-exit failure; EPIPE; session
+  continuation; cancellation; checkpoints/manifest; model persistence; image
+  rejection; permission preview and limitations.
+- Out of scope: Claim Cursor enforcement unavailable from its current CLI.
+- Acceptance:
+  - Successful live turn streams and persists all required run artifacts.
+  - Auth recovery retries the existing turn without duplicate user messages.
+  - Failed/cancelled/unsupported cases are terminal and visible.
+  - Exact selected model survives continuation and restart.
+- Verification: `tests/cursor-harness.test.ts`, credential/persistence focused
+  suites, verified live Cursor matrix, database/run inspection.
+- Blocked by: S3-F15-T1, S3-F10-T4, S3-F12-T5.
+- Blocks: S3-F15-T5.
+- Relevant context: `src/main/lib/cursor/**`, Cursor renderer transport,
+  provider error normalization, reasoning fixtures.
+- 2026-07-13 safe closeout: current Cursor CLI `2026.07.09-a3815c0` reports
+  `auto` as default; an authenticated low-risk CLI turn and same-session
+  continuation passed. The adapter now uses that default, bounds chat runs, and
+  reuses the existing logical user turn during auth recovery. Completion stays
+  open because the locked Mac prevented Flapstack UI/database auth-retry,
+  stop/restart, exact-model persistence, and S3-F12 live enforcement proof.
+- 2026-07-13 unlocked follow-up: exact-worktree `Flapstack Dev` completed a
+  clean `auto` turn and same-session continuation through production Cursor
+  persistence. Both runs kept one user/assistant pair, the same session ID,
+  before/after checkpoints, read-only limitation truth, reasoning disclosure,
+  and reload-visible output. T2 remains open for auth-retry, Stop/restart, and
+  the hard S3-F10-T4/S3-F12-T5 prerequisites.
+
+### S3-F15-T3 — Close OpenRouter and NanoGPT runtime and model defaults
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
+- Outcome: Both OpenCode-backed providers complete low-cost live chats using
+  exact, current, chat-capable model IDs.
+- Scope: Harden sidecar resolution/health/session/subscription/prompt deadlines;
+  isolated config and keys; catalog refresh/cache; default filtering; replace
+  stale NanoGPT DeepSeek seed; live minimal completions; stream/reasoning/tool
+  lifecycle; provider identity; package PATH resolution; cleanup.
+- Out of scope: Adopt a new sidecar architecture or seed a model based only on
+  catalog metadata.
+- Acceptance:
+  - OpenRouter and NanoGPT each complete one persisted live turn.
+  - The NanoGPT seed is current and chat-capable, proven by a minimal live run.
+  - Missing key/model/binary fails before misleading provider work.
+  - Temporary config, child processes, and subscriptions clean up after every
+    terminal outcome.
+- Verification: OpenCode transport/sidecar/model-catalog suites; dev-test-control
+  MCP live launch/wait; verified UI runs; package resolution smoke.
+- Blocked by: S3-F15-T1, S3-F10-T4; dev-test-control MCP closeout
+  (`add-dev-test-control-mcp` tasks 3.3 and 3.4).
+- Blocks: S3-F15-T4, S3-F15-T5.
+- Relevant context: `src/main/lib/harness/opencode-sidecar/**`, OpenCode tRPC
+  router and renderer transport, model provider settings.
+- 2026-07-13 safe closeout: fresh persisted dev-headless OpenRouter and NanoGPT
+  turns passed with exact provider/model, checkpoints, session, usage, and
+  terminal state. `zai-org/glm-latest` is proven chat-capable. The OpenRouter
+  probe exposed conflicting duplicate reasoning fields; the corrected config
+  passed a fresh run. SSE idle lifetime is now bounded. Preview arm64 package
+  inspection and bundled binary smoke pass. Completion stays open for verified
+  renderer behavior.
+
+### S3-F15-T4 — Prove provider permissions, approvals, and run integrity
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
+- Outcome: Provider tools and concurrent lifecycle events obey the displayed
+  permissions and preserve one coherent run record.
+- Scope: Exercise allow/deny/ask modes; exact approval request and scope;
+  allow-once/reusable/deny; no-handler fail-closed; overlapping subscriptions;
+  message mutation; persistence failure; generation/usage hooks; failed,
+  cancelled, and completed terminal state; audit correlation.
+- Out of scope: Redefine permission modes or production MCP risk tiers.
+- Acceptance:
+  - Displayed permission application matches S3-F12 runtime enforcement.
+  - No missing handler or unknown tool silently allows work.
+  - Only the active run mutates its chat and existing messages survive by ID.
+  - Tool decisions and terminal state agree across provider, run metadata, and
+    production MCP audit where applicable.
+- Verification: provider permission matrix, approval bridge and persistence
+  integration tests, verified live allow/deny/cancel run, SQLite/audit compare.
+- Blocked by: S3-F15-T3, S3-F12-T5, S3-F3-T4, S3-F4-T2, S3-F6-T2.
+- Blocks: S3-F15-T5.
+- Relevant context: OpenCode permissions/events/session/persistence, S3-F12
+  capability contract, production MCP approval/audit services.
+- 2026-07-13 safe closeout: dev-headless allow-once, deny, and active-run cancel
+  smokes persisted exact command/pattern, user decision source, coherent
+  terminal state, and before/after checkpoints. Product/dev/third-party MCP
+  identity and fail-closed matrices pass in focused tests. Completion stays open
+  for S3-F12/S3-F6 visual permission and approval evidence plus UI/audit
+  correlation; no exact project-boundary claim is made.
+
+### S3-F15-T5 — Publish and pass provider harness exit
+
+- [x] Completion: acceptance and verification passed
+- Parent: Flapstack / S3 Safe Agent Control / S3-F15 Provider Harness Closeout
+- Outcome: One SHA-bound evidence record proves the required Cursor,
+  OpenRouter, and NanoGPT release paths and honest limitations.
+- Scope: Run focused/full gates and provider matrix; verify chips/models,
+  create/send/retry/approve/deny/stop/resume/reload flows, persisted artifacts,
+  package resolution, docs/task truth, cleanup, and exact evidence metadata.
+- Out of scope: Mark a provider-live row passed from fixtures or another SHA.
+- Acceptance:
+  - Required provider-live and UI-live rows pass with exact chat/run evidence.
+  - Every conditional credential/platform row is PASS, FAIL, or BLOCKED.
+  - Node 22 `npm run check`, strict OpenSpec, and package smoke pass.
+  - No key, generated config, temporary process, or test chat remains exposed or
+    active unintentionally.
+- Verification: focused suites; Node 22 `npm run check`; strict validation;
+  verified dev (`npm run dev`, `npm run dev:verify`); package/provider matrix;
+  `git diff --check`.
+- Blocked by: S3-F15-T2, S3-F15-T3, S3-F15-T4.
+- Blocks: S3-F16-T4, S3-F17-T2.
+- Relevant context: this change, provider evidence matrix, live-dev/package
+  identity rules, low-value credential policy.
+- 2026-07-13 safe closeout: `npm run dev` and `npm run dev:verify` passed for
+  this exact worktree and `Flapstack Dev`; focused provider/permission suites
+  and strict OpenSpec passed. Implementation SHA
+  `99672b7fc3607e84cc478f981e35b8c69c9343b8` passed the full Node 22 gate (746
+  passed, 3 skipped), unsigned Preview arm64 packaging, package inspection, and
+  bundled Claude/Codex/Whisper/Parakeet smoke. Packaged ACP stale-session
+  fallback and product-MCP server identity were inspected. All test chats were
+  archived, no approval remained pending, no temporary sidecar directory
+  remained, and artifacts contain no credential. Required visual rows remain
+  open while the Mac is locked.
+
+### 2026-07-13 final credential-path continuation
+
+- Cursor, OpenRouter reasoning-enabled, NanoGPT enabled/disabled, Codex
+  low/minimal, and Claude low/minimal credentialed headless runs completed on a
+  live tree exactly matching base `f4c4ad4`. OpenRouter disabled truthfully
+  failed because the free endpoint mandates reasoning.
+- Raw OpenRouter/NanoGPT catalog IDs exposed missing provider-prefix
+  normalization in dev-test launch. The source fix and regression assertions
+  are included in this lane; final integration must rerun after landing it.
+- Claude native question initiation was attempted. Read-only `dontAsk` blocked
+  `AskUserQuestion`; other providers remain continuation-only. No question row
+  is promoted.
+- All chats archived, recorded approvals are empty, and sidecar temp cleanup
+  passed. T3-T5 stay unchecked because this base predates final integration and
+  lacks same-SHA renderer/package/cross-platform closure.
+
+### 2026-07-14 integrated completion evidence
+
+- Cursor `b18f987c...` completed and reloaded with exact `auto` model identity,
+  session, checkpoints, read-only limitation, and one coherent transcript.
+  Auth-retry, cancellation, malformed output, and duplicate suppression remain
+  covered by the current focused matrix.
+- OpenRouter `fb41aee8...` and NanoGPT `648c7080...` completed in the exact Dev
+  profile. NanoGPT run `6dd30cbc...` cancelled terminally without leaking the
+  compact context envelope. Package sidecar resolution and cleanup passed.
+- Live read-only permission application passed across all five providers;
+  automated allow-once, deny, missing-handler, overlap, and audit-correlation
+  rows pass. Windows/Linux are deferred to Stage 4 and are not Stage 3 blockers.

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { PlanIcon, ExpandIcon, CollapseIcon, IconSpinner } from "@/components/ui/icons"
 import { ChatMarkdownRenderer } from "@/components/chat-markdown-renderer"
 import { trpc } from "@/lib/trpc"
+import { toDurablePlanFileTarget } from "@/lib/file-target"
 import { planContentCacheAtomFamily } from "../atoms"
 import type { AgentMode } from "../../agents/atoms"
 
@@ -16,6 +17,7 @@ interface PlanWidgetProps {
   chatId: string
   /** Active sub-chat ID for plan fetching */
   activeSubChatId?: string | null
+  worktreePath: string | null
   /** Path to the plan file */
   planPath: string | null
   /** Plan refetch trigger */
@@ -37,6 +39,7 @@ interface PlanWidgetProps {
 export const PlanWidget = memo(function PlanWidget({
   chatId,
   activeSubChatId,
+  worktreePath,
   planPath,
   refetchTrigger,
   mode = "agent",
@@ -55,6 +58,10 @@ export const PlanWidget = memo(function PlanWidget({
 
   // Plan content cache to avoid flashing loading state
   const [planCache, setPlanCache] = useAtom(planContentCacheAtomFamily(effectiveChatId))
+  const fileTarget = useMemo(
+    () => toDurablePlanFileTarget(worktreePath, effectiveChatId, planPath),
+    [worktreePath, effectiveChatId, planPath],
+  )
 
   // Fetch plan file content using tRPC
   const {
@@ -62,7 +69,10 @@ export const PlanWidget = memo(function PlanWidget({
     isLoading,
     error,
     refetch,
-  } = trpc.files.readFile.useQuery({ filePath: planPath! }, { enabled: !!planPath })
+  } = trpc.files.readFile.useQuery(
+    fileTarget ?? { rootPath: worktreePath || "invalid", relativePath: "invalid" },
+    { enabled: !!fileTarget },
+  )
 
   // Update cache when content loads successfully
   useEffect(() => {

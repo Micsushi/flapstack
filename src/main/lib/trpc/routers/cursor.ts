@@ -12,6 +12,7 @@ import { agentRuns, chats, getDatabase, subChats } from "../../db"
 import {
   buildCursorEnv,
   CursorAgentNotFoundError,
+  resolveCursorRunTimeoutMs,
   resolveCursorAgentBinary,
 } from "../../cursor/binary"
 import { buildCursorArgs } from "../../cursor/args"
@@ -25,6 +26,7 @@ import {
   isCursorAuthText,
   parseCursorStreamLine,
 } from "../../cursor/stream"
+import { findReusableCursorPromptMessage } from "../../cursor/turn"
 import {
   buildHarnessContextBundle,
   getLastHarnessContextFingerprint,
@@ -47,10 +49,13 @@ type ActiveCursorStream = {
   runId: string
   child: ChildProcess
   cancelRequested: boolean
+  failureReason?: string
   killTimer?: ReturnType<typeof setTimeout>
+  runTimeout?: ReturnType<typeof setTimeout>
 }
 
 const activeStreams = new Map<string, ActiveCursorStream>()
+const devRunSubscriptions = new Map<string, { unsubscribe?: () => void }>()
 
 function terminateCursorStream(stream: ActiveCursorStream): void {
   stream.cancelRequested = true
@@ -83,6 +88,15 @@ export function abortAllCursorStreams(): void {
   // here loses that signal and can incorrectly mark a killed run as successful.
 }
 
+export function cancelActiveCursorRun(input: { subChatId: string; runId: string }) {
+  const activeStream = activeStreams.get(input.subChatId)
+  if (!activeStream) return { cancelled: false, ignoredStale: false }
+  if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
+
+  terminateCursorStream(activeStream)
+  return { cancelled: true, ignoredStale: false }
+}
+
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
   mediaType: z.string(),
@@ -97,20 +111,6 @@ function parseStoredMessages(raw: string | null | undefined): any[] {
   } catch {
     return []
   }
-}
-
-function extractPromptFromStoredMessage(message: any): string {
-  if (!message || !Array.isArray(message.parts)) return ""
-  const textParts: string[] = []
-  for (const part of message.parts) {
-    if (part?.type === "text" && typeof part.text === "string") {
-      textParts.push(part.text)
-    } else if (part?.type === "file-content" && typeof part.content === "string") {
-      const fileName = part.filePath?.split("/").pop() || part.filePath || "file"
-      textParts.push(`\n--- ${fileName} ---\n${part.content}`)
-    }
-  }
-  return textParts.join("\n")
 }
 
 function buildUserParts(
@@ -163,6 +163,7 @@ async function createCursorRun(params: {
   subChatId: string
   model: string
   permissionMode: PermissionMode
+  customPermissions: string | null
   worktreePath: string | null
   promptMessageId?: string
 }) {
@@ -191,6 +192,7 @@ async function createCursorRun(params: {
       harness: HARNESS,
       model: params.model,
       permissionMode: params.permissionMode,
+      customPermissions: params.customPermissions,
       worktreePath: params.worktreePath,
       promptMessageId: params.promptMessageId,
       status: "running",
@@ -424,10 +426,20 @@ export const cursorRouter = router({
             if (!existingChat) throw new Error("Chat not found")
 
             const existingMessages = parseStoredMessages(existingSubChat.messages)
-            const permissionMode = resolveCursorPermissionMode({
-              subChatPermissionMode: existingSubChat.permissionMode,
-              chatPermissionMode: existingChat.permissionMode,
-            })
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, input.runId))
+              .get()
+            const permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveCursorPermissionMode({
+                subChatPermissionMode: existingSubChat.permissionMode,
+                chatPermissionMode: existingChat.permissionMode,
+              })
             const permissionApplication = buildCursorPermissionApplication({
               permissionMode,
               cwd: input.cwd,
@@ -450,14 +462,16 @@ export const cursorRouter = router({
             const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
 
             // Persist the user message (dedupe a resent prompt like Codex).
-            const lastMessage = existingMessages[existingMessages.length - 1]
-            const isDuplicatePrompt =
-              lastMessage?.role === "user" &&
-              extractPromptFromStoredMessage(lastMessage) === input.prompt
+            const reusablePromptMessage = findReusableCursorPromptMessage(
+              existingMessages,
+              input.prompt,
+              input.forceNewSession === true,
+            )
+            const isDuplicatePrompt = Boolean(reusablePromptMessage)
 
             let messagesForStream = existingMessages
             let promptMessageId =
-              isDuplicatePrompt && typeof lastMessage?.id === "string" ? lastMessage.id : undefined
+              typeof reusablePromptMessage?.id === "string" ? reusablePromptMessage.id : undefined
 
             if (!isDuplicatePrompt) {
               const userMessage = {
@@ -480,6 +494,10 @@ export const cursorRouter = router({
               subChatId: input.subChatId,
               model: metadataModel,
               permissionMode,
+              customPermissions:
+                permissionMode === "custom"
+                  ? (persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions)
+                  : null,
               worktreePath: input.cwd || null,
               promptMessageId,
             })
@@ -507,6 +525,16 @@ export const cursorRouter = router({
               cancelRequested: false,
             }
             activeStreams.set(input.subChatId, activeStreamForRun)
+            const runTimeoutMs = resolveCursorRunTimeoutMs()
+            activeStreamForRun.runTimeout = setTimeout(() => {
+              if (!activeStreamForRun || child?.exitCode != null || child?.signalCode != null)
+                return
+              activeStreamForRun.failureReason = `Cursor run timed out after ${runTimeoutMs}ms.`
+              const timedOutStream = activeStreamForRun
+              terminateCursorStream(timedOutStream)
+              timedOutStream.cancelRequested = false
+            }, runTimeoutMs)
+            activeStreamForRun.runTimeout.unref?.()
 
             const startedAt = Date.now()
             const translator = new CursorStreamTranslator()
@@ -557,7 +585,10 @@ export const cursorRouter = router({
 
             const wasCancelled = activeStreamForRun?.cancelRequested === true
 
-            if (wasCancelled) {
+            if (activeStreamForRun?.failureReason) {
+              runStatus = "failure"
+              safeEmit({ type: "error", errorText: activeStreamForRun.failureReason })
+            } else if (wasCancelled) {
               runStatus = "cancelled"
             } else if (translator.sawError()) {
               runStatus = "failure"
@@ -650,6 +681,7 @@ export const cursorRouter = router({
             const activeStream = activeStreams.get(input.subChatId)
             if (activeStream?.runId === input.runId) {
               if (activeStream.killTimer) clearTimeout(activeStream.killTimer)
+              if (activeStream.runTimeout) clearTimeout(activeStream.runTimeout)
               activeStreams.delete(input.subChatId)
             }
           }
@@ -667,14 +699,7 @@ export const cursorRouter = router({
 
   cancel: publicProcedure
     .input(z.object({ subChatId: z.string(), runId: z.string() }))
-    .mutation(({ input }) => {
-      const activeStream = activeStreams.get(input.subChatId)
-      if (!activeStream) return { cancelled: false, ignoredStale: false }
-      if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
-
-      terminateCursorStream(activeStream)
-      return { cancelled: true, ignoredStale: false }
-    }),
+    .mutation(({ input }) => cancelActiveCursorRun(input)),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     const activeStream = activeStreams.get(input.subChatId)
@@ -694,3 +719,55 @@ export const cursorRouter = router({
     return { success: true }
   }),
 })
+
+export async function startCursorDevRun(input: {
+  subChatId: string
+  chatId: string
+  model: string
+  prompt: string
+  cwd: string
+  projectPath?: string
+  forceNewSession?: boolean
+}): Promise<{ runId: string }> {
+  const runId = crypto.randomUUID()
+  const stream = (await cursorRouter.createCaller({ getWindow: () => null }).chat({
+    ...input,
+    runId,
+    reasoningEnabled: true,
+  })) as unknown as {
+    subscribe?: (observer: {
+      next?: (value: unknown) => void
+      error?: (error: unknown) => void
+      complete?: () => void
+    }) => { unsubscribe?: () => void }
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>
+  }
+
+  const finish = () => devRunSubscriptions.delete(runId)
+  if (typeof stream.subscribe === "function") {
+    const subscription = stream.subscribe({
+      error: (error) => {
+        console.error(`[dev-mcp] Cursor run ${runId} failed`, error)
+        finish()
+      },
+      complete: finish,
+    })
+    devRunSubscriptions.set(runId, subscription)
+  } else if (stream[Symbol.asyncIterator]) {
+    void (async () => {
+      try {
+        for await (const _chunk of stream as AsyncIterable<unknown>) {
+          // Consuming the stream drives the production Cursor subscription lifecycle.
+        }
+      } catch (error) {
+        console.error(`[dev-mcp] Cursor run ${runId} failed`, error)
+      } finally {
+        finish()
+      }
+    })()
+  } else {
+    throw new Error("Cursor chat subscription did not return a consumable stream")
+  }
+
+  return { runId }
+}

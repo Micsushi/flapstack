@@ -10,6 +10,7 @@ import { checkGitLfsAvailable, getShellEnvironment } from "./shell-env"
 import { executeWorktreeSetup } from "./worktree-config"
 import type { WorktreeSetupResult } from "./worktree-config"
 import { generateWorktreeFolderName } from "./worktree-naming"
+import { bindFilesystemRootIdentity } from "./security/path-validation"
 
 const execFileAsync = promisify(execFile)
 
@@ -158,6 +159,7 @@ export async function createWorktree(
       ["-C", mainRepoPath, "worktree", "add", worktreePath, "-b", branch, commitHash],
       { env, timeout: 120_000 },
     )
+    bindFilesystemRootIdentity(worktreePath)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     const lowerError = errorMessage.toLowerCase()

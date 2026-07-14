@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs"
 import path from "node:path"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
@@ -24,7 +25,10 @@ export const PARAKEET_MODEL = {
   sizeBytes: 731_357_568,
   sha256: "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
   url: "https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/main/parakeet-unified-en-0.6b-Q8_0.gguf",
-  license: "CC-BY-4.0",
+  license: "NVIDIA-Open-Model-License",
+  source: "https://huggingface.co/nvidia/parakeet-unified-en-0.6b",
+  licenseUrl:
+    "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
 } as const
 
 export type ParakeetModelStatus =
@@ -115,7 +119,10 @@ export function ensureParakeetModel() {
 }
 
 async function downloadParakeetModel() {
-  if (await validModel()) return getParakeetModelPath()
+  if (await validModel()) {
+    writeModelNotice()
+    return getParakeetModelPath()
+  }
   const destination = getParakeetModelPath()
   const temporary = `${destination}.download`
   mkdirSync(path.dirname(destination), { recursive: true })
@@ -148,6 +155,7 @@ async function downloadParakeetModel() {
     if ((await sha256(temporary)) !== PARAKEET_MODEL.sha256)
       throw new Error("Downloaded model checksum is invalid")
     renameSync(temporary, destination)
+    writeModelNotice()
     validatedModel = null
     modelStatus = { status: "present", sizeBytes: PARAKEET_MODEL.sizeBytes }
     return destination
@@ -157,6 +165,20 @@ async function downloadParakeetModel() {
     modelStatus = { status: "error", message }
     throw new Error(`Parakeet model download failed: ${message}`)
   }
+}
+
+function writeModelNotice() {
+  const noticePath = path.join(path.dirname(getParakeetModelPath()), "PARAKEET-MODEL-LICENSE.txt")
+  writeFileSync(
+    noticePath,
+    [
+      `Model: ${PARAKEET_MODEL.label}`,
+      `Source: ${PARAKEET_MODEL.source}`,
+      `Terms: ${PARAKEET_MODEL.license}`,
+      `License: ${PARAKEET_MODEL.licenseUrl}`,
+      "",
+    ].join("\n"),
+  )
 }
 
 type SidecarResponse = {
@@ -177,6 +199,7 @@ class StreamingSidecar {
   >()
   private loadedPath: string | null = null
   private unloadTimer: ReturnType<typeof setTimeout> | null = null
+  private streamActive = false
 
   private async launch() {
     if (this.child && !this.child.killed) return
@@ -201,6 +224,9 @@ class StreamingSidecar {
     child.once("exit", () => {
       this.child = null
       this.loadedPath = null
+      this.streamActive = false
+      if (this.unloadTimer) clearTimeout(this.unloadTimer)
+      this.unloadTimer = null
       for (const pending of this.pending.values())
         pending.reject(new Error("Streaming STT sidecar exited"))
       this.pending.clear()
@@ -228,24 +254,44 @@ class StreamingSidecar {
     if (this.unloadTimer) clearTimeout(this.unloadTimer)
     this.unloadTimer = null
     await this.load()
-    await this.request("start")
+    if (this.unloadTimer) clearTimeout(this.unloadTimer)
+    this.unloadTimer = null
+    try {
+      await this.request("start")
+      this.streamActive = true
+    } catch (error) {
+      this.scheduleUnload()
+      throw error
+    }
   }
   async feed(pcm: Buffer) {
     return await this.request("feed", { pcm_base64: pcm.toString("base64") })
   }
   async finalize() {
-    const result = await this.request("finalize")
-    this.scheduleUnload()
-    return result
+    try {
+      return await this.request("finalize")
+    } finally {
+      this.streamActive = false
+      this.scheduleUnload()
+    }
   }
   async cancel() {
-    if (this.child) await this.request("cancel").catch(() => {})
-    this.scheduleUnload()
+    try {
+      if (this.child) await this.request("cancel").catch(() => {})
+    } finally {
+      this.streamActive = false
+      this.scheduleUnload()
+    }
+  }
+
+  rescheduleIdleUnload() {
+    if (this.loadedPath && !this.streamActive) this.scheduleUnload()
   }
 
   private scheduleUnload() {
     if (this.unloadTimer) clearTimeout(this.unloadTimer)
     this.unloadTimer = setTimeout(() => {
+      if (this.streamActive) return
       void this.request("unload")
         .then(() => {
           this.loadedPath = null

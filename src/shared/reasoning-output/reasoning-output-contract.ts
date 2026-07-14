@@ -47,6 +47,9 @@ export type ReasoningOutputPhase = "start" | "delta" | "final"
 /** Human label shown in the Reasoning output panel. `null` kinds are never displayed. */
 export type ReasoningOutputLabel = "Reasoning output" | "Reasoning summary" | "Reasoning tokens"
 
+export type ReasoningVisibilityClass =
+  "visible-text" | "visible-summary" | "token-only" | "opaque-private" | "absent" | "unsupported"
+
 export const REASONING_OUTPUT_LABELS: Record<ReasoningOutputKind, ReasoningOutputLabel | null> = {
   "reasoning-output": "Reasoning output",
   "reasoning-summary": "Reasoning summary",
@@ -103,6 +106,26 @@ export function isDisplayableReasoningOutput(event: ReasoningOutputEvent): boole
 
 export function reasoningOutputLabel(event: ReasoningOutputEvent): ReasoningOutputLabel | null {
   return REASONING_OUTPUT_LABELS[event.kind]
+}
+
+export function classifyReasoningVisibility(
+  event?: ReasoningOutputEvent,
+  capabilitySupported = true,
+): ReasoningVisibilityClass {
+  if (!capabilitySupported) return "unsupported"
+  if (!event) return "absent"
+  if (event.kind === "reasoning-summary" && isDisplayableReasoningOutput(event)) {
+    return "visible-summary"
+  }
+  if (
+    (event.kind === "reasoning-output" || event.kind === "thought") &&
+    isDisplayableReasoningOutput(event)
+  ) {
+    return "visible-text"
+  }
+  if (event.kind === "reasoning-tokens") return "token-only"
+  if (event.kind === "opaque") return "opaque-private"
+  return "absent"
 }
 
 // ---------------------------------------------------------------------------
@@ -175,9 +198,10 @@ export class ReasoningOutputAccumulator {
         break
       case "final":
         if (typeof event.text === "string") {
-          // Only adopt final text if we did not already stream deltas, so a
-          // streamed-then-final provider does not duplicate its reasoning output.
-          if (block.text.length === 0) block.text = event.text
+          // Cumulative final replay replaces a known streamed prefix. Exact
+          // replay is a no-op. An independent non-prefix final remains a new
+          // provider part and must use its own stable id.
+          if (block.text.length === 0 || event.text.startsWith(block.text)) block.text = event.text
         }
         block.done = true
         break

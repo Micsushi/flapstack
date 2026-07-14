@@ -1,11 +1,16 @@
 import { observable } from "@trpc/server/observable"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { app, BrowserWindow, safeStorage } from "electron"
 import * as fs from "fs/promises"
 import * as os from "os"
 import path from "path"
 import { z } from "zod"
 import { setConnectionMethod } from "../../analytics"
+import { agentInputLifecycle } from "../../agent-input/service"
+import {
+  formatClaudeInputAnswers,
+  normalizeClaudeInputQuestions,
+} from "../../agent-input/claude-adapter"
 import {
   buildClaudeEnv,
   checkOfflineFallback,
@@ -17,7 +22,10 @@ import {
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
 import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
-import { mergeMessagesPreservingSpokenText } from "../../speech/history"
+import {
+  clearClaudeStreamIfOwned,
+  persistClaudeMessagesForStream,
+} from "../../claude/message-persistence"
 import {
   getMergedGlobalMcpServers,
   getMergedLocalProjectMcpServers,
@@ -39,10 +47,18 @@ import {
   chats,
   claudeCodeCredentials,
   getDatabase,
+  getDatabasePath,
   projects as projectsTable,
   subChats,
   tasks as tasksTable,
 } from "../../db"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpRecordCollisions,
+} from "../../mcp-control/registration"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
 import {
@@ -50,6 +66,8 @@ import {
   getLastHarnessContextFingerprint,
   prependStartupContext,
 } from "../../harness/launch-context"
+import { getAgentInputCapability } from "../../harness/input-capabilities"
+import type { AgentInputRequest } from "../../../../shared/agent-input"
 import {
   ensureMcpTokensFresh,
   fetchMcpTools,
@@ -61,17 +79,22 @@ import {
 import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
+import { getCredentialService } from "../../credential-service"
+import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
 import {
   buildClaudePermissionApplication,
   getGlobalDefault,
   isClaudeReadOnlyToolAllowed,
+  isCustomToolAllowed,
   mapClaudeSdkPermissionMode,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   resolveForRun,
   type PermissionMode,
 } from "../../permissions"
+import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import {
   findMissingClaudeSessionMessage,
   isMissingClaudeSessionError,
@@ -84,6 +107,15 @@ import {
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
+
+function parseStoredCustomPermissions(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
 
 /**
  * Parse @[agent:name], @[skill:name], and @[tool:servername] mentions from prompt text
@@ -212,22 +244,30 @@ function resolveClaudeRunPermission(chatId: string): PermissionMode {
 }
 
 async function createClaudeAgentRun(input: {
+  runId?: string
   chatId: string
   subChatId: string
   model?: string | null
   permissionMode: PermissionMode
+  customPermissions?: string | null
   worktreePath?: string | null
   promptMessageId?: string
 }) {
   const db = getDatabase()
+  if (input.runId) {
+    const existing = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
+    if (existing) return existing
+  }
   const run = db
     .insert(agentRuns)
     .values({
+      ...(input.runId ? { id: input.runId } : {}),
       chatId: input.chatId,
       subChatId: input.subChatId,
       harness: HARNESS,
       model: input.model ?? undefined,
       permissionMode: input.permissionMode,
+      customPermissions: input.customPermissions ?? null,
       worktreePath: input.worktreePath ?? null,
       promptMessageId: input.promptMessageId,
       status: "running",
@@ -269,7 +309,7 @@ async function createClaudeAgentRun(input: {
 async function completeClaudeAgentRun(
   runId: string | null,
   subChatId: string,
-  status: RunCompletionStatus,
+  resolveStatus: () => RunCompletionStatus,
 ) {
   if (!runId) return
 
@@ -286,16 +326,21 @@ async function completeClaudeAgentRun(
     console.warn("[claude] Failed to capture after checkpoint/manifest:", error)
   }
 
-  db.update(agentRuns)
+  const status = resolveStatus()
+  const completedRun = db
+    .update(agentRuns)
     .set({
       status,
       completedAt: new Date(),
       ...(afterCheckpointId && { afterCheckpointId }),
     })
-    .where(eq(agentRuns.id, runId))
-    .run()
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "running")))
+    .returning({ id: agentRuns.id })
+    .get()
 
-  db.update(subChats).set({ runStatus: status }).where(eq(subChats.id, subChatId)).run()
+  if (!completedRun) return
+
+  updateSubChatRunStatusIfAuthoritative(db, { runId, subChatId, status })
 }
 
 /**
@@ -330,11 +375,6 @@ function getClaudeCodeToken(): string | null {
         )
         const decrypted = decryptToken(account.oauthToken)
         console.log("[claude-auth] Token decrypted successfully")
-        console.log(
-          "[claude-auth] Token preview:",
-          decrypted.slice(0, 20) + "..." + decrypted.slice(-10),
-        )
-        console.log("[claude-auth] Token total length:", decrypted.length)
         console.log("[claude-auth] ============================================")
         return decrypted
       }
@@ -349,24 +389,12 @@ function getClaudeCodeToken(): string | null {
       .where(eq(claudeCodeCredentials.id, "default"))
       .get()
 
-    console.log(
-      "[claude-auth] Legacy credential record:",
-      cred
-        ? {
-            id: cred.id,
-            hasOauthToken: !!cred.oauthToken,
-            encryptedTokenLength: cred.oauthToken?.length ?? 0,
-            connectedAt: cred.connectedAt,
-            userId: cred.userId,
-          }
-        : null,
-    )
+    console.log("[claude-auth] Legacy credential available:", Boolean(cred?.oauthToken))
 
     if (!cred?.oauthToken) {
       const systemToken = getExistingClaudeToken()?.trim()
       if (systemToken) {
         console.log("[claude-auth] Using Claude Code token from system credentials")
-        console.log("[claude-auth] System token total length:", systemToken.length)
         console.log("[claude-auth] ============================================")
         return systemToken
       }
@@ -378,11 +406,6 @@ function getClaudeCodeToken(): string | null {
 
     const decrypted = decryptToken(cred.oauthToken)
     console.log("[claude-auth] Token decrypted successfully (legacy)")
-    console.log(
-      "[claude-auth] Token preview:",
-      decrypted.slice(0, 20) + "..." + decrypted.slice(-10),
-    )
-    console.log("[claude-auth] Token total length:", decrypted.length)
     console.log("[claude-auth] ============================================")
 
     return decrypted
@@ -410,7 +433,13 @@ const getClaudeQuery = async () => {
 
 // Active sessions for cancellation (onAbort handles stash + abort + restore)
 // Active sessions for cancellation
-const activeSessions = new Map<string, AbortController>()
+type ActiveClaudeSession = {
+  runId: string
+  controller: AbortController
+  cancelRequested: boolean
+}
+
+const activeSessions = new Map<string, ActiveClaudeSession>()
 
 /** Check if there are any active Claude streaming sessions */
 export function hasActiveClaudeSessions(): boolean {
@@ -419,11 +448,36 @@ export function hasActiveClaudeSessions(): boolean {
 
 /** Abort all active Claude sessions so their cleanup saves partial state */
 export function abortAllClaudeSessions(): void {
-  for (const [subChatId, controller] of activeSessions) {
+  for (const [subChatId, session] of activeSessions) {
     console.log(`[claude] Aborting session ${subChatId} before reload`)
-    controller.abort()
+    session.cancelRequested = true
+    session.controller.abort()
+    agentInputLifecycle.cancelByChat(
+      subChatId,
+      "Application reload cancelled the pending question.",
+    )
   }
-  activeSessions.clear()
+  // Keep ownership until each async finalizer persists cancellation and removes
+  // its own entry. App shutdown waits for that durable boundary before DB close.
+}
+
+export function cancelActiveClaudeSession(input: { subChatId: string; runId?: string }): {
+  cancelled: boolean
+  ignoredStale: boolean
+} {
+  const session = activeSessions.get(input.subChatId)
+  if (session && input.runId && session.runId !== input.runId) {
+    return { cancelled: false, ignoredStale: true }
+  }
+  if (session) {
+    session.cancelRequested = true
+    session.controller.abort()
+  }
+  const cancelledQuestions = agentInputLifecycle.cancelByChat(input.subChatId, "Session cancelled.")
+  return {
+    cancelled: Boolean(session || cancelledQuestions),
+    ignoredStale: false,
+  }
 }
 
 // In-memory cache of working MCP server names (resets on app restart)
@@ -485,22 +539,11 @@ async function readProjectMcpJsonCached(
   }
 }
 
-const pendingToolApprovals = new Map<
-  string,
-  {
-    subChatId: string
-    resolve: (decision: { approved: boolean; message?: string; updatedInput?: unknown }) => void
-  }
->()
-
 const PLAN_MODE_BLOCKED_TOOLS = new Set(["Bash", "NotebookEdit"])
 
 const clearPendingApprovals = (message: string, subChatId?: string) => {
-  for (const [toolUseId, pending] of pendingToolApprovals) {
-    if (subChatId && pending.subChatId !== subChatId) continue
-    pending.resolve({ approved: false, message })
-    pendingToolApprovals.delete(toolUseId)
-  }
+  if (subChatId) agentInputLifecycle.cancelByChat(subChatId, message)
+  else agentInputLifecycle.dispose(message)
 }
 
 // Image attachment schema
@@ -919,6 +962,7 @@ export const claudeRouter = router({
   chat: publicProcedure
     .input(
       z.object({
+        runId: z.string().optional(),
         subChatId: z.string(),
         chatId: z.string(),
         prompt: z.string(),
@@ -927,13 +971,6 @@ export const claudeRouter = router({
         mode: z.enum(["plan", "agent"]).default("agent"),
         sessionId: z.string().optional(),
         model: z.string().optional(),
-        customConfig: z
-          .object({
-            model: z.string().min(1),
-            token: z.string().min(1),
-            baseUrl: z.string().min(1),
-          })
-          .optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
         reasoningEnabled: z.boolean().default(true),
         images: z.array(imageAttachmentSchema).optional(), // Image attachments
@@ -946,14 +983,28 @@ export const claudeRouter = router({
       return observable<UIMessageChunk>((emit) => {
         // Abort any existing session for this subChatId before starting a new one
         // This prevents race conditions if two messages are sent in quick succession
-        const existingController = activeSessions.get(input.subChatId)
-        if (existingController) {
-          existingController.abort()
+        const existingSession = activeSessions.get(input.subChatId)
+        if (existingSession) {
+          existingSession.cancelRequested = true
+          existingSession.controller.abort()
         }
 
         const abortController = new AbortController()
         const streamId = crypto.randomUUID()
-        activeSessions.set(input.subChatId, abortController)
+        const launchRunId = input.runId ?? crypto.randomUUID()
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId: launchRunId,
+              revoke: () => abortController.abort(),
+            })
+          : () => undefined
+        activeSessions.set(input.subChatId, {
+          runId: launchRunId,
+          controller: abortController,
+          cancelRequested: false,
+        })
 
         // Stream debug logging
         const subId = input.subChatId.slice(-8) // Short ID for logs
@@ -962,7 +1013,11 @@ export const claudeRouter = router({
         let lastChunkType = ""
         // Shared sessionId for cleanup to save on abort
         let currentSessionId: string | null = null
-        let agentRunId: string | null = null
+        // A queued launch owns its durable run before any provider preflight starts.
+        // Keep that identity even when offline/SDK setup exits before createClaudeAgentRun.
+        let agentRunId: string | null = launchRunId
+        let runCompletionStatus: RunCompletionStatus = "failure"
+        let runCompletionPromise: Promise<void> | null = null
         console.log(`[SD] M:START sub=${subId} stream=${streamId.slice(-8)} mode=${input.mode}`)
 
         // Track if observable is still active (not unsubscribed)
@@ -1013,8 +1068,23 @@ export const claudeRouter = router({
           } as UIMessageChunk)
         }
 
-        const completeRun = async (status: RunCompletionStatus) => {
-          await completeClaudeAgentRun(agentRunId, input.subChatId, status)
+        const completeRun = (status: RunCompletionStatus): Promise<void> => {
+          runCompletionStatus = status
+          if (!agentRunId) return Promise.resolve()
+          if (!runCompletionPromise) {
+            runCompletionPromise = completeClaudeAgentRun(agentRunId, input.subChatId, () => {
+              const activeSession = activeSessions.get(input.subChatId)
+              const isCurrentSession = activeSession?.controller === abortController
+              return abortController.signal.aborted ||
+                activeSession?.cancelRequested ||
+                !isCurrentSession
+                ? "cancelled"
+                : runCompletionStatus
+            }).catch((runError) => {
+              console.error("[claude] Failed to complete run:", runError)
+            })
+          }
+          return runCompletionPromise
         }
 
         ;(async () => {
@@ -1029,6 +1099,35 @@ export const claudeRouter = router({
               .get()
             const existingMessages = JSON.parse(existing?.messages || "[]")
             const existingSessionId = existing?.sessionId || null
+            const queuedPromptMessageId = input.runId
+              ? db
+                  .select({ promptMessageId: agentRuns.promptMessageId })
+                  .from(agentRuns)
+                  .where(eq(agentRuns.id, input.runId))
+                  .get()?.promptMessageId
+              : null
+            const isAuthoritativeRun = () =>
+              activeSessions.get(input.subChatId)?.controller === abortController
+            const persistMessagesForRun = (
+              incomingMessages: any[],
+              sessionId: string | null | undefined,
+            ) => {
+              if (!isAuthoritativeRun()) return false
+              return persistClaudeMessagesForStream(db, {
+                subChatId: input.subChatId,
+                streamId,
+                incomingMessages,
+                sessionId,
+              })
+            }
+            const clearStreamForRun = (sessionId: string | null | undefined) => {
+              if (!isAuthoritativeRun()) return false
+              return clearClaudeStreamIfOwned(db, {
+                subChatId: input.subChatId,
+                streamId,
+                sessionId,
+              })
+            }
 
             // Get resumeSessionAt UUID only if shouldResume flag was set (by rollbackToMessage)
             // or shouldForkResume flag was set (by forkSubChat)
@@ -1069,6 +1168,10 @@ export const claudeRouter = router({
             if (isDuplicate) {
               userMessage = lastMsg
               messagesToSave = existingMessages
+              db.update(subChats)
+                .set({ streamId, updatedAt: new Date() })
+                .where(eq(subChats.id, input.subChatId))
+                .run()
             } else {
               const parts: any[] = [{ type: "text", text: input.prompt }]
               if (input.images && input.images.length > 0) {
@@ -1084,7 +1187,7 @@ export const claudeRouter = router({
                 }
               }
               userMessage = {
-                id: crypto.randomUUID(),
+                id: queuedPromptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts,
               }
@@ -1102,9 +1205,21 @@ export const claudeRouter = router({
 
             // 2.5. AUTO-FALLBACK: Check internet and switch to Ollama if offline
             // Only check if offline mode is enabled in settings
+            const customCredentialStatus = getCredentialService().status("claude.custom-api-token")
+            const customToken = getCredentialService().resolve("claude.custom-api-token")
+            const secureCustomConfig =
+              customToken &&
+              customCredentialStatus.metadata?.model &&
+              customCredentialStatus.metadata.baseUrl
+                ? {
+                    model: customCredentialStatus.metadata.model,
+                    token: customToken,
+                    baseUrl: customCredentialStatus.metadata.baseUrl,
+                  }
+                : undefined
             const claudeCodeToken = getClaudeCodeToken()
             const offlineResult = await checkOfflineFallback(
-              input.customConfig,
+              secureCustomConfig,
               claudeCodeToken,
               undefined, // selectedOllamaModel - will be read from customConfig if present
               input.offlineModeEnabled ?? false, // Pass offline mode setting
@@ -1113,12 +1228,11 @@ export const claudeRouter = router({
             if (offlineResult.error) {
               emitError(new Error(offlineResult.error), "Offline mode unavailable")
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
             // Use offline config if available
-            const finalCustomConfig = offlineResult.config || input.customConfig
+            const finalCustomConfig = offlineResult.config || secureCustomConfig
             const isUsingOllama = offlineResult.isUsingOllama
 
             // Track connection method for analytics
@@ -1144,7 +1258,6 @@ export const claudeRouter = router({
               emitError(sdkError, "Failed to load Claude SDK")
               console.log(`[SD] M:END sub=${subId} reason=sdk_load_error n=${chunkCount}`)
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
@@ -1431,6 +1544,25 @@ export const claudeRouter = router({
                   ...projectServers,
                 }
 
+                if (productMcpEnabledAtLaunch) {
+                  const permissionMode = resolveClaudeRunPermission(input.chatId)
+                  const registration = buildMcpStdioRegistration(
+                    { chatId: input.chatId, runId: launchRunId, permissionMode },
+                    {
+                      executablePath: process.execPath,
+                      mainDirectory: __dirname,
+                      databasePath: getDatabasePath(),
+                    },
+                  )
+                  const collisionAliases = renameProductMcpRecordCollisions(allServers)
+                  if (collisionAliases.length > 0) {
+                    console.warn(
+                      `[claude] Renamed ${collisionAliases.length} third-party MCP collision(s) for reserved name "${FLAPSTACK_MCP_SERVER_NAME}" to ${collisionAliases.join(", ")} for this run.`,
+                    )
+                  }
+                  allServers[FLAPSTACK_MCP_SERVER_NAME] = registration
+                }
+
                 // Filter to only working MCPs using scoped cache keys
                 if (workingMcpServers.size > 0) {
                   const filtered: Record<string, any> = {}
@@ -1525,13 +1657,14 @@ export const claudeRouter = router({
 
             const clearMissingSessionAndRetry = async (reason: string) => {
               if (!resumeSessionId) return false
+              if (!isAuthoritativeRun()) return false
 
               console.log(
                 `[claude] ${reason} - clearing missing sessionId ${resumeSessionId} and retrying once without resume`,
               )
               db.update(subChats)
                 .set({ sessionId: null })
-                .where(eq(subChats.id, input.subChatId))
+                .where(and(eq(subChats.id, input.subChatId), eq(subChats.streamId, streamId)))
                 .run()
 
               resumeSessionId = undefined
@@ -1594,35 +1727,59 @@ export const claudeRouter = router({
               `[SD] Query options - cwd: ${input.cwd}, projectPath: ${input.projectPath || "(not set)"}, mcpServers: ${mcpServersForSdk ? Object.keys(mcpServersForSdk).join(", ") : "(none)"}`,
             )
             if (finalCustomConfig) {
-              const redactedConfig = {
-                ...finalCustomConfig,
-                token: `${finalCustomConfig.token.slice(0, 6)}...`,
-              }
               if (isUsingOllama) {
-                console.log(
-                  `[Ollama] Using offline mode - Model: ${finalCustomConfig.model}, Base URL: ${finalCustomConfig.baseUrl}`,
-                )
+                console.log(`[Ollama] Using offline mode - Model: ${finalCustomConfig.model}`)
               } else {
-                console.log(`[claude] Custom config: ${JSON.stringify(redactedConfig)}`)
+                console.log("[claude] Custom config enabled", {
+                  model: finalCustomConfig.model,
+                  hasToken: Boolean(finalCustomConfig.token),
+                })
               }
             }
 
             const resolvedModel = finalCustomConfig?.model || input.model
-            const resolvedPermissionMode = resolveClaudeRunPermission(input.chatId)
+            const persistedRunSnapshot = input.runId
+              ? db
+                  .select({
+                    permissionMode: agentRuns.permissionMode,
+                    customPermissions: agentRuns.customPermissions,
+                  })
+                  .from(agentRuns)
+                  .where(eq(agentRuns.id, input.runId))
+                  .get()
+              : null
+            const resolvedPermissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveClaudeRunPermission(input.chatId)
+            const storedCustomPermissions = db
+              .select({ customPermissions: chats.customPermissions })
+              .from(chats)
+              .where(eq(chats.id, input.chatId))
+              .get()?.customPermissions
+            const customPermissions =
+              resolvedPermissionMode === "custom"
+                ? parseStoredCustomPermissions(
+                    persistedRunSnapshot?.customPermissions ?? storedCustomPermissions,
+                  )
+                : null
             const sdkPermission = mapClaudeSdkPermissionMode(resolvedPermissionMode, input.mode)
             const permissionApplication = buildClaudePermissionApplication({
               permissionMode: resolvedPermissionMode,
               cwd: input.cwd,
               sdkPermissionMode: sdkPermission.sdkPermissionMode,
               canUseToolReadOnlyGuard: resolvedPermissionMode === "read-only",
+              customPermissions,
             })
+            if (!isAuthoritativeRun()) return
             const run = await createClaudeAgentRun({
+              runId: launchRunId,
               chatId: input.chatId,
               subChatId: input.subChatId,
               model: resolvedModel,
               permissionMode: resolvedPermissionMode,
               worktreePath: input.cwd,
               promptMessageId: userMessage.id,
+              customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
             })
             agentRunId = run.id
             metadata = {
@@ -1686,11 +1843,9 @@ export const claudeRouter = router({
             if (isUsingOllama) {
               console.log("[Ollama Debug] SDK Configuration:", {
                 model: resolvedModel,
-                baseUrl: finalEnv.ANTHROPIC_BASE_URL,
                 cwd: input.cwd,
                 configDir: isolatedConfigDir,
                 hasAuthToken: !!finalEnv.ANTHROPIC_AUTH_TOKEN,
-                tokenPreview: finalEnv.ANTHROPIC_AUTH_TOKEN?.slice(0, 10) + "...",
               })
               console.log("[Ollama Debug] Session settings:", {
                 resumeSessionId: resumeSessionId || "none (first message)",
@@ -1903,6 +2058,28 @@ ${prompt}
                     }
                   }
 
+                  const providerMcpDecision = resolveProviderMcpPermission({
+                    permissionMode: resolvedPermissionMode,
+                    correlationId: options.toolUseID,
+                    providerToolName: toolName,
+                    trustedProductServerName: productMcpEnabledAtLaunch
+                      ? FLAPSTACK_MCP_SERVER_NAME
+                      : null,
+                    customPermissions,
+                  })
+                  if (providerMcpDecision?.decision === "deny") {
+                    return { behavior: "deny", message: providerMcpDecision.reason }
+                  }
+                  if (providerMcpDecision?.decision === "allow") {
+                    return { behavior: "allow", updatedInput: toolInput }
+                  }
+                  if (providerMcpDecision?.decision === "provider-approval") {
+                    return {
+                      behavior: "deny",
+                      message: "Third-party MCP requires a provider approval bridge.",
+                    }
+                  }
+
                   if (
                     resolvedPermissionMode === "read-only" &&
                     !isClaudeReadOnlyToolAllowed(toolName)
@@ -1910,6 +2087,34 @@ ${prompt}
                     return {
                       behavior: "deny",
                       message: `Tool "${toolName}" blocked by read-only permission mode.`,
+                    }
+                  }
+
+                  if (
+                    resolvedPermissionMode === "custom" &&
+                    !isCustomToolAllowed(customPermissions, toolName)
+                  ) {
+                    return {
+                      behavior: "deny",
+                      message: `Tool "${toolName}" is disabled by custom permissions.`,
+                    }
+                  }
+
+                  if (
+                    resolvedPermissionMode === "custom" &&
+                    /^(Edit|MultiEdit|Write|NotebookEdit)$/i.test(toolName)
+                  ) {
+                    const requestedPath =
+                      typeof toolInput.file_path === "string" ? toolInput.file_path : ""
+                    if (
+                      !requestedPath ||
+                      !(await isWithinProjectBoundary(input.cwd, requestedPath))
+                    ) {
+                      return {
+                        behavior: "deny",
+                        message:
+                          "Custom project edits cannot leave the selected worktree boundary.",
+                      }
                     }
                   }
 
@@ -1937,57 +2142,61 @@ ${prompt}
                   }
                   if (toolName === "AskUserQuestion") {
                     const { toolUseID } = options
-                    // Emit to UI (safely in case observer is closed)
+                    const createdAt = Date.now()
+                    const questions = normalizeClaudeInputQuestions((toolInput as any).questions)
+                    const request: AgentInputRequest = {
+                      requestId: toolUseID,
+                      chatId: input.subChatId,
+                      runId: agentRunId ?? input.runId ?? streamId,
+                      origin: {
+                        harness: HARNESS,
+                        provider: "anthropic",
+                        ...(resolvedModel ? { model: resolvedModel } : {}),
+                        toolName,
+                      },
+                      capability: getAgentInputCapability(HARNESS),
+                      questions,
+                      status: "pending",
+                      createdAt,
+                      expiresAt: createdAt + 15 * 60_000,
+                    }
+
                     safeEmit({
-                      type: "ask-user-question",
-                      toolUseId: toolUseID,
-                      questions: (toolInput as any).questions,
+                      type: "agent-input-request",
+                      request,
                     } as UIMessageChunk)
 
-                    // Wait for response (60s timeout)
-                    const response = await new Promise<{
-                      approved: boolean
-                      message?: string
-                      updatedInput?: unknown
-                    }>((resolve) => {
-                      const timeoutId = setTimeout(() => {
-                        pendingToolApprovals.delete(toolUseID)
-                        // Emit chunk to notify UI that the question has timed out
-                        // This ensures the pending question dialog is cleared
-                        safeEmit({
-                          type: "ask-user-question-timeout",
-                          toolUseId: toolUseID,
-                        } as UIMessageChunk)
-                        resolve({ approved: false, message: "Timed out" })
-                      }, 60000)
-
-                      pendingToolApprovals.set(toolUseID, {
-                        subChatId: input.subChatId,
-                        resolve: (d) => {
-                          clearTimeout(timeoutId)
-                          resolve(d)
-                        },
-                      })
+                    const resolution = await agentInputLifecycle.create(request, {
+                      timeoutMs: 15 * 60_000,
+                      signal: abortController.signal,
                     })
+
+                    safeEmit({
+                      type: "agent-input-status",
+                      event: {
+                        requestId: request.requestId,
+                        chatId: request.chatId,
+                        runId: request.runId,
+                        status: resolution.status,
+                        at: Date.now(),
+                        ...(resolution.status === "answered"
+                          ? { response: resolution.response }
+                          : { message: resolution.message }),
+                      },
+                    } as UIMessageChunk)
 
                     // Find the tool part in accumulated parts
                     const askToolPart = parts.find(
                       (p) => p.toolCallId === toolUseID && p.type === "tool-AskUserQuestion",
                     )
 
-                    if (!response.approved) {
+                    if (resolution.status !== "answered") {
                       // Update the tool part with error result for skipped/denied
-                      const errorMessage = response.message || "Skipped"
+                      const errorMessage = resolution.message
                       if (askToolPart) {
                         askToolPart.result = errorMessage
                         askToolPart.state = "result"
                       }
-                      // Emit result to frontend so it updates in real-time
-                      safeEmit({
-                        type: "ask-user-question-result",
-                        toolUseId: toolUseID,
-                        result: errorMessage,
-                      } as UIMessageChunk)
                       return {
                         behavior: "deny",
                         message: errorMessage,
@@ -1995,21 +2204,15 @@ ${prompt}
                     }
 
                     // Update the tool part with answers result for approved
-                    const answers = (response.updatedInput as any)?.answers
+                    const answers = formatClaudeInputAnswers(questions, resolution.response.answers)
                     const answerResult = { answers }
                     if (askToolPart) {
                       askToolPart.result = answerResult
                       askToolPart.state = "result"
                     }
-                    // Emit result to frontend so it updates in real-time
-                    safeEmit({
-                      type: "ask-user-question-result",
-                      toolUseId: toolUseID,
-                      result: answerResult,
-                    } as UIMessageChunk)
                     return {
                       behavior: "allow",
-                      updatedInput: response.updatedInput,
+                      updatedInput: { questions: (toolInput as any).questions, answers },
                     }
                   }
                   return {
@@ -2072,9 +2275,7 @@ ${prompt}
                 console.error("[CLAUDE] ✗ Failed to create SDK query:", queryError)
                 emitError(queryError, "Failed to start Claude query")
                 console.log(`[SD] M:END sub=${subId} reason=query_error n=${chunkCount}`)
-                await completeRun("failure")
                 safeEmit({ type: "finish" } as UIMessageChunk)
-                safeComplete()
                 return
               }
 
@@ -2091,10 +2292,6 @@ ${prompt}
               if (isUsingOllama) {
                 console.log(`[Ollama] ===== STARTING STREAM ITERATION =====`)
                 console.log(`[Ollama] Model: ${finalCustomConfig?.model}`)
-                console.log(`[Ollama] Base URL: ${finalCustomConfig?.baseUrl}`)
-                console.log(
-                  `[Ollama] Prompt: "${typeof input.prompt === "string" ? input.prompt.slice(0, 100) : "N/A"}..."`,
-                )
                 console.log(`[Ollama] CWD: ${input.cwd}`)
               }
 
@@ -2178,9 +2375,7 @@ ${prompt}
                       },
                     } as UIMessageChunk)
                     console.log(`[SD] M:END sub=${subId} reason=session_missing n=${chunkCount}`)
-                    await completeRun("failure")
                     safeEmit({ type: "finish" } as UIMessageChunk)
-                    safeComplete()
                     return
                   }
 
@@ -2305,9 +2500,7 @@ ${prompt}
                       messageId: msgAny.message?.id,
                       fullMessage: JSON.stringify(msgAny, null, 2),
                     })
-                    await completeRun("failure")
                     safeEmit({ type: "finish" } as UIMessageChunk)
-                    safeComplete()
                     return
                   }
 
@@ -2336,12 +2529,15 @@ ${prompt}
                       typeof observedModel === "string" &&
                       observedModel.trim() &&
                       !observedModel.startsWith("<") && // skip "<synthetic>"
-                      observedModel !== metadata.model
+                      observedModel !== metadata.model &&
+                      isAuthoritativeRun()
                     ) {
                       metadata.model = observedModel
                       db.update(subChats)
                         .set({ model: observedModel })
-                        .where(eq(subChats.id, input.subChatId))
+                        .where(
+                          and(eq(subChats.id, input.subChatId), eq(subChats.streamId, streamId)),
+                        )
                         .run()
                       db.update(chats)
                         .set({ model: observedModel })
@@ -2641,19 +2837,12 @@ ${prompt}
                     metadata,
                   }
                   const finalMessages = [...messagesToSave, assistantMessage]
-                  db.update(subChats)
-                    .set({
-                      messages: JSON.stringify(finalMessages),
-                      sessionId: metadata.sessionId,
-                      streamId: null,
-                      updatedAt: new Date(),
-                    })
-                    .where(eq(subChats.id, input.subChatId))
-                    .run()
-                  db.update(chats)
-                    .set({ updatedAt: new Date() })
-                    .where(eq(chats.id, input.chatId))
-                    .run()
+                  if (persistMessagesForRun(finalMessages, metadata.sessionId)) {
+                    db.update(chats)
+                      .set({ updatedAt: new Date() })
+                      .where(eq(chats.id, input.chatId))
+                      .run()
+                  }
 
                   // Create snapshot stash for rollback support (on error)
                   if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
@@ -2664,9 +2853,8 @@ ${prompt}
                 console.log(
                   `[SD] M:END sub=${subId} reason=stream_error cat=${errorCategory} n=${chunkCount} last=${lastChunkType}`,
                 )
-                await completeRun(abortController.signal.aborted ? "cancelled" : "failure")
+                runCompletionStatus = abortController.signal.aborted ? "cancelled" : "failure"
                 safeEmit({ type: "finish" } as UIMessageChunk)
-                safeComplete()
                 return
               }
 
@@ -2692,9 +2880,7 @@ ${prompt}
             if (messageCount === 0 && !abortController.signal.aborted) {
               emitError(new Error("No response received from Claude"), "Empty response")
               console.log(`[SD] M:END sub=${subId} reason=no_response n=${chunkCount}`)
-              await completeRun("failure")
               safeEmit({ type: "finish" } as UIMessageChunk)
-              safeComplete()
               return
             }
 
@@ -2719,46 +2905,19 @@ ${prompt}
                 metadata,
               }
 
-              const latestSubChat = db
-                .select({ messages: subChats.messages })
-                .from(subChats)
-                .where(eq(subChats.id, input.subChatId))
-                .get()
-              let latestMessages: any[] = []
-              try {
-                const parsed = JSON.parse(latestSubChat?.messages || "[]")
-                latestMessages = Array.isArray(parsed) ? parsed : []
-              } catch {
-                latestMessages = []
-              }
-              const finalMessages = mergeMessagesPreservingSpokenText(latestMessages, [
-                ...messagesToSave,
-                assistantMessage,
-              ])
-
-              db.update(subChats)
-                .set({
-                  messages: JSON.stringify(finalMessages),
-                  sessionId: savedSessionId,
-                  streamId: null,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subChats.id, input.subChatId))
-                .run()
+              persistMessagesForRun([...messagesToSave, assistantMessage], savedSessionId)
             } else {
               // No assistant response - just clear streamId
-              db.update(subChats)
-                .set({
-                  sessionId: savedSessionId,
-                  streamId: null,
-                  updatedAt: new Date(),
-                })
-                .where(eq(subChats.id, input.subChatId))
-                .run()
+              clearStreamForRun(savedSessionId)
             }
 
             // Update parent chat timestamp
-            db.update(chats).set({ updatedAt: new Date() }).where(eq(chats.id, input.chatId)).run()
+            if (isAuthoritativeRun()) {
+              db.update(chats)
+                .set({ updatedAt: new Date() })
+                .where(eq(chats.id, input.chatId))
+                .run()
+            }
 
             // Create snapshot stash for rollback support
             if (historyEnabled && metadata.sdkMessageUuid && input.cwd) {
@@ -2769,7 +2928,7 @@ ${prompt}
             console.log(
               `[SD] M:END sub=${subId} reason=ok n=${chunkCount} last=${lastChunkType} t=${duration}s`,
             )
-            await completeRun(abortController.signal.aborted ? "cancelled" : "success")
+            runCompletionStatus = abortController.signal.aborted ? "cancelled" : "success"
             if (pendingFinishChunk) {
               safeEmit({
                 ...pendingFinishChunk,
@@ -2785,18 +2944,29 @@ ${prompt}
                 messageMetadata: { context: metadata.context },
               } as UIMessageChunk)
             }
-            safeComplete()
           } catch (error) {
             const duration = ((Date.now() - streamStart) / 1000).toFixed(1)
             console.log(
               `[SD] M:END sub=${subId} reason=unexpected_error n=${chunkCount} t=${duration}s`,
             )
             emitError(error, "Unexpected error")
-            await completeRun("failure")
+            runCompletionStatus = "failure"
             safeEmit({ type: "finish" } as UIMessageChunk)
-            safeComplete()
           } finally {
-            activeSessions.delete(input.subChatId)
+            try {
+              await completeRun(runCompletionStatus)
+            } finally {
+              releaseProductMcpSession()
+              clearClaudeStreamIfOwned(getDatabase(), {
+                subChatId: input.subChatId,
+                streamId,
+                sessionId: currentSessionId,
+              })
+              if (activeSessions.get(input.subChatId)?.controller === abortController) {
+                activeSessions.delete(input.subChatId)
+              }
+              safeComplete()
+            }
           }
         })()
 
@@ -2805,15 +2975,22 @@ ${prompt}
           console.log(`[SD] M:CLEANUP sub=${subId} sessionId=${currentSessionId || "none"}`)
           isObservableActive = false // Prevent emit after unsubscribe
           abortController.abort()
-          activeSessions.delete(input.subChatId)
+          releaseProductMcpSession()
+          const isCurrentSession =
+            activeSessions.get(input.subChatId)?.controller === abortController
+          if (isCurrentSession) {
+            activeSessions.delete(input.subChatId)
+          }
           clearPendingApprovals("Session ended.", input.subChatId)
 
           // Clear streamId since we're no longer streaming.
           // sessionId is NOT saved here - the save block in the async function
           // handles it (saves on normal completion, clears on abort). This avoids
           // a redundant DB write that the cancel mutation would then overwrite.
-          const db = getDatabase()
-          db.update(subChats).set({ streamId: null }).where(eq(subChats.id, input.subChatId)).run()
+          if (isCurrentSession) {
+            const db = getDatabase()
+            clearClaudeStreamIfOwned(db, { subChatId: input.subChatId, streamId })
+          }
         }
       })
     }),
@@ -2911,14 +3088,7 @@ ${prompt}
    * Cancel active session
    */
   cancel: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
-    const controller = activeSessions.get(input.subChatId)
-    if (controller) {
-      controller.abort()
-      activeSessions.delete(input.subChatId)
-      clearPendingApprovals("Session cancelled.", input.subChatId)
-    }
-
-    return { cancelled: !!controller }
+    return cancelActiveClaudeSession(input)
   }),
 
   /**
@@ -2937,17 +3107,39 @@ ${prompt}
       }),
     )
     .mutation(({ input }) => {
-      const pending = pendingToolApprovals.get(input.toolUseId)
-      if (!pending) {
-        return { ok: false }
+      const request = agentInputLifecycle.get(input.toolUseId)
+      if (!request) return { ok: false }
+      if (!input.approved) {
+        return {
+          ok: agentInputLifecycle.skip(
+            input.toolUseId,
+            input.message || "User skipped questions - proceed with defaults",
+          ),
+        }
       }
-      pending.resolve({
-        approved: input.approved,
-        message: input.message,
-        updatedInput: input.updatedInput,
-      })
-      pendingToolApprovals.delete(input.toolUseId)
-      return { ok: true }
+
+      const legacyAnswers = (input.updatedInput as any)?.answers ?? {}
+      const answers = Object.fromEntries(
+        request.questions.map((question) => {
+          const value = legacyAnswers[question.question] ?? legacyAnswers[question.id]
+          return [
+            question.id,
+            Array.isArray(value)
+              ? value.map(String).filter(Boolean)
+              : typeof value === "string" && value.trim()
+                ? [value.trim()]
+                : [],
+          ]
+        }),
+      )
+      return {
+        ok: agentInputLifecycle.answer({
+          requestId: input.toolUseId,
+          mode: (input.updatedInput as any)?.responseMode === "chat" ? "chat" : "structured",
+          answers,
+          submittedAt: Date.now(),
+        }),
+      }
     }),
 
   /**

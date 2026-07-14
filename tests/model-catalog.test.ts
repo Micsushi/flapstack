@@ -119,7 +119,7 @@ describe("Claude model catalog", () => {
 describe("Cursor model catalog", () => {
   it("keeps the normal picker small and defaults to Composer", () => {
     expect(CURSOR_MODELS.map((model) => model.id)).toEqual(["auto", "composer-2.5"])
-    expect(DEFAULT_CURSOR_MODEL_ID).toBe("composer-2.5")
+    expect(DEFAULT_CURSOR_MODEL_ID).toBe("auto")
   })
 })
 
@@ -147,6 +147,18 @@ describe("OpenCode provider defaults", () => {
     )
     expect(normalizeOpencodeModelId("nanogpt", "nanogpt/zai-org/glm-latest")).toBe(
       "nanogpt/zai-org/glm-latest",
+    )
+    expect(normalizeOpencodeModelId("openrouter", "openai/gpt-oss-20b:free")).toBe(
+      "openrouter/openai/gpt-oss-20b:free",
+    )
+    expect(normalizeOpencodeModelId("nanogpt", "zai-org/glm-4.7-flash")).toBe(
+      "nanogpt/zai-org/glm-4.7-flash",
+    )
+    expect(() => normalizeOpencodeModelId("openrouter", "nanogpt/zai-org/glm-latest")).toThrow(
+      "does not belong to the openrouter provider",
+    )
+    expect(() => normalizeOpencodeModelId("nanogpt", "   ")).toThrow(
+      "Model cannot be empty for the nanogpt provider",
     )
   })
 })

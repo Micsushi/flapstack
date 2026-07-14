@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from "electron"
 import { gitWatcherRegistry, type GitWatchEvent } from "./git-watcher"
 import { gitCache } from "../cache"
+import { assertRegisteredWorktree } from "../security/path-validation"
 
 /**
  * IPC Bridge for GitWatcher.
@@ -19,6 +20,8 @@ export function registerGitWatcherIPC(): void {
   // Handle subscription requests from renderer
   ipcMain.handle("git:subscribe-watcher", async (event, worktreePath: string) => {
     if (!worktreePath) return
+    const registeredRoot = assertRegisteredWorktree(worktreePath)
+    const canonicalPath = registeredRoot.canonicalPath
 
     // Already subscribed?
     if (activeSubscriptions.has(worktreePath)) {
@@ -33,8 +36,15 @@ export function registerGitWatcherIPC(): void {
 
     // Subscribe to file changes (await to ensure watcher is ready)
     const unsubscribe = await gitWatcherRegistry.subscribe(
-      worktreePath,
+      canonicalPath,
       (watchEvent: GitWatchEvent) => {
+        try {
+          assertRegisteredWorktree(worktreePath)
+        } catch {
+          activeSubscriptions.get(worktreePath)?.unsubscribe()
+          activeSubscriptions.delete(worktreePath)
+          return
+        }
         // Send to the subscribing window, not the focused window
         const subscription = activeSubscriptions.get(worktreePath)
         if (!subscription) return

@@ -1,20 +1,373 @@
 import type { SettingsTab } from "../../lib/atoms"
 
-export const HIDDEN_SETTINGS_TABS = [
-  "keyboard",
-  "beta",
-  "agents",
-  "future",
-] as const satisfies readonly SettingsTab[]
+export type SettingsTabMetadata = {
+  id: SettingsTab
+  label: string
+  description: string
+  keywords: string[]
+  section: "main" | "advanced" | "development" | "hidden"
+  released: boolean
+}
 
-const hiddenSettingsTabs = new Set<SettingsTab>(HIDDEN_SETTINGS_TABS)
+export type SettingsProviderScope =
+  "claude" | "codex" | "cursor" | "opencode" | "openrouter" | "nanogpt" | "openai-voice"
+
+export type SettingsControlMetadata = {
+  id: string
+  tab: SettingsTab
+  label: string
+  description: string
+  keywords: string[]
+  targetId: string
+  providerScope?: readonly SettingsProviderScope[]
+  requiresAvailableProvider?: boolean
+}
+
+export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
+  {
+    id: "preferences",
+    label: "Preferences",
+    description: "General agent, notification, navigation, and privacy settings",
+    keywords: ["behavior", "notifications", "editor", "analytics"],
+    section: "main",
+    released: true,
+  },
+  {
+    id: "permissions",
+    label: "Permissions",
+    description: "Manage permission prompts, defaults, providers, and chats",
+    keywords: ["access", "approval", "security", "read only", "full access"],
+    section: "main",
+    released: true,
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Theme, workspace icons, and visual behavior",
+    keywords: ["theme", "light", "dark", "color"],
+    section: "main",
+    released: true,
+  },
+  {
+    id: "projects",
+    label: "Projects",
+    description: "Project paths, worktrees, setup commands, and removal",
+    keywords: ["repository", "repo", "worktree"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "models",
+    label: "Models",
+    description: "Provider model availability and accounts",
+    keywords: ["anthropic", "claude", "codex", "cursor", "account", "reasoning"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "api-providers",
+    label: "API Providers",
+    description: "Configure direct model API providers",
+    keywords: ["provider", "api key", "credentials"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "voice",
+    label: "Voice",
+    description: "Dictation, transcription, text-to-speech, and voices",
+    keywords: ["microphone", "speech", "tts", "stt"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "keyboard",
+    label: "Keyboard",
+    description: "View and customize working application shortcuts",
+    keywords: ["shortcut", "hotkey", "keys", "binding"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    description: "Discover and manage installed agent skills",
+    keywords: ["skill", "commands", "slash command"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "agents",
+    label: "Custom Agents",
+    description: "Configure custom agents and provider extensions",
+    keywords: ["custom agent", "subagent", "provider extension", "catalog"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "mcp",
+    label: "MCP Servers",
+    description: "Configure third-party MCP servers for Claude Code and Codex",
+    keywords: ["model context protocol", "server", "tool", "third party"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "plugins",
+    label: "Plugins",
+    description: "Manage plugin-provided commands and skills",
+    keywords: ["extension", "marketplace", "install"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    description: "Provider usage, limits, alerts, and history",
+    keywords: ["tokens", "credits", "cost", "limits"],
+    section: "advanced",
+    released: true,
+  },
+  {
+    id: "debug",
+    label: "Debug",
+    description: "Developer diagnostics and internal controls",
+    keywords: ["logs", "diagnostics", "developer tools"],
+    section: "development",
+    released: true,
+  },
+  {
+    id: "profile",
+    label: "Profile",
+    description: "Legacy profile settings",
+    keywords: [],
+    section: "hidden",
+    released: false,
+  },
+  {
+    id: "worktrees",
+    label: "Worktrees",
+    description: "Legacy worktree settings route",
+    keywords: [],
+    section: "hidden",
+    released: false,
+  },
+  {
+    id: "beta",
+    label: "Legacy Beta",
+    description: "Retired beta settings",
+    keywords: [],
+    section: "hidden",
+    released: false,
+  },
+  {
+    id: "future",
+    label: "Future",
+    description: "Unreleased future settings",
+    keywords: [],
+    section: "hidden",
+    released: false,
+  },
+] as const
+
+export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "preferences-reasoning",
+    "preferences",
+    "Reasoning output",
+    "Show provider-visible model reasoning",
+    ["thinking", "streaming", "credits"],
+  ),
+  control(
+    "preferences-default-mode",
+    "preferences",
+    "Default mode",
+    "Plan or Agent for new chats",
+    ["plan", "agent", "read only"],
+  ),
+  control(
+    "preferences-coauthor",
+    "preferences",
+    "Claude commit attribution",
+    "Add a Claude Co-authored-by trailer to commits made by Claude Code",
+    ["git", "commit", "claude", "author"],
+    ["claude"],
+  ),
+  control(
+    "preferences-desktop-notifications",
+    "preferences",
+    "Desktop notifications",
+    "Notify when an agent needs input or completes",
+    ["alerts", "system notification"],
+  ),
+  control(
+    "preferences-sound-notifications",
+    "preferences",
+    "Sound notifications",
+    "Play completion sounds",
+    ["audio", "alerts"],
+  ),
+  control(
+    "preferences-focused-notifications",
+    "preferences",
+    "Notify when focused",
+    "Show notifications while Flapstack is active",
+    ["alerts", "foreground"],
+  ),
+  control(
+    "preferences-drag-chats",
+    "preferences",
+    "Drag chats between sections",
+    "Allow moving chats between Global, project, and task sections",
+    ["sidebar", "move chats", "drag and drop", "global", "project", "task"],
+  ),
+  control(
+    "preferences-auto-advance",
+    "preferences",
+    "Auto-advance",
+    "Choose where to go after archiving",
+    ["archive", "next chat"],
+  ),
+  control(
+    "preferences-editor",
+    "preferences",
+    "Preferred editor",
+    "Default app for opening project folders",
+    ["vscode", "cursor", "terminal", "ide"],
+  ),
+  control(
+    "preferences-analytics",
+    "preferences",
+    "Share usage analytics",
+    "Anonymous product usage and performance data",
+    ["privacy", "telemetry", "tracking"],
+  ),
+  control(
+    "permissions-change-behavior",
+    "permissions",
+    "Permission change behavior",
+    "Ask every time or remember all chats or this chat",
+    [
+      "remember my choice",
+      "undo remember",
+      "ask every time",
+      "always all chats",
+      "always this chat",
+      "approval",
+    ],
+  ),
+  control(
+    "permissions-default",
+    "permissions",
+    "Default permission",
+    "Choose the Global and fallback permission for new chats",
+    ["default", "new chats", "global", "fallback", "access", "read only"],
+  ),
+  control(
+    "permissions-chat-list",
+    "permissions",
+    "Chat permissions",
+    "Inspect and edit active or archived chat permissions",
+    ["different chats", "per chat", "archived", "all chats", "manage"],
+  ),
+  control(
+    "credential-codex-api-key",
+    "api-providers",
+    "Codex API key",
+    "Manage the write-only Codex API credential and authentication priority",
+    ["openai", "codex", "credential", "chatgpt subscription", "remove", "replace"],
+    ["codex"],
+  ),
+  control(
+    "credential-openai-voice-api-key",
+    "api-providers",
+    "OpenAI transcription API key",
+    "Manage the write-only OpenAI Whisper credential",
+    ["voice", "whisper", "speech", "stt", "openai api key", "remove", "replace"],
+    ["openai-voice"],
+  ),
+  control(
+    "credential-claude-custom-api-token",
+    "api-providers",
+    "Claude API key or custom endpoint token",
+    "Manage the write-only Anthropic or custom Claude credential",
+    ["anthropic", "claude", "custom model", "base url", "remove", "replace"],
+    ["claude"],
+  ),
+  control(
+    "openrouter-provider-card",
+    "api-providers",
+    "OpenRouter API key",
+    "Manage the write-only OpenRouter provider credential",
+    ["openrouter", "credential", "remove", "replace"],
+    ["openrouter"],
+    true,
+  ),
+  control(
+    "nanogpt-provider-card",
+    "api-providers",
+    "NanoGPT API key",
+    "Manage the write-only NanoGPT provider credential",
+    ["nanogpt", "credential", "remove", "replace"],
+    ["nanogpt"],
+    true,
+  ),
+  control(
+    "skills-provider-extensions",
+    "skills",
+    "Provider skills and commands",
+    "Discover provider-scoped skills and commands with honest runtime limits",
+    ["claude skills", "codex skills", "cursor commands", "opencode skills", "slash command"],
+    ["claude", "codex", "cursor", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+  control(
+    "agents-provider-extensions",
+    "agents",
+    "Provider custom agents",
+    "Inspect Claude and read-only OpenCode custom agents",
+    ["custom agents", "subagent", "claude agents", "opencode agents"],
+    ["claude", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+  control(
+    "plugins-provider-extensions",
+    "plugins",
+    "Provider plugins",
+    "Inspect read-only Claude and OpenCode plugin inventories",
+    ["claude plugins", "opencode plugins", "extension", "marketplace"],
+    ["claude", "opencode"],
+    false,
+    "provider-extensions",
+  ),
+] as const
+
+export const HIDDEN_SETTINGS_TABS = SETTINGS_TAB_REGISTRY.filter((entry) => !entry.released).map(
+  (entry) => entry.id,
+)
+
+export function getVisibleSettingsTabs(
+  section: "main" | "advanced",
+  options: { showDevelopment?: boolean } = {},
+): SettingsTabMetadata[] {
+  const tabs = SETTINGS_TAB_REGISTRY.filter((entry) => entry.released && entry.section === section)
+  if (section === "main" && options.showDevelopment) {
+    const debug = SETTINGS_TAB_REGISTRY.find((entry) => entry.id === "debug")
+    return debug ? [...tabs, debug] : tabs
+  }
+  return tabs
+}
 
 export function isVisibleSettingsTab(
   tab: SettingsTab,
   options: { showDevelopment?: boolean } = {},
 ): boolean {
-  if (tab === "debug") return options.showDevelopment === true
-  return !hiddenSettingsTabs.has(tab)
+  const entry = SETTINGS_TAB_REGISTRY.find((candidate) => candidate.id === tab)
+  if (!entry?.released) return false
+  if (entry.section === "development") return options.showDevelopment === true
+  return entry.section !== "hidden"
 }
 
 export function normalizeVisibleSettingsTab(
@@ -22,4 +375,41 @@ export function normalizeVisibleSettingsTab(
   options: { showDevelopment?: boolean } = {},
 ): SettingsTab {
   return isVisibleSettingsTab(tab, options) ? tab : "preferences"
+}
+
+export function isVisibleSettingsControl(
+  control: SettingsControlMetadata,
+  options: {
+    showDevelopment?: boolean
+    availableProviders?: readonly SettingsProviderScope[]
+  } = {},
+): boolean {
+  if (!isVisibleSettingsTab(control.tab, options)) return false
+  if (!control.requiresAvailableProvider || !options.availableProviders) return true
+  return (
+    control.providerScope?.some((provider) => options.availableProviders?.includes(provider)) ===
+    true
+  )
+}
+
+function control(
+  id: string,
+  tab: SettingsTab,
+  label: string,
+  description: string,
+  keywords: string[],
+  providerScope?: readonly SettingsProviderScope[],
+  requiresAvailableProvider = false,
+  targetId = id,
+): SettingsControlMetadata {
+  return {
+    id,
+    tab,
+    label,
+    description,
+    keywords,
+    targetId,
+    providerScope,
+    requiresAvailableProvider,
+  }
 }

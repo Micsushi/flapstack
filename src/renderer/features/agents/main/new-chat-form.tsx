@@ -60,12 +60,8 @@ import {
   agentsSettingsDialogActiveTabAtom,
   anthropicOnboardingCompletedAtom,
   apiKeyOnboardingCompletedAtom,
-  codexApiKeyAtom,
   codexOnboardingCompletedAtom,
-  customClaudeConfigAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
-  normalizeCustomClaudeConfig,
   showOfflineModeFeaturesAtom,
   selectedOllamaModelAtom,
   customHotkeysAtom,
@@ -129,6 +125,7 @@ import {
   type NewChatDraft,
 } from "../lib/drafts"
 import { useDictationSession } from "../voice/dictation-session"
+import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import {
   CLAUDE_MODELS,
   CODEX_MODELS,
@@ -308,9 +305,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [])
   const [workMode, setWorkMode] = useAtom(lastSelectedWorkModeAtom)
   const debugMode = useAtomValue(agentsDebugModeAtom)
-  const customClaudeConfig = useAtomValue(customClaudeConfigAtom)
-  const normalizedCustomClaudeConfig = normalizeCustomClaudeConfig(customClaudeConfig)
-  const hasCustomClaudeConfig = Boolean(normalizedCustomClaudeConfig)
+  const { data: customClaudeCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "claude.custom-api-token",
+  })
+  const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   // Connection status for providers
   const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
@@ -467,8 +465,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     setLastSelectedClaudeEffort(selectedClaudeEffort)
   }, [lastSelectedClaudeEffort, selectedClaudeEffort, setLastSelectedClaudeEffort])
 
-  const storedCodexApiKey = useAtomValue(codexApiKeyAtom)
-  const hasAppCodexApiKey = Boolean(normalizeCodexApiKey(storedCodexApiKey))
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hiddenModels = useAtomValue(hiddenModelsAtom)
   const codexUiModels = useMemo(() => {
     const authSurface = hasAppCodexApiKey ? "api-key" : "chatgpt"
@@ -495,7 +495,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const selectedCursorModel = useMemo(
     () =>
       cursorUiModels.find((model) => model.id === lastSelectedCursorModelId) ||
-      cursorUiModels[0] || { id: "composer-2.5", name: "Composer 2.5" },
+      cursorUiModels[0] || { id: "auto", name: "Auto" },
     [cursorUiModels, lastSelectedCursorModelId],
   )
 
@@ -731,17 +731,31 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [ownsDictation])
 
   useEffect(() => {
-    const insert = (event: Event) => {
-      const text = (event as CustomEvent<string>).detail?.trim()
+    return registerVoiceHistoryInsertTarget("new-chat:composer", (value) => {
+      const text = value.trim()
       if (!text) return
+      const draftId = currentDraftIdRef.current ?? generateDraftId()
+      currentDraftIdRef.current = draftId
+      setSelectedDraftId(draftId)
       const current = editorRef.current?.getValue() || ""
-      editorRef.current?.setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`)
+      const next = `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`
+      const project =
+        chatScope !== "global" && validatedProject
+          ? {
+              id: validatedProject.id,
+              name: validatedProject.name,
+              path: validatedProject.path,
+              gitOwner: validatedProject.gitOwner,
+              gitRepo: validatedProject.gitRepo,
+              gitProvider: validatedProject.gitProvider,
+            }
+          : undefined
+      updateNewChatDraftText(draftId, next, project)
+      editorRef.current?.setValue(next)
       setHasContent(true)
       editorRef.current?.focus()
-    }
-    window.addEventListener("voice-history-insert", insert)
-    return () => window.removeEventListener("voice-history-insert", insert)
-  }, [])
+    })
+  }, [chatScope, setSelectedDraftId, validatedProject])
 
   // Voice input handlers
   const handleVoiceMouseDown = useCallback(async () => {
@@ -1838,7 +1852,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
           // Read and cache content (will be added to prompt on send)
           try {
-            const content = await trpcUtils.files.readFile.fetch({ filePath })
+            const content = await file.text()
             fileContentsRef.current.set(mentionId, content)
           } catch (err) {
             // If reading fails, chip is still there - agent can try to read via path

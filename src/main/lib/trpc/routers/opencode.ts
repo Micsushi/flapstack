@@ -48,14 +48,25 @@ import { getUsageSettings } from "../../usage/settings"
 import { agentRuns, chats, getDatabase, subChats } from "../../db"
 import {
   getGlobalDefault,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   permissionModes,
   type PermissionMode,
 } from "../../permissions"
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
+import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
+import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
+
+function parseStoredCustomPermissions(value: string) {
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
 
 type PendingApproval = {
   provider: (typeof OPENCODE_HARNESSES)[number]
@@ -158,6 +169,10 @@ export const opencodeRouter = router({
           docsUrl: def.docsUrl,
           configured: status.configured,
           sessionOnly: status.sessionOnly === true,
+          source: status.source ?? null,
+          fingerprint: status.fingerprint ?? null,
+          updatedAt: status.updatedAt ?? null,
+          warning: status.warning ?? null,
           engine: "opencode" as const,
         }
       }),
@@ -325,50 +340,43 @@ export const opencodeRouter = router({
           const reasoningMetadata: Array<{ partId: string; metadata: unknown }> = []
           let sawSidecarError = false
           let sidecarErrorText = ""
-          const providerKey = await getProviderKeyAsync(input.provider)
-          if (!providerKey) {
-            if (activeStreams.get(input.subChatId)?.runId === runId) {
-              activeStreams.delete(input.subChatId)
-            }
-            safeEmit({
-              type: "error",
-              errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
-            })
-            safeEmit({ type: "finish" })
-            complete()
-            return
-          }
-          let availableModels = getAvailableProviderModels(input.provider)
-          if (availableModels.source === "seed") {
-            try {
-              await refreshProviderModels(input.provider)
-              availableModels = getAvailableProviderModels(input.provider)
-            } catch (error) {
+          let runAudit = new OpencodeRunAuditAccumulator([])
+          let finalMessageMetadata: Record<string, unknown> | undefined
+          let reasoningControl: ReturnType<typeof resolveReasoningControls> | undefined
+          try {
+            const providerKey = await getProviderKeyAsync(input.provider)
+            if (!providerKey) {
               safeEmit({
                 type: "error",
-                errorText: `Could not load current ${OPENCODE_PROVIDERS[input.provider].label} models: ${sanitizeProviderErrorText(error)}`,
+                errorText: `Add the ${OPENCODE_PROVIDERS[input.provider].label} API key in Settings before starting a run.`,
               })
-              safeEmit({ type: "finish" })
-              complete()
               return
             }
-          }
-          const modelId = input.model.startsWith(`${input.provider}/`)
-            ? input.model.slice(input.provider.length + 1)
-            : input.model
-          if (!availableModels.models.some((model) => model.id === modelId)) {
-            safeEmit({
-              type: "error",
-              errorText: `${modelId} is no longer available from ${OPENCODE_PROVIDERS[input.provider].label}. Select a refreshed model and retry.`,
-            })
-            safeEmit({ type: "finish" })
-            complete()
-            return
-          }
-          const auditSecrets = [providerKey]
-          const runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
-          let finalMessageMetadata: Record<string, unknown> | undefined
-          try {
+            let availableModels = getAvailableProviderModels(input.provider)
+            if (availableModels.source === "seed") {
+              try {
+                await refreshProviderModels(input.provider)
+                availableModels = getAvailableProviderModels(input.provider)
+              } catch (error) {
+                safeEmit({
+                  type: "error",
+                  errorText: `Could not load current ${OPENCODE_PROVIDERS[input.provider].label} models: ${sanitizeProviderErrorText(error)}`,
+                })
+                return
+              }
+            }
+            const modelId = input.model.startsWith(`${input.provider}/`)
+              ? input.model.slice(input.provider.length + 1)
+              : input.model
+            if (!availableModels.models.some((model) => model.id === modelId)) {
+              safeEmit({
+                type: "error",
+                errorText: `${modelId} is no longer available from ${OPENCODE_PROVIDERS[input.provider].label}. Select a refreshed model and retry.`,
+              })
+              return
+            }
+            const auditSecrets = [providerKey]
+            runAudit = new OpencodeRunAuditAccumulator(auditSecrets)
             db = getDatabase()
             if (!isAuthoritativeRun()) return
             const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
@@ -376,7 +384,24 @@ export const opencodeRouter = router({
             if (!subChat) throw new Error("Sub-chat not found")
             if (!chat) throw new Error("Chat not found")
 
-            permissionMode = resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, runId))
+              .get()
+            permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
+            const customPermissions =
+              permissionMode === "custom" &&
+              (persistedRunSnapshot?.customPermissions || chat.customPermissions)
+                ? parseStoredCustomPermissions(
+                    persistedRunSnapshot?.customPermissions ?? chat.customPermissions!,
+                  )
+                : null
             const messages = parseStoredMessages(subChat.messages)
             const last = messages[messages.length - 1]
             const duplicate =
@@ -416,6 +441,7 @@ export const opencodeRouter = router({
                 harness: input.provider,
                 model: input.model,
                 permissionMode,
+                customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
                 worktreePath: input.cwd,
                 promptMessageId: promptMessage.id,
                 status: "running",
@@ -468,9 +494,21 @@ export const opencodeRouter = router({
               previousSourceFingerprint: getLastHarnessContextFingerprint(messages),
             })
             contextMetadata = contextBundle.metadata
+            const nativeModelId = input.model.slice(input.model.indexOf("/") + 1)
+            const selectedModel = getAvailableProviderModels(input.provider).models.find(
+              (model) => model.id === nativeModelId,
+            )
+            const reasoningSupported = selectedModel?.supportsReasoning ?? null
+            reasoningControl = resolveReasoningControls(
+              reasoningSupported === true
+                ? { toggle: true, efforts: ["minimal", "low", "medium", "high", "xhigh"] }
+                : { toggle: false },
+              { enabled: input.reasoningEnabled, effort: input.reasoningEffort },
+            )
+            const messageMetadata = { runId, context: contextMetadata, reasoningControl }
             safeEmit({
               type: "message-metadata",
-              messageMetadata: { runId, context: contextMetadata },
+              messageMetadata,
             })
             const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
 
@@ -488,6 +526,7 @@ export const opencodeRouter = router({
                 permissionMode,
                 reasoningEnabled: input.reasoningEnabled,
                 reasoningEffort: input.reasoningEffort,
+                reasoningSupported,
                 resumeSessionId: ownedSessionId,
                 signal: controller.signal,
               },
@@ -586,18 +625,20 @@ export const opencodeRouter = router({
             if (db && messagesWithPrompt) {
               try {
                 const audit = runAudit.snapshot()
+                const persistedReasoning = sanitizeHarnessEnvelopeEcho(reasoning)
+                const persistedText = sanitizeHarnessEnvelopeEcho(text)
                 const assistantParts = [
-                  ...(reasoning || reasoningMetadata.length
+                  ...(persistedReasoning || reasoningMetadata.length
                     ? [
                         {
                           type: "reasoning",
-                          text: reasoning,
+                          text: persistedReasoning,
                           state: "done",
                           ...(reasoningMetadata.length ? { metadata: reasoningMetadata } : {}),
                         },
                       ]
                     : []),
-                  ...(text ? [{ type: "text", text, state: "done" }] : []),
+                  ...(persistedText ? [{ type: "text", text: persistedText, state: "done" }] : []),
                   ...runAudit.toMessageParts(),
                   ...(sidecarErrorText
                     ? [{ type: "text", text: `Error: ${sidecarErrorText}`, state: "done" }]
@@ -611,6 +652,7 @@ export const opencodeRouter = router({
                   durationMs: Date.now() - startedAt,
                   sessionId: sidecarSessionId,
                   permissionMode,
+                  reasoningControl,
                   engine: audit.engine,
                   permissionApplication: audit.permissionApplication,
                   limitations: audit.limitations,

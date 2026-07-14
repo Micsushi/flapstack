@@ -210,18 +210,16 @@ async function reconcileStoredGenerations(
       throw error
     }
     if (!payload.data) {
-      throw new UsageProviderError(
-        "openrouter",
-        "source-unavailable",
-        "OpenRouter generation response omitted data",
-      )
+      const detail = "OpenRouter generation response omitted data"
+      ctx.log("warn", detail, { generationId })
+      await ctx.markGenerationReconciliation?.("openrouter", generationId, "retry", detail)
+      continue
     }
     if (payload.data.id && payload.data.id !== generationId) {
-      throw new UsageProviderError(
-        "openrouter",
-        "source-unavailable",
-        "OpenRouter generation response id did not match the requested generation",
-      )
+      const detail = "OpenRouter generation response id did not match the requested generation"
+      ctx.log("warn", detail, { generationId })
+      await ctx.markGenerationReconciliation?.("openrouter", generationId, "retry", detail)
+      continue
     }
     const sample = buildGenerationSample(ctx, generationId, payload)
     samples.push(sample)

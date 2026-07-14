@@ -8,10 +8,29 @@ import {
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
-import { closeDatabase, initDatabase } from "./lib/db"
+import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
+import { createMainRunLauncher } from "./lib/main-run-launcher"
+import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
+import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
+import {
+  isDevTestControlEnabled,
+  resolvePreviewUserDataName,
+} from "./lib/mcp-test-control/lifecycle"
+import {
+  startProductMcpInvalidationBridge,
+  type ProductMcpInvalidationBridge,
+} from "./lib/mcp-control/invalidation-bridge"
+import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
+import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
+import {
+  abortAndWaitForShutdownIdle,
+  installBeforeQuitShutdown,
+  runAppShutdown,
+} from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
 import {
   getLaunchDirectory,
@@ -26,11 +45,13 @@ import {
   getAllMcpConfigHandler,
   hasActiveClaudeSessions,
   abortAllClaudeSessions,
+  cancelActiveClaudeSession,
 } from "./lib/trpc/routers/claude"
 import {
   getAllCodexMcpConfigHandler,
   hasActiveCodexStreams,
   abortAllCodexStreams,
+  cancelActiveCodexRun,
 } from "./lib/trpc/routers/codex"
 import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
 import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
@@ -46,6 +67,7 @@ import { windowManager } from "./windows/window-manager"
 import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
+let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -82,6 +104,19 @@ function abortAllAgentSessions(): void {
   abortAllOpencodeStreams()
 }
 
+async function abortAndWaitForAgentSessions(): Promise<void> {
+  if (pendingRunTimer) clearInterval(pendingRunTimer)
+  pendingRunTimer = null
+  const stopped = await abortAndWaitForShutdownIdle({
+    abort: abortAllAgentSessions,
+    isIdle: () => !pendingRunDrainActive && !hasActiveAgentSessions(),
+    timeoutMs: 10_000,
+  })
+  if (!stopped) {
+    throw new Error("Timed out waiting for agent sessions to stop during shutdown")
+  }
+}
+
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
 // This ensures dev and prod have separate instance locks
 if (IS_DEV) {
@@ -95,7 +130,11 @@ if (IS_DEV) {
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
 } else if (IS_MAC_PREVIEW) {
-  const previewUserData = join(app.getPath("userData"), "..", "Flapstack Preview")
+  const previewUserData = join(
+    app.getPath("userData"),
+    "..",
+    resolvePreviewUserDataName(process.env.FLAPSTACK_PREVIEW_INSTANCE),
+  )
   app.setPath("userData", previewUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Preview] Using separate userData path:", previewUserData)
@@ -137,6 +176,8 @@ export function getAppUrl(): string {
 
 // Auth manager singleton (use the one from auth-manager module)
 let authManager: AuthManager
+let pendingRunTimer: NodeJS.Timeout | null = null
+let pendingRunDrainActive = false
 
 export function getAuthManager(): AuthManager {
   // First try to get from module, fallback to local variable for backwards compat
@@ -150,10 +191,9 @@ export async function handleAuthCode(code: string): Promise<void> {
 
 // Handle deep link
 function handleDeepLink(url: string): void {
-  console.log("[DeepLink] Received:", url)
-
   try {
     const parsed = new URL(url)
+    console.log("[DeepLink] Received protocol callback:", parsed.host || parsed.pathname)
 
     // Handle MCP OAuth callback: flapstack://mcp-oauth?code=xxx&state=yyy
     if (parsed.pathname === "/mcp-oauth" || parsed.host === "mcp-oauth") {
@@ -174,7 +214,7 @@ console.log("[Protocol] ========== PROTOCOL REGISTRATION ==========")
 console.log("[Protocol] Protocol:", PROTOCOL)
 console.log("[Protocol] Is dev mode (process.defaultApp):", process.defaultApp)
 console.log("[Protocol] process.execPath:", process.execPath)
-console.log("[Protocol] process.argv:", process.argv)
+console.log("[Protocol] process argument count:", process.argv.length)
 
 /**
  * Register the app as the handler for our custom protocol.
@@ -243,7 +283,7 @@ const server = createServer((req, res) => {
 
   if (url.pathname === "/auth/callback") {
     const code = url.searchParams.get("code")
-    console.log("[Auth Server] Received callback with code:", code?.slice(0, 8) + "...")
+    console.log("[Auth Server] Received hosted auth callback:", Boolean(code))
 
     if (code) {
       // Handle the auth code
@@ -322,12 +362,7 @@ const server = createServer((req, res) => {
     // Handle MCP OAuth callback
     const code = url.searchParams.get("code")
     const state = url.searchParams.get("state")
-    console.log(
-      "[Auth Server] Received MCP OAuth callback with code:",
-      code?.slice(0, 8) + "...",
-      "state:",
-      state?.slice(0, 8) + "...",
-    )
+    console.log("[Auth Server] Received MCP OAuth callback:", Boolean(code && state))
 
     if (code && state) {
       // Handle the MCP OAuth callback
@@ -419,8 +454,8 @@ server.on("error", (error: NodeJS.ErrnoException) => {
   console.error("[Auth Server] Failed:", error)
 })
 
-server.listen(AUTH_SERVER_PORT, () => {
-  console.log(`[Auth Server] Listening on http://localhost:${AUTH_SERVER_PORT}`)
+server.listen(AUTH_SERVER_PORT, "127.0.0.1", () => {
+  console.log(`[Auth Server] Listening on http://127.0.0.1:${AUTH_SERVER_PORT}`)
 })
 
 // Clean up stale lock files from crashed instances
@@ -825,26 +860,100 @@ if (gotTheLock) {
     // Track app opened without hosted account identity.
     trackAppOpened()
 
-    // Initialize database
-    try {
-      initDatabase()
-      console.log("[App] Database initialized")
-      devMcpServer = await startDevMcpServer({
-        enabled: IS_DEV,
-        userDataPath: app.getPath("userData"),
-        checkout: app.getAppPath(),
-        profile: app.getName(),
-      })
-      void runStartupCatchUp({
-        db: initDatabase(),
-        getSecret: getAppUsageSecret,
-      }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
-    } catch (error) {
-      console.error("[App] Failed to initialize database:", error)
-    }
-
-    // Create main window
-    createMainWindow()
+    const startupReady = await runRequiredStartup({
+      initialize: () => {
+        initDatabase()
+        console.log("[App] Database initialized")
+      },
+      continueStartup: async () => {
+        await runIsolatedStartupTasks(
+          [
+            {
+              name: "Voice history reconciliation",
+              run: reconcileVoiceHistory,
+            },
+            {
+              name: "Product MCP invalidation bridge",
+              run: async () => {
+                productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
+                  onInvalidation: (payload) => {
+                    for (const window of BrowserWindow.getAllWindows()) {
+                      if (!window.isDestroyed()) {
+                        window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+                      }
+                    }
+                  },
+                })
+              },
+            },
+            {
+              name: "Dev MCP server",
+              run: async () => {
+                devMcpServer = await startDevMcpServer({
+                  enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
+                  userDataPath: app.getPath("userData"),
+                  checkout: app.getAppPath(),
+                  profile: basename(app.getPath("userData")),
+                })
+              },
+            },
+            {
+              name: "Interrupted MCP run recovery",
+              run: () => recoverInterruptedMcpRuns(getDatabasePath()),
+            },
+            {
+              name: "Pending run scheduler",
+              run: () => {
+                const pendingRunLauncher = createMainRunLauncher()
+                const orchestrationService = createAgentOrchestrationService(getDatabasePath())
+                const launchPendingRuns = async () => {
+                  if (pendingRunDrainActive) return
+                  pendingRunDrainActive = true
+                  try {
+                    orchestrationService.tickAll()
+                    for (const request of orchestrationService.listCancellationRequests()) {
+                      if (request.harness === "codex") cancelActiveCodexRun(request)
+                      else cancelActiveClaudeSession(request)
+                      orchestrationService.acknowledgeCancellationRequest(request.runId)
+                    }
+                    await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+                  } catch (error) {
+                    console.error("[App] Pending run launch failed:", error)
+                  } finally {
+                    pendingRunDrainActive = false
+                  }
+                }
+                pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                void launchPendingRuns()
+              },
+            },
+            {
+              name: "Usage startup catch-up",
+              run: () => {
+                void runStartupCatchUp({
+                  db: initDatabase(),
+                  getSecret: getAppUsageSecret,
+                }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
+              },
+            },
+          ],
+          (name, error) => console.error(`[App] ${name} failed:`, error),
+        )
+        createMainWindow()
+      },
+      cleanup: async () => {
+        if (pendingRunTimer) clearInterval(pendingRunTimer)
+        pendingRunTimer = null
+        await devMcpServer?.stop()
+        devMcpServer = null
+        await productMcpInvalidationBridge?.stop()
+        productMcpInvalidationBridge = null
+        closeDatabase()
+      },
+      exit: (code) => app.exit(code),
+      report: (error) => console.error("[App] Failed required startup:", error),
+    })
+    if (!startupReady) return
 
     // Hosted auto-update is disabled for local-first Flapstack builds.
 
@@ -892,16 +1001,28 @@ if (gotTheLock) {
     }
   })
 
-  // Cleanup before quit
-  app.on("before-quit", async () => {
-    console.log("[App] Shutting down...")
-    abortAllAgentSessions()
-    cancelAllPendingOAuth()
-    await devMcpServer?.stop()
-    devMcpServer = null
-    await cleanupGitWatchers()
-    await shutdownAnalytics()
-    await closeDatabase()
+  // Electron does not await async event listeners. Hold quit until one guarded
+  // shutdown promise has finished, with SQLite closed only after stream
+  // finalizers and services can no longer write to it.
+  installBeforeQuitShutdown({
+    app,
+    shutdown: () =>
+      runAppShutdown({
+        persistProviderSessions: abortAndWaitForAgentSessions,
+        cancelPendingOAuth: () => cancelAllPendingOAuth(),
+        stopDevMcpServer: async () => {
+          await devMcpServer?.stop()
+          devMcpServer = null
+        },
+        stopProductMcpBridge: async () => {
+          await productMcpInvalidationBridge?.stop()
+          productMcpInvalidationBridge = null
+        },
+        cleanupGitWatchers,
+        shutdownAnalytics,
+        closeDatabase,
+      }),
+    reportError: (error) => console.error("[App] Shutdown error:", error),
   })
 
   // Handle uncaught exceptions

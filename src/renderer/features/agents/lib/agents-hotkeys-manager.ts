@@ -1,108 +1,71 @@
-/**
- * Hotkeys manager for Agents
- * Centralized keyboard shortcut handling
- */
-
 import * as React from "react"
-import { useCallback, useMemo } from "react"
+import { useCallback } from "react"
 import {
-  AgentActionContext,
-  AGENT_ACTIONS,
   executeAgentAction,
   getAvailableAgentActions,
+  type AgentActionContext,
 } from "./agents-actions"
 import type { SettingsTab, CustomHotkeysConfig } from "../../../lib/atoms"
-import { getResolvedHotkey, type ShortcutActionId } from "../../../lib/hotkeys"
+import {
+  ALL_SHORTCUT_ACTIONS,
+  detectConflicts,
+  getResolvedHotkey,
+  type ShortcutAction,
+} from "../../../lib/hotkeys"
 
-// ============================================================================
-// ACTION ID MAPPING
-// ============================================================================
-
-/**
- * Maps shortcut registry IDs to agent action IDs
- * This allows the shortcut system to work with the existing action system
- */
-const SHORTCUT_TO_ACTION_MAP: Record<ShortcutActionId, string> = {
-  "show-shortcuts": "open-shortcuts",
-  "open-settings": "open-settings",
-  "toggle-sidebar": "toggle-sidebar",
-  "toggle-details": "toggle-details",
-  "undo-archive": "undo-archive",
-  "new-workspace": "create-new-agent",
-  "search-workspaces": "search-workspaces",
-  "archive-workspace": "archive-workspace",
-  "quick-switch-workspaces": "quick-switch-workspaces",
-  "open-kanban": "open-kanban",
-  "new-agent": "create-new-agent",
-  "new-agent-split": "create-new-agent-split",
-  "search-chats": "search-chats",
-  "search-in-chat": "toggle-chat-search",
-  "archive-agent": "archive-agent",
-  "quick-switch-agents": "quick-switch-agents",
-  "prev-agent": "prev-agent",
-  "next-agent": "next-agent",
-  "focus-input": "focus-input",
-  "toggle-focus": "toggle-focus",
-  "stop-generation": "stop-generation",
-  "switch-model": "switch-model",
-  "toggle-terminal": "toggle-terminal",
-  "open-diff": "open-diff",
-  "create-pr": "create-pr",
-  "file-search": "file-search",
-  "voice-input": "voice-input", // Handled directly in chat-input-area.tsx
-  "open-in-editor": "open-in-editor",
-  "open-file-in-editor": "open-file-in-editor",
-}
-
-// Reverse mapping: action ID -> shortcut ID
-const ACTION_TO_SHORTCUT_MAP: Record<string, ShortcutActionId> = Object.fromEntries(
-  Object.entries(SHORTCUT_TO_ACTION_MAP).map(([k, v]) => [v, k as ShortcutActionId]),
-) as Record<string, ShortcutActionId>
-
-// ============================================================================
-// HOTKEY MATCHING
-// ============================================================================
-
-/**
- * Parse a hotkey string and match against a keyboard event
- * Supports: "?", "shift+?", "cmd+k", "cmd+shift+i"
- */
-function matchesHotkey(e: KeyboardEvent, hotkey: string): boolean {
+export function matchesHotkey(event: KeyboardEvent, hotkey: string): boolean {
   const parts = hotkey.toLowerCase().split("+")
-  const key = parts[parts.length - 1]
-  const modifiers = parts.slice(0, -1)
+  const key = parts.at(-1)
+  if (!key) return false
+  const modifiers = new Set(parts.slice(0, -1))
+  const needsMeta = modifiers.has("cmd")
+  const needsAlt = modifiers.has("opt")
+  const needsCtrl = modifiers.has("ctrl")
+  const needsShift = modifiers.has("shift") || key === "?"
+  if (needsMeta !== event.metaKey) return false
+  if (needsAlt !== event.altKey) return false
+  if (needsCtrl !== event.ctrlKey) return false
+  if (needsShift !== event.shiftKey) return false
 
-  const needsMeta = modifiers.includes("cmd") || modifiers.includes("meta")
-  const needsAlt = modifiers.includes("opt") || modifiers.includes("alt")
-  const needsCtrl = modifiers.includes("ctrl")
-  let needsShift = modifiers.includes("shift")
-
-  // "?" requires shift implicitly
-  if (key === "?" && !modifiers.includes("shift")) {
-    needsShift = true
-  }
-
-  if (needsMeta !== e.metaKey) return false
-  if (needsAlt !== e.altKey) return false
-  if (needsCtrl !== e.ctrlKey) return false
-  if (needsShift !== e.shiftKey) return false
-
-  const eventKey = e.key.toLowerCase()
-  const eventCode = e.code.toLowerCase()
-
+  const eventKey = event.key.toLowerCase()
+  const code = event.code.toLowerCase()
   if (eventKey === key) return true
-  if (key === "?" && eventKey === "?") return true
-  if (key === "/" && (eventKey === "/" || eventCode === "slash")) return true
-  if (key === "\\" && (eventKey === "\\" || eventCode === "backslash")) return true
-  if (key === "," && (eventKey === "," || eventCode === "comma")) return true
-  if (key.length === 1 && eventCode === `key${key}`) return true
-
-  return false
+  if (key === "esc") return eventKey === "escape"
+  if (key === "space") return eventKey === " "
+  if (key === "?" && code === "slash") return true
+  if (key === "/" && code === "slash") return true
+  if (key === "\\" && code === "backslash") return true
+  if (key === "," && code === "comma") return true
+  return key.length === 1 && code === `key${key}`
 }
 
-// ============================================================================
-// TYPES
-// ============================================================================
+export function isShortcutFocusAllowed(
+  action: ShortcutAction,
+  target: EventTarget | null,
+): boolean {
+  if (action.focusPolicy === "global") return true
+  if (!(target instanceof Element)) return true
+  return !target.closest(
+    'input, textarea, select, [contenteditable="true"], .monaco-editor, .xterm, [role="dialog"], [aria-modal="true"]',
+  )
+}
+
+export function resolveRendererShortcut(
+  event: KeyboardEvent,
+  config: CustomHotkeysConfig,
+  options: { availableActionIds?: ReadonlySet<string> } = {},
+): ShortcutAction | null {
+  const conflicts = detectConflicts(config)
+  for (const action of ALL_SHORTCUT_ACTIONS) {
+    if (action.dispatch !== "renderer") continue
+    if (options.availableActionIds && !options.availableActionIds.has(action.actionId)) continue
+    if (conflicts.has(action.id)) continue
+    if (!isShortcutFocusAllowed(action, event.target)) continue
+    const hotkey = getResolvedHotkey(action.id, config)
+    if (hotkey && matchesHotkey(event, hotkey)) return action
+  }
+  return null
+}
 
 export interface AgentsHotkeysManagerConfig {
   setSelectedChatId?: (id: string | null) => void
@@ -114,9 +77,9 @@ export interface AgentsHotkeysManagerConfig {
   setFileSearchDialogOpen?: (open: boolean) => void
   toggleChatSearch?: () => void
   selectedChatId?: string | null
+  desktopView?: import("../atoms").DesktopView
+  hasSelectedProject?: boolean
   customHotkeysConfig?: CustomHotkeysConfig
-  // Feature flags
-  betaKanbanEnabled?: boolean
 }
 
 export interface UseAgentsHotkeysOptions {
@@ -124,19 +87,11 @@ export interface UseAgentsHotkeysOptions {
   preventDefault?: boolean
 }
 
-// Hotkeys that work even in inputs
-const GLOBAL_HOTKEYS = new Set(["open-shortcuts"])
-
-// ============================================================================
-// HOTKEYS MANAGER HOOK
-// ============================================================================
-
 export function useAgentsHotkeys(
   config: AgentsHotkeysManagerConfig,
   options: UseAgentsHotkeysOptions = {},
 ) {
   const { enabled = true, preventDefault = true } = options
-
   const createActionContext = useCallback(
     (): AgentActionContext => ({
       setSelectedChatId: config.setSelectedChatId,
@@ -148,6 +103,8 @@ export function useAgentsHotkeys(
       setFileSearchDialogOpen: config.setFileSearchDialogOpen,
       toggleChatSearch: config.toggleChatSearch,
       selectedChatId: config.selectedChatId,
+      desktopView: config.desktopView,
+      hasSelectedProject: config.hasSelectedProject,
     }),
     [
       config.setSelectedChatId,
@@ -159,208 +116,49 @@ export function useAgentsHotkeys(
       config.setFileSearchDialogOpen,
       config.toggleChatSearch,
       config.selectedChatId,
+      config.desktopView,
+      config.hasSelectedProject,
     ],
   )
 
   const handleHotkeyAction = useCallback(
     async (actionId: string) => {
       const context = createActionContext()
-      const availableActions = getAvailableAgentActions(context)
-      const action = availableActions.find((a) => a.id === actionId)
-
-      if (!action) return
-
+      if (!getAvailableAgentActions(context).some((action) => action.id === actionId)) return
       await executeAgentAction(actionId, context, "hotkey")
     },
     [createActionContext],
   )
 
-  // Listen for Cmd+N via IPC from main process (menu accelerator)
   React.useEffect(() => {
-    if (!enabled) return
-    if (!window.desktopApi?.onShortcutNewAgent) return
-
-    const cleanup = window.desktopApi.onShortcutNewAgent(() => {
-      console.log("[Hotkey] Cmd+N received via IPC, executing create-new-agent")
-      handleHotkeyAction("create-new-agent")
-    })
-
-    return cleanup
+    if (!enabled || !window.desktopApi?.onShortcutNewAgent) return
+    return window.desktopApi.onShortcutNewAgent(() => void handleHotkeyAction("create-new-agent"))
   }, [enabled, handleHotkeyAction])
 
-  // Listen for Cmd+, via IPC from main process (menu accelerator)
   React.useEffect(() => {
-    if (!enabled) return
-    if (!window.desktopApi?.onShortcutOpenSettings) return
-
-    const cleanup = window.desktopApi.onShortcutOpenSettings(() => {
-      console.log("[Hotkey] Cmd+, received via IPC, executing open-settings")
-      handleHotkeyAction("open-settings")
-    })
-
-    return cleanup
+    if (!enabled || !window.desktopApi?.onShortcutOpenSettings) return
+    return window.desktopApi.onShortcutOpenSettings(() => void handleHotkeyAction("open-settings"))
   }, [enabled, handleHotkeyAction])
 
-  // Get the resolved hotkey for a shortcut, respecting custom bindings
-  const getHotkeyForAction = useCallback(
-    (shortcutId: ShortcutActionId): string | null => {
-      const customConfig = config.customHotkeysConfig || { version: 1, bindings: {} }
-      return getResolvedHotkey(shortcutId, customConfig)
-    },
-    [config.customHotkeysConfig],
-  )
-
-  // Unified hotkey listener that respects custom configurations
   React.useEffect(() => {
     if (!enabled) return
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement
-      const isInputFocused =
-        activeElement instanceof HTMLInputElement ||
-        activeElement instanceof HTMLTextAreaElement ||
-        activeElement?.getAttribute("contenteditable") === "true" ||
-        activeElement?.closest('[contenteditable="true"]')
-
-      // Check toggle-sidebar hotkey
-      const toggleSidebarHotkey = getHotkeyForAction("toggle-sidebar")
-      if (toggleSidebarHotkey && matchesHotkey(e, toggleSidebarHotkey)) {
-        e.preventDefault()
-        e.stopPropagation()
-        handleHotkeyAction("toggle-sidebar")
-        return
+    const shortcutConfig = config.customHotkeysConfig ?? { version: 2, bindings: {} }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const context = createActionContext()
+      const availableActionIds = new Set(
+        getAvailableAgentActions(context).map((action) => action.id),
+      )
+      const action = resolveRendererShortcut(event, shortcutConfig, { availableActionIds })
+      if (!action) return
+      if (preventDefault) {
+        event.preventDefault()
+        event.stopPropagation()
       }
-
-      // Check show-shortcuts hotkey (only when not in input)
-      if (!isInputFocused) {
-        const showShortcutsHotkey = getHotkeyForAction("show-shortcuts")
-        if (showShortcutsHotkey && matchesHotkey(e, showShortcutsHotkey)) {
-          e.preventDefault()
-          e.stopPropagation()
-          handleHotkeyAction("open-shortcuts")
-          return
-        }
-      }
-
-      // Check open-settings hotkey
-      const openSettingsHotkey = getHotkeyForAction("open-settings")
-      if (openSettingsHotkey && matchesHotkey(e, openSettingsHotkey)) {
-        e.preventDefault()
-        e.stopPropagation()
-        handleHotkeyAction("open-settings")
-        return
-      }
-
-      // Check search-in-chat hotkey
-      // Skip if focus is inside a file viewer Monaco editor so Cmd+F triggers editor find
-      const searchInChatHotkey = getHotkeyForAction("search-in-chat")
-      if (searchInChatHotkey && matchesHotkey(e, searchInChatHotkey)) {
-        const active = document.activeElement
-        const isInFileViewer = active?.closest?.("[data-file-viewer-path]")
-        if (!isInFileViewer) {
-          e.preventDefault()
-          e.stopPropagation()
-          handleHotkeyAction("toggle-chat-search")
-          return
-        }
-      }
-
-      // Check file-search hotkey (Cmd+P)
-      const fileSearchHotkey = getHotkeyForAction("file-search")
-      if (fileSearchHotkey && matchesHotkey(e, fileSearchHotkey)) {
-        e.preventDefault()
-        e.stopPropagation()
-        handleHotkeyAction("file-search")
-        return
-      }
-
-      // Check open-kanban hotkey (only if feature is enabled)
-      if (config.betaKanbanEnabled) {
-        const openKanbanHotkey = getHotkeyForAction("open-kanban")
-        if (openKanbanHotkey && matchesHotkey(e, openKanbanHotkey)) {
-          e.preventDefault()
-          e.stopPropagation()
-          handleHotkeyAction("open-kanban")
-          return
-        }
-      }
-
-      // Check new-workspace alt hotkey ("C") - only when not in input
-      if (!isInputFocused && matchesHotkey(e, "c")) {
-        e.preventDefault()
-        e.stopPropagation()
-        handleHotkeyAction("create-new-agent")
-        return
-      }
+      void handleHotkeyAction(action.actionId)
     }
-
     window.addEventListener("keydown", handleKeyDown, true)
     return () => window.removeEventListener("keydown", handleKeyDown, true)
-  }, [enabled, handleHotkeyAction, getHotkeyForAction, config.betaKanbanEnabled])
-
-  // General hotkey handler for remaining actions
-  const actionsWithHotkeys = useMemo(
-    () =>
-      Object.values(AGENT_ACTIONS).filter(
-        (action) =>
-          action.hotkey !== undefined &&
-          action.id !== "create-new-agent" &&
-          action.id !== "toggle-sidebar" &&
-          action.id !== "open-shortcuts" &&
-          action.id !== "open-settings" &&
-          action.id !== "toggle-chat-search",
-      ),
-    [],
-  )
-
-  const hotkeyMappings = useMemo(() => {
-    const mappings: Array<{
-      actionId: string
-      hotkeys: string[]
-      isGlobal: boolean
-    }> = []
-
-    for (const action of actionsWithHotkeys) {
-      if (!action.hotkey) continue
-      const hotkeys = Array.isArray(action.hotkey) ? action.hotkey : [action.hotkey]
-      const isGlobal = GLOBAL_HOTKEYS.has(action.id)
-      mappings.push({
-        actionId: action.id,
-        hotkeys: hotkeys.filter(Boolean) as string[],
-        isGlobal,
-      })
-    }
-
-    return mappings
-  }, [actionsWithHotkeys])
-
-  React.useEffect(() => {
-    if (!enabled) return
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      const isInInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
-
-      for (const mapping of hotkeyMappings) {
-        if (isInInput && !mapping.isGlobal) continue
-
-        for (const hotkey of mapping.hotkeys) {
-          if (matchesHotkey(e, hotkey)) {
-            if (preventDefault) {
-              e.preventDefault()
-              e.stopPropagation()
-            }
-            handleHotkeyAction(mapping.actionId)
-            return
-          }
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown, true)
-    return () => window.removeEventListener("keydown", handleKeyDown, true)
-  }, [enabled, preventDefault, hotkeyMappings, handleHotkeyAction])
+  }, [config.customHotkeysConfig, createActionContext, enabled, handleHotkeyAction, preventDefault])
 
   return {
     executeAction: handleHotkeyAction,

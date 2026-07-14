@@ -14,7 +14,12 @@ import { UsageEngine } from "../../usage/engine"
 import { runManualRefresh } from "../../usage/catch-up"
 import { getUsageProviders } from "../../usage/registry"
 import { getUsageSettings, setUsageSettings } from "../../usage/settings"
-import { getUsageSecret, hasUsageSecret, setUsageSecret } from "../../usage/secrets"
+import {
+  getUsageCredentialNamespace,
+  getUsageSecret,
+  hasUsageSecret,
+  setUsageSecret,
+} from "../../usage/secrets"
 import { getAppUsageSecret } from "../../usage/app-secrets"
 import { syncOnWatchUsageHistory } from "../../usage/onwatch-history"
 import { readDaemonStatus } from "../../usage-daemon/lifecycle"
@@ -32,6 +37,7 @@ import {
   listRecentCycles,
   listRecentSamples,
   resetGenerationReconciliation,
+  updateDaemonStatus,
 } from "../../usage/store"
 import { SAMPLE_SOURCES, USAGE_PROVIDER_IDS } from "../../usage/types"
 
@@ -62,7 +68,7 @@ export const usageRouter = router({
   // ---- Capabilities (kept for back-compat with the earlier scaffold) ----
   getCapabilities: publicProcedure.query(() => ({
     enabled: true,
-    daemonInstall: describeInstall(),
+    daemonInstall: describeInstall(join(app.getPath("userData"), "data")),
     providers: getUsageProviders().map((p) => ({
       id: p.id,
       label: p.label,
@@ -269,6 +275,7 @@ export const usageRouter = router({
         dbPath: getDatabasePath(),
         configDir: join(app.getPath("userData"), "data"),
         cadenceSeconds: settings.cadenceSeconds,
+        secretNamespace: getUsageCredentialNamespace(),
       })
     } catch (error) {
       setUsageSettings({
@@ -281,8 +288,22 @@ export const usageRouter = router({
   }),
 
   uninstallDaemon: publicProcedure.mutation(async () => {
+    const previous = getUsageSettings()
     setUsageSettings({ daemonEnabled: false, daemonStartAtLogin: false })
-    uninstallUsageDaemon(join(app.getPath("userData"), "data"))
+    try {
+      uninstallUsageDaemon(join(app.getPath("userData"), "data"))
+    } catch (error) {
+      setUsageSettings({
+        daemonEnabled: previous.daemonEnabled,
+        daemonStartAtLogin: previous.daemonStartAtLogin,
+      })
+      throw error
+    }
+    await updateDaemonStatus(getDatabase(), {
+      enabled: false,
+      running: false,
+      pid: null,
+    })
     return readDaemonStatus(getDatabase())
   }),
 

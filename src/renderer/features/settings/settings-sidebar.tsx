@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
-import { ChevronLeft, Mic, Search, ShieldCheck, X } from "lucide-react"
+import { ChevronLeft, Keyboard, Mic, Search, ShieldCheck, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { EyeOpenFilledIcon, SlidersFilledIcon } from "../../icons"
 import {
@@ -11,9 +11,11 @@ import {
   type SettingsTab,
 } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
+import { trpc } from "../../lib/trpc"
 import {
   BrainFilledIcon,
   BugFilledIcon,
+  CustomAgentIconFilled,
   FolderFilledIcon,
   OriginalMCPIcon,
   PluginFilledIcon,
@@ -21,78 +23,28 @@ import {
 } from "../../components/ui/icons"
 import { desktopViewAtom } from "../agents/atoms"
 import { searchSettings, type SettingsSearchEntry } from "./settings-search"
+import { getVisibleSettingsTabs, type SettingsProviderScope } from "./settings-visibility"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
 
-// General settings tabs
-const MAIN_TABS = [
-  {
-    id: "preferences" as SettingsTab,
-    label: "Preferences",
-    icon: SlidersFilledIcon,
-  },
-  {
-    id: "permissions" as SettingsTab,
-    label: "Permissions",
-    icon: ShieldCheck,
-  },
-  {
-    id: "appearance" as SettingsTab,
-    label: "Appearance",
-    icon: EyeOpenFilledIcon,
-  },
-]
-
-// Advanced tabs (base - without Debug)
-const ADVANCED_TABS_BASE = [
-  {
-    id: "projects" as SettingsTab,
-    label: "Projects",
-    icon: FolderFilledIcon,
-  },
-  {
-    id: "models" as SettingsTab,
-    label: "Models",
-    icon: BrainFilledIcon,
-  },
-  {
-    id: "api-providers" as SettingsTab,
-    label: "API Providers",
-    icon: BrainFilledIcon,
-  },
-  {
-    id: "voice" as SettingsTab,
-    label: "Voice",
-    icon: Mic,
-  },
-  {
-    id: "skills" as SettingsTab,
-    label: "Skills",
-    icon: SkillIconFilled,
-  },
-  {
-    id: "mcp" as SettingsTab,
-    label: "MCP Servers",
-    icon: OriginalMCPIcon,
-  },
-  {
-    id: "plugins" as SettingsTab,
-    label: "Plugins",
-    icon: PluginFilledIcon,
-  },
-  {
-    id: "usage" as SettingsTab,
-    label: "Usage",
-    icon: SlidersFilledIcon,
-  },
-]
-
-// Debug tab definition
-const DEBUG_TAB = {
-  id: "debug" as SettingsTab,
-  label: "Debug",
-  icon: BugFilledIcon,
+const SETTINGS_TAB_ICONS: Partial<
+  Record<SettingsTab, React.ComponentType<{ className?: string }>>
+> = {
+  preferences: SlidersFilledIcon,
+  permissions: ShieldCheck,
+  appearance: EyeOpenFilledIcon,
+  projects: FolderFilledIcon,
+  models: BrainFilledIcon,
+  "api-providers": BrainFilledIcon,
+  voice: Mic,
+  keyboard: Keyboard,
+  skills: SkillIconFilled,
+  agents: CustomAgentIconFilled,
+  mcp: OriginalMCPIcon,
+  plugins: PluginFilledIcon,
+  usage: SlidersFilledIcon,
+  debug: BugFilledIcon,
 }
 
 interface TabButtonProps {
@@ -138,6 +90,7 @@ export function SettingsSidebar() {
   const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const isDesktop = useAtomValue(isDesktopAtom)
+  const { data: apiProviders = [] } = trpc.opencode.listProviders.useQuery()
 
   // Settings has its own full-width drag bar, so keep the native macOS window
   // controls available for minimize, fullscreen, and window management.
@@ -148,24 +101,57 @@ export function SettingsSidebar() {
   }, [isDesktop])
 
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchResultRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
 
   // Show debug tab if in development OR if devtools are unlocked
   const showDebugTab = isDevelopment || devToolsUnlocked
 
-  const mainTabs = useMemo(() => {
-    if (showDebugTab) return [...MAIN_TABS, DEBUG_TAB]
-    return MAIN_TABS
-  }, [showDebugTab])
+  const mainTabs = useMemo(
+    () =>
+      getVisibleSettingsTabs("main", { showDevelopment: showDebugTab }).map((tab) => ({
+        ...tab,
+        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+      })),
+    [showDebugTab],
+  )
+  const advancedTabs = useMemo(
+    () =>
+      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab }).map((tab) => ({
+        ...tab,
+        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+      })),
+    [showDebugTab],
+  )
+
+  const availableApiProviders = useMemo(
+    () =>
+      apiProviders
+        .map((provider) => provider.id)
+        .filter(
+          (provider): provider is Extract<SettingsProviderScope, "openrouter" | "nanogpt"> =>
+            provider === "openrouter" || provider === "nanogpt",
+        ),
+    [apiProviders],
+  )
 
   const searchResults = useMemo(
-    () => searchSettings(searchQuery, { showDevelopment: showDebugTab }),
-    [searchQuery, showDebugTab],
+    () =>
+      searchSettings(searchQuery, {
+        showDevelopment: showDebugTab,
+        availableProviders: availableApiProviders,
+      }),
+    [availableApiProviders, searchQuery, showDebugTab],
   )
 
   useEffect(() => {
     setSelectedSearchIndex(0)
   }, [searchQuery])
+
+  useEffect(() => {
+    if (!searchQuery) return
+    searchResultRefs.current[selectedSearchIndex]?.scrollIntoView({ block: "nearest" })
+  }, [searchQuery, selectedSearchIndex])
 
   useEffect(() => {
     const handleFind = (event: KeyboardEvent) => {
@@ -239,6 +225,10 @@ export function SettingsSidebar() {
             onKeyDown={handleSearchKeyDown}
             placeholder="Search settings"
             aria-label="Search settings"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="settings-search-results"
+            aria-expanded={Boolean(searchQuery)}
             aria-activedescendant={
               searchQuery && searchResults[selectedSearchIndex]
                 ? `settings-search-result-${searchResults[selectedSearchIndex].id}`
@@ -265,13 +255,21 @@ export function SettingsSidebar() {
       {/* Tab list */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent px-2 pb-4 space-y-4">
         {searchQuery ? (
-          <div className="space-y-1" role="listbox" aria-label="Settings search results">
+          <div
+            id="settings-search-results"
+            className="space-y-1"
+            role="listbox"
+            aria-label="Settings search results"
+          >
             {searchResults.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted-foreground">No matching settings.</div>
             ) : (
               searchResults.map((result, index) => (
                 <button
                   key={result.id}
+                  ref={(element) => {
+                    searchResultRefs.current[index] = element
+                  }}
                   id={`settings-search-result-${result.id}`}
                   type="button"
                   role="option"
@@ -315,7 +313,7 @@ export function SettingsSidebar() {
 
             {/* Advanced Tabs */}
             <div className="space-y-1">
-              {ADVANCED_TABS_BASE.map((tab) => (
+              {advancedTabs.map((tab) => (
                 <TabButton
                   key={tab.id}
                   tab={tab}

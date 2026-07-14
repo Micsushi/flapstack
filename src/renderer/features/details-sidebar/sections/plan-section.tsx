@@ -5,11 +5,13 @@ import { useAtom } from "jotai"
 import { IconSpinner, PlanIcon } from "@/components/ui/icons"
 import { ChatMarkdownRenderer } from "@/components/chat-markdown-renderer"
 import { trpc } from "@/lib/trpc"
+import { toDurablePlanFileTarget } from "@/lib/file-target"
 import { planContentCacheAtomFamily } from "../atoms"
 
 interface PlanSectionProps {
   chatId: string
   planPath: string | null
+  worktreePath: string | null
   refetchTrigger?: number
   isExpanded?: boolean
 }
@@ -22,6 +24,7 @@ interface PlanSectionProps {
 export const PlanSection = memo(function PlanSection({
   chatId,
   planPath,
+  worktreePath,
   refetchTrigger,
   isExpanded = false,
 }: PlanSectionProps) {
@@ -32,6 +35,10 @@ export const PlanSection = memo(function PlanSection({
 
   // Plan content cache to avoid flashing loading state
   const [planCache, setPlanCache] = useAtom(planContentCacheAtomFamily(chatId))
+  const fileTarget = useMemo(
+    () => toDurablePlanFileTarget(worktreePath, chatId, planPath),
+    [worktreePath, chatId, planPath],
+  )
 
   // Fetch plan file content using tRPC
   const {
@@ -39,7 +46,10 @@ export const PlanSection = memo(function PlanSection({
     isLoading,
     error,
     refetch,
-  } = trpc.files.readFile.useQuery({ filePath: planPath! }, { enabled: !!planPath })
+  } = trpc.files.readFile.useQuery(
+    fileTarget ?? { rootPath: worktreePath || "invalid", relativePath: "invalid" },
+    { enabled: !!fileTarget },
+  )
 
   // Update cache when content loads successfully
   useEffect(() => {

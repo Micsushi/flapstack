@@ -417,7 +417,7 @@ export async function undoRunChangeSet(runId: string) {
     return {
       success: true as const,
       alreadyUndone: false as const,
-      files: plans.map((plan) => relative(worktreePath, plan.absolutePath)),
+      files: plans.map((plan) => relative(plan.worktreeRoot, plan.absolutePath)),
       recoveryCommit,
     }
   })

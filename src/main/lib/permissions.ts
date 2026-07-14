@@ -1,10 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import type {
   HarnessPermissionApplication,
   HarnessPermissionLimitation,
 } from "../../shared/harness-types"
+import {
+  CUSTOM_PERMISSION_SCHEMA_VERSION,
+  customPermissionCapabilityKeys,
+  disabledCustomPermissions,
+  parseCustomPermissionCapabilities,
+  type CustomPermissionCapabilities,
+} from "../../shared/permission-capabilities"
+import { nowEpochSeconds } from "./db/timestamps"
 
 const require = createRequire(import.meta.url)
 
@@ -24,6 +40,7 @@ export type PermissionChangeBehavior = (typeof permissionChangeBehaviors)[number
 export type PermissionPreferences = {
   globalDefault: PermissionMode
   changeBehavior: PermissionChangeBehavior
+  globalCustomPermissions?: CustomPermissionCapabilities | null
 }
 
 export type ClaudeSdkPermissionMode =
@@ -34,14 +51,12 @@ export type ClaudeSdkPermissionApplication = {
   allowDangerouslySkipPermissions: boolean
 }
 
-export type CustomPermissionToggles = {
-  fileWrite: boolean
-  shell: boolean
-  network: boolean
-  git: boolean
-  browser: boolean
-  mcp: boolean
-  secrets: boolean
+export type CustomPermissionToggles = CustomPermissionCapabilities
+export const customPermissionKeys = customPermissionCapabilityKeys
+export { CUSTOM_PERMISSION_SCHEMA_VERSION, disabledCustomPermissions }
+
+export function parseCustomPermissionToggles(value: unknown): CustomPermissionToggles | null {
+  return parseCustomPermissionCapabilities(value)
 }
 
 export type PermissionSource = "chat" | "task" | "project" | "global" | "fallback"
@@ -63,6 +78,8 @@ export type CodexAcpModeId = "read-only" | "agent" | "agent-full-access"
 type PermissionConfig = {
   globalDefault?: PermissionMode
   changeBehavior?: PermissionChangeBehavior
+  globalCustomPermissions?: CustomPermissionCapabilities | null
+  pendingAllChatsSync?: boolean
 }
 
 export const defaultPermissionMode: PermissionMode = "ask-before-edits"
@@ -122,10 +139,14 @@ export function getPermissionChangeBehavior(): PermissionChangeBehavior {
 
 export function getPermissionPreferences(): PermissionPreferences {
   const config = readPermissionConfig()
-  return {
+  const preferences: PermissionPreferences = {
     globalDefault: config.globalDefault ?? defaultPermissionMode,
     changeBehavior: config.changeBehavior ?? "ask",
   }
+  if (preferences.globalDefault === "custom") {
+    preferences.globalCustomPermissions = config.globalCustomPermissions ?? null
+  }
+  return preferences
 }
 
 export function setGlobalDefault(mode: PermissionMode): PermissionMode {
@@ -134,8 +155,15 @@ export function setGlobalDefault(mode: PermissionMode): PermissionMode {
   if (!parsedMode) {
     throw new Error(`Invalid permission mode: ${String(mode)}`)
   }
+  if (parsedMode === "custom") {
+    throw new Error("Custom global defaults require explicit capability toggles.")
+  }
 
-  writePermissionConfig({ ...readPermissionConfig(), globalDefault: parsedMode })
+  writePermissionConfig({
+    ...readPermissionConfig(),
+    globalDefault: parsedMode,
+    globalCustomPermissions: null,
+  })
   return parsedMode
 }
 
@@ -153,6 +181,17 @@ export function setPermissionChangeBehavior(
 }
 
 export function replacePermissionPreferences(preferences: PermissionPreferences): void {
+  writePermissionConfig(normalizePermissionPreferences(preferences))
+}
+
+export function stageAllChatPermissionPreferences(preferences: PermissionPreferences): void {
+  writePermissionConfig({
+    ...normalizePermissionPreferences(preferences),
+    pendingAllChatsSync: true,
+  })
+}
+
+function normalizePermissionPreferences(preferences: PermissionPreferences): PermissionConfig {
   const globalDefault = parsePermissionMode(preferences.globalDefault)
   const changeBehavior = parsePermissionChangeBehavior(preferences.changeBehavior)
 
@@ -160,12 +199,62 @@ export function replacePermissionPreferences(preferences: PermissionPreferences)
     throw new Error("Invalid permission preferences")
   }
 
-  writePermissionConfig({ globalDefault, changeBehavior })
+  const globalCustomPermissions =
+    globalDefault === "custom"
+      ? parseCustomPermissionToggles(preferences.globalCustomPermissions)
+      : null
+  if (globalDefault === "custom" && !globalCustomPermissions) {
+    throw new Error("Custom global permission requires a complete versioned capability set")
+  }
+
+  return { globalDefault, changeBehavior, globalCustomPermissions }
+}
+
+type PermissionRecoveryDatabase = {
+  transaction<T>(operation: () => T): () => T
+  prepare(sql: string): { run(...params: unknown[]): unknown }
+}
+
+/** Complete an interrupted all-chat promotion before the app creates new rows. */
+export function recoverPendingAllChatPermissionChange(sqlite: PermissionRecoveryDatabase): boolean {
+  const config = readPermissionConfig()
+  if (!config.pendingAllChatsSync) return false
+  const preferences = normalizePermissionPreferences({
+    globalDefault: config.globalDefault ?? defaultPermissionMode,
+    changeBehavior: config.changeBehavior ?? "ask",
+    globalCustomPermissions: config.globalCustomPermissions ?? null,
+  })
+  const customPermissions =
+    preferences.globalDefault === "custom"
+      ? JSON.stringify(preferences.globalCustomPermissions)
+      : null
+  const now = nowEpochSeconds()
+  sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        "UPDATE projects SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
+      )
+      .run(preferences.globalDefault, customPermissions, now)
+    sqlite
+      .prepare(
+        "UPDATE tasks SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
+      )
+      .run(preferences.globalDefault, customPermissions, now)
+    sqlite
+      .prepare("UPDATE chats SET permission_mode = ?, custom_permissions = ?, updated_at = ?")
+      .run(preferences.globalDefault, customPermissions, now)
+    sqlite
+      .prepare("UPDATE sub_chats SET permission_mode = ?, updated_at = ?")
+      .run(preferences.globalDefault, now)
+  })()
+  writePermissionConfig(preferences)
+  return true
 }
 
 export function buildCodexPermissionApplication(params: {
   permissionMode: PermissionMode
   cwd?: string | null
+  customPermissions?: CustomPermissionToggles | null
 }): HarnessPermissionApplication {
   const cwd = params.cwd?.trim() || null
   const modeId = mapCodexAcpModeId(params.permissionMode)
@@ -211,7 +300,7 @@ export function buildCodexPermissionApplication(params: {
     },
   ]
 
-  const limitations = getCodexPermissionLimitations(params.permissionMode)
+  const limitations = getCodexPermissionLimitations(params.permissionMode, params.customPermissions)
   const warnings = [
     `Codex ACP mode "${modeId}" is selected.`,
     ...limitations.map((limitation) => limitation.reason),
@@ -226,7 +315,7 @@ export function buildCodexPermissionApplication(params: {
     warnings: Array.from(new Set(warnings)),
     reason:
       limitations.length > 0
-        ? "Flapstack selects the closest conservative Codex ACP mode and approval behavior, but custom capability toggles remain unsupported."
+        ? "Flapstack selects the closest conservative Codex ACP mode and approval behavior, but does not claim native parity for every custom capability."
         : "Flapstack selects the Codex ACP mode and fail-closed approval behavior for this permission mode.",
   }
 }
@@ -276,7 +365,7 @@ export function mapCursorPermissionFlags(mode: PermissionMode): CursorPermission
       return { sandbox: "disabled", autoReview: false, force: true }
     case "custom":
     default:
-      return { sandbox: "enabled", autoReview: true, force: false }
+      return { mode: "plan", sandbox: "enabled", autoReview: false, force: false }
   }
 }
 
@@ -386,19 +475,10 @@ function getCursorPermissionLimitations(mode: PermissionMode): HarnessPermission
     case "custom":
       return [
         limitation(
-          "shell",
-          "custom shell toggle",
-          "Shell access cannot be individually controlled through cursor-agent flags.",
+          "filesystem-write-scope",
+          "enabled custom capabilities",
+          "Cursor has no per-capability callback, so custom mode fails closed to sandboxed plan mode instead of honoring enabled mutations.",
         ),
-        limitation("network", "custom network toggle", "Network access cannot be controlled here."),
-        limitation("git", "custom git toggle", "Git access cannot be controlled here."),
-        limitation("browser", "custom browser toggle", "Browser access cannot be controlled here."),
-        limitation(
-          "mcp",
-          "custom MCP toggle",
-          "MCP servers are managed via `cursor-agent mcp`, not custom mode.",
-        ),
-        limitation("secrets", "custom secrets toggle", "Secret access cannot be controlled here."),
       ]
   }
 }
@@ -430,9 +510,13 @@ export function buildClaudePermissionApplication(params: {
   cwd?: string | null
   sdkPermissionMode: ClaudeSdkPermissionMode
   canUseToolReadOnlyGuard: boolean
+  customPermissions?: CustomPermissionToggles | null
 }): HarnessPermissionApplication {
   const cwd = params.cwd?.trim() || null
-  const limitations = getClaudePermissionLimitations(params.permissionMode)
+  const limitations = getClaudePermissionLimitations(
+    params.permissionMode,
+    params.customPermissions,
+  )
   const enforced = [
     {
       control: "process-cwd" as const,
@@ -444,10 +528,12 @@ export function buildClaudePermissionApplication(params: {
     },
     {
       control: "filesystem-write-scope" as const,
-      applied: params.canUseToolReadOnlyGuard,
-      reason: params.canUseToolReadOnlyGuard
-        ? "Flapstack denies known mutating Claude tools before they execute."
-        : "Write scope is delegated to Claude Code SDK permission behavior.",
+      applied: params.canUseToolReadOnlyGuard || Boolean(params.customPermissions),
+      reason: params.customPermissions
+        ? "Flapstack maps every tool request through the stored custom capability set."
+        : params.canUseToolReadOnlyGuard
+          ? "Flapstack denies known mutating Claude tools before they execute."
+          : "Write scope is delegated to Claude Code SDK permission behavior.",
     },
   ]
   const warnings = [
@@ -457,7 +543,10 @@ export function buildClaudePermissionApplication(params: {
 
   return {
     requested: params.permissionMode,
-    applied: params.permissionMode === "read-only" || params.permissionMode === "full-access",
+    applied:
+      params.permissionMode === "read-only" ||
+      params.permissionMode === "full-access" ||
+      (params.permissionMode === "custom" && Boolean(params.customPermissions)),
     degraded: limitations.length > 0,
     enforced,
     limitations,
@@ -481,7 +570,40 @@ export function isClaudeReadOnlyToolAllowed(toolName: string): boolean {
   return CLAUDE_READ_ONLY_TOOLS.has(toolName)
 }
 
-function getCodexPermissionLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
+export function customCapabilityForToolName(
+  toolName: string,
+): Exclude<keyof CustomPermissionToggles, "schemaVersion"> | "unknown" | null {
+  const normalized = toolName.toLowerCase()
+  if (normalized.startsWith("mcp__")) return "thirdPartyMcp"
+  if (/^(edit|multiedit|write|notebookedit|apply_patch)$/.test(normalized)) {
+    return "projectWrite"
+  }
+  if (/^(bash|shell|execute|exec|run)$/.test(normalized)) return "shell"
+  if (/git/.test(normalized)) return "git"
+  if (/^(webfetch|websearch)$/.test(normalized) || /network|http|fetch/.test(normalized)) {
+    return "network"
+  }
+  if (/browser|playwright|chrome/.test(normalized)) return "browser"
+  if (/^(task|agent|subagent)$/.test(normalized)) return "subagents"
+  if (/secret|credential|keychain|password|token|environment|env/.test(normalized)) return "secrets"
+  if ([...CLAUDE_READ_ONLY_TOOLS].some((name) => name.toLowerCase() === normalized)) return null
+  return "unknown"
+}
+
+export function isCustomToolAllowed(
+  permissions: CustomPermissionToggles | null | undefined,
+  toolName: string,
+): boolean {
+  if (!permissions) return false
+  const capability = customCapabilityForToolName(toolName)
+  if (capability === "unknown") return false
+  return capability === null || permissions[capability]
+}
+
+function getCodexPermissionLimitations(
+  mode: PermissionMode,
+  customPermissions?: CustomPermissionToggles | null,
+): HarnessPermissionLimitation[] {
   switch (mode) {
     case "read-only":
       return []
@@ -494,29 +616,20 @@ function getCodexPermissionLimitations(mode: PermissionMode): HarnessPermissionL
     case "custom":
       return [
         limitation(
-          "codex-sandbox",
-          "custom sandbox toggles",
-          "Custom capability toggles are not implemented; Codex uses conservative read-only mode.",
+          customPermissions ? "codex-sandbox" : "codex-approval-policy",
+          "versioned custom capabilities",
+          customPermissions
+            ? "Disabled capabilities fail closed through Flapstack, but Codex custom mode keeps a read-only ACP sandbox floor and does not claim enabled-mutation parity."
+            : "Missing or invalid custom capability state fails closed to read-only.",
         ),
-        limitation(
-          "codex-approval-policy",
-          "custom approval toggles",
-          "Custom permission requests use the conservative Flapstack approval bridge.",
-        ),
-        limitation("network", "custom network toggle", "Network access cannot be controlled here."),
-        limitation("git", "custom git toggle", "Git access cannot be controlled here."),
-        limitation("browser", "custom browser toggle", "Browser access cannot be controlled here."),
-        limitation(
-          "mcp",
-          "custom MCP toggle",
-          "MCP servers are configured separately, not by custom mode.",
-        ),
-        limitation("secrets", "custom secrets toggle", "Secret access cannot be controlled here."),
       ]
   }
 }
 
-function getClaudePermissionLimitations(mode: PermissionMode): HarnessPermissionLimitation[] {
+function getClaudePermissionLimitations(
+  mode: PermissionMode,
+  customPermissions?: CustomPermissionToggles | null,
+): HarnessPermissionLimitation[] {
   switch (mode) {
     case "read-only":
       return [
@@ -558,15 +671,11 @@ function getClaudePermissionLimitations(mode: PermissionMode): HarnessPermission
       return [
         limitation(
           "filesystem-write-scope",
-          "custom filesystem write toggle",
-          "Custom filesystem settings are not mapped to Claude Code SDK controls yet.",
+          "versioned custom capabilities",
+          customPermissions
+            ? "Flapstack enforces disabled tool classes and edit boundaries, but Claude tool-name classification cannot prove independent shell/git or browser/secret parity."
+            : "Missing or invalid custom capability state fails closed.",
         ),
-        limitation("shell", "custom shell toggle", "Custom shell settings are not mapped yet."),
-        limitation("network", "custom network toggle", "Network access cannot be controlled here."),
-        limitation("git", "custom git toggle", "Git access cannot be controlled here."),
-        limitation("browser", "custom browser toggle", "Browser access cannot be controlled here."),
-        limitation("mcp", "custom MCP toggle", "MCP access cannot be controlled here."),
-        limitation("secrets", "custom secrets toggle", "Secret access cannot be controlled here."),
       ]
   }
 }
@@ -638,6 +747,8 @@ function readPermissionConfig(): PermissionConfig {
       ...data,
       globalDefault: parsePermissionMode(data.globalDefault) ?? undefined,
       changeBehavior: parsePermissionChangeBehavior(data.changeBehavior) ?? undefined,
+      globalCustomPermissions: parseCustomPermissionToggles(data.globalCustomPermissions),
+      pendingAllChatsSync: data.pendingAllChatsSync === true,
     }
   } catch (error) {
     console.warn("[Permissions] Failed to read permission config:", error)
@@ -647,8 +758,16 @@ function readPermissionConfig(): PermissionConfig {
 
 function writePermissionConfig(config: PermissionConfig): void {
   const configPath = getPermissionConfigPath()
-  mkdirSync(dirname(configPath), { recursive: true })
-  writeFileSync(configPath, JSON.stringify(config, null, 2))
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 })
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+    chmodSync(tempPath, 0o600)
+    renameSync(tempPath, configPath)
+    chmodSync(configPath, 0o600)
+  } finally {
+    rmSync(tempPath, { force: true })
+  }
 }
 
 function getPermissionConfigPath(): string {

@@ -1,10 +1,21 @@
 import { z } from "zod"
 import { router, publicProcedure } from "../index"
-import { readdir, stat, readFile, writeFile, mkdir, rename as fsRename, rm } from "node:fs/promises"
-import { join, relative, basename, extname, dirname, resolve, isAbsolute } from "node:path"
+import { realpathSync } from "node:fs"
+import { lstat, readdir, realpath } from "node:fs/promises"
+import { join, relative, basename, extname, isAbsolute, resolve, sep } from "node:path"
 import { app, shell } from "electron"
-import { watch } from "node:fs"
+import { watch as watchFiles } from "chokidar"
 import { observable } from "@trpc/server/observable"
+import { eq } from "drizzle-orm"
+import { getDatabase, subChats } from "../../db"
+import {
+  actOnPathInsideRoot,
+  readFileInsideRoot,
+  RootedReadTooLargeError,
+  renamePathInsideRoot,
+  writeFileInsideRoot,
+} from "../../path-safety"
+import { assertRegisteredWorktree } from "../../git/security/path-validation"
 
 // Directories to ignore when scanning
 const IGNORED_DIRS = new Set([
@@ -66,25 +77,15 @@ const MAX_CACHE_ENTRIES = 20
 const fileListCache = new Map<string, { entries: FileEntry[]; timestamp: number }>()
 const CACHE_TTL = 5000 // 5 seconds
 
-/**
- * Validate that a path doesn't contain path traversal attacks.
- * Checks for null bytes and ensures the resolved path stays within the expected parent.
- */
-function validatePathSafe(targetPath: string, allowedParent?: string): void {
-  if (targetPath.includes("\0")) {
-    throw new Error("Path contains invalid characters")
-  }
-  if (!isAbsolute(targetPath)) {
-    throw new Error("Path must be absolute")
-  }
-  const resolved = resolve(targetPath)
-  if (allowedParent) {
-    const resolvedParent = resolve(allowedParent)
-    if (!resolved.startsWith(resolvedParent + "/") && resolved !== resolvedParent) {
-      throw new Error("Path escapes allowed directory")
-    }
-  }
-}
+const rootedFileInput = z.object({
+  rootPath: z.string().min(1),
+  relativePath: z.string().min(1),
+})
+const subChatFileInput = z.object({
+  subChatId: z.string().min(1),
+  filePath: z.string().min(1),
+})
+const fileTargetInput = z.union([rootedFileInput, subChatFileInput])
 
 function validateFileName(name: string): void {
   if (name.includes("/") || name.includes("\\")) {
@@ -112,6 +113,18 @@ async function scanDirectory(
   const entries: FileEntry[] = []
 
   try {
+    const currentInfo = await lstat(currentPath)
+    if (currentInfo.isSymbolicLink() || !currentInfo.isDirectory()) return []
+    const realRoot = await realpath(rootPath)
+    const realCurrent = await realpath(currentPath)
+    const relativeCurrent = relative(realRoot, realCurrent)
+    if (
+      relativeCurrent === ".." ||
+      relativeCurrent.startsWith(`..${sep}`) ||
+      isAbsolute(relativeCurrent)
+    ) {
+      return []
+    }
     const dirEntries = await readdir(currentPath, { withFileTypes: true })
 
     for (const entry of dirEntries) {
@@ -149,6 +162,7 @@ async function scanDirectory(
         entries.push({ path: relativePath, type: "file" })
       }
     }
+    if ((await realpath(currentPath)) !== realCurrent) return []
   } catch (error) {
     // Silently skip directories we can't read
     console.warn(`[files] Could not read directory: ${currentPath}`, error)
@@ -282,15 +296,11 @@ export const filesRouter = router({
       }
 
       try {
-        // Verify the path exists and is a directory
-        const pathStat = await stat(projectPath)
-        if (!pathStat.isDirectory()) {
-          console.warn(`[files] Not a directory: ${projectPath}`)
-          return []
-        }
+        const registeredRoot = assertRegisteredWorktree(projectPath)
 
         // Get entry list (cached or fresh scan)
-        const entries = await getEntryList(projectPath)
+        const entries = await getEntryList(registeredRoot.canonicalPath)
+        assertRegisteredWorktree(projectPath)
 
         // Filter and sort by query
         return filterEntries(entries, query, limit, typeFilter)
@@ -304,21 +314,22 @@ export const filesRouter = router({
    * Clear the file cache for a project (useful when files change)
    */
   clearCache: publicProcedure.input(z.object({ projectPath: z.string() })).mutation(({ input }) => {
-    fileListCache.delete(input.projectPath)
+    const registeredRoot = assertRegisteredWorktree(input.projectPath)
+    fileListCache.delete(registeredRoot.canonicalPath)
     return { success: true }
   }),
 
   /**
    * Read file contents from filesystem
    */
-  readFile: publicProcedure.input(z.object({ filePath: z.string() })).query(async ({ input }) => {
-    const { filePath } = input
-
+  readFile: publicProcedure.input(fileTargetInput).query(async ({ input }) => {
     try {
-      const content = await readFile(filePath, "utf-8")
-      return content
+      const target = resolveDurableFileTarget(input)
+      const content = await readFileInsideRoot(target.rootPath, target.relativePath)
+      target.verifyAfterRead()
+      return content.toString("utf-8")
     } catch (error) {
-      console.error(`[files] Error reading file ${filePath}:`, error)
+      console.error("[files] Error reading rooted file:", error)
       throw new Error(
         `Failed to read file: ${error instanceof Error ? error.message : "Unknown error"}`,
       )
@@ -329,84 +340,86 @@ export const filesRouter = router({
    * Read a text file with size/binary validation
    * Returns structured result with error reasons
    */
-  readTextFile: publicProcedure
-    .input(z.object({ filePath: z.string() }))
-    .query(async ({ input }) => {
-      const { filePath } = input
-      const MAX_SIZE = 2 * 1024 * 1024 // 2 MB
+  readTextFile: publicProcedure.input(fileTargetInput).query(async ({ input }) => {
+    const MAX_SIZE = 2 * 1024 * 1024 // 2 MB
 
-      try {
-        const fileStat = await stat(filePath)
-
-        if (fileStat.size > MAX_SIZE) {
-          return { ok: false as const, reason: "too-large" as const, byteLength: fileStat.size }
-        }
-
-        const buffer = await readFile(filePath)
-
-        // Check if binary by looking for null bytes in first 8KB
-        const sample = buffer.subarray(0, 8192)
-        if (sample.includes(0)) {
-          return { ok: false as const, reason: "binary" as const, byteLength: fileStat.size }
-        }
-
-        const content = buffer.toString("utf-8")
-        return { ok: true as const, content, byteLength: fileStat.size }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : "Unknown error"
-        if (msg.includes("ENOENT") || msg.includes("no such file")) {
-          return { ok: false as const, reason: "not-found" as const, byteLength: 0 }
-        }
-        throw new Error(`Failed to read file: ${msg}`)
+    try {
+      const target = resolveDurableFileTarget(input)
+      const buffer = await readFileInsideRoot(target.rootPath, target.relativePath, {
+        maxBytes: MAX_SIZE,
+      })
+      target.verifyAfterRead()
+      if (buffer.byteLength > MAX_SIZE) {
+        return { ok: false as const, reason: "too-large" as const, byteLength: buffer.byteLength }
       }
-    }),
+
+      // Check if binary by looking for null bytes in first 8KB
+      const sample = buffer.subarray(0, 8192)
+      if (sample.includes(0)) {
+        return { ok: false as const, reason: "binary" as const, byteLength: buffer.byteLength }
+      }
+
+      const content = buffer.toString("utf-8")
+      return { ok: true as const, content, byteLength: buffer.byteLength }
+    } catch (error) {
+      if (error instanceof RootedReadTooLargeError) {
+        return { ok: false as const, reason: "too-large" as const, byteLength: error.byteLength }
+      }
+      const msg = error instanceof Error ? error.message : "Unknown error"
+      if (msg.includes("ENOENT") || msg.includes("no such file")) {
+        return { ok: false as const, reason: "not-found" as const, byteLength: 0 }
+      }
+      throw new Error(`Failed to read file: ${msg}`)
+    }
+  }),
 
   /**
    * Read a binary file as base64 (for images)
    */
-  readBinaryFile: publicProcedure
-    .input(z.object({ filePath: z.string() }))
-    .query(async ({ input }) => {
-      const { filePath } = input
-      const MAX_SIZE = 20 * 1024 * 1024 // 20 MB
+  readBinaryFile: publicProcedure.input(fileTargetInput).query(async ({ input }) => {
+    const MAX_SIZE = 20 * 1024 * 1024 // 20 MB
 
-      try {
-        const fileStat = await stat(filePath)
-
-        if (fileStat.size > MAX_SIZE) {
-          return { ok: false as const, reason: "too-large" as const, byteLength: fileStat.size }
-        }
-
-        const buffer = await readFile(filePath)
-        const ext = extname(filePath).toLowerCase()
-
-        // Determine MIME type
-        const mimeMap: Record<string, string> = {
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".gif": "image/gif",
-          ".svg": "image/svg+xml",
-          ".webp": "image/webp",
-          ".ico": "image/x-icon",
-          ".bmp": "image/bmp",
-        }
-        const mimeType = mimeMap[ext] || "application/octet-stream"
-
-        return {
-          ok: true as const,
-          data: buffer.toString("base64"),
-          mimeType,
-          byteLength: fileStat.size,
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : "Unknown error"
-        if (msg.includes("ENOENT") || msg.includes("no such file")) {
-          return { ok: false as const, reason: "not-found" as const, byteLength: 0 }
-        }
-        throw new Error(`Failed to read binary file: ${msg}`)
+    try {
+      const target = resolveDurableFileTarget(input)
+      const buffer = await readFileInsideRoot(target.rootPath, target.relativePath, {
+        maxBytes: MAX_SIZE,
+      })
+      target.verifyAfterRead()
+      if (buffer.byteLength > MAX_SIZE) {
+        return { ok: false as const, reason: "too-large" as const, byteLength: buffer.byteLength }
       }
-    }),
+      const ext = extname(target.relativePath).toLowerCase()
+
+      // Determine MIME type
+      const mimeMap: Record<string, string> = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+        ".ico": "image/x-icon",
+        ".bmp": "image/bmp",
+      }
+      const mimeType = mimeMap[ext] || "application/octet-stream"
+
+      return {
+        ok: true as const,
+        data: buffer.toString("base64"),
+        mimeType,
+        byteLength: buffer.byteLength,
+      }
+    } catch (error) {
+      if (error instanceof RootedReadTooLargeError) {
+        return { ok: false as const, reason: "too-large" as const, byteLength: error.byteLength }
+      }
+      const msg = error instanceof Error ? error.message : "Unknown error"
+      if (msg.includes("ENOENT") || msg.includes("no such file")) {
+        return { ok: false as const, reason: "not-found" as const, byteLength: 0 }
+      }
+      throw new Error(`Failed to read binary file: ${msg}`)
+    }
+  }),
 
   /**
    * Watch for file changes in a project directory
@@ -415,15 +428,33 @@ export const filesRouter = router({
   watchChanges: publicProcedure
     .input(z.object({ projectPath: z.string() }))
     .subscription(({ input }) => {
+      const registeredRoot = assertRegisteredWorktree(input.projectPath)
       return observable<{ filename: string; eventType: string }>((emit) => {
-        const watcher = watch(input.projectPath, { recursive: true }, (eventType, filename) => {
-          if (filename) {
-            emit.next({ filename, eventType })
+        const watcher = watchFiles(registeredRoot.canonicalPath, {
+          followSymlinks: false,
+          ignoreInitial: true,
+        })
+        watcher.on("all", (eventType, changedPath) => {
+          try {
+            assertRegisteredWorktree(input.projectPath)
+            const filename = relative(registeredRoot.canonicalPath, changedPath)
+            if (
+              filename &&
+              filename !== ".." &&
+              !filename.startsWith(`..${sep}`) &&
+              !isAbsolute(filename)
+            ) {
+              emit.next({ filename, eventType })
+            }
+          } catch (error) {
+            void watcher.close()
+            emit.error(error instanceof Error ? error : new Error("Registered root changed"))
           }
         })
+        watcher.on("error", (error) => emit.error(error))
 
         return () => {
-          watcher.close()
+          void watcher.close()
         }
       })
     }),
@@ -443,10 +474,17 @@ export const filesRouter = router({
     .mutation(async ({ input }) => {
       const { subChatId, text, filename } = input
 
-      // Create pasted directory in session folder
-      const sessionDir = join(app.getPath("userData"), "claude-sessions", subChatId)
-      const pastedDir = join(sessionDir, "pasted")
-      await mkdir(pastedDir, { recursive: true })
+      // subChatId is both an ownership key and a path component. Require the
+      // durable row first, then constrain it to one path segment.
+      const subChat = getDatabase()
+        .select({ id: subChats.id })
+        .from(subChats)
+        .where(eq(subChats.id, subChatId))
+        .get()
+      if (!subChat) throw new Error("Sub-chat not found")
+      validateFileName(subChat.id)
+
+      const userDataRoot = app.getPath("userData")
 
       // Generate filename with timestamp
       const finalFilename = filename || `pasted_${Date.now()}.txt`
@@ -454,13 +492,12 @@ export const filesRouter = router({
       // Validate filename doesn't contain path separators or null bytes
       validateFileName(finalFilename)
 
-      const filePath = join(pastedDir, finalFilename)
-
-      // Ensure the resolved path stays within the pasted directory
-      validatePathSafe(filePath, pastedDir)
-
-      // Write file
-      await writeFile(filePath, text, "utf-8")
+      const { targetPath: filePath } = await writeFileInsideRoot(
+        userDataRoot,
+        join("claude-sessions", subChat.id, "pasted", finalFilename),
+        { data: text },
+        { overwrite: true },
+      )
 
       console.log(`[files] Wrote pasted text to ${filePath} (${text.length} bytes)`)
 
@@ -477,23 +514,18 @@ export const filesRouter = router({
   renameFile: publicProcedure
     .input(
       z.object({
-        absolutePath: z.string(),
+        worktreePath: z.string(),
+        relativePath: z.string(),
         newName: z.string().min(1),
       }),
     )
     .mutation(async ({ input }) => {
-      const { absolutePath, newName } = input
-
-      validatePathSafe(absolutePath)
-      validateFileName(newName)
-
-      const dir = dirname(absolutePath)
-      const newPath = join(dir, newName)
-
-      // Ensure the new path stays in the same directory
-      validatePathSafe(newPath, dir)
-
-      await fsRename(absolutePath, newPath)
+      assertRegisteredWorktree(input.worktreePath)
+      const { newPath } = await renamePathInsideRoot(
+        input.worktreePath,
+        input.relativePath,
+        input.newName,
+      )
       return { success: true, newPath }
     }),
 
@@ -503,12 +535,75 @@ export const filesRouter = router({
   deleteFile: publicProcedure
     .input(
       z.object({
-        absolutePath: z.string(),
+        worktreePath: z.string(),
+        relativePath: z.string(),
       }),
     )
     .mutation(async ({ input }) => {
-      validatePathSafe(input.absolutePath)
-      await shell.trashItem(input.absolutePath)
+      assertRegisteredWorktree(input.worktreePath)
+      await actOnPathInsideRoot(input.worktreePath, input.relativePath, (targetPath) =>
+        shell.trashItem(targetPath),
+      )
       return { success: true }
     }),
 })
+
+function resolveDurableFileTarget(input: z.infer<typeof fileTargetInput>): {
+  rootPath: string
+  relativePath: string
+  verifyAfterRead: () => void
+} {
+  if ("rootPath" in input) {
+    const registration = assertRegisteredWorktree(input.rootPath)
+    return {
+      rootPath: registration.canonicalPath,
+      relativePath: input.relativePath,
+      verifyAfterRead: () => {
+        assertRegisteredWorktree(input.rootPath)
+      },
+    }
+  }
+
+  const subChat = getDatabase()
+    .select({ id: subChats.id, chatId: subChats.chatId })
+    .from(subChats)
+    .where(eq(subChats.id, input.subChatId))
+    .get()
+  if (!subChat) throw new Error("Sub-chat not found")
+  validateFileName(subChat.id)
+  validateFileName(subChat.chatId)
+  if (!isAbsolute(input.filePath)) throw new Error("Sub-chat file path must be absolute")
+
+  const lexicalUserDataRoot = resolve(app.getPath("userData"))
+  const userDataRoot = realpathSync(lexicalUserDataRoot)
+  const absoluteTarget = resolve(input.filePath)
+  const userDataRoots = [...new Set([lexicalUserDataRoot, userDataRoot])]
+  const matchedUserDataRoot = userDataRoots.find((candidateRoot) =>
+    [subChat.id, subChat.chatId].some((ownerId) => {
+      const candidateRelative = relative(
+        join(candidateRoot, "claude-sessions", ownerId),
+        absoluteTarget,
+      )
+      return (
+        candidateRelative !== ".." &&
+        !candidateRelative.startsWith(`..${sep}`) &&
+        !isAbsolute(candidateRelative)
+      )
+    }),
+  )
+  if (!matchedUserDataRoot) throw new Error("File is outside the durable sub-chat namespace")
+
+  const relativePath = relative(matchedUserDataRoot, absoluteTarget)
+  return {
+    rootPath: userDataRoot,
+    relativePath,
+    verifyAfterRead: () => {
+      const durable = getDatabase()
+        .select({ id: subChats.id })
+        .from(subChats)
+        .where(eq(subChats.id, input.subChatId))
+        .get()
+      if (!durable) throw new Error("Sub-chat registration changed during read")
+    },
+  }
+}

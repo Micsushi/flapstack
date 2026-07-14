@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { getShortcutPlatform, keyToDisplay as platformKeyToDisplay } from "./shortcut-registry"
 
 /**
  * Hook options for hotkey recording
@@ -92,6 +93,8 @@ function eventKeyToInternal(e: KeyboardEvent): string {
  * Convert internal key to display format
  */
 function keyToDisplay(key: string): string {
+  const platform = getShortcutPlatform()
+  if (platform !== "darwin") return platformKeyToDisplay(key, platform)
   return DISPLAY_MAP[key] || key
 }
 
@@ -134,7 +137,7 @@ function buildDisplayString(modifiers: Set<string>, key: string | null): string 
     parts.push(keyToDisplay(key))
   }
 
-  return parts.join("")
+  return parts.join(getShortcutPlatform() === "darwin" ? "" : "+")
 }
 
 /**

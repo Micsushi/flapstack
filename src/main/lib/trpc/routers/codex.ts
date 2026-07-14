@@ -2,7 +2,7 @@ import { createACPProvider, type ACPProvider } from "@mcpc-tech/acp-ai-provider"
 import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk"
 import { observable } from "@trpc/server/observable"
 import { streamText } from "ai"
-import { and, eq, ne } from "drizzle-orm"
+import { and, eq, isNull, ne } from "drizzle-orm"
 import { app } from "electron"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -33,25 +33,46 @@ import {
   allowCodexPermissionRequest,
   createCodexPermissionDecision,
   rejectCodexPermissionRequest,
-  resolveCodexPermissionOption,
+  registerPendingCodexPermissionRequest,
+  removePendingCodexPermissionRequest,
+  replyPendingCodexPermissionRequest,
+  rejectPendingCodexPermissionRequests,
 } from "../../codex/permission-bridge"
-import { agentRuns, chats, getDatabase, projects as projectsTable, subChats } from "../../db"
+import {
+  agentRuns,
+  chats,
+  getDatabase,
+  getDatabasePath,
+  projects as projectsTable,
+  subChats,
+} from "../../db"
 import { CODEX_TRANSPORT_DECISION } from "../../harness/codex-transport-decision"
 import {
   buildHarnessContextBundle,
   getLastHarnessContextFingerprint,
   prependStartupContext,
 } from "../../harness/launch-context"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
+import {
+  buildMcpStdioRegistration,
+  FLAPSTACK_MCP_SERVER_NAME,
+  renameProductMcpServerCollisions,
+} from "../../mcp-control/registration"
+import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { fetchMcpTools, fetchMcpToolsStdio, type McpToolInfo } from "../../mcp-auth"
 import { mergeMessagesPreservingSpokenText } from "../../speech/history"
 import {
   buildCodexPermissionApplication,
   getGlobalDefault,
+  isCustomToolAllowed,
   mapCodexAcpModeId,
+  parseCustomPermissionToggles,
   parsePermissionMode,
   type PermissionMode,
 } from "../../permissions"
+import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
+import { getCredentialService } from "../../credential-service"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -59,12 +80,22 @@ const imageAttachmentSchema = z.object({
   filename: z.string().optional(),
 })
 
+function parseCustomPermissionTogglesJson(value: string | null) {
+  if (!value) return null
+  try {
+    return parseCustomPermissionToggles(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
+
 type CodexProviderSession = {
   provider: ACPProvider
   cwd: string
   authFingerprint: string | null
   mcpFingerprint: string
   reasoningEnabled: boolean
+  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
 }
 
 type CodexLoginSessionState = "running" | "success" | "error" | "cancelled"
@@ -129,15 +160,7 @@ const activeStreams = new Map<string, ActiveCodexStream>()
 type CodexPermissionHandler = (
   request: RequestPermissionRequest,
 ) => Promise<RequestPermissionResponse>
-type PendingCodexApproval = {
-  subChatId: string
-  runId: string
-  request: RequestPermissionRequest
-  resolve: (response: RequestPermissionResponse) => void
-}
-
 const codexPermissionHandlers = new Map<string, { runId: string; handle: CodexPermissionHandler }>()
-const pendingCodexApprovals = new Map<string, PendingCodexApproval>()
 
 /** Check if there are any active Codex streaming sessions */
 export function hasActiveCodexStreams(): boolean {
@@ -150,27 +173,23 @@ export function abortAllCodexStreams(): void {
     console.log(`[codex] Aborting stream ${subChatId} before reload`)
     stream.controller.abort()
   }
-  activeStreams.clear()
+  // Keep ownership until each async finalizer persists cancellation and removes
+  // its own entry. App shutdown waits for that durable boundary before DB close.
 }
 
-function replyPendingCodexApproval(input: { requestId: string; optionId: string }): {
-  resolved: boolean
+export function cancelActiveCodexRun(input: { subChatId: string; runId: string }): {
+  cancelled: boolean
+  ignoredStale: boolean
 } {
-  const pending = pendingCodexApprovals.get(input.requestId)
-  if (!pending) return { resolved: false }
-
-  pendingCodexApprovals.delete(input.requestId)
-  pending.resolve(resolveCodexPermissionOption(pending.request, input.optionId))
-  return { resolved: true }
+  const activeStream = activeStreams.get(input.subChatId)
+  if (!activeStream) return { cancelled: false, ignoredStale: false }
+  if (activeStream.runId !== input.runId) return { cancelled: false, ignoredStale: true }
+  activeStream.cancelRequested = true
+  activeStream.controller.abort()
+  rejectPendingCodexPermissionRequests(input.subChatId, input.runId)
+  return { cancelled: true, ignoredStale: false }
 }
 
-function rejectPendingCodexApprovals(subChatId: string, runId?: string): void {
-  for (const [requestId, pending] of pendingCodexApprovals) {
-    if (pending.subChatId !== subChatId || (runId && pending.runId !== runId)) continue
-    pendingCodexApprovals.delete(requestId)
-    pending.resolve(rejectCodexPermissionRequest(pending.request))
-  }
-}
 const loginSessions = new Map<string, CodexLoginSession>()
 const codexMcpCache = new Map<string, CodexMcpSnapshot>()
 
@@ -1116,6 +1135,7 @@ async function createCodexRun(params: {
   subChatId: string
   model: string
   permissionMode: PermissionMode
+  customPermissions: string | null
   worktreePath: string | null
   promptMessageId?: string
 }) {
@@ -1149,6 +1169,7 @@ async function createCodexRun(params: {
       harness: "codex",
       model: params.model,
       permissionMode: params.permissionMode,
+      customPermissions: params.customPermissions,
       worktreePath: params.worktreePath,
       promptMessageId: params.promptMessageId,
       status: "running",
@@ -1192,27 +1213,42 @@ async function completeCodexRun(params: {
   const run = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
   if (!run || run.completedAt) return run
 
-  const after = await captureCheckpoint(run.id, run.worktreePath, "after")
-  await captureNoChangeManifest(run.id)
+  let afterCheckpointId: string | undefined
+  try {
+    const after = await captureCheckpoint(run.id, run.worktreePath, "after")
+    afterCheckpointId = after.id
+    await captureNoChangeManifest(run.id)
+  } catch (error) {
+    console.warn("[codex] Failed to capture after checkpoint/manifest:", error)
+  }
 
   const completedRun = db
     .update(agentRuns)
     .set({
       status: params.status,
       completedAt: new Date(),
-      afterCheckpointId: after.id,
+      ...(afterCheckpointId && { afterCheckpointId }),
     })
-    .where(eq(agentRuns.id, params.runId))
+    .where(
+      and(
+        eq(agentRuns.id, params.runId),
+        eq(agentRuns.status, "running"),
+        isNull(agentRuns.completedAt),
+      ),
+    )
     .returning()
     .get()
 
-  db.update(subChats)
-    .set({
-      runStatus: params.status,
-      updatedAt: new Date(),
-    })
-    .where(eq(subChats.id, params.subChatId))
-    .run()
+  if (!completedRun) {
+    return db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
+  }
+
+  updateSubChatRunStatusIfAuthoritative(db, {
+    runId: params.runId,
+    subChatId: params.subChatId,
+    status: params.status,
+    updatedAt: new Date(),
+  })
 
   return completedRun
 }
@@ -1279,6 +1315,7 @@ function getAuthFingerprint(authConfig?: { apiKey: string }): string | null {
 function buildCodexProviderEnv(
   authConfig?: { apiKey: string },
   reasoningEnabled = true,
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
 ): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
@@ -1309,6 +1346,7 @@ function buildCodexProviderEnv(
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: reasoningEnabled,
     hide_agent_reasoning: !reasoningEnabled,
+    ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
   })
 
   const apiKey = authConfig?.apiKey?.trim()
@@ -1402,6 +1440,7 @@ function getOrCreateProvider(params: {
     apiKey: string
   }
   reasoningEnabled: boolean
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh"
 }): ACPProvider {
   const authFingerprint = getAuthFingerprint(params.authConfig)
   const existing = providerSessions.get(params.subChatId)
@@ -1411,7 +1450,8 @@ function getOrCreateProvider(params: {
     existing.cwd === params.cwd &&
     existing.authFingerprint === authFingerprint &&
     existing.mcpFingerprint === params.mcpFingerprint &&
-    existing.reasoningEnabled === params.reasoningEnabled
+    existing.reasoningEnabled === params.reasoningEnabled &&
+    existing.reasoningEffort === (params.reasoningEffort ?? null)
   ) {
     return existing.provider
   }
@@ -1428,7 +1468,7 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
-    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled),
+    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled, params.reasoningEffort),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     permissionRequestHandler: async (request) => {
       const active = codexPermissionHandlers.get(params.subChatId)
@@ -1448,6 +1488,7 @@ function getOrCreateProvider(params: {
     authFingerprint,
     mcpFingerprint: params.mcpFingerprint,
     reasoningEnabled: params.reasoningEnabled,
+    reasoningEffort: params.reasoningEffort ?? null,
   })
 
   return provider
@@ -1461,6 +1502,10 @@ function cleanupProvider(subChatId: string): void {
   providerSessions.delete(subChatId)
 }
 
+function cleanupAllCodexProviders(): void {
+  for (const subChatId of [...providerSessions.keys()]) cleanupProvider(subChatId)
+}
+
 export const codexRouter = router({
   getIntegration: publicProcedure.query(async () => {
     const result = await runCodexCli(["login", "status"])
@@ -1469,7 +1514,10 @@ export const codexRouter = router({
       .join("\n")
       .trim()
 
-    const state = normalizeCodexIntegrationState(combinedOutput)
+    const storedApiKey = getCredentialService().status("codex.api-key").configured
+    const state = storedApiKey
+      ? ("connected_api_key" as const)
+      : normalizeCodexIntegrationState(combinedOutput)
 
     return {
       state,
@@ -1479,7 +1527,21 @@ export const codexRouter = router({
     }
   }),
 
+  removeApiKey: publicProcedure.mutation(() => {
+    const service = getCredentialService()
+    if (service.status("codex.api-key").configured) {
+      service.remove("codex.api-key")
+      cleanupAllCodexProviders()
+    }
+    return service.status("codex.api-key")
+  }),
+
   logout: publicProcedure.mutation(async () => {
+    const hadStoredApiKey = getCredentialService().status("codex.api-key").configured
+    if (hadStoredApiKey) {
+      getCredentialService().remove("codex.api-key")
+      cleanupAllCodexProviders()
+    }
     const logoutResult = await runCodexCli(["logout"])
     const statusResult = await runCodexCli(["login", "status"])
 
@@ -1744,12 +1806,8 @@ export const codexRouter = router({
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
         reasoningEnabled: z.boolean().default(true),
+        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
         images: z.array(imageAttachmentSchema).optional(),
-        authConfig: z
-          .object({
-            apiKey: z.string().min(1),
-          })
-          .optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1787,6 +1845,14 @@ export const codexRouter = router({
         }
 
         const abortController = new AbortController()
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId: input.runId,
+              revoke: () => abortController.abort(),
+            })
+          : () => undefined
         activeStreams.set(input.subChatId, {
           runId: input.runId,
           controller: abortController,
@@ -1833,6 +1899,8 @@ export const codexRouter = router({
 
         ;(async () => {
           try {
+            const storedApiKey = getCredentialService().resolve("codex.api-key")
+            const authConfig = storedApiKey ? { apiKey: storedApiKey } : undefined
             const db = getDatabase()
 
             const existingSubChat = db
@@ -1865,24 +1933,47 @@ export const codexRouter = router({
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
             const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
-            const fallbackModel = input.authConfig?.apiKey?.trim()
+            const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING
             const requestedModelId = extractCodexModelId(input.model) || fallbackModel
             const selectedModelId = preprocessCodexModelName({
               modelId: requestedModelId,
-              authConfig: input.authConfig,
+              authConfig,
             })
             const acpModelId = formatCodexModelForAcp(selectedModelId)
             const metadataModel = selectedModelId
-            const permissionMode = resolveCodexPermissionMode({
-              subChatPermissionMode: existingSubChat.permissionMode,
-              chatPermissionMode: existingChat.permissionMode,
-            })
+            const persistedRunSnapshot = db
+              .select({
+                permissionMode: agentRuns.permissionMode,
+                customPermissions: agentRuns.customPermissions,
+                promptMessageId: agentRuns.promptMessageId,
+              })
+              .from(agentRuns)
+              .where(eq(agentRuns.id, input.runId))
+              .get()
+            const permissionMode =
+              parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
+              resolveCodexPermissionMode({
+                subChatPermissionMode: existingSubChat.permissionMode,
+                chatPermissionMode: existingChat.permissionMode,
+              })
             const permissionApplication = buildCodexPermissionApplication({
               permissionMode,
               cwd: input.cwd,
+              customPermissions:
+                permissionMode === "custom"
+                  ? parseCustomPermissionTogglesJson(
+                      persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
+                    )
+                  : null,
             })
+            const customPermissions =
+              permissionMode === "custom"
+                ? parseCustomPermissionTogglesJson(
+                    persistedRunSnapshot?.customPermissions ?? existingChat.customPermissions,
+                  )
+                : null
 
             const lastMessage = existingMessages[existingMessages.length - 1]
             const isDuplicatePrompt =
@@ -1894,7 +1985,7 @@ export const codexRouter = router({
               isDuplicatePrompt && typeof lastMessage?.id === "string" ? lastMessage.id : undefined
             const isAuthoritativeRun = () => {
               const currentStream = activeStreams.get(input.subChatId)
-              return !currentStream || currentStream.runId === input.runId
+              return currentStream?.runId === input.runId
             }
 
             const persistSubChatMessages = (messages: any[]) => {
@@ -1949,7 +2040,7 @@ export const codexRouter = router({
 
             if (!isDuplicatePrompt) {
               const userMessage = {
-                id: crypto.randomUUID(),
+                id: persistedRunSnapshot?.promptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts: buildUserParts(input.prompt, input.images),
                 metadata: { model: metadataModel },
@@ -1973,6 +2064,7 @@ export const codexRouter = router({
               subChatId: input.subChatId,
               model: metadataModel,
               permissionMode,
+              customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
               worktreePath: input.cwd || null,
               promptMessageId,
             })
@@ -1994,11 +2086,60 @@ export const codexRouter = router({
               mcpSnapshot = await resolveCodexMcpSnapshot({
                 lookupPath: mcpLookupPath,
               })
+              if (productMcpEnabledAtLaunch) {
+                const registration = buildMcpStdioRegistration(
+                  { chatId: input.chatId, runId: input.runId, permissionMode },
+                  {
+                    executablePath: process.execPath,
+                    mainDirectory: __dirname,
+                    databasePath: getDatabasePath(),
+                  },
+                )
+                const collisionAliases = renameProductMcpServerCollisions(
+                  mcpSnapshot.mcpServersForSession,
+                )
+                if (collisionAliases.length > 0) {
+                  console.warn(
+                    `[codex] Renamed third-party MCP collision "${FLAPSTACK_MCP_SERVER_NAME}" to ${collisionAliases.join(", ")} for this run.`,
+                  )
+                }
+                mcpSnapshot.mcpServersForSession.push({
+                  name: FLAPSTACK_MCP_SERVER_NAME,
+                  type: "stdio",
+                  command: registration.command,
+                  args: registration.args,
+                  env: Object.entries(registration.env).map(([name, value]) => ({ name, value })),
+                })
+                mcpSnapshot.fingerprint = getCodexMcpFingerprint(mcpSnapshot.mcpServersForSession)
+              }
             } catch (mcpError) {
               console.error("[codex] Failed to resolve MCP servers:", mcpError)
             }
 
             const handleCodexPermissionRequest: CodexPermissionHandler = async (request) => {
+              const providerMcpDecision = resolveProviderMcpPermission({
+                permissionMode,
+                correlationId: request.toolCall.toolCallId,
+                providerToolName: request.toolCall.title,
+                metadata: request.toolCall.rawInput ?? request._meta,
+                isMcpToolApproval: request._meta?.is_mcp_tool_approval === true,
+                trustedProductServerName: productMcpEnabledAtLaunch
+                  ? FLAPSTACK_MCP_SERVER_NAME
+                  : null,
+                customPermissions,
+              })
+              if (providerMcpDecision?.decision === "deny") {
+                return rejectCodexPermissionRequest(request)
+              }
+              if (providerMcpDecision?.decision === "allow") {
+                return allowCodexPermissionRequest(request)
+              }
+              if (
+                permissionMode === "custom" &&
+                !isCustomToolAllowed(customPermissions, request.toolCall.title ?? "unknown")
+              ) {
+                return rejectCodexPermissionRequest(request)
+              }
               if (permissionMode === "read-only" || abortController.signal.aborted || !isActive) {
                 return rejectCodexPermissionRequest(request)
               }
@@ -2011,7 +2152,7 @@ export const codexRouter = router({
                 request,
                 signal: abortController.signal,
               })
-              pendingCodexApprovals.set(requestId, {
+              registerPendingCodexPermissionRequest(requestId, {
                 subChatId: input.subChatId,
                 runId: input.runId,
                 request,
@@ -2031,7 +2172,7 @@ export const codexRouter = router({
                 })),
               })
               if (!isActive) decision.reject()
-              return decision.promise.finally(() => pendingCodexApprovals.delete(requestId))
+              return decision.promise.finally(() => removePendingCodexPermissionRequest(requestId))
             }
             codexPermissionHandlers.set(input.subChatId, {
               runId: input.runId,
@@ -2044,8 +2185,9 @@ export const codexRouter = router({
               mcpServers: mcpSnapshot.mcpServersForSession,
               mcpFingerprint: mcpSnapshot.fingerprint,
               existingSessionId: ownedSessionId,
-              authConfig: input.authConfig,
+              authConfig,
               reasoningEnabled: input.reasoningEnabled,
+              reasoningEffort: input.reasoningEffort,
             })
 
             const startedAt = Date.now()
@@ -2235,13 +2377,17 @@ export const codexRouter = router({
 
             const reader = uiStream.getReader()
             let pendingFinishChunk: any | null = null
+            let terminalProviderFailure = false
             const streamedReasoningOutputTexts = new Set<string>()
             while (true) {
               const { done, value } = await reader.read()
               if (done) break
+              const valueType = (value as { type?: string } | undefined)?.type
 
-              if (value?.type === "error") {
+              if (valueType === "error" || valueType === "auth-error") {
                 const normalized = extractCodexError(value)
+                // Provider/auth errors are terminal even if the transport later emits finish.
+                terminalProviderFailure = true
 
                 if (isCodexAuthError(normalized)) {
                   safeEmit({ ...value, type: "auth-error", errorText: normalized.message })
@@ -2251,7 +2397,17 @@ export const codexRouter = router({
                 continue
               }
 
-              if (value?.type === "finish") {
+              if (valueType === "finish") {
+                const finishValue = value as {
+                  finishReason?: string
+                  messageMetadata?: { resultSubtype?: string }
+                }
+                if (
+                  finishValue.finishReason === "error" ||
+                  finishValue.messageMetadata?.resultSubtype === "error"
+                ) {
+                  terminalProviderFailure = true
+                }
                 pendingFinishChunk = value
                 continue
               }
@@ -2300,7 +2456,13 @@ export const codexRouter = router({
               safeEmit({ type: "finish" })
             }
 
-            runCompletionStatus = "success"
+            const activeStream = activeStreams.get(input.subChatId)
+            runCompletionStatus =
+              abortController.signal.aborted || activeStream?.cancelRequested
+                ? "cancelled"
+                : terminalProviderFailure
+                  ? "failure"
+                  : "success"
             await completeRunOnce(runCompletionStatus)
             safeComplete()
           } catch (error) {
@@ -2321,11 +2483,12 @@ export const codexRouter = router({
             safeEmit({ type: "finish" })
             safeComplete()
           } finally {
+            releaseProductMcpSession()
             const permissionHandler = codexPermissionHandlers.get(input.subChatId)
             if (permissionHandler?.runId === input.runId) {
               codexPermissionHandlers.delete(input.subChatId)
             }
-            rejectPendingCodexApprovals(input.subChatId, input.runId)
+            rejectPendingCodexPermissionRequests(input.subChatId, input.runId)
             const activeStream = activeStreams.get(input.subChatId)
             if (!runCompleted) {
               const finalStatus =
@@ -2348,6 +2511,7 @@ export const codexRouter = router({
         return () => {
           isActive = false
           abortController.abort()
+          releaseProductMcpSession()
 
           const activeStream = activeStreams.get(input.subChatId)
           if (activeStream?.runId === input.runId) {
@@ -2359,7 +2523,7 @@ export const codexRouter = router({
 
   replyPermission: publicProcedure
     .input(z.object({ requestId: z.string(), optionId: z.string() }))
-    .mutation(({ input }) => replyPendingCodexApproval(input)),
+    .mutation(({ input }) => replyPendingCodexPermissionRequest(input)),
 
   cancel: publicProcedure
     .input(
@@ -2368,26 +2532,11 @@ export const codexRouter = router({
         runId: z.string(),
       }),
     )
-    .mutation(({ input }) => {
-      const activeStream = activeStreams.get(input.subChatId)
-      if (!activeStream) {
-        return { cancelled: false, ignoredStale: false }
-      }
-
-      if (activeStream.runId !== input.runId) {
-        return { cancelled: false, ignoredStale: true }
-      }
-
-      activeStream.cancelRequested = true
-      activeStream.controller.abort()
-      rejectPendingCodexApprovals(input.subChatId, input.runId)
-
-      return { cancelled: true, ignoredStale: false }
-    }),
+    .mutation(({ input }) => cancelActiveCodexRun(input)),
 
   cleanup: publicProcedure.input(z.object({ subChatId: z.string() })).mutation(({ input }) => {
     codexPermissionHandlers.delete(input.subChatId)
-    rejectPendingCodexApprovals(input.subChatId)
+    rejectPendingCodexPermissionRequests(input.subChatId)
     cleanupProvider(input.subChatId)
 
     const activeStream = activeStreams.get(input.subChatId)

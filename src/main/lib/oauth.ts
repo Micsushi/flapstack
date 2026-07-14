@@ -55,7 +55,16 @@ const FALLBACK_CLIENT_NAME = "Codex"
  * Generate a styled OAuth callback page with terminal emulator aesthetic
  * Matches application design with Tokyo Night theme
  */
-function generateOAuthPage(options: {
+export function escapeOAuthHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+}
+
+export function generateOAuthPage(options: {
   title: string
   message: string
   isSuccess: boolean
@@ -94,16 +103,17 @@ function generateOAuthPage(options: {
 
   const terminalLinesHtml = terminalLines
     .map((line, i) => {
+      const text = escapeOAuthHtml(line.text)
       let content = ""
       if (line.isHighlight) {
         const color = line.highlightColor === "green" ? "var(--green)" : "var(--red)"
         const glow =
           line.highlightColor === "green" ? "rgba(158, 206, 106, 0.4)" : "rgba(247, 118, 142, 0.4)"
-        content = `<span class="cmd-text" style="color: ${color}; text-shadow: 0 0 10px ${glow};">${line.text}</span>`
+        content = `<span class="cmd-text" style="color: ${color}; text-shadow: 0 0 10px ${glow};">${text}</span>`
       } else if (line.isError) {
-        content = `<span class="cmd-text" style="color: var(--red);">${line.text}</span>`
+        content = `<span class="cmd-text" style="color: var(--red);">${text}</span>`
       } else {
-        content = `<span class="cmd-text">${line.text}${line.status ? ` <span class="${line.statusClass}">${line.status}</span>` : ""}${line.hasCursor ? ' <span class="cursor"></span>' : ""}</span>`
+        content = `<span class="cmd-text">${text}${line.status ? ` <span class="${line.statusClass}">${escapeOAuthHtml(line.status)}</span>` : ""}${line.hasCursor ? ' <span class="cursor"></span>' : ""}</span>`
       }
       return `        <div class="line" style="animation-delay: ${0.2 + i * 0.4}s;">
           <span class="prompt">➜</span>
@@ -162,7 +172,7 @@ function generateOAuthPage(options: {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Craft - ${title}</title>
+  <title>Craft - ${escapeOAuthHtml(title)}</title>
   <style>
     :root {
       /* Tokyo Night Palette */
@@ -566,8 +576,7 @@ export class CraftOAuth {
     })
 
     if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`Failed to register OAuth client: ${error}`)
+      throw new Error(`Failed to register OAuth client: HTTP ${response.status}`)
     }
 
     return response.json() as Promise<{
@@ -608,8 +617,7 @@ export class CraftOAuth {
     })
 
     if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`Failed to exchange code for tokens: ${error}`)
+      throw new Error(`Failed to exchange code for tokens: HTTP ${response.status}`)
     }
 
     const data = (await response.json()) as {
@@ -884,12 +892,12 @@ export class CraftOAuth {
                 title: "Authorization Failed",
                 message: "You can close this window.",
                 isSuccess: false,
-                errorDetail: error,
+                errorDetail: "The OAuth provider denied the request.",
               }),
             )
             clearTimeout(timeout)
             this.stopServer()
-            reject(new Error(`OAuth error: ${error}`))
+            reject(new Error("OAuth provider denied the request."))
             return
           }
 
@@ -943,7 +951,7 @@ export class CraftOAuth {
         }
       })
 
-      this.server.listen(CALLBACK_PORT, () => {
+      this.server.listen(CALLBACK_PORT, "127.0.0.1", () => {
         // Server started
       })
 

@@ -37,7 +37,8 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
   return {
     voiceSettingsVersion: 2,
     sttAdapterId:
-      raw.voiceSettingsVersion === 2 && typeof raw.sttAdapterId === "string"
+      raw.voiceSettingsVersion === 2 &&
+      (raw.sttAdapterId === "local-parakeet" || raw.sttAdapterId === "local-whisper")
         ? raw.sttAdapterId
         : defaultVoiceSettings.sttAdapterId,
     parakeetModelId: "parakeet-unified-en-q8",
@@ -54,7 +55,9 @@ export function normalizeVoiceSettings(raw: Partial<VoiceSettings>): VoiceSettin
         ? raw.whisperCppBinPath.trim()
         : null,
     ttsAdapterId:
-      typeof raw.ttsAdapterId === "string" ? raw.ttsAdapterId : defaultVoiceSettings.ttsAdapterId,
+      raw.ttsAdapterId === "kokoro" || raw.ttsAdapterId === "native-os"
+        ? raw.ttsAdapterId
+        : defaultVoiceSettings.ttsAdapterId,
     voiceId: typeof raw.voiceId === "string" ? raw.voiceId : null,
     voiceByTtsAdapterId,
     rate:

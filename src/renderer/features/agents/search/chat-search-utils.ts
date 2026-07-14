@@ -1,5 +1,6 @@
 import type { Message, MessagePart } from "../stores/message-store"
 import type { SearchMatch } from "./chat-search-atoms"
+import { extractVisibleMessageParts } from "../../../../shared/chat-visible-content"
 
 // ============================================================================
 // TEXT EXTRACTION
@@ -22,35 +23,12 @@ function extractTextFromPart(
   partIndex: number,
   part: MessagePart,
 ): ExtractedText[] {
-  const results: ExtractedText[] = []
-
-  // Search assistant text plus user-visible reasoning output. Other tool content stays
-  // excluded so search remains focused and cheap.
-  if (part.type === "text" && part.text && typeof part.text === "string" && part.text.trim()) {
-    results.push({ messageId, partIndex, partType: "text", text: part.text })
-  }
-  if (part.type === "reasoning" && part.text && typeof part.text === "string" && part.text.trim()) {
-    results.push({ messageId, partIndex, partType: "reasoning", text: part.text })
-  }
-  if (part.type === "file-content") {
-    const filePart = part as MessagePart & { text?: string; content?: string }
-    const content =
-      typeof filePart.content === "string" && filePart.content.trim()
-        ? filePart.content
-        : filePart.text
-    if (typeof content === "string" && content.trim()) {
-      results.push({ messageId, partIndex, partType: "file-content", text: content })
-    }
-  }
-  if (
-    (part.type === "tool-ReasoningOutput" || part.type === "tool-Thinking") &&
-    typeof part.input?.text === "string" &&
-    part.input.text.trim()
-  ) {
-    results.push({ messageId, partIndex, partType: part.type, text: part.input.text })
-  }
-
-  return results
+  return extractVisibleMessageParts({ parts: [part] }).map((entry) => ({
+    messageId,
+    partIndex,
+    partType: entry.partType,
+    text: entry.text,
+  }))
 }
 
 // Keep old implementation commented for reference if we want to re-enable tool search later
@@ -215,11 +193,6 @@ export function extractSearchableText(messages: Message[]): ExtractedText[] {
       const textParts = message.parts.flatMap((part) => {
         if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
           return [part.text]
-        }
-        if (part.type === "file-content") {
-          const filePart = part as MessagePart & { text?: string; content?: string }
-          const content = filePart.content ?? filePart.text
-          if (typeof content === "string" && content.trim()) return [content]
         }
         return []
       })

@@ -4,14 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import {
   agentsLoginModalOpenAtom,
+  agentsSettingsDialogActiveTabAtom,
   claudeLoginModalConfigAtom,
-  codexApiKeyAtom,
   codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
   codexOnboardingAuthMethodAtom,
   codexOnboardingCompletedAtom,
   hiddenModelsAtom,
-  normalizeCodexApiKey,
 } from "../../../lib/atoms"
 import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
 import { ClaudeCodeIcon, CodexIcon, CursorIcon, SearchIcon } from "../../ui/icons"
@@ -260,13 +259,16 @@ export function AgentsModelsTab() {
   const setClaudeLoginModalOpen = useSetAtom(agentsLoginModalOpenAtom)
   const setCodexLoginModalOpen = useSetAtom(codexLoginModalOpenAtom)
   const setCodexLoginModalMethod = useSetAtom(codexLoginModalMethodAtom)
+  const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const isNarrowScreen = useIsNarrowScreen()
   const { data: claudeCodeIntegration, isLoading: isClaudeCodeLoading } =
     trpc.claudeCode.getIntegration.useQuery()
   const isClaudeCodeConnected = claudeCodeIntegration?.isConnected
   const { data: codexIntegration, isLoading: isCodexLoading } = trpc.codex.getIntegration.useQuery()
 
-  const [storedCodexApiKey, setStoredCodexApiKey] = useAtom(codexApiKeyAtom)
+  const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
+    id: "codex.api-key",
+  })
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const codexOnboardingAuthMethod = useAtomValue(codexOnboardingAuthMethodAtom)
   const codexLogoutMutation = trpc.codex.logout.useMutation()
@@ -299,26 +301,7 @@ export function AgentsModelsTab() {
     }
   }
 
-  const handleRemoveCodexApiKey = async () => {
-    const confirmed = window.confirm("Remove the Codex API key from Flapstack?")
-    if (!confirmed) return
-
-    try {
-      setStoredCodexApiKey("")
-      if (codexIntegration?.state === "connected_api_key") {
-        await codexLogoutMutation.mutateAsync()
-      }
-      await trpcUtils.codex.getIntegration.invalidate()
-      toast.success("Codex API key removed")
-    } catch (error) {
-      await trpcUtils.codex.getIntegration.invalidate()
-      const message = error instanceof Error ? error.message : "Failed to disconnect Codex API key"
-      toast.error(`API key removed, but Codex logout failed: ${message}`)
-    }
-  }
-
-  const normalizedStoredCodexApiKey = normalizeCodexApiKey(storedCodexApiKey)
-  const hasAppCodexApiKey = Boolean(normalizedStoredCodexApiKey)
+  const hasAppCodexApiKey = codexCredentialStatus?.configured === true
   const hasLocalCodexSubscription =
     codexOnboardingCompleted && codexOnboardingAuthMethod === "chatgpt"
   const isCodexSubscriptionConnected =
@@ -456,7 +439,9 @@ export function AgentsModelsTab() {
         <div className="pb-2 flex items-center justify-between">
           <div>
             <h4 className="text-sm font-medium text-foreground">Anthropic Accounts</h4>
-            <p className="text-xs text-muted-foreground">Manage your Claude API accounts</p>
+            <p className="text-xs text-muted-foreground">
+              Manage Anthropic accounts used by Claude Code
+            </p>
           </div>
           <Button
             size="sm"
@@ -532,19 +517,13 @@ export function AgentsModelsTab() {
                       Active
                     </Badge>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => handleCodexSetup("api_key")}>
-                    {hasAppCodexApiKey ? "Update" : "Add"}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setActiveSettingsTab("api-providers")}
+                  >
+                    Manage
                   </Button>
-                  {hasAppCodexApiKey && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={codexLogoutMutation.isPending}
-                      onClick={() => void handleRemoveCodexApiKey()}
-                    >
-                      Remove
-                    </Button>
-                  )}
                 </div>
               </div>
             </>

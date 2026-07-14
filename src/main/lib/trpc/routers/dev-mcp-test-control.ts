@@ -1,7 +1,11 @@
 import { z } from "zod"
 import { getDevMcpTool, devMcpTestControlTools } from "../../mcp-test-control/registry"
 import {
+  controlSettings,
   getHarnessStatusForRepo,
+  getSettingsState,
+  getLiveSettingsState,
+  getVisibleCopySearchState,
   getTestEnvironment,
   listTestTargets,
   openspecValidate,
@@ -12,8 +16,18 @@ import {
   waitForRun,
 } from "../../mcp-test-control/service"
 import { publicProcedure, router } from "../index"
+import { recordDevAgentInputRendererState } from "../../mcp-test-control/renderer-state"
 
 const repoPathSchema = z.string().optional()
+const settingsProviderSchema = z.enum([
+  "claude",
+  "codex",
+  "cursor",
+  "opencode",
+  "openrouter",
+  "nanogpt",
+  "openai-voice",
+])
 
 export const devMcpTestControlRouter = router({
   describe: publicProcedure.query(() => ({
@@ -33,6 +47,58 @@ export const devMcpTestControlRouter = router({
     .query(({ input }) => getHarnessStatusForRepo(input)),
 
   listTestTargets: publicProcedure.query(() => listTestTargets()),
+
+  getSettingsState: publicProcedure
+    .input(
+      z
+        .object({
+          query: z.string().max(200).optional(),
+          showDevelopment: z.boolean().optional(),
+          availableProviders: z.array(settingsProviderSchema).optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => ({
+      ...getSettingsState(input),
+      renderer: await getLiveSettingsState(),
+    })),
+
+  controlSettings: publicProcedure
+    .input(
+      z.object({
+        operation: z.enum(["open", "close", "navigate", "search", "select-project"]),
+        tab: z.string().max(100).optional(),
+        query: z.string().max(200).optional(),
+        targetId: z.string().max(200).optional(),
+        projectId: z.string().max(200).nullable().optional(),
+      }),
+    )
+    .mutation(({ input }) => controlSettings(input)),
+
+  getVisibleCopySearchState: publicProcedure
+    .input(
+      z.object({
+        subChatId: z.string().min(1),
+        query: z.string().max(200).optional(),
+        messageLimit: z.number().int().min(1).max(100).optional(),
+      }),
+    )
+    .query(({ input }) => getVisibleCopySearchState(input)),
+
+  reportAgentInputRendererState: publicProcedure
+    .input(
+      z.object({
+        parentChatId: z.string(),
+        subChatId: z.string(),
+        pendingRequestIds: z.array(z.string()).max(32),
+        hydratedRequestIds: z.array(z.string()).max(32),
+        expiredRequestIds: z.array(z.string()).max(32),
+        dialogOpen: z.boolean(),
+        hydrationError: z.string().max(2_000).nullable(),
+        observedAt: z.number().int().nonnegative(),
+      }),
+    )
+    .mutation(({ input }) => recordDevAgentInputRendererState(input)),
 
   setChatRunConfig: publicProcedure
     .input(
@@ -94,6 +160,8 @@ export const devMcpTestControlRouter = router({
           return getTestEnvironment()
         case "get_harness_status":
           return getHarnessStatusForRepo()
+        case "get_settings_state":
+          return getSettingsState()
         case "list_test_targets":
           return listTestTargets()
         case "run_project_check":

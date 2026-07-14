@@ -6,6 +6,7 @@ import {
   getShortcutAction,
   keysToDisplay,
   keysToHotkeyString,
+  migrateHotkeysConfig,
 } from "./shortcut-registry"
 import type { ShortcutActionId } from "./types"
 
@@ -22,7 +23,8 @@ import type { ShortcutActionId } from "./types"
  */
 export function useResolvedHotkeyDisplay(actionId: ShortcutActionId): string | null {
   const config = useAtomValue(customHotkeysAtom)
-  const hotkey = getResolvedHotkey(actionId, config)
+  const safeConfig = migrateHotkeysConfig(config)
+  const hotkey = getResolvedHotkey(actionId, safeConfig)
   if (!hotkey) return null
   return hotkeyToDisplay(hotkey)
 }
@@ -39,13 +41,14 @@ export function useResolvedHotkeyDisplayWithAlt(actionId: ShortcutActionId): {
   alt: string | null
 } {
   const config = useAtomValue(customHotkeysAtom)
-  const hotkey = getResolvedHotkey(actionId, config)
+  const safeConfig = migrateHotkeysConfig(config)
+  const hotkey = getResolvedHotkey(actionId, safeConfig)
   const action = getShortcutAction(actionId)
 
   const primary = hotkey ? hotkeyToDisplay(hotkey) : null
 
   // Only show alt if not using custom binding
-  const hasCustomBinding = config.bindings[actionId] !== undefined
+  const hasCustomBinding = safeConfig.bindings[actionId] !== undefined
   const alt =
     action?.altKeys && !hasCustomBinding
       ? hotkeyToDisplay(keysToHotkeyString(action.altKeys))

@@ -106,8 +106,8 @@ export const CODEX_MODELS = [
 // `cursor-agent --model <id>` accepts a bare model id, `auto`, or an id with
 // parameterized overrides, e.g. `claude-opus-4-8[context=1m,effort=high,fast=false]`.
 // Cursor iterates quickly and gates many named models behind paid plans, so this
-// catalog stays intentionally small and honest. `auto` is always available and
-// is the default; named ids are best-effort and validated at launch, not assumed.
+// catalog stays intentionally small and honest. `auto` is the current CLI
+// default; named ids are best-effort and validated at launch, not assumed.
 // Live ids can be enumerated with `cursor-agent models` / `--list-models`.
 // ---------------------------------------------------------------------------
 
@@ -141,7 +141,14 @@ export function normalizeOpencodeModelId(provider: OpencodeProviderId, modelId: 
     openrouter: new Set(["openrouter/tencent/hy3:free", "openrouter/google/gemini-3-pro"]),
     nanogpt: new Set(["nanogpt/deepseek-v3", "nanogpt/deepseek-chat"]),
   }
-  return legacy[provider].has(modelId) ? DEFAULT_OPENCODE_MODELS[provider][0].id : modelId
+  const trimmed = modelId.trim()
+  if (!trimmed) throw new Error(`Model cannot be empty for the ${provider} provider.`)
+  const qualifiedProvider = trimmed.match(/^(openrouter|nanogpt)\//)?.[1]
+  if (qualifiedProvider && qualifiedProvider !== provider) {
+    throw new Error(`Model ${trimmed} does not belong to the ${provider} provider.`)
+  }
+  const normalized = qualifiedProvider === provider ? trimmed : `${provider}/${trimmed}`
+  return legacy[provider].has(normalized) ? DEFAULT_OPENCODE_MODELS[provider][0].id : normalized
 }
 
 const CURSOR_MODEL_LABELS: Record<string, string> = Object.fromEntries(
@@ -255,4 +262,4 @@ export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"
 export const DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CHATGPT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
-export const DEFAULT_CURSOR_MODEL_ID = "composer-2.5"
+export const DEFAULT_CURSOR_MODEL_ID = "auto"

@@ -8,12 +8,43 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { execFile, spawn, spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 
 const require = createRequire(import.meta.url)
 const secretsFileName = "usage-secrets.json"
 const KEYCHAIN_SERVICE = "dev.flapstack.usage"
-const WINDOWS_CREDENTIAL_PREFIX = "dev.flapstack.usage/"
+const WINDOWS_CREDENTIAL_PREFIX = "dev.flapstack.usage"
+
+function sanitizeNamespace(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
+/** Keep production credentials stable while isolating Dev/Preview profiles and
+ * disposable evidence runs from each other. The daemon receives the resolved
+ * namespace through its native service definition. */
+export function getUsageCredentialNamespace(): string | null {
+  const explicit = process.env.FLAPSTACK_USAGE_SECRET_NAMESPACE
+  if (explicit) return sanitizeNamespace(explicit) || null
+  try {
+    const electron = require("electron") as { app?: { getPath(name: string): string } }
+    const profile = electron.app?.getPath("userData")
+    if (!profile) return null
+    const name = basename(profile)
+    if (name === "Flapstack") return null
+    return sanitizeNamespace(name) || null
+  } catch {
+    return null
+  }
+}
+
+function credentialService(): string {
+  const namespace = getUsageCredentialNamespace()
+  return namespace ? `${KEYCHAIN_SERVICE}.${namespace}` : KEYCHAIN_SERVICE
+}
 
 type SafeStorage = {
   isEncryptionAvailable(): boolean
@@ -154,7 +185,7 @@ function keychainAccount(key: string): string {
 function getKeychainSecret(key: string): string | null {
   const result = spawnSync(
     "/usr/bin/security",
-    ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", keychainAccount(key), "-w"],
+    ["find-generic-password", "-s", credentialService(), "-a", keychainAccount(key), "-w"],
     { encoding: "utf8" },
   )
   return result.status === 0 ? result.stdout.trim() || null : null
@@ -165,7 +196,7 @@ function setKeychainSecret(key: string, value: string | null): boolean {
   if (value == null || value === "") {
     const result = spawnSync(
       "/usr/bin/security",
-      ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account],
+      ["delete-generic-password", "-s", credentialService(), "-a", account],
       {
         encoding: "utf8",
       },
@@ -176,8 +207,8 @@ function setKeychainSecret(key: string, value: string | null): boolean {
   }
   const result = spawnSync(
     "/usr/bin/security",
-    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", "-w"],
-    { encoding: "utf8", input: `${value}\n`, timeout: 10_000 },
+    ["add-generic-password", "-s", credentialService(), "-a", account, "-U", "-w"],
+    { encoding: "utf8", input: `${value}\n${value}\n`, timeout: 10_000 },
   )
   return result.status === 0
 }
@@ -187,7 +218,7 @@ export function getUsageSecretAsync(key: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       "/usr/bin/security",
-      ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", keychainAccount(key), "-w"],
+      ["find-generic-password", "-s", credentialService(), "-a", keychainAccount(key), "-w"],
       { encoding: "utf8", timeout: 10_000 },
       (error, stdout) => resolve(error ? null : stdout.trim() || null),
     )
@@ -201,8 +232,8 @@ export function setUsageSecretAsync(key: string, value: string | null): Promise<
   }
   const account = keychainAccount(key)
   const args = value
-    ? ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-U", "-w"]
-    : ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account]
+    ? ["add-generic-password", "-s", credentialService(), "-a", account, "-U", "-w"]
+    : ["delete-generic-password", "-s", credentialService(), "-a", account]
   return new Promise((resolve, reject) => {
     const child = spawn("/usr/bin/security", args, {
       stdio: [value ? "pipe" : "ignore", "ignore", "ignore"],
@@ -228,12 +259,12 @@ export function setUsageSecretAsync(key: string, value: string | null): Promise<
       if (code === 0 || (!value && code === 44)) finish()
       else finish(new Error(`security exited with code ${code ?? "unknown"}`))
     })
-    if (value) child.stdin?.end(`${value}\n`)
+    if (value) child.stdin?.end(`${value}\n${value}\n`)
   })
 }
 
 function linuxSecretArgs(key: string): string[] {
-  return ["service", KEYCHAIN_SERVICE, "account", keychainAccount(key)]
+  return ["service", credentialService(), "account", keychainAccount(key)]
 }
 
 function getLinuxSecret(key: string): string | null {
@@ -258,7 +289,8 @@ function setLinuxSecret(key: string, value: string | null): boolean {
 }
 
 function windowsCredentialTarget(key: string): string {
-  return `${WINDOWS_CREDENTIAL_PREFIX}${keychainAccount(key)}`
+  const namespace = getUsageCredentialNamespace()
+  return `${WINDOWS_CREDENTIAL_PREFIX}${namespace ? `.${namespace}` : ""}/${keychainAccount(key)}`
 }
 
 function runWindowsCredentialScript(

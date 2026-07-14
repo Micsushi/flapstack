@@ -11,6 +11,7 @@
  */
 
 import { existsSync } from "node:fs"
+import { spawn } from "node:child_process"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 
@@ -93,4 +94,83 @@ export function resolveOpencodeBinary(): OpencodeBinaryResolution {
 
 export function serveArgs(): string[] {
   return ["serve", "--hostname", "127.0.0.1", "--port", "0"]
+}
+
+export type OpencodeCliResult = {
+  stdout: string
+  stderr: string
+  exitCode: number | null
+}
+
+export class OpencodeCliTimeoutError extends Error {
+  constructor(args: string[], timeoutMs: number) {
+    super(`Provider runtime command ${args.join(" ")} timed out after ${timeoutMs}ms`)
+    this.name = "OpencodeCliTimeoutError"
+  }
+}
+
+/** Run a bounded, short-lived OpenCode capability command. */
+export async function runOpencodeCli(
+  args: string[],
+  options: { timeoutMs?: number; cwd?: string } = {},
+): Promise<OpencodeCliResult> {
+  const resolution = resolveOpencodeBinary()
+  if (resolution.kind === "missing") throw new Error(resolution.reason)
+  const timeoutMs = options.timeoutMs ?? 15_000
+  return await new Promise((resolve, reject) => {
+    const child = spawn(resolution.command, [...resolution.args, ...args], {
+      cwd: options.cwd,
+      env: process.env,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+    let timedOut = false
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined
+    const clearTimers = () => {
+      clearTimeout(timer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+    }
+    const append = (current: string, chunk: Buffer) =>
+      (current + chunk.toString("utf8")).slice(-1_000_000)
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk)
+    })
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk)
+    })
+    const timer = setTimeout(() => {
+      timedOut = true
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM")
+        else child.kill("SIGTERM")
+      } catch {
+        child.kill("SIGKILL")
+      }
+      forceKillTimer = setTimeout(() => {
+        try {
+          if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL")
+          else child.kill("SIGKILL")
+        } catch {
+          // Already exited.
+        }
+      }, 1_000)
+    }, timeoutMs)
+    child.once("error", (error) => {
+      if (settled) return
+      settled = true
+      clearTimers()
+      reject(timedOut ? new OpencodeCliTimeoutError(args, timeoutMs) : error)
+    })
+    child.once("close", (exitCode) => {
+      if (settled) return
+      settled = true
+      clearTimers()
+      if (timedOut) reject(new OpencodeCliTimeoutError(args, timeoutMs))
+      else resolve({ stdout, stderr, exitCode })
+    })
+  })
 }

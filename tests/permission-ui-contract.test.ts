@@ -15,6 +15,16 @@ describe("permission UI contract", () => {
     expect(source).toContain("permissionConfirmationInFlightRef.current")
   })
 
+  it("requires an explicit complete custom capability review before any all-chat apply", () => {
+    const source = readSource("src/renderer/features/agents/main/chat-input-area.tsx")
+    expect(source).toContain('if (mode === "custom")')
+    expect(source).toContain("setPendingCustomReviewed(false)")
+    expect(source).toContain("Review the exact capabilities before applying Custom")
+    expect(source).toContain("I reviewed this complete capability set.")
+    expect(source).toContain('pendingPermissionMode === "custom" && !pendingCustomReviewed')
+    expect(source).toContain("permissionResolution?.customPermissions ?? disabledCustomPermissions")
+  })
+
   it("keeps direct Settings edits scoped to one named chat", () => {
     const source = readSource(
       "src/renderer/components/dialogs/settings-tabs/agents-permissions-tab.tsx",

@@ -11,15 +11,25 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
+const expectedUserDataProfile =
+  process.env.FLAPSTACK_DEV_MCP_PROFILE?.trim() ||
+  (instance ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "Flapstack Dev")
 const descriptorPath =
   process.env.FLAPSTACK_DEV_MCP_DESCRIPTOR ||
-  join(homedir(), "Library", "Application Support", "Flapstack Dev", "dev-test-control-mcp.json")
+  join(
+    homedir(),
+    "Library",
+    "Application Support",
+    expectedUserDataProfile,
+    "dev-test-control-mcp.json",
+  )
 
 let upstream = null
 
 async function readDescriptor() {
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"))
-  if (descriptor.profile !== "Flapstack Dev") {
+  if (descriptor.profile !== expectedUserDataProfile) {
     throw new Error(`Refusing non-dev Flapstack profile: ${descriptor.profile || "unknown"}`)
   }
   if (resolve(descriptor.checkout) !== checkout) {
