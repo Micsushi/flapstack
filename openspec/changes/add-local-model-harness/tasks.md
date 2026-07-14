@@ -29,13 +29,14 @@
 
 ### S4-F6-T3 — Implement the bounded read-only tool loop
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Tool-capable local models can inspect a registered project without mutation.
 - Scope: Provider-neutral loop; read/list/glob/grep tools; tool schema/normalization; iteration/call/context/output/time caps; unknown-tool denial; tool evidence.
 - Out of scope: File writes, shell, git, network, subagents, and MCP mutation.
 - Acceptance: Read tools stay inside registered roots; unsupported models remain chat-only; loops stop at limits; malformed/unknown calls fail closed.
 - Verification: `npm test -- local-model-read-tools` with traversal, symlink, recursion, malformed, limit, and chat-only fixtures.
+- Manual verification remaining: live Ollama, renderer, package, and provider/device acceptance stays with S4-F6-T8; no such evidence is claimed here.
 - Blocked by: S4-F6-T1, S4-F6-T2
 - Blocks: S4-F6-T4, S4-F6-T5, S4-F6-T7
 - Context: path safety, file read/search services, normalized tool events, permission evidence.
