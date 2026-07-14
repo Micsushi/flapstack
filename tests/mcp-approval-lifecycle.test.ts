@@ -56,6 +56,21 @@ describe("MCP approval lifecycle", () => {
     })
   })
 
+  it("notifies renderer consumers when pending approvals settle", async () => {
+    vi.useFakeTimers()
+    const onPendingChanged = vi.fn()
+    const lifecycle = new McpApprovalLifecycle(undefined, onPendingChanged)
+    lifecycle.request(request("timeout", { timeoutMs: 10 }))
+    lifecycle.request(request("approved"))
+    lifecycle.request(request("denied"))
+
+    vi.advanceTimersByTime(10)
+    lifecycle.approve("approved")
+    lifecycle.deny("denied")
+
+    expect(onPendingChanged).toHaveBeenCalledTimes(3)
+  })
+
   it("shares only an exact duplicate pending decision and rejects context collisions", async () => {
     const lifecycle = new McpApprovalLifecycle()
     const first = lifecycle.request(request("same-id"))

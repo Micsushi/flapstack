@@ -210,10 +210,23 @@ type ProductMcpTestCall = {
   error: string | null
   startedAt: string
   finishedAt: string | null
-  transport: StdioClientTransport
+  sessionKey: string
 }
 
 const productMcpTestCalls = new Map<string, ProductMcpTestCall>()
+
+type ProductMcpTestSession = {
+  key: string
+  chatId: string
+  runId: string
+  client: Client
+  transport: StdioClientTransport
+  connected: Promise<void>
+  release: () => void
+  closed: boolean
+}
+
+const productMcpTestSessions = new Map<string, ProductMcpTestSession>()
 
 export async function requestDevRendererControl(input: DevRendererControlCommand) {
   const windows = BrowserWindow?.getAllWindows?.() ?? []
@@ -242,6 +255,19 @@ export async function requestDevRendererControl(input: DevRendererControlCommand
 
 export async function getLiveSettingsState() {
   return requestDevRendererControl({ command: "settings.get" })
+}
+
+export async function getProductMcpRendererState(input: { chatId: string }) {
+  requireProductMcpTestCaller(input.chatId)
+  return requestDevRendererControl({ command: "mcp.get", chatId: input.chatId })
+}
+
+export async function controlProductMcpRenderer(input: {
+  chatId: string
+  operation: "open-audit" | "close-audit"
+}) {
+  requireProductMcpTestCaller(input.chatId)
+  return requestDevRendererControl({ command: "mcp.control", ...input })
 }
 
 export async function controlSettings(input: {
@@ -279,7 +305,23 @@ export function createTestOrchestration(
   input: unknown,
   options: { deferScheduling?: boolean } = {},
 ) {
-  return createAgentOrchestrationService(getDatabasePath()).create(input, undefined, options)
+  const service = createAgentOrchestrationService(getDatabasePath())
+  // deferScheduling persists paused in the same transaction as task creation.
+  // The independent scheduler can never observe this fixture as launchable.
+  const created = service.create(input, undefined, options)
+  notifyTestOrchestrationChanged(created.orchestration.taskId)
+  return created
+}
+
+function notifyTestOrchestrationChanged(taskId: string) {
+  const chatIds = getDatabase()
+    .select({ id: chats.id })
+    .from(chats)
+    .where(eq(chats.taskId, taskId))
+    .all()
+    .map((chat) => chat.id)
+    .slice(0, 100)
+  notifyTestControlView({ action: "orchestration-changed", taskId, chatIds })
 }
 
 export function createTestOrchestrationFixture(input: {
@@ -366,29 +408,39 @@ export function mutateTestOrchestration(input: {
   payload?: unknown
 }) {
   const service = createAgentOrchestrationService(getDatabasePath())
+  let result: unknown
   switch (input.action) {
     case "tick":
       service.tickAll()
-      return service.getOverview(input.taskId)
+      result = service.getOverview(input.taskId)
+      break
     case "pause":
     case "resume":
     case "stop":
-      return service.control(input.taskId, input.action)
+      result = service.control(input.taskId, input.action)
+      break
     case "retry":
       if (!input.agentId) throw new Error("retry requires agentId")
-      return service.retryAgent(input.taskId, input.agentId)
+      result = service.retryAgent(input.taskId, input.agentId)
+      break
     case "replace": {
       if (!input.agentId) throw new Error("replace requires agentId")
       const payload = objectPayload(input.payload)
-      return service.replaceAgent(input.taskId, input.agentId, payload.agent)
+      result = service.replaceAgent(input.taskId, input.agentId, payload.agent)
+      break
     }
     case "add":
-      return service.addAgent({ ...objectPayload(input.payload), taskId: input.taskId })
+      result = service.addAgent({ ...objectPayload(input.payload), taskId: input.taskId })
+      break
     case "progress":
-      return service.reportProgress({ ...objectPayload(input.payload), taskId: input.taskId })
+      result = service.reportProgress({ ...objectPayload(input.payload), taskId: input.taskId })
+      break
     case "archive":
-      return service.archiveTerminal(input.taskId)
+      result = service.archiveTerminal(input.taskId)
+      break
   }
+  notifyTestOrchestrationChanged(input.taskId)
+  return result
 }
 
 function objectPayload(value: unknown): Record<string, unknown> {
@@ -477,6 +529,7 @@ export function prepareProductMcpCaller(input: {
   harness: "codex" | "claude"
   name?: string
   repoPath?: string
+  permissionMode?: "read-only" | "ask-before-edits" | "auto-edit-project-only" | "full-access"
 }) {
   const db = getDatabase()
   const chatId = randomUUID()
@@ -485,6 +538,7 @@ export function prepareProductMcpCaller(input: {
   const harness = input.harness === "claude" ? "claude-code" : "codex"
   const model = harness === "codex" ? SAFE_CHATGPT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL_ID
   const worktreePath = resolveProductMcpTestRepoPath(input.repoPath)
+  const permissionMode = input.permissionMode ?? "full-access"
   const name = `MCP live test ${input.harness}${input.name?.trim() ? `: ${input.name.trim()}` : ""}`
   const created = db.transaction((tx) => {
     const chat = tx
@@ -495,7 +549,7 @@ export function prepareProductMcpCaller(input: {
         scope: "global",
         harness,
         model,
-        permissionMode: "full-access",
+        permissionMode,
         worktreePath,
         mcpExposureEnabled: false,
       })
@@ -510,7 +564,7 @@ export function prepareProductMcpCaller(input: {
         mode: "agent",
         harness,
         model,
-        permissionMode: "full-access",
+        permissionMode,
         worktreePath,
         runStatus: "running",
         messages: "[]",
@@ -525,7 +579,7 @@ export function prepareProductMcpCaller(input: {
         subChatId,
         harness,
         model,
-        permissionMode: "full-access",
+        permissionMode,
         worktreePath,
         status: "running",
         startedAt: new Date(),
@@ -591,12 +645,7 @@ export function startProductMcpTestCall(
         databasePath: getDatabasePath(),
       },
     )
-  const transport = new StdioClientTransport({
-    command: registration.command,
-    args: registration.args,
-    env: { PATH: process.env.PATH ?? "", ...registration.env },
-    stderr: "pipe",
-  })
+  const session = getOrCreateProductMcpTestSession(input.chatId, input.runId, registration)
   const id = randomUUID()
   const call: ProductMcpTestCall = {
     id,
@@ -608,26 +657,13 @@ export function startProductMcpTestCall(
     error: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
-    transport,
+    sessionKey: session.key,
   }
   productMcpTestCalls.set(id, call)
-  const release = registerActiveProductMcpSession({
-    chatId: input.chatId,
-    runId: input.runId,
-    revoke: () => {
-      if (call.status === "running") {
-        call.status = "cancelled"
-        call.error = "Product MCP exposure was disabled."
-        call.finishedAt = new Date().toISOString()
-      }
-      void transport.close().catch(() => undefined)
-    },
-  })
-  const client = new Client({ name: "flapstack-dev-test-control", version: "1.0.0" })
   void (async () => {
     try {
-      await client.connect(transport)
-      const response = await client.callTool({
+      await session.connected
+      const response = await session.client.callTool({
         name: input.toolName,
         arguments: input.arguments ?? {},
       })
@@ -644,12 +680,64 @@ export function startProductMcpTestCall(
         )
         call.finishedAt = new Date().toISOString()
       }
-    } finally {
-      release()
-      await client.close().catch(() => undefined)
     }
   })()
   return productMcpTestCallDto(call)
+}
+
+function getOrCreateProductMcpTestSession(
+  chatId: string,
+  runId: string,
+  registration: McpStdioRegistration,
+) {
+  const key = `${chatId}\u0000${runId}`
+  const current = productMcpTestSessions.get(key)
+  if (current && !current.closed) return current
+
+  const transport = new StdioClientTransport({
+    command: registration.command,
+    args: registration.args,
+    env: { PATH: process.env.PATH ?? "", ...registration.env },
+    stderr: "pipe",
+  })
+  const client = new Client({ name: "flapstack-dev-test-control", version: "1.0.0" })
+  let session!: ProductMcpTestSession
+  const release = registerActiveProductMcpSession({
+    chatId,
+    runId,
+    revoke: () => closeProductMcpTestSession(session, "Product MCP exposure was disabled."),
+  })
+  session = {
+    key,
+    chatId,
+    runId,
+    client,
+    transport,
+    connected: client.connect(transport),
+    release,
+    closed: false,
+  }
+  productMcpTestSessions.set(key, session)
+  return session
+}
+
+function closeProductMcpTestSession(session: ProductMcpTestSession, reason?: string) {
+  if (session.closed) return
+  session.closed = true
+  if (productMcpTestSessions.get(session.key) === session) {
+    productMcpTestSessions.delete(session.key)
+  }
+  if (reason) {
+    const finishedAt = new Date().toISOString()
+    for (const call of productMcpTestCalls.values()) {
+      if (call.sessionKey !== session.key || call.status !== "running") continue
+      call.status = "cancelled"
+      call.error = reason
+      call.finishedAt = finishedAt
+    }
+  }
+  session.release()
+  void session.client.close().catch(() => session.transport.close().catch(() => undefined))
 }
 
 export function getProductMcpTestCall(input: { callId: string }) {
@@ -681,11 +769,18 @@ export function getProductMcpState(input: {
   chatId: string
   toolName?: string
   decision?: McpAuditStatus
+  from?: string
+  to?: string
   cursor?: string
   limit?: number
 }) {
   const db = getDatabase()
   const caller = requireProductMcpTestCaller(input.chatId)
+  const from = parseProductMcpAuditTime(input.from, "from")
+  const to = parseProductMcpAuditTime(input.to, "to")
+  if (from && to && from > to) {
+    throw new Error("Product MCP audit from time must not be after to time.")
+  }
   const runs = db
     .select()
     .from(agentRuns)
@@ -730,6 +825,8 @@ export function getProductMcpState(input: {
       callerChatId: input.chatId,
       toolName: input.toolName,
       decision: input.decision,
+      from,
+      to,
       cursor: input.cursor,
       limit: input.limit,
     }),
@@ -738,6 +835,15 @@ export function getProductMcpState(input: {
       .filter((call) => call.chatId === input.chatId)
       .map(productMcpTestCallDto),
   }
+}
+
+function parseProductMcpAuditTime(value: string | undefined, field: "from" | "to") {
+  if (!value) return undefined
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Product MCP audit ${field} time must be a valid ISO timestamp.`)
+  }
+  return parsed
 }
 
 export function manageProductMcpRecovery(input: {
@@ -822,14 +928,93 @@ export function cleanupProductMcpCaller(input: { chatId: string }) {
   return { chatId: input.chatId, archived: true, archivedChildren, activeChildren }
 }
 
+export async function cancelProductMcpChildRun(input: {
+  chatId: string
+  childChatId: string
+  runId: string
+}) {
+  const db = getDatabase()
+  requireProductMcpTestCaller(input.chatId)
+  const child = db
+    .select({ id: chats.id, parentChatId: chats.parentChatId })
+    .from(chats)
+    .where(eq(chats.id, input.childChatId))
+    .get()
+  if (!child || child.parentChatId !== input.chatId) {
+    throw new Error("Product MCP child does not belong to this test caller.")
+  }
+  const foundRun = db
+    .select()
+    .from(agentRuns)
+    .where(and(eq(agentRuns.id, input.runId), eq(agentRuns.chatId, input.childChatId)))
+    .get()
+  if (!foundRun) throw new Error("Product MCP child run not found.")
+  let run = foundRun
+  if (run.status === "pending") {
+    const pendingRun = run
+    if (!pendingRun.subChatId) throw new Error("Product MCP child run has no conversation.")
+    const subChatId = pendingRun.subChatId
+    const now = new Date()
+    const cancelled = db.transaction((tx) => {
+      const updated = tx
+        .update(agentRuns)
+        .set({ status: "cancelled", completedAt: now })
+        .where(and(eq(agentRuns.id, pendingRun.id), eq(agentRuns.status, "pending")))
+        .run()
+      if (updated.changes !== 1) return false
+      tx.update(subChats)
+        .set({ runStatus: "cancelled", updatedAt: now })
+        .where(eq(subChats.id, subChatId))
+        .run()
+      return true
+    })
+    if (cancelled) {
+      return { cancelled: true, ignoredStale: false, status: "cancelled" as const }
+    }
+    const refreshed = db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, input.runId), eq(agentRuns.chatId, input.childChatId)))
+      .get()
+    if (!refreshed) throw new Error("Product MCP child run disappeared during cancellation.")
+    run = refreshed
+  }
+  if (!run.subChatId) throw new Error("Product MCP child run has no conversation.")
+  if (run.status !== "running") {
+    return { cancelled: false, ignoredStale: true, status: run.status }
+  }
+  const outcome =
+    run.harness === "codex"
+      ? (await import("../trpc/routers/codex")).cancelActiveCodexRun({
+          subChatId: run.subChatId,
+          runId: run.id,
+        })
+      : run.harness === "claude-code"
+        ? (await import("../trpc/routers/claude")).cancelActiveClaudeSession({
+            subChatId: run.subChatId,
+            runId: run.id,
+          })
+        : { cancelled: false, ignoredStale: true }
+  return { ...outcome, status: run.status }
+}
+
 function requireProductMcpTestCaller(chatId: string) {
-  const caller = getDatabase().select().from(chats).where(eq(chats.id, chatId)).get()
+  const db = getDatabase()
+  const caller = db.select().from(chats).where(eq(chats.id, chatId)).get()
+  const fixtureConversation = db
+    .select({ id: subChats.id, name: subChats.name })
+    .from(subChats)
+    .where(eq(subChats.chatId, chatId))
+    .all()
+    .some(
+      (conversation) =>
+        typeof conversation.name === "string" && conversation.name.startsWith("MCP live test "),
+    )
   if (
     !caller ||
     caller.scope !== "global" ||
     caller.parentChatId !== null ||
-    typeof caller.name !== "string" ||
-    !caller.name.startsWith("MCP live test ")
+    !fixtureConversation
   ) {
     throw new Error("Refusing an MCP test action for a non-test caller chat.")
   }
@@ -860,9 +1045,11 @@ function pruneProductMcpTestCalls() {
 }
 
 export async function resetProductMcpTestCallsForTests() {
-  const calls = [...productMcpTestCalls.values()]
+  const sessions = [...productMcpTestSessions.values()]
   productMcpTestCalls.clear()
-  await Promise.all(calls.map((call) => call.transport.close().catch(() => undefined)))
+  productMcpTestSessions.clear()
+  for (const session of sessions) closeProductMcpTestSession(session)
+  await Promise.all(sessions.map((session) => session.client.close().catch(() => undefined)))
 }
 
 export async function getProviderStatus() {
@@ -995,6 +1182,12 @@ function safeMessageMetadata(metadata: Record<string, unknown> | undefined) {
     "toolActivity",
     "approvalActivity",
     "usage",
+    "inputTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "totalCostUsd",
+    "modelContextWindow",
     "sessionId",
   ]
   return sanitizeOpencodeAuditValue(

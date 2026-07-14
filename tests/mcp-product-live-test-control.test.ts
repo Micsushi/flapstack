@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { closeDatabase } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
 import {
+  cancelProductMcpChildRun,
   cleanupProductMcpCaller,
   getProductMcpState,
   getProductMcpTestCall,
@@ -49,7 +50,7 @@ afterEach(async () => {
 })
 
 describe("authenticated dev control for live product MCP", () => {
-  it("refuses product-MCP test actions against ordinary user chats", () => {
+  it("refuses product-MCP test actions against ordinary user chats", async () => {
     const sqlite = new Database(databasePath)
     sqlite
       .prepare(
@@ -62,6 +63,47 @@ describe("authenticated dev control for live product MCP", () => {
       /non-test caller/,
     )
     expect(() => getProductMcpState({ chatId: "ordinary" })).toThrow(/non-test caller/)
+    await expect(
+      cancelProductMcpChildRun({ chatId: "ordinary", childChatId: "child", runId: "run" }),
+    ).rejects.toThrow(/non-test caller/)
+  })
+
+  it("cancels only a pending spawned child owned by the isolated caller", async () => {
+    const caller = prepareProductMcpCaller({ harness: "codex" })
+    setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
+    const started = startProductMcpTestCall(
+      {
+        chatId: caller.chatId,
+        runId: caller.runId,
+        toolName: "spawn_thread",
+        arguments: spawnArguments("claude-code"),
+      },
+      { registration: sourceRegistration(caller.chatId, caller.runId) },
+    )
+    const approval = await waitForApproval(caller.chatId)
+    replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })
+    expect(await waitForCall(started.id)).toMatchObject({ status: "completed" })
+    const child = getProductMcpState({ chatId: caller.chatId }).children[0]!
+    const run = child.runs[0]!
+
+    expect(
+      await cancelProductMcpChildRun({
+        chatId: caller.chatId,
+        childChatId: child.id,
+        runId: run.id,
+      }),
+    ).toMatchObject({ cancelled: true, status: "cancelled" })
+    expect(getProductMcpState({ chatId: caller.chatId }).children[0]!.runs[0]).toMatchObject({
+      status: "cancelled",
+    })
+    await expect(
+      cancelProductMcpChildRun({
+        chatId: caller.chatId,
+        childChatId: "unrelated",
+        runId: run.id,
+      }),
+    ).rejects.toThrow(/does not belong/)
+    cleanupProductMcpCaller({ chatId: caller.chatId })
   })
 
   it("binds live caller worktree only to the running dev checkout", () => {
@@ -71,6 +113,29 @@ describe("authenticated dev control for live product MCP", () => {
     expect(() => prepareProductMcpCaller({ harness: "codex", repoPath: directory })).toThrow(
       /running dev checkout/,
     )
+  })
+
+  it("creates callers at the requested supported permission tier", () => {
+    const caller = prepareProductMcpCaller({
+      harness: "claude",
+      permissionMode: "ask-before-edits",
+    })
+    expect(caller).toMatchObject({ permissionMode: "ask-before-edits" })
+    expect(getProductMcpState({ chatId: caller.chatId }).runs[0]).toMatchObject({
+      permissionMode: "ask-before-edits",
+    })
+  })
+
+  it("keeps dev-control ownership after the product legitimately renames its caller chat", () => {
+    const caller = prepareProductMcpCaller({ harness: "codex" })
+    const sqlite = new Database(databasePath)
+    sqlite
+      .prepare("UPDATE chats SET name = 'Renamed by product MCP' WHERE id = ?")
+      .run(caller.chatId)
+    sqlite.close()
+
+    expect(getProductMcpState({ chatId: caller.chatId }).caller.id).toBe(caller.chatId)
+    expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({ archived: true })
   })
 
   it("proves exposure, real stdio ping, audit state, and isolated cleanup", async () => {
@@ -91,7 +156,70 @@ describe("authenticated dev control for live product MCP", () => {
     const state = getProductMcpState({ chatId: caller.chatId, toolName: "ping" })
     expect(state.audit.entries.map((entry) => entry.decision)).toContain("completed")
     expect(state.pendingApprovals).toEqual([])
+    const occurredAt = state.audit.entries[0]!.occurredAt
+    expect(
+      getProductMcpState({
+        chatId: caller.chatId,
+        from: new Date(new Date(occurredAt).getTime() - 1_000).toISOString(),
+        to: new Date(new Date(occurredAt).getTime() + 1_000).toISOString(),
+      }).audit.entries.length,
+    ).toBeGreaterThan(0)
+    expect(
+      getProductMcpState({
+        chatId: caller.chatId,
+        from: new Date(new Date(occurredAt).getTime() + 1_000).toISOString(),
+      }).audit.entries,
+    ).toEqual([])
+    expect(() => getProductMcpState({ chatId: caller.chatId, from: "not-a-time" })).toThrow(
+      /valid ISO timestamp/,
+    )
+    expect(() =>
+      getProductMcpState({
+        chatId: caller.chatId,
+        from: "2026-07-13T12:00:00.000Z",
+        to: "2026-07-13T11:00:00.000Z",
+      }),
+    ).toThrow(/must not be after/)
     expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({ archived: true })
+  })
+
+  it("keeps one caller session alive so a Tier 1 session grant is reusable", async () => {
+    const caller = prepareProductMcpCaller({
+      harness: "codex",
+      permissionMode: "ask-before-edits",
+    })
+    setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
+    const registration = sourceRegistration(caller.chatId, caller.runId, "ask-before-edits")
+    const first = startProductMcpTestCall(
+      {
+        chatId: caller.chatId,
+        runId: caller.runId,
+        toolName: "create_chat",
+        arguments: { name: "First granted chat", scope: "global", harness: "codex" },
+      },
+      { registration },
+    )
+    const approval = await waitForApproval(caller.chatId)
+    expect(
+      replyProductMcpApproval({
+        approvalId: approval.id,
+        decision: "approve",
+        grantSession: true,
+      }),
+    ).toEqual({ resolved: true })
+    expect(await waitForCall(first.id)).toMatchObject({ status: "completed" })
+
+    const second = startProductMcpTestCall(
+      {
+        chatId: caller.chatId,
+        runId: caller.runId,
+        toolName: "create_chat",
+        arguments: { name: "Second granted chat", scope: "global", harness: "codex" },
+      },
+      { registration },
+    )
+    expect(await waitForCall(second.id)).toMatchObject({ status: "completed" })
+    expect(getProductMcpState({ chatId: caller.chatId }).pendingApprovals).toEqual([])
   })
 
   it.each([
@@ -164,7 +292,7 @@ describe("authenticated dev control for live product MCP", () => {
   })
 })
 
-function sourceRegistration(chatId: string, runId: string) {
+function sourceRegistration(chatId: string, runId: string, permissionMode = "full-access") {
   const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
   return {
     command: process.execPath,
@@ -172,7 +300,7 @@ function sourceRegistration(chatId: string, runId: string) {
     env: {
       FLAPSTACK_MCP_CHAT_ID: chatId,
       FLAPSTACK_MCP_RUN_ID: runId,
-      FLAPSTACK_MCP_PERMISSION_MODE: "full-access",
+      FLAPSTACK_MCP_PERMISSION_MODE: permissionMode,
       FLAPSTACK_DB_PATH: databasePath,
     },
   }

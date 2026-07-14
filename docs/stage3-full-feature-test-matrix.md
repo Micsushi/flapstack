@@ -130,6 +130,25 @@ files with 929 passed and 3 conditional skips plus lint, formatting,
 TypeScript, and production build. All 18 active OpenSpec changes strict-validate
 and the release ledger still covers 347 scenarios and 17 feature exits.
 
+2026-07-13 current-candidate MCP/orchestration evidence: exact isolated Dev
+verification passed after restart. Authenticated product stdio drove real
+Codex-to-Claude and Claude-to-Codex children, default-off and reconnect, active
+and background approval without selection theft, approve/deny/60-second timeout,
+session grant and fresh Tier 3 approval, restart persistence, audit paging and
+redaction, safety denials, and cleanup. A real read-only Codex orchestration
+child returned exactly `ORCHESTRATION_FORK_OK`; 17,272 authoritative tokens
+triggered the durable token-budget stop, unknown cost remained unfabricated, and
+two-way renderer lineage controls were present. A persisted unified-sidebar
+preference initially hid the only product MCP widget; the authenticated control
+now opens that actual product surface, and the rerun rendered connected exposure
+state plus audit history. This closes OpenSpec S3-F5-T3 and S3-F6-T1/T2/T3/T5.
+S3-M01 through S3-M12 remain unchecked pending integrated pixel/package
+acceptance, and S3-F6-T4 makes no package or visual claim.
+
+The final owned-lane Node 22 gate passed lint, Prettier, TypeScript, 125 test
+files with 936 passed and 3 conditional skips, and the production build. Strict
+`add-stage3-mcp-control` validation passed.
+
 ## 2. Settings reliability (S3-F7 through S3-F13)
 
 - [ ] **S3-S01** only honest, implemented tabs appear; every visible tab is

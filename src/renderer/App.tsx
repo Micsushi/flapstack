@@ -114,6 +114,19 @@ function AppContent() {
           }
           return
         }
+        if (payload.action === "orchestration-changed") {
+          await Promise.all([
+            trpcUtils.tasks.list.invalidate(),
+            trpcUtils.chats.list.invalidate(),
+            ...payload.chatIds.map((chatId) => trpcUtils.chats.get.invalidate({ id: chatId })),
+            trpcUtils.spawnedAgents.getTaskOverview.invalidate({ taskId: payload.taskId }),
+            trpcUtils.spawnedAgents.getLineage.invalidate({ taskId: payload.taskId }),
+            ...payload.chatIds.map((chatId) =>
+              trpcUtils.spawnedAgents.previewLineage.invalidate({ chatId }),
+            ),
+          ])
+          return
+        }
         await Promise.all([
           trpcUtils.chats.list.invalidate(),
           trpcUtils.chats.listArchived.invalidate(),
@@ -133,6 +146,10 @@ function AppContent() {
       trpcUtils.chats.listArchived,
       trpcUtils.projects.list,
       trpcUtils.projects.listArchived,
+      trpcUtils.spawnedAgents.getLineage,
+      trpcUtils.spawnedAgents.getTaskOverview,
+      trpcUtils.spawnedAgents.previewLineage,
+      trpcUtils.tasks.list,
     ],
   )
 

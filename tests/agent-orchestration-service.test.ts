@@ -102,15 +102,38 @@ describe("durable agent task orchestration", () => {
     ])
   })
 
-  it("can defer initial scheduling for authenticated dev-test control", () => {
-    const created = createAgentOrchestrationService(path).create(
-      createInput({ count: 2 }),
+  it("persists deferred initial scheduling across concurrent and restart drains", () => {
+    const service = createAgentOrchestrationService(path)
+    const created = service.create(
+      createInput({ count: 2, stopConditions: { maxWallClockMs: 10 } }),
       undefined,
       { deferScheduling: true },
     )
-    expect(created.orchestration.status).toBe("queued")
+    expect(created.orchestration.status).toBe("paused")
     expect(created.aggregate).toMatchObject({ queued: 2, active: 0 })
+
+    const concurrentRead = createAgentOrchestrationService(path).getOverview(
+      created.orchestration.taskId,
+    )
+    const restartedRead = createAgentOrchestrationService(path).getOverview(
+      created.orchestration.taskId,
+    )
+    expect(concurrentRead?.orchestration.status).toBe("paused")
+    expect(restartedRead?.orchestration.status).toBe("paused")
     expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+
+    const resumed = createAgentOrchestrationService(path).control(
+      created.orchestration.taskId,
+      "resume",
+    )
+    expect(resumed.orchestration.startedAt).toEqual(expect.any(Number))
+    sqlite
+      .prepare("UPDATE task_orchestrations SET started_at = ? WHERE task_id = ?")
+      .run(Date.now() - 100, created.orchestration.taskId)
+    expect(
+      createAgentOrchestrationService(path).getOverview(created.orchestration.taskId)
+        ?.orchestration,
+    ).toMatchObject({ status: "stopped", stopReason: "wall-clock-budget" })
   })
 
   it("unblocks dependencies and queued work only after durable completion", () => {
