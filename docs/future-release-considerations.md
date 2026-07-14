@@ -35,3 +35,15 @@ Before Flapstack publishes DMG or ZIP downloads for general users:
 
 Apple signing and notarization are public-distribution gates, not Stage 3
 feature-completion gates.
+
+## Windows and Linux acceptance
+
+Stage 3 release acceptance is macOS arm64 only. Native Windows and Linux
+package, UI, service, and secret-store validation is deferred to the end of
+Stage 4 and does not block Stage 3 completion.
+
+Stage 3 still keeps the shared cross-platform contracts and automated platform
+fixtures green. It does not claim native Windows or Linux runtime parity from
+macOS evidence. The Stage 4 closeout must run each native matrix on real target
+hosts, record any platform-specific repair, and update the support statement
+before those platforms are promoted.
