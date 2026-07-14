@@ -251,6 +251,7 @@ function headroomResult(
   used: number | null,
   quality: UsageRollupValue["quality"],
 ): UsageInsightResult["headroom"] {
+  if (quality === "unknown") return unavailableHeadroom(quality, "quality-unknown")
   if (!capacity) return unavailableHeadroom(quality, "capacity-unavailable")
   if (used === null) return unavailableHeadroom(quality, "usage-unavailable")
   if (quality === "estimated") {
@@ -304,6 +305,7 @@ function paceResult(
   quality: UsageRollupValue["quality"],
   nowMs: number,
 ): UsageInsightResult["resetAwarePace"] {
+  if (quality === "unknown") return unavailablePace(resetWindow, "quality-unknown")
   if (!capacity || used === null) return unavailablePace(resetWindow, "headroom-unavailable")
   if (!resetWindow) return unavailablePace(null, "reset-window-unavailable")
   if (nowMs < resetWindow.startMs || nowMs >= resetWindow.endMs) {

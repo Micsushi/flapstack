@@ -76,6 +76,62 @@ describe("usage insights", () => {
     }
   })
 
+  it("keeps headroom unavailable when source quality is unknown", async () => {
+    const { sqlite, db } = database()
+    try {
+      await insertSamples(db, dailyCostSamples([1, 1, 1, 1], "unknown"))
+
+      const result = queryUsageInsights(db, insightInput())
+
+      expect(result.headroom).toEqual({
+        status: "unavailable",
+        limit: null,
+        used: null,
+        remaining: null,
+        remainingRange: null,
+        source: null,
+        quality: "unknown",
+        reason: "quality-unknown",
+      })
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it.each([
+    [1.25, "on-pace"],
+    [1.5, "ahead"],
+  ])(
+    "keeps pace unavailable for unknown quality that would otherwise appear %s (%s)",
+    async (dailyCost) => {
+      const { sqlite, db } = database()
+      try {
+        await insertSamples(
+          db,
+          dailyCostSamples([dailyCost, dailyCost, dailyCost, dailyCost], "unknown"),
+        )
+
+        const result = queryUsageInsights(db, insightInput())
+
+        expect(result.resetAwarePace).toEqual({
+          status: "unavailable",
+          resetWindow: {
+            startMs: FROM_MS,
+            endMs: RESET_END_MS,
+            source: "explicit",
+          },
+          elapsedRatio: null,
+          usedRatio: null,
+          paceRatio: null,
+          paceRatioRange: null,
+          reason: "quality-unknown",
+        })
+      } finally {
+        sqlite.close()
+      }
+    },
+  )
+
   it("keeps forecasts and anomaly claims unavailable for sparse history", async () => {
     const { sqlite, db } = database()
     try {
@@ -199,7 +255,7 @@ function insightInput() {
 
 function dailyCostSamples(
   values: number[],
-  quality: "exact" | "estimated",
+  quality: "exact" | "estimated" | "unknown",
   pricingVersion?: string,
   dayOffset = 0,
 ): UsageSampleInput[] {
