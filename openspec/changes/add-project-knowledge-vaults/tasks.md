@@ -42,13 +42,17 @@
 
 ### S4-F2-T4 — Add explicit run-context loading
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Selected vault sections enter agent context with provenance and budgets.
 - Scope: Project/task/run selection, default policy, size/token budget, truncation report, context manifest, supported harness integration.
 - Out of scope: Hidden automatic memory selection.
 - Acceptance: Only selected sections load; every inclusion and truncation is visible; oversized or unsafe content fails honestly.
 - Verification: Resolver, budget, provenance, secret-rejection, and per-harness context tests.
+- Evidence (2026-07-13): 84 focused headless tests passed across run-context,
+  vault storage/policy, plan source/schema, Stage 3 migration, MCP launch, and
+  Codex/Claude harness paths; Node 22 TypeScript, focused ESLint/Prettier,
+  strict vault and Plan/Kanban OpenSpec validation, and `git diff --check` passed.
 - Blocked by: S4-F2-T2
 - Blocks: S4-F2-T5, S4-F2-T6
 - Context: agent context/evidence pipeline and run manifests.

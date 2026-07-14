@@ -29,6 +29,9 @@ export const projects = sqliteTable("projects", {
   iconPath: text("icon_path"),
   defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
   defaultCustomPermissions: text("default_custom_permissions"),
+  // Null is the fixed opt-in default: no vault context. A JSON array is an
+  // explicit project selection, including [] when the user selected none.
+  vaultContextSections: text("vault_context_sections"),
   pinnedAt: integer("pinned_at", { mode: "timestamp" }),
   archivedAt: integer("archived_at", { mode: "timestamp" }),
 })
@@ -225,6 +228,8 @@ export const tasks = sqliteTable(
     sourceFingerprint: text("source_fingerprint"),
     defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
     defaultCustomPermissions: text("default_custom_permissions"),
+    // Null inherits the project selection. A JSON array is an exact task override.
+    vaultContextSections: text("vault_context_sections"),
     primaryWorktreePath: text("primary_worktree_path"),
     primaryBranch: text("primary_branch"),
     pinnedAt: integer("pinned_at", { mode: "timestamp" }),
@@ -502,6 +507,9 @@ export const agentRuns = sqliteTable(
     worktreePath: text("worktree_path"),
     promptMessageId: text("prompt_message_id"),
     initialPrompt: text("initial_prompt"),
+    // Exact run override and the immutable provenance report for the context used.
+    vaultContextSections: text("vault_context_sections"),
+    vaultContextManifest: text("vault_context_manifest"),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
