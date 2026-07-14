@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "../../components/ui/select"
 import { Button } from "../../components/ui/button"
+import { TaskProposalTray } from "./components/task-proposal-tray"
 
 export function KanbanView() {
   const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
@@ -224,35 +225,38 @@ export function KanbanView() {
               : "Drag cards, or focus one and use Alt plus arrow keys to move it."}
       </div>
 
-      <main className="flex-1 overflow-hidden">
-        {(boardQuery.data?.length ?? 0) === 0 ? (
-          <div className="flex h-full items-center justify-center p-8 text-center">
-            <div>
-              <h2 className="text-sm font-medium">No task cards</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Create a task under a project. Chats alone do not become cards.
-              </p>
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TaskProposalTray projectId={projectId === "all" ? undefined : projectId} />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {(boardQuery.data?.length ?? 0) === 0 ? (
+            <div className="flex h-full items-center justify-center p-8 text-center">
+              <div>
+                <h2 className="text-sm font-medium">No task cards</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Create a task under a project. Chats alone do not become cards.
+                </p>
+              </div>
             </div>
-          </div>
-        ) : cards.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-8 text-center">
-            <div>
-              <h2 className="text-sm font-medium">No tasks match these filters</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Clear search or selectors.</p>
+          ) : cards.length === 0 ? (
+            <div className="flex h-full items-center justify-center p-8 text-center">
+              <div>
+                <h2 className="text-sm font-medium">No tasks match these filters</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Clear search or selectors.</p>
+              </div>
             </div>
-          </div>
-        ) : (
-          <KanbanBoard
-            cards={cards}
-            moveEnabled={moveEnabled && !moveMutation.isPending}
-            onOpenTask={(card) => selectTask(card, null)}
-            onOpenChat={(card) => selectTask(card, card.chats.latestId)}
-            onMove={handleMove}
-            onArchive={(card) =>
-              archiveMutation.mutate({ id: card.id, expectedVersion: card.version })
-            }
-          />
-        )}
+          ) : (
+            <KanbanBoard
+              cards={cards}
+              moveEnabled={moveEnabled && !moveMutation.isPending}
+              onOpenTask={(card) => selectTask(card, null)}
+              onOpenChat={(card) => selectTask(card, card.chats.latestId)}
+              onMove={handleMove}
+              onArchive={(card) =>
+                archiveMutation.mutate({ id: card.id, expectedVersion: card.version })
+              }
+            />
+          )}
+        </div>
       </main>
     </div>
   )

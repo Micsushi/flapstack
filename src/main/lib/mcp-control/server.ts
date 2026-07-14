@@ -7,6 +7,7 @@ import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
 import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./project-vault-service"
 import { createMcpAutomationService, mcpAutomationInputShapes } from "./automation-service"
+import { createMcpTaskProposalService, mcpTaskProposalInputShapes } from "./task-proposal-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import {
   appendMcpAuditRecord,
@@ -38,6 +39,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const mutations = createMcpMutationService()
   const projectVaults = createMcpProjectVaultService()
   const automationControls = createMcpAutomationService()
+  const taskProposalControls = createMcpTaskProposalService()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
@@ -48,7 +50,8 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
           mcpReadInputShapes[tool.name] ??
           mcpMutationInputShapes[tool.name] ??
           mcpProjectVaultInputShapes[tool.name] ??
-          mcpAutomationInputShapes[tool.name],
+          mcpAutomationInputShapes[tool.name] ??
+          mcpTaskProposalInputShapes[tool.name],
         annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input, extra) => {
@@ -74,6 +77,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
           mutations,
           projectVaults,
           automationControls,
+          taskProposalControls,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
         })
         const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
