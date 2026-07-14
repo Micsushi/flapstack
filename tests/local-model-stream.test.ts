@@ -239,6 +239,71 @@ describe("local model stream", () => {
     )
   })
 
+  it("registers independently authorized exec tiers and dispatches through the bounded adapter", async () => {
+    const fixture = setup()
+    const requests: Array<Record<string, unknown>> = []
+    const policies: unknown[] = []
+    const order: string[] = []
+    const service = new LocalModelChatService({
+      persistence: fixture.persistence,
+      fetchImpl: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)))
+        return requests.length === 1
+          ? byteStreamResponse([
+              '{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"git_exec","arguments":{"command":"status","args":[]}}}]},"done":true}\n',
+            ])
+          : byteStreamResponse(['{"message":{"role":"assistant","content":"Done."},"done":true}\n'])
+      },
+      buildContext: async () => contextBundle,
+      createReadToolExecutor: () => ({
+        execute: async (call) => ({
+          ok: true,
+          tool: call.name,
+          content: "read",
+          truncated: false,
+        }),
+      }),
+      createExecToolExecutor: (options) => {
+        policies.push({
+          shell: options.shellPolicy,
+          git: options.gitPolicy,
+          network: options.networkPolicy,
+        })
+        return {
+          execute: async (call) => {
+            order.push(call.name)
+            return { ok: true, tool: call.name, content: "clean", truncated: false }
+          },
+        }
+      },
+      runChanges: {
+        captureBefore: vi.fn(async () => order.push("before")),
+        captureAfterAndManifest: vi.fn(async () => order.push("after")),
+      },
+      now: () => NOW,
+    })
+
+    await collect(
+      service.stream(
+        input({
+          runId: "run-exec",
+          permissionMode: "full-access",
+          metadata: execMetadata,
+        }),
+      ),
+    )
+
+    expect(policies).toEqual([{ shell: "allow", git: "allow", network: "allow" }])
+    expect(requests[0]).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({ function: expect.objectContaining({ name: "shell_exec" }) }),
+        expect.objectContaining({ function: expect.objectContaining({ name: "git_exec" }) }),
+        expect.objectContaining({ function: expect.objectContaining({ name: "network_fetch" }) }),
+      ]),
+    })
+    expect(order).toEqual(["before", "git_exec", "after"])
+  })
+
   it("persists a bounded terminal reason when a tool loop reaches its limit", async () => {
     const fixture = setup()
     const service = fixture.service(
@@ -638,6 +703,26 @@ const writeMetadata: LocalModelRunMetadata = {
         available: true,
         limitation: null,
       },
+    ],
+  },
+}
+
+const execMetadata: LocalModelRunMetadata = {
+  ...toolMetadata,
+  permission: {
+    mode: "full-access",
+    customPermissions: null,
+    toolTiers: [
+      ...toolMetadata.permission.toolTiers,
+      ...(["project-write", "shell", "git", "network"] as const).map((tier) => ({
+        tier,
+        requiredCapability: "tools" as const,
+        mutates: true,
+        customPermission:
+          tier === "project-write" ? "projectWrite" : (tier as "shell" | "git" | "network"),
+        available: true,
+        limitation: null,
+      })),
     ],
   },
 }

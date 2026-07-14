@@ -336,8 +336,9 @@ function isTierAllowedByPermission(
 ): boolean {
   if (!declaration.mutates) return true
   if (mode === "full-access") return true
+  if (mode === "ask-before-edits") return true
   if (declaration.tier === "project-write") {
-    if (mode === "ask-before-edits" || mode === "auto-edit-project-only") return true
+    if (mode === "auto-edit-project-only") return true
   }
   if (mode !== "custom" || !declaration.customPermission || !customPermissions) return false
   return customPermissions[declaration.customPermission]
