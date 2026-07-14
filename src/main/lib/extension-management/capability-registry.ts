@@ -120,7 +120,7 @@ const promoted: CapabilityOverride[] = [
     "mcp",
     ["Plugin MCP enablement is an approval record; provider files remain read-only."],
   ),
-  ...disabledHooks("claude-code"),
+  ...managedHooks("claude-code"),
 
   capability(
     "codex",
@@ -148,7 +148,7 @@ const promoted: CapabilityOverride[] = [
   ),
   ...legacyCodexCommands(),
   ...codexMcp(),
-  ...disabledHooks("codex"),
+  ...managedHooks("codex"),
 
   capability(
     "cursor-agent",
@@ -223,9 +223,9 @@ export const extensionBaselineGaps: ExtensionBaselineGap[] = [
   {
     id: "hook-lifecycle",
     currentBehavior:
-      "Claude Code and Codex hooks are scaffolded with discovery and execution disabled.",
+      "Managed Claude Code and Codex hook records validate, dry-run, audit, and enable explicitly but are not injected into native harness runtimes.",
     additiveNeed:
-      "Add validation, command preview, dry-run, audit redaction, and explicit enablement.",
+      "Prove live enable/disable and add native runtime consumption without weakening the managed safety gate.",
     owner: "S4-F1-T6",
   },
 ]
@@ -372,11 +372,21 @@ function codexMcp(): CapabilityOverride[] {
   ]
 }
 
-function disabledHooks(harness: "claude-code" | "codex"): CapabilityOverride[] {
+function managedHooks(harness: "claude-code" | "codex"): CapabilityOverride[] {
   return (["user", "project"] as const).map((scope) =>
-    capability(harness, "hook", scope, "disabled", [], "disabled", [], "none", [
-      "The hooks-management router advertises this harness but disables discovery, mutation, and execution.",
-    ]),
+    capability(
+      harness,
+      "hook",
+      scope,
+      "supported",
+      ["enable", "disable"],
+      "not-consumed",
+      ["<Flapstack userData>/data/hook-management.json"],
+      "none",
+      [
+        "Hooks use a managed import-default-off registry with validation, bounded dry-run, approval, and audit; native runtime trigger wiring remains unavailable.",
+      ],
+    ),
   )
 }
 

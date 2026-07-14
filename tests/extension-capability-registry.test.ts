@@ -113,19 +113,25 @@ describe("Stage 3 extension capability baseline", () => {
     }
   })
 
-  it("keeps the hooks router reconciled as disabled for both advertised harnesses", async () => {
+  it("promotes managed hooks while keeping native runtime consumption honest", async () => {
     const state = await hooksManagementRouter
       .createCaller({ getWindow: () => null })
       .getCapabilities()
 
-    expect(state.enabled).toBe(false)
+    expect(state.enabled).toBe(true)
+    expect(state.importDefault).toBe("disabled")
+    expect(state.approval).toBe("tier-3-for-dry-run-and-enable")
     for (const harness of state.harnesses) {
       for (const scope of ["user", "project"] as const) {
         expect(
           extensionCapabilityRegistry.find(
             (row) => row.id === extensionCapabilityId(harness, "hook", scope),
           ),
-        ).toMatchObject({ inventory: "disabled", mutations: [], runtimeConsumption: "disabled" })
+        ).toMatchObject({
+          inventory: "supported",
+          mutations: ["enable", "disable"],
+          runtimeConsumption: "not-consumed",
+        })
       }
     }
   })
