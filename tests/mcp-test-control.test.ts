@@ -54,6 +54,8 @@ describe("dev MCP test-control registry", () => {
       "remove_credential",
       "get_settings_state",
       "control_settings",
+      "get_settings_legacy_state",
+      "mutate_settings_legacy_state",
       "get_visible_copy_search_state",
       "select_test_chat",
       "get_shortcut_state",
@@ -83,11 +85,17 @@ describe("dev MCP test-control registry", () => {
       "mutate_project_provider_extension",
       "get_permission_state",
       "set_permission_default",
+      "set_permission_change_behavior",
       "set_chat_permission",
       "preview_permission",
+      "get_permission_ui_state",
+      "control_permission_ui",
       "set_chat_run_config",
       "send_test_prompt",
       "launch_test_run",
+      "launch_harness_test_run",
+      "list_codex_permission_requests",
+      "reply_codex_permission_request",
       "inject_agent_input_request",
       "reply_agent_input_request",
       "reply_approval",
@@ -135,6 +143,40 @@ describe("dev renderer Settings control boundary", () => {
     ).toEqual({ domains: ["credentials", "permissions"] })
     expect(parseDevMcpSettingsInvalidation({ domains: ["credentials", "filesystem"] })).toBeNull()
     expect(parseDevMcpSettingsInvalidation({ domains: [] })).toBeNull()
+  })
+
+  it("accepts bounded legacy and permission UI controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        activeTab: "beta",
+        ctrlTabTarget: "agents",
+      }),
+    ).toMatchObject({ command: "settings.legacy.mutate", activeTab: "beta" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "settings.legacy.mutate",
+        ctrlTabTarget: "unsafe",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-custom-capability",
+        capability: "network",
+        enabled: false,
+      }),
+    ).toMatchObject({ operation: "set-custom-capability", capability: "network" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "permissions.ui.control",
+        operation: "set-scope",
+      }),
+    ).toBeNull()
   })
 
   it("accepts only bounded chat-selection identities from the main process", () => {
@@ -269,6 +311,46 @@ describe("dev MCP transport", () => {
       })
       expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
       const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const inheritedCustomPermissions = {
+        schemaVersion: 1,
+        projectWrite: true,
+        shell: false,
+        network: false,
+        git: false,
+        browser: false,
+        secrets: false,
+        subagents: false,
+        thirdPartyMcp: false,
+        productMcpRead: true,
+        productMcpWrite: false,
+        productMcpTier3: false,
+      }
+      sqlite
+        .prepare(
+          "UPDATE projects SET default_permission_mode = ?, default_custom_permissions = ? WHERE id = ?",
+        )
+        .run("custom", JSON.stringify(inheritedCustomPermissions), fixtureResult.projectId)
+      const inheritedChat = await client.callTool({
+        name: "create_test_chat",
+        arguments: {
+          projectId: fixtureResult.projectId,
+          name: "Inherited custom permissions",
+          provider: "openrouter",
+          model: "openai/gpt-5.2",
+        },
+      })
+      expect(inheritedChat, JSON.stringify(inheritedChat.content)).not.toMatchObject({
+        isError: true,
+      })
+      const inheritedChatResult = (inheritedChat.structuredContent as { result: any }).result
+      expect(
+        sqlite
+          .prepare("SELECT permission_mode, custom_permissions FROM chats WHERE id = ?")
+          .get(inheritedChatResult.chatId),
+      ).toEqual({
+        permission_mode: "custom",
+        custom_permissions: JSON.stringify(inheritedCustomPermissions),
+      })
       const created = await client.callTool({
         name: "create_test_orchestration",
         arguments: {

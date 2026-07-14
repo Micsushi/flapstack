@@ -14,6 +14,7 @@ import {
   cancelRun,
   cleanupProductMcpCaller,
   controlSettings,
+  controlPermissionUi,
   createTestChat,
   ensureTestProject,
   createTestOrchestration,
@@ -26,6 +27,9 @@ import {
   getProviderStatus,
   getSettingsState,
   getLiveSettingsState,
+  getLiveSettingsLegacyState,
+  mutateLiveSettingsLegacyState,
+  getPermissionUiState,
   getVisibleCopySearchState,
   requestDevRendererControl,
   getRendererAgentInputState,
@@ -35,15 +39,18 @@ import {
   getTestEnvironment,
   getTestOrchestration,
   launchTestRun,
+  launchHarnessTestRun,
   injectAgentInputRequest,
   listAgentInputRequests,
   listPendingApprovals,
+  listCodexPermissionRequests,
   listTestTargets,
   mutateProjectProviderExtension,
   manageProductMcpRecovery,
   prepareProductMcpCaller,
   mutateTestOrchestration,
   replyApproval,
+  replyCodexPermissionRequest,
   replyProductMcpApproval,
   sendTestPrompt,
   setProductMcpTestExposure,
@@ -64,6 +71,7 @@ import {
   setChatPermission,
   setOrReplaceCredential,
   setPermissionDefault,
+  setPermissionChangeBehavior,
 } from "./settings-release-controls"
 
 export const DEV_MCP_DESCRIPTOR_FILENAME = "dev-test-control-mcp.json"
@@ -165,6 +173,39 @@ const customPermissionsSchema = z
   })
   .strict()
 const permissionModeSchema = z.enum(permissionModes)
+const settingsTabSchema = z.enum([
+  "profile",
+  "appearance",
+  "preferences",
+  "permissions",
+  "models",
+  "api-providers",
+  "voice",
+  "skills",
+  "agents",
+  "mcp",
+  "plugins",
+  "worktrees",
+  "projects",
+  "usage",
+  "debug",
+  "beta",
+  "future",
+  "keyboard",
+])
+const customPermissionCapabilitySchema = z.enum([
+  "projectWrite",
+  "shell",
+  "network",
+  "git",
+  "browser",
+  "secrets",
+  "subagents",
+  "thirdPartyMcp",
+  "productMcpRead",
+  "productMcpWrite",
+  "productMcpTier3",
+])
 
 function registerTools(server: McpServer): void {
   server.registerTool(
@@ -332,6 +373,41 @@ function registerTools(server: McpServer): void {
           throw new Error("projectId is required for select-project; use null to clear")
         }
         return result(await controlSettings(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_settings_legacy_state",
+    {
+      description: "Inspect raw and release-effective legacy Settings state.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return result(await getLiveSettingsLegacyState())
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_settings_legacy_state",
+    {
+      description: "Seed bounded legacy tab and quick-switch values in the live renderer.",
+      inputSchema: {
+        activeTab: settingsTabSchema.optional(),
+        ctrlTabTarget: z.enum(["workspaces", "agents"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        if (input.activeTab === undefined && input.ctrlTabTarget === undefined) {
+          throw new Error("At least one legacy Settings value is required")
+        }
+        return result(await mutateLiveSettingsLegacyState(input))
       } catch (error) {
         return failure(error)
       }
@@ -893,6 +969,21 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "set_permission_change_behavior",
+    {
+      description: "Set the persisted permission-change behavior.",
+      inputSchema: { behavior: z.enum(["ask", "current-chat", "all-chats"]) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await setPermissionChangeBehavior(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "set_chat_permission",
     {
       description: "Set one chat or all chats permission state through production persistence.",
@@ -936,6 +1027,67 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "get_permission_ui_state",
+    {
+      description: "Inspect the active chat permission selector and confirmation state.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return result(await getPermissionUiState())
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_permission_ui",
+    {
+      description: "Drive the active permission selector and confirmation through typed actions.",
+      inputSchema: {
+        operation: z.enum([
+          "select-mode",
+          "set-scope",
+          "set-remember",
+          "set-custom-capability",
+          "set-custom-reviewed",
+          "apply",
+          "cancel",
+        ]),
+        mode: permissionModeSchema.optional(),
+        scope: z.enum(["all-chats", "current-chat"]).optional(),
+        enabled: z.boolean().optional(),
+        capability: customPermissionCapabilitySchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        if (input.operation === "select-mode" && input.mode === undefined) {
+          throw new Error("select-mode requires mode")
+        }
+        if (input.operation === "set-scope" && input.scope === undefined) {
+          throw new Error("set-scope requires scope")
+        }
+        if (
+          (input.operation === "set-remember" || input.operation === "set-custom-reviewed") &&
+          input.enabled === undefined
+        ) {
+          throw new Error(`${input.operation} requires enabled`)
+        }
+        if (
+          input.operation === "set-custom-capability" &&
+          (input.capability === undefined || input.enabled === undefined)
+        ) {
+          throw new Error("set-custom-capability requires capability and enabled")
+        }
+        return result(await controlPermissionUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "launch_test_run",
     {
       description: "Launch a real OpenRouter or NanoGPT run through Flapstack persistence.",
@@ -957,6 +1109,45 @@ function registerTools(server: McpServer): void {
         return failure(error)
       }
     },
+  )
+  server.registerTool(
+    "launch_harness_test_run",
+    {
+      description: "Launch a real Codex or Claude run rooted to its persisted test project.",
+      inputSchema: {
+        subChatId: z.string().min(1),
+        prompt: z.string().min(1).max(20_000),
+        harness: z.enum(["codex", "claude-code"]).optional(),
+        model: z.string().min(1).max(500).optional(),
+        reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async (input) => {
+      try {
+        return result(await launchHarnessTestRun(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "list_codex_permission_requests",
+    {
+      description: "List redacted pending Codex ACP permission requests.",
+      inputSchema: { runId: z.string().min(1).optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => result(listCodexPermissionRequests(input)),
+  )
+  server.registerTool(
+    "reply_codex_permission_request",
+    {
+      description: "Resolve one Codex ACP permission request with an exact advertised option.",
+      inputSchema: { requestId: z.string().min(1), optionId: z.string().min(1).max(500) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => result(replyCodexPermissionRequest(input)),
   )
   server.registerTool(
     "inject_agent_input_request",

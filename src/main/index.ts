@@ -16,6 +16,10 @@ import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
 import {
+  isDevTestControlEnabled,
+  resolvePreviewUserDataName,
+} from "./lib/mcp-test-control/lifecycle"
+import {
   startProductMcpInvalidationBridge,
   type ProductMcpInvalidationBridge,
 } from "./lib/mcp-control/invalidation-bridge"
@@ -121,7 +125,11 @@ if (IS_DEV) {
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
 } else if (IS_MAC_PREVIEW) {
-  const previewUserData = join(app.getPath("userData"), "..", "Flapstack Preview")
+  const previewUserData = join(
+    app.getPath("userData"),
+    "..",
+    resolvePreviewUserDataName(process.env.FLAPSTACK_PREVIEW_INSTANCE),
+  )
   app.setPath("userData", previewUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Preview] Using separate userData path:", previewUserData)
@@ -873,10 +881,10 @@ if (gotTheLock) {
             },
           })
           devMcpServer = await startDevMcpServer({
-            enabled: IS_DEV,
+            enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
             userDataPath: app.getPath("userData"),
             checkout: app.getAppPath(),
-            profile: app.getName(),
+            profile: basename(app.getPath("userData")),
           })
           recoverInterruptedMcpRuns(getDatabasePath())
           const pendingRunLauncher = createMainRunLauncher()

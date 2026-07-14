@@ -29,7 +29,7 @@ let upstream = null
 
 async function readDescriptor() {
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"))
-  if (descriptor.profile !== "Flapstack Dev") {
+  if (descriptor.profile !== expectedUserDataProfile) {
     throw new Error(`Refusing non-dev Flapstack profile: ${descriptor.profile || "unknown"}`)
   }
   if (resolve(descriptor.checkout) !== checkout) {

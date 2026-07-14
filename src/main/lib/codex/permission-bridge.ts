@@ -11,6 +11,79 @@ export type CodexPermissionDecision = {
   reject: () => void
 }
 
+type PendingCodexPermissionRequest = {
+  subChatId: string
+  runId: string
+  request: RequestPermissionRequest
+  resolve: (response: RequestPermissionResponse) => void
+}
+
+const pendingCodexPermissionRequests = new Map<string, PendingCodexPermissionRequest>()
+
+export function summarizeCodexPermissionRequest(input: {
+  requestId: string
+  subChatId: string
+  runId: string
+  request: RequestPermissionRequest
+}) {
+  return {
+    requestId: input.requestId,
+    subChatId: input.subChatId,
+    runId: input.runId,
+    toolCallId: input.request.toolCall.toolCallId,
+    title: input.request.toolCall.title ?? "Codex tool",
+    kind: input.request.toolCall.kind ?? "other",
+    options: input.request.options.map((option) => ({
+      optionId: option.optionId,
+      name: option.name,
+      kind: option.kind,
+    })),
+  }
+}
+
+export function registerPendingCodexPermissionRequest(
+  requestId: string,
+  pending: PendingCodexPermissionRequest,
+): void {
+  pendingCodexPermissionRequests.set(requestId, pending)
+}
+
+export function removePendingCodexPermissionRequest(requestId: string): void {
+  pendingCodexPermissionRequests.delete(requestId)
+}
+
+export function listPendingCodexPermissionRequests(input?: { runId?: string }) {
+  return [...pendingCodexPermissionRequests.entries()]
+    .filter(([, pending]) => !input?.runId || pending.runId === input.runId)
+    .map(([requestId, pending]) =>
+      summarizeCodexPermissionRequest({
+        requestId,
+        subChatId: pending.subChatId,
+        runId: pending.runId,
+        request: pending.request,
+      }),
+    )
+}
+
+export function replyPendingCodexPermissionRequest(input: {
+  requestId: string
+  optionId: string
+}): { resolved: boolean } {
+  const pending = pendingCodexPermissionRequests.get(input.requestId)
+  if (!pending) return { resolved: false }
+  pendingCodexPermissionRequests.delete(input.requestId)
+  pending.resolve(resolveCodexPermissionOption(pending.request, input.optionId))
+  return { resolved: true }
+}
+
+export function rejectPendingCodexPermissionRequests(subChatId: string, runId?: string): void {
+  for (const [requestId, pending] of pendingCodexPermissionRequests) {
+    if (pending.subChatId !== subChatId || (runId && pending.runId !== runId)) continue
+    pendingCodexPermissionRequests.delete(requestId)
+    pending.resolve(rejectCodexPermissionRequest(pending.request))
+  }
+}
+
 export function rejectCodexPermissionRequest(
   request: Pick<RequestPermissionRequest, "options">,
 ): RequestPermissionResponse {

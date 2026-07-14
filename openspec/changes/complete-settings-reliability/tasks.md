@@ -109,6 +109,14 @@ features. Stage and feature README files are navigation routers only.
   project selection. Accessibility inspection proved the visible credential
   search surface. A representative live legacy permission value and the final
   post-lease visual matrix remain open.
+- 2026-07-13 `64d1` closeout: verified Dev identity named this worktree and
+  `Flapstack Dev 64d1`. Live accessibility showed only the 13 release-visible
+  routes. `beta`, `future`, `profile`, and hidden quick-switch searches returned
+  no target; keyboard, credential, permission, and skill searches navigated
+  visible controls. Hidden state remained stored. The renderer selection cache
+  normalized the seeded non-Codex project-only value before its
+  change-required label could be inspected, so that exact visual row remains
+  open rather than inferred.
 - Estimated effort: 0.5-1 day.
 - Blocked by: S3-F7-T1, S3-F7-T2, S3-F7-T3.
 - Blocks: S3-F8-T1 unless headless-only work is explicitly accepted;
@@ -459,6 +467,14 @@ secret-store and unlocked Settings proof remain open.
   Restart consumption, packaged migration/removal/restore, and Windows/Linux
   evidence remain unavailable. See
   `docs/credential-security-matrix.md`; this completion box stays unchecked.
+- 2026-07-13 `64d1` package evidence: a disposable NanoGPT credential reported
+  encrypted persistence through the macOS Keychain backend. Scanning the
+  isolated Preview profile found no plaintext; `data/credentials.v1.json` was
+  mode `0600`. The credential survived one package restart, removal returned it
+  to unconfigured, and a second restart proved it did not resurrect. Final
+  Preview build, binary/license inspection, and Claude/Codex/Whisper/Parakeet
+  smoke passed. Actual credentialed provider consumption and Windows/Linux rows
+  remain open, so this completion box stays unchecked.
 - Estimated effort: 1 day.
 - Blocked by: S3-F10-T2, S3-F10-T3.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -556,7 +572,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F11-T5 - Promote extension surfaces with provider evidence
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Provider-Scoped Extensions
 - Outcome: Skills, Plugins, and Custom Agents expose only proven provider paths
   and carry an honest platform/provider matrix.
@@ -590,6 +606,13 @@ secret-store and unlocked Settings proof remain open.
   passed with cleanup. Arbitrary paths are not accepted; nested symlink and
   parent-swap regressions fail closed. Current Preview build/inspect/smoke pass.
   Packaged user-local discovery and Windows/Linux remain open.
+- 2026-07-13 `64d1` completion: the verified Dev Skills surface displayed
+  provider, kind, scope, runtime, and limitation metadata. The isolated Preview
+  package discovered 73 content-redacted user-local entries: 51 Claude plugins,
+  11 Claude skills, 4 Codex MCP registrations, and 7 Codex skills. Final macOS
+  arm64 build/inspect/smoke passed. Existing runtime-consumption and mutation
+  evidence covers every visible write path; unsupported combinations remain
+  hidden or read-only. Windows/Linux parity is not claimed.
 - Estimated effort: 1 day.
 - Blocked by: S3-F11-T3, S3-F11-T4.
 - Blocks: S3-F13-T1, S3-F13-T4.
@@ -599,7 +622,7 @@ secret-store and unlocked Settings proof remain open.
 
 ### S3-F12-T1 - Reconcile active permission ownership and eligibility matrix
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The follow-on begins from the closed provider synchronization change
   and an evidence-backed provider/mode eligibility matrix.
@@ -622,10 +645,15 @@ secret-store and unlocked Settings proof remain open.
   best-effort/unavailable. Project-only stays unselectable for every provider,
   including Codex, until live outside-boundary proof closes GPP-T4. This task
   remains open on its stated GPP dependencies and S3-F7-T2.
+- 2026-07-13 `64d1` completion: GPP-T4/T6/T9/T10 are closed with live Codex,
+  product-MCP, strict-spec, and full-gate evidence. Live previews exercised all
+  five providers for custom and project-only. Only Codex project-only reports
+  exact enforcement; unsupported cells report conservative or best-effort
+  limitations and are not offered as exact.
 
 ### S3-F12-T2 - Add durable custom defaults across the permission hierarchy
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: The existing exact per-chat custom schema gains coherent global,
   project, and task defaults without changing future-chat behavior accidentally.
@@ -651,10 +679,16 @@ secret-store and unlocked Settings proof remain open.
   are implemented and covered by focused persistence tests. Acceptance remains
   open because T1 is blocked and live Settings proof is unavailable while the
   Mac is locked.
+- 2026-07-13 `64d1` completion: the live custom dialog required a complete
+  schema-v1 toggle set and explicit review. Applying all-chat custom updated the
+  selected chat, an archived chat, global and project defaults, and a future
+  chat. A missing test-control copy-on-create seam was fixed and covered by an
+  authenticated API regression. Current-chat full access then updated exactly
+  one chat; remembered current-chat behavior persisted and reset to ask.
 
 ### S3-F12-T3 - Enforce custom capabilities across providers
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: Claude, Codex, Cursor, OpenRouter, and NanoGPT consume each custom
   capability through native controls or conservative Flapstack approvals.
@@ -677,10 +711,15 @@ secret-store and unlocked Settings proof remain open.
   and third-party MCP stay separate; Tier 3 still requires the Stage 3 gate.
   Cursor and OpenCode mappings are explicitly conservative, not parity claims.
   Acceptance remains open on T1/T2/GPP-T9 and provider-live proof.
+- 2026-07-13 `64d1` completion: live provider previews matched the stored
+  schema for Claude, Codex, Cursor, OpenRouter, and NanoGPT. Native gaps remained
+  explicitly degraded, Codex custom retained a read-only sandbox floor, and
+  OpenCode unknown/shell/network buckets denied conservatively. GPP-T9 closes
+  the product-read/product-Tier-3/third-party MCP dependency.
 
 ### S3-F12-T4 - Prove exact project-only eligibility per provider
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Flapstack / S3 Safe Agent Control / Permission Mode Promotion
 - Outcome: `auto-edit-project-only` appears only where outside-project mutation
   is deterministically asked or denied.
@@ -709,6 +748,13 @@ secret-store and unlocked Settings proof remain open.
   revalidation. Parent and final swap attacks fail closed. Portable Node APIs do
   not provide an exact directory-handle transaction across every platform, so
   continuous namespace races and Windows reparse behavior remain platform gaps.
+- 2026-07-13 `64d1` completion: a real Codex ACP project-only run created the
+  in-project marker without approval. The `/tmp` write failed in the sandbox,
+  emitted one raw-input-free pending request with exact provider options, and
+  resolved through `reject_once`; the run completed with the outside marker
+  absent. The ACP package excludes both TMPDIR and `/tmp` from workspace-write
+  roots. Other providers remain unselectable because cwd/classifier hints are
+  not exact boundaries.
 
 ### S3-F12-T5 - Promote eligible permission modes and close the matrix
 
@@ -735,6 +781,11 @@ secret-store and unlocked Settings proof remain open.
   unsigned macOS Preview packaging pass; the package includes migration 0019,
   stale-session recovery, and Codex MCP identity preservation. The row remains
   open because T2-T4 acceptance and unlocked live UI proof are not complete.
+- 2026-07-13 `64d1` closeout: T2-T4 are complete. Live selectors exposed custom
+  for all providers and project-only only for Codex, and the final package
+  retains the fail-closed ACP bridge. This row remains open solely for an exact
+  visual observation of a stored ineligible legacy value after the renderer
+  selection-cache repair integrates.
 
 ## S3-F13 - Copy and Search Consistency
 
@@ -883,6 +934,12 @@ secret-store and unlocked Settings proof remain open.
   navigation passed. Disposable chat state was archived and shortcut state was
   reset. The task remains open on F7/F9/F10-F12 exits, packaged credential and
   provider discovery, the every-visible-target sweep, and Windows/Linux.
+- 2026-07-13 `64d1` prerequisites: packaged Keychain credential
+  restart/removal/redaction and packaged user-local extension discovery now
+  pass. Live permission search, dialog accessibility, all-chat/current-chat
+  hierarchy behavior, and exact Codex project-only enforcement also pass.
+  S3-F9 Voice, S3-F10 credentialed provider consumption, S3-F12-T5 legacy-row
+  visual proof, the every-visible-target sweep, and Windows/Linux remain open.
 - Final candidate automation: Node 22.23.1 `npm run check` passed lint,
   formatting, TypeScript, 119 test files with 879 passing and 3 skipped tests,
   and the production build. All four affected strict OpenSpec validations and

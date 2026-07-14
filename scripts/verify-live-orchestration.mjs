@@ -23,7 +23,7 @@ if (
 ) {
   throw new Error(`Unexpected dev profile path: ${descriptor.userDataPath}`)
 }
-if (descriptor.profile !== "Flapstack Dev") {
+if (descriptor.profile !== profile) {
   throw new Error(`Unexpected dev application name: ${descriptor.profile}`)
 }
 if ((await realpath(descriptor.checkout)) !== checkout) {

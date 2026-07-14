@@ -68,6 +68,20 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "get_settings_legacy_state",
+    description: "Inspect raw and release-effective legacy Settings state in the live renderer.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "mutate_settings_legacy_state",
+    description: "Seed bounded legacy tab and quick-switch values for release-behavior proof.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
     name: "get_visible_copy_search_state",
     description:
       "Inspect bounded visible chat copy/search text without private tool or attachment payloads.",
@@ -276,6 +290,14 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "set_permission_change_behavior",
+    description:
+      "Set Ask, all-chat, or current-chat permission behavior through production persistence.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
     name: "set_chat_permission",
     description: "Set one chat or all chats permission mode through production synchronization.",
     tier: 1,
@@ -287,6 +309,21 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     description: "Preview exact harness permission mapping without executing a provider.",
     tier: 0,
     mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "get_permission_ui_state",
+    description: "Inspect the active chat permission selector and confirmation state.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "control_permission_ui",
+    description:
+      "Drive the mounted permission selector and confirmation through typed renderer actions.",
+    tier: 1,
+    mutates: true,
     status: "implemented",
   },
   {
@@ -307,6 +344,28 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
   {
     name: "launch_test_run",
     description: "Launch a real OpenRouter or NanoGPT run through the app runtime.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "launch_harness_test_run",
+    description: "Launch a real Codex or Claude run rooted to the selected persisted test project.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "list_codex_permission_requests",
+    description: "List redacted pending Codex ACP permission requests and exact response options.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "reply_codex_permission_request",
+    description:
+      "Resolve one pending Codex ACP permission request with an exact advertised option.",
     tier: 1,
     mutates: true,
     status: "implemented",
@@ -412,6 +471,8 @@ export const devMcpExposedToolNames = [
   "remove_credential",
   "get_settings_state",
   "control_settings",
+  "get_settings_legacy_state",
+  "mutate_settings_legacy_state",
   "get_visible_copy_search_state",
   "select_test_chat",
   "get_shortcut_state",
@@ -446,9 +507,15 @@ export const devMcpExposedToolNames = [
   "mutate_project_provider_extension",
   "get_permission_state",
   "set_permission_default",
+  "set_permission_change_behavior",
   "set_chat_permission",
   "preview_permission",
+  "get_permission_ui_state",
+  "control_permission_ui",
   "launch_test_run",
+  "launch_harness_test_run",
+  "list_codex_permission_requests",
+  "reply_codex_permission_request",
   "inject_agent_input_request",
   "reply_agent_input_request",
   "reply_approval",

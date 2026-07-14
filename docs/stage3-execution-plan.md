@@ -26,8 +26,10 @@ verified commits into the cumulative branch.
    - 2026-07-13 closeout lane: custom hierarchy/runtime enforcement and
      stale-ACP-session recovery are implemented. OpenRouter/NanoGPT headless
      smokes, the full Node 22 gate, and unsigned macOS Preview packaging pass.
-     GPP-T4/T6/T9 and S3-F12 remain truthfully open on locked-Mac Codex/visual
-     evidence; project-only is not promoted as exact.
+     GPP-T4/T6/T9 closed in the `64d1` lane with verified live Codex,
+     all-chat/current-chat, package, strict-spec, and full-gate evidence.
+     S3-F12-T1 through T4 are closed; T5 remains open only for the integrated
+     legacy-row visual check. Codex alone is promoted as exact project-only.
 2. **Settings shell — S3-F7, S3-F8, S3-F13**
    - Honest visibility, keyboard registry/runtime parity, route/search/copy
      consistency, focused and live Settings verification.

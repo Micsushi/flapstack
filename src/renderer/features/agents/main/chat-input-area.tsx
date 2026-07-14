@@ -124,6 +124,7 @@ import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { toast } from "sonner"
 import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
+import { registerPermissionUiTestControl } from "../lib/permission-ui-test-control"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import {
   customPermissionCapabilityKeys,
@@ -938,6 +939,67 @@ export const ChatInputArea = memo(function ChatInputArea({
     pendingPermissionMode,
     pendingPermissionScope,
     rememberPermissionScope,
+  ])
+
+  useEffect(() => {
+    const state = () => ({
+      chatId: parentChatId,
+      provider,
+      storedMode: resolvedPermissionMode,
+      requestedMode: requestedPermissionMode,
+      changeBehavior: permissionPreferences?.changeBehavior ?? "ask",
+      selectableModes: [...selectablePermissionModes],
+      dialogOpen: pendingPermissionMode !== null,
+      pendingMode: pendingPermissionMode,
+      pendingScope: pendingPermissionScope,
+      rememberScope: rememberPermissionScope,
+      customReviewed: pendingCustomReviewed,
+      customPermissions: pendingPermissionMode === "custom" ? pendingCustomPermissions : null,
+      mutationPending: setChatPermissionModeMutation.isPending,
+    })
+
+    return registerPermissionUiTestControl(async (command) => {
+      if (command.command === "permissions.ui.get") return state()
+      if (command.operation === "select-mode") {
+        handlePermissionModeChange(command.mode!)
+      } else if (command.operation === "set-scope") {
+        setPendingPermissionScope(command.scope!)
+      } else if (command.operation === "set-remember") {
+        setRememberPermissionScope(command.enabled!)
+      } else if (command.operation === "set-custom-reviewed") {
+        setPendingCustomReviewed(command.enabled!)
+      } else if (command.operation === "set-custom-capability") {
+        const capability = command.capability as (typeof customPermissionCapabilityKeys)[number]
+        if (!customPermissionCapabilityKeys.includes(capability)) {
+          throw new Error("Unknown custom permission capability")
+        }
+        setPendingCustomPermissions((current) => ({
+          ...current,
+          [capability]: command.enabled!,
+        }))
+      } else if (command.operation === "apply") {
+        await handleConfirmPermissionModeChange()
+      } else {
+        setPendingPermissionMode(null)
+        setPendingCustomReviewed(false)
+      }
+      return state()
+    })
+  }, [
+    handleConfirmPermissionModeChange,
+    handlePermissionModeChange,
+    parentChatId,
+    pendingCustomPermissions,
+    pendingCustomReviewed,
+    pendingPermissionMode,
+    pendingPermissionScope,
+    permissionPreferences?.changeBehavior,
+    provider,
+    rememberPermissionScope,
+    requestedPermissionMode,
+    resolvedPermissionMode,
+    selectablePermissionModes,
+    setChatPermissionModeMutation.isPending,
   ])
   const { data: worktreeOptions = [] } = trpc.chats.listWorktreeOptions.useQuery(
     { id: parentChatId },

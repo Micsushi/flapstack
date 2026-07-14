@@ -24,6 +24,7 @@ import {
   resolveTestChatSelection,
   setChatPermission,
   setOrReplaceCredential,
+  setPermissionChangeBehavior,
 } from "../src/main/lib/mcp-test-control/settings-release-controls"
 
 vi.mock("electron", () => ({
@@ -170,6 +171,16 @@ describe("provider extension project boundaries", () => {
 })
 
 describe("permission dev MCP production routing", () => {
+  it("sets and reads the remembered permission behavior", async () => {
+    await expect(setPermissionChangeBehavior({ behavior: "all-chats" })).resolves.toEqual({
+      behavior: "all-chats",
+    })
+    await expect(getPermissionState()).resolves.toMatchObject({
+      preferences: { changeBehavior: "all-chats" },
+    })
+    await setPermissionChangeBehavior({ behavior: "ask" })
+  })
+
   it("returns exact stored custom state, mutates it, and previews the same toggles", async () => {
     expect(await getPermissionState({ chatId: "chat-1" })).toMatchObject({
       chat: { mode: "custom", customPermissions: exactCustom },
