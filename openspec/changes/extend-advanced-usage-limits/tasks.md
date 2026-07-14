@@ -28,7 +28,7 @@
 
 ### S4-F7-T3 — Implement reconciled multi-scope rollups
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: One query engine returns trustworthy totals and series for every supported scope.
 - Scope: Filter/query DTOs; raw-to-rollup aggregation; source-class reconciliation; quality propagation; time buckets; pagination; rebuildable cache; drill-down fact IDs.
