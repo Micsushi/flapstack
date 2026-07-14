@@ -1,5 +1,13 @@
-import { index, sqliteTable, text, integer, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
-import { relations } from "drizzle-orm"
+import {
+  check,
+  index,
+  sqliteTable,
+  text,
+  integer,
+  primaryKey,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core"
+import { relations, sql } from "drizzle-orm"
 import { createId } from "../utils"
 
 // ============ PROJECTS ============
@@ -27,6 +35,7 @@ export const projects = sqliteTable("projects", {
 export const projectsRelations = relations(projects, ({ many }) => ({
   chats: many(chats),
   tasks: many(tasks),
+  taskProposals: many(taskProposals),
 }))
 
 // Project knowledge remains shared across every worktree for a project. Paths
@@ -70,7 +79,13 @@ export const tasks = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     description: text("description"),
-    status: text("status").notNull().default("active"),
+    status: text("status").notNull().default("backlog"),
+    boardOrder: text("board_order").notNull().default("a0"),
+    version: integer("version").notNull().default(1),
+    sourceType: text("source_type"),
+    sourcePath: text("source_path"),
+    sourceCandidateId: text("source_candidate_id"),
+    sourceFingerprint: text("source_fingerprint"),
     defaultPermissionMode: text("default_permission_mode").notNull().default("ask-before-edits"),
     defaultCustomPermissions: text("default_custom_permissions"),
     primaryWorktreePath: text("primary_worktree_path"),
@@ -80,7 +95,20 @@ export const tasks = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
-  (table) => [index("tasks_project_id_idx").on(table.projectId)],
+  (table) => [
+    index("tasks_project_id_idx").on(table.projectId),
+    index("tasks_project_status_order_idx").on(table.projectId, table.status, table.boardOrder),
+    uniqueIndex("tasks_source_candidate_idx").on(
+      table.projectId,
+      table.sourcePath,
+      table.sourceCandidateId,
+    ),
+    check(
+      "tasks_status_check",
+      sql`${table.status} in ('backlog', 'planned', 'in-progress', 'review', 'done')`,
+    ),
+    check("tasks_version_check", sql`${table.version} >= 1`),
+  ],
 )
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
@@ -93,6 +121,56 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   orchestration: one(taskOrchestrations, {
     fields: [tasks.id],
     references: [taskOrchestrations.taskId],
+  }),
+}))
+
+// AI-authored work stays inert here until a later approval transaction creates
+// real task/chat state. Caller identity is stored as evidence rather than a
+// foreign key so deleting a chat cannot erase who proposed the work.
+export const taskProposals = sqliteTable(
+  "task_proposals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    proposedByChatId: text("proposed_by_chat_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    targetStatus: text("target_status").notNull().default("backlog"),
+    status: text("status").notNull().default("pending"),
+    version: integer("version").notNull().default(1),
+    sourceType: text("source_type"),
+    sourcePath: text("source_path"),
+    sourceCandidateId: text("source_candidate_id"),
+    sourceFingerprint: text("source_fingerprint"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    decidedAt: integer("decided_at", { mode: "timestamp" }),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("task_proposals_project_status_idx").on(table.projectId, table.status, table.createdAt),
+    index("task_proposals_caller_idx").on(table.proposedByChatId, table.createdAt),
+    check(
+      "task_proposals_target_status_check",
+      sql`${table.targetStatus} in ('backlog', 'planned')`,
+    ),
+    check(
+      "task_proposals_status_check",
+      sql`${table.status} in ('pending', 'approved', 'denied', 'cancelled')`,
+    ),
+    check("task_proposals_version_check", sql`${table.version} >= 1`),
+    check("task_proposals_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+  ],
+)
+
+export const taskProposalsRelations = relations(taskProposals, ({ one }) => ({
+  project: one(projects, {
+    fields: [taskProposals.projectId],
+    references: [projects.id],
   }),
 }))
 
