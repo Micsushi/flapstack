@@ -67,8 +67,18 @@ type CallerScope = {
   taskId: string | null
 }
 
+export type AutomationControlHooks = {
+  /** Test seam for a version change after the read but before the update CAS. */
+  beforeUpdateCas?: () => void
+  /** Test seam for a version change after the read but before the archive CAS. */
+  beforeArchiveCas?: () => void
+}
+
 export class AutomationControlService {
-  constructor(private readonly databasePath: string) {}
+  constructor(
+    private readonly databasePath: string,
+    private readonly hooks: AutomationControlHooks = {},
+  ) {}
 
   list(
     actor: AutomationControlActor,
@@ -189,8 +199,9 @@ export class AutomationControlService {
       const expansion = impact.requiresApproval
       const approvedExpansion = expansion && input.approval
       const now = Date.now()
+      this.hooks.beforeUpdateCas?.()
       const transaction = database.transaction(() => {
-        database
+        const result = database
           .prepare(
             `UPDATE automations SET
               name = ?, description = ?, scope_type = ?, project_id = ?, task_id = ?, chat_id = ?,
@@ -234,6 +245,7 @@ export class AutomationControlService {
             input.automationId,
             input.expectedVersion,
           )
+        if (result.changes !== 1) conflict(latestVersion(database, input.automationId))
         writeAutomationChildren(database, input.automationId, next, now)
       })
       transaction.immediate()
@@ -360,7 +372,8 @@ export class AutomationControlService {
       }
       if (current.version !== input.expectedVersion) conflict(current.version)
       const now = Date.now()
-      database
+      this.hooks.beforeArchiveCas?.()
+      const result = database
         .prepare(
           `UPDATE automations SET state = 'archived', enabled = 0, approval_state = 'revoked',
              approved_by = ?, approved_at = ?, approval_audit_id = ?, archived_at = ?,
@@ -375,6 +388,7 @@ export class AutomationControlService {
           input.automationId,
           input.expectedVersion,
         )
+      if (result.changes !== 1) conflict(latestVersion(database, input.automationId))
       return { record: requireRecord(database, input.automationId), changed: true }
     })
   }
@@ -916,6 +930,12 @@ function numberOrNull(value: unknown): number | null {
 
 function conflict(currentVersion: number): never {
   fail("conflict", `Automation version is stale; current version is ${currentVersion}.`)
+}
+
+function latestVersion(database: Database.Database, automationId: string): number {
+  const row = database.prepare("SELECT version FROM automations WHERE id = ?").get(automationId) as
+    { version: number } | undefined
+  return row?.version ?? 0
 }
 
 function fail(code: AutomationControlErrorCode, message: string): never {
