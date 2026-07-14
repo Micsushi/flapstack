@@ -30,6 +30,7 @@ const transport = new StreamableHTTPClientTransport(new URL(descriptor.url), {
 })
 let taskId = null
 let fixture = null
+let testProject = null
 
 function toolResult(response) {
   if (response.isError) {
@@ -74,6 +75,7 @@ try {
   const environment = await call("get_test_environment")
   assert((await realpath(environment.repo.path)) === checkout, "Live environment checkout mismatch")
   const harness = await call("get_harness_status")
+  testProject = await call("ensure_test_project")
 
   fixture = await call("create_test_orchestration_fixture", {
     projectPath: checkout,
@@ -233,6 +235,12 @@ try {
   if (taskId && !keep) {
     await call("mutate_test_orchestration", { taskId, action: "stop" }).catch(() => {})
     await call("mutate_test_orchestration", { taskId, action: "archive" }).catch(() => {})
+  }
+  if (fixture?.chatId && !keep) {
+    await call("archive_test_chat", { chatId: fixture.chatId }).catch(() => {})
+  }
+  if ((testProject?.created || testProject?.restored) && !keep) {
+    await call("archive_test_project", { projectId: testProject.project.id }).catch(() => {})
   }
   await transport.close().catch(() => {})
 }

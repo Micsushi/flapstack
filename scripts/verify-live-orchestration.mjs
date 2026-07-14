@@ -38,6 +38,8 @@ const transport = new StreamableHTTPClientTransport(new URL(descriptor.url), {
   requestInit: { headers: { Authorization: `Bearer ${descriptor.token}` } },
 })
 let taskId = null
+let fixture = null
+let testProject = null
 
 function toolResult(response) {
   if (response.isError) {
@@ -69,8 +71,9 @@ try {
   await client.connect(transport)
   const environment = await call("get_test_environment")
   assert((await realpath(environment.repo.path)) === checkout, "Live environment checkout mismatch")
+  testProject = await call("ensure_test_project")
 
-  const fixture = await call("create_test_orchestration_fixture", {
+  fixture = await call("create_test_orchestration_fixture", {
     projectPath: checkout,
     projectName: "Flapstack orchestration proof",
     chatName: `Orchestration MCP proof ${Date.now()}`,
@@ -294,5 +297,11 @@ try {
   }
   throw error
 } finally {
+  if (fixture?.chatId) {
+    await call("archive_test_chat", { chatId: fixture.chatId }).catch(() => undefined)
+  }
+  if (testProject?.created || testProject?.restored) {
+    await call("archive_test_project", { projectId: testProject.project.id }).catch(() => undefined)
+  }
   await transport.close().catch(() => undefined)
 }

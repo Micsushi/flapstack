@@ -45,8 +45,16 @@ describe("test-control lifecycle", () => {
   it("validates isolated Dev descriptors against their exact profile", () => {
     const proxy = readFileSync("scripts/flapstack-dev-mcp-proxy.mjs", "utf8")
     const orchestration = readFileSync("scripts/verify-live-orchestration.mjs", "utf8")
+    const providerOrchestration = readFileSync(
+      "scripts/verify-live-orchestration-provider.mjs",
+      "utf8",
+    )
     expect(proxy).toContain("descriptor.profile !== expectedUserDataProfile")
     expect(orchestration).toContain("descriptor.profile !== profile")
+    for (const driver of [orchestration, providerOrchestration]) {
+      expect(driver).toContain('call("ensure_test_project")')
+      expect(driver).toContain('call("archive_test_project"')
+    }
   })
 
   it("invalidates the project cache before selecting externally created test projects", () => {
