@@ -5,6 +5,7 @@ import type { AppendMcpAuditRecord, McpAuditStatus, McpDispatchBlock } from "./a
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
 import { evaluateMcpGateWithSelfReference } from "./self-reference"
+import { mcpProjectVaultToolNames, type McpProjectVaultService } from "./project-vault-service"
 import type {
   McpCallerIdentity,
   McpControlResponse,
@@ -27,6 +28,7 @@ export type McpInvocationDependencies = {
   invocationId?: () => string
   audit?: McpAuditWriter
   mutations?: McpMutationService
+  projectVaults?: McpProjectVaultService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
     tool: McpControlTool
@@ -107,6 +109,48 @@ export const mcpControlTools: McpControlTool[] = [
     description: "Search caller-visible object metadata.",
     tier: 0,
     requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "list_vault_sections",
+    description: "List typed knowledge sections in a caller-visible project vault.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_vault_section",
+    description: "Read one exact caller-visible project vault section.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "create_vault_section",
+    description: "Create one approved typed project vault section from expected version zero.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "update_vault_section",
+    description: "Replace one exact project vault section using its current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "update_vault_handoff",
+    description: "Replace the bounded handoff section using its current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "record_vault_decision",
+    description: "Append one bounded decision entry using the decision section's current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
     status: "implemented",
   },
   {
@@ -607,7 +651,14 @@ function dispatch(
 ): McpControlResponse | Promise<McpControlResponse> {
   return (
     dependencies.execute?.({ tool, caller, rawInput: input }) ??
-    executeImplementedTool(tool.name, caller, input, readService, dependencies.mutations)
+    executeImplementedTool(
+      tool.name,
+      caller,
+      input,
+      readService,
+      dependencies.mutations,
+      dependencies.projectVaults,
+    )
   )
 }
 
@@ -617,6 +668,7 @@ function executeImplementedTool(
   input: unknown,
   readService?: McpReadService,
   mutations?: McpMutationService,
+  projectVaults?: McpProjectVaultService,
 ): McpControlResponse | Promise<McpControlResponse> {
   if (name === "ping") {
     return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
@@ -626,6 +678,15 @@ function executeImplementedTool(
       ok: true,
       data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
     }
+  }
+
+  if (mcpProjectVaultToolNames.has(name)) {
+    return projectVaults
+      ? projectVaults.invoke(name, caller, input)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Project vault service is unavailable." },
+        }
   }
 
   if (mcpControlTools.some((tool) => tool.name === name && tool.tier > 0)) {

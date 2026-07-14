@@ -67,13 +67,24 @@
 
 ### S4-F2-T5 — Add approved agent vault operations
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Authorized agents read and update vault sections through bounded tools.
 - Scope: MCP list/read/create/update tools, version preconditions, approval tiers, audit redaction, invalidation, handoff/decision helper operations.
 - Out of scope: Secret storage and arbitrary filesystem access.
 - Acceptance: Reads honor caller scope; writes require exact section/version and applicable approval; stale/secret writes fail closed.
 - Verification: Registry, caller identity, approval, audit, stale-write, secret, and renderer invalidation tests.
+- Evidence (2026-07-14): Added bounded MCP list/read/create/update, handoff,
+  and decision tools over the typed vault registry. Exact project/section/version
+  inputs, durable caller scope, Stage 3 Tier 0/Tier 2 gates, project-write
+  capability enforcement, redacted audit summaries, secret and external-change
+  rejection, registered-root storage, and vault query invalidation are covered by
+  74 focused headless tests across registry transport, caller reads, approval,
+  audit, stale/secret storage, and invalidation. Focused ESLint/Prettier, strict
+  OpenSpec, and `git diff --check` passed. Full TypeScript reached only the three
+  pre-existing `local-model-catalog.ts` unknown-value errors; changed files add
+  no TypeScript errors. Manual/live/UI/package and Stage 3 release verification
+  remain unrun under this lane restriction and are non-blocking for this code task.
 - Blocked by: S4-F2-T2, S4-F2-T4 and Stage 3 MCP gate/audit
 - Blocks: S4-F2-T6
 - Context: app-control MCP registry, gate, audit, and invalidation bridge.

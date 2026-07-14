@@ -66,12 +66,15 @@ describe("project vault browser services", () => {
 
   it("searches only the selected project and redacts secret-like snippets", async () => {
     const secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
-    await writeProjectVaultSection(database, {
-      projectId: "project-1",
-      sectionId: "handoff",
-      expectedVersion: 1,
-      content: `Deploy needle\nOPENAI_API_KEY=${secret}\nKeep needle private`,
-    })
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    writeFileSync(
+      join(vault.rootPath, "current-handoff.md"),
+      `Deploy needle\nOPENAI_API_KEY=${secret}\nKeep needle private`,
+    )
     await writeProjectVaultSection(database, {
       projectId: "project-2",
       sectionId: "index",
