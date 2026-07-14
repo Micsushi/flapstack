@@ -54,7 +54,7 @@
 
 ### S4-F7-T5 — Enforce scoped budgets and advanced alerts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Soft alerts and hard stops apply consistently to user and automated runs.
 - Scope: Budget CRUD/resolver; precedence; launch preflight; running stop checks; automation/orchestration integration; daemon thresholds; debounce/re-arm; approval-gated override; audit.

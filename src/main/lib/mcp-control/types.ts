@@ -58,6 +58,7 @@ export type McpControlErrorCode =
   | "secret-detected"
   | "not-found"
   | "reconciliation-required"
+  | "usage-budget-exhausted"
   | "conflict"
   | "internal-error"
 

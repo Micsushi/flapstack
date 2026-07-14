@@ -348,32 +348,102 @@ export const usageBudgetPolicyDtoSchema = z
     updatedAt: timestampSchema,
   })
   .strict()
-  .superRefine((value, context) => {
-    if (value.scope.type === "provider-account" && value.action === "hard-stop") {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["action"],
-        message: "Provider-account usage is external and supports soft alerts only.",
-      })
-    }
-    if (
-      value.threshold.type === "quota-percent-micros" &&
-      value.scope.type !== "provider-account"
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["threshold"],
-        message: "Quota-percent thresholds require provider-account scope.",
-      })
-    }
-    if (value.reset.type === "provider-cycle" && value.scope.type !== "provider-account") {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["reset"],
-        message: "Provider-cycle resets require provider-account scope.",
-      })
-    }
+  .superRefine(validateBudgetDefinition)
+
+export const usageBudgetContextSchema = z
+  .object({
+    controlled: z.boolean().default(true),
+    providerId: idSchema.nullable().default(null),
+    accountTag: z.string().max(256).nullable().default(null),
+    projectId: nullableIdSchema.default(null),
+    taskId: nullableIdSchema.default(null),
+    automationId: nullableIdSchema.default(null),
+    orchestrationId: nullableIdSchema.default(null),
+    runId: nullableIdSchema.default(null),
   })
+  .strict()
+
+const usageBudgetDefinitionFields = {
+  name: z.string().trim().min(1).max(256),
+  enabled: z.boolean(),
+  scope: usageBudgetScopeSchema,
+  threshold: usageBudgetThresholdSchema,
+  action: usageBudgetActionSchema,
+  reset: usageBudgetResetSchema,
+}
+
+export const usageBudgetCreateSchema = z
+  .object(usageBudgetDefinitionFields)
+  .strict()
+  .superRefine(validateBudgetDefinition)
+
+export const usageBudgetUpdateSchema = z
+  .object({
+    id: idSchema,
+    expectedVersion: z.number().int().min(1),
+    name: usageBudgetDefinitionFields.name.optional(),
+    enabled: usageBudgetDefinitionFields.enabled.optional(),
+    scope: usageBudgetDefinitionFields.scope.optional(),
+    threshold: usageBudgetDefinitionFields.threshold.optional(),
+    action: usageBudgetDefinitionFields.action.optional(),
+    reset: usageBudgetDefinitionFields.reset.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      ["name", "enabled", "scope", "threshold", "action", "reset"].some(
+        (key) => value[key as keyof typeof value] !== undefined,
+      ),
+    { message: "Budget update must change at least one field." },
+  )
+
+export const usageBudgetOverrideRequestSchema = z
+  .object({
+    budgetIds: z.array(idSchema).min(1).max(10),
+    context: usageBudgetContextSchema,
+    callerChatId: idSchema,
+    callerRunId: nullableIdSchema.optional(),
+    reason: z.string().trim().min(1).max(500),
+    durationMs: z
+      .number()
+      .int()
+      .min(1_000)
+      .max(15 * 60 * 1_000)
+      .default(5 * 60 * 1_000),
+  })
+  .strict()
+
+function validateBudgetDefinition(
+  value: {
+    scope: UsageBudgetScope
+    threshold: UsageBudgetThreshold
+    action: UsageBudgetAction
+    reset: UsageBudgetReset
+  },
+  context: z.RefinementCtx,
+): void {
+  if (value.scope.type === "provider-account" && value.action === "hard-stop") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["action"],
+      message: "Provider-account usage is external and supports soft alerts only.",
+    })
+  }
+  if (value.threshold.type === "quota-percent-micros" && value.scope.type !== "provider-account") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["threshold"],
+      message: "Quota-percent thresholds require provider-account scope.",
+    })
+  }
+  if (value.reset.type === "provider-cycle" && value.scope.type !== "provider-account") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reset"],
+      message: "Provider-cycle resets require provider-account scope.",
+    })
+  }
+}
 
 export type UsageAttributionSnapshot = z.infer<typeof usageAttributionSnapshotSchema>
 export type UsageFactClassification = z.infer<typeof usageFactClassificationSchema>
@@ -395,3 +465,7 @@ export type UsageBudgetThreshold = z.infer<typeof usageBudgetThresholdSchema>
 export type UsageBudgetAction = z.infer<typeof usageBudgetActionSchema>
 export type UsageBudgetReset = z.infer<typeof usageBudgetResetSchema>
 export type UsageBudgetPolicyDto = z.infer<typeof usageBudgetPolicyDtoSchema>
+export type UsageBudgetContext = z.infer<typeof usageBudgetContextSchema>
+export type UsageBudgetCreate = z.infer<typeof usageBudgetCreateSchema>
+export type UsageBudgetUpdate = z.infer<typeof usageBudgetUpdateSchema>
+export type UsageBudgetOverrideRequest = z.infer<typeof usageBudgetOverrideRequestSchema>

@@ -14,6 +14,11 @@ import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { permissionModes } from "../../permissions"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../../run-change-undo"
 import { publicProcedure, router } from "../index"
+import {
+  assertUsageBudgetAllowsLaunch,
+  bindUsageBudgetOverrideToRun,
+  providerForHarness,
+} from "../../usage/budgets"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
 
 const permissionModeSchema = z.enum(permissionModes)
@@ -29,6 +34,7 @@ export const runsRouter = router({
         permissionMode: permissionModeSchema,
         worktreePath: z.string().nullable().optional(),
         promptMessageId: z.string().optional(),
+        budgetOverrideToken: z.string().min(1).max(500).optional(),
         vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
@@ -36,6 +42,19 @@ export const runsRouter = router({
       const db = getDatabase()
       const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
       if (!chat) throw new Error("Chat not found")
+      const budgetContext = {
+        controlled: true,
+        providerId: providerForHarness(input.harness),
+        accountTag: null,
+        projectId: chat.projectId,
+        taskId: chat.taskId,
+        automationId: null,
+        orchestrationId: null,
+        runId: null,
+      }
+      const budgetDecision = assertUsageBudgetAllowsLaunch(db, budgetContext, {
+        overrideToken: input.budgetOverrideToken,
+      })
       let checkpointRoot: string | null = null
       if (input.worktreePath) {
         const project = chat.projectId
@@ -73,6 +92,13 @@ export const runsRouter = router({
         })
         .returning()
         .get()
+
+      if (
+        input.budgetOverrideToken &&
+        budgetDecision.evaluations.some((evaluation) => evaluation.overridden)
+      ) {
+        bindUsageBudgetOverrideToRun(input.budgetOverrideToken, budgetContext, run.id)
+      }
 
       const before = await captureCheckpoint(run.id, checkpointRoot, "before")
       return db

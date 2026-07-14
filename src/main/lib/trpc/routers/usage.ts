@@ -40,9 +40,30 @@ import {
   updateDaemonStatus,
 } from "../../usage/store"
 import { SAMPLE_SOURCES, USAGE_PROVIDER_IDS } from "../../usage/types"
-import { usageInsightQuerySchema, usageRollupQuerySchema } from "../../../../shared/advanced-usage"
+import {
+  usageBudgetContextSchema,
+  usageBudgetCreateSchema,
+  usageBudgetOverrideRequestSchema,
+  usageBudgetUpdateSchema,
+  usageInsightQuerySchema,
+  usageRollupQuerySchema,
+} from "../../../../shared/advanced-usage"
 import { queryUsageRollups } from "../../usage/rollups"
 import { queryUsageInsights } from "../../usage/insights"
+import {
+  appendUsageBudgetOverrideAudit,
+  createUsageBudget,
+  createUsageBudgetOverride,
+  deleteUsageBudget,
+  getUsageBudget,
+  listUsageBudgets,
+  resolveUsageBudgets,
+  updateUsageBudget,
+} from "../../usage/budgets"
+import { McpApprovalLifecycle } from "../../mcp-control/approval-lifecycle"
+import { createSqliteMcpApprovalCoordinator } from "../../mcp-control/approval-coordinator"
+import { publishProductMcpInvalidation } from "../../mcp-control/invalidation-bridge"
+import { randomUUID } from "node:crypto"
 
 const providerIdSchema = z.enum(USAGE_PROVIDER_IDS)
 const sampleSourceSchema = z.enum(SAMPLE_SOURCES)
@@ -167,6 +188,57 @@ export const usageRouter = router({
     }
     return queryUsageInsights(getDatabase(), input)
   }),
+
+  listBudgets: publicProcedure
+    .input(z.object({ enabledOnly: z.boolean().optional() }).optional())
+    .query(({ input }) => listUsageBudgets(getDatabase(), input?.enabledOnly ?? false)),
+
+  getBudget: publicProcedure
+    .input(z.object({ id: z.string().trim().min(1).max(200) }))
+    .query(({ input }) => getUsageBudget(getDatabase(), input.id)),
+
+  createBudget: publicProcedure.input(usageBudgetCreateSchema).mutation(({ input }) =>
+    createUsageBudget(getDatabase(), input, {
+      callerChatId: "flapstack-settings-usage",
+    }),
+  ),
+
+  updateBudget: publicProcedure.input(usageBudgetUpdateSchema).mutation(({ input }) =>
+    updateUsageBudget(getDatabase(), input, {
+      callerChatId: "flapstack-settings-usage",
+    }),
+  ),
+
+  deleteBudget: publicProcedure
+    .input(
+      z.object({
+        id: z.string().trim().min(1).max(200),
+        expectedVersion: z.number().int().min(1),
+      }),
+    )
+    .mutation(({ input }) =>
+      deleteUsageBudget(getDatabase(), {
+        ...input,
+        callerChatId: "flapstack-settings-usage",
+      }),
+    ),
+
+  resolveBudgets: publicProcedure
+    .input(
+      z.object({
+        context: usageBudgetContextSchema,
+        overrideToken: z.string().min(1).max(500).nullable().optional(),
+      }),
+    )
+    .query(({ input }) =>
+      resolveUsageBudgets(getDatabase(), input.context, {
+        overrideToken: input.overrideToken,
+      }),
+    ),
+
+  requestBudgetOverride: publicProcedure
+    .input(usageBudgetOverrideRequestSchema)
+    .mutation(async ({ input }) => requestBudgetOverride(input)),
 
   listCycles: publicProcedure
     .input(
@@ -354,3 +426,78 @@ export const usageRouter = router({
     }
   }),
 })
+
+async function requestBudgetOverride(input: z.infer<typeof usageBudgetOverrideRequestSchema>) {
+  const db = getDatabase()
+  for (const id of input.budgetIds) {
+    const budget = getUsageBudget(db, id)
+    if (!budget || !budget.enabled || budget.action !== "hard-stop") {
+      throw new Error("Budget override target must be an enabled hard-stop budget.")
+    }
+  }
+  const publishApprovalChange = () => {
+    void publishProductMcpInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["approvals"],
+    })
+  }
+  const lifecycle = new McpApprovalLifecycle(
+    createSqliteMcpApprovalCoordinator(db, publishApprovalChange),
+    publishApprovalChange,
+  )
+  const id = randomUUID()
+  appendUsageBudgetOverrideAudit(db, {
+    status: "approval-required",
+    callerChatId: input.callerChatId,
+    callerRunId: input.callerRunId,
+    budgetIds: input.budgetIds,
+    context: input.context,
+    durationMs: input.durationMs,
+  })
+  try {
+    const wait = lifecycle.request({
+      id,
+      invocationId: id,
+      caller: { chatId: input.callerChatId, runId: input.callerRunId ?? undefined },
+      toolName: "usage_budget.override",
+      tier: 3,
+      timeoutMs: 60_000,
+      input: {
+        target: input.budgetIds.join(","),
+        budgetIds: input.budgetIds,
+        scope: input.context,
+        durationMs: input.durationMs,
+        reason: input.reason,
+      },
+    })
+    const decision = await wait.decision
+    if (decision.state !== "approved") {
+      appendUsageBudgetOverrideAudit(db, {
+        status: decision.state === "denied" ? "denied" : "failed",
+        callerChatId: input.callerChatId,
+        callerRunId: input.callerRunId,
+        budgetIds: input.budgetIds,
+        context: input.context,
+        durationMs: input.durationMs,
+      })
+      return { approved: false as const, decision: decision.state, override: null }
+    }
+    const override = createUsageBudgetOverride({
+      budgetIds: input.budgetIds,
+      context: input.context,
+      durationMs: input.durationMs,
+    })
+    appendUsageBudgetOverrideAudit(db, {
+      status: "completed",
+      callerChatId: input.callerChatId,
+      callerRunId: input.callerRunId,
+      budgetIds: input.budgetIds,
+      context: input.context,
+      durationMs: input.durationMs,
+    })
+    return { approved: true as const, decision: decision.state, override }
+  } finally {
+    lifecycle.shutdown()
+  }
+}

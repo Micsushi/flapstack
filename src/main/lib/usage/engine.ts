@@ -31,6 +31,7 @@ import {
   type UsageProviderContext,
   type UsageProviderId,
 } from "./types"
+import { evaluateUsageBudgetAlerts } from "./budgets"
 
 export type EngineMode = "app" | "daemon"
 
@@ -93,6 +94,7 @@ export class UsageEngine {
       }
       results.push(await this.runProvider(provider, intent, settings))
     }
+    if (this.mode === "daemon") evaluateUsageBudgetAlerts(this.deps.db, { source: "daemon" })
     return results
   }
 
