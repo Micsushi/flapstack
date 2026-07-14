@@ -56,6 +56,7 @@ import {
   ClipboardList,
   Activity,
   BookOpenText,
+  BookOpen,
   Star,
   Plus,
   ArrowRightLeft,
@@ -6482,21 +6483,36 @@ export function AgentsSidebar({
           <span>Usage</span>
         </ButtonCustom>
         {selectedProject && (
-          <ButtonCustom
-            variant={desktopView === "plan" ? "secondary" : "ghost"}
-            size="sm"
-            className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-            aria-current={desktopView === "plan" ? "page" : undefined}
-            onClick={() => {
-              setSelectedDraftId(null)
-              setShowNewChatForm(false)
-              setDesktopView("plan")
-              setSearchQuery("")
-            }}
-          >
-            <BookOpenText className="h-4 w-4" />
-            <span>Plan</span>
-          </ButtonCustom>
+          <>
+            <ButtonCustom
+              variant={desktopView === "plan" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "plan" ? "page" : undefined}
+              onClick={() => {
+                setSelectedDraftId(null)
+                setShowNewChatForm(false)
+                setDesktopView("plan")
+                setSearchQuery("")
+              }}
+            >
+              <BookOpenText className="h-4 w-4" />
+              <span>Plan</span>
+            </ButtonCustom>
+            <ButtonCustom
+              variant={desktopView === "project-vault" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "project-vault" ? "page" : undefined}
+              onClick={() => {
+                setSelectedChatId(null)
+                setDesktopView("project-vault")
+              }}
+            >
+              <BookOpen className="h-4 w-4" />
+              <span>Project knowledge</span>
+            </ButtonCustom>
+          </>
         )}
       </div>
 
