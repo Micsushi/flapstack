@@ -183,6 +183,13 @@
       "when": 1784010915026,
       "tag": "0025_thick_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1784011983155,
+      "tag": "0026_wet_george_stacy",
+      "breakpoints": true
     }
   ]
 }

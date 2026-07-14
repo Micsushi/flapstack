@@ -16,7 +16,8 @@
 
 ### S4-F9-T2 — Implement plan source discovery and parsing
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
+- Evidence: Node 22 focused plan-source, plan-kanban, project-vault, and Stage 3 migration suites pass 33 tests across 5 files; `npm run ts:check`, focused ESLint/Prettier, and strict OpenSpec validation pass.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Registered projects expose stable read-only candidates from OpenSpec and selected Markdown.
 - Scope: Source registry/config; registered-root/path safety; OpenSpec proposal/spec/tasks parser; Markdown heading/checklist parser; source fingerprint; stable candidate IDs; parse limitations; refresh watcher.
