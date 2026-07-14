@@ -1,6 +1,6 @@
 # Stage 4 Execution Plan
 
-Stage 4 is the final planned Flapstack stage. Its ten feature boards contain 72
+Stage 4 is the final planned Flapstack stage. Its ten feature boards contain 77
 independently pick-up-able tasks. This document orders those boards without
 duplicating task state; the checkbox in each OpenSpec `tasks.md` is authoritative.
 
@@ -45,8 +45,8 @@ only when sequential tasks touch the same migration or service seam.
 | ---------------------------- | ----: | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | S4-F1 Unified skills/hooks   |     7 | `openspec/changes/add-unified-skills-hooks-manager/tasks.md` | Native extension inventory, policy, safe editing, sharing, and hook control |
 | S4-F2 Knowledge vaults       |     6 | `openspec/changes/add-project-knowledge-vaults/tasks.md`     | Typed project knowledge with explicit context and safe agent operations     |
-| S4-F3 Multi-agent operations |     6 | `openspec/changes/extend-multi-agent-operations/tasks.md`    | Fleet view, lineage, versioned policy, and bounded cascading controls       |
-| S4-F4 Saved workspaces       |     6 | `openspec/changes/add-saved-workspaces/tasks.md`             | Durable multi-pane operating layouts and exclusive window ownership         |
+| S4-F3 Multi-agent operations |    10 | `openspec/changes/extend-multi-agent-operations/tasks.md`    | Selectable engines, workflows, fleet, reasoning, policy, and safe controls  |
+| S4-F4 Saved workspaces       |     7 | `openspec/changes/add-saved-workspaces/tasks.md`             | Manual and orchestration-owned multi-pane workspaces across windows          |
 | S4-F5 Automation             |     8 | `openspec/changes/add-local-automation-scheduler/tasks.md`   | Default-safe in-app scheduling, triggers, approvals, history, and kill      |
 | S4-F6 Local models           |     8 | `openspec/changes/add-local-model-harness/tasks.md`          | Ollama-first app-owned agent loop with capability-gated tools               |
 | S4-F7 Usage/limits           |     7 | `openspec/changes/extend-advanced-usage-limits/tasks.md`     | Reconciled attribution, forecasting, budgets, alerts, and export            |
@@ -70,7 +70,7 @@ schema, or generated-file seam.
 ### Wave 1 — Establish feature contracts and additive schemas
 
 - S4-F1-T1, S4-F2-T1, S4-F3-T1, S4-F4-T1, S4-F5-T1, S4-F6-T1,
-  S4-F7-T1, S4-F9-T1, and S4-F10-T1.
+  S4-F7-T1, S4-F9-T1, and S4-F10-T1; S4-F3-T6 follows S4-F3-T1.
 - Resolve migrations and shared enums before feature UI work begins.
 - S4-F8-T1 intentionally waits for S4-F1-T3, S4-F2-T2, and S4-F4-T2 so its
   scope registry describes real persisted data instead of guesses.
@@ -91,8 +91,8 @@ schema, or generated-file seam.
 
 - S4-F1-T5 and S4-F1-T6.
 - S4-F2-T5.
-- S4-F3-T5.
-- S4-F4-T4 and S4-F4-T5.
+- S4-F3-T7 and S4-F3-T8, then S4-F3-T5 and S4-F3-T9.
+- S4-F4-T4 and S4-F4-T5, then the cross-feature operation workspace S4-F4-T6.
 - S4-F5-T5, S4-F5-T6, and then S4-F5-T7.
 - S4-F6-T4, then S4-F6-T5.
 - S4-F7-T5 and S4-F7-T6.
@@ -118,7 +118,7 @@ schema, or generated-file seam.
 
 ### Wave 6 — Close each feature independently
 
-- S4-F1-T7, S4-F2-T6, S4-F3-T6, S4-F4-T6, S4-F5-T8, S4-F6-T8,
+- S4-F1-T7, S4-F2-T6, S4-F3-T10, S4-F4-T7, S4-F5-T8, S4-F6-T8,
   S4-F7-T7, S4-F8-T8, S4-F9-T8, and S4-F10-T8.
 - A feature can close only when its focused tests, documentation, recovery or
   rollback path, required live walkthrough, and feature matrix rows are truthful.
@@ -133,7 +133,7 @@ schema, or generated-file seam.
 - Use `npm run package:preview:mac` for packaged macOS proof. Keep Windows,
   Linux, credentialed-provider, and unavailable-device rows open until observed.
 - Perform final security, migration, accessibility, recovery, and documentation
-  review. Stage 4 exits only when all 72 tasks and the integrated matrix are closed.
+  review. Stage 4 exits only when all 77 tasks and the integrated matrix are closed.
 
 ## Fixed product decisions
 
@@ -149,6 +149,16 @@ schema, or generated-file seam.
   states. Promotion creates exactly one task and one chat, never an automatic run.
 - The mobile companion is a default-off LAN HTTPS PWA with one-time pairing,
   revocable device credentials, desktop authority, and read-only offline state.
+- Multi-agent orchestration defaults to Flapstack's deterministic `workflow`
+  engine. Codex V2 task-tree mode is capability-gated; Codex V1 is advanced legacy
+  compatibility. Engine choice is snapshotted per orchestration and never falls
+  back silently.
+- Every new orchestration owns one task-scoped saved operation workspace. Agent
+  chats join its roster as they materialize; the four-visible-chat cap still holds.
+- Agent capability profiles, presentation personalities, workflow templates, and
+  runtime snapshots are separate concepts. The profile/personality product stays
+  behind its research gate until its trust, precedence, memory, and evaluation
+  decisions are promoted.
 
 ## Parked after Stage 4
 

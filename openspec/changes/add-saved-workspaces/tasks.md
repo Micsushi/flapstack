@@ -5,12 +5,12 @@
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Versioned project/task workspace records reference existing objects safely.
-- Scope: Schema, scope constraint, layout version, pane binding union, ordering, archive timestamps, migration, DTOs, and terminology boundary from legacy chat-as-workspace code.
+- Scope: Schema, scope constraint, `manual`/`orchestration` owner kind, unique orchestration link, layout version, pane binding union, roster projection, ordering, archive timestamps, migration, DTOs, and terminology boundary from legacy chat-as-workspace code.
 - Out of scope: UI and broad legacy renames.
 - Acceptance: Each workspace has one project or task scope; invalid pane data fails validation; existing chats remain unchanged.
 - Verification: Migration, DTO, scope, malformed-layout, and supported-prior-schema tests.
 - Blocked by: Stage 3 release baseline
-- Blocks: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5
+- Blocks: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5, S4-F4-T6
 - Context: project/task/chat schema, existing local workspace terminology.
 
 ### S4-F4-T2 — Add crash-safe workspace lifecycle
@@ -23,7 +23,7 @@
 - Acceptance: Lifecycle survives restart and concurrent saves; delete removes only workspace metadata.
 - Verification: CRUD, version conflict, crash transaction, archive/undo, delete, and reference-preservation tests.
 - Blocked by: S4-F4-T1
-- Blocks: S4-F4-T3, S4-F4-T5, S4-F4-T6, S4-F8-T1
+- Blocks: S4-F4-T3, S4-F4-T5, S4-F4-T6, S4-F4-T7, S4-F8-T1
 - Context: project/task archive patterns, scoped search, tRPC invalidation.
 
 ### S4-F4-T3 — Build the bounded layout shell
@@ -36,7 +36,7 @@
 - Acceptance: Layout restores after restart; at most four chat panes render; all panes remain keyboard reachable.
 - Verification: Layout reducer/property, persistence, cap, component, accessibility, and restart tests.
 - Blocked by: S4-F4-T1, S4-F4-T2
-- Blocks: S4-F4-T4, S4-F4-T5, S4-F4-T6
+- Blocks: S4-F4-T4, S4-F4-T5, S4-F4-T6, S4-F4-T7
 - Context: Agents shell, chat tabs, sidebar, `ui-design.md` future workspace layer.
 
 ### S4-F4-T4 — Bind chat, terminal, file, diff, and browser panes
@@ -49,7 +49,7 @@
 - Acceptance: Valid panes reuse existing data/services; missing targets do not block other panes; terminal process creation is explicit.
 - Verification: Adapter, stale binding, terminal safety, worktree removal, file move, browser URL validation, and live pane tests.
 - Blocked by: S4-F4-T1, S4-F4-T3
-- Blocks: S4-F4-T6, S4-F6-T7
+- Blocks: S4-F4-T6, S4-F4-T7, S4-F6-T7
 - Context: terminal, file viewer, diff views, URL link provider, worktree resolver.
 
 ### S4-F4-T5 — Add pop-outs and exclusive window ownership
@@ -62,18 +62,31 @@
 - Acceptance: No chat has two live owners; stale claims recover; pop-outs retain workspace and pane identity.
 - Verification: Multi-window ownership, stale owner, focus, move, close, crash/restart, and race tests.
 - Blocked by: S4-F4-T1, S4-F4-T2, S4-F4-T3
-- Blocks: S4-F4-T6
+- Blocks: S4-F4-T7
 - Context: `window-manager.ts`, window creation, existing open-chat ownership UI.
 
-### S4-F4-T6 — Close saved workspace acceptance
+### S4-F4-T6 — Add orchestration-owned operation workspaces
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F4
+- Outcome: Starting multi-agent work opens one durable workspace containing the lead and every descendant agent chat.
+- Scope: Transactional/recoverable orchestration link, initiating-chat roster, dynamic descendant roster, lead/navigator/selected-agent/activity default layout, workspace open/focus, status and artifact bindings, large-team overflow, archive/delete impact preview, and lineage-based regeneration.
+- Out of scope: Rendering every agent simultaneously, duplicating chat/run data, or deleting/stopping work through workspace deletion.
+- Acceptance: Every new orchestration has one operation workspace; newly materialized chats appear once; the four-chat cap holds; restart repairs half-created links without replay; deleting workspace metadata preserves all work.
+- Verification: Creation-order race, unique link, dynamic spawn, selected-agent swap, cap/overflow, restart repair, deletion preservation, regeneration, accessibility, and live heterogeneous orchestration tests.
+- Blocked by: S4-F4-T1, S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F3-T6, S4-F3-T7, S4-F3-T8
+- Blocks: S4-F3-T10, S4-F4-T7
+- Context: orchestration agent chat IDs, workspace service/router, lineage graph, agent activity timeline.
+
+### S4-F4-T7 — Close saved workspace acceptance
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: A real project/task operating surface restores safely in Dev and packaged preview.
-- Scope: Full gate, matrix S4-WS01 through S4-WS05, six-chat overflow, multi-window, stale worktree/file, crash recovery, docs and package preview.
+- Scope: Full gate, matrix S4-WS01 through S4-WS06, manual and operation workspaces, six-chat overflow, multi-window, stale worktree/file, crash recovery, docs and package preview.
 - Out of scope: Remote synchronization.
-- Acceptance: Workspace survives restart and one forced recovery; referenced work remains intact; ownership and stale states stay honest.
+- Acceptance: Manual and operation workspaces survive restart and one forced recovery; descendant rosters reconcile; referenced work remains intact; ownership and stale states stay honest.
 - Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, live multi-window walkthrough, and packaged preview evidence.
-- Blocked by: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5
+- Blocked by: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5, S4-F4-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

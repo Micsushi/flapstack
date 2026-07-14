@@ -44,6 +44,19 @@ tests do not substitute for live UI or packaged evidence.
       and show partial failures honestly.
 - [ ] **S4-MA05** Restart preserves queue, budgets, lineage, stop reason, and
       cancellation intent.
+- [ ] **S4-MA06** Engine selection resolves per-launch, project, global, then
+      `workflow` default; the stored engine snapshot cannot change mid-run and an
+      unsupported native mode never falls back silently.
+- [ ] **S4-MA07** A deterministic workflow runs parallel and dependent phases,
+      validates structured output, fails closed at required barriers, and resumes
+      from durable checkpoints without replaying completed workers.
+- [ ] **S4-MA08** Codex V2 preserves named task paths, selective context forks,
+      mailbox/follow-up/interrupt semantics, and reusable worker identity.
+- [ ] **S4-MA09** Codex V1 remains visibly legacy and preserves ID-based
+      spawn/send/wait/resume/close behavior without synthetic V2 features.
+- [ ] **S4-MA10** Reasoning/activity events preserve provider ordering,
+      provenance, indices, section breaks, and privacy; display, effort, subagent
+      progress, and hook diagnostics are independent controls.
 
 ## Saved Workspaces
 
@@ -57,6 +70,9 @@ tests do not substitute for live UI or packaged evidence.
       recovery is explicit.
 - [ ] **S4-WS05** Layout writes are crash-safe and invalid panes do not prevent
       the rest of a workspace from opening.
+- [ ] **S4-WS06** Starting an orchestration creates one operation workspace; all
+      descendant chats join its roster once, overflow stays bounded, restart
+      repairs the link without replay, and workspace deletion preserves work.
 
 ## Automation and Scheduler
 

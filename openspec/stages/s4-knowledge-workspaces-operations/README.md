@@ -17,7 +17,7 @@ Delivery order:
 10. [S4-F10 Cross-agent mobile companion](features/s4-f10-mobile-companion/README.md)
 
 All ten features are promoted into authoritative OpenSpec changes containing
-72 bounded tasks. Dependency waves and pickup rules live in
+77 bounded tasks. Dependency waves and pickup rules live in
 `docs/stage4-execution-plan.md`.
 
 Entry gate: Stage 3 implementation is merged, but Stage 4 implementation must

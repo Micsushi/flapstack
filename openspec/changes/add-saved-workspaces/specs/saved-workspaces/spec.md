@@ -11,6 +11,36 @@ changing the identity of referenced chats, runs, worktrees, or files.
 - **THEN** Flapstack creates one task-scoped workspace that references those
   objects and survives restart
 
+### Requirement: Orchestration-owned operation workspace
+
+Flapstack SHALL create or bind exactly one task-scoped saved workspace for every
+new orchestration and SHALL preserve a unique, restart-safe association without
+duplicating chat or run data.
+
+#### Scenario: Start a multi-agent orchestration
+
+- **WHEN** an orchestration is accepted from an initiating task chat
+- **THEN** Flapstack creates or binds one operation workspace containing the
+  initiating chat roster entry before descendant work is presented as running
+
+#### Scenario: Restart between orchestration and workspace creation
+
+- **WHEN** the app exits after one side of the association is durable
+- **THEN** reconciliation repairs the missing workspace/link without replaying
+  any orchestration or worker launch
+
+### Requirement: Dynamic operation roster
+
+Flapstack SHALL derive an operation workspace roster from durable orchestration
+lineage and SHALL make every materialized descendant chat reachable without
+forcing every chat to render concurrently.
+
+#### Scenario: Agent spawns a descendant
+
+- **WHEN** the descendant receives a durable chat ID
+- **THEN** it appears in the operation roster and can replace the selected-agent
+  pane while the four-chat display cap remains enforced
+
 ### Requirement: Versioned restorable pane layout
 
 Flapstack SHALL persist a versioned row/column/tab layout and restore valid panes
@@ -53,3 +83,9 @@ duplicate, archive, restore, and explicit delete without deleting referenced wor
 - **WHEN** Flapstack restarts after an interrupted layout write
 - **THEN** it restores the last valid version and reports recovery instead of
   opening corrupt or empty state
+
+#### Scenario: Delete an operation workspace
+
+- **WHEN** a user confirms deletion of workspace metadata
+- **THEN** the orchestration, chats, runs, worktrees, and usage remain intact and
+  the workspace can be regenerated from durable lineage
