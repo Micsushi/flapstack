@@ -41,7 +41,7 @@
 
 ### S4-F5-T4 — Add scoped file-change triggers
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Registered project/worktree changes create bounded coalesced occurrences.
 - Scope: Registered-root watcher, include/exclude globs, debounce/coalescing, symlink defense, watcher restart, generated/output ignore defaults.
