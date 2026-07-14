@@ -40,6 +40,7 @@ import { devMcpTestControlRouter } from "./dev-mcp-test-control"
 import { providerExtensionsRouter } from "./provider-extensions"
 import { providerCapabilitiesRouter } from "./provider-capabilities"
 import { credentialsRouter } from "./credentials"
+import { planSourcesRouter } from "./plan-sources"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 
@@ -92,6 +93,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     providerExtensions: providerExtensionsRouter,
     providerCapabilities: providerCapabilitiesRouter,
     credentials: credentialsRouter,
+    planSources: planSourcesRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),

@@ -38,6 +38,39 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   tasks: many(tasks),
   taskProposals: many(taskProposals),
   vault: one(projectVaults),
+  planSourceRegistrations: many(planSourceRegistrations),
+}))
+
+// OpenSpec is discovered from the registered project root. Only explicitly
+// selected Markdown needs durable configuration.
+export const planSourceRegistrations = sqliteTable(
+  "plan_source_registrations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull().default("markdown"),
+    relativePath: text("relative_path").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("plan_source_registrations_project_path_idx").on(
+      table.projectId,
+      table.relativePath,
+    ),
+    check("plan_source_registrations_type_check", sql`${table.sourceType} = 'markdown'`),
+  ],
+)
+
+export const planSourceRegistrationsRelations = relations(planSourceRegistrations, ({ one }) => ({
+  project: one(projects, {
+    fields: [planSourceRegistrations.projectId],
+    references: [projects.id],
+  }),
 }))
 
 // Project knowledge remains shared across every worktree for a project. Paths
