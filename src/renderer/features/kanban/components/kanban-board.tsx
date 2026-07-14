@@ -1,78 +1,59 @@
-import { memo, useMemo } from "react"
+import { memo, useMemo, useState } from "react"
 import { KanbanColumn } from "./kanban-column"
-import type { KanbanCardData } from "./kanban-card"
-import type { SubChatStatus } from "../lib/derive-status"
+import type { TaskKanbanCardData } from "./kanban-card"
+import { taskKanbanColumns, type TaskKanbanMoveTarget } from "../../../../shared/task-kanban"
+import type { TaskWorkflowStatus } from "../../../../shared/plan-kanban"
 
 interface KanbanBoardProps {
-  cards: KanbanCardData[]
-  pinnedChatIds: Set<string>
-  isMultiSelectMode: boolean
-  selectedChatIds: Set<string>
-  onCardClick: (card: KanbanCardData, e: React.MouseEvent) => void
-  onCheckboxClick: (e: React.MouseEvent, chatId: string) => void
-  onTogglePin: (chatId: string) => void
-  onRename: (chat: { id: string; name: string | null }) => void
-  onArchive: (chatId: string) => void
-  onCopyBranch: (branch: string) => void
-  onExportChat: (params: { chatId: string; format: "markdown" | "json" | "text" }) => void
-  onCopyChat: (params: { chatId: string; format: "markdown" | "json" | "text" }) => void
+  cards: TaskKanbanCardData[]
+  moveEnabled: boolean
+  onOpenTask: (card: TaskKanbanCardData) => void
+  onOpenChat: (card: TaskKanbanCardData) => void
+  onMove: (card: TaskKanbanCardData, target: TaskKanbanMoveTarget) => void
+  onArchive: (card: TaskKanbanCardData) => void
 }
-
-// 4 columns: drafts + workspace statuses
-const COLUMNS: { status: SubChatStatus; title: string }[] = [
-  { status: "draft", title: "Drafts" },
-  { status: "in-progress", title: "In Progress" },
-  { status: "needs-input", title: "Need Input" },
-  { status: "done", title: "Done" },
-]
 
 export const KanbanBoard = memo(function KanbanBoard({
   cards,
-  isMultiSelectMode,
-  onCardClick,
-  onCheckboxClick,
-  onTogglePin,
-  onRename,
+  moveEnabled,
+  onOpenTask,
+  onOpenChat,
+  onMove,
   onArchive,
-  onCopyBranch,
-  onExportChat,
-  onCopyChat,
 }: KanbanBoardProps) {
-  // Group cards by status
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
   const cardsByStatus = useMemo(() => {
-    const grouped: Record<SubChatStatus, KanbanCardData[]> = {
-      draft: [],
-      "in-progress": [],
-      "needs-input": [],
-      done: [],
-    }
-
-    for (const card of cards) {
-      grouped[card.status].push(card)
-    }
-
+    const grouped = new Map<TaskWorkflowStatus, TaskKanbanCardData[]>(
+      taskKanbanColumns.map((column) => [column.status, []]),
+    )
+    for (const card of cards) grouped.get(card.status)?.push(card)
     return grouped
   }, [cards])
 
+  const handleDrop = (status: TaskWorkflowStatus, beforeTaskId?: string) => {
+    const card = cards.find((item) => item.id === draggedTaskId)
+    setDraggedTaskId(null)
+    if (!card || card.id === beforeTaskId) return
+    onMove(card, { targetStatus: status, beforeTaskId })
+  }
+
   return (
-    <div className="h-full overflow-x-auto">
-      {/* Centered container with max-width */}
-      <div className="flex gap-3 h-full px-4 py-2 mx-auto max-w-5xl min-w-min">
-        {COLUMNS.map((column) => (
+    <div className="h-full overflow-x-auto" role="region" aria-label="Task Kanban board">
+      <div className="mx-auto flex h-full min-w-min max-w-[1500px] gap-3 px-4 py-2">
+        {taskKanbanColumns.map((column) => (
           <KanbanColumn
             key={column.status}
             title={column.title}
+            description={column.description}
             status={column.status}
-            cards={cardsByStatus[column.status]}
-            isMultiSelectMode={isMultiSelectMode}
-            onCardClick={onCardClick}
-            onCheckboxClick={onCheckboxClick}
-            onTogglePin={onTogglePin}
-            onRename={onRename}
+            cards={cardsByStatus.get(column.status) ?? []}
+            moveEnabled={moveEnabled}
+            onOpenTask={onOpenTask}
+            onOpenChat={onOpenChat}
+            onMove={onMove}
             onArchive={onArchive}
-            onCopyBranch={onCopyBranch}
-            onExportChat={onExportChat}
-            onCopyChat={onCopyChat}
+            onDragStart={setDraggedTaskId}
+            onDrop={handleDrop}
           />
         ))}
       </div>

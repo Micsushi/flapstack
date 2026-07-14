@@ -1,491 +1,259 @@
-import { useCallback, useMemo, useEffect, useRef, useState } from "react"
-import { useAtom, useAtomValue, useSetAtom } from "jotai"
+import { useCallback, useMemo, useState } from "react"
+import { useAtom, useSetAtom } from "jotai"
+import { AlertCircle, RefreshCw, Search } from "lucide-react"
 import { toast } from "sonner"
 import { trpc } from "../../lib/trpc"
-import { getWindowId } from "../../contexts/WindowContext"
 import {
-  selectedAgentChatIdAtom,
-  selectedDraftIdAtom,
-  showNewChatFormAtom,
-  loadingSubChatsAtom,
-  pendingUserQuestionsAtom,
-  pendingPlanApprovalsAtom,
-  agentsUnseenChangesAtom,
-  selectedProjectAtom,
   agentsSidebarOpenAtom,
+  selectedAgentChatIdAtom,
+  selectedChatScopeAtom,
+  selectedDraftIdAtom,
+  selectedProjectAtom,
+  showNewChatFormAtom,
 } from "../agents/atoms"
-import {
-  selectedAgentChatIdsAtom,
-  isAgentMultiSelectModeAtom,
-  toggleAgentChatSelectionAtom,
-} from "../../lib/atoms"
-import { KanbanBoard } from "./components/kanban-board"
-import type { KanbanCardData } from "./components/kanban-card"
-import { deriveWorkspaceStatus } from "./lib/derive-status"
-import { useNewChatDrafts } from "../agents/lib/drafts"
-import { exportChat, copyChat } from "../agents/lib/export-chat"
-import { AgentsRenameSubChatDialog } from "../agents/components/agents-rename-subchat-dialog"
-import { ConfirmArchiveDialog } from "../../components/confirm-archive-dialog"
 import { AgentsHeaderControls } from "../agents/ui/agents-header-controls"
-
-// Event for open sub-chats changes
-const OPEN_SUB_CHATS_CHANGE_EVENT = "open-sub-chats-change"
+import { KanbanBoard } from "./components/kanban-board"
+import type { TaskKanbanCardData } from "./components/kanban-card"
+import {
+  selectTaskKanbanCards,
+  type TaskKanbanChatFilter,
+  type TaskKanbanMoveTarget,
+  type TaskKanbanSort,
+} from "../../../shared/task-kanban"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select"
+import { Button } from "../../components/ui/button"
 
 export function KanbanView() {
+  const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
+  const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
+  const setSelectedChatScope = useSetAtom(selectedChatScopeAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
-
-  // Sidebar state for header controls
-  const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
-
-  // Multi-select state
-  const [selectedChatIds] = useAtom(selectedAgentChatIdsAtom)
-  const isMultiSelectMode = useAtomValue(isAgentMultiSelectModeAtom)
-  const toggleChatSelection = useSetAtom(toggleAgentChatSelectionAtom)
-
-  // Status atoms
-  const loadingSubChats = useAtomValue(loadingSubChatsAtom)
-  const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
-  const pendingPlanApprovals = useAtomValue(pendingPlanApprovalsAtom)
-  const unseenChanges = useAtomValue(agentsUnseenChangesAtom)
-
-  // Project for pinned chats storage
-  const [selectedProject] = useAtom(selectedProjectAtom)
-
-  // Pinned chats (stored in localStorage per project)
-  const [pinnedChatIds, setPinnedChatIds] = useState<Set<string>>(new Set())
-
-  // Rename dialog state
-  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
-  const [renamingChat, setRenamingChat] = useState<{ id: string; name: string | null } | null>(null)
-
-  // Archive confirmation dialog state
-  const [confirmArchiveDialogOpen, setConfirmArchiveDialogOpen] = useState(false)
-  const [archivingChatId, setArchivingChatId] = useState<string | null>(null)
-  const [activeProcessCount, setActiveProcessCount] = useState(0)
-
-  // tRPC utils
+  const [projectId, setProjectId] = useState(selectedProject?.id ?? "all")
+  const [search, setSearch] = useState("")
+  const [chatFilter, setChatFilter] = useState<TaskKanbanChatFilter>("all")
+  const [sort, setSort] = useState<TaskKanbanSort>("board")
   const utils = trpc.useUtils()
 
-  // Load pinned IDs from localStorage when project changes
-  useEffect(() => {
-    if (!selectedProject?.id) {
-      setPinnedChatIds(new Set())
-      return
-    }
-    try {
-      const windowId = getWindowId()
-      const stored = localStorage.getItem(`${windowId}:agent-pinned-chats-${selectedProject.id}`)
-      setPinnedChatIds(stored ? new Set(JSON.parse(stored)) : new Set())
-    } catch {
-      setPinnedChatIds(new Set())
-    }
-  }, [selectedProject?.id])
-
-  // Save pinned IDs to localStorage when they change
-  const prevPinnedRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    if (!selectedProject?.id) return
-    if (
-      (pinnedChatIds !== prevPinnedRef.current && pinnedChatIds.size > 0) ||
-      prevPinnedRef.current.size > 0
-    ) {
-      const windowId = getWindowId()
-      localStorage.setItem(
-        `${windowId}:agent-pinned-chats-${selectedProject.id}`,
-        JSON.stringify([...pinnedChatIds]),
-      )
-    }
-    prevPinnedRef.current = pinnedChatIds
-  }, [pinnedChatIds, selectedProject?.id])
-
-  // Toggle pin handler
-  const handleTogglePin = useCallback((chatId: string) => {
-    setPinnedChatIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(chatId)) {
-        next.delete(chatId)
-      } else {
-        next.add(chatId)
-      }
-      return next
-    })
-  }, [])
-
-  // Drafts from localStorage
-  const drafts = useNewChatDrafts()
-
-  // Fetch all chats (workspaces)
-  const { data: chats } = trpc.chats.list.useQuery({})
-
-  // Fetch projects for metadata
-  const { data: projects } = trpc.projects.list.useQuery()
-
-  // Create projects map
-  type Project = NonNullable<typeof projects>[number]
-  const projectsMap = useMemo(() => {
-    if (!projects) return new Map<string, Project>()
-    return new Map(projects.map((p) => [p.id, p]))
-  }, [projects])
-
-  // Track open sub-chat changes for reactivity
-  const [openSubChatsVersion, setOpenSubChatsVersion] = useState(0)
-  useEffect(() => {
-    const handleChange = () => setOpenSubChatsVersion((v) => v + 1)
-    window.addEventListener(OPEN_SUB_CHATS_CHANGE_EVENT, handleChange)
-    return () => window.removeEventListener(OPEN_SUB_CHATS_CHANGE_EVENT, handleChange)
-  }, [])
-
-  // Store previous value to avoid unnecessary React Query refetches
-  const prevOpenSubChatIdsRef = useRef<string[]>([])
-
-  // Collect all open sub-chat IDs from localStorage for all workspaces
-  const allOpenSubChatIds = useMemo(() => {
-    void openSubChatsVersion
-    if (!chats) return prevOpenSubChatIdsRef.current
-
-    const windowId = getWindowId()
-    const allIds: string[] = []
-    for (const chat of chats) {
-      try {
-        const stored = localStorage.getItem(`${windowId}:agent-open-sub-chats-${chat.id}`)
-        if (stored) {
-          const ids = JSON.parse(stored) as string[]
-          allIds.push(...ids)
-        }
-      } catch {
-        // Skip invalid JSON
-      }
-    }
-
-    const prev = prevOpenSubChatIdsRef.current
-    const sorted = [...allIds].sort()
-    const prevSorted = [...prev].sort()
-    if (sorted.length === prevSorted.length && sorted.every((id, i) => id === prevSorted[i])) {
-      return prev
-    }
-
-    prevOpenSubChatIdsRef.current = allIds
-    return allIds
-  }, [chats, openSubChatsVersion])
-
-  // Pending plan approvals from DB
-  const { data: pendingPlanApprovalsData } = trpc.chats.getPendingPlanApprovals.useQuery(
-    { openSubChatIds: allOpenSubChatIds },
-    {
-      refetchInterval: 5000,
-      enabled: allOpenSubChatIds.length > 0,
-      placeholderData: (prev) => prev,
-    },
+  const projectsQuery = trpc.projects.list.useQuery()
+  const boardQuery = trpc.tasks.board.useQuery(
+    { projectId: projectId === "all" ? undefined : projectId, includeArchived: false },
+    { placeholderData: (previous) => previous, refetchInterval: 5_000 },
   )
-
-  // File stats from DB
-  const { data: fileStatsData } = trpc.chats.getFileStats.useQuery(
-    { openSubChatIds: allOpenSubChatIds },
-    {
-      refetchInterval: 5000,
-      enabled: allOpenSubChatIds.length > 0,
-      placeholderData: (prev) => prev,
-    },
+  const cards = useMemo(
+    () =>
+      selectTaskKanbanCards(boardQuery.data ?? [], {
+        search,
+        chatFilter,
+        sort,
+      }),
+    [boardQuery.data, chatFilter, search, sort],
   )
+  const moveEnabled = sort === "board" && chatFilter === "all" && search.trim() === ""
 
-  // Build set of chatIds with pending plan approvals from DB
-  const workspacesWithPendingApprovalsFromDb = useMemo(() => {
-    const set = new Set<string>()
-    if (pendingPlanApprovalsData) {
-      for (const item of pendingPlanApprovalsData) {
-        set.add(item.chatId)
-      }
-    }
-    return set
-  }, [pendingPlanApprovalsData])
+  const refreshBoard = useCallback(() => utils.tasks.board.invalidate(), [utils.tasks.board])
+  const moveMutation = trpc.tasks.moveCard.useMutation({
+    onSuccess: async () => {
+      await Promise.all([utils.tasks.board.invalidate(), utils.tasks.list.invalidate()])
+    },
+    onError: async (error) => {
+      await refreshBoard()
+      toast.error(error.message || "Task move failed. Board refreshed.")
+    },
+  })
+  const archiveMutation = trpc.tasks.archiveCard.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.tasks.board.invalidate(),
+        utils.tasks.list.invalidate(),
+        utils.tasks.listArchived.invalidate(),
+      ])
+      toast.success("Task archived")
+    },
+    onError: async (error) => {
+      await refreshBoard()
+      toast.error(error.message || "Task archive failed. Board refreshed.")
+    },
+  })
 
-  // Build set of chatIds with pending plan approvals from runtime atom
-  const workspacesWithPendingApprovals = useMemo(() => {
-    const set = new Set<string>(workspacesWithPendingApprovalsFromDb)
-    // Add from runtime atom (parentChatId is the workspace id)
-    pendingPlanApprovals.forEach((parentChatId) => {
-      set.add(parentChatId)
-    })
-    return set
-  }, [workspacesWithPendingApprovalsFromDb, pendingPlanApprovals])
-
-  // Build file stats map (chatId -> stats)
-  const workspaceFileStats = useMemo(() => {
-    const statsMap = new Map<string, { fileCount: number; additions: number; deletions: number }>()
-    if (fileStatsData) {
-      for (const stat of fileStatsData) {
-        statsMap.set(stat.chatId, {
-          fileCount: stat.fileCount,
-          additions: stat.additions,
-          deletions: stat.deletions,
-        })
-      }
-    }
-    return statsMap
-  }, [fileStatsData])
-
-  // Build set of chatIds with pending questions
-  const workspacesWithPendingQuestions = useMemo(() => {
-    const set = new Set<string>()
-    pendingQuestions.forEach((q) => {
-      set.add(q.parentChatId)
-    })
-    return set
-  }, [pendingQuestions])
-
-  // Build set of chatIds (workspace IDs) that are loading
-  // loadingSubChats is Map<subChatId, parentChatId>, we need the VALUES (parentChatId)
-  const workspacesLoading = useMemo(() => new Set([...loadingSubChats.values()]), [loadingSubChats])
-
-  // Build kanban cards from workspaces (chats) + drafts
-  const cards = useMemo(() => {
-    const result: KanbanCardData[] = []
-
-    // Add drafts first (they go to "draft" column)
-    for (const draft of drafts) {
-      result.push({
-        id: draft.id,
-        name: draft.text.slice(0, 50) + (draft.text.length > 50 ? "..." : ""),
-        chatId: draft.id, // Use draft id as chatId for navigation
-        chatName: null,
-        projectName: draft.project?.gitRepo || draft.project?.name || null,
-        branch: null,
-        mode: "agent",
-        status: "draft",
-        hasUnseenChanges: false,
-        hasPendingPlan: false,
-        hasPendingQuestion: false,
-        createdAt: new Date(draft.updatedAt),
-        updatedAt: new Date(draft.updatedAt),
-        isDraft: true,
-        isPinned: false,
-        isSelected: false,
+  const selectTask = useCallback(
+    (card: TaskKanbanCardData, chatId: string | null) => {
+      setSelectedProject({
+        id: card.project.id,
+        name: card.project.name,
+        path: card.project.path,
+        gitRemoteUrl: card.project.gitRemoteUrl,
+        gitProvider: card.project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+        gitOwner: card.project.gitOwner,
+        gitRepo: card.project.gitRepo,
       })
-    }
-
-    // Add workspaces
-    if (chats) {
-      for (const chat of chats) {
-        const project = chat.projectId ? projectsMap.get(chat.projectId) : undefined
-
-        const status = deriveWorkspaceStatus(chat.id, {
-          workspacesLoading,
-          workspacesWithPendingQuestions,
-          workspacesWithPendingApprovals,
-        })
-
-        result.push({
-          id: chat.id,
-          name: chat.name,
-          chatId: chat.id,
-          chatName: chat.name,
-          projectName: project?.gitRepo || project?.name || null,
-          branch: chat.branch,
-          mode: "agent",
-          status,
-          hasUnseenChanges: unseenChanges.has(chat.id),
-          hasPendingPlan: workspacesWithPendingApprovals.has(chat.id),
-          hasPendingQuestion: workspacesWithPendingQuestions.has(chat.id),
-          createdAt: new Date(chat.createdAt || Date.now()),
-          updatedAt: chat.updatedAt ? new Date(chat.updatedAt) : null,
-          isDraft: false,
-          stats: workspaceFileStats.get(chat.id),
-          isPinned: pinnedChatIds.has(chat.id),
-          isSelected: selectedChatIds.has(chat.id),
-        })
-      }
-    }
-
-    return result
-  }, [
-    chats,
-    drafts,
-    projectsMap,
-    workspacesLoading,
-    workspacesWithPendingQuestions,
-    workspacesWithPendingApprovals,
-    unseenChanges,
-    workspaceFileStats,
-    pinnedChatIds,
-    selectedChatIds,
-  ])
-
-  // Navigation on card click
-  const handleCardClick = useCallback(
-    (card: KanbanCardData, e?: React.MouseEvent) => {
-      // In multi-select mode with shift/cmd, toggle selection instead of navigating
-      if (isMultiSelectMode || e?.shiftKey || e?.metaKey) {
-        if (!card.isDraft) {
-          toggleChatSelection(card.chatId)
-        }
-        return
-      }
-
-      if (card.isDraft) {
-        // Navigate to NewChatForm with this draft selected
-        setSelectedChatId(null)
-        setSelectedDraftId(card.id)
-        setShowNewChatForm(false) // Clear explicit new form state
-      } else {
-        // Navigate to workspace
-        setSelectedChatId(card.chatId)
-        setShowNewChatForm(false) // Clear explicit new form state
-      }
+      setSelectedChatScope({
+        type: "task",
+        id: card.id,
+        name: card.name,
+        projectId: card.projectId,
+        projectName: card.project.name,
+      })
+      setSelectedDraftId(null)
+      setSelectedChatId(chatId)
+      setShowNewChatForm(false)
     },
     [
       setSelectedChatId,
+      setSelectedChatScope,
       setSelectedDraftId,
+      setSelectedProject,
       setShowNewChatForm,
-      isMultiSelectMode,
-      toggleChatSelection,
     ],
   )
 
-  // Checkbox click handler for multi-select
-  const handleCheckboxClick = useCallback(
-    (e: React.MouseEvent, chatId: string) => {
-      e.stopPropagation()
-      toggleChatSelection(chatId)
+  const handleMove = useCallback(
+    (card: TaskKanbanCardData, target: TaskKanbanMoveTarget) => {
+      moveMutation.mutate({
+        id: card.id,
+        expectedVersion: card.version,
+        targetStatus: target.targetStatus,
+        beforeTaskId: target.beforeTaskId,
+      })
     },
-    [toggleChatSelection],
+    [moveMutation],
   )
 
-  // Rename mutation
-  const renameChatMutation = trpc.chats.rename.useMutation({
-    onSuccess: () => {
-      utils.chats.list.invalidate()
-    },
-    onError: () => {
-      toast.error("Failed to rename workspace")
-    },
-  })
-
-  // Rename handler
-  const handleRenameClick = useCallback((chat: { id: string; name: string | null }) => {
-    setRenamingChat(chat)
-    setRenameDialogOpen(true)
-  }, [])
-
-  const handleRenameSave = async (newName: string) => {
-    if (!renamingChat) return
-    await renameChatMutation.mutateAsync({ id: renamingChat.id, name: newName })
-    setRenameDialogOpen(false)
-    setRenamingChat(null)
+  if (boardQuery.isError && !boardQuery.data) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <AlertCircle className="h-8 w-8 text-destructive" aria-hidden="true" />
+        <div>
+          <h1 className="font-medium">Task board unavailable</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{boardQuery.error.message}</p>
+        </div>
+        <Button type="button" variant="outline" onClick={() => boardQuery.refetch()}>
+          Retry
+        </Button>
+      </div>
+    )
   }
 
-  // Archive mutation
-  const archiveChatMutation = trpc.chats.archive.useMutation({
-    onSuccess: () => {
-      utils.chats.list.invalidate()
-      toast.success("Workspace archived")
-    },
-    onError: () => {
-      toast.error("Failed to archive workspace")
-    },
-  })
-
-  // Archive handler with confirmation for active processes
-  const handleArchive = useCallback(
-    async (chatId: string) => {
-      // Check for active processes. Worktrees stay intact when archiving.
-      const chat = chats?.find((c) => c.id === chatId)
-      const isLocalMode = !chat?.branch
-      const sessionCount = isLocalMode
-        ? 0
-        : await utils.terminal.getActiveSessionCount.fetch({ workspaceId: chatId })
-
-      const needsConfirmation = sessionCount > 0
-
-      if (needsConfirmation) {
-        setArchivingChatId(chatId)
-        setActiveProcessCount(sessionCount)
-        setConfirmArchiveDialogOpen(true)
-      } else {
-        await archiveChatMutation.mutateAsync({ id: chatId })
-      }
-    },
-    [utils, archiveChatMutation, chats],
-  )
-
-  const handleConfirmArchive = useCallback(async () => {
-    if (!archivingChatId) return
-    await archiveChatMutation.mutateAsync({ id: archivingChatId })
-    setConfirmArchiveDialogOpen(false)
-    setArchivingChatId(null)
-  }, [archivingChatId, archiveChatMutation])
-
-  const handleCancelArchive = useCallback(() => {
-    setConfirmArchiveDialogOpen(false)
-    setArchivingChatId(null)
-  }, [])
-
-  // Copy branch name to clipboard
-  const handleCopyBranch = useCallback((branch: string) => {
-    navigator.clipboard.writeText(branch)
-    toast.success("Branch name copied", { description: branch })
-  }, [])
-
-  // Export chat handler
-  const handleExportChat = useCallback(
-    (params: { chatId: string; format: "markdown" | "json" | "text" }) => {
-      exportChat(params)
-    },
-    [],
-  )
-
-  // Copy chat handler
-  const handleCopyChat = useCallback(
-    (params: { chatId: string; format: "markdown" | "json" | "text" }) => {
-      copyChat(params)
-    },
-    [],
-  )
-
   return (
-    <div className="flex flex-col h-full w-full bg-background">
-      {/* Header with sidebar toggle */}
-      <div className="flex-shrink-0 flex items-center p-1.5">
+    <div className="flex h-full w-full flex-col bg-background">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 p-2">
         <AgentsHeaderControls
           isSidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+          onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
+        <div>
+          <h1 className="text-sm font-semibold">Tasks</h1>
+          <p className="text-[11px] text-muted-foreground">Durable project work</p>
+        </div>
+        <div className="relative ml-auto min-w-[180px] flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Filter tasks"
+            aria-label="Filter task cards"
+            className="h-8 w-full rounded-md border border-input bg-background pl-7 pr-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+        <Select value={projectId} onValueChange={setProjectId}>
+          <SelectTrigger className="h-8 w-[150px] text-xs" aria-label="Filter by project">
+            <SelectValue placeholder="All projects" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All projects</SelectItem>
+            {(projectsQuery.data ?? []).map((project) => (
+              <SelectItem key={project.id} value={project.id}>
+                {project.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={chatFilter}
+          onValueChange={(value) => setChatFilter(value as TaskKanbanChatFilter)}
+        >
+          <SelectTrigger className="h-8 w-[140px] text-xs" aria-label="Filter by task activity">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All tasks</SelectItem>
+            <SelectItem value="with-chats">With chats</SelectItem>
+            <SelectItem value="without-chats">Without chats</SelectItem>
+            <SelectItem value="running">Running now</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sort} onValueChange={(value) => setSort(value as TaskKanbanSort)}>
+          <SelectTrigger className="h-8 w-[125px] text-xs" aria-label="Order task cards">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="board">Board order</SelectItem>
+            <SelectItem value="updated">Recently updated</SelectItem>
+            <SelectItem value="name">Task name</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => boardQuery.refetch()}
+          aria-label="Refresh task board"
+        >
+          <RefreshCw
+            className={boardQuery.isFetching ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"}
+          />
+        </Button>
+      </header>
+
+      <div className="min-h-6 px-4 py-1 text-[11px] text-muted-foreground" aria-live="polite">
+        {boardQuery.isError && boardQuery.data
+          ? "Refresh failed. Showing the last task board."
+          : boardQuery.isFetching && boardQuery.data
+            ? "Refreshing task board…"
+            : !moveEnabled
+              ? "Choose Board order with no search or activity filter to move cards."
+              : "Drag cards, or focus one and use Alt plus arrow keys to move it."}
       </div>
 
-      {/* Board */}
-      <div className="flex-1 overflow-hidden">
-        <KanbanBoard
-          cards={cards}
-          pinnedChatIds={pinnedChatIds}
-          isMultiSelectMode={isMultiSelectMode}
-          selectedChatIds={selectedChatIds}
-          onCardClick={handleCardClick}
-          onCheckboxClick={handleCheckboxClick}
-          onTogglePin={handleTogglePin}
-          onRename={handleRenameClick}
-          onArchive={handleArchive}
-          onCopyBranch={handleCopyBranch}
-          onExportChat={handleExportChat}
-          onCopyChat={handleCopyChat}
-        />
-      </div>
-
-      {/* Rename Dialog */}
-      <AgentsRenameSubChatDialog
-        isOpen={renameDialogOpen}
-        onClose={() => setRenameDialogOpen(false)}
-        currentName={renamingChat?.name || ""}
-        onSave={handleRenameSave}
-      />
-
-      {/* Archive Confirmation Dialog */}
-      <ConfirmArchiveDialog
-        isOpen={confirmArchiveDialogOpen}
-        onClose={handleCancelArchive}
-        onConfirm={handleConfirmArchive}
-        activeProcessCount={activeProcessCount}
-      />
+      <main className="flex-1 overflow-hidden">
+        {(boardQuery.data?.length ?? 0) === 0 ? (
+          <div className="flex h-full items-center justify-center p-8 text-center">
+            <div>
+              <h2 className="text-sm font-medium">No task cards</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Create a task under a project. Chats alone do not become cards.
+              </p>
+            </div>
+          </div>
+        ) : cards.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-8 text-center">
+            <div>
+              <h2 className="text-sm font-medium">No tasks match these filters</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Clear search or selectors.</p>
+            </div>
+          </div>
+        ) : (
+          <KanbanBoard
+            cards={cards}
+            moveEnabled={moveEnabled && !moveMutation.isPending}
+            onOpenTask={(card) => selectTask(card, null)}
+            onOpenChat={(card) => selectTask(card, card.chats.latestId)}
+            onMove={handleMove}
+            onArchive={(card) =>
+              archiveMutation.mutate({ id: card.id, expectedVersion: card.version })
+            }
+          />
+        )}
+      </main>
     </div>
   )
 }

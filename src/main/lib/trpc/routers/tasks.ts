@@ -11,6 +11,13 @@ import {
   type CustomPermissionToggles,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
+import { TRPCError } from "@trpc/server"
+import {
+  archiveTaskKanbanCard,
+  listTaskKanban,
+  moveTaskKanbanCard,
+  TaskKanbanError,
+} from "../../task-kanban"
 import {
   assertTaskStatusTransition,
   taskWorkflowStatusSchema,
@@ -63,6 +70,48 @@ export async function ensureTaskPrimaryWorktree(taskId: string) {
 }
 
 export const tasksRouter = router({
+  board: publicProcedure
+    .input(
+      z.object({ projectId: z.string().optional(), includeArchived: z.boolean().default(false) }),
+    )
+    .query(({ input }) => listTaskKanban(getDatabase(), input)),
+
+  moveCard: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        expectedVersion: z.number().int().positive(),
+        targetStatus: taskWorkflowStatusSchema,
+        beforeTaskId: z.string().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      try {
+        return moveTaskKanbanCard(getDatabase(), input)
+      } catch (error) {
+        if (error instanceof TaskKanbanError) {
+          throw new TRPCError({
+            code: error.code === "not-found" ? "NOT_FOUND" : "CONFLICT",
+            message: error.message,
+          })
+        }
+        throw error
+      }
+    }),
+
+  archiveCard: publicProcedure
+    .input(z.object({ id: z.string(), expectedVersion: z.number().int().positive() }))
+    .mutation(({ input }) => {
+      try {
+        return archiveTaskKanbanCard(getDatabase(), input)
+      } catch (error) {
+        if (error instanceof TaskKanbanError) {
+          throw new TRPCError({ code: "CONFLICT", message: error.message })
+        }
+        throw error
+      }
+    }),
+
   create: publicProcedure
     .input(
       z.object({
