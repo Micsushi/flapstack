@@ -20,6 +20,7 @@ import {
   type OrchestrationUsageUpdate,
 } from "../../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
+import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
 
 type Row = Record<string, unknown>
@@ -85,7 +86,7 @@ export function createAgentOrchestrationService(databasePath: string) {
               "The selected task already has an orchestration.",
             )
           }
-          const now = Date.now()
+          const now = nowEpochSeconds()
           const initialStatus = options.deferScheduling ? "paused" : "queued"
           db.prepare(
             `INSERT INTO task_orchestrations (
@@ -195,7 +196,7 @@ export function createAgentOrchestrationService(databasePath: string) {
               "Completed agents cannot be replaced or duplicated.",
             )
           }
-          const now = Date.now()
+          const now = nowEpochSeconds()
           if (!TERMINAL_AGENT_STATUSES.has(String(source.status))) {
             db.prepare(
               `UPDATE orchestration_agents SET status = 'stopped', stop_reason = 'replaced',
@@ -239,12 +240,12 @@ export function createAgentOrchestrationService(databasePath: string) {
             }
             db.prepare(
               "UPDATE task_orchestrations SET status = 'paused', updated_at = ? WHERE task_id = ?",
-            ).run(Date.now(), taskId)
+            ).run(nowEpochSeconds(), taskId)
           } else if (action === "resume") {
             if (current !== "paused") {
               throw new AgentOrchestrationError("conflict", "Only paused orchestration can resume.")
             }
-            const now = Date.now()
+            const now = nowEpochSeconds()
             db.prepare(
               `UPDATE task_orchestrations
                SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
@@ -341,7 +342,7 @@ export function createAgentOrchestrationService(databasePath: string) {
           )
         }
         const archive = db.transaction(() => {
-          const now = Date.now()
+          const now = nowEpochSeconds()
           const chats = db
             .prepare(
               "UPDATE chats SET archived_at = ?, updated_at = ? WHERE task_id = ? AND archived_at IS NULL",
@@ -396,7 +397,7 @@ export function createAgentOrchestrationService(databasePath: string) {
                SET lease_owner = 'cancellation-consumed', lease_expires_at = NULL, updated_at = ?
                WHERE run_id = ? AND status = 'stopped' AND lease_owner IS NULL`,
             )
-            .run(Date.now(), runId).changes === 1
+            .run(nowEpochSeconds(), runId).changes === 1
         )
       } finally {
         db.close()
@@ -446,6 +447,7 @@ function createOrAttachTask(db: Sqlite, input: CreateOrchestrationInput): string
     taskId = input.task.taskId
   } else {
     taskId = randomUUID()
+    const now = nowEpochSeconds()
     db.prepare(
       `INSERT INTO tasks (
         id, project_id, name, default_permission_mode, default_custom_permissions, created_at, updated_at
@@ -456,8 +458,8 @@ function createOrAttachTask(db: Sqlite, input: CreateOrchestrationInput): string
       input.task.name,
       project.default_permission_mode,
       project.default_custom_permissions ?? null,
-      Date.now(),
-      Date.now(),
+      now,
+      now,
     )
   }
   const conflictingDescendant = db
@@ -489,7 +491,7 @@ function createOrAttachTask(db: Sqlite, input: CreateOrchestrationInput): string
     )
     UPDATE chats SET task_id = ?, scope = 'task', updated_at = ?
     WHERE id IN (SELECT id FROM descendants) AND project_id = ?`,
-  ).run(input.initiatingChatId, taskId, Date.now(), input.projectId)
+  ).run(input.initiatingChatId, taskId, nowEpochSeconds(), input.projectId)
   return taskId
 }
 
@@ -620,7 +622,7 @@ function addAgent(
   if (ancestors.includes(id) || dependencies.includes(id)) {
     throw new AgentOrchestrationError("forbidden-loop", "Agent lineage would contain itself.")
   }
-  const now = Date.now()
+  const now = nowEpochSeconds()
   insertAgent(db, {
     id,
     taskId: input.taskId,
@@ -676,7 +678,7 @@ function reportProgress(db: Sqlite, input: OrchestrationUsageUpdate): void {
   const terminal = input.status && input.status !== "active"
   const nextStatus = input.status ?? String(current.status)
   const blockerIncrement = input.blocked && Number(current.blocker_count) === 0 ? 1 : 0
-  const now = Date.now()
+  const now = nowEpochSeconds()
   db.prepare(
     `UPDATE orchestration_agents SET
       progress_percent = ?, input_tokens = ?, output_tokens = ?, reasoning_tokens = ?,
@@ -731,7 +733,7 @@ function tickTask(db: Sqlite, taskId: string): void {
       return
     }
     if (String(orchestration.status) === "paused") return
-    const now = Date.now()
+    const now = nowEpochSeconds()
     if (String(orchestration.status) === "queued") {
       db.prepare(
         "UPDATE task_orchestrations SET status = 'running', started_at = ?, updated_at = ? WHERE task_id = ?",
@@ -790,10 +792,11 @@ function reconcileRunOutcomes(db: Sqlite, taskId: string): void {
         : row.run_status === "cancelled"
           ? "stopped"
           : "failed"
+    const now = nowEpochSeconds()
     db.prepare(
       `UPDATE orchestration_agents SET status = ?, progress_percent = CASE WHEN ? = 'completed' THEN 100 ELSE progress_percent END,
        completed_at = COALESCE(?, ?), updated_at = ? WHERE id = ? AND status = 'active'`,
-    ).run(status, status, row.completed_at ?? null, Date.now(), Date.now(), row.id)
+    ).run(status, status, row.completed_at ?? null, now, now, row.id)
   }
   persistMessageUsageSamples(db, taskId)
   const usageRows = db
@@ -870,11 +873,11 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
         attribution_chat_id, attribution_chat_name,
         attribution_automation_id, attribution_automation_name,
         attribution_orchestration_id, attribution_orchestration_name,
-        attribution_run_id, source_class, dedupe_strategy, raw_payload, dedupe_key
+        attribution_run_id, source_class, dedupe_strategy, raw_payload, dedupe_key, created_at
       ) VALUES (
         ?, ?, 'flapstack-run', ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        'flapstack-run', 'exact-fact', ?, ?
+        'flapstack-run', 'exact-fact', ?, ?, ?
       )
       ON CONFLICT(dedupe_key) DO UPDATE SET
         captured_at = excluded.captured_at,
@@ -895,7 +898,7 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       randomUUID(),
       providerId,
       costQuality,
-      Date.now(),
+      nowEpochSeconds(),
       usage.inputTokens,
       usage.outputTokens,
       usage.reasoningTokens,
@@ -918,6 +921,7 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       attribution.runId,
       JSON.stringify({ origin: "persisted-message-metadata" }),
       dedupeKey,
+      nowEpochSeconds(),
     )
   }
 }
@@ -995,7 +999,7 @@ function stopDecision(
   if (
     stop.maxWallClockMs &&
     orchestration.started_at &&
-    Date.now() - Number(orchestration.started_at) >= stop.maxWallClockMs
+    Date.now() - Number(orchestration.started_at) * 1_000 >= stop.maxWallClockMs
   ) {
     return { status: "stopped", reason: "wall-clock-budget" }
   }
@@ -1035,7 +1039,7 @@ function stopTask(
   reason: string,
   status: "completed" | "failed" | "stopped",
 ): void {
-  const now = Date.now()
+  const now = nowEpochSeconds()
   const terminalAgentStatus =
     status === "completed" ? "stopped" : status === "failed" ? "stopped" : "stopped"
   db.prepare(
@@ -1099,7 +1103,7 @@ function failUnrecoverableDependencies(db: Sqlite, taskId: string): void {
       if (!failedDependency) continue
       const dependencyId = String(failedDependency.id)
       const dependencyStatus = String(failedDependency.status)
-      const now = Date.now()
+      const now = nowEpochSeconds()
       const result = db
         .prepare(
           `UPDATE orchestration_agents
@@ -1142,6 +1146,7 @@ function recoverDependents(
       )
       const definition = parseDefinition(dependent.definition)
       const dependencyFailure = String(dependent.stop_reason ?? "").startsWith("dependency-")
+      const now = nowEpochSeconds()
       db.prepare(
         `UPDATE orchestration_agents SET dependency_agent_ids = ?, definition = ?,
           status = CASE WHEN ? THEN 'queued' ELSE status END,
@@ -1159,8 +1164,8 @@ function recoverDependents(
         dependencyFailure ? 1 : 0,
         dependencyFailure ? 1 : 0,
         dependencyFailure ? 1 : 0,
-        Date.now(),
-        Date.now(),
+        now,
+        now,
         dependent.id,
         taskId,
       )
@@ -1177,7 +1182,7 @@ function reopenTaskForRecovery(db: Sqlite, taskId: string): void {
        completed_at = CASE WHEN status IN ('completed','failed','stopped') THEN NULL ELSE completed_at END,
        updated_at = ?
      WHERE task_id = ?`,
-  ).run(Date.now(), taskId)
+  ).run(nowEpochSeconds(), taskId)
 }
 
 function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
@@ -1212,7 +1217,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   const chatId = randomUUID()
   const subChatId = randomUUID()
   const runId = randomUUID()
-  const now = Date.now()
+  const now = nowEpochSeconds()
   const promptMessageId = `mcp-orchestration-${agent.id}`
   const prompt = [
     definition.prompt,
@@ -1458,9 +1463,9 @@ function toTaskDto(row: Row, task: Row): OrchestrationTaskDto {
     maxDepth: Number(row.max_depth),
     stopConditions: parseStopConditions(row.stop_conditions),
     stopReason: stringOrNull(row.stop_reason),
-    createdAt: Number(row.created_at),
-    startedAt: numberOrNull(row.started_at),
-    completedAt: numberOrNull(row.completed_at),
+    createdAt: epochSecondsToMilliseconds(row.created_at) ?? 0,
+    startedAt: epochSecondsToMilliseconds(row.started_at),
+    completedAt: epochSecondsToMilliseconds(row.completed_at),
   }
 }
 
@@ -1485,9 +1490,9 @@ function toAgentDto(row: Row): OrchestrationAgentDto {
     resultSummary: stringOrNull(row.result_summary),
     stopReason: stringOrNull(row.stop_reason),
     blockerCount: Number(row.blocker_count),
-    queuedAt: Number(row.queued_at),
-    startedAt: numberOrNull(row.started_at),
-    completedAt: numberOrNull(row.completed_at),
+    queuedAt: epochSecondsToMilliseconds(row.queued_at) ?? 0,
+    startedAt: epochSecondsToMilliseconds(row.started_at),
+    completedAt: epochSecondsToMilliseconds(row.completed_at),
   }
 }
 

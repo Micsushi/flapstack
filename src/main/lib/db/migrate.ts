@@ -7,6 +7,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 const STAGE3_MIGRATION_TAG = "0017_third_molecule_man"
 const VOICE_ARTIFACT_MIGRATION_TAG = "0010_voice_artifacts"
 const INITIAL_PROMPT_MIGRATION_TAG = "0020_silky_sphinx"
+const STAGE3_TIMESTAMP_MIGRATION_TAG = "0023_stage3_timestamp_seconds"
 
 type Journal = {
   entries: Array<{ tag: string; when: number }>
@@ -31,6 +32,7 @@ export function migrateDatabase(
   try {
     normalizeLegacyStage3Migration(sqlite, migrationsFolder)
     normalizeInitialPromptMigration(sqlite, migrationsFolder)
+    normalizeStage3TimestampMigration(sqlite, migrationsFolder)
     migrate(database, { migrationsFolder })
     recoverLegacyQueuedRunPrompts(sqlite)
   } finally {
@@ -41,6 +43,31 @@ export function migrateDatabase(
   if (violations.length > 0) {
     throw new Error(`Database migration left ${violations.length} foreign key violation(s).`)
   }
+}
+
+/**
+ * Stage 4 briefly shipped a different 0023 migration with a later timestamp.
+ * Those profiles are already past the canonical Stage 3 0023 entry, so Drizzle
+ * would skip its epoch-second repair. Apply and record the canonical migration
+ * once before continuing with the stable Stage 4 0024-0030 chain.
+ */
+export function normalizeStage3TimestampMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!tableExists(sqlite, "__drizzle_migrations")) return false
+
+  const journal = readJournal(migrationsFolder)
+  const current = journal.entries.find((entry) => entry.tag === STAGE3_TIMESTAMP_MIGRATION_TAG)
+  if (!current) {
+    throw new Error(`Missing ${STAGE3_TIMESTAMP_MIGRATION_TAG} migration metadata.`)
+  }
+  if (migrationRecorded(sqlite, current.when) || latestMigrationTime(sqlite) < current.when) {
+    return false
+  }
+
+  applyMigration(sqlite, migrationsFolder, current)
+  return true
 }
 
 /**

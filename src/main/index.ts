@@ -25,8 +25,8 @@ import {
 } from "./lib/mcp-control/invalidation-bridge"
 import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
-import { runRequiredStartup } from "./lib/startup-gate"
-import { installBeforeQuitShutdown, runAppShutdown } from "./lib/app-shutdown"
+import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
+import { installBeforeQuitShutdown, runAppShutdown, waitForShutdownIdle } from "./lib/app-shutdown"
 import {
   createDefaultMobileBridgeService,
   setAppMobileBridgeService,
@@ -109,12 +109,18 @@ function abortAllAgentSessions(): void {
 async function abortAndWaitForAgentSessions(): Promise<void> {
   if (pendingRunTimer) clearInterval(pendingRunTimer)
   pendingRunTimer = null
-  while (pendingRunDrainActive) {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
-  }
+  const deadline = Date.now() + 10_000
+  const drainStopped = await waitForShutdownIdle({
+    isIdle: () => !pendingRunDrainActive,
+    timeoutMs: Math.max(0, deadline - Date.now()),
+  })
   abortAllAgentSessions()
-  while (hasActiveAgentSessions()) {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+  const sessionsStopped = await waitForShutdownIdle({
+    isIdle: () => !hasActiveAgentSessions(),
+    timeoutMs: Math.max(0, deadline - Date.now()),
+  })
+  if (!drainStopped || !sessionsStopped) {
+    throw new Error("Timed out waiting for agent sessions to stop during shutdown")
   }
 }
 
@@ -867,57 +873,87 @@ if (gotTheLock) {
         console.log("[App] Database initialized")
       },
       continueStartup: async () => {
-        try {
-          await reconcileVoiceHistory().catch((error) =>
-            console.warn("[Voice] Startup history reconciliation failed:", error),
-          )
-          productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
-            onInvalidation: (payload) => {
-              for (const window of BrowserWindow.getAllWindows()) {
-                if (!window.isDestroyed()) {
-                  window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
-                }
-              }
+        await runIsolatedStartupTasks(
+          [
+            {
+              name: "Voice history reconciliation",
+              run: reconcileVoiceHistory,
             },
-          })
-          devMcpServer = await startDevMcpServer({
-            enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
-            userDataPath: app.getPath("userData"),
-            checkout: app.getAppPath(),
-            profile: basename(app.getPath("userData")),
-          })
-          mobileBridgeService = createDefaultMobileBridgeService()
-          setAppMobileBridgeService(mobileBridgeService)
-          await mobileBridgeService.startFromSettings()
-          recoverInterruptedMcpRuns(getDatabasePath())
-          const pendingRunLauncher = createMainRunLauncher()
-          const orchestrationService = createAgentOrchestrationService(getDatabasePath())
-          const launchPendingRuns = async () => {
-            if (pendingRunDrainActive) return
-            pendingRunDrainActive = true
-            try {
-              orchestrationService.tickAll()
-              for (const request of orchestrationService.listCancellationRequests()) {
-                if (request.harness === "codex") cancelActiveCodexRun(request)
-                else cancelActiveClaudeSession(request)
-                orchestrationService.acknowledgeCancellationRequest(request.runId)
-              }
-              await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
-            } catch (error) {
-              console.error("[App] Pending run launch failed:", error)
-            } finally {
-              pendingRunDrainActive = false
-            }
-          }
-          pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
-          void launchPendingRuns()
-          void runStartupCatchUp({
-            db: initDatabase(),
-            getSecret: getAppUsageSecret,
-          }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
-        } catch (error) {
-          console.error("[App] Optional startup service failed:", error)
-        }
+            {
+              name: "Product MCP invalidation bridge",
+              run: async () => {
+                productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
+                  onInvalidation: (payload) => {
+                    for (const window of BrowserWindow.getAllWindows()) {
+                      if (!window.isDestroyed()) {
+                        window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
+                      }
+                    }
+                  },
+                })
+              },
+            },
+            {
+              name: "Dev MCP server",
+              run: async () => {
+                devMcpServer = await startDevMcpServer({
+                  enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
+                  userDataPath: app.getPath("userData"),
+                  checkout: app.getAppPath(),
+                  profile: basename(app.getPath("userData")),
+                })
+              },
+            },
+            {
+              name: "Interrupted MCP run recovery",
+              run: () => recoverInterruptedMcpRuns(getDatabasePath()),
+            },
+            {
+              name: "Pending run scheduler",
+              run: () => {
+                const pendingRunLauncher = createMainRunLauncher()
+                const orchestrationService = createAgentOrchestrationService(getDatabasePath())
+                const launchPendingRuns = async () => {
+                  if (pendingRunDrainActive) return
+                  pendingRunDrainActive = true
+                  try {
+                    orchestrationService.tickAll()
+                    for (const request of orchestrationService.listCancellationRequests()) {
+                      if (request.harness === "codex") cancelActiveCodexRun(request)
+                      else cancelActiveClaudeSession(request)
+                      orchestrationService.acknowledgeCancellationRequest(request.runId)
+                    }
+                    await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
+                  } catch (error) {
+                    console.error("[App] Pending run launch failed:", error)
+                  } finally {
+                    pendingRunDrainActive = false
+                  }
+                }
+                pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                void launchPendingRuns()
+              },
+            },
+            {
+              name: "Mobile bridge",
+              run: async () => {
+                mobileBridgeService = createDefaultMobileBridgeService()
+                setAppMobileBridgeService(mobileBridgeService)
+                await mobileBridgeService.startFromSettings()
+              },
+            },
+            {
+              name: "Usage startup catch-up",
+              run: () => {
+                void runStartupCatchUp({
+                  db: initDatabase(),
+                  getSecret: getAppUsageSecret,
+                }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
+              },
+            },
+          ],
+          (name, error) => console.error(`[App] ${name} failed:`, error),
+        )
         createMainWindow()
       },
       cleanup: async () => {

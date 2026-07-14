@@ -140,7 +140,9 @@ function ProviderCard({ providerId }: { providerId: "openrouter" | "nanogpt" }) 
                 ? "Session only"
                 : provider.source === "environment"
                   ? "Configured in environment"
-                  : "Encrypted on this device"}
+                  : provider.source === "legacy-file"
+                    ? "Legacy credential"
+                    : "Encrypted on this device"}
             </Badge>
           ) : (
             <Badge variant="outline">Not configured</Badge>

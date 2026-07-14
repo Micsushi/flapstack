@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai"
-import { Copy, Pencil, Plus, RefreshCw, Search, ShieldOff } from "lucide-react"
+import { Copy, Pencil, Plus, RefreshCw, Search, ShieldOff, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { toast } from "sonner"
 import type {
@@ -99,9 +99,9 @@ type ActionPreview =
       diff: string
       warnings: string[]
       preview: NativeExtensionMutationPreview
-      operation: "create" | "update"
+      operation: "create" | "update" | "delete"
       target: NativeExtensionTarget
-      changes: NativeChanges
+      changes?: NativeChanges
     }
   | {
       type: "copy"
@@ -297,7 +297,9 @@ export function AgentsProviderExtensionsTab({
   const selected = items.find((item) => item.id === state.selectedId) ?? null
   const selectedTarget =
     selected?.native &&
-    (selected.native.extension.capabilities.create || selected.native.extension.capabilities.update)
+    (selected.native.extension.capabilities.create ||
+      selected.native.extension.capabilities.update ||
+      selected.native.extension.capabilities.delete)
       ? targetFor(selected.native, selectedProject?.path)
       : null
   const policyLocation = buildPolicyLocation(policyScope, selectedProject?.id, taskId)
@@ -349,6 +351,12 @@ export function AgentsProviderExtensionsTab({
       name: selected.name,
     })
     dispatch({ type: "begin", flow: "copy" })
+  }
+
+  const beginDelete = () => {
+    if (!selectedTarget) return
+    setPreview(null)
+    dispatch({ type: "begin", flow: "delete" })
   }
 
   const preparePreview = useCallback(async () => {
@@ -420,6 +428,12 @@ export function AgentsProviderExtensionsTab({
           target,
           collisionPolicy: draft.collisionPolicy,
         }
+      } else if (state.flow === "delete" && selectedTarget) {
+        const result = await trpcClient.providerExtensions.previewNativeMutation.query({
+          operation: "delete",
+          target: selectedTarget,
+        })
+        next = nativePreview("Delete native extension", "delete", selectedTarget, undefined, result)
       } else if (state.flow === "policy" && selected?.native && policyLocation) {
         const enabled = !selected.native.resolved.enabled
         next = {
@@ -473,7 +487,7 @@ export function AgentsProviderExtensionsTab({
   ])
 
   useEffect(() => {
-    if (state.flow === "policy" && !preview) void preparePreview()
+    if ((state.flow === "policy" || state.flow === "delete") && !preview) void preparePreview()
   }, [preparePreview, preview, state.flow])
 
   const confirmPreview = useCallback(async () => {
@@ -483,7 +497,7 @@ export function AgentsProviderExtensionsTab({
         await applyNative.mutateAsync({
           operation: preview.operation,
           target: preview.target,
-          changes: preview.changes,
+          ...(preview.changes ? { changes: preview.changes } : {}),
           expectedHash: preview.preview.beforeHash,
         })
       } else if (preview.type === "copy") {
@@ -558,7 +572,12 @@ export function AgentsProviderExtensionsTab({
                 Native truth, policy, and copy support
               </p>
             </div>
-            <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh extensions">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refresh}
+              aria-label="Refresh provider extensions"
+            >
               <RefreshCw className={cn("h-4 w-4", resolvedState.isFetching && "animate-spin")} />
             </Button>
           </div>
@@ -577,6 +596,7 @@ export function AgentsProviderExtensionsTab({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Filter
+              aria-label="Provider filter"
               label="Harness"
               value={state.filters.harness}
               values={extensionManagerHarnesses}
@@ -584,6 +604,7 @@ export function AgentsProviderExtensionsTab({
               onChange={(value) => dispatch({ type: "filter", key: "harness", value })}
             />
             <Filter
+              aria-label="Extension kind"
               label="Kind"
               value={state.filters.kind}
               values={extensionManagerKinds}
@@ -665,7 +686,9 @@ export function AgentsProviderExtensionsTab({
             onConfirmed={(confirmed) => dispatch({ type: "confirm-preview", confirmed })}
             onBack={() => {
               setPreview(null)
-              if (state.flow === "policy") dispatch({ type: "cancel" })
+              if (state.flow === "policy" || state.flow === "delete") {
+                dispatch({ type: "cancel" })
+              }
             }}
             onCancel={() => {
               setPreview(null)
@@ -695,6 +718,7 @@ export function AgentsProviderExtensionsTab({
             onTask={setTaskId}
             onEdit={beginEdit}
             onCopy={beginCopy}
+            onDelete={beginDelete}
             onPolicy={() => {
               setPreview(null)
               dispatch({ type: "begin", flow: "policy" })
@@ -721,6 +745,7 @@ function DetailPanel({
   onTask,
   onEdit,
   onCopy,
+  onDelete,
   onPolicy,
 }: {
   item: ManagerItem
@@ -733,6 +758,7 @@ function DetailPanel({
   onTask: (taskId: string) => void
   onEdit: () => void
   onCopy: () => void
+  onDelete: () => void
   onPolicy: () => void
 }) {
   const editable = Boolean(
@@ -741,6 +767,9 @@ function DetailPanel({
   const copyable = Boolean(
     item.native?.extension.capabilities.update &&
     ["skill", "command", "custom-agent"].includes(item.kind),
+  )
+  const deletable = Boolean(
+    item.native?.extension.capabilities.delete && item.capability.mutations.includes("delete"),
   )
   const canDisable = item.hook ? item.hook.enabled : policySupported
   return (
@@ -774,6 +803,16 @@ function DetailPanel({
             title={copyable ? undefined : "No cross-harness copy adapter"}
           >
             <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={!deletable}
+            onClick={onDelete}
+            title={deletable ? undefined : "No native delete adapter"}
+            aria-label="Delete extension"
+          >
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -1092,6 +1131,7 @@ function PreviewPanel({
 }
 
 function Filter({
+  "aria-label": ariaLabel,
   label,
   value,
   values,
@@ -1100,6 +1140,7 @@ function Filter({
   disabled = false,
   disabledValues = [],
 }: {
+  "aria-label"?: string
   label: string
   value: string
   values: readonly string[]
@@ -1112,7 +1153,7 @@ function Filter({
     <div className="space-y-1">
       <Label className="text-[10px]">{label}</Label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger aria-label={`${label} filter`} className="h-8">
+        <SelectTrigger aria-label={ariaLabel ?? `${label} filter`} className="h-8">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -1205,9 +1246,9 @@ function nativeChanges(draft: Draft): NativeChanges {
 
 function nativePreview(
   title: string,
-  operation: "create" | "update",
+  operation: "create" | "update" | "delete",
   target: NativeExtensionTarget,
-  changes: NativeChanges,
+  changes: NativeChanges | undefined,
   preview: NativeExtensionMutationPreview,
 ): ActionPreview {
   return {

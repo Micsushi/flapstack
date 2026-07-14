@@ -43,7 +43,7 @@ export type ExtensionManagerFilters = {
   query: string
 }
 
-export type ExtensionManagerFlow = "create" | "edit" | "copy" | "policy" | null
+export type ExtensionManagerFlow = "create" | "edit" | "copy" | "delete" | "policy" | null
 
 export type ExtensionManagerState = {
   filters: ExtensionManagerFilters
