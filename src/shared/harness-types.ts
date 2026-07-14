@@ -4,6 +4,7 @@ export const AGENT_HARNESSES = [
   "cursor-agent",
   "openrouter",
   "nanogpt",
+  "local",
 ] as const
 
 export type AgentHarness = (typeof AGENT_HARNESSES)[number]
@@ -15,7 +16,7 @@ export function isOpencodeHarness(harness: string | null | undefined): harness i
   return harness === "openrouter" || harness === "nanogpt"
 }
 
-export type FutureHarnessProvider = "local" | "custom"
+export type FutureHarnessProvider = "custom"
 export type HarnessProvider = AgentHarness | FutureHarnessProvider
 export type HarnessChipKind = HarnessProvider | "unknown"
 

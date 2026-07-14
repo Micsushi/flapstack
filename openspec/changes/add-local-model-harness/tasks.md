@@ -2,7 +2,7 @@
 
 ### S4-F6-T1 — Define the local harness and model capability contract
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: `local` is a typed harness with per-model capability and limitation truth.
 - Scope: Shared harness/model DTOs; Ollama endpoint config; availability/catalog probe; capability cache/versioning; model identity; limitation codes; fixtures.
