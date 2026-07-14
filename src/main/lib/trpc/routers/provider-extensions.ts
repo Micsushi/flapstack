@@ -6,8 +6,21 @@ import {
 } from "../../provider-extensions"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { publicProcedure, router } from "../index"
+import {
+  extensionBaselineGaps,
+  extensionCapabilityRegistry,
+  extensionHarnessBaselines,
+  EXTENSION_CAPABILITY_SCHEMA_VERSION,
+} from "../../extension-management"
 
 export const providerExtensionsRouter = router({
+  getCapabilities: publicProcedure.query(() => ({
+    schemaVersion: EXTENSION_CAPABILITY_SCHEMA_VERSION,
+    harnesses: extensionHarnessBaselines,
+    capabilities: extensionCapabilityRegistry,
+    additiveGaps: extensionBaselineGaps,
+  })),
+
   list: publicProcedure
     .input(z.object({ cwd: z.string().optional() }).optional())
     .query(({ input }) => {
