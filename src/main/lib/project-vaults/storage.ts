@@ -31,6 +31,7 @@ import {
   projectVaultSectionRegistry,
   type ProjectVaultSectionId,
 } from "./registry"
+import { assertProjectVaultContentSafe } from "./content-safety"
 
 type Database = ReturnType<typeof getDatabase>
 type VaultRow = typeof projectVaults.$inferSelect
@@ -467,6 +468,7 @@ export async function adoptExternalProjectVaultSectionChange(
     const bytes = await readFileInsideRoot(root.canonicalPath, section.relativePath, {
       maxBytes: MAX_VAULT_SECTION_BYTES,
     })
+    assertProjectVaultContentSafe(bytes.toString("utf8"))
     const currentHash = sha256(bytes)
     if (currentHash !== input.expectedCurrentContentHash || currentHash === section.contentHash) {
       throw new ProjectVaultConflictError(
