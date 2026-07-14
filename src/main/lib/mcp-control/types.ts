@@ -54,6 +54,7 @@ export type McpControlErrorCode =
   | "out-of-scope"
   | "forbidden-loop"
   | "forbidden-target"
+  | "secret-detected"
   | "not-found"
   | "reconciliation-required"
   | "conflict"

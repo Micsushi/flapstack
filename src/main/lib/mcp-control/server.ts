@@ -5,6 +5,7 @@ import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
+import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./project-vault-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import {
   appendMcpAuditRecord,
@@ -34,13 +35,17 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   )
   const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
+  const projectVaults = createMcpProjectVaultService()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
       tool.name,
       {
         description: tool.description,
-        inputSchema: mcpReadInputShapes[tool.name] ?? mcpMutationInputShapes[tool.name],
+        inputSchema:
+          mcpReadInputShapes[tool.name] ??
+          mcpMutationInputShapes[tool.name] ??
+          mcpProjectVaultInputShapes[tool.name],
         annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input, extra) => {
@@ -64,6 +69,7 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
             },
           },
           mutations,
+          projectVaults,
           resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
         })
         const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)

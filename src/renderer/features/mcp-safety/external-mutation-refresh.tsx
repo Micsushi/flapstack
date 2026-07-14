@@ -29,6 +29,7 @@ export function McpExternalMutationRefreshBridge() {
           utils.spawnedAgents.getLineage.invalidate({ taskId }),
         ]),
       chatLineage: (chatId) => utils.spawnedAgents.previewLineage.invalidate({ chatId }),
+      projectVault: () => utils.projectVaults.invalidate(),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate)
     const unsubscribe = window.desktopApi.onProductMcpInvalidation(coalescer.push)

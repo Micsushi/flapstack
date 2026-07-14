@@ -38,6 +38,7 @@ const safeAuditKeys = new Set([
   "dependencyCount",
   "dryRun",
   "error",
+  "expectedVersion",
   "git",
   "harness",
   "id",
@@ -75,6 +76,7 @@ const safeAuditKeys = new Set([
   "runId",
   "schemaVersion",
   "scope",
+  "sectionId",
   "secrets",
   "sha256",
   "shell",
@@ -259,6 +261,17 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
   const input = asRecord(value)
   if (!input) return null
   const textDigest = (key: string) => summarizeText(input[key])
+  const vaultTarget = () => ({
+    projectId: textDigest("projectId"),
+    sectionId:
+      typeof input.sectionId === "string" &&
+      ["index", "handoff", "decisions", "context", "tasks", "logs"].includes(input.sectionId)
+        ? safeLiteral(input.sectionId)
+        : null,
+    ...(typeof input.expectedVersion === "number"
+      ? { expectedVersion: input.expectedVersion }
+      : {}),
+  })
   const safe = (...keys: string[]) => {
     const entries: Array<[string, unknown]> = []
     for (const key of keys) {
@@ -298,6 +311,20 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return summarizeOrchestrationAuthority(value)
     case "create_automation_draft":
       return { ...safe("trigger", "dryRun"), name: textDigest("name") }
+    case "create_vault_section":
+    case "update_vault_section":
+    case "update_vault_handoff":
+      return {
+        ...vaultTarget(),
+        content: textDigest("content"),
+      }
+    case "record_vault_decision":
+      return {
+        ...vaultTarget(),
+        title: textDigest("title"),
+        decision: textDigest("decision"),
+        rationale: textDigest("rationale"),
+      }
     case "search":
       return { ...safe("scope", "scopeId", "cursor", "limit"), query: textDigest("query") }
     case "rename_item":
@@ -315,6 +342,9 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
     case "list_worktrees":
     case "list_artifacts":
       return safe("projectId", "taskId", "chatId", "runId", "cursor", "limit")
+    case "list_vault_sections":
+    case "read_vault_section":
+      return vaultTarget()
     case "ping":
     case "describe":
       return null
