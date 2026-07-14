@@ -8,13 +8,19 @@ import {
   vaultLocationModes,
 } from "../../project-vaults/policy"
 import {
+  adoptExternalProjectVaultSectionChange,
   deleteProjectVault,
   getProjectVaultDeleteContract,
+  listProjectVaultSectionBackups,
   listProjectVaultSections,
   readProjectVaultSection,
+  readProjectVaultSectionBackup,
+  restoreProjectVaultSectionBackup,
   scaffoldProjectVault,
   writeProjectVaultSection,
 } from "../../project-vaults/storage"
+import { searchProjectVault } from "../../project-vaults/browser"
+import { assertProjectVaultContentSafe } from "../../project-vaults/content-safety"
 import { projectVaultSectionIds, projectVaultSectionRegistry } from "../../project-vaults/registry"
 import {
   getProjectVaultContextSelection,
@@ -130,10 +136,58 @@ export const projectVaultsRouter = router({
         projectId: z.string().min(1),
         sectionId: sectionSchema,
         expectedVersion: z.number().int().positive(),
+        expectedCurrentContentHash: z.string().length(64).optional(),
         content: z.string(),
       }),
     )
-    .mutation(({ input }) => writeProjectVaultSection(getDatabase(), input)),
+    .mutation(({ input }) => {
+      assertProjectVaultContentSafe(input.content)
+      return writeProjectVaultSection(getDatabase(), input)
+    }),
+
+  search: publicProcedure
+    .input(z.object({ projectId: z.string().min(1), query: z.string().min(1).max(500) }))
+    .query(({ input }) => searchProjectVault(getDatabase(), input)),
+
+  listBackups: publicProcedure
+    .input(z.object({ projectId: z.string().min(1), sectionId: sectionSchema }))
+    .query(({ input }) => listProjectVaultSectionBackups(getDatabase(), input)),
+
+  readBackup: publicProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        sectionId: sectionSchema,
+        backupId: z.string().min(1),
+      }),
+    )
+    .query(({ input }) => readProjectVaultSectionBackup(getDatabase(), input)),
+
+  restoreBackup: publicProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        sectionId: sectionSchema,
+        backupId: z.string().min(1),
+        expectedVersion: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const backup = await readProjectVaultSectionBackup(getDatabase(), input)
+      assertProjectVaultContentSafe(backup.content)
+      return restoreProjectVaultSectionBackup(getDatabase(), input)
+    }),
+
+  adoptExternalChange: publicProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        sectionId: sectionSchema,
+        expectedVersion: z.number().int().positive(),
+        expectedCurrentContentHash: z.string().length(64),
+      }),
+    )
+    .mutation(({ input }) => adoptExternalProjectVaultSectionChange(getDatabase(), input)),
 
   getDeleteContract: publicProcedure
     .input(z.object({ projectId: z.string().min(1) }))

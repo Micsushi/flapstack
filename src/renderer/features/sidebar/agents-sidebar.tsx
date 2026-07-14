@@ -55,6 +55,7 @@ import {
   MessageSquare,
   ClipboardList,
   Activity,
+  BookOpen,
   Star,
   Plus,
   ArrowRightLeft,
@@ -6480,6 +6481,20 @@ export function AgentsSidebar({
           <Activity className="h-4 w-4" />
           <span>Usage</span>
         </ButtonCustom>
+        {selectedProject && (
+          <ButtonCustom
+            variant={desktopView === "project-vault" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+            onClick={() => {
+              setSelectedChatId(null)
+              setDesktopView("project-vault")
+            }}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Project knowledge</span>
+          </ButtonCustom>
+        )}
       </div>
 
       {/* Search and project actions */}

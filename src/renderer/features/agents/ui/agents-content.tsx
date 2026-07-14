@@ -26,6 +26,7 @@ import {
   agentsSubChatsSidebarModeAtom,
   agentsSubChatsSidebarWidthAtom,
   desktopViewAtom,
+  selectedProjectAtom,
   SUBCHATS_SIDEBAR_PANEL_ENABLED,
 } from "../atoms"
 import {
@@ -76,6 +77,7 @@ import {
 } from "../../../components/ui/context-menu"
 import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
 import { DictationSessionProvider } from "../voice/dictation-session"
+import { ProjectVaultView } from "../../project-vault/project-vault-view"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -107,6 +109,7 @@ function AgentsContentInner() {
   const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const selectedChatScope = useAtomValue(selectedChatScopeAtom)
+  const selectedProject = useAtomValue(selectedProjectAtom)
   const setChatSourceMode = useSetAtom(chatSourceModeAtom)
   const chatSourceMode = useAtomValue(chatSourceModeAtom)
   const selectedDraftId = useAtomValue(selectedDraftIdAtom)
@@ -1120,6 +1123,8 @@ function AgentsContentInner() {
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
           </div>
+        ) : desktopView === "project-vault" ? (
+          <ProjectVaultView key={selectedProject?.id} />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1248,6 +1253,8 @@ function AgentsContentInner() {
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />
             </div>
+          ) : desktopView === "project-vault" ? (
+            <ProjectVaultView key={selectedProject?.id} />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (

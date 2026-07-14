@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq } from "drizzle-orm"
 import { createHash, randomUUID } from "node:crypto"
 import { lstat, readdir, rm } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
@@ -197,6 +197,7 @@ export async function writeProjectVaultSection(
     projectId: string
     sectionId: ProjectVaultSectionId
     expectedVersion: number
+    expectedCurrentContentHash?: string
     content: string
   },
   hooks: ProjectVaultWriteHooks = {},
@@ -215,7 +216,7 @@ export async function writeProjectVaultSection(
       maxBytes: MAX_VAULT_SECTION_BYTES,
     })
     const previousHash = sha256(previous)
-    if (previousHash !== section.contentHash) {
+    if (previousHash !== section.contentHash && previousHash !== input.expectedCurrentContentHash) {
       throw new ProjectVaultConflictError(
         "Project vault section changed outside Flapstack.",
         section.version,
@@ -228,7 +229,7 @@ export async function writeProjectVaultSection(
       throw new Error("Project vault section exceeds the storage size limit.")
     }
     const nextHash = sha256(next)
-    const backupRelativePath = `.backups/${section.sectionId}/v${section.version}-${section.contentHash}.md`
+    const backupRelativePath = `.backups/${section.sectionId}/v${section.version}-${previousHash}.md`
     await writeFileInsideRoot(
       root.canonicalPath,
       backupRelativePath,
@@ -279,7 +280,7 @@ export async function writeProjectVaultSection(
             sectionId: input.sectionId,
             version: section.version,
             relativePath: backupRelativePath,
-            contentHash: section.contentHash,
+            contentHash: previousHash,
             byteLength: previous.byteLength,
           })
           .run()
@@ -308,6 +309,132 @@ export async function writeProjectVaultSection(
       await removeVaultFile(root.canonicalPath, backupRelativePath)
       throw error
     }
+  })
+}
+
+export function listProjectVaultSectionBackups(
+  database: Database,
+  input: { projectId: string; sectionId: ProjectVaultSectionId },
+) {
+  getVerifiedSection(database, input)
+  return database
+    .select()
+    .from(projectVaultBackups)
+    .where(
+      and(
+        eq(projectVaultBackups.projectId, input.projectId),
+        eq(projectVaultBackups.sectionId, input.sectionId),
+      ),
+    )
+    .orderBy(desc(projectVaultBackups.version))
+    .all()
+}
+
+export async function readProjectVaultSectionBackup(
+  database: Database,
+  input: { projectId: string; sectionId: ProjectVaultSectionId; backupId: string },
+) {
+  const { root } = getVerifiedSection(database, input)
+  const backup = database
+    .select()
+    .from(projectVaultBackups)
+    .where(
+      and(
+        eq(projectVaultBackups.id, input.backupId),
+        eq(projectVaultBackups.projectId, input.projectId),
+        eq(projectVaultBackups.sectionId, input.sectionId),
+      ),
+    )
+    .get()
+  if (!backup) throw new Error("Project vault backup not found.")
+  const bytes = await readFileInsideRoot(root.canonicalPath, backup.relativePath, {
+    maxBytes: MAX_VAULT_SECTION_BYTES,
+  })
+  if (bytes.byteLength !== backup.byteLength || sha256(bytes) !== backup.contentHash) {
+    throw new Error("Project vault backup content does not match its recorded identity.")
+  }
+  return { ...backup, content: bytes.toString("utf8") }
+}
+
+export async function restoreProjectVaultSectionBackup(
+  database: Database,
+  input: {
+    projectId: string
+    sectionId: ProjectVaultSectionId
+    backupId: string
+    expectedVersion: number
+  },
+): Promise<SectionRow> {
+  const backup = await readProjectVaultSectionBackup(database, input)
+  return writeProjectVaultSection(database, {
+    projectId: input.projectId,
+    sectionId: input.sectionId,
+    expectedVersion: input.expectedVersion,
+    content: backup.content,
+  })
+}
+
+export async function adoptExternalProjectVaultSectionChange(
+  database: Database,
+  input: {
+    projectId: string
+    sectionId: ProjectVaultSectionId
+    expectedVersion: number
+    expectedCurrentContentHash: string
+  },
+): Promise<SectionRow> {
+  return withVaultMutationLock(input.projectId, async () => {
+    const { vault, section, root } = getVerifiedSection(database, input)
+    if (section.version !== input.expectedVersion) {
+      throw new ProjectVaultConflictError(
+        "Project vault section version is stale.",
+        section.version,
+        section.contentHash,
+      )
+    }
+    const bytes = await readFileInsideRoot(root.canonicalPath, section.relativePath, {
+      maxBytes: MAX_VAULT_SECTION_BYTES,
+    })
+    const currentHash = sha256(bytes)
+    if (currentHash !== input.expectedCurrentContentHash || currentHash === section.contentHash) {
+      throw new ProjectVaultConflictError(
+        "Project vault external change no longer matches the reviewed content.",
+        section.version,
+        currentHash,
+      )
+    }
+    return database.transaction((tx) => {
+      const updated = tx
+        .update(projectVaultSections)
+        .set({
+          version: section.version + 1,
+          contentHash: currentHash,
+          byteLength: bytes.byteLength,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(projectVaultSections.projectId, input.projectId),
+            eq(projectVaultSections.sectionId, input.sectionId),
+            eq(projectVaultSections.version, section.version),
+            eq(projectVaultSections.contentHash, section.contentHash),
+          ),
+        )
+        .returning()
+        .get()
+      if (!updated) {
+        throw new ProjectVaultConflictError(
+          "Project vault section version is stale.",
+          section.version,
+          section.contentHash,
+        )
+      }
+      tx.update(projectVaults)
+        .set({ updatedAt: new Date() })
+        .where(eq(projectVaults.projectId, vault.projectId))
+        .run()
+      return updated
+    })
   })
 }
 
