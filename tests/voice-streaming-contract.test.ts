@@ -52,6 +52,33 @@ describe("Voice History insertion ownership", () => {
     unregister()
     expect(insertVoiceHistoryIntoTarget(target!, "preserve me")).toBe(false)
   })
+
+  it("restores the captured target after full-page Settings remounts the composer", () => {
+    const first = vi.fn()
+    const unregister = registerVoiceHistoryInsertTarget("chat:a", first)
+    unregister()
+    const target = captureVoiceHistoryInsertTarget()
+    const remounted = vi.fn()
+    registerVoiceHistoryInsertTarget("chat:a", remounted)
+    expect(target).toBe("chat:a")
+    expect(insertVoiceHistoryIntoTarget(target!, "restored text")).toBe(true)
+    expect(first).not.toHaveBeenCalled()
+    expect(remounted).toHaveBeenCalledWith("restored text")
+  })
+
+  it("falls back to the newest still-mounted composer when the active one unmounts", () => {
+    const chatA = vi.fn()
+    const chatB = vi.fn()
+    registerVoiceHistoryInsertTarget("chat:a", chatA)
+    const unregisterB = registerVoiceHistoryInsertTarget("chat:b", chatB)
+
+    unregisterB()
+
+    expect(captureVoiceHistoryInsertTarget()).toBe("chat:a")
+    expect(insertVoiceHistoryIntoTarget("chat:a", "remaining composer")).toBe(true)
+    expect(chatA).toHaveBeenCalledWith("remaining composer")
+    expect(chatB).not.toHaveBeenCalled()
+  })
 })
 
 describe("canonical playback settings", () => {

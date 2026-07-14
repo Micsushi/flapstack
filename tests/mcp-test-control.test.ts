@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
@@ -6,7 +7,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+
+vi.mock("electron", () => ({
+  app: { getPath: () => process.env.FLAPSTACK_CONFIG_DIR || "/tmp" },
+  BrowserWindow: { getAllWindows: () => [] },
+}))
 import {
   SAFE_CHATGPT_CODEX_MODEL,
   normalizeCodexStatus,
@@ -31,6 +37,7 @@ import {
   parseDevRendererControlRequest,
 } from "../src/shared/dev-renderer-control"
 import {
+  cleanupAllTestRendererCaptures,
   listAgentInputRequests,
   replyAgentInputRequest,
 } from "../src/main/lib/mcp-test-control/service"
@@ -43,11 +50,16 @@ import * as schema from "../src/main/lib/db/schema"
 import { closeDatabase, getDatabase } from "../src/main/lib/db"
 import {
   cleanupCarryoverRunFixture,
+  cleanupUsageUiFixture,
+  cleanupVoiceUiFixture,
   controlVoiceSettings,
   createCarryoverRunFixture,
+  createUsageUiFixture,
+  createVoiceUiFixture,
   getCarryoverRunFixtureFiles,
   getRunChangeState,
   getVoiceState,
+  requireVoiceUiFixture,
   undoRunChange,
 } from "../src/main/lib/mcp-test-control/carryover-controls"
 
@@ -67,6 +79,7 @@ describe("dev MCP test-control registry", () => {
       "mutate_settings_legacy_state",
       "get_visible_copy_search_state",
       "select_test_chat",
+      "copy_test_chat_history",
       "get_renderer_orchestration_state",
       "get_shortcut_state",
       "get_product_mcp_renderer_state",
@@ -80,14 +93,24 @@ describe("dev MCP test-control registry", () => {
       "get_reasoning_timer_state",
       "get_voice_state",
       "control_voice_settings",
+      "create_voice_ui_fixture",
+      "cleanup_voice_ui_fixture",
+      "get_renderer_voice_ui_state",
+      "control_renderer_voice_ui",
       "get_usage_state",
       "refresh_usage_state",
+      "create_usage_ui_fixture",
+      "cleanup_usage_ui_fixture",
+      "get_renderer_usage_ui_state",
+      "control_renderer_usage_ui",
       "get_run_change_state",
       "undo_run_change",
       "create_carryover_run_fixture",
       "get_carryover_run_fixture_files",
       "cleanup_carryover_run_fixture",
       "get_renderer_carryover_state",
+      "capture_test_renderer",
+      "cleanup_test_renderer_capture",
       "control_renderer_carryover",
       "list_pending_approvals",
       "get_opencode_logs",
@@ -101,6 +124,8 @@ describe("dev MCP test-control registry", () => {
       "cleanup_product_mcp_caller",
       "list_agent_input_requests",
       "get_renderer_agent_input_state",
+      "get_renderer_agent_input_navigation_state",
+      "navigate_agent_input_notification",
       "ensure_test_project",
       "archive_test_project",
       "create_test_chat",
@@ -155,6 +180,71 @@ describe("dev renderer Settings control boundary", () => {
         command: "settings.control",
         operation: "select-project",
         project: { id: "project-id", name: "Project", path: 42 },
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "agent-input.get",
+      }),
+    ).toMatchObject({ command: "agent-input.get" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "show-all",
+        target: "samples",
+      }),
+    ).toMatchObject({ command: "usage-ui.control", target: "samples" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "scroll-to",
+        target: "provider-states",
+      }),
+    ).toMatchObject({ command: "usage-ui.control", target: "provider-states" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "usage-ui.control",
+        operation: "show-all",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "copy-history",
+        historyId: "voice-history-id",
+      }),
+    ).toMatchObject({ command: "voice-ui.control", historyId: "voice-history-id" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "copy-history",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.control",
+        operation: "set-rate",
+        value: "1.4",
+      }),
+    ).toMatchObject({ command: "voice-ui.control", value: "1.4" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.get",
+        historyId: "voice-history-id",
+      }),
+    ).toMatchObject({ command: "voice-ui.get", historyId: "voice-history-id" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "voice-ui.get",
       }),
     ).toBeNull()
   })
@@ -219,6 +309,24 @@ describe("dev renderer Settings control boundary", () => {
       subChatId: "sub-chat-1",
       showOrchestration: true,
     })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.copy",
+        chatId: "chat-1",
+        source: "active-header",
+        expectedText: "bounded fixture",
+      }),
+    ).toMatchObject({ command: "chat.copy", source: "active-header" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "chat.copy",
+        chatId: "chat-1",
+        source: "anything",
+        expectedText: "bounded fixture",
+      }),
+    ).toBeNull()
     expect(
       parseDevRendererControlRequest({
         requestId: "request-id-long-enough",
@@ -290,6 +398,15 @@ describe("dev renderer Settings control boundary", () => {
       parseDevRendererControlRequest({
         requestId: "request-id-long-enough",
         command: "carryover.control",
+        surface: "run-change",
+        operation: "undo",
+        runId: "run-1",
+      }),
+    ).toMatchObject({ operation: "undo", runId: "run-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
         surface: "voice",
         operation: "click-anything",
       }),
@@ -331,6 +448,39 @@ describe("dev MCP carryover controls", () => {
         withAudioCount: expect.any(Number),
       })
       expect(JSON.stringify(state.history)).not.toContain("text")
+      const forgedFixture = getDatabase()
+        .insert(schema.voiceArtifacts)
+        .values({
+          kind: "transcription",
+          text: "sanitized fixture",
+          adapterId: "local-parakeet",
+          originId: "stage3-voice-ui-fixture",
+          originLabel: "Stage 3 Voice UI fixture",
+        })
+        .returning({ id: schema.voiceArtifacts.id })
+        .get()
+      const userArtifact = getDatabase()
+        .insert(schema.voiceArtifacts)
+        .values({
+          kind: "transcription",
+          text: "private user transcript",
+          adapterId: "local-parakeet",
+          originLabel: "New chat",
+        })
+        .returning({ id: schema.voiceArtifacts.id })
+        .get()
+      const fixture = await createVoiceUiFixture()
+      expect(requireVoiceUiFixture(fixture.id)).toMatchObject({
+        id: fixture.id,
+        hasAudio: true,
+      })
+      expect(() => requireVoiceUiFixture(forgedFixture.id)).toThrow(
+        "Voice UI control requires an exact Stage 3 fixture",
+      )
+      expect(() => requireVoiceUiFixture(userArtifact.id)).toThrow(
+        "Voice UI control requires an exact Stage 3 fixture",
+      )
+      await cleanupVoiceUiFixture({ id: fixture.id })
     } finally {
       closeDatabase()
       if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
@@ -389,6 +539,90 @@ describe("dev MCP carryover controls", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it("creates and cleans bounded Usage UI evidence rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-usage-ui-"))
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    try {
+      const fixture = await createUsageUiFixture()
+      expect(fixture).toMatchObject({ samples: 30, cycles: 30, alerts: 30, providerStates: 2 })
+      const db = getDatabase()
+      expect(
+        db
+          .select()
+          .from(schema.usageSamples)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageCycles)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageAlertEvents)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(30)
+      expect(
+        db
+          .select()
+          .from(schema.usageProviderStates)
+          .all()
+          .filter((row) => row.accountTag === fixture.accountTag),
+      ).toHaveLength(2)
+
+      const collidingUserSample = db
+        .insert(schema.usageSamples)
+        .values({
+          providerId: "codex",
+          accountTag: fixture.accountTag,
+          source: "external-provider",
+          costQuality: "provider-reported",
+          sourceTag: "user-data",
+          dedupeKey: "user-owned-collision",
+        })
+        .returning({ id: schema.usageSamples.id })
+        .get()
+
+      expect(cleanupUsageUiFixture()).toMatchObject({
+        samples: 30,
+        cycles: 30,
+        alerts: 30,
+        providerStates: 2,
+      })
+      expect(db.select().from(schema.usageSamples).all()).toEqual([
+        expect.objectContaining({ id: collidingUserSample.id, sourceTag: "user-data" }),
+      ])
+      expect(db.select().from(schema.usageCycles).all()).toEqual([])
+      expect(db.select().from(schema.usageAlertEvents).all()).toEqual([])
+      expect(db.select().from(schema.usageProviderStates).all()).toEqual([])
+    } finally {
+      closeDatabase()
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("sweeps checkout-scoped renderer capture directories", () => {
+    const checkoutScope = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 12)
+    const directory = mkdtempSync(join(tmpdir(), `flapstack-renderer-evidence-${checkoutScope}-`))
+    writeFileSync(join(directory, "capture.png"), "sanitized fixture", { mode: 0o600 })
+
+    cleanupAllTestRendererCaptures()
+
+    expect(existsSync(directory)).toBe(false)
+  })
 })
 
 describe("dev MCP transport", () => {

@@ -19,6 +19,7 @@ interface ChatTitleEditorProps {
   isMobile?: boolean
   disabled?: boolean
   chatId?: string
+  copyChatId?: string
   hasMessages?: boolean
   onCopyChat?: () => void
   isSidebarOpen?: boolean
@@ -40,6 +41,7 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.isMobile === next.isMobile &&
     prev.disabled === next.disabled &&
     prev.chatId === next.chatId &&
+    prev.copyChatId === next.copyChatId &&
     prev.hasMessages === next.hasMessages &&
     prev.onCopyChat === next.onCopyChat &&
     prev.isSidebarOpen === next.isSidebarOpen &&
@@ -61,6 +63,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   isMobile = false,
   disabled = false,
   chatId,
+  copyChatId,
   hasMessages = false,
   onCopyChat,
   isSidebarOpen = true,
@@ -276,6 +279,8 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
               }}
               aria-label="Copy full chat"
               title="Copy full chat"
+              data-dev-chat-copy-source="active-header"
+              data-chat-id={copyChatId}
             >
               <CopyIcon className="h-3.5 w-3.5" />
               <span className="text-xs font-medium">Copy full chat</span>

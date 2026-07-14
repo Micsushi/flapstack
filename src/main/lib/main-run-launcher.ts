@@ -7,6 +7,8 @@ export function createMainRunLauncher(): AgentRunLauncher {
   return async (run) => {
     const cwd = run.worktreePath ?? run.projectPath
     if (!cwd) throw new Error("Run has no project or worktree path.")
+    const model =
+      run.harness === "codex" ? resolveCodexLaunchModel(run.model, run.reasoningEffort) : run.model
     const stream =
       run.harness === "codex"
         ? await caller.codex.chat({
@@ -16,7 +18,7 @@ export function createMainRunLauncher(): AgentRunLauncher {
             prompt: run.prompt,
             cwd,
             ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(run.model ? { model: run.model } : {}),
+            ...(model ? { model } : {}),
             mode: "agent",
             reasoningEnabled: run.reasoningEffort !== "minimal",
             ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
@@ -28,7 +30,7 @@ export function createMainRunLauncher(): AgentRunLauncher {
             prompt: run.prompt,
             cwd,
             ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(run.model ? { model: run.model } : {}),
+            ...(model ? { model } : {}),
             mode: "agent",
             reasoningEnabled: run.reasoningEffort !== "minimal",
             ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
@@ -37,6 +39,20 @@ export function createMainRunLauncher(): AgentRunLauncher {
           })
     await drainStream(stream, run)
   }
+}
+
+function resolveCodexLaunchModel(
+  model: string | null,
+  reasoningEffort: QueuedAgentRun["reasoningEffort"],
+): string | null {
+  const normalized = model?.trim()
+  if (!normalized) return null
+  const effort = reasoningEffort && reasoningEffort !== "minimal" ? reasoningEffort : "low"
+  const withoutEffort = normalized
+    .replace(/\/(?:minimal|low|medium|high|xhigh)$/i, "")
+    .replace(/\[(?:minimal|low|medium|high|xhigh)\]$/i, "")
+  if (withoutEffort.includes("/")) return normalized
+  return `${withoutEffort}/${effort}`
 }
 
 async function drainStream(stream: unknown, run: QueuedAgentRun): Promise<void> {

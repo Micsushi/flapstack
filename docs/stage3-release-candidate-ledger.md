@@ -1,8 +1,7 @@
 # Stage 3 release candidate ledger
 
-Status: exact-candidate automation, provider, Usage, Dev, and macOS package
-evidence recorded. Stage 3 is not complete while the remaining locked-macOS
-manual rows and exact packaged Usage daemon row remain open.
+Status: Stage 3 complete. Exact-candidate automation, provider, Voice, Usage,
+Dev, macOS package, review, and cleanup evidence pass.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
 notarization are deferred to `docs/future-release-considerations.md`. Neither is
@@ -10,11 +9,12 @@ a Stage 3 acceptance row.
 
 ## Candidate header
 
-- Candidate source: `0a3d1af16777332dcbbe60134a4927c8dcff368b`.
+- Candidate source: the final commit containing this ledger on
+  `codex/stage3-integration`; record its resolved SHA in the handoff.
 - Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
   on `codex/stage3-integration`; `main` remains untouched.
-- Profile isolation: exact Dev used `Flapstack Dev stage3-finish`; exact Preview
-  used a disposable `Flapstack Preview stage3-final` profile.
+- Profile isolation: final exact Dev used `Flapstack Dev stage3-capture`; exact
+  Preview used a disposable `Flapstack Preview` profile.
 - Supported release runtime: Node 22 on macOS arm64. Exact Dev evidence used
   22.22.1; the final documentation gate used 22.23.1. Windows and Linux are
   explicitly deferred to the end of Stage 4 and do not block Stage 3.
@@ -36,14 +36,14 @@ different SHA is context only.
 | `S3-U01`, Stage 3 rows in `U1-01`-`U11-05`          | Usage, daemon, provider, alert, dashboard                                  | Usage exit matrix                      |
 | `S3-H01`, `D0-01`-`D5-02`, `E1-01`-`E7-03`          | Cursor, OpenRouter, NanoGPT                                                | provider closeout matrix               |
 | `S3-R01`, `R-FIXTURE`, `R-LIVE`, `R-UI`, `R-RELOAD` | reasoning classification, controls, persistence, live providers            | reasoning capability matrix            |
-| `S3-C01`, `S3-A01`-`S3-A07`                         | Stage 1/2 carryover and supporting active changes                          | full gate plus focused live rows       |
+| `S3-C01`, `S3-A01`-`S3-A07`                         | Stage 1/2 carryover and supporting completed changes                       | full gate plus focused live rows       |
 | `S3-X01`-`S3-X06`                                   | integrated walkthrough, review, docs, cleanup                              | this ledger and full-feature matrix    |
 
-## Active normative-scenario crosswalk
+## Stage 3 normative-scenario crosswalk
 
-Every normative scenario under a mapped active change is owned by the named
-stable row family. `npm run check:stage3-release-ledger` enumerates every
-non-archive change and scenario and fails when a mapping disappears.
+Every normative scenario under a mapped completed change is owned by the named
+stable row family. `npm run check:stage3-release-ledger` resolves each change in
+its active or dated archive location and fails when a mapping disappears.
 
 <!-- stage3-release-change: add-agent-change-undo-review | rows=S3-A01,S3-A02,S3-X01 -->
 <!-- stage3-release-change: add-agent-question-dialog | rows=S3-A03,S3-X01 -->
@@ -87,43 +87,41 @@ S3-F6, F9, F10, F12, F13, F14, F15, and F16 to feed S3-F17.
 <!-- stage3-release-feature: S3-F16 | exit=S3-F16-T5 | depends=S3-F10,S3-F15 -->
 <!-- stage3-release-feature: S3-F17 | exit=S3-F17-T5 | depends=S3-F6,S3-F9,S3-F10,S3-F12,S3-F13,S3-F14,S3-F15,S3-F16 -->
 
-Current truth: implementation and exact-candidate automation are complete.
-Provider credential paths, Usage refresh, Discord transport, Dev identity, and
-unsigned macOS Preview build/startup now have exact-candidate evidence. The
-remaining feature exits are the manual rows listed in the current handoff;
-S3-F17-T2/T3/T4/T5 remain open until those rows close.
+Current truth: implementation, exact-candidate automation, all required feature
+exits, independent review, cleanup, and macOS release evidence are complete.
+Windows/Linux native execution is deferred to the end of Stage 4 by explicit
+release decision.
 
 ## Execution evidence
 
 | Gate                                   | Result   | Evidence or blocker                                                                                                         |
 | -------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                | PASS     | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
-| Affected OpenSpec strict validation    | PASS     | all 18 active changes pass strict non-interactive validation                                                                |
-| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 129 files, 960 passed, 3 conditional skips, production build                     |
+| OpenSpec strict validation             | PASS     | all 18 changes archived; all 29 current specs pass strict non-interactive validation                                        |
+| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 129 files, 969 passed, 3 conditional skips, production build                     |
 | Security round-3 focused suite         | PASS     | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
 | Final security/control review          | PASS     | three repair rounds, focused attack suites, native SQLite coverage, and exact-candidate full gate pass                      |
 | S3-F5 focused and attack suites        | PASS     | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
-| MCP-first management closeout          | PARTIAL  | two-way real target launches and provider paths pass; remaining manual visual aggregate stays open                          |
+| MCP-first management closeout          | PASS     | two-way target launches, approvals, audit, lineage, recovery, renderer state, and cleanup pass                              |
 | Production/dev MCP separation          | PASS     | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
 | Usage daemon smoke                     | PASS     | three repeated duplicate/crash/restart/clean-stop runs after early-signal race fix                                          |
-| Verified lane Dev profiles             | PASS     | exact integration checkout and isolated `Flapstack Dev stage3-finish` profile verified                                      |
+| Verified lane Dev profiles             | PASS     | exact integration checkout and isolated `Flapstack Dev stage3-capture` profile verified                                     |
 | macOS Preview build/inspect/smoke      | PASS     | exact unsigned arm64 build, inspection, clean-HOME sidecars, startup/migrations/window, shutdown, cleanup                   |
 | Settings keyboard/search/credential AX | PASS     | MCP-first state plus real pixels, accessibility, focus, custom-key delivery, and search navigation                          |
 | Settings clipboard and Dev Keychain    | PASS     | actual message/full-history clipboard; disposable encrypted Dev store, mode 0600, no plaintext, cleanup                     |
-| Visual orchestration and MCP UI        | PENDING  | component/AX worker proof exists; integrated task-screen, focus, keyboard, and full visual matrix remain                    |
-| Remaining live/package feature rows    | BLOCKED  | locked-macOS copy/timestamp/Undo/question visuals and exact packaged Usage daemon polling                                   |
+| Visual orchestration and MCP UI        | PASS     | integrated product surface, task state, lineage, focus, approval/audit, and failure controls pass                           |
+| Remaining live/package feature rows    | PASS     | copy, timestamps, Review/Undo, questions, Voice, Usage UI, and packaged daemon lifecycle pass                               |
 | Windows/Linux                          | DEFERRED | moved to end of Stage 4 by release decision                                                                                 |
-| Independent review rounds              | BLOCKED  | S3-F17-T4 requires completed T2 and T3                                                                                      |
+| Independent review rounds              | PASS     | three security rounds plus final independent correctness/security review; all accepted findings repaired                    |
 
 ## 2026-07-14 exact integration closeout
 
-- Node 22 `npm run check`: PASS, 129 test files, 960 passed, 3 conditional
+- Node 22 `npm run check`: PASS, 129 test files, 969 passed, 3 conditional
   skips, lint, Prettier, TypeScript, and production build.
-- Release ledger: PASS, 18 active changes, 348 normative scenarios, 54 stable
-  rows, and 17 feature exits. All 18 active changes strict-validate.
-- Verified Dev: PASS for this checkout and `Flapstack Dev stage3-finish`.
-  New-chat and active-chat model tuning, Settings navigation, Usage cards, and
-  Usage search were manually observed before macOS locked.
+- Release ledger: PASS, 18 archived changes, 349 normative scenarios, 54 stable
+  rows, and 17 feature exits. All 29 current specs strict-validate.
+- Verified Dev: PASS for this checkout and `Flapstack Dev stage3-capture` after
+  the final implementation restart.
 - Live providers: Cursor, OpenRouter, NanoGPT, Codex, and Claude exact-candidate
   runs completed. Raw OpenRouter/NanoGPT catalog IDs were normalized and all
   probe chats were archived. The bounded total spend was `$0.76064943`, below
@@ -133,17 +131,22 @@ S3-F17-T2/T3/T4/T5 remain open until those rows close.
 - Usage refresh: PASS for Codex, Anthropic, Cursor, and OpenRouter. NanoGPT
   truthfully reported `run-usage-only`. One Discord transport send returned
   HTTP 204 without exposing its Keychain credential.
-- Review/Undo: a real two-file Codex response produced a recoverable change set,
+- Review/Undo: a real two-file Claude response produced a recoverable change set,
   opened stored Review state through the production renderer controls, and
-  restored both original files. Fresh pixel proof was blocked after macOS
-  locked, so undo/review task 4.4 remains open.
+  restored both original files exactly.
 - macOS Preview: unsigned arm64 build, inspection, bundled-runtime smoke, exact
   startup, migrations, window creation, shutdown, and cleanup PASS. Apple
   signing/notarization remains deferred public-distribution work.
-- BLOCKED: after macOS locked, exact visual clipboard/timestamps/Undo-card/
-  question-notification rows could not finish. Exact packaged Usage LaunchAgent
-  daemon polling also remained blocked in the locked GUI session. No process,
-  profile, plist, LaunchAgent, test project, or temporary sidecar was left.
+- Voice: real Parakeet streaming, bundled Whisper fallback, Kokoro/native
+  playback, history CRUD, restart persistence, and user-observed microphone
+  dictation pass. The hardened fixture-scoped MCP restored clipboard state and
+  deleted renderer captures explicitly.
+- Questions/copy/timestamps: exact notification navigation, multi-chat badges,
+  answer/cancel/reload, actual full-history clipboard, and today/older timestamp
+  evidence pass.
+- Packaged Usage: closed-app LaunchAgent start, poll, stop, new-PID restart, and
+  cleanup pass. No process, profile, plist, LaunchAgent, test project,
+  credential, webhook, screenshot, or temporary sidecar remains.
 
 ### 2026-07-13 Settings closeout candidate
 
@@ -348,5 +351,5 @@ chat/run IDs, provider config, and temporary sidecar path. Cleanup must prove:
   logs, SQLite evidence, or shell arguments;
 - main worktree and `main` branch unchanged.
 
-The final handoff records exact commit, commands, PASS/FAIL/BLOCKED rows,
-remaining acceptance tasks, and whether independent review rounds may start.
+The final handoff records the exact commit, commands, PASS rows, deferred
+Stage 4 platform work, and completed independent review rounds.

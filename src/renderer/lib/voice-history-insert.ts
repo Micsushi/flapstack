@@ -7,11 +7,18 @@ export function registerVoiceHistoryInsertTarget(
   key: string,
   handler: VoiceHistoryInsertHandler,
 ): () => void {
+  targets.delete(key)
   targets.set(key, handler)
   activeTargetKey = key
   return () => {
-    if (targets.get(key) === handler) targets.delete(key)
-    if (activeTargetKey === key) activeTargetKey = Array.from(targets.keys()).at(-1) ?? null
+    const removed = targets.get(key) === handler
+    if (removed) targets.delete(key)
+    // Keep the immutable key while a full-page Settings view temporarily
+    // unmounts the composer. The same target re-registers after Settings closes;
+    // when another composer is still mounted, make that live target active.
+    if (removed && activeTargetKey === key) {
+      activeTargetKey = Array.from(targets.keys()).at(-1) ?? key
+    }
   }
 }
 

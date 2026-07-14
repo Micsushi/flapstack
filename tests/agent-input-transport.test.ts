@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { beforeEach, describe, expect, it } from "vitest"
 import { appStore } from "../src/renderer/lib/jotai-store"
 import {
@@ -7,7 +9,10 @@ import {
   expiredUserQuestionsAtom,
   pendingUserQuestionsAtom,
 } from "../src/renderer/features/agents/atoms"
-import { handleAgentInputChunk } from "../src/renderer/features/agents/lib/agent-input-transport"
+import {
+  handleAgentInputChunk,
+  reconcileLiveAgentInputs,
+} from "../src/renderer/features/agents/lib/agent-input-transport"
 import type { AgentInputRequest } from "../src/shared/agent-input"
 
 function request(overrides: Partial<AgentInputRequest> = {}): AgentInputRequest {
@@ -45,6 +50,37 @@ beforeEach(() => {
 })
 
 describe("provider-neutral agent input transport", () => {
+  it("keeps provider-controlled question headers out of desktop notifications", () => {
+    const sources = [
+      "src/renderer/features/agents/ui/agents-content.tsx",
+      "src/renderer/features/agents/main/active-chat.tsx",
+    ].map((path) => readFileSync(join(process.cwd(), path), "utf8"))
+    for (const source of sources) {
+      expect(source).toContain('notifyAgentNeedsInput("", {')
+      expect(source).not.toContain("notifyAgentNeedsInput(request.questions[0]?.header")
+      expect(source).not.toContain("notifyAgentNeedsInput(questionName")
+    }
+  })
+
+  it("reconciles multiple background requests and clears only terminal lifecycle rows", () => {
+    const first = request({ requestId: "request-1", chatId: "sub-chat-1" })
+    const second = request({ requestId: "request-2", chatId: "sub-chat-2" })
+    const initial = reconcileLiveAgentInputs(new Map(), [
+      { request: first, parentChatId: "parent-1" },
+      { request: second, parentChatId: "parent-2" },
+    ])
+    expect([...initial.pending.values()].map((item) => item.parentChatId).sort()).toEqual([
+      "parent-1",
+      "parent-2",
+    ])
+
+    const afterFirstTerminates = reconcileLiveAgentInputs(initial.pending, [
+      { request: second, parentChatId: "parent-2" },
+    ])
+    expect(afterFirstTerminates.pending.has("sub-chat-1")).toBe(false)
+    expect(afterFirstTerminates.pending.get("sub-chat-2")?.toolUseId).toBe("request-2")
+  })
+
   it.each(["codex", "cursor-agent", "openrouter", "nanogpt"] as const)(
     "accepts %s continuation requests without provider-specific renderer state",
     (harness) => {

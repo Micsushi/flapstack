@@ -54,6 +54,7 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
+import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
@@ -624,18 +625,20 @@ export const opencodeRouter = router({
             if (db && messagesWithPrompt) {
               try {
                 const audit = runAudit.snapshot()
+                const persistedReasoning = sanitizeHarnessEnvelopeEcho(reasoning)
+                const persistedText = sanitizeHarnessEnvelopeEcho(text)
                 const assistantParts = [
-                  ...(reasoning || reasoningMetadata.length
+                  ...(persistedReasoning || reasoningMetadata.length
                     ? [
                         {
                           type: "reasoning",
-                          text: reasoning,
+                          text: persistedReasoning,
                           state: "done",
                           ...(reasoningMetadata.length ? { metadata: reasoningMetadata } : {}),
                         },
                       ]
                     : []),
-                  ...(text ? [{ type: "text", text, state: "done" }] : []),
+                  ...(persistedText ? [{ type: "text", text: persistedText, state: "done" }] : []),
                   ...runAudit.toMessageParts(),
                   ...(sidecarErrorText
                     ? [{ type: "text", text: `Error: ${sidecarErrorText}`, state: "done" }]

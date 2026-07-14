@@ -27,6 +27,7 @@ import {
   agentsSubChatsSidebarWidthAtom,
   desktopViewAtom,
   SUBCHATS_SIDEBAR_PANEL_ENABLED,
+  pendingUserQuestionsAtom,
 } from "../atoms"
 import {
   selectedTeamIdAtom,
@@ -77,6 +78,9 @@ import {
 } from "../../../components/ui/context-menu"
 import { resolveOpenChatTabUnderlineColor, resolveVisibleOpenChatTabs } from "../lib/open-chat-tabs"
 import { DictationSessionProvider } from "../voice/dictation-session"
+import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
+import { appStore } from "../../../lib/jotai-store"
+import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -153,6 +157,8 @@ function AgentsContentInner() {
   const { user } = useUser()
   const { signOut } = useClerk()
   const isAdmin = useIsAdmin()
+  const { notifyAgentNeedsInput } = useDesktopNotifications()
+  const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
 
   // Quick-switch dialog state - Agents (Opt+Ctrl+Tab)
   const [quickSwitchOpen, setQuickSwitchOpen] = useAtom(agentsQuickSwitchOpenAtom)
@@ -244,6 +250,30 @@ function AgentsContentInner() {
     { enabled: !!selectedTeamId },
   )
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
+  const { data: liveAgentInputs = [] } = trpc.agentInput.listWithContext.useQuery(undefined, {
+    refetchInterval: import.meta.env.DEV ? 250 : 1_000,
+  })
+
+  useEffect(() => {
+    const current = appStore.get(pendingUserQuestionsAtom)
+    const reconciled = reconcileLiveAgentInputs(current, liveAgentInputs)
+
+    for (const { request, parentChatId } of liveAgentInputs) {
+      if (
+        parentChatId &&
+        parentChatId !== selectedChatId &&
+        !notifiedBackgroundRequestIdsRef.current.has(request.requestId)
+      ) {
+        notifiedBackgroundRequestIdsRef.current.add(request.requestId)
+        notifyAgentNeedsInput("", {
+          chatId: parentChatId,
+          subChatId: request.chatId,
+        })
+      }
+    }
+
+    if (reconciled.changed) appStore.set(pendingUserQuestionsAtom, reconciled.pending)
+  }, [liveAgentInputs, notifyAgentNeedsInput, selectedChatId])
 
   // Fetch all projects for git info (like sidebar does)
   const { data: projects } = trpc.projects.list.useQuery()

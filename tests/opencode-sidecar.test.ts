@@ -652,6 +652,51 @@ The project is a local-first coding workspace.`,
     ])
   })
 
+  it("removes resumed compact context from streamed reasoning without hiding adjacent output", () => {
+    const normalizer = new OpencodeEventNormalizer()
+    normalizer.normalize({
+      type: "message.part.updated",
+      properties: { part: { id: "compact-context", type: "reasoning", text: "" } },
+    })
+
+    expect(
+      normalizer.normalize({
+        type: "message.part.delta",
+        properties: {
+          partID: "compact-context",
+          field: "text",
+          delta: "I will continue safely.\n--- FLAPSTACK COM",
+        },
+      }),
+    ).toEqual([
+      {
+        kind: "reasoning-delta",
+        partId: "compact-context",
+        delta: "I will continue safely.",
+      },
+    ])
+
+    expect(
+      normalizer.normalize({
+        type: "message.part.delta",
+        properties: {
+          partID: "compact-context",
+          field: "text",
+          delta: `PACT CONTEXT (DO NOT QUOTE) ---
+private resumed context
+--- END FLAPSTACK COMPACT CONTEXT ---
+The operation was aborted.`,
+        },
+      }),
+    ).toEqual([
+      {
+        kind: "reasoning-delta",
+        partId: "compact-context",
+        delta: "\nThe operation was aborted.",
+      },
+    ])
+  })
+
   it("maps tool inputs, output, and errors from part updates", () => {
     const running = normalizeOpencodeEvent({
       type: "message.part.updated",

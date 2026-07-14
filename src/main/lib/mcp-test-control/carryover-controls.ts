@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto"
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { eq } from "drizzle-orm"
+import { eq, inArray } from "drizzle-orm"
 import simpleGit from "simple-git"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import {
@@ -11,6 +12,11 @@ import {
   getDatabase,
   projects,
   subChats,
+  usageAlertEvents,
+  usageCycles,
+  usageProviderStates,
+  usageSamples,
+  voiceArtifacts,
 } from "../db"
 import { bindRegisteredFilesystemRoot } from "../git/security/path-validation"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../run-change-undo"
@@ -19,9 +25,10 @@ import { runManualRefresh } from "../usage/catch-up"
 import { getAppUsageSecret } from "../usage/app-secrets"
 import { hasUsageSecret } from "../usage/secrets"
 import { getUsageSettings } from "../usage/settings"
-import { listCurrentSamples, listProviderStates } from "../usage/store"
+import { insertSamples, listCurrentSamples, listProviderStates } from "../usage/store"
 import { readDaemonStatus } from "../usage-daemon/lifecycle"
 import { searchVoiceHistory } from "../speech/history"
+import { deleteVoiceHistoryEntry, recordTranscription } from "../speech/history"
 import {
   getNativeTtsAvailability,
   resolveSttAdapter,
@@ -34,6 +41,40 @@ import { getParakeetModelStatus, parakeetSidecar } from "../speech/stt-parakeet-
 import { getSttModelStatus } from "../speech/stt-whisper-cpp"
 import type { VoiceSettings } from "../speech/types"
 import type { UsageProviderId } from "../usage/types"
+
+const DEV_USAGE_UI_ACCOUNT_TAG_PREFIX = "dev-stage3-ui-fixture-"
+export const DEV_VOICE_UI_ORIGIN = "Stage 3 Voice UI fixture"
+export const DEV_VOICE_UI_TEXT = "Stage 3 voice history fixture"
+const DEV_VOICE_UI_ORIGIN_ID = "stage3-voice-ui-fixture"
+const activeVoiceUiFixtureIds = new Set<string>()
+
+type UsageUiFixtureState = {
+  accountTag: string
+  sampleIds: string[]
+  cycleIds: string[]
+  alertIds: string[]
+  providerStateIds: string[]
+}
+
+let activeUsageUiFixture: UsageUiFixtureState | null = null
+
+function silentWav(durationMs = 100) {
+  const sampleCount = Math.max(1, Math.round((16_000 * durationMs) / 1_000))
+  const output = Buffer.alloc(44 + sampleCount * 2)
+  output.write("RIFF", 0)
+  output.writeUInt32LE(36 + sampleCount * 2, 4)
+  output.write("WAVEfmt ", 8)
+  output.writeUInt32LE(16, 16)
+  output.writeUInt16LE(1, 20)
+  output.writeUInt16LE(1, 22)
+  output.writeUInt32LE(16_000, 24)
+  output.writeUInt32LE(32_000, 28)
+  output.writeUInt16LE(2, 32)
+  output.writeUInt16LE(16, 34)
+  output.write("data", 36)
+  output.writeUInt32LE(sampleCount * 2, 40)
+  return output
+}
 
 function usageDeps() {
   return { db: getDatabase(), getSecret: getAppUsageSecret }
@@ -112,6 +153,51 @@ export function controlVoiceSettings(
   return next
 }
 
+export async function createVoiceUiFixture() {
+  const artifact = await recordTranscription({
+    text: DEV_VOICE_UI_TEXT,
+    adapterId: "local-parakeet",
+    modelId: "parakeet-unified-en-q8",
+    originKind: "new-chat",
+    originId: DEV_VOICE_UI_ORIGIN_ID,
+    originLabel: DEV_VOICE_UI_ORIGIN,
+    durationMs: 100,
+    audioWav: silentWav(),
+  })
+  activeVoiceUiFixtureIds.add(artifact.id)
+  return { id: artifact.id, kind: artifact.kind, hasAudio: Boolean(artifact.audioPath) }
+}
+
+export function requireVoiceUiFixture(id: string) {
+  const artifact = getDatabase()
+    .select()
+    .from(voiceArtifacts)
+    .where(eq(voiceArtifacts.id, id))
+    .get()
+  if (
+    !artifact ||
+    !activeVoiceUiFixtureIds.has(id) ||
+    artifact.originId !== DEV_VOICE_UI_ORIGIN_ID ||
+    artifact.originLabel !== DEV_VOICE_UI_ORIGIN
+  ) {
+    throw new Error("Voice UI control requires an exact Stage 3 fixture")
+  }
+  return { id: artifact.id, kind: artifact.kind, hasAudio: Boolean(artifact.audioPath) }
+}
+
+export async function cleanupVoiceUiFixture(input: { id: string }) {
+  const artifact = getDatabase()
+    .select()
+    .from(voiceArtifacts)
+    .where(eq(voiceArtifacts.id, input.id))
+    .get()
+  if (!artifact) return { deleted: false, alreadyMissing: true, id: input.id }
+  requireVoiceUiFixture(input.id)
+  const result = await deleteVoiceHistoryEntry(input.id)
+  activeVoiceUiFixtureIds.delete(input.id)
+  return { ...result, alreadyMissing: false, id: input.id }
+}
+
 export async function getUsageState() {
   const db = getDatabase()
   const [states, samples, daemon, openrouterKey, nanogptKey] = await Promise.all([
@@ -181,6 +267,12 @@ export async function createCarryoverRunFixture(input: {
     await git.commit("Initialize carryover fixture")
 
     const db = getDatabase()
+    // The product exposes one canonical conversation per sidebar chat. Keep the
+    // primary evidence row strictly earlier than the legacy background row so
+    // second-resolution SQLite timestamps cannot make canonical selection depend
+    // on generated IDs.
+    const primaryCreatedAt = new Date(Date.now() - 2_000)
+    const backgroundCreatedAt = new Date(Date.now() - 1_000)
     const created = db.transaction((tx) => {
       const project = tx
         .insert(projects)
@@ -213,6 +305,8 @@ export async function createCarryoverRunFixture(input: {
           permissionMode: "read-only",
           worktreePath: root,
           messages: "[]",
+          createdAt: primaryCreatedAt,
+          updatedAt: primaryCreatedAt,
         })
         .returning()
         .get()
@@ -227,6 +321,8 @@ export async function createCarryoverRunFixture(input: {
           permissionMode: "read-only",
           worktreePath: root,
           messages: "[]",
+          createdAt: backgroundCreatedAt,
+          updatedAt: backgroundCreatedAt,
         })
         .returning()
         .get()
@@ -384,4 +480,150 @@ export async function cleanupCarryoverRunFixture(input: { projectId: string }) {
   })
   await rm(project.path, { recursive: true, force: true })
   return { cleaned: true, projectId: input.projectId }
+}
+
+export async function createUsageUiFixture() {
+  cleanupUsageUiFixture()
+  const db = getDatabase()
+  const now = Date.now()
+  const fixtureToken = randomUUID()
+  const accountTag = `${DEV_USAGE_UI_ACCOUNT_TAG_PREFIX}${fixtureToken}`
+  await insertSamples(
+    db,
+    Array.from({ length: 30 }, (_, index) => {
+      const capturedAt = new Date(now - index * 4 * 60 * 60 * 1_000)
+      const windowStart = new Date(capturedAt.getTime() - 5 * 60 * 60 * 1_000)
+      return {
+        providerId: "codex" as const,
+        accountTag,
+        source: "app-poll" as const,
+        costQuality: "provider-reported" as const,
+        sourceTag: `dev-fixture:${fixtureToken}`,
+        metricKey: "five_hour",
+        capturedAt,
+        windowStart,
+        windowEnd: capturedAt,
+        inputTokens: 1_000 + index * 10,
+        outputTokens: 250 + index * 5,
+        totalTokens: 1_250 + index * 15,
+        requestCount: index + 1,
+        costUsd: 0.1 + index / 100,
+        percentUsed: Math.min(99, 20 + index * 2),
+        quotaUsed: 20 + index * 2,
+        quotaLimit: 100,
+        quotaUnit: "provider-native" as const,
+        resetAt: new Date(capturedAt.getTime() + 60 * 60 * 1_000),
+        dedupeKey: `dev-stage3-ui-sample-${fixtureToken}-${index}`,
+      }
+    }),
+  )
+  db.insert(usageProviderStates)
+    .values([
+      {
+        providerId: "codex",
+        accountTag,
+        status: "ok",
+        statusDetail: "Sanitized Stage 3 UI fixture",
+        configured: true,
+        supportsDaemon: true,
+        supportsHistorical: true,
+        lastPollAt: new Date(now),
+        lastSuccessAt: new Date(now),
+      },
+      {
+        providerId: "nanogpt",
+        accountTag,
+        status: "run-usage-only",
+        statusDetail: "Run usage only; account history is unavailable.",
+        configured: true,
+        supportsDaemon: false,
+        supportsHistorical: false,
+        lastPollAt: new Date(now),
+        lastSuccessAt: new Date(now),
+      },
+    ])
+    .run()
+  db.insert(usageAlertEvents)
+    .values(
+      Array.from({ length: 30 }, (_, index) => ({
+        providerId: "codex",
+        accountTag,
+        alertType: index % 2 === 0 ? "quota-percent" : "api-dollar-budget",
+        thresholdValue: 50_000_000,
+        observedValue: 70_000_000 + index,
+        costQuality: "provider-reported",
+        channel: "discord",
+        deliveryStatus: index === 0 ? "failed" : "sent",
+        deliveryError: index === 0 ? "Sanitized fixture delivery failure" : null,
+        message: `Sanitized Stage 3 alert fixture ${index + 1}`,
+        createdAt: new Date(now - index * 60_000),
+      })),
+    )
+    .run()
+  activeUsageUiFixture = {
+    accountTag,
+    sampleIds: db
+      .select({ id: usageSamples.id })
+      .from(usageSamples)
+      .where(eq(usageSamples.accountTag, accountTag))
+      .all()
+      .map((row) => row.id),
+    cycleIds: db
+      .select({ id: usageCycles.id })
+      .from(usageCycles)
+      .where(eq(usageCycles.accountTag, accountTag))
+      .all()
+      .map((row) => row.id),
+    alertIds: db
+      .select({ id: usageAlertEvents.id })
+      .from(usageAlertEvents)
+      .where(eq(usageAlertEvents.accountTag, accountTag))
+      .all()
+      .map((row) => row.id),
+    providerStateIds: db
+      .select({ id: usageProviderStates.id })
+      .from(usageProviderStates)
+      .where(eq(usageProviderStates.accountTag, accountTag))
+      .all()
+      .map((row) => row.id),
+  }
+  return {
+    accountTag,
+    samples: 30,
+    cycles: 30,
+    alerts: 30,
+    providerStates: 2,
+  }
+}
+
+export function cleanupUsageUiFixture() {
+  const fixture = activeUsageUiFixture
+  if (!fixture) {
+    return { accountTag: null, alerts: 0, cycles: 0, samples: 0, providerStates: 0 }
+  }
+  const db = getDatabase()
+  const result = db.transaction((tx) => ({
+    alerts:
+      fixture.alertIds.length === 0
+        ? 0
+        : tx.delete(usageAlertEvents).where(inArray(usageAlertEvents.id, fixture.alertIds)).run()
+            .changes,
+    cycles:
+      fixture.cycleIds.length === 0
+        ? 0
+        : tx.delete(usageCycles).where(inArray(usageCycles.id, fixture.cycleIds)).run().changes,
+    samples:
+      fixture.sampleIds.length === 0
+        ? 0
+        : tx.delete(usageSamples).where(inArray(usageSamples.id, fixture.sampleIds)).run().changes,
+    providerStates:
+      fixture.providerStateIds.length === 0
+        ? 0
+        : tx
+            .delete(usageProviderStates)
+            .where(inArray(usageProviderStates.id, fixture.providerStateIds))
+            .run().changes,
+  }))
+  activeUsageUiFixture = null
+  return { accountTag: fixture.accountTag, ...result }
 }

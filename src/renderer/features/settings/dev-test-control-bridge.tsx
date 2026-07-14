@@ -10,6 +10,7 @@ import {
 } from "../../lib/atoms"
 import { buildShortcutState, mutateShortcutConfig } from "../../lib/hotkeys"
 import { appStore } from "../../lib/jotai-store"
+import { api } from "../../lib/mock-api"
 import { trpc } from "../../lib/trpc"
 import {
   desktopViewAtom,
@@ -17,6 +18,7 @@ import {
   selectedAgentChatIdAtom,
   selectedChatIsRemoteAtom,
   selectedProjectAtom,
+  pendingUserQuestionsAtom,
 } from "../agents/atoms"
 import { readRendererOrchestrationCard } from "../agents/lib/orchestration-test-state"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
@@ -68,9 +70,82 @@ function boundedCarryoverDataset(
   }
 }
 
+function readUsageUiState(document: Document) {
+  const root = document.querySelector<HTMLElement>('[data-dev-carryover-surface="usage"]')
+  const pressedValue = (control: string) =>
+    Array.from(
+      document.querySelectorAll<HTMLElement>(`[data-dev-usage-control="${control}"]`),
+    ).find(
+      (element) =>
+        element.getAttribute("aria-pressed") === "true" || element.dataset.state === "active",
+    )?.dataset.value ?? null
+  const monitoring = document.querySelector<HTMLDetailsElement>(
+    '[data-dev-usage-control="monitoring"]',
+  )
+  return {
+    mounted: Boolean(root),
+    provider: pressedValue("provider"),
+    scope: pressedValue("scope"),
+    historyMode: pressedValue("history-mode"),
+    historyRange: pressedValue("history-range"),
+    monitoringOpen: monitoring?.open ?? false,
+    rows: Object.fromEntries(
+      (["alerts", "samples", "cycles"] as const).map((kind) => [
+        kind,
+        document.querySelectorAll(`[data-dev-usage-row="${kind}"]`).length,
+      ]),
+    ),
+    showAllTargets: Array.from(
+      document.querySelectorAll<HTMLElement>('[data-dev-usage-action="show-all"]'),
+    ).map((element) => element.dataset.devUsagePaging),
+  }
+}
+
+const DEV_VOICE_UI_TEXT = "Stage 3 voice history fixture"
+
+function readVoiceUiState(document: Document, historyId?: string) {
+  const root = document.querySelector<HTMLElement>('[data-dev-carryover-surface="voice"]')
+  const activeElement = document.activeElement as HTMLElement | null
+  const controlValue = (name: string) =>
+    document.querySelector<HTMLInputElement | HTMLSelectElement>(
+      `[data-dev-voice-control="${name}"]`,
+    )?.value ?? null
+  return {
+    mounted: Boolean(root),
+    sttAdapterId: controlValue("stt-adapter"),
+    ttsAdapterId: controlValue("tts-adapter"),
+    voiceId: controlValue("voice"),
+    rate: controlValue("rate"),
+    searchActive: Boolean(controlValue("history-search")),
+    previewHasText: Boolean(controlValue("preview-text")),
+    activeComposerHasFixtureText:
+      activeElement?.getAttribute("contenteditable") === "true"
+        ? activeElement.textContent?.includes(DEV_VOICE_UI_TEXT) === true
+        : false,
+    visibleComposerFixtureMatches: Array.from(
+      document.querySelectorAll<HTMLElement>('[contenteditable="true"]'),
+    )
+      .filter((element) => element.offsetParent !== null)
+      .slice(0, 20)
+      .filter((element) => element.textContent?.includes(DEV_VOICE_UI_TEXT) === true).length,
+    history: Array.from(document.querySelectorAll<HTMLElement>("[data-dev-voice-history-id]"))
+      .filter((element) => element.dataset.devVoiceHistoryId === historyId)
+      .slice(0, 100)
+      .map((element) => ({
+        id: element.dataset.devVoiceHistoryId,
+        kind: element.dataset.devVoiceHistoryKind,
+        containsFixtureText: element.textContent?.includes(DEV_VOICE_UI_TEXT) === true,
+        actions: Array.from(element.querySelectorAll<HTMLElement>("[data-dev-voice-action]"))
+          .map((action) => action.dataset.devVoiceAction)
+          .filter(Boolean),
+      })),
+  }
+}
+
 /** Always-mounted renderer half of the authenticated development test-control bridge. */
 export function DevTestControlBridge() {
   const trpcUtils = trpc.useUtils()
+  const apiUtils = api.useUtils()
 
   useEffect(() => {
     if (!window.desktopApi?.onDevRendererControlRequest) return
@@ -218,6 +293,21 @@ export function DevTestControlBridge() {
           })
           return
         }
+        await apiUtils.agents.getAgentChat.invalidate({ chatId: request.chatId })
+        const persistedSubChat = (
+          snapshot.targetChat as {
+            subChats?: Array<{ id: string; messages?: string | null }>
+          } | null
+        )?.subChats?.find((subChat) => subChat.id === request.subChatId)
+        let persistedMessages: unknown[] | null = null
+        if (persistedSubChat?.messages) {
+          try {
+            const parsed = JSON.parse(persistedSubChat.messages)
+            if (Array.isArray(parsed)) persistedMessages = parsed
+          } catch {
+            persistedMessages = null
+          }
+        }
         const store = useAgentSubChatStore.getState()
         store.setChatId(null)
         store.queueNavigation(request.chatId, request.subChatId)
@@ -238,6 +328,30 @@ export function DevTestControlBridge() {
           }
         }
         store.setChatId(request.chatId)
+        // The active chat mounts asynchronously and may restore its persisted first tab
+        // after the queued navigation is consumed. Re-apply the bounded requested
+        // sub-chat to the now-active store so dev evidence cannot drift to a sibling tab.
+        store.queueNavigation(request.chatId, request.subChatId)
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())),
+        )
+        const refreshedStore = useAgentSubChatStore.getState()
+        if (refreshedStore.chatId !== request.chatId) {
+          refreshedStore.queueNavigation(request.chatId, request.subChatId)
+          refreshedStore.setChatId(request.chatId)
+        }
+        refreshedStore.queueNavigation(request.chatId, request.subChatId)
+        appStore.set(selectedProjectAtom, request.project)
+        appStore.set(selectedAgentChatIdAtom, request.chatId)
+        appStore.set(selectedChatIsRemoteAtom, false)
+        if (persistedMessages) {
+          window.dispatchEvent(
+            new CustomEvent("flapstack-dev-chat-refresh", {
+              detail: { subChatId: request.subChatId, messages: persistedMessages },
+            }),
+          )
+          await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+        }
         const selectedSubChatId = useAgentSubChatStore.getState().activeSubChatId
         window.desktopApi.respondDevRendererControl({
           requestId: request.requestId,
@@ -249,6 +363,288 @@ export function DevTestControlBridge() {
             settingsOpen: false,
             detailsOpen: appStore.get(detailsSidebarOpenAtom),
             detailsTab: appStore.get(detailsSidebarTabAtom),
+            persistedMessageCount: persistedMessages?.length ?? 0,
+          },
+        })
+        return
+      }
+      if (request.command === "chat.copy") {
+        if (appStore.get(selectedAgentChatIdAtom) !== request.chatId) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error: "Requested chat is not selected",
+          })
+          return
+        }
+        const previousClipboard = await window.desktopApi.clipboardRead()
+        const sentinel = `flapstack-dev-copy-${crypto.randomUUID()}`
+        let copiedState:
+          | {
+              chatId: string
+              source: "active-header" | "sidebar-menu"
+              copied: boolean
+              clipboardLength: number
+              containsExpected: boolean
+            }
+          | undefined
+        let operationError: unknown
+        try {
+          await window.desktopApi.clipboardWrite(sentinel)
+          let action: HTMLElement | undefined
+          if (request.source === "active-header") {
+            action = Array.from(
+              document.querySelectorAll<HTMLElement>('[data-dev-chat-copy-source="active-header"]'),
+            ).find((element) => element.dataset.chatId === request.chatId)
+          } else {
+            const row = Array.from(
+              document.querySelectorAll<HTMLElement>("[data-chat-item][data-chat-id]"),
+            ).find((element) => element.dataset.chatId === request.chatId)
+            if (row) {
+              const rect = row.getBoundingClientRect()
+              row.dispatchEvent(
+                new MouseEvent("contextmenu", {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: rect.left + Math.min(20, rect.width / 2),
+                  clientY: rect.top + Math.min(20, rect.height / 2),
+                }),
+              )
+              await new Promise<void>((resolve) =>
+                window.requestAnimationFrame(() => window.setTimeout(resolve, 50)),
+              )
+              action = Array.from(
+                document.querySelectorAll<HTMLElement>(
+                  '[data-dev-chat-copy-source="sidebar-menu"]',
+                ),
+              ).find((element) => element.dataset.chatId === request.chatId)
+            }
+          }
+          if (!action) throw new Error("Requested chat copy action is not mounted")
+          action.click()
+
+          let copiedText = sentinel
+          for (let attempt = 0; attempt < 20 && copiedText === sentinel; attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 100))
+            copiedText = await window.desktopApi.clipboardRead()
+          }
+          copiedState = {
+            chatId: request.chatId,
+            source: request.source,
+            copied: copiedText !== sentinel,
+            clipboardLength: copiedText === sentinel ? 0 : copiedText.length,
+            containsExpected: copiedText !== sentinel && copiedText.includes(request.expectedText),
+          }
+        } catch (error) {
+          operationError = error
+        }
+        try {
+          await window.desktopApi.clipboardWrite(previousClipboard)
+          const clipboardRestored = (await window.desktopApi.clipboardRead()) === previousClipboard
+          if (!clipboardRestored) throw new Error("Clipboard restoration verification failed")
+          if (operationError || !copiedState) throw operationError ?? new Error("Copy failed")
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: { ...copiedState, clipboardRestored },
+          })
+        } catch (error) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : "Chat copy control failed",
+          })
+        }
+        return
+      }
+      if (request.command === "agent-input.get") {
+        const pending = [...appStore.get(pendingUserQuestionsAtom).values()].slice(0, 100)
+        const countsByParentChatId: Record<string, number> = {}
+        for (const request of pending) {
+          countsByParentChatId[request.parentChatId] =
+            (countsByParentChatId[request.parentChatId] ?? 0) + 1
+        }
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: {
+            selectedChatId: appStore.get(selectedAgentChatIdAtom),
+            activeSubChatId: useAgentSubChatStore.getState().activeSubChatId,
+            desktopView: appStore.get(desktopViewAtom),
+            pendingRequestIds: pending.map((item) => item.toolUseId),
+            countsByParentChatId,
+          },
+        })
+        return
+      }
+      if (request.command === "usage-ui.get" || request.command === "usage-ui.control") {
+        if (request.command === "usage-ui.control") {
+          let action: HTMLElement | null | undefined
+          if (request.operation === "open") {
+            appStore.set(desktopViewAtom, "usage")
+            action = document.body
+          } else if (request.operation === "open-monitoring") {
+            const details = document.querySelector<HTMLDetailsElement>(
+              '[data-dev-usage-control="monitoring"]',
+            )
+            if (details) details.open = true
+            action = details
+          } else if (request.operation === "scroll-to") {
+            action = document.querySelector<HTMLElement>(
+              `[data-dev-usage-section="${request.target}"]`,
+            )
+            action?.scrollIntoView({ block: "start" })
+          } else if (request.operation === "show-all") {
+            action = Array.from(
+              document.querySelectorAll<HTMLElement>('[data-dev-usage-action="show-all"]'),
+            ).find((element) => element.dataset.devUsagePaging === request.target)
+            action?.click()
+          } else {
+            const control =
+              request.operation === "select-provider"
+                ? "provider"
+                : request.operation === "set-scope"
+                  ? "scope"
+                  : request.operation === "set-history-mode"
+                    ? "history-mode"
+                    : "history-range"
+            action = Array.from(
+              document.querySelectorAll<HTMLElement>(`[data-dev-usage-control="${control}"]`),
+            ).find((element) => element.dataset.value === request.value)
+            if (action?.getAttribute("role") === "tab") {
+              action.dispatchEvent(
+                new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }),
+              )
+            } else {
+              action?.click()
+            }
+          }
+          if (!action) {
+            window.desktopApi.respondDevRendererControl({
+              requestId: request.requestId,
+              ok: false,
+              error: "Requested Usage UI action is not mounted",
+            })
+            return
+          }
+        }
+        window.setTimeout(() => {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: readUsageUiState(document),
+          })
+        }, 100)
+        return
+      }
+      if (request.command === "voice-ui.get" || request.command === "voice-ui.control") {
+        if (request.command === "voice-ui.get") {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: true,
+            state: readVoiceUiState(document, request.historyId),
+          })
+          return
+        }
+        const preservesClipboard = ["copy-history", "insert-history"].includes(request.operation)
+        const previousClipboard = preservesClipboard
+          ? await window.desktopApi.clipboardRead()
+          : undefined
+        const sentinel = `flapstack-dev-voice-${crypto.randomUUID()}`
+        let fixtureClipboardMatch = false
+        let operationError: unknown
+        if (preservesClipboard) await window.desktopApi.clipboardWrite(sentinel)
+        if (request.command === "voice-ui.control") {
+          let action: HTMLElement | null | undefined
+          try {
+            if (request.operation === "open") {
+              await trpcUtils.speech.searchHistory.invalidate()
+              await trpcUtils.speech.getSettings.invalidate()
+              appStore.set(desktopViewAtom, "settings")
+              appStore.set(agentsSettingsDialogActiveTabAtom, "voice")
+              appStore.set(agentsSettingsDialogOpenAtom, true)
+              action = document.body
+            } else if (["search", "set-stt", "set-tts", "set-rate"].includes(request.operation)) {
+              const control =
+                request.operation === "search"
+                  ? "history-search"
+                  : request.operation === "set-stt"
+                    ? "stt-adapter"
+                    : request.operation === "set-tts"
+                      ? "tts-adapter"
+                      : "rate"
+              const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(
+                `[data-dev-voice-control="${control}"]`,
+              )
+              if (input) {
+                const setter = Object.getOwnPropertyDescriptor(
+                  input instanceof HTMLSelectElement
+                    ? HTMLSelectElement.prototype
+                    : HTMLInputElement.prototype,
+                  "value",
+                )?.set
+                setter?.call(input, request.value ?? "")
+                input.dispatchEvent(new Event("change", { bubbles: true }))
+              }
+              action = input
+            } else if (["preview", "stop"].includes(request.operation)) {
+              action = document.querySelector<HTMLElement>(
+                `[data-dev-voice-action="${request.operation}"]`,
+              )
+              action?.click()
+            } else {
+              const row = Array.from(
+                document.querySelectorAll<HTMLElement>("[data-dev-voice-history-id]"),
+              ).find((element) => element.dataset.devVoiceHistoryId === request.historyId)
+              action = row?.querySelector<HTMLElement>(
+                `[data-dev-voice-action="${request.operation}"]`,
+              )
+              if (request.operation === "delete-history") {
+                const previousConfirm = window.confirm
+                window.confirm = () => true
+                try {
+                  action?.click()
+                } finally {
+                  window.confirm = previousConfirm
+                }
+              } else {
+                action?.click()
+              }
+            }
+            if (!action) throw new Error("Requested Voice UI action is not mounted")
+          } catch (error) {
+            operationError = error
+          }
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 200))
+        let clipboardRestored: boolean | undefined
+        if (preservesClipboard) {
+          try {
+            const clipboard = await window.desktopApi.clipboardRead()
+            fixtureClipboardMatch = clipboard !== sentinel && clipboard.includes(DEV_VOICE_UI_TEXT)
+            await window.desktopApi.clipboardWrite(previousClipboard ?? "")
+            clipboardRestored =
+              (await window.desktopApi.clipboardRead()) === (previousClipboard ?? "")
+            if (!clipboardRestored) throw new Error("Clipboard restoration verification failed")
+          } catch (error) {
+            operationError ??= error
+          }
+        }
+        if (operationError) {
+          window.desktopApi.respondDevRendererControl({
+            requestId: request.requestId,
+            ok: false,
+            error:
+              operationError instanceof Error ? operationError.message : "Voice UI control failed",
+          })
+          return
+        }
+        window.desktopApi.respondDevRendererControl({
+          requestId: request.requestId,
+          ok: true,
+          state: {
+            ...readVoiceUiState(document, request.historyId),
+            ...(preservesClipboard ? { fixtureClipboardMatch, clipboardRestored } : {}),
           },
         })
         return

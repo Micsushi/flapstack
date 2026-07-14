@@ -18,6 +18,18 @@ if (!appArgument || !existsSync(appPath)) {
 }
 
 const appName = basename(appPath, ".app")
+const expectProviderArgument = process.argv.find((value) => value.startsWith("--expect-provider="))
+const expectedProvider = expectProviderArgument?.slice("--expect-provider=".length).trim() || null
+const expectAlert = process.argv.includes("--expect-alert")
+if (
+  expectedProvider &&
+  !["codex", "anthropic", "cursor", "openrouter", "nanogpt"].includes(expectedProvider)
+) {
+  throw new Error(`Unsupported expected provider: ${expectedProvider}`)
+}
+if (expectAlert && !expectedProvider) {
+  throw new Error("--expect-alert requires --expect-provider")
+}
 const executable = join(appPath, "Contents", "MacOS", appName)
 const daemonEntry = join(
   appPath,
@@ -59,16 +71,46 @@ try {
   mkdirSync(configDir, { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec("CREATE TABLE agent_runs (id text PRIMARY KEY)")
-  db.exec(
-    readFileSync(join(root, "drizzle/0009_exotic_red_wolf.sql"), "utf8").replaceAll(
-      "--> statement-breakpoint",
-      "",
-    ),
-  )
+  for (const migration of [
+    "0009_exotic_red_wolf.sql",
+    "0011_usage_generation_reconciliation.sql",
+    "0012_usage_alert_threshold_micros.sql",
+    "0013_cursor_usage_account_cleanup.sql",
+    "0015_dear_toad_men.sql",
+  ]) {
+    db.exec(
+      readFileSync(join(root, "drizzle", migration), "utf8").replaceAll(
+        "--> statement-breakpoint",
+        "",
+      ),
+    )
+  }
   db.close()
   writeFileSync(
     settingsPath,
-    JSON.stringify({ daemonEnabled: true, daemonStartAtLogin: true, cadenceSeconds: 30 }),
+    JSON.stringify({
+      daemonEnabled: true,
+      daemonStartAtLogin: true,
+      cadenceSeconds: 30,
+      discordAlertsEnabled: expectAlert,
+      ...(expectedProvider
+        ? {
+            providers: {
+              [expectedProvider]: {
+                enabled: true,
+                ...(expectAlert
+                  ? {
+                      thresholds: {
+                        quotaPercent: expectedProvider === "openrouter" ? [] : [0],
+                        spendUsd: expectedProvider === "openrouter" ? [0] : [],
+                      },
+                    }
+                  : {}),
+              },
+            },
+          }
+        : {}),
+    }),
   )
 
   const install = () =>
@@ -83,6 +125,8 @@ try {
 
   install()
   const first = await waitForRunning(dbPath)
+  if (expectedProvider) await waitForProviderSample(dbPath, expectedProvider)
+  if (expectAlert) await waitForSentAlert(dbPath, expectedProvider)
   assertLaunchAgent(serviceId, plistPath, executable, daemonEntry, secretNamespace)
 
   platformHelpers.uninstallUsageDaemon(configDir)
@@ -102,7 +146,7 @@ try {
   assertLaunchAgentRemoved(serviceId, plistPath)
 
   console.log(
-    `packaged usage daemon smoke passed (closed-app launch, stop, restart, cleanup): ${serviceId}`,
+    `packaged usage daemon smoke passed (closed-app launch, poll${expectedProvider ? `, ${expectedProvider} sample` : ""}${expectAlert ? ", persisted Discord alert" : ""}, stop, restart, cleanup): ${serviceId}`,
   )
 } finally {
   if (platformHelpers && serviceId) {
@@ -124,6 +168,62 @@ function readStatus(dbPath) {
   } finally {
     db.close()
   }
+}
+
+function readProviderSampleCount(dbPath, providerId) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return db
+      .prepare("SELECT count(*) AS count FROM usage_samples WHERE provider_id = ?")
+      .get(providerId).count
+  } finally {
+    db.close()
+  }
+}
+
+function readProviderState(dbPath, providerId) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return db
+      .prepare(
+        "SELECT status, configured, status_detail, last_error FROM usage_provider_states WHERE provider_id = ? ORDER BY updated_at DESC LIMIT 1",
+      )
+      .get(providerId)
+  } finally {
+    db.close()
+  }
+}
+
+function readSentAlertCount(dbPath, providerId) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return db
+      .prepare(
+        "SELECT count(*) AS count FROM usage_alert_events WHERE provider_id = ? AND delivery_status = 'sent' AND channel = 'discord'",
+      )
+      .get(providerId).count
+  } finally {
+    db.close()
+  }
+}
+
+async function waitForProviderSample(dbPath, providerId) {
+  try {
+    await waitFor(
+      () => (readProviderSampleCount(dbPath, providerId) > 0 ? true : null),
+      `packaged usage daemon to persist a ${providerId} sample`,
+    )
+  } catch (error) {
+    const state = readProviderState(dbPath, providerId)
+    throw new Error(`${error.message}; sanitized provider state: ${JSON.stringify(state ?? null)}`)
+  }
+}
+
+async function waitForSentAlert(dbPath, providerId) {
+  await waitFor(
+    () => (readSentAlertCount(dbPath, providerId) > 0 ? true : null),
+    `packaged usage daemon to persist a sent ${providerId} Discord alert`,
+  )
 }
 
 async function waitForRunning(dbPath, previousPid = null) {

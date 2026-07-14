@@ -36,6 +36,15 @@ import {
   getVisibleCopySearchState,
   requestDevRendererControl,
   getRendererAgentInputState,
+  getRendererAgentInputNavigationState,
+  getRendererUsageUiState,
+  getRendererVoiceUiState,
+  navigateAgentInputNotification,
+  controlRendererUsageUi,
+  controlRendererVoiceUi,
+  captureTestRenderer,
+  cleanupAllTestRendererCaptures,
+  cleanupTestRendererCapture,
   listProviderExtensions,
   getReasoningTimerState,
   getRunState,
@@ -78,8 +87,12 @@ import {
 } from "./settings-release-controls"
 import {
   cleanupCarryoverRunFixture,
+  cleanupUsageUiFixture,
+  cleanupVoiceUiFixture,
   controlVoiceSettings,
   createCarryoverRunFixture,
+  createUsageUiFixture,
+  createVoiceUiFixture,
   getCarryoverRunFixtureFiles,
   getRunChangeState,
   getUsageState,
@@ -474,6 +487,35 @@ function registerTools(server: McpServer): void {
     },
   )
   server.registerTool(
+    "copy_test_chat_history",
+    {
+      description:
+        "Exercise active-header or sidebar-menu full-history copy for one persisted test chat.",
+      inputSchema: {
+        chatId: z.string().min(1).max(200),
+        subChatId: z.string().min(1).max(200),
+        source: z.enum(["active-header", "sidebar-menu"]),
+        expectedText: z.string().min(1).max(200),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const selection = resolveTestChatSelection(input)
+        return result(
+          await requestDevRendererControl({
+            command: "chat.copy",
+            chatId: selection.chatId,
+            source: input.source,
+            expectedText: input.expectedText,
+          }),
+        )
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "get_renderer_orchestration_state",
     {
       description:
@@ -610,6 +652,76 @@ function registerTools(server: McpServer): void {
     async (input) => result(controlVoiceSettings(input)),
   )
   server.registerTool(
+    "create_voice_ui_fixture",
+    {
+      description: "Create one sanitized local Voice History row with a silent WAV.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async () => result(await createVoiceUiFixture()),
+  )
+  server.registerTool(
+    "cleanup_voice_ui_fixture",
+    {
+      description: "Delete one exact sanitized Stage 3 Voice History fixture.",
+      inputSchema: { id: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cleanupVoiceUiFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_voice_ui_state",
+    {
+      description: "Inspect bounded Voice settings and one exact sanitized fixture row.",
+      inputSchema: { historyId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getRendererVoiceUiState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_renderer_voice_ui",
+    {
+      description: "Exercise bounded Voice settings, history, preview, and stop controls.",
+      inputSchema: {
+        operation: z.enum([
+          "open",
+          "search",
+          "copy-history",
+          "play-history",
+          "insert-history",
+          "delete-history",
+          "preview",
+          "stop",
+          "set-stt",
+          "set-tts",
+          "set-rate",
+        ]),
+        value: z.string().max(500).optional(),
+        historyId: z.string().min(1).max(200).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlRendererVoiceUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     "get_usage_state",
     {
       description:
@@ -629,6 +741,61 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
     async (input) => result(await refreshUsageState(input)),
+  )
+  server.registerTool(
+    "create_usage_ui_fixture",
+    {
+      description: "Create sanitized Usage cards, history, paging, alert, and limitation rows.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async () => result(await createUsageUiFixture()),
+  )
+  server.registerTool(
+    "cleanup_usage_ui_fixture",
+    {
+      description: "Delete only the sanitized Stage 3 Usage UI fixture rows.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async () => result(cleanupUsageUiFixture()),
+  )
+  server.registerTool(
+    "get_renderer_usage_ui_state",
+    {
+      description: "Inspect bounded provider filters, history controls, paging, and row counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getRendererUsageUiState()),
+  )
+  server.registerTool(
+    "control_renderer_usage_ui",
+    {
+      description: "Exercise enumerated provider, history, monitoring, and paging controls.",
+      inputSchema: {
+        operation: z.enum([
+          "open",
+          "select-provider",
+          "set-scope",
+          "set-history-mode",
+          "set-history-range",
+          "open-monitoring",
+          "show-all",
+          "scroll-to",
+        ]),
+        value: z.string().min(1).max(100).optional(),
+        target: z.enum(["provider-states", "alerts", "samples", "cycles"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await controlRendererUsageUi(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
   )
   server.registerTool(
     "get_run_change_state",
@@ -734,7 +901,7 @@ function registerTools(server: McpServer): void {
       description: "Control an enumerated live reasoning or run-change disclosure action.",
       inputSchema: {
         surface: z.enum(["reasoning", "run-change"]),
-        operation: z.enum(["toggle", "open-review", "show-all"]),
+        operation: z.enum(["toggle", "open-review", "show-all", "undo"]),
         runId: z.string().min(1).max(200).optional(),
         index: z.number().int().min(0).max(100).optional(),
       },
@@ -980,6 +1147,54 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (input) => result(getRendererAgentInputState(input)),
+  )
+  server.registerTool(
+    "get_renderer_agent_input_navigation_state",
+    {
+      description: "Inspect selected chat and bounded background-input badge counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getRendererAgentInputNavigationState()),
+  )
+  server.registerTool(
+    "navigate_agent_input_notification",
+    {
+      description: "Navigate through the exact notification-click event for one pending request.",
+      inputSchema: { requestId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(navigateAgentInputNotification(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "capture_test_renderer",
+    {
+      description: "Capture the current bounded Stage 3 test renderer to a mode-0600 local PNG.",
+      inputSchema: { chatId: z.string().min(1).max(200) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await captureTestRenderer(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_test_renderer_capture",
+    {
+      description: "Delete one exact temporary renderer capture created by this process.",
+      inputSchema: { captureId: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => result(cleanupTestRendererCapture(input)),
   )
   server.registerTool(
     "ensure_test_project",
@@ -1534,6 +1749,8 @@ export async function startDevMcpServer(input: {
 }): Promise<DevMcpServerHandle | null> {
   if (!input.enabled) return null
 
+  cleanupAllTestRendererCaptures()
+
   const token = randomBytes(32).toString("base64url")
   const expressApp = createMcpExpressApp({
     host: "127.0.0.1",
@@ -1603,6 +1820,7 @@ export async function startDevMcpServer(input: {
     stop: async () => {
       rmSync(descriptorPath, { force: true })
       await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+      cleanupAllTestRendererCaptures()
     },
   }
 }

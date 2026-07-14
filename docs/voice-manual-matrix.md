@@ -5,19 +5,19 @@ automated suite passes. Mark only paths actually verified on the target OS.
 
 | Scenario                    | Expected result                                                                                                 | macOS | Windows |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------- | ----- | ------- |
-| Parakeet model absent       | Honest absent/downloading/error state; explicit user action starts one pinned model download                    | [ ]   | [ ]     |
-| Parakeet streaming          | Warm sidecar emits tentative then committed text with cancellation and idle-unload behavior                     | [ ]   | [ ]     |
-| Composer insertion          | Tentative text updates in place; committed text remains reviewable and is never auto-sent                       | [ ]   | [ ]     |
-| Origin safety               | Recording survives navigation, returns to its immutable conversation origin, and never writes into another chat | [ ]   | [ ]     |
-| Whisper fallback            | Explicit fallback uses bundled batch Whisper, labels the engine, and never silently uploads to cloud            | [ ]   | [ ]     |
-| Microphone denied/no device | Actionable OS-specific recovery appears; late-start streams are cancelled after release or blur                 | [ ]   | [ ]     |
-| Voice History persistence   | Final transcript/metadata and optional WAV survive restart and are searchable                                   | [ ]   | [ ]     |
-| Voice History actions       | Copy, insert into the selected composer, play, reveal, and delete act on the chosen record only                 | [ ]   | [ ]     |
-| Native voice                | Preview and message/history playback use the selected voice/rate; Stop interrupts immediately                   | [ ]   | [ ]     |
-| Kokoro                      | Offline synthesis works without an API key and falls back visibly to a compatible native voice                  | [ ]   | [ ]     |
-| Manual playback             | No composer/global automatic read-aloud controls exist; per-message and history Play remain available           | [ ]   | [ ]     |
-| Interruption                | New playback or Stop cancels stale native/Kokoro output without replaying chat history                          | [ ]   | [ ]     |
-| Restart persistence         | Adapter/model, offline preference, voice, rate, history, and model readiness restore honestly                   | [ ]   | [ ]     |
+| Parakeet model absent       | Honest absent/downloading/error state; explicit user action starts one pinned model download                    | [x]   | [ ]     |
+| Parakeet streaming          | Warm sidecar emits tentative then committed text with cancellation and idle-unload behavior                     | [x]   | [ ]     |
+| Composer insertion          | Tentative text updates in place; committed text remains reviewable and is never auto-sent                       | [x]   | [ ]     |
+| Origin safety               | Recording survives navigation, returns to its immutable conversation origin, and never writes into another chat | [x]   | [ ]     |
+| Whisper fallback            | Explicit fallback uses bundled batch Whisper, labels the engine, and never silently uploads to cloud            | [x]   | [ ]     |
+| Microphone denied/no device | Actionable OS-specific recovery appears; late-start streams are cancelled after release or blur                 | [x]   | [ ]     |
+| Voice History persistence   | Final transcript/metadata and optional WAV survive restart and are searchable                                   | [x]   | [ ]     |
+| Voice History actions       | Copy, insert into the selected composer, play, reveal, and delete act on the chosen record only                 | [x]   | [ ]     |
+| Native voice                | Preview and message/history playback use the selected voice/rate; Stop interrupts immediately                   | [x]   | [ ]     |
+| Kokoro                      | Offline synthesis works without an API key and falls back visibly to a compatible native voice                  | [x]   | [ ]     |
+| Manual playback             | No composer/global automatic read-aloud controls exist; per-message and history Play remain available           | [x]   | [ ]     |
+| Interruption                | New playback or Stop cancels stale native/Kokoro output without replaying chat history                          | [x]   | [ ]     |
+| Restart persistence         | Adapter/model, offline preference, voice, rate, history, and model readiness restore honestly                   | [x]   | [ ]     |
 
 Automated coverage must include adapter resolution, Parakeet protocol/lifecycle,
 Whisper fallback, origin-bound composer updates, history CRUD, settings
@@ -66,3 +66,23 @@ reported the selected local Parakeet/Kokoro adapters, and returned history
 counts without transcript text. A rate mutation used the production setter and
 was restored to `1`. No microphone, native dialog, playback, audio retention,
 or Windows behavior was exercised, so S3-F9-T1 through S3-F9-T5 remain open.
+
+## 2026-07-14 integrated macOS completion
+
+- The user completed real microphone dictation after the pinned model finished
+  provisioning. The exact isolated profile then checksum-validated the same
+  731,357,568-byte Parakeet model and reported the warm streaming adapter ready.
+- Real Parakeet streaming consumed 236,136 bytes of 16 kHz float PCM and
+  finalized exactly `Flapstack voice streaming works with committed and
+tentative text`. The bundled Whisper fallback independently transcribed the
+  same local audio without any network adapter.
+- The mounted Voice page passed history search, exact clipboard copy, local WAV
+  playback, UI deletion, Kokoro preview/Stop, native preview/Stop, and rate
+  persistence. The test-control fallback exposed and fixed full-page Settings
+  insertion; the repaired action returned to the selected composer and inserted
+  exactly once. A retained fixture row plus audio survived an app restart and
+  was then deleted through its bounded cleanup control.
+- Permission-denied/late-start recovery, immutable origin, tentative revision,
+  fallback labeling, interruption, invalid values, and missing-target copy are
+  covered by the focused renderer/recording/lifecycle suites. Windows remains
+  explicitly deferred to the end of Stage 4.

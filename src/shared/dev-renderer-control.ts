@@ -53,6 +53,53 @@ export type DevRendererControlCommand =
       showOrchestration?: boolean
     }
   | {
+      command: "chat.copy"
+      chatId: string
+      source: "active-header" | "sidebar-menu"
+      expectedText: string
+    }
+  | {
+      command: "agent-input.get"
+    }
+  | {
+      command: "usage-ui.get"
+    }
+  | {
+      command: "voice-ui.get"
+      historyId: string
+    }
+  | {
+      command: "voice-ui.control"
+      operation:
+        | "open"
+        | "search"
+        | "copy-history"
+        | "play-history"
+        | "insert-history"
+        | "delete-history"
+        | "preview"
+        | "stop"
+        | "set-stt"
+        | "set-tts"
+        | "set-rate"
+      value?: string
+      historyId?: string
+    }
+  | {
+      command: "usage-ui.control"
+      operation:
+        | "open"
+        | "select-provider"
+        | "set-scope"
+        | "set-history-mode"
+        | "set-history-range"
+        | "open-monitoring"
+        | "show-all"
+        | "scroll-to"
+      value?: string
+      target?: "provider-states" | "alerts" | "samples" | "cycles"
+    }
+  | {
       command: "orchestration.get"
       taskId: string
     }
@@ -91,7 +138,7 @@ export type DevRendererControlCommand =
   | {
       command: "carryover.control"
       surface: "reasoning" | "run-change"
-      operation: "toggle" | "open-review" | "show-all"
+      operation: "toggle" | "open-review" | "show-all" | "undo"
       runId?: string
       index?: number
     }
@@ -118,6 +165,12 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       "settings.legacy.mutate",
       "settings.control",
       "chat.select",
+      "chat.copy",
+      "agent-input.get",
+      "voice-ui.get",
+      "voice-ui.control",
+      "usage-ui.get",
+      "usage-ui.control",
       "permissions.ui.get",
       "permissions.ui.control",
       "carryover.get",
@@ -226,6 +279,111 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
       return null
     }
   }
+  if (value.command === "chat.copy") {
+    if (
+      typeof value.chatId !== "string" ||
+      value.chatId.length < 1 ||
+      value.chatId.length > 200 ||
+      !["active-header", "sidebar-menu"].includes(String(value.source)) ||
+      typeof value.expectedText !== "string" ||
+      value.expectedText.length < 1 ||
+      value.expectedText.length > 200
+    ) {
+      return null
+    }
+  }
+  if (value.command === "usage-ui.control") {
+    if (
+      ![
+        "open",
+        "select-provider",
+        "set-scope",
+        "set-history-mode",
+        "set-history-range",
+        "open-monitoring",
+        "show-all",
+        "scroll-to",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.value !== undefined &&
+      (typeof value.value !== "string" || value.value.length > 100)
+    ) {
+      return null
+    }
+    if (
+      value.target !== undefined &&
+      !["provider-states", "alerts", "samples", "cycles"].includes(String(value.target))
+    ) {
+      return null
+    }
+    if (
+      ["select-provider", "set-scope", "set-history-mode", "set-history-range"].includes(
+        String(value.operation),
+      ) &&
+      value.value === undefined
+    ) {
+      return null
+    }
+    if (["show-all", "scroll-to"].includes(String(value.operation)) && value.target === undefined) {
+      return null
+    }
+  }
+  if (value.command === "voice-ui.control") {
+    if (
+      ![
+        "open",
+        "search",
+        "copy-history",
+        "play-history",
+        "insert-history",
+        "delete-history",
+        "preview",
+        "stop",
+        "set-stt",
+        "set-tts",
+        "set-rate",
+      ].includes(String(value.operation))
+    ) {
+      return null
+    }
+    if (
+      value.value !== undefined &&
+      (typeof value.value !== "string" || value.value.length > 500)
+    ) {
+      return null
+    }
+    if (
+      value.historyId !== undefined &&
+      (typeof value.historyId !== "string" || value.historyId.length > 200)
+    ) {
+      return null
+    }
+    if (
+      ["search", "set-stt", "set-tts", "set-rate"].includes(String(value.operation)) &&
+      value.value === undefined
+    ) {
+      return null
+    }
+    if (
+      ["copy-history", "play-history", "insert-history", "delete-history"].includes(
+        String(value.operation),
+      ) &&
+      value.historyId === undefined
+    ) {
+      return null
+    }
+  }
+  if (
+    value.command === "voice-ui.get" &&
+    (typeof value.historyId !== "string" ||
+      value.historyId.length < 1 ||
+      value.historyId.length > 200)
+  ) {
+    return null
+  }
   if (
     value.command === "orchestration.get" &&
     (typeof value.taskId !== "string" || value.taskId.length < 1 || value.taskId.length > 200)
@@ -317,7 +475,7 @@ export function parseDevRendererControlRequest(raw: unknown): DevRendererControl
     }
     if (
       value.command === "carryover.control" &&
-      !["toggle", "open-review", "show-all"].includes(String(value.operation))
+      !["toggle", "open-review", "show-all", "undo"].includes(String(value.operation))
     ) {
       return null
     }

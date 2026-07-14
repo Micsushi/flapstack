@@ -1,8 +1,7 @@
 # Stage 3 integrated release handoff
 
-Status: exact-candidate implementation, automation, providers, Usage refresh,
-Dev, and macOS Preview evidence are green. Stage 3 remains blocked only on the
-recorded locked-macOS manual rows and exact packaged Usage daemon proof.
+Status: Stage 3 complete. Exact-candidate implementation, automation, providers,
+Voice, Usage, Dev, macOS Preview, review, and cleanup evidence are green.
 
 OpenAI/Anthropic Admin usage validation and Apple public-distribution signing/
 notarization are explicitly deferred to `docs/future-release-considerations.md`
@@ -11,16 +10,18 @@ and do not block Stage 3.
 ## Current candidate
 
 - Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
-- Evidence candidate: `0a3d1af16777332dcbbe60134a4927c8dcff368b`;
-  resolve the later documentation commit with `git rev-parse HEAD`.
+- Evidence candidate: the final commit containing this handoff; resolve with
+  `git rev-parse HEAD` after the local closeout commit.
 - Branch: `codex/stage3-integration` in
   `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`.
 - Runtime: Node 22 on macOS arm64; exact Dev used 22.22.1 and the final
   documentation gate used 22.23.1.
-- Exact integrated automation, migrations, strict OpenSpec, release-ledger,
-  Dev, credentialed providers, Usage refresh, Discord transport, and unsigned
-  Preview build/startup pass. Remaining proof is listed below.
-- `main` remains untouched. No push, merge, publish, or OpenSpec archive was done.
+- Exact integrated automation, migrations, OpenSpec, release-ledger, Dev,
+  credentialed providers, Voice, Usage, Discord transport, unsigned Preview,
+  package daemon lifecycle, and review pass.
+- All 18 completed Stage 3 OpenSpec changes are archived and all 29 current
+  specs strict-validate.
+- `main` remains untouched. No push, merge, or publish was done.
 
 ## Historical Settings lane candidate
 
@@ -151,15 +152,8 @@ affected strict changes and release-ledger coverage pass.
 
 ## Remaining Stage 3 proof
 
-- Unlock macOS and visually verify sidebar/active-chat full-history copy,
-  current/older message timestamps, the fresh real two-file Review/Undo card,
-  and background question notification/badge navigation with multiple chats.
-- Rerun the exact packaged Preview Usage LaunchAgent start/poll/restart/cleanup
-  smoke while the GUI session is unlocked.
-- Finish the remaining question stop/reload/provider-live aggregate and any
-  task-board aggregate exits that depend on these manual rows.
-- Rerun the frozen-SHA T2/T3 release gate, then complete independent T4 review
-  rounds and T5 archive/handoff.
+None. All required Stage 3 rows and OpenSpec task boards are complete. The only
+remaining action is the user's merge/push decision.
 
 Windows/Linux proof is deferred to the end of Stage 4. Apple signing,
 notarization, and OpenAI/Anthropic Admin usage keys are future considerations,

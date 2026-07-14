@@ -21,6 +21,11 @@ type AgentInputTransportContext = {
   subChatId: string
 }
 
+export type LiveAgentInputWithContext = {
+  request: AgentInputRequest
+  parentChatId: string | null
+}
+
 function isAgentInputChunk(chunk: unknown): chunk is AgentInputChunk {
   if (!chunk || typeof chunk !== "object") return false
   const type = (chunk as { type?: unknown }).type
@@ -49,6 +54,34 @@ export function toPendingAgentInput(
       allowCustom: question.allowCustom,
     })),
   }
+}
+
+export function reconcileLiveAgentInputs(
+  current: Map<string, PendingUserQuestions>,
+  entries: readonly LiveAgentInputWithContext[],
+): { pending: Map<string, PendingUserQuestions>; changed: boolean } {
+  const liveRequestIds = new Set(entries.map(({ request }) => request.requestId))
+  const pending = new Map(current)
+  let changed = false
+
+  for (const [subChatId, request] of pending) {
+    if (request.request && !liveRequestIds.has(request.toolUseId)) {
+      pending.delete(subChatId)
+      changed = true
+    }
+  }
+
+  for (const { request, parentChatId } of entries) {
+    if (!parentChatId) continue
+    if (pending.get(request.chatId)?.toolUseId === request.requestId) continue
+    pending.set(
+      request.chatId,
+      toPendingAgentInput(request, { chatId: parentChatId, subChatId: request.chatId }),
+    )
+    changed = true
+  }
+
+  return { pending, changed }
 }
 
 /** Apply provider-neutral input chunks for every harness transport. */

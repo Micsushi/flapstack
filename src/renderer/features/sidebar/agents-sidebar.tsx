@@ -1027,6 +1027,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
   const modelLabel = model?.trim()
   const harnessChip = getModelChipMeta(modelLabel, harness)
   const identityChipLabel = harness ? harnessChip.name : null
+  const hasInlineStatus = hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan
   const effectiveDragItemId = dragItemId ?? chatId
   const suppressClickRef = useRef(false)
   const handlePointerDragStart = useSidebarPointerDragSource({
@@ -1081,6 +1082,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
       <ContextMenuTrigger asChild>
         <div
           data-chat-item
+          data-chat-id={chatId}
+          data-pending-question={hasPendingQuestion ? "true" : undefined}
           data-chat-index={globalIndex}
           data-sidebar-drag-source
           data-sidebar-drag-target-kind={dragKind}
@@ -1208,7 +1211,12 @@ const AgentChatItem = React.memo(function AgentChatItem({
                 </span>
                 {/* Hover actions or inline loader/status when icon is hidden */}
                 {!isMultiSelectMode && !isMobileFullscreen && (
-                  <div className="relative flex h-5 w-0 flex-shrink-0 items-center justify-end overflow-hidden group-hover:w-[4.25rem] focus-within:w-[4.25rem]">
+                  <div
+                    className={cn(
+                      "relative flex h-5 flex-shrink-0 items-center justify-end overflow-hidden group-hover:w-[4.25rem] focus-within:w-[4.25rem]",
+                      hasInlineStatus ? "w-5" : "w-0",
+                    )}
+                  >
                     {/* Inline loader/status when icon is hidden - always visible, hides on hover */}
                     {!showIcon &&
                       (hasPendingQuestion || isLoading || hasUnseenChanges || hasPendingPlan) && (
@@ -1223,6 +1231,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
                                 transition={{ duration: 0.15 }}
                               >
                                 <QuestionIcon className="w-2.5 h-2.5 text-blue-500" />
+                                <span className="sr-only">Input required</span>
                               </motion.div>
                             ) : isLoading ? (
                               <motion.div
@@ -1611,6 +1620,8 @@ const AgentChatItem = React.memo(function AgentChatItem({
             )}
             <ContextMenuItem
               className="gap-2"
+              data-dev-chat-copy-source="sidebar-menu"
+              data-chat-id={chatId}
               onClick={() =>
                 copyChat({
                   chatId: isRemote ? chatId.replace(/^remote_/, "") : chatId,

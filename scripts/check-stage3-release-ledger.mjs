@@ -5,13 +5,10 @@ const root = resolve(import.meta.dirname, "..")
 const changesRoot = resolve(root, "openspec/changes")
 const ledger = readFileSync(resolve(root, "docs/stage3-release-candidate-ledger.md"), "utf8")
 
-const activeChanges = readdirSync(changesRoot, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name !== "archive")
-  .map((entry) => entry.name)
-  .sort()
-
 const changeMappings = parseMappings("stage3-release-change", "change")
-assertSameSet("active OpenSpec changes", [...changeMappings.keys()], activeChanges)
+const mappedChangeRoots = new Map(
+  [...changeMappings.keys()].map((change) => [change, resolveChangeRoot(change)]),
+)
 
 const evidenceCorpus = collectMarkdown(resolve(root, "docs"), {
   exclude: new Set([resolve(root, "docs/stage3-release-candidate-ledger.md")]),
@@ -23,17 +20,19 @@ for (const row of releaseRows) {
 }
 
 let scenarioCount = 0
-for (const change of activeChanges) {
+for (const change of changeMappings.keys()) {
   const mapping = changeMappings.get(change)
   if (!mapping?.rows.length) fail(`change ${change} has no release rows`)
-  const specsRoot = resolve(changesRoot, change, "specs")
+  const specsRoot = resolve(mappedChangeRoots.get(change), "specs")
   scenarioCount += countScenarios(specsRoot)
 }
 
 const featureMappings = parseMappings("stage3-release-feature", "feature")
 const expectedFeatures = Array.from({ length: 17 }, (_, index) => `S3-F${index + 1}`)
 assertSameSet("Stage 3 feature exits", [...featureMappings.keys()], expectedFeatures)
-const taskCorpus = collectMarkdown(changesRoot, { basename: "tasks.md" })
+const taskCorpus = [...mappedChangeRoots.values()]
+  .map((changeRoot) => collectMarkdown(changeRoot, { basename: "tasks.md" }))
+  .join("\n")
 
 for (const [feature, mapping] of featureMappings) {
   if (!mapping.exit) fail(`${feature} has no exit task`)
@@ -79,8 +78,25 @@ for (const field of [
 }
 
 console.log(
-  `stage3 release ledger coverage passed (${activeChanges.length} changes, ${scenarioCount} scenarios, ${releaseRows.length} release rows, ${featureMappings.size} feature exits)`,
+  `stage3 release ledger coverage passed (${changeMappings.size} changes, ${scenarioCount} scenarios, ${releaseRows.length} release rows, ${featureMappings.size} feature exits)`,
 )
+
+function resolveChangeRoot(change) {
+  const activeRoot = resolve(changesRoot, change)
+  try {
+    if (readdirSync(activeRoot)) return activeRoot
+  } catch {
+    // Completed Stage 3 changes move under the dated archive directory.
+  }
+  const archiveRoot = resolve(changesRoot, "archive")
+  const matches = readdirSync(archiveRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.endsWith(`-${change}`))
+    .map((entry) => resolve(archiveRoot, entry.name))
+  if (matches.length !== 1) {
+    fail(`change ${change} must exist exactly once as active or archived; found ${matches.length}`)
+  }
+  return matches[0]
+}
 
 function collectMarkdown(directory, options = {}) {
   let content = ""

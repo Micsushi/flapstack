@@ -64,16 +64,62 @@ describe("MCP main run launcher", () => {
 
   it("passes durable per-worker reasoning effort to supported harness launches", async () => {
     const launch = createMainRunLauncher()
-    await launch({ ...queuedRun("effort-codex", "codex"), reasoningEffort: "high" })
+    await launch({
+      ...queuedRun("effort-codex", "codex"),
+      model: "gpt-5.3-codex-spark",
+      reasoningEffort: "high",
+    })
     await launch({ ...queuedRun("effort-claude", "claude-code"), reasoningEffort: "minimal" })
 
     expect(harnessMocks.codex).toHaveBeenCalledWith(
-      expect.objectContaining({ reasoningEnabled: true, reasoningEffort: "high" }),
+      expect.objectContaining({
+        model: "gpt-5.3-codex-spark/high",
+        reasoningEnabled: true,
+        reasoningEffort: "high",
+      }),
     )
     expect(harnessMocks.claude).toHaveBeenCalledWith(
       expect.objectContaining({ reasoningEnabled: false }),
     )
     expect(harnessMocks.claude.mock.calls.at(-1)?.[0]).not.toHaveProperty("effort")
+  })
+
+  it("maps disabled Codex reasoning to the lowest provider-supported model variant", async () => {
+    const launch = createMainRunLauncher()
+    await launch({
+      ...queuedRun("minimal-codex", "codex"),
+      model: "gpt-5.3-codex-spark",
+      reasoningEffort: "minimal",
+    })
+
+    expect(harnessMocks.codex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.3-codex-spark/low",
+        reasoningEnabled: false,
+        reasoningEffort: "minimal",
+      }),
+    )
+  })
+
+  it("replaces stale Codex model effort suffixes with the durable run effort", async () => {
+    const launch = createMainRunLauncher()
+    await launch({
+      ...queuedRun("stale-slash-effort", "codex"),
+      model: "gpt-5.3-codex-spark/low",
+      reasoningEffort: "high",
+    })
+    await launch({
+      ...queuedRun("stale-bracket-effort", "codex"),
+      model: "gpt-5.3-codex-spark[high]",
+      reasoningEffort: "minimal",
+    })
+
+    expect(harnessMocks.codex.mock.calls.at(-2)?.[0]).toEqual(
+      expect.objectContaining({ model: "gpt-5.3-codex-spark/high" }),
+    )
+    expect(harnessMocks.codex.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ model: "gpt-5.3-codex-spark/low" }),
+    )
   })
 
   it("has one idempotent startup owner and drains only MCP-origin pending runs", async () => {

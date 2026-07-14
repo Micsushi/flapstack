@@ -1,6 +1,7 @@
 # Stage 3 integrated candidate release notes
 
-Status: release candidate under validation; not Stage 3 complete.
+Status: Stage 3 complete on `codex/stage3-integration`; ready for the user's
+merge decision. No push was performed.
 
 ## Included
 
@@ -14,25 +15,30 @@ Status: release candidate under validation; not Stage 3 complete.
 - Development test-control MCP, migration coverage, macOS Preview packaging,
   bundled runtime inspection, and release-ledger validation.
 
-## Required evidence still open
+## Completion evidence
 
-- On unlocked macOS, visually close full-history copy, today/older timestamps,
-  the fresh two-file Review/Undo card, and background question notification/
-  badge navigation with multiple chats.
-- Rerun exact packaged Preview Usage LaunchAgent polling/restart/cleanup while
-  the GUI session is unlocked.
-- Close the remaining question stop/reload/provider aggregate and dependent
-  task-board exits, then run the frozen-SHA release gates and independent S3-F17
-  review rounds.
+- Full-history copy, today/older timestamps, fresh two-file Review/Undo, and
+  background question notification/badge navigation pass.
+- Exact packaged Preview Usage LaunchAgent start/poll/stop/new-PID restart and
+  cleanup pass while the app is closed.
+- Real Parakeet streaming, bundled Whisper fallback, Kokoro/native playback,
+  Voice History CRUD, restart persistence, and user-observed microphone
+  dictation pass.
+- Questions pass answer, cancel, timeout, stop, reload, native Claude, and
+  continuation delivery across all credential-available providers.
+- The final Node 22 gate passes 129 test files, 969 tests, 3 conditional skips,
+  lint, Prettier, TypeScript, and production build. Strict OpenSpec, release
+  ledger, Usage matrix, package smoke, and independent review gates pass.
 
 Exact-candidate Cursor, OpenRouter, NanoGPT, Codex, Claude, native Claude
 question, Usage refresh, Discord HTTP 204, Dev identity, model-tuning UI, and
 unsigned macOS Preview package/startup evidence now pass. Windows/Linux are
 deferred to the end of Stage 4 by release decision.
 
-No open row is promoted by fixture, prior-SHA, headless, macOS-only, or package
-inspection evidence. See `docs/stage3-release-candidate-ledger.md` for the exact
-crosswalk, cleanup contract, and current gate results.
+No required row was promoted by fixture or prior-SHA evidence alone. Windows and
+Linux execution is explicitly deferred to the end of Stage 4. See
+`docs/stage3-release-candidate-ledger.md` for the exact crosswalk and cleanup
+contract.
 
 Safe S3-F17 closeout also hardens Usage daemon startup against an early
 SIGTERM/SIGINT race, adds regression coverage, and removes a stale local
