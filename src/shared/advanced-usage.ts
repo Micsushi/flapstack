@@ -81,6 +81,95 @@ export const usageFactClassificationSchema = z
     }
   })
 
+export const usageRollupScopeTypes = [
+  "global",
+  "provider-account",
+  "project",
+  "task",
+  "chat",
+  "automation",
+  "orchestration",
+  "run",
+] as const
+
+export const usageRollupScopeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("global") }).strict(),
+  z
+    .object({
+      type: z.literal("provider-account"),
+      providerId: idSchema,
+      accountTag: z.string().max(256),
+    })
+    .strict(),
+  z.object({ type: z.literal("project"), id: idSchema }).strict(),
+  z.object({ type: z.literal("task"), id: idSchema }).strict(),
+  z.object({ type: z.literal("chat"), id: idSchema }).strict(),
+  z.object({ type: z.literal("automation"), id: idSchema }).strict(),
+  z.object({ type: z.literal("orchestration"), id: idSchema }).strict(),
+  z.object({ type: z.literal("run"), id: idSchema }).strict(),
+])
+
+export const usageRollupGroupDimensions = [
+  "none",
+  "provider-account",
+  "project",
+  "task",
+  "chat",
+  "automation",
+  "orchestration",
+  "run",
+  "harness",
+  "model",
+  "source",
+  "source-class",
+  "quality",
+] as const
+export const usageRollupGroupDimensionSchema = z.enum(usageRollupGroupDimensions)
+
+export const usageRollupBucketUnits = ["none", "hour", "day", "week", "month"] as const
+export const usageRollupBucketUnitSchema = z.enum(usageRollupBucketUnits)
+
+export const usageRollupQualities = ["exact", "provider-reported", "estimated", "unknown"] as const
+export const usageRollupQualitySchema = z.enum(usageRollupQualities)
+
+export const usageRollupQuerySchema = z
+  .object({
+    scope: usageRollupScopeSchema.default({ type: "global" }),
+    providerIds: z.array(idSchema).max(50).optional(),
+    accountTags: z.array(z.string().max(256)).max(50).optional(),
+    harnesses: z.array(z.enum(AGENT_HARNESSES)).max(50).optional(),
+    models: z.array(idSchema).max(100).optional(),
+    sources: z.array(idSchema).max(50).optional(),
+    sourceClasses: z.array(usageSourceClassSchema).max(4).optional(),
+    qualities: z.array(usageRollupQualitySchema).max(4).optional(),
+    fromMs: timestampSchema.optional(),
+    toMs: timestampSchema.optional(),
+    timezone: z.string().trim().min(1).max(100).default("UTC"),
+    bucket: usageRollupBucketUnitSchema.default("none"),
+    groupBy: usageRollupGroupDimensionSchema.default("none"),
+    limit: z.number().int().min(1).max(500).default(100),
+    cursor: z.string().min(1).max(4096).nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.fromMs !== undefined && value.toMs !== undefined && value.toMs <= value.fromMs) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["toMs"],
+        message: "Rollup end time must be later than the start time.",
+      })
+    }
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value.timezone }).format(0)
+    } catch {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timezone"],
+        message: "Rollup timezone must be a valid IANA timezone.",
+      })
+    }
+  })
+
 export const usageBudgetScopeTypes = [
   "global",
   "provider-account",
@@ -192,6 +281,12 @@ export const usageBudgetPolicyDtoSchema = z
 export type UsageAttributionSnapshot = z.infer<typeof usageAttributionSnapshotSchema>
 export type UsageFactClassification = z.infer<typeof usageFactClassificationSchema>
 export type UsageSourceClass = z.infer<typeof usageSourceClassSchema>
+export type UsageRollupScope = z.infer<typeof usageRollupScopeSchema>
+export type UsageRollupGroupDimension = z.infer<typeof usageRollupGroupDimensionSchema>
+export type UsageRollupBucketUnit = z.infer<typeof usageRollupBucketUnitSchema>
+export type UsageRollupQuality = z.infer<typeof usageRollupQualitySchema>
+export type UsageRollupQuery = z.infer<typeof usageRollupQuerySchema>
+export type UsageRollupQueryInput = z.input<typeof usageRollupQuerySchema>
 export type UsageBudgetScope = z.infer<typeof usageBudgetScopeSchema>
 export type UsageBudgetThreshold = z.infer<typeof usageBudgetThresholdSchema>
 export type UsageBudgetAction = z.infer<typeof usageBudgetActionSchema>
