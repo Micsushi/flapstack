@@ -48,4 +48,19 @@ describe("test-control lifecycle", () => {
     expect(proxy).toContain("descriptor.profile !== expectedUserDataProfile")
     expect(orchestration).toContain("descriptor.profile !== profile")
   })
+
+  it("invalidates the project cache before selecting externally created test projects", () => {
+    const source = readFileSync("src/renderer/App.tsx", "utf8")
+    const driver = readFileSync("scripts/verify-live-mcp-management.mjs", "utf8")
+    const projectCreated = source.slice(
+      source.indexOf('if (payload.action === "project-created")'),
+      source.indexOf('if (payload.action === "project-archived")'),
+    )
+    expect(projectCreated.indexOf("trpcUtils.projects.list.invalidate()")).toBeGreaterThanOrEqual(0)
+    expect(projectCreated.indexOf("trpcUtils.projects.list.invalidate()")).toBeLessThan(
+      projectCreated.indexOf("trpcUtils.projects.list.fetch()"),
+    )
+    expect(driver).toContain('call("ensure_test_project")')
+    expect(driver).toContain('call("archive_test_project"')
+  })
 })

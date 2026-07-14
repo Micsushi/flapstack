@@ -79,6 +79,7 @@ function AppContent() {
     () =>
       window.desktopApi.onDevMcpViewChanged(async (payload) => {
         if (payload.action === "project-created") {
+          await trpcUtils.projects.list.invalidate()
           const refreshedProjects = await trpcUtils.projects.list.fetch()
           const project = refreshedProjects.find((item) => item.id === payload.projectId)
           if (project) {

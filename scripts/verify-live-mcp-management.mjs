@@ -30,6 +30,7 @@ const transport = new StreamableHTTPClientTransport(new URL(descriptor.url), {
 })
 const callers = []
 let passed = false
+let testProject = null
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -140,6 +141,7 @@ try {
   const environment = await call("get_test_environment")
   assert((await realpath(environment.repo.path)) === checkout, "Live environment mismatch")
   const harnessStatus = await call("get_harness_status")
+  testProject = await call("ensure_test_project")
 
   let codex = await call("prepare_product_mcp_caller", {
     harness: "codex",
@@ -387,6 +389,11 @@ try {
       if (!chat.archived && chat.name?.startsWith(proofTag)) {
         await call("archive_test_chat", { chatId: chat.id }).catch(() => undefined)
       }
+    }
+    if (testProject?.created || testProject?.restored) {
+      await call("archive_test_project", { projectId: testProject.project.id }).catch(
+        () => undefined,
+      )
     }
   }
   await transport.close().catch(() => undefined)
