@@ -9,9 +9,9 @@ and do not block Stage 3.
 
 ## Current candidate
 
-- Baseline: `main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
-- Evidence candidate: the final commit containing this handoff; resolve with
-  `git rev-parse HEAD` after the local closeout commit.
+- Baseline: `origin/main` at `bf56fe7d3ea2aada98902f4466f7aaad5832a0da`.
+- Immutable evidence candidate: annotated tag `stage3-final`; resolve with
+  `git rev-parse stage3-final^{commit}`.
 - Branch: `codex/stage3-integration` in
   `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`.
 - Runtime: Node 22 on macOS arm64; exact Dev used 22.22.1 and the final
@@ -21,7 +21,23 @@ and do not block Stage 3.
   package daemon lifecycle, and review pass.
 - All 18 completed Stage 3 OpenSpec changes are archived and all 29 current
   specs strict-validate.
-- `main` remains untouched. No push, merge, or publish was done.
+- Local `main` is a fresh squash of `origin/main` plus the exact
+  `stage3-final` tree. No push or publish was done.
+
+## Final independent-review remediation
+
+- Raw SQL now uses Unix seconds for every Drizzle timestamp touched by MCP,
+  orchestration, run recovery, permission recovery, root registration, audit,
+  and persisted run Usage paths. Migration `0023_stage3_timestamp_seconds`
+  repairs millisecond, SQLite datetime-text, and missing Stage 3 timestamps.
+- MCP-created rows are read through Drizzle in regression coverage; task-scoped
+  moves remain inside their task; custom-mode launches fail closed without a
+  capability snapshot.
+- Credential status is metadata-only and cannot trigger legacy migration or OS
+  keychain decryption. Provider resolution still performs migration when a
+  credential is actually needed.
+- Prompt-envelope filtering requires a marker to start its own line, preserving
+  ordinary inline discussion such as `[USER REQUEST]` and `[FILE:demo]`.
 
 ## Historical Settings lane candidate
 

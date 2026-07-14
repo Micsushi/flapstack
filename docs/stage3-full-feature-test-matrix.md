@@ -10,8 +10,9 @@ notarization, and provider Admin usage APIs are future considerations.
 
 ## 0. Identity and automated gate
 
-- [x] **S3-P01** `codex/stage3-integration` contains current `main`; `main` is
-      clean and unchanged by Stage 3 development.
+- [x] **S3-P01** annotated tag `stage3-final` identifies the integration
+      candidate; local `main` is a squash of `origin/main` with the exact tagged
+      tree, without touching the dirty Stage 4 checkout.
 - [x] **S3-P02** Node 22 `npm run check` passes after the final code change.
 - [x] **S3-P03** every active Stage 3 OpenSpec change passes strict validation.
 - [x] **S3-P04** fresh, `main`-era, and supported legacy databases migrate
@@ -405,8 +406,8 @@ evidence; the final closeout below supersedes that historical status.
 
 ## 6. Final integrated closeout - 2026-07-14 PDT
 
-The final integration candidate passed the Node 22 repository gate with 129
-test files, 969 passed tests, 3 declared conditional skips, lint, Prettier,
+The final integration candidate passed the Node 22 repository gate with 130
+test files, 976 passed tests, 3 declared conditional skips, lint, Prettier,
 TypeScript, and the production build. All 18 Stage 3 changes strict-validated;
 the release ledger and Usage matrix coverage gates passed. Exact Dev identity
 passed after the final restart in `Flapstack Dev stage3-capture`.
@@ -517,7 +518,7 @@ Notes:
 ### Exact integration closeout — 2026-07-14
 
 - Candidate is the final commit containing this matrix. Node 22 full gate PASS
-  with 129 files, 969 passed, 3 conditional skips, and production build. All 18
+  with 130 files, 976 passed, 3 conditional skips, and production build. All 18
   completed OpenSpec changes are archived; 29 current specs strict-validate;
   the 349-scenario release ledger and 29-row/14-scenario Usage matrix pass.
 - Exact verified Dev passed credentialed Cursor, OpenRouter, NanoGPT, Codex,

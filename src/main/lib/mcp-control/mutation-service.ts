@@ -6,6 +6,7 @@ import { z } from "zod"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getPermissionPreferences } from "../permissions"
+import { nowEpochSeconds } from "../db/timestamps"
 import { createOrchestrationInputSchema } from "../../../shared/agent-orchestration"
 import {
   AgentOrchestrationError,
@@ -219,6 +220,12 @@ function launchRun(
     permissionMode === "custom" && typeof chat.custom_permissions === "string"
       ? chat.custom_permissions
       : null
+  if (permissionMode === "custom" && !customPermissions) {
+    return fail(
+      "permission-denied",
+      "Custom permission settings are missing for this conversation.",
+    )
+  }
   const transaction = db.transaction(() => {
     db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
     db.prepare(
@@ -237,7 +244,7 @@ function launchRun(
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
       input.initialPrompt,
-      Date.now(),
+      nowEpochSeconds(),
     )
   })
   try {
@@ -334,8 +341,9 @@ function createTask(
     .get(projectId, input.name) as Row | undefined
   if (existing) return { ok: true, data: { id: existing.id, created: false } }
   const taskId = randomUUID()
+  const now = nowEpochSeconds()
   db.prepare(
-    "INSERT INTO tasks (id, project_id, name, description, default_permission_mode, default_custom_permissions) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tasks (id, project_id, name, description, default_permission_mode, default_custom_permissions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     taskId,
     projectId,
@@ -343,6 +351,8 @@ function createTask(
     input.description ?? null,
     project.default_permission_mode,
     project.default_custom_permissions ?? null,
+    now,
+    now,
   )
   return { ok: true, data: { id: taskId, created: true } }
 }
@@ -402,8 +412,9 @@ function createChat(
         : JSON.stringify(preferences.globalCustomPermissions)
       : null
   const chatId = randomUUID()
+  const now = nowEpochSeconds()
   db.prepare(
-    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     chatId,
     input.name,
@@ -414,10 +425,12 @@ function createChat(
     customPermissions,
     input.harness ?? null,
     input.model ?? null,
+    now,
+    now,
   )
   db.prepare(
-    "INSERT INTO sub_chats (id, chat_id, harness, model, permission_mode, messages) VALUES (?, ?, ?, ?, ?, '[]')",
-  ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null, permissionMode)
+    "INSERT INTO sub_chats (id, chat_id, harness, model, permission_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
+  ).run(randomUUID(), chatId, input.harness ?? null, input.model ?? null, permissionMode, now, now)
   return { ok: true, data: { id: chatId, created: true } }
 }
 
@@ -465,7 +478,7 @@ async function spawnThread(
   const subChatId = randomUUID()
   const runId = contract.plan.launch.requested ? randomUUID() : null
   const promptMessageId = `mcp-spawn-${chatId}`
-  const now = Date.now()
+  const now = nowEpochSeconds()
   const initialMessages =
     !runId && contract.plan.launch.initialPrompt
       ? JSON.stringify([
@@ -507,8 +520,10 @@ async function spawnThread(
       now,
     )
     db.prepare(
-      `INSERT INTO sub_chats (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sub_chats (
+        id, chat_id, harness, permission_mode, worktree_path, run_status, messages,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       subChatId,
       chatId,
@@ -517,6 +532,8 @@ async function spawnThread(
       resolved.worktreePath,
       runId ? "pending" : null,
       initialMessages,
+      now,
+      now,
     )
     if (runId) {
       db.prepare(
@@ -684,7 +701,7 @@ function addAttachment(
   if (existing) return { ok: true, data: { id: existing.id, created: false } }
   const attachmentId = randomUUID()
   db.prepare(
-    "INSERT INTO attachments (id, chat_id, task_id, kind, name, content_text) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO attachments (id, chat_id, task_id, kind, name, content_text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     attachmentId,
     input.chatId,
@@ -692,6 +709,7 @@ function addAttachment(
     input.kind,
     basename(input.name),
     input.contentText,
+    nowEpochSeconds(),
   )
   return { ok: true, data: { id: attachmentId, created: true } }
 }
@@ -703,7 +721,7 @@ function renameItem(
   const current = target(db, scope, input.kind, input.id)
   if (current.name === input.name) return { ok: true, data: { id: input.id, changed: false } }
   const table = input.kind === "project" ? "projects" : input.kind === "task" ? "tasks" : "chats"
-  db.prepare(`UPDATE ${table} SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+  db.prepare(`UPDATE ${table} SET name = ?, updated_at = unixepoch() WHERE id = ?`).run(
     input.name,
     input.id,
   )
@@ -732,10 +750,13 @@ function moveChat(
     if (!task) return fail("stale-target", "Task is missing or archived.")
     projectId = String(task.project_id)
   }
-  if (scope.taskId || (scope.projectId && projectId !== scope.projectId))
+  if (
+    (scope.taskId && (input.scope !== "task" || taskId !== scope.taskId)) ||
+    (scope.projectId && projectId !== scope.projectId)
+  )
     return fail("out-of-scope", "Move is outside caller scope.")
   db.prepare(
-    "UPDATE chats SET scope = ?, project_id = ?, task_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    "UPDATE chats SET scope = ?, project_id = ?, task_id = ?, updated_at = unixepoch() WHERE id = ?",
   ).run(input.scope, projectId, taskId, input.id)
   return { ok: true, data: { id: input.id, moved: true } }
 }
@@ -748,8 +769,8 @@ function pinItem(
   const already = input.pinned ? current.pinned_at != null : current.pinned_at == null
   if (already) return { ok: true, data: { id: input.id, changed: false } }
   const table = input.kind === "project" ? "projects" : input.kind === "task" ? "tasks" : "chats"
-  db.prepare(`UPDATE ${table} SET pinned_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
-    input.pinned ? Date.now() : null,
+  db.prepare(`UPDATE ${table} SET pinned_at = ?, updated_at = unixepoch() WHERE id = ?`).run(
+    input.pinned ? nowEpochSeconds() : null,
     input.id,
   )
   return { ok: true, data: { id: input.id, changed: true } }
@@ -764,9 +785,10 @@ function setArchived(
   const already = archived ? current.archived_at != null : current.archived_at == null
   if (already) return { ok: true, data: { id: input.id, changed: false } }
   const table = input.kind === "project" ? "projects" : input.kind === "task" ? "tasks" : "chats"
-  db.prepare(
-    `UPDATE ${table} SET archived_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-  ).run(archived ? Date.now() : null, input.id)
+  db.prepare(`UPDATE ${table} SET archived_at = ?, updated_at = unixepoch() WHERE id = ?`).run(
+    archived ? nowEpochSeconds() : null,
+    input.id,
+  )
   return { ok: true, data: { id: input.id, changed: true } }
 }
 async function writeAttachment(

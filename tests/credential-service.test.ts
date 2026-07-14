@@ -56,6 +56,31 @@ describe("main-process credential service", () => {
     expect(JSON.stringify(service.status("codex.api-key"))).not.toContain(secret)
   })
 
+  it("reports encrypted credential status without decrypting or prompting the OS store", () => {
+    let decryptions = 0
+    const service = new CredentialService({
+      storageDir: tempDir(),
+      encryption: {
+        ...encryptedBackend,
+        decrypt: (ciphertext) => {
+          decryptions += 1
+          return encryptedBackend.decrypt(ciphertext)
+        },
+      },
+    })
+    service.set("codex.api-key", "status-must-be-passive")
+    const afterVerifiedWrite = decryptions
+
+    expect(service.status("codex.api-key")).toMatchObject({
+      configured: true,
+      persistence: "encrypted",
+    })
+    expect(service.listStatuses().find((status) => status.id === "codex.api-key")).toMatchObject({
+      configured: true,
+    })
+    expect(decryptions).toBe(afterVerifiedWrite)
+  })
+
   it("uses memory only when OS encryption is unavailable", () => {
     const dir = tempDir()
     const service = new CredentialService({

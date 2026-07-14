@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { eq } from "drizzle-orm"
 import { createHash } from "node:crypto"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -188,6 +189,84 @@ describe("Stage 3 migration rebase", () => {
         sqlite.prepare("SELECT id FROM mcp_audit_records WHERE id = 'legacy-audit'").all(),
       ).toEqual([{ id: "legacy-audit" }])
       expect(recoverInterruptedMcpRuns(path)).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("repairs millisecond and text timestamps before Drizzle reads shared rows", () => {
+    const { sqlite, directory } = database("timestamp-units")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 22),
+      })
+      const milliseconds = Date.UTC(2026, 6, 14, 12, 0, 0)
+      sqlite
+        .prepare(
+          `INSERT INTO projects (id, name, path, created_at, updated_at, pinned_at)
+           VALUES ('timestamp-project', 'Timestamp', '/tmp/timestamp', ?, '2026-07-14 12:00:00', ?)`,
+        )
+        .run(milliseconds, milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO tasks (id, project_id, name, created_at, updated_at)
+           VALUES ('timestamp-task', 'timestamp-project', 'Task', ?, ?)`,
+        )
+        .run(milliseconds, milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO chats (
+             id, name, scope, project_id, task_id, permission_mode, created_at, updated_at
+           ) VALUES (
+             'timestamp-chat', 'Chat', 'task', 'timestamp-project', 'timestamp-task',
+             'read-only', ?, '2026-07-14 12:00:00'
+           )`,
+        )
+        .run(milliseconds)
+      sqlite
+        .prepare(
+          `INSERT INTO mcp_audit_records (
+             id, invocation_id, status, caller_chat_id, tool_name, tier, caller_snapshot,
+             chat_snapshot, run_snapshot, input_summary, result_summary, duration_ms, created_at
+           ) VALUES (
+             'timestamp-audit', 'timestamp-invocation', 'completed', 'timestamp-chat',
+             'ping', 0, '{}', '{}', '{}', '{}', '{}', 1, NULL
+           )`,
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(
+        sqlite
+          .prepare(
+            `SELECT typeof(created_at) created_type, created_at, typeof(updated_at) updated_type,
+              updated_at, pinned_at FROM projects WHERE id = 'timestamp-project'`,
+          )
+          .get(),
+      ).toEqual({
+        created_type: "integer",
+        created_at: 1784030400,
+        updated_type: "integer",
+        updated_at: 1784030400,
+        pinned_at: 1784030400,
+      })
+      const chat = drizzle(sqlite, { schema })
+        .select()
+        .from(schema.chats)
+        .where(eq(schema.chats.id, "timestamp-chat"))
+        .get()
+      expect(chat?.updatedAt?.toISOString()).toBe("2026-07-14T12:00:00.000Z")
+      expect(
+        sqlite
+          .prepare("SELECT typeof(created_at) type FROM mcp_audit_records WHERE id = ?")
+          .get("timestamp-audit"),
+      ).toEqual({ type: "integer" })
+      expect(() =>
+        sqlite
+          .prepare("UPDATE mcp_audit_records SET status = 'failed' WHERE id = ?")
+          .run("timestamp-audit"),
+      ).toThrow(/append-only/)
     } finally {
       sqlite.close()
     }

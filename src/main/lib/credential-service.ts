@@ -395,19 +395,17 @@ export class CredentialService {
     try {
       const stored = this.readStoreStrict().credentials[id]
       if (!stored) return this.emptyStatus(id)
-      const configured = this.resolve(id) !== null
       return {
         id,
-        configured,
+        // Status polling is metadata-only. Decrypting here can prompt for a
+        // locked OS keychain; actual credential consumers validate on resolve.
+        configured: true,
         persistence: "encrypted",
         source: "encrypted-store",
         fingerprint: stored.fingerprint,
         updatedAt: stored.updatedAt,
         encryptionBackend: stored.encryptionBackend,
         ...(stored.metadata ? { metadata: stored.metadata } : {}),
-        ...(!configured
-          ? { warning: "The encrypted credential could not be decrypted. Replace or remove it." }
-          : {}),
       }
     } catch {
       return {

@@ -500,9 +500,7 @@ export function hasProviderKey(provider: OpencodeProviderId): boolean {
 }
 
 export function getCredentialStatus(provider: OpencodeProviderId): ProviderCredentialStatus {
-  let status = getCredentialService().status(credentialId(provider))
-  if (!status.configured) getProviderKey(provider)
-  status = getCredentialService().status(credentialId(provider))
+  const status = getCredentialService().status(credentialId(provider))
   const environmentConfigured = Boolean(
     process.env[`FLAPSTACK_${provider.toUpperCase()}_API_KEY`]?.trim(),
   )
@@ -528,8 +526,7 @@ export function getCredentialStatus(provider: OpencodeProviderId): ProviderCrede
 export async function getCredentialStatusAsync(
   provider: OpencodeProviderId,
 ): Promise<ProviderCredentialStatus> {
-  await getProviderKeyAsync(provider)
-  return getCredentialStatus(provider)
+  return serializeProviderOperation(provider, async () => getCredentialStatus(provider))
 }
 
 export function getOpencodeStorageDir(): string {

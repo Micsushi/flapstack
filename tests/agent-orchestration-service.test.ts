@@ -7,6 +7,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
+import { nowEpochSeconds } from "../src/main/lib/db/timestamps"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
 import { invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
@@ -129,7 +130,7 @@ describe("durable agent task orchestration", () => {
     expect(resumed.orchestration.startedAt).toEqual(expect.any(Number))
     sqlite
       .prepare("UPDATE task_orchestrations SET started_at = ? WHERE task_id = ?")
-      .run(Date.now() - 100, created.orchestration.taskId)
+      .run(nowEpochSeconds() - 1, created.orchestration.taskId)
     expect(
       createAgentOrchestrationService(path).getOverview(created.orchestration.taskId)
         ?.orchestration,
@@ -148,7 +149,7 @@ describe("durable agent task orchestration", () => {
     const first = created.agents.find((agent) => agent.id === "agent-a")!
     sqlite
       .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-      .run(Date.now(), first.runId)
+      .run(nowEpochSeconds(), first.runId)
 
     const resumed = createAgentOrchestrationService(path).getOverview(created.orchestration.taskId)!
     expect(resumed.agents.find((agent) => agent.id === "agent-a")?.status).toBe("completed")
@@ -166,7 +167,7 @@ describe("durable agent task orchestration", () => {
     const first = created.agents.find((agent) => agent.id === "agent-a")!
     sqlite
       .prepare("UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ?")
-      .run(Date.now(), first.runId)
+      .run(nowEpochSeconds(), first.runId)
 
     const failed = service.getOverview(created.orchestration.taskId)!
     expect(failed.orchestration.status).toBe("failed")
@@ -202,7 +203,7 @@ describe("durable agent task orchestration", () => {
     const first = created.agents.find((agent) => agent.status === "active")!
     sqlite
       .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-      .run(Date.now(), first.runId)
+      .run(nowEpochSeconds(), first.runId)
     service.tickAll()
     const firstSubChat = sqlite
       .prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?")
@@ -214,7 +215,7 @@ describe("durable agent task orchestration", () => {
         ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode, 'running', ?
           FROM agent_runs WHERE id = ?`,
       )
-      .run(Date.now() + 1, first.runId)
+      .run(nowEpochSeconds() + 1, first.runId)
     sqlite
       .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?")
       .run(firstSubChat.sub_chat_id)
@@ -234,7 +235,7 @@ describe("durable agent task orchestration", () => {
     const created = service.create(createInput({ count: 1 }))
     service.control(created.orchestration.taskId, "stop")
     const staleAgent = "stale-after-stop"
-    const now = Date.now()
+    const now = nowEpochSeconds()
     sqlite
       .prepare(
         `INSERT INTO orchestration_agents (
@@ -469,7 +470,7 @@ describe("durable agent task orchestration", () => {
           `UPDATE agent_runs SET status = 'success', completed_at = ?
            WHERE id IN (SELECT run_id FROM orchestration_agents WHERE task_id = ? AND status = 'active')`,
         )
-        .run(Date.now(), created.orchestration.taskId)
+        .run(nowEpochSeconds(), created.orchestration.taskId)
       service.tickAll()
     }
     const beforeRestart = sqlite.prepare("SELECT count(*) count FROM agent_runs").get()
@@ -487,7 +488,7 @@ describe("durable agent task orchestration", () => {
     const wall = service.create(createInput({ count: 1, stopConditions: { maxWallClockMs: 10 } }))
     sqlite
       .prepare("UPDATE task_orchestrations SET started_at = ? WHERE task_id = ?")
-      .run(Date.now() - 100, wall.orchestration.taskId)
+      .run(nowEpochSeconds() - 1, wall.orchestration.taskId)
     expect(service.getOverview(wall.orchestration.taskId)?.orchestration).toMatchObject({
       status: "stopped",
       stopReason: "wall-clock-budget",
@@ -529,7 +530,7 @@ describe("durable agent task orchestration", () => {
     })
     sqlite
       .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-      .run(Date.now(), completion.agents[0]!.runId)
+      .run(nowEpochSeconds(), completion.agents[0]!.runId)
     expect(service.getOverview(completion.orchestration.taskId)?.orchestration).toMatchObject({
       status: "completed",
       stopReason: "completion-target",
@@ -559,7 +560,7 @@ describe("durable agent task orchestration", () => {
       .agents.find((agent) => agent.status === "active")!
     sqlite
       .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
-      .run(Date.now(), currentlyActive.runId)
+      .run(nowEpochSeconds(), currentlyActive.runId)
     service.tickAll()
     expect(() => service.retryAgent(created.orchestration.taskId, currentlyActive.id)).toThrow(
       /terminal agents|completed/i,
@@ -655,7 +656,7 @@ describe("durable agent task orchestration", () => {
       .prepare(
         "INSERT INTO tasks (id, project_id, name, created_at, updated_at) VALUES ('foreign-task', 'project-1', 'Foreign', ?, ?)",
       )
-      .run(Date.now(), Date.now())
+      .run(nowEpochSeconds(), nowEpochSeconds())
     sqlite
       .prepare(
         `INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, harness,

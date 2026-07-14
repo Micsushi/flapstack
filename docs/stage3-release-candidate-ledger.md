@@ -9,10 +9,11 @@ a Stage 3 acceptance row.
 
 ## Candidate header
 
-- Candidate source: the final commit containing this ledger on
-  `codex/stage3-integration`; record its resolved SHA in the handoff.
+- Candidate source: annotated tag `stage3-final` on
+  `codex/stage3-integration`; resolve with `git rev-parse stage3-final^{commit}`.
 - Checkout: `/Users/michaelshi/Documents/GitHub/temp/flapstack-s3-integration`
-  on `codex/stage3-integration`; `main` remains untouched.
+  on `codex/stage3-integration`; local `main` is a squash with the exact tagged
+  tree and parent `origin/main`.
 - Profile isolation: final exact Dev used `Flapstack Dev stage3-capture`; exact
   Preview used a disposable `Flapstack Preview` profile.
 - Supported release runtime: Node 22 on macOS arm64. Exact Dev evidence used
@@ -98,7 +99,7 @@ release decision.
 | -------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Release-ledger coverage                | PASS     | exact counts are enforced by `npm run check:stage3-release-ledger`                                                          |
 | OpenSpec strict validation             | PASS     | all 18 changes archived; all 29 current specs pass strict non-interactive validation                                        |
-| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 129 files, 969 passed, 3 conditional skips, production build                     |
+| Node 22 `npm run check`                | PASS     | exact candidate: lint, format, TypeScript, 130 files, 976 passed, 3 conditional skips, production build                     |
 | Security round-3 focused suite         | PASS     | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
 | Final security/control review          | PASS     | three repair rounds, focused attack suites, native SQLite coverage, and exact-candidate full gate pass                      |
 | S3-F5 focused and attack suites        | PASS     | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
@@ -116,7 +117,7 @@ release decision.
 
 ## 2026-07-14 exact integration closeout
 
-- Node 22 `npm run check`: PASS, 129 test files, 969 passed, 3 conditional
+- Node 22 `npm run check`: PASS, 130 test files, 976 passed, 3 conditional
   skips, lint, Prettier, TypeScript, and production build.
 - Release ledger: PASS, 18 archived changes, 349 normative scenarios, 54 stable
   rows, and 17 feature exits. All 29 current specs strict-validate.

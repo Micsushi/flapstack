@@ -20,6 +20,7 @@ import {
   parseCustomPermissionCapabilities,
   type CustomPermissionCapabilities,
 } from "../../shared/permission-capabilities"
+import { nowEpochSeconds } from "./db/timestamps"
 
 const require = createRequire(import.meta.url)
 
@@ -227,23 +228,24 @@ export function recoverPendingAllChatPermissionChange(sqlite: PermissionRecovery
     preferences.globalDefault === "custom"
       ? JSON.stringify(preferences.globalCustomPermissions)
       : null
+  const now = nowEpochSeconds()
   sqlite.transaction(() => {
     sqlite
       .prepare(
         "UPDATE projects SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
       )
-      .run(preferences.globalDefault, customPermissions, Date.now())
+      .run(preferences.globalDefault, customPermissions, now)
     sqlite
       .prepare(
         "UPDATE tasks SET default_permission_mode = ?, default_custom_permissions = ?, updated_at = ?",
       )
-      .run(preferences.globalDefault, customPermissions, Date.now())
+      .run(preferences.globalDefault, customPermissions, now)
     sqlite
       .prepare("UPDATE chats SET permission_mode = ?, custom_permissions = ?, updated_at = ?")
-      .run(preferences.globalDefault, customPermissions, Date.now())
+      .run(preferences.globalDefault, customPermissions, now)
     sqlite
       .prepare("UPDATE sub_chats SET permission_mode = ?, updated_at = ?")
-      .run(preferences.globalDefault, Date.now())
+      .run(preferences.globalDefault, now)
   })()
   writePermissionConfig(preferences)
   return true
