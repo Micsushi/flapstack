@@ -29,6 +29,24 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   tasks: many(tasks),
 }))
 
+// Project knowledge remains shared across every worktree for a project. Paths
+// are captured when a location is selected so later worktree or project-path
+// changes cannot silently move the vault.
+export const projectVaultPolicies = sqliteTable("project_vault_policies", {
+  projectId: text("project_id")
+    .primaryKey()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  locationMode: text("location_mode").notNull().default("app-managed"),
+  centralPath: text("central_path").notNull(),
+  projectOwnedPath: text("project_owned_path"),
+  gitTrackingEnabled: integer("git_tracking_enabled", { mode: "boolean" }).notNull().default(false),
+  portabilityMode: text("portability_mode").notNull().default("export-required"),
+  worktreeMode: text("worktree_mode").notNull().default("shared-across-worktrees"),
+  deletionMode: text("deletion_mode").notNull().default("retain-until-explicit-delete"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+})
+
 // Durable filesystem identity for project and worktree roots. The pathname is
 // only the lookup key; security decisions also require the canonical path and,
 // where the platform exposes them, the device/inode pair captured at binding.

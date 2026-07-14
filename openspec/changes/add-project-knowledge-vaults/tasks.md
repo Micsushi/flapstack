@@ -2,7 +2,7 @@
 
 ### S4-F2-T1 — Implement and persist the vault location policy
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Every project has an explicit, inspectable vault location and tracking policy.
 - Scope: Implement app-managed central storage as the default; add explicit project-owned and git-tracking opt-ins; persist portability, worktree, and deletion semantics.
