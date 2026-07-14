@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { isAbsolute, resolve } from "node:path"
+import { lstatSync, realpathSync } from "node:fs"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import type {
   LocalModelNormalizedToolCall,
@@ -85,6 +86,7 @@ export type LocalModelCommandRequest = {
   signal: AbortSignal
   timeoutMs: number
   maxOutputBytes: number
+  validateBeforeSpawn?: () => void
 }
 
 export type LocalModelCommandResult = {
@@ -233,6 +235,8 @@ export function createBoundedLocalModelExecToolExecutor(
             : await executeCommand(
                 parsed,
                 root,
+                options.rootPath,
+                verifyRoot,
                 safeEnvironment,
                 runCommand,
                 signal,
@@ -265,6 +269,19 @@ type ParsedExecCall = {
   argumentCount: number
   gitMutates: boolean
   url?: URL
+}
+
+type ShellPathKind = "file" | "directory" | "file-or-directory"
+
+type ShellPathOperand = {
+  value: string
+  kind: ShellPathKind
+}
+
+type ShellPathSnapshot = ShellPathOperand & {
+  canonicalPath: string
+  deviceId: string
+  inodeId: string
 }
 
 type ExecutionResult = {
@@ -385,30 +402,35 @@ function validateShellArguments(command: string, args: readonly string[]): void 
   if (args.some(isExternalPathArgument)) {
     throw new ExecArgumentsError("Shell arguments must stay inside the registered project.")
   }
-  if (command === "pwd" && args.length > 0) {
-    throw new ExecArgumentsError("pwd does not accept arguments.")
+  if (args.some((arg) => arg.startsWith("-"))) {
+    throw new ExecArgumentsError("Shell command flags are not allowed.")
   }
-  if (
-    command === "find" &&
-    args.some((arg) =>
-      [
-        "-delete",
-        "-exec",
-        "-execdir",
-        "-fls",
-        "-fprint",
-        "-fprint0",
-        "-fprintf",
-        "-ok",
-        "-okdir",
-      ].includes(arg),
-    )
-  ) {
-    throw new ExecArgumentsError("Mutating or command-running find actions are not allowed.")
+
+  if (command === "pwd") {
+    if (args.length !== 0) throw new ExecArgumentsError("pwd does not accept arguments.")
+    return
   }
-  if (command === "rg" && args.some((arg) => arg === "--pre" || arg.startsWith("--pre="))) {
-    throw new ExecArgumentsError("rg preprocessors are not allowed.")
+  if (command === "ls") {
+    if (args.length > 16) throw new ExecArgumentsError("ls accepts at most 16 paths.")
+    return
   }
+  if (["head", "tail", "wc"].includes(command)) {
+    if (args.length !== 1)
+      throw new ExecArgumentsError(`${command} requires exactly one project file path.`)
+    return
+  }
+  if (command === "find") {
+    if (args.length !== 1)
+      throw new ExecArgumentsError("find requires exactly one project directory path.")
+    return
+  }
+  if (command === "rg") {
+    if (args.length < 1 || args.length > 2) {
+      throw new ExecArgumentsError("rg requires a pattern and at most one project path.")
+    }
+    return
+  }
+  throw new ExecArgumentsError("Shell command has no bounded argument contract.")
 }
 
 function isExternalPathArgument(arg: string): boolean {
@@ -418,6 +440,8 @@ function isExternalPathArgument(arg: string): boolean {
 async function executeCommand(
   parsed: ParsedExecCall,
   root: string,
+  rootPath: string,
+  verifyRoot: (rootPath: string) => string,
   env: NodeJS.ProcessEnv,
   runner: (request: LocalModelCommandRequest) => Promise<LocalModelCommandResult>,
   signal: AbortSignal,
@@ -425,6 +449,10 @@ async function executeCommand(
   maxOutputBytes: number,
   secretValues: readonly string[],
 ): Promise<ExecutionResult> {
+  const shellRequest =
+    parsed.tool === "shell_exec"
+      ? prepareShellRequest(parsed.operation, parsed.args, root, rootPath, verifyRoot)
+      : null
   const gitOperationArgs = ["diff", "log", "show"].includes(parsed.operation)
     ? [parsed.operation, "--no-ext-diff", "--no-textconv", ...parsed.args]
     : [parsed.operation, ...parsed.args]
@@ -444,14 +472,18 @@ async function executeCommand(
           ...gitOperationArgs,
         ]
       : parsed.args
+  const validateBeforeSpawn =
+    shellRequest?.validateBeforeSpawn ?? (() => assertSameVerifiedRoot(root, rootPath, verifyRoot))
+  validateBeforeSpawn()
   const result = await runner({
     command: parsed.tool === "git_exec" ? "git" : parsed.operation,
-    args: gitArgs,
+    args: shellRequest?.args ?? gitArgs,
     cwd: root,
     env,
     signal,
     timeoutMs,
     maxOutputBytes,
+    validateBeforeSpawn,
   })
   const content = scrubSecrets(
     [result.stdout, result.stderr].filter(Boolean).join(result.stderr ? "\n" : ""),
@@ -588,6 +620,7 @@ export function runBoundedCommand(
   request: LocalModelCommandRequest,
 ): Promise<LocalModelCommandResult> {
   return new Promise((resolveResult, reject) => {
+    request.validateBeforeSpawn?.()
     const child = spawn(request.command, [...request.args], {
       cwd: request.cwd,
       env: request.env,
@@ -647,6 +680,110 @@ export function runBoundedCommand(
       request.signal.removeEventListener("abort", abort)
     }
   })
+}
+
+function prepareShellRequest(
+  command: string,
+  args: readonly string[],
+  root: string,
+  rootPath: string,
+  verifyRoot: (rootPath: string) => string,
+): { args: string[]; validateBeforeSpawn: () => void } {
+  const operands = shellPathOperands(command, args)
+  const snapshots = operands.map((operand) => captureShellPath(root, operand))
+  const validateBeforeSpawn = () => {
+    assertSameVerifiedRoot(root, rootPath, verifyRoot)
+    for (const snapshot of snapshots) assertUnchangedShellPath(root, snapshot)
+  }
+
+  if (command === "pwd") return { args: [], validateBeforeSpawn }
+  if (command === "rg") {
+    const [pattern, path = "."] = args
+    return { args: ["--", pattern!, path], validateBeforeSpawn }
+  }
+  if (command === "find") return { args: [...args], validateBeforeSpawn }
+  return { args: ["--", ...args], validateBeforeSpawn }
+}
+
+function shellPathOperands(command: string, args: readonly string[]): ShellPathOperand[] {
+  if (command === "pwd") return []
+  if (command === "rg") {
+    return [{ value: args[1] ?? ".", kind: "file-or-directory" }]
+  }
+  if (command === "find") return [{ value: args[0]!, kind: "directory" }]
+  if (["head", "tail", "wc"].includes(command)) {
+    return [{ value: args[0]!, kind: "file" }]
+  }
+  return (args.length > 0 ? args : ["."]).map((value) => ({
+    value,
+    kind: "file-or-directory" as const,
+  }))
+}
+
+function captureShellPath(root: string, operand: ShellPathOperand): ShellPathSnapshot {
+  const lexicalRoot = resolve(root)
+  const target = resolve(lexicalRoot, operand.value)
+  assertInsideRoot(lexicalRoot, target)
+
+  const relativeTarget = relative(lexicalRoot, target)
+  let current = lexicalRoot
+  let info = lstatSync(current, { bigint: true })
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new RootBindingError()
+  for (const part of relativeTarget.split(sep).filter(Boolean)) {
+    current = resolve(current, part)
+    info = lstatSync(current, { bigint: true })
+    if (info.isSymbolicLink()) {
+      throw new ExecArgumentsError("Shell path symlinks are not allowed.")
+    }
+  }
+
+  const canonicalPath = realpathSync(target)
+  assertInsideRoot(lexicalRoot, canonicalPath)
+  if (operand.kind === "file" && !info.isFile()) {
+    throw new ExecArgumentsError("Shell path must be a regular file.")
+  }
+  if (operand.kind === "directory" && !info.isDirectory()) {
+    throw new ExecArgumentsError("Shell path must be a directory.")
+  }
+  if (operand.kind === "file-or-directory" && !info.isFile() && !info.isDirectory()) {
+    throw new ExecArgumentsError("Shell path must be a regular file or directory.")
+  }
+  return {
+    ...operand,
+    canonicalPath,
+    deviceId: info.dev.toString(),
+    inodeId: info.ino.toString(),
+  }
+}
+
+function assertUnchangedShellPath(root: string, expected: ShellPathSnapshot): void {
+  const current = captureShellPath(root, expected)
+  if (
+    current.canonicalPath !== expected.canonicalPath ||
+    current.deviceId !== expected.deviceId ||
+    current.inodeId !== expected.inodeId
+  ) {
+    throw new ExecArgumentsError("Shell path changed before command dispatch.")
+  }
+}
+
+function assertSameVerifiedRoot(
+  expectedRoot: string,
+  rootPath: string,
+  verifyRoot: (rootPath: string) => string,
+): void {
+  if (verifiedRoot(rootPath, verifyRoot) !== expectedRoot) throw new RootBindingError()
+}
+
+function assertInsideRoot(root: string, target: string): void {
+  const bounded = relative(root, target)
+  if (
+    bounded === "" ||
+    (!bounded.startsWith(`..${sep}`) && bounded !== ".." && !isAbsolute(bounded))
+  ) {
+    return
+  }
+  throw new ExecArgumentsError("Shell path escaped the registered project.")
 }
 
 function policyFor(

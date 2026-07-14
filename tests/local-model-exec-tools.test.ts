@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -117,6 +117,95 @@ describe("bounded local-model shell, git, and network tools", () => {
     expect(runner).not.toHaveBeenCalled()
   })
 
+  it("rejects file and directory symlink readers before command dispatch", async () => {
+    const root = fixtureRoot()
+    const outside = fixtureRoot()
+    writeFileSync(join(outside, "secret.txt"), "outside secret\n")
+    mkdirSync(join(outside, "tree"))
+    writeFileSync(join(outside, "tree", "secret.txt"), "outside tree secret\n")
+    symlinkSync(join(outside, "secret.txt"), join(root, "file-link"))
+    symlinkSync(join(outside, "tree"), join(root, "directory-link"))
+    const runner = vi.fn(async () => commandResult({ stdout: "unexpected" }))
+    const executor = createExecutor({ rootPath: root, runCommand: runner })
+
+    for (const input of [
+      { command: "head", args: ["file-link"] },
+      { command: "tail", args: ["file-link"] },
+      { command: "wc", args: ["file-link"] },
+      { command: "ls", args: ["directory-link"] },
+      { command: "rg", args: ["secret", "directory-link"] },
+      { command: "find", args: ["directory-link"] },
+    ]) {
+      await expect(execute(executor, "shell_exec", input)).resolves.toMatchObject({ ok: false })
+    }
+    expect(runner).not.toHaveBeenCalled()
+  })
+
+  it("rejects every rg and find symlink-follow flag form", async () => {
+    const runner = vi.fn(async () => commandResult({ stdout: "unexpected" }))
+    const executor = createExecutor({ runCommand: runner })
+
+    for (const input of [
+      { command: "rg", args: ["-L", "secret", "."] },
+      { command: "rg", args: ["--follow", "secret", "."] },
+      { command: "rg", args: ["--follow=true", "secret", "."] },
+      { command: "find", args: ["-L", "."] },
+      { command: "find", args: ["-H", "."] },
+    ]) {
+      await expect(execute(executor, "shell_exec", input)).resolves.toMatchObject({
+        ok: false,
+        errorCode: "invalid-tool-arguments",
+      })
+    }
+    expect(runner).not.toHaveBeenCalled()
+  })
+
+  it("passes only validated project paths after an option terminator", async () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, "nested"))
+    writeFileSync(join(root, "nested", "safe.txt"), "safe\n")
+    const requests: LocalModelCommandRequest[] = []
+    const executor = createExecutor({
+      rootPath: root,
+      runCommand: async (request) => {
+        requests.push(request)
+        return commandResult({ stdout: "safe" })
+      },
+    })
+
+    await expect(
+      execute(executor, "shell_exec", { command: "head", args: ["nested/safe.txt"] }),
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      execute(executor, "shell_exec", { command: "rg", args: ["safe", "nested"] }),
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(requests.map(({ command, args }) => [command, args])).toEqual([
+      ["head", ["--", "nested/safe.txt"]],
+      ["rg", ["--", "safe", "nested"]],
+    ])
+  })
+
+  it("revalidates a shell path identity at the production spawn seam", async () => {
+    const root = fixtureRoot()
+    const outside = fixtureRoot()
+    const target = join(root, "target.txt")
+    writeFileSync(target, "safe\n")
+    writeFileSync(join(outside, "secret.txt"), "outside\n")
+    const runner = vi.fn(async (request: LocalModelCommandRequest) => {
+      rmSync(target)
+      symlinkSync(join(outside, "secret.txt"), target)
+      request.validateBeforeSpawn?.()
+      return commandResult({ stdout: "unexpected" })
+    })
+    const executor = createExecutor({ rootPath: root, runCommand: runner })
+
+    await expect(
+      execute(executor, "shell_exec", { command: "head", args: ["target.txt"] }),
+    ).resolves.toMatchObject({ ok: false, errorCode: "tool-failed" })
+    expect(runner).toHaveBeenCalledOnce()
+  })
+
   it("returns deterministic timeout and output-flood failures", async () => {
     const timeout = createExecutor({
       runCommand: async () => commandResult({ timedOut: true }),
@@ -157,6 +246,22 @@ describe("bounded local-model shell, git, and network tools", () => {
       maxOutputBytes: 1_024,
     })
     expect(flood).toMatchObject({ timedOut: false, outputLimited: true })
+
+    const stderr = await runBoundedCommand({
+      command: process.execPath,
+      args: ["-e", "process.stderr.write('stderr-once')"],
+      cwd,
+      env: { PATH: process.env.PATH },
+      signal: new AbortController().signal,
+      timeoutMs: 2_000,
+      maxOutputBytes: 1_024,
+    })
+    expect(stderr).toMatchObject({
+      stdout: "stderr-once",
+      stderr: "",
+      outputBytes: Buffer.byteLength("stderr-once"),
+      outputLimited: false,
+    })
   })
 
   it("requires approval before a bounded git mutation and emits content-free audit states", async () => {
@@ -258,7 +363,7 @@ describe("bounded local-model shell, git, and network tools", () => {
             call: {
               id: "secret-call",
               name: "shell_exec",
-              arguments: { command: "rg", args: [secret] },
+              arguments: { command: "rg", args: [secret, "."] },
             },
           }
           yield { kind: "done" as const }
