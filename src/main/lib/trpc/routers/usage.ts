@@ -40,8 +40,9 @@ import {
   updateDaemonStatus,
 } from "../../usage/store"
 import { SAMPLE_SOURCES, USAGE_PROVIDER_IDS } from "../../usage/types"
-import { usageRollupQuerySchema } from "../../../../shared/advanced-usage"
+import { usageInsightQuerySchema, usageRollupQuerySchema } from "../../../../shared/advanced-usage"
 import { queryUsageRollups } from "../../usage/rollups"
+import { queryUsageInsights } from "../../usage/insights"
 
 const providerIdSchema = z.enum(USAGE_PROVIDER_IDS)
 const sampleSourceSchema = z.enum(SAMPLE_SOURCES)
@@ -155,6 +156,16 @@ export const usageRouter = router({
       await syncOnWatchUsageHistory(getDatabasePath())
     }
     return queryUsageRollups(getDatabase(), input)
+  }),
+
+  queryInsights: publicProcedure.input(usageInsightQuerySchema).query(async ({ input }) => {
+    if (
+      !input.rollup.providerIds ||
+      input.rollup.providerIds.some((id) => id === "codex" || id === "anthropic")
+    ) {
+      await syncOnWatchUsageHistory(getDatabasePath())
+    }
+    return queryUsageInsights(getDatabase(), input)
   }),
 
   listCycles: publicProcedure

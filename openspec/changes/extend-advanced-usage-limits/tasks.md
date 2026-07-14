@@ -41,7 +41,7 @@
 
 ### S4-F7-T4 — Add headroom, forecast, and anomaly calculations
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Users receive bounded decision support with visible confidence and provenance.
 - Scope: Remaining headroom; burn rate; reset-aware pace; forecast/range; coverage threshold; anomaly/spike detection; pricing version; unavailable states.
