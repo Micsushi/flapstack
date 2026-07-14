@@ -54,7 +54,7 @@
 
 ### S4-F5-T5 — Add approval-gated CRUD and MCP management
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Users and authorized agents manage automations without bypassing approval or scope.
 - Scope: CRUD router/service, draft review, enable/disable, authority/budget impact classification, MCP list/read/create-draft/update/enable controls, approval, audit, invalidation.

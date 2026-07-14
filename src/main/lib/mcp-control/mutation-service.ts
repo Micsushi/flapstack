@@ -72,13 +72,6 @@ const schemas = {
       overwrite: z.boolean().default(false),
     })
     .strict(),
-  create_automation_draft: z
-    .object({
-      name,
-      trigger: z.enum(["schedule", "file-change", "run-complete", "manual"]),
-      dryRun: z.literal(true).default(true),
-    })
-    .strict(),
   launch_run: z
     .object({
       chatId: id,
@@ -152,15 +145,6 @@ export function createMcpMutationService(
             )
           case "launch_run":
             return launchRun(db, scope, input.data as z.infer<typeof schemas.launch_run>)
-          case "create_automation_draft":
-            return {
-              ok: true,
-              data: {
-                draft: input.data,
-                runnable: false,
-                reason: "Automation activation is disabled.",
-              },
-            }
         }
         return fail("invalid-input", "Unsupported mutation operation.")
       } catch (error) {

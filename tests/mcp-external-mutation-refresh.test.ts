@@ -25,6 +25,21 @@ describe("product MCP external mutation refresh", () => {
   it("publishes only successful changed product mutations after their response", () => {
     expect(
       invalidationForProductMcpMutation(
+        "update_automation",
+        { automationId: "automation-1", expectedVersion: 1 },
+        {
+          ok: true,
+          data: { changed: true, record: { id: "automation-1", version: 2 } },
+        },
+      ),
+    ).toEqual({
+      version: 1,
+      source: "product-mcp",
+      domains: ["automations"],
+      automationIds: ["automation-1"],
+    })
+    expect(
+      invalidationForProductMcpMutation(
         "archive_item",
         { kind: "chat", id: "chat-2" },
         { ok: true, data: { id: "chat-2", changed: true } },
@@ -150,6 +165,7 @@ describe("product MCP external mutation refresh", () => {
       orchestrationTask: (id) => calls.push(`orchestration:${id}`),
       chatLineage: (id) => calls.push(`lineage:${id}`),
       projectVault: (id) => calls.push(`vault:${id}`),
+      automations: () => calls.push("automations"),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate, 25)
     coalescer.push({
@@ -178,6 +194,12 @@ describe("product MCP external mutation refresh", () => {
       domains: ["vaults"],
       projectIds: ["project-1"],
     })
+    coalescer.push({
+      version: 1,
+      source: "product-mcp",
+      domains: ["automations"],
+      automationIds: ["automation-1"],
+    })
 
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(25)
@@ -192,6 +214,7 @@ describe("product MCP external mutation refresh", () => {
       "orchestration:task-1",
       "lineage:chat-1",
       "vault:project-1",
+      "automations",
     ])
     coalescer.dispose()
   })

@@ -81,13 +81,13 @@ describe("MCP mutation service", () => {
     ).resolves.toMatchObject({ ok: false, error: { code: "stale-target" } })
   })
 
-  it("keeps automation drafts non-runnable", async () => {
+  it("does not retain the legacy automation scaffold in the generic mutation service", async () => {
     const result = await createMcpMutationService(path).invoke(
       "create_automation_draft",
       { chatId: "chat-1", permissionMode: "full-access" },
       { name: "Daily review", trigger: "schedule" },
     )
-    expect(result).toMatchObject({ ok: true, data: { runnable: false } })
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid-input" } })
   })
 
   it("queues launch_run once for an idempotency key", async () => {

@@ -13,6 +13,7 @@ export const productMcpInvalidationDomains = [
   "audit",
   "orchestrations",
   "vaults",
+  "automations",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
@@ -25,6 +26,7 @@ export type ProductMcpRendererInvalidation = {
   runIds?: string[]
   projectIds?: string[]
   taskIds?: string[]
+  automationIds?: string[]
 }
 
 const allowedKeys = new Set([
@@ -35,6 +37,7 @@ const allowedKeys = new Set([
   "runIds",
   "projectIds",
   "taskIds",
+  "automationIds",
 ])
 const domains = new Set<string>(productMcpInvalidationDomains)
 
@@ -56,7 +59,7 @@ export function parseProductMcpRendererInvalidation(
     source: "product-mcp",
     domains: unique(record.domains as ProductMcpInvalidationDomain[]),
   }
-  for (const key of ["chatIds", "runIds", "projectIds", "taskIds"] as const) {
+  for (const key of ["chatIds", "runIds", "projectIds", "taskIds", "automationIds"] as const) {
     const ids = record[key]
     if (ids === undefined) continue
     if (!isBoundedIds(ids)) return null
@@ -74,7 +77,7 @@ export function mergeProductMcpRendererInvalidations(
     source: "product-mcp",
     domains: unique(events.flatMap((event) => event.domains)),
   }
-  for (const key of ["chatIds", "runIds", "projectIds", "taskIds"] as const) {
+  for (const key of ["chatIds", "runIds", "projectIds", "taskIds", "automationIds"] as const) {
     const ids = unique(events.flatMap((event) => event[key] ?? []))
     if (ids.length > 0) merged[key] = ids
   }
@@ -101,6 +104,16 @@ export function invalidationForProductMcpMutation(
     case "record_vault_decision":
       return event(["vaults"], {
         projectIds: compactIds(stringValue(request.projectId), stringValue(result.projectId)),
+      })
+    case "create_automation_draft":
+    case "update_automation":
+    case "enable_automation":
+      return event(["automations"], {
+        automationIds: compactIds(
+          stringValue(request.automationId),
+          stringValue(result.id),
+          stringValue(objectValue(result.record).id),
+        ),
       })
     case "create_chat":
     case "spawn_thread":
@@ -152,7 +165,10 @@ export function invalidationForProductMcpMutation(
 
 function event(
   eventDomains: ProductMcpInvalidationDomain[],
-  ids: Pick<ProductMcpRendererInvalidation, "chatIds" | "runIds" | "projectIds" | "taskIds">,
+  ids: Pick<
+    ProductMcpRendererInvalidation,
+    "chatIds" | "runIds" | "projectIds" | "taskIds" | "automationIds"
+  >,
 ): ProductMcpRendererInvalidation {
   return parseProductMcpRendererInvalidation({
     version: 1,

@@ -45,6 +45,7 @@ export type McpControlErrorCode =
   | "stale-caller"
   | "stale-target"
   | "approval-denied"
+  | "approval-required"
   | "approval-timeout"
   | "approval-cancelled"
   | "approval-shutdown"
