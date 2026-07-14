@@ -4,6 +4,7 @@ import {
   sqliteTable,
   text,
   integer,
+  foreignKey,
   primaryKey,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core"
@@ -32,10 +33,11 @@ export const projects = sqliteTable("projects", {
   archivedAt: integer("archived_at", { mode: "timestamp" }),
 })
 
-export const projectsRelations = relations(projects, ({ many }) => ({
+export const projectsRelations = relations(projects, ({ one, many }) => ({
   chats: many(chats),
   tasks: many(tasks),
   taskProposals: many(taskProposals),
+  vault: one(projectVaults),
 }))
 
 // Project knowledge remains shared across every worktree for a project. Paths
@@ -55,6 +57,108 @@ export const projectVaultPolicies = sqliteTable("project_vault_policies", {
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 })
+
+// Vault content stays readable Markdown on disk. SQLite owns the stable typed
+// index, optimistic versions, content hashes, and backup inventory.
+export const projectVaults = sqliteTable(
+  "project_vaults",
+  {
+    projectId: text("project_id")
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    rootPath: text("root_path").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("project_vaults_root_path_idx").on(table.rootPath),
+    check("project_vaults_schema_version_check", sql`${table.schemaVersion} >= 1`),
+  ],
+)
+
+export const projectVaultSections = sqliteTable(
+  "project_vault_sections",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectVaults.projectId, { onDelete: "cascade" }),
+    sectionId: text("section_id").notNull(),
+    sectionType: text("section_type").notNull(),
+    title: text("title").notNull(),
+    relativePath: text("relative_path").notNull(),
+    version: integer("version").notNull().default(1),
+    contentHash: text("content_hash").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.sectionId] }),
+    uniqueIndex("project_vault_sections_path_idx").on(table.projectId, table.relativePath),
+    check("project_vault_sections_version_check", sql`${table.version} >= 1`),
+    check("project_vault_sections_byte_length_check", sql`${table.byteLength} >= 0`),
+  ],
+)
+
+export const projectVaultBackups = sqliteTable(
+  "project_vault_backups",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    projectId: text("project_id").notNull(),
+    sectionId: text("section_id").notNull(),
+    version: integer("version").notNull(),
+    relativePath: text("relative_path").notNull(),
+    contentHash: text("content_hash").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("project_vault_backups_version_idx").on(
+      table.projectId,
+      table.sectionId,
+      table.version,
+    ),
+    index("project_vault_backups_section_idx").on(
+      table.projectId,
+      table.sectionId,
+      table.createdAt,
+    ),
+    check("project_vault_backups_version_check", sql`${table.version} >= 1`),
+    check("project_vault_backups_byte_length_check", sql`${table.byteLength} >= 0`),
+    foreignKey({
+      columns: [table.projectId, table.sectionId],
+      foreignColumns: [projectVaultSections.projectId, projectVaultSections.sectionId],
+    }).onDelete("cascade"),
+  ],
+)
+
+export const projectVaultsRelations = relations(projectVaults, ({ one, many }) => ({
+  project: one(projects, { fields: [projectVaults.projectId], references: [projects.id] }),
+  sections: many(projectVaultSections),
+  backups: many(projectVaultBackups),
+}))
+
+export const projectVaultSectionsRelations = relations(projectVaultSections, ({ one, many }) => ({
+  vault: one(projectVaults, {
+    fields: [projectVaultSections.projectId],
+    references: [projectVaults.projectId],
+  }),
+  backups: many(projectVaultBackups),
+}))
+
+export const projectVaultBackupsRelations = relations(projectVaultBackups, ({ one }) => ({
+  vault: one(projectVaults, {
+    fields: [projectVaultBackups.projectId],
+    references: [projectVaults.projectId],
+  }),
+  section: one(projectVaultSections, {
+    fields: [projectVaultBackups.projectId, projectVaultBackups.sectionId],
+    references: [projectVaultSections.projectId, projectVaultSections.sectionId],
+  }),
+}))
 
 // Durable filesystem identity for project and worktree roots. The pathname is
 // only the lookup key; security decisions also require the canonical path and,
