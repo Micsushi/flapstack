@@ -11,6 +11,11 @@ import {
   type CustomPermissionToggles,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
+import {
+  assertTaskStatusTransition,
+  taskWorkflowStatusSchema,
+  type TaskWorkflowStatus,
+} from "../../../../shared/plan-kanban"
 
 const permissionModeSchema = z.enum(permissionModes)
 const customPermissionsSchema = z.custom<CustomPermissionToggles>(
@@ -77,6 +82,7 @@ export const tasksRouter = router({
           projectId: input.projectId,
           name: input.name,
           description: input.description,
+          status: "backlog",
           defaultPermissionMode: project.defaultPermissionMode,
           defaultCustomPermissions: project.defaultCustomPermissions,
         })
@@ -128,7 +134,7 @@ export const tasksRouter = router({
         id: z.string(),
         name: z.string().min(1).optional(),
         description: z.string().optional().nullable(),
-        status: z.string().optional(),
+        status: taskWorkflowStatusSchema.optional(),
         defaultPermissionMode: permissionModeSchema.optional(),
         defaultCustomPermissions: customPermissionsSchema.optional().nullable(),
       }),
@@ -136,6 +142,16 @@ export const tasksRouter = router({
     .mutation(({ input }) => {
       const db = getDatabase()
       const { id, ...updates } = input
+      if (updates.status !== undefined) {
+        const current = db
+          .select({ status: tasks.status })
+          .from(tasks)
+          .where(eq(tasks.id, id))
+          .get()
+        if (!current) throw new Error("Task not found")
+        const currentStatus = taskWorkflowStatusSchema.parse(current.status) as TaskWorkflowStatus
+        assertTaskStatusTransition(currentStatus, updates.status)
+      }
       if (updates.defaultCustomPermissions !== undefined && !updates.defaultPermissionMode) {
         throw new Error("Updating custom capability toggles also requires a permission mode.")
       }

@@ -2,7 +2,8 @@
 
 ### S4-F9-T1 — Add task workflow and proposal contracts
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
+- Evidence: Node 22 `npm test -- plan-kanban-schema` (4 tests) and `npm test -- stage3-migration-rebase` (7 tests) pass; `npm run ts:check` and focused ESLint pass; strict OpenSpec validation passes.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Tasks have canonical board status/order/version and AI proposals have inert durable identity.
 - Scope: Task status migration; order/version/source provenance fields; `task_proposals` schema; proposal status/version; DTOs; indexes; prior-schema fixtures.
