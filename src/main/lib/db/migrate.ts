@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
 
 const STAGE3_MIGRATION_TAG = "0017_third_molecule_man"
+const VOICE_ARTIFACT_MIGRATION_TAG = "0010_voice_artifacts"
 const INITIAL_PROMPT_MIGRATION_TAG = "0020_silky_sphinx"
 
 type Journal = {
@@ -20,10 +21,48 @@ export function migrateDatabase(
   sqlite: Database.Database,
   migrationsFolder: string,
 ): void {
+  normalizeLateVoiceArtifactMigration(sqlite, migrationsFolder)
   normalizeLegacyStage3Migration(sqlite, migrationsFolder)
   normalizeInitialPromptMigration(sqlite, migrationsFolder)
   migrate(database, { migrationsFolder })
   recoverLegacyQueuedRunPrompts(sqlite)
+}
+
+/**
+ * Migration 0010 was published after 0009 with an earlier journal timestamp.
+ * Drizzle compares timestamps when upgrading an existing profile, so a
+ * profile last opened on 0009 skips 0010 and later fails when 0014 alters the
+ * missing voice_artifacts table. Apply and record 0010 before its dependents.
+ */
+export function normalizeLateVoiceArtifactMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!tableExists(sqlite, "__drizzle_migrations")) return false
+
+  const journal = readJournal(migrationsFolder)
+  const current = journal.entries.find((entry) => entry.tag === VOICE_ARTIFACT_MIGRATION_TAG)
+  if (!current) throw new Error(`Missing ${VOICE_ARTIFACT_MIGRATION_TAG} migration metadata.`)
+  if (latestMigrationTime(sqlite) < current.when) return false
+
+  const recorded = migrationRecorded(sqlite, current.when)
+  const tablePresent = tableExists(sqlite, "voice_artifacts")
+  if (recorded && tablePresent) return false
+
+  const repair = sqlite.transaction(() => {
+    if (!tablePresent) {
+      const migrationSql = readFileSync(
+        join(migrationsFolder, `${VOICE_ARTIFACT_MIGRATION_TAG}.sql`),
+        "utf8",
+      )
+      for (const statement of migrationSql.split("--> statement-breakpoint")) {
+        if (statement.trim()) sqlite.exec(statement)
+      }
+    }
+    if (!recorded) recordMigration(sqlite, migrationsFolder, current)
+  })
+  repair.immediate()
+  return true
 }
 
 /**

@@ -151,6 +151,28 @@ describe("MCP main run launcher", () => {
     expect(order).toEqual(["shared-first", "shared-second"])
   })
 
+  it("keeps a newer queued run authoritative during interrupted-run recovery", () => {
+    seedSharedConversationRuns()
+    sqlite
+      .prepare(
+        `UPDATE agent_runs
+         SET status = 'running', prompt_message_id = 'ordinary-interrupted'
+         WHERE id = 'shared-first'`,
+      )
+      .run()
+    sqlite.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'").run()
+
+    expect(recoverInterruptedMcpRuns(path)).toBe(0)
+
+    expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY started_at").all()).toEqual([
+      { id: "shared-first", status: "cancelled" },
+      { id: "shared-second", status: "pending" },
+    ])
+    expect(
+      sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
+    ).toEqual({ run_status: "pending" })
+  })
+
   it.each(["codex", "claude-code"] as const)(
     "recovers two legacy queued %s turns before routing them in exact transcript order",
     async (harness) => {

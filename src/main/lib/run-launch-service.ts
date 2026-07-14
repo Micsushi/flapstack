@@ -27,36 +27,48 @@ export function recoverInterruptedMcpRuns(databasePath: string): number {
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
-    const runs = db
-      .prepare(
-        `SELECT id, sub_chat_id, prompt_message_id FROM agent_runs
-         WHERE status = 'running' AND completed_at IS NULL`,
-      )
-      .all() as Row[]
-    let recovered = 0
     const recover = db.transaction(() => {
+      const runs = db
+        .prepare(
+          `SELECT id, sub_chat_id, prompt_message_id FROM agent_runs
+           WHERE status = 'running' AND completed_at IS NULL`,
+        )
+        .all() as Row[]
+      const affectedSubChats = new Set<string>()
+      let recovered = 0
       const now = Date.now()
       for (const run of runs) {
+        affectedSubChats.add(String(run.sub_chat_id))
         const isMcp =
           typeof run.prompt_message_id === "string" && run.prompt_message_id.startsWith("mcp-")
         if (isMcp) {
           db.prepare("UPDATE agent_runs SET status = 'pending' WHERE id = ?").run(run.id)
-          db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(
-            run.sub_chat_id,
-          )
           recovered += 1
         } else {
           db.prepare(
             "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ?",
           ).run(now, run.id)
-          db.prepare("UPDATE sub_chats SET run_status = 'cancelled' WHERE id = ?").run(
-            run.sub_chat_id,
-          )
         }
       }
+
+      for (const subChatId of affectedSubChats) {
+        db.prepare(
+          `UPDATE sub_chats SET run_status = COALESCE((
+             SELECT status FROM agent_runs
+             WHERE sub_chat_id = ? AND status IN ('pending','running')
+             ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
+             LIMIT 1
+           ), (
+             SELECT status FROM agent_runs
+             WHERE sub_chat_id = ?
+             ORDER BY started_at DESC, id DESC
+             LIMIT 1
+           ), run_status), updated_at = ? WHERE id = ?`,
+        ).run(subChatId, subChatId, now, subChatId)
+      }
+      return recovered
     })
-    recover()
-    return recovered
+    return recover.immediate()
   } finally {
     db.close()
   }
