@@ -38,6 +38,7 @@ describe("native extension adapter parsing", () => {
         (capability) =>
           capability.mutations.length > 0 &&
           capability.kind !== "mcp" &&
+          capability.kind !== "hook" &&
           capability.scope !== "plugin",
       )
       .map((capability) => capability.id)
