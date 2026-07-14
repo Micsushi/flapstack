@@ -118,3 +118,29 @@ without requiring UI input or a provider launch.
   retries, replaces, adds, reports progress, or archives an orchestration fixture
 - **THEN** the action uses the production orchestration service and returns durable state
   suitable for functional assertions
+
+### Requirement: Carryover surface control
+
+The development MCP SHALL expose bounded functional reads and controls for Voice, Usage,
+reasoning disclosure, and stored run review/undo without returning credentials, raw provider
+payloads, transcript text from Voice History, or reasoning body text from the renderer.
+
+#### Scenario: Inspect Voice and Usage without desktop input
+
+- **WHEN** an authenticated development client inspects Voice or Usage
+- **THEN** it receives production settings, readiness, counts, redacted provider state, and daemon
+  health
+- **AND** saved credentials are reported as presence booleans only
+
+#### Scenario: Control a live disclosure without synthetic input
+
+- **WHEN** an authenticated development client toggles a mounted reasoning or run-change
+  disclosure or opens the stored Review surface
+- **THEN** the production renderer action runs and returns bounded state attributes
+- **AND** the response excludes reasoning body text and stored diff content
+
+#### Scenario: Review or undo a stored run
+
+- **WHEN** an authenticated development client requests a stored run review or conflict-safe undo
+- **THEN** Flapstack uses the same checkpoint and inverse-merge services as the product UI
+- **AND** overlapping later edits block the undo without partially changing files

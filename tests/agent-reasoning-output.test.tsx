@@ -39,7 +39,17 @@ describe("AgentReasoningOutput", () => {
     )
 
     const disclosure = document.body.querySelector('button[aria-expanded="false"]') as HTMLElement
+    const boundary = document.body.querySelector<HTMLElement>(
+      '[data-dev-carryover-surface="reasoning"]',
+    )
     expect(disclosure).not.toBeNull()
+    expect(boundary?.dataset).toMatchObject({
+      expanded: "false",
+      streaming: "false",
+      label: "Reasoning summary",
+      status: "Worked for 5s",
+    })
+    expect(JSON.stringify(boundary?.dataset)).not.toContain("Checked the persisted response")
     expect(disclosure.getAttribute("aria-label")).toBe("Worked for 5s. Reasoning summary")
     expect(disclosure.textContent).toContain("Worked for 5s")
     expect(disclosure.textContent).toContain("Reasoning summary")
@@ -47,6 +57,7 @@ describe("AgentReasoningOutput", () => {
 
     await act(async () => disclosure.click())
     expect(disclosure.getAttribute("aria-expanded")).toBe("true")
+    expect(boundary?.dataset.expanded).toBe("true")
     expect(document.body.textContent).toContain("Checked the persisted response.")
   })
 

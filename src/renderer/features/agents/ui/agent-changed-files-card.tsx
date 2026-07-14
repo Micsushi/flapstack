@@ -77,9 +77,18 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
 
   return (
     <>
-      <div className="mx-2 overflow-hidden rounded-lg border border-border bg-muted/45">
+      <div
+        className="mx-2 overflow-hidden rounded-lg border border-border bg-muted/45"
+        data-dev-carryover-surface="run-change"
+        data-run-id={runId}
+        data-expanded={isExpanded ? "true" : "false"}
+        data-review-open={isReviewOpen ? "true" : "false"}
+        data-undone={isUndone ? "true" : "false"}
+        data-file-count={data.fileCount}
+      >
         <div
           role="button"
+          data-dev-carryover-action="toggle"
           tabIndex={0}
           aria-expanded={isExpanded}
           onClick={() => setIsExpanded((expanded) => !expanded)}
@@ -107,6 +116,7 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
               disabled={undoMutation.isPending}
               className="h-7 gap-1.5 px-2 text-xs"
               title="Undo this response's file changes"
+              data-dev-carryover-action="undo"
             >
               {undoMutation.isPending ? "Undoing..." : "Undo"}
               <RotateCcw className="h-3.5 w-3.5" />
@@ -121,6 +131,7 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
               openReview()
             }}
             className="h-7 px-2.5 text-xs"
+            data-dev-carryover-action="open-review"
           >
             Review
           </Button>
@@ -153,6 +164,7 @@ export function AgentChangedFilesCard({ runId }: AgentChangedFilesCardProps) {
                 type="button"
                 onClick={() => setShowAll(true)}
                 className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/55 hover:text-foreground"
+                data-dev-carryover-action="show-all"
               >
                 Show {hiddenCount} more file{hiddenCount === 1 ? "" : "s"}
                 <ChevronRight className="h-3.5 w-3.5 rotate-90" />

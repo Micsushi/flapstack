@@ -21,3 +21,7 @@
 - [ ] 2.3 Manually verify the sidebar right-click action and active-chat/menu
       action copy the chat's full visible conversation (plus clearly labeled
       legacy recovery content when hidden legacy rows exist).
+
+2026-07-13 lane attempt: the isolated `ee39-ux` Dev profile passed
+`npm run dev:verify`, but macOS was locked before Computer Use could inspect the
+sidebar, active-chat menu, or clipboard result. Task 2.3 remains open.

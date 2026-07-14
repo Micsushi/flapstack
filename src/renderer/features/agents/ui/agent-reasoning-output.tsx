@@ -153,10 +153,18 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   }
 
   return (
-    <div className="mb-3">
+    <div
+      className="mb-3"
+      data-dev-carryover-surface="reasoning"
+      data-expanded={isExpanded ? "true" : "false"}
+      data-streaming={isStreaming ? "true" : "false"}
+      data-label={reasoningOutputLabel}
+      data-status={statusLabel}
+    >
       {/* Header - always visible, clickable to toggle */}
       <button
         type="button"
+        data-dev-carryover-action="toggle"
         onClick={() => setIsExpanded(!isExpanded)}
         aria-expanded={isExpanded}
         aria-label={`${statusLabel}. ${reasoningOutputLabel}`}

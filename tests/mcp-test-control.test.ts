@@ -40,7 +40,16 @@ import {
   recordDevAgentInputRendererState,
 } from "../src/main/lib/mcp-test-control/renderer-state"
 import * as schema from "../src/main/lib/db/schema"
-import { closeDatabase } from "../src/main/lib/db"
+import { closeDatabase, getDatabase } from "../src/main/lib/db"
+import {
+  cleanupCarryoverRunFixture,
+  controlVoiceSettings,
+  createCarryoverRunFixture,
+  getCarryoverRunFixtureFiles,
+  getRunChangeState,
+  getVoiceState,
+  undoRunChange,
+} from "../src/main/lib/mcp-test-control/carryover-controls"
 
 describe("dev MCP test-control registry", () => {
   it("defines the today-sized testing tool surface", () => {
@@ -65,6 +74,17 @@ describe("dev MCP test-control registry", () => {
       "get_chat_state",
       "get_run_state",
       "get_reasoning_timer_state",
+      "get_voice_state",
+      "control_voice_settings",
+      "get_usage_state",
+      "refresh_usage_state",
+      "get_run_change_state",
+      "undo_run_change",
+      "create_carryover_run_fixture",
+      "get_carryover_run_fixture_files",
+      "cleanup_carryover_run_fixture",
+      "get_renderer_carryover_state",
+      "control_renderer_carryover",
       "list_pending_approvals",
       "get_opencode_logs",
       "prepare_product_mcp_caller",
@@ -199,6 +219,127 @@ describe("dev renderer Settings control boundary", () => {
       }),
     ).toBeNull()
   })
+
+  it("accepts only enumerated carryover reads and controls", () => {
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.get",
+        surface: "voice",
+      }),
+    ).toMatchObject({ command: "carryover.get", surface: "voice" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "run-change",
+        operation: "open-review",
+        runId: "run-1",
+      }),
+    ).toMatchObject({ operation: "open-review", runId: "run-1" })
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "voice",
+        operation: "click-anything",
+      }),
+    ).toBeNull()
+    expect(
+      parseDevRendererControlRequest({
+        requestId: "request-id-long-enough",
+        command: "carryover.control",
+        surface: "reasoning",
+        operation: "toggle",
+        index: 101,
+      }),
+    ).toBeNull()
+  })
+})
+
+describe("dev MCP carryover controls", () => {
+  it("updates bounded Voice preferences and returns history counts without transcript content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-voice-"))
+    const previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    process.env.FLAPSTACK_CONFIG_DIR = dir
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    try {
+      expect(controlVoiceSettings({ rate: 1.4, preferOffline: false })).toMatchObject({
+        rate: 1.4,
+        preferOffline: false,
+      })
+      const state = await getVoiceState()
+      expect(state.settings).toMatchObject({ rate: 1.4, preferOffline: false })
+      expect(state.history).toEqual({
+        count: expect.any(Number),
+        transcriptionCount: expect.any(Number),
+        speechCount: expect.any(Number),
+        withAudioCount: expect.any(Number),
+      })
+      expect(JSON.stringify(state.history)).not.toContain("text")
+    } finally {
+      closeDatabase()
+      if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
+      else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it("creates and cleans isolated run fixtures for non-overlap and conflict proof", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-carryover-"))
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    const fixtureIds: string[] = []
+    try {
+      const nonOverlap = await createCarryoverRunFixture({ laterEdit: "non-overlap" })
+      fixtureIds.push(nonOverlap.projectId)
+      expect(nonOverlap.backgroundSubChatId).toEqual(expect.any(String))
+      const review = await getRunChangeState({ runId: nonOverlap.runId, includeReview: true })
+      expect(review).toMatchObject({ fileCount: 2, recoverable: true })
+      expect(review.diff).toContain("alpha from response")
+      expect(review.diff).toContain("beta from response")
+      expect(await undoRunChange({ runId: nonOverlap.runId })).toMatchObject({
+        success: true,
+        alreadyUndone: false,
+        files: expect.arrayContaining(["alpha.txt", "beta.txt"]),
+      })
+      expect(await getCarryoverRunFixtureFiles({ projectId: nonOverlap.projectId })).toEqual({
+        alpha: "alpha before\nmanual anchor\nomega from later manual edit\n",
+        beta: "beta before\n",
+      })
+
+      const overlap = await createCarryoverRunFixture({ laterEdit: "overlap" })
+      fixtureIds.push(overlap.projectId)
+      const beforeConflict = await getCarryoverRunFixtureFiles({ projectId: overlap.projectId })
+      expect(await undoRunChange({ runId: overlap.runId })).toMatchObject({
+        success: false,
+        conflicts: [expect.objectContaining({ filePath: "alpha.txt" })],
+      })
+      expect(await getCarryoverRunFixtureFiles({ projectId: overlap.projectId })).toEqual(
+        beforeConflict,
+      )
+    } finally {
+      for (const projectId of fixtureIds) {
+        await cleanupCarryoverRunFixture({ projectId }).catch(() => {})
+      }
+      expect(getDatabase().select().from(schema.filesystemRootRegistrations).all()).toEqual([])
+      closeDatabase()
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
 })
 
 describe("dev MCP transport", () => {

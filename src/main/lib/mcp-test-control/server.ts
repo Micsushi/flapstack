@@ -73,6 +73,17 @@ import {
   setPermissionDefault,
   setPermissionChangeBehavior,
 } from "./settings-release-controls"
+import {
+  cleanupCarryoverRunFixture,
+  controlVoiceSettings,
+  createCarryoverRunFixture,
+  getCarryoverRunFixtureFiles,
+  getRunChangeState,
+  getUsageState,
+  getVoiceState,
+  refreshUsageState,
+  undoRunChange,
+} from "./carryover-controls"
 
 export const DEV_MCP_DESCRIPTOR_FILENAME = "dev-test-control-mcp.json"
 
@@ -540,6 +551,176 @@ function registerTools(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (input) => result(getReasoningTimerState(input)),
+  )
+  server.registerTool(
+    "get_voice_state",
+    {
+      description:
+        "Inspect bounded production Voice settings, adapter readiness, models, and history counts.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getVoiceState()),
+  )
+  server.registerTool(
+    "control_voice_settings",
+    {
+      description: "Update bounded production Voice preferences without synthetic UI input.",
+      inputSchema: {
+        sttAdapterId: z.enum(["local-parakeet", "local-whisper"]).optional(),
+        retainDictationAudio: z.boolean().optional(),
+        sttModelUnloadMinutes: z.number().int().min(1).max(60).optional(),
+        whisperModelId: z.enum(["tiny", "base", "small"]).optional(),
+        ttsAdapterId: z.enum(["kokoro", "native-os"]).optional(),
+        voiceId: z.string().max(500).nullable().optional(),
+        voiceByTtsAdapterId: z
+          .record(z.string().max(100), z.string().max(500).nullable())
+          .optional(),
+        rate: z.number().min(0.5).max(2).optional(),
+        preferOffline: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => result(controlVoiceSettings(input)),
+  )
+  server.registerTool(
+    "get_usage_state",
+    {
+      description:
+        "Inspect redacted Usage settings, provider states, current samples, and daemon health.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => result(await getUsageState()),
+  )
+  server.registerTool(
+    "refresh_usage_state",
+    {
+      description: "Run the production Usage refresh with saved credentials only.",
+      inputSchema: {
+        providerId: z.enum(["codex", "anthropic", "cursor", "openrouter", "nanogpt"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async (input) => result(await refreshUsageState(input)),
+  )
+  server.registerTool(
+    "get_run_change_state",
+    {
+      description: "Inspect one stored run change set and optional historical review diff.",
+      inputSchema: {
+        runId: z.string().min(1),
+        includeReview: z.boolean().optional(),
+        filePath: z.string().min(1).max(4_096).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getRunChangeState(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "undo_run_change",
+    {
+      description: "Undo one stored run change set through the conflict-safe production service.",
+      inputSchema: { runId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await undoRunChange(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "create_carryover_run_fixture",
+    {
+      description:
+        "Create an isolated temp Git repository with a two-file run, visible reasoning fixture, and optional later edit.",
+      inputSchema: { laterEdit: z.enum(["none", "non-overlap", "overlap"]).optional() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await createCarryoverRunFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_carryover_run_fixture_files",
+    {
+      description: "Read only alpha.txt and beta.txt from an isolated carryover fixture.",
+      inputSchema: { projectId: z.string().min(1) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getCarryoverRunFixtureFiles(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_carryover_run_fixture",
+    {
+      description: "Delete one isolated carryover fixture and its temp Git repository.",
+      inputSchema: { projectId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await cleanupCarryoverRunFixture(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_renderer_carryover_state",
+    {
+      description: "Inspect bounded live Voice, Usage, reasoning, or run-change renderer state.",
+      inputSchema: {
+        surface: z.enum(["voice", "usage", "reasoning", "run-change"]),
+        runId: z.string().min(1).max(200).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "carryover.get", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "control_renderer_carryover",
+    {
+      description: "Control an enumerated live reasoning or run-change disclosure action.",
+      inputSchema: {
+        surface: z.enum(["reasoning", "run-change"]),
+        operation: z.enum(["toggle", "open-review", "show-all"]),
+        runId: z.string().min(1).max(200).optional(),
+        index: z.number().int().min(0).max(100).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await requestDevRendererControl({ command: "carryover.control", ...input }))
+      } catch (error) {
+        return failure(error)
+      }
+    },
   )
   server.registerTool(
     "list_pending_approvals",

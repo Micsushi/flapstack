@@ -147,6 +147,15 @@ Notes: headless evidence does not prove renderer visuals, provider parity, or
   exact project-boundary enforcement
 ```
 
+## 2026-07-13 integrated-candidate continuation
+
+The isolated `acbf-cont` profile reported OpenRouter and NanoGPT unconfigured,
+with only their shipped seed models available. Cursor, OpenRouter, and NanoGPT
+credential presence was false, and the app-scoped Claude token was absent.
+Injected question requests proved provider-adapter capability declarations and
+shared lifecycle cleanup, not provider runtime behavior. No credential was
+created or copied and no paid call ran. S3-F15-T2 through S3-F15-T5 remain open.
+
 ## Evidence record
 
 ```text

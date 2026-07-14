@@ -55,3 +55,14 @@ Prompt injection and automatic read-aloud are removed behavior, not exit goals.
 - The current Node 22 full gate passed lint, formatting, TypeScript, tests, and
   the production build.
 - Windows and Linux manual/package rows remain unavailable and unchecked.
+
+The former three-test MCP migration mismatch is resolved on the integration
+baseline. It no longer blocks S3-F9; the manual rows above remain open.
+
+## 2026-07-13 integrated-candidate continuation
+
+Authenticated MCP read the bounded live Voice surface and production settings,
+reported the selected local Parakeet/Kokoro adapters, and returned history
+counts without transcript text. A rate mutation used the production setter and
+was restored to `1`. No microphone, native dialog, playback, audio retention,
+or Windows behavior was exercised, so S3-F9-T1 through S3-F9-T5 remain open.

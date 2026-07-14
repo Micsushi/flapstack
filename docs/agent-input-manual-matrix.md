@@ -120,3 +120,26 @@ open until every required provider-live row is either passed or its continuation
 limitation is explicitly accepted for release, and the Node 22 full gate passes
 on the final commit. The current lane gate passed 117 test files with 869 tests
 passed and 3 skipped, plus lint, formatting, TypeScript, and production build.
+
+## 2026-07-13 integrated-candidate continuation
+
+From integration candidate `03ef5bf`, authenticated MCP repeated the complete
+injected lifecycle for Claude, Codex, Cursor, OpenRouter, and NanoGPT. Claude
+reported `native`/`sameRun: true`; the other four reported their honest
+`continuation`/`sameRun: false` limitation. Each request reached the same owner,
+renderer, and dialog state, accepted one terminal reply, and cleared without a
+pending approval. This is adapter/UI contract proof only. The isolated profile
+had no credentialed OpenRouter or NanoGPT provider and no app-scoped Claude
+token, so Q12 and Q13 remain open.
+
+## 2026-07-13 `ee39-ux` lane attempt
+
+Node 22 `npm run check` passed lint, formatting, strict TypeScript, 125 test
+files with 932 passed and 3 skipped tests, and the production build. The
+isolated Dev instance passed `npm run dev:verify` for this exact checkout and
+`Flapstack Dev ee39-ux`. Authenticated MCP created a disposable two-sub-chat
+fixture for background/multi-chat navigation, but macOS was locked when Computer
+Use began. The UI lease was released immediately and no visual notification,
+focus, navigation, or multi-chat lifecycle evidence is claimed. Q11 remains
+open. The profile also lacked the credentialed five-provider live matrix needed
+for Q12/Q13, which remain open.

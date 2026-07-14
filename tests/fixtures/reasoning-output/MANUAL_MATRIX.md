@@ -106,3 +106,14 @@ For each required provider, record:
 - Result: T3 automation/headless persistence and the safe provider subset of T4
   pass. T3/T4/T5 remain unchecked for unlocked visual accessibility/search and
   same-SHA Claude/Codex/Cursor provider plus UI-live recapture.
+
+## 2026-07-13 integrated-candidate continuation
+
+The authenticated dev-test surface now reads bounded reasoning/run-change DOM
+state and controls only enumerated disclosure actions; returned datasets contain
+labels and state, never reasoning body text. Focused tests cover completed
+disclosure state and redaction. During live evidence the exact fixture chat and
+sub-chat selection was confirmed, but the synthetic transcript did not mount in
+the renderer. That failed observation is not relabeled as visual proof. No
+provider, timer, reload, search, accessibility, or screenshot row is promoted;
+S3-F16-T3 through S3-F16-T5 remain open.
