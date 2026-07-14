@@ -20,10 +20,25 @@ export function migrateDatabase(
   sqlite: Database.Database,
   migrationsFolder: string,
 ): void {
-  normalizeLegacyStage3Migration(sqlite, migrationsFolder)
-  normalizeInitialPromptMigration(sqlite, migrationsFolder)
-  migrate(database, { migrationsFolder })
-  recoverLegacyQueuedRunPrompts(sqlite)
+  // Drizzle wraps migrations in a transaction. SQLite ignores an in-migration
+  // `PRAGMA foreign_keys=OFF`, so generated table rebuilds would otherwise run
+  // cascading delete actions against durable child rows. Toggle before Drizzle
+  // starts, restore on every path, then prove the rebuilt graph is intact.
+  const foreignKeysEnabled = Boolean(sqlite.pragma("foreign_keys", { simple: true }))
+  if (foreignKeysEnabled) sqlite.pragma("foreign_keys = OFF")
+  try {
+    normalizeLegacyStage3Migration(sqlite, migrationsFolder)
+    normalizeInitialPromptMigration(sqlite, migrationsFolder)
+    migrate(database, { migrationsFolder })
+    recoverLegacyQueuedRunPrompts(sqlite)
+  } finally {
+    if (foreignKeysEnabled) sqlite.pragma("foreign_keys = ON")
+  }
+
+  const violations = sqlite.pragma("foreign_key_check") as Array<Record<string, unknown>>
+  if (violations.length > 0) {
+    throw new Error(`Database migration left ${violations.length} foreign key violation(s).`)
+  }
 }
 
 /**
