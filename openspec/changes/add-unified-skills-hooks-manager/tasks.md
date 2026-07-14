@@ -12,6 +12,16 @@
 - Blocked by: Stage 3 S3-F11 and S3-F13 exit
 - Blocks: S4-F1-T2, S4-F1-T4, S4-F1-T5
 - Context: `skills.ts`, `commands.ts`, `plugins.ts`, `hooks-management.ts`, Settings extension tabs.
+- Code-ready evidence: the production `providerExtensions.getCapabilities` query
+  now returns a schema-versioned 72-cell registry across four harnesses, six
+  extension kinds, and three scopes, including 36 explicit unsupported cells.
+  Focused fixture/provider-DTO/hook/router coverage passes 21 tests against
+  Claude Agent SDK 0.3.207 / Claude Code 2.1.207, Codex ACP 1.1.2 / CLI 0.144.1,
+  Cursor Agent 2026.07.09-a3815c0, and OpenCode 1.17.18. Exact additive gaps and
+  their downstream owners are recorded in
+  `docs/stage4-s4-f1-t1-extension-baseline.md`. Completion stays unchecked
+  because the declared Stage 3 S3-F11/S3-F13 exit/archive and live/package proof
+  remain open; none of that evidence is inferred from headless tests.
 
 ### S4-F1-T2 — Add safe native extension adapters
 
