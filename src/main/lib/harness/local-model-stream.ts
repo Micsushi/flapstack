@@ -8,10 +8,14 @@ import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
 import { createSqliteMcpApprovalCoordinator } from "../mcp-control/approval-coordinator"
 import { publishProductMcpInvalidation } from "../mcp-control/invalidation-bridge"
+import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
 import type * as schema from "../db/schema"
 import type { LocalModelRunMetadata } from "../../../shared/local-model-contract"
 import type { RunPermissionMode } from "../../../shared/harness-types"
-import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
+import {
+  customPermissionCapabilityKeys,
+  parseCustomPermissionCapabilities,
+} from "../../../shared/permission-capabilities"
 import { buildHarnessContextBundle, type HarnessContextBundle } from "./launch-context"
 import { getOllamaEndpointConfig, type OllamaEndpointConfig } from "./local-model-catalog"
 import {
@@ -34,6 +38,16 @@ import {
   type LocalModelWriteApprovalDecision,
   type LocalModelWriteToolOptions,
 } from "./local-model-write-tools"
+import {
+  createBoundedLocalModelExecToolExecutor,
+  LOCAL_MODEL_EXEC_TOOL_NAMES,
+  LOCAL_MODEL_EXEC_TOOL_SCHEMAS,
+  type LocalModelExecApprovalDecision,
+  type LocalModelExecApprovalRequest,
+  type LocalModelExecAuditRecord,
+  type LocalModelExecPolicy,
+  type LocalModelExecToolOptions,
+} from "./local-model-exec-tools"
 
 const DEFAULT_STREAM_TIMEOUT_MS = 120_000
 const DEFAULT_TRANSCRIPT_CHARS = 48_000
@@ -130,12 +144,19 @@ export type LocalModelChatServiceDependencies = {
   createReadToolExecutor?: (rootPath: string) => LocalModelReadToolExecutor
   createWriteToolExecutor?: (options: LocalModelWriteToolOptions) => LocalModelReadToolExecutor
   createWriteApprovalSession?: () => LocalModelWriteApprovalSession
+  createExecToolExecutor?: (options: LocalModelExecToolOptions) => LocalModelReadToolExecutor
+  createExecApprovalSession?: () => LocalModelExecApprovalSession
   runChanges?: LocalModelRunChangeTracker
   now?: () => number
 }
 
 export type LocalModelWriteApprovalSession = {
   request(input: LocalModelWriteApprovalRequest): Promise<LocalModelWriteApprovalDecision>
+  shutdown(): void
+}
+
+export type LocalModelExecApprovalSession = {
+  request(input: LocalModelExecApprovalRequest): Promise<LocalModelExecApprovalDecision>
   shutdown(): void
 }
 
@@ -238,6 +259,7 @@ export class LocalModelChatService {
     let textStarted = false
     let usage: LocalModelPersistedRunFinish["usage"]
     let approvalSession: LocalModelWriteApprovalSession | undefined
+    let execApprovalSession: LocalModelExecApprovalSession | undefined
     let changeTrackingStarted = false
     let changeTrackingAttempted = false
     const worktreePath = input.worktreePath ?? input.cwd
@@ -274,7 +296,10 @@ export class LocalModelChatService {
       began = true
 
       const writeToolsEnabled = localWriteToolsEnabled(input)
-      if (writeToolsEnabled) {
+      const execPolicies = localExecToolPolicies(input)
+      const mutationToolsEnabled =
+        writeToolsEnabled || execPolicies.shell !== "deny" || execPolicies.git !== "deny"
+      if (mutationToolsEnabled) {
         try {
           await runChanges.captureBefore(runId, worktreePath)
           changeTrackingStarted = true
@@ -291,9 +316,17 @@ export class LocalModelChatService {
         maxTranscriptChars: input.maxTranscriptChars,
       })
       const toolsEnabled = localReadToolsEnabled(input.metadata)
-      const tools = writeToolsEnabled
-        ? [...LOCAL_MODEL_READ_TOOL_SCHEMAS, ...LOCAL_MODEL_WRITE_TOOL_SCHEMAS]
-        : LOCAL_MODEL_READ_TOOL_SCHEMAS
+      const execToolSchemas = LOCAL_MODEL_EXEC_TOOL_SCHEMAS.filter((schema) => {
+        const name = schema.function.name
+        if (name === "shell_exec") return execPolicies.shell !== "deny"
+        if (name === "git_exec") return execPolicies.git !== "deny"
+        return execPolicies.network !== "deny"
+      })
+      const tools = [
+        ...LOCAL_MODEL_READ_TOOL_SCHEMAS,
+        ...(writeToolsEnabled ? LOCAL_MODEL_WRITE_TOOL_SCHEMAS : []),
+        ...execToolSchemas,
+      ]
       const provider = createOllamaToolProvider({
         endpoint,
         model: input.model,
@@ -334,6 +367,48 @@ export class LocalModelChatService {
             )
               ? writer.execute(call, signal)
               : executor.execute(call, signal),
+        }
+      }
+      if (execToolSchemas.length > 0 && toolExecutor) {
+        if (Object.values(execPolicies).includes("ask")) {
+          execApprovalSession =
+            this.dependencies.createExecApprovalSession?.() ?? createLocalModelExecApprovalSession()
+        }
+        const exec =
+          this.dependencies.createExecToolExecutor?.({
+            rootPath: worktreePath,
+            runId,
+            chatId: input.chatId,
+            shellPolicy: execPolicies.shell,
+            gitPolicy: execPolicies.git,
+            networkPolicy: execPolicies.network,
+            requestApproval: execApprovalSession?.request,
+            audit: appendLocalModelExecAudit,
+          }) ??
+          createBoundedLocalModelExecToolExecutor({
+            rootPath: worktreePath,
+            runId,
+            chatId: input.chatId,
+            shellPolicy: execPolicies.shell,
+            gitPolicy: execPolicies.git,
+            networkPolicy: execPolicies.network,
+            requestApproval: execApprovalSession?.request,
+            audit: appendLocalModelExecAudit,
+          })
+        const previous = toolExecutor
+        toolExecutor = {
+          redactInput: (call) =>
+            LOCAL_MODEL_EXEC_TOOL_NAMES.includes(
+              call.name as (typeof LOCAL_MODEL_EXEC_TOOL_NAMES)[number],
+            )
+              ? exec.redactInput?.(call)
+              : previous.redactInput?.(call),
+          execute: (call, signal) =>
+            LOCAL_MODEL_EXEC_TOOL_NAMES.includes(
+              call.name as (typeof LOCAL_MODEL_EXEC_TOOL_NAMES)[number],
+            )
+              ? exec.execute(call, signal)
+              : previous.execute(call, signal),
         }
       }
 
@@ -455,6 +530,7 @@ export class LocalModelChatService {
     } finally {
       clearTimeout(timer)
       approvalSession?.shutdown()
+      execApprovalSession?.shutdown()
       if (!terminal && began) {
         controller.abort()
         let errorCode: LocalModelStreamErrorCode = "consumer-disconnected"
@@ -658,6 +734,56 @@ function localWriteToolsEnabled(input: StreamLocalModelChatInput): boolean {
   )
 }
 
+function localExecToolPolicies(input: StreamLocalModelChatInput): {
+  shell: LocalModelExecPolicy
+  git: LocalModelExecPolicy
+  network: LocalModelExecPolicy
+} {
+  if (
+    input.metadata.capabilities.tools.state !== "supported" ||
+    input.metadata.permission.mode !== input.permissionMode
+  ) {
+    return { shell: "deny", git: "deny", network: "deny" }
+  }
+
+  let custom = input.metadata.permission.customPermissions
+  if (input.permissionMode === "custom") {
+    try {
+      const snapshot = custom
+      const persisted = parseCustomPermissionCapabilities(
+        JSON.parse(input.customPermissions ?? "null"),
+      )
+      if (
+        !persisted ||
+        !snapshot ||
+        persisted.schemaVersion !== snapshot.schemaVersion ||
+        customPermissionCapabilityKeys.some((key) => persisted[key] !== snapshot[key])
+      ) {
+        return { shell: "deny", git: "deny", network: "deny" }
+      }
+      custom = persisted
+    } catch {
+      return { shell: "deny", git: "deny", network: "deny" }
+    }
+  }
+
+  const resolvePolicy = (tier: "shell" | "git" | "network"): LocalModelExecPolicy => {
+    const available = input.metadata.permission.toolTiers.some(
+      (state) => state.tier === tier && state.available,
+    )
+    if (!available) return "deny"
+    if (input.permissionMode === "ask-before-edits") return "ask"
+    if (input.permissionMode === "full-access") return "allow"
+    if (input.permissionMode === "custom" && custom?.[tier]) return "allow"
+    return "deny"
+  }
+  return {
+    shell: resolvePolicy("shell"),
+    git: resolvePolicy("git"),
+    network: resolvePolicy("network"),
+  }
+}
+
 const defaultLocalModelRunChangeTracker: LocalModelRunChangeTracker = {
   async captureBefore(runId, worktreePath) {
     const before = await captureCheckpoint(runId, worktreePath, "before")
@@ -722,6 +848,70 @@ function createLocalModelWriteApprovalSession(): LocalModelWriteApprovalSession 
     },
     shutdown: () => lifecycle.shutdown(),
   }
+}
+
+function createLocalModelExecApprovalSession(): LocalModelExecApprovalSession {
+  const publishApprovalChange = () => {
+    void publishProductMcpInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["approvals"],
+    })
+  }
+  const lifecycle = new McpApprovalLifecycle(
+    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    publishApprovalChange,
+  )
+  return {
+    request: async (input) => {
+      const cancel = () => lifecycle.cancel(input.id)
+      input.signal.addEventListener("abort", cancel, { once: true })
+      try {
+        const wait = lifecycle.request({
+          id: input.id,
+          invocationId: input.callId,
+          caller: { chatId: input.chatId, runId: input.runId },
+          toolName: `local_model.${input.tool}`,
+          tier: 2,
+          input: {
+            operation: input.operation,
+            targetHost: input.targetHost,
+            argumentCount: input.argumentCount,
+          },
+        })
+        if (input.signal.aborted) lifecycle.cancel(input.id)
+        const decision = await wait.decision
+        if (decision.state === "approved") return "approved"
+        if (decision.state === "denied") return "denied"
+        if (decision.state === "timed-out") return "timed-out"
+        return "cancelled"
+      } finally {
+        input.signal.removeEventListener("abort", cancel)
+      }
+    },
+    shutdown: () => lifecycle.shutdown(),
+  }
+}
+
+function appendLocalModelExecAudit(record: LocalModelExecAuditRecord): void {
+  appendMcpAuditRecord(getDatabase(), {
+    id: record.id,
+    invocationId: record.invocationId,
+    status: record.status,
+    caller: { chatId: record.chatId, runId: record.runId },
+    toolName: `local_model.${record.tool}`,
+    tier: record.tool === "network_fetch" ? 1 : 2,
+    input: {
+      operation: record.operation,
+      targetHost: record.targetHost,
+      argumentCount: record.argumentCount,
+    },
+    result: {
+      outputBytes: record.outputBytes ?? 0,
+      truncated: record.truncated ?? false,
+    },
+    durationMs: record.durationMs,
+  })
 }
 
 export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalModelRunPersistence {

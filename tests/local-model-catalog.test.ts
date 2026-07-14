@@ -211,6 +211,12 @@ describe("local model catalog contract", () => {
       limitation: { code: "permission-denied" },
     })
 
+    expect(
+      resolveLocalModelToolTiers(model.capabilities, "ask-before-edits")
+        .filter(({ available }) => available)
+        .map(({ tier }) => tier),
+    ).toEqual(["chat", "read", "project-write", "shell", "git", "network"])
+
     const customTiers = resolveLocalModelToolTiers(model.capabilities, "custom", {
       ...disabledCustomPermissions,
       projectWrite: true,

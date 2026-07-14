@@ -152,6 +152,9 @@ export type LocalModelToolErrorCode =
   | "stale-file"
   | "write-failed"
   | "rollback-failed"
+  | "command-timeout"
+  | "output-limit"
+  | "network-denied"
   | "tool-failed"
 
 export type LocalModelToolLoopLimitCode =
@@ -189,6 +192,7 @@ export const DEFAULT_LOCAL_MODEL_TOOL_LOOP_LIMITS: LocalModelToolLoopLimits = {
 
 export type LocalModelReadToolExecutor = {
   execute(call: LocalModelNormalizedToolCall, signal: AbortSignal): Promise<LocalModelToolResult>
+  redactInput?(call: LocalModelNormalizedToolCall): unknown
 }
 
 export type LocalModelReadToolOptions = {
@@ -389,7 +393,14 @@ export async function* runBoundedLocalModelToolLoop(input: {
       }
       if (!input.executor) throw new Error("Read-only tool executor is unavailable.")
 
-      messages.push({ role: "assistant", content: assistantText, toolCalls: turnCalls })
+      messages.push({
+        role: "assistant",
+        content: assistantText,
+        toolCalls: turnCalls.map((call) => ({
+          ...call,
+          arguments: input.executor?.redactInput?.(call) ?? call.arguments,
+        })),
+      })
       assertWithinContext(messages, limits.maxContextChars, tools)
       for (const call of turnCalls) {
         callCount += 1
@@ -402,7 +413,7 @@ export async function* runBoundedLocalModelToolLoop(input: {
           iteration,
           callId: call.id,
           tool: call.name,
-          input: boundedEvidenceValue(call.arguments),
+          input: boundedEvidenceValue(input.executor.redactInput?.(call) ?? call.arguments),
           status: "started",
           startedAt: started,
         }

@@ -57,13 +57,14 @@
 
 ### S4-F6-T5 — Add shell, git, and network tool tiers
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Explicitly authorized local runs use bounded shell/git/network tools with honest limitations.
 - Scope: Tool adapters; cwd/root binding; timeout/output caps; environment/secret filtering; shell-vs-git capability mapping; network allow/ask/deny; approval and audit.
 - Out of scope: Browser automation, secrets access, subagents, and unrestricted external-directory writes.
 - Acceptance: Each capability is independently gated; unknown command/tool fails closed; secrets are absent from prompt, env logs, output previews, and audit.
 - Verification: `npm test -- local-model-exec-tools` with mode matrix, timeout, output flood, env secret, git mutation, network denial, and audit cases.
+- Manual verification remaining: live Ollama, renderer, package, provider, network, and device acceptance stays with S4-F6-T8; no such evidence is claimed here.
 - Blocked by: S4-F6-T3, S4-F6-T4 and Stage 3 approval/audit
 - Blocks: S4-F6-T7
 - Context: shell safety, git security commands, OpenCode permission bridge, provider audit patterns.
