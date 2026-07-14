@@ -172,15 +172,21 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - Multi-agent orchestration with lineage, budgets, depth limits, and kill controls.
 - Saved project/task workspaces combining chats, terminals, agents, worktrees,
   browser/editor/diff panes, tabs, and pop-outs.
+- Automation and scheduler with approval, dry-run, budgets, history, and kill controls.
+- Local models through the app-owned permission-gated agent loop.
+- Advanced usage and limits across runs, chats, tasks, projects, accounts, and harnesses.
+- Versioned import/export plus optional user-owned private sync.
+- Linked Plan and Kanban views with approved task/chat creation.
+- Cross-agent mobile companion for bounded monitoring, steering, review, and approvals.
+
+Stage 4 is the final planned stage for now. New ideas stay parked until the user
+explicitly adds them to Stage 4 or creates a later stage.
+Its ten OpenSpec feature boards contain 72 bounded tasks; see the
+[Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
+and [execution plan](docs/stage4-execution-plan.md).
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
 dictation; no separate Flapstack voice platform is planned.
-
-### Later
-
-- Automation and scheduler.
-- Local models.
-- Additional usage providers, account coverage, and dashboard depth.
 
 ## Development
 
