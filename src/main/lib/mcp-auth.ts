@@ -19,6 +19,9 @@ import {
 } from "./oauth"
 import { discoverPluginMcpServers } from "./plugins"
 import { bringToFront } from "./window"
+import { sanitizeMcpAmbientEnvironment } from "./mcp-environment"
+
+export { sanitizeMcpAmbientEnvironment } from "./mcp-environment"
 
 /**
  * Fetch tools from an MCP server using the official MCP SDK
@@ -64,7 +67,7 @@ export async function fetchMcpTools(
     console.log(`[MCP] Fetched ${tools.length} tools via SDK`)
     return tools.map((t) => ({ name: t.name, description: t.description }))
   } catch (error) {
-    console.error("[MCP] Failed to fetch tools:", error)
+    console.error("[MCP] Failed to fetch tools:", safeMcpErrorKind(error))
     return []
   } finally {
     // Clean up the connection
@@ -77,20 +80,6 @@ export async function fetchMcpTools(
     }
   }
 }
-
-/**
- * Sensitive env vars to filter out when spawning MCP subprocesses
- */
-const BLOCKED_ENV_VARS = [
-  "ANTHROPIC_API_KEY",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-  "AWS_ACCESS_KEY_ID",
-  "AWS_SECRET_ACCESS_KEY",
-  "AWS_SESSION_TOKEN",
-  "GITHUB_TOKEN",
-  "GH_TOKEN",
-  "OPENAI_API_KEY",
-]
 
 /**
  * Fetch tools from a stdio-based MCP server
@@ -119,12 +108,7 @@ export async function fetchMcpToolsStdio(
     const shellEnv = getClaudeShellEnvironment()
 
     // Filter sensitive env vars
-    const safeEnv: Record<string, string> = {}
-    for (const [key, value] of Object.entries(shellEnv)) {
-      if (!BLOCKED_ENV_VARS.includes(key)) {
-        safeEnv[key] = value
-      }
-    }
+    const safeEnv = sanitizeMcpAmbientEnvironment(shellEnv)
 
     transport = new StdioClientTransport({
       command: config.command,
@@ -142,7 +126,7 @@ export async function fetchMcpToolsStdio(
     console.log(`[MCP] Fetched ${tools.length} tools via stdio`)
     return tools.map((t) => ({ name: t.name, description: t.description }))
   } catch (error) {
-    console.error("[MCP] Failed to fetch tools via stdio:", error)
+    console.error("[MCP] Failed to fetch tools via stdio:", safeMcpErrorKind(error))
     return []
   } finally {
     try {
@@ -153,6 +137,10 @@ export async function fetchMcpToolsStdio(
       // Ignore close errors
     }
   }
+}
+
+function safeMcpErrorKind(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UnknownError"
 }
 
 async function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -279,7 +267,7 @@ export async function startMcpOAuth(
 export async function handleMcpOAuthCallback(code: string, state: string): Promise<void> {
   const pending = pendingOAuthFlows.get(state)
   if (!pending) {
-    console.warn(`[MCP OAuth] No pending flow for state: ${state.slice(0, 8)}...`)
+    console.warn("[MCP OAuth] No pending flow for supplied state.")
     return
   }
 
@@ -395,7 +383,10 @@ export async function refreshMcpToken(
     console.log(`[MCP Refresh] Successfully refreshed token for ${serverName}`)
     return tokens.accessToken
   } catch (error) {
-    console.error(`[MCP Refresh] Failed to refresh token for ${serverName}:`, error)
+    console.error(
+      `[MCP Refresh] Failed to refresh token for ${serverName}:`,
+      safeMcpErrorKind(error),
+    )
     return null
   }
 }

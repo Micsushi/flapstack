@@ -495,6 +495,28 @@ This is the sole authoritative task checklist for S3-F2 through S3-F6.
   All 18 active changes strict-validate; the ledger covers 323 scenarios and 17
   feature exits.
 
+## 2026-07-13 final delegated security/control review evidence
+
+- Third-party stdio MCP discovery no longer inherits ambient Flapstack control
+  identity, database, invalidation endpoint, provider/cloud token, SSH/GPG agent,
+  Kubernetes, Kerberos, PostgreSQL password-file, or similar credential handles.
+  An MCP's explicitly configured environment remains separate and intentional.
+- OAuth callbacks bind only IPv4 loopback. Deep-link, process-argument, auth-code,
+  state, token-fragment, token-length, custom-endpoint, and credential-record
+  logging is removed. Prompt previews and raw MCP SDK errors cannot serialize
+  pasted credentials, authorization headers, or tokenized URLs. Provider-controlled
+  OAuth error text is not propagated; callback HTML escapes every remaining
+  dynamic string.
+- Caller identity, product/dev/third-party MCP separation, permission and approval
+  revalidation, audit fail-closed/reconciliation, rooted filesystem contracts,
+  self-reference, and spawn/orchestration loop controls were re-reviewed with no
+  additional accepted defect.
+- Node 22 headless verification passes 72 tests across 12 non-native focused
+  files plus focused ESLint and Prettier. SQLite-backed attack reruns remain for
+  the coordinator's Node 22 ABI/full gate because this worktree shares native
+  modules with another active Electron lane. No UI, package, provider-live,
+  platform, S3-F6-T4, S3-X05, or S3-F17-T4 claim is promoted.
+
 ## 2026-07-13 MCP-first management closeout evidence
 
 - S3-F6-T1: exposure now distinguishes disabled, next-run, connected, and

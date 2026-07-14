@@ -148,6 +148,15 @@ feature-local closeout gates.
   Node 22 focused attacks pass 60/60; the full gate passes 855 tests with 3
   conditional skips plus lint, format, TypeScript, and production build. All 18
   active changes and the 323-scenario ledger validate.
+- 2026-07-13 final delegated security/control note: the last review removed
+  ambient third-party MCP credential/control-plane inheritance, remaining direct
+  credential, prompt-preview, custom-endpoint, and raw SDK-error logs, non-loopback
+  OAuth callback listeners, and provider-error HTML reflection/raw propagation.
+  Node 22 passes 72 headless
+  tests across 12 non-native focused files plus focused lint/format. Shared native
+  modules were Electron ABI-bound by another active lane, so SQLite-backed reruns
+  remain with the coordinator's Node 22 full gate. This pre-completion review does
+  not satisfy T4 or change the T2/T3 blockers.
 
 ### S3-F17-T5 — Reconcile, archive, clean up, and hand off Stage 3
 

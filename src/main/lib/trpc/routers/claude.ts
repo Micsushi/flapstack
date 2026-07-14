@@ -375,11 +375,6 @@ function getClaudeCodeToken(): string | null {
         )
         const decrypted = decryptToken(account.oauthToken)
         console.log("[claude-auth] Token decrypted successfully")
-        console.log(
-          "[claude-auth] Token preview:",
-          decrypted.slice(0, 20) + "..." + decrypted.slice(-10),
-        )
-        console.log("[claude-auth] Token total length:", decrypted.length)
         console.log("[claude-auth] ============================================")
         return decrypted
       }
@@ -394,24 +389,12 @@ function getClaudeCodeToken(): string | null {
       .where(eq(claudeCodeCredentials.id, "default"))
       .get()
 
-    console.log(
-      "[claude-auth] Legacy credential record:",
-      cred
-        ? {
-            id: cred.id,
-            hasOauthToken: !!cred.oauthToken,
-            encryptedTokenLength: cred.oauthToken?.length ?? 0,
-            connectedAt: cred.connectedAt,
-            userId: cred.userId,
-          }
-        : null,
-    )
+    console.log("[claude-auth] Legacy credential available:", Boolean(cred?.oauthToken))
 
     if (!cred?.oauthToken) {
       const systemToken = getExistingClaudeToken()?.trim()
       if (systemToken) {
         console.log("[claude-auth] Using Claude Code token from system credentials")
-        console.log("[claude-auth] System token total length:", systemToken.length)
         console.log("[claude-auth] ============================================")
         return systemToken
       }
@@ -423,11 +406,6 @@ function getClaudeCodeToken(): string | null {
 
     const decrypted = decryptToken(cred.oauthToken)
     console.log("[claude-auth] Token decrypted successfully (legacy)")
-    console.log(
-      "[claude-auth] Token preview:",
-      decrypted.slice(0, 20) + "..." + decrypted.slice(-10),
-    )
-    console.log("[claude-auth] Token total length:", decrypted.length)
     console.log("[claude-auth] ============================================")
 
     return decrypted
@@ -1749,16 +1727,13 @@ export const claudeRouter = router({
               `[SD] Query options - cwd: ${input.cwd}, projectPath: ${input.projectPath || "(not set)"}, mcpServers: ${mcpServersForSdk ? Object.keys(mcpServersForSdk).join(", ") : "(none)"}`,
             )
             if (finalCustomConfig) {
-              const redactedConfig = {
-                ...finalCustomConfig,
-                token: `${finalCustomConfig.token.slice(0, 6)}...`,
-              }
               if (isUsingOllama) {
-                console.log(
-                  `[Ollama] Using offline mode - Model: ${finalCustomConfig.model}, Base URL: ${finalCustomConfig.baseUrl}`,
-                )
+                console.log(`[Ollama] Using offline mode - Model: ${finalCustomConfig.model}`)
               } else {
-                console.log(`[claude] Custom config: ${JSON.stringify(redactedConfig)}`)
+                console.log("[claude] Custom config enabled", {
+                  model: finalCustomConfig.model,
+                  hasToken: Boolean(finalCustomConfig.token),
+                })
               }
             }
 
@@ -1868,11 +1843,9 @@ export const claudeRouter = router({
             if (isUsingOllama) {
               console.log("[Ollama Debug] SDK Configuration:", {
                 model: resolvedModel,
-                baseUrl: finalEnv.ANTHROPIC_BASE_URL,
                 cwd: input.cwd,
                 configDir: isolatedConfigDir,
                 hasAuthToken: !!finalEnv.ANTHROPIC_AUTH_TOKEN,
-                tokenPreview: finalEnv.ANTHROPIC_AUTH_TOKEN?.slice(0, 10) + "...",
               })
               console.log("[Ollama Debug] Session settings:", {
                 resumeSessionId: resumeSessionId || "none (first message)",
@@ -2319,10 +2292,6 @@ ${prompt}
               if (isUsingOllama) {
                 console.log(`[Ollama] ===== STARTING STREAM ITERATION =====`)
                 console.log(`[Ollama] Model: ${finalCustomConfig?.model}`)
-                console.log(`[Ollama] Base URL: ${finalCustomConfig?.baseUrl}`)
-                console.log(
-                  `[Ollama] Prompt: "${typeof input.prompt === "string" ? input.prompt.slice(0, 100) : "N/A"}..."`,
-                )
                 console.log(`[Ollama] CWD: ${input.cwd}`)
               }
 

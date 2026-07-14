@@ -100,6 +100,7 @@ and T3 therefore remain blocked; S3-F17-T4 cannot begin as a completion review.
 | Affected OpenSpec strict validation    | PASS    | all 18 active changes pass strict non-interactive validation                                                                |
 | Node 22 `npm run check`                | PASS    | lint, format, TypeScript, 124 files, 926 passed, 3 conditional skips, all production builds                                 |
 | Security round-3 focused suite         | PASS    | 11 focused files, 60 passed; rooted reads, attachment namespace, identity, collision, temp, recovery, and migration attacks |
+| Final security/control review          | PARTIAL | 12 Node 22 non-native files, 72 passed; native SQLite reruns remain with coordinator ABI/full gate                          |
 | S3-F5 focused and attack suites        | PASS    | integrated Node 22 reconciliation suite passed 8 files and 62 tests                                                         |
 | MCP-first management closeout          | PARTIAL | 11 focused files, 54 passed; real Claude-to-Codex target passed, reverse Claude target and full visual matrix remain open   |
 | Production/dev MCP separation          | PASS    | focused SDK/security suites plus isolated authenticated dev-test-control API                                                |
@@ -212,6 +213,30 @@ files; `npm run check` passed lint, format, TypeScript, 855 tests with 3
 conditional skips, and the production build. All 18 active OpenSpec changes
 strict-validate, and release-ledger coverage passes for 323 scenarios and 17
 feature exits.
+
+### 2026-07-13 final delegated security/control review
+
+The review found and repaired four required boundary defects: ambient secrets
+and Flapstack control-plane identity reached third-party stdio MCP discovery;
+remaining Claude credential metadata, prompt previews, raw SDK errors, and
+custom endpoint URLs reached logs;
+OAuth callback listeners accepted non-loopback binds; and provider-controlled
+OAuth errors could be reflected into callback HTML or propagated raw.
+
+The resulting code strips ambient control/credential handles while preserving
+explicit per-server configuration, removes credential and endpoint log metadata,
+binds both callback servers to IPv4 loopback, reduces provider failures to HTTP
+status or generic messages, and HTML-escapes all remaining dynamic callback text.
+Caller identity, product/dev/third-party separation, approval revalidation,
+audit reconciliation, rooted filesystem boundaries, self-reference, and
+spawn/orchestration loops had no further accepted finding.
+
+Node 22 passes 72 tests across 12 non-native focused files; focused ESLint,
+Prettier, and diff whitespace checks pass. SQLite-backed attack reruns could not
+load because the shared dependency tree was built for the Electron ABI by an
+active lane. This lane did not rebuild shared modules or launch/stop Electron;
+the coordinator retains the Node 22 native/full gate. No live, package, provider,
+platform, S3-X05, or S3-F17-T4 result is promoted.
 
 ### 2026-07-13 S3-F5 task orchestration
 

@@ -81,6 +81,18 @@ keeps exact non-idempotent unknown outcomes blocked without poisoning different
 input. Continuous namespace races, reparse behavior, cross-resource
 exactly-once, and all live UI/platform rows remain unproved and unchecked.
 
+2026-07-13 final delegated security/control evidence: third-party stdio MCP
+discovery strips ambient Flapstack control-plane variables and broad provider,
+cloud, repository, agent, and credential handles. OAuth callback servers bind
+only IPv4 loopback; callback HTML escapes provider-controlled text and raw
+provider errors no longer propagate. Logs no longer expose deep-link or process
+arguments, authorization code/state fragments, token fragments/lengths,
+credential-record metadata, prompt previews, raw SDK errors, or custom provider
+endpoint URLs. Node 22 passes 72 headless tests across 12 non-native security
+files plus focused lint/format.
+SQLite-backed reruns remain assigned to the coordinator's Node 22 ABI/full gate;
+no live UI, package, platform, S3-X05, or S3-F17-T4 row is promoted.
+
 2026-07-13 MCP-first closeout evidence: the authenticated dev-test MCP drove
 all functional actions through real product stdio children. Default-off,
 enable/connected truth, Codex and Claude `ping`/`describe`, two-way durable
