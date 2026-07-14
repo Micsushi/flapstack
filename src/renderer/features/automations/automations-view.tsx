@@ -1,272 +1,195 @@
 "use client"
 
 import "./automations-styles.css"
-import { useAtomValue, useSetAtom, useAtom } from "jotai"
-import { selectedTeamIdAtom } from "../../lib/atoms"
-import {
-  desktopViewAtom,
-  automationDetailIdAtom,
-  automationTemplateParamsAtom,
-  agentsSidebarOpenAtom,
-  agentsMobileViewModeAtom,
-} from "../agents/atoms"
-import { Logo } from "../../components/ui/logo"
-import { useState, useMemo, useCallback } from "react"
-import { Plus, AlignJustify } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useAtom, useSetAtom } from "jotai"
+import { AlignJustify, Inbox, Plus } from "lucide-react"
+import { trpc } from "../../lib/trpc"
 import { useIsMobile } from "../../lib/hooks/use-mobile"
-import { remoteTrpc } from "../../lib/remote-trpc"
-import { useQuery } from "@tanstack/react-query"
-
 import {
-  AutomationCard,
-  TemplateCard,
-  TabToggle,
-  AUTOMATION_TEMPLATES,
-  type ViewTab,
-  type Platform,
-} from "./_components"
+  agentsMobileViewModeAtom,
+  agentsSidebarOpenAtom,
+  automationDetailIdAtom,
+  desktopViewAtom,
+} from "../agents/atoms"
+import { AutomationCard } from "./_components"
+import {
+  AUTOMATION_A11Y,
+  filterAutomationRecords,
+  type AutomationUiState,
+} from "./automation-ui-model"
+
+type StateFilter = "all" | "active" | "draft" | "paused" | "error"
 
 export function AutomationsView() {
-  const teamId = useAtomValue(selectedTeamIdAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
   const setAutomationDetailId = useSetAtom(automationDetailIdAtom)
-  const setTemplateParams = useSetAtom(automationTemplateParamsAtom)
   const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
   const setMobileViewMode = useSetAtom(agentsMobileViewModeAtom)
   const isMobile = useIsMobile()
+  const [query, setQuery] = useState("")
+  const [stateFilter, setStateFilter] = useState<StateFilter>("all")
 
-  const handleSidebarToggle = useCallback(() => {
+  const automations = trpc.automations.list.useQuery(
+    { includeArchived: false, limit: 100 },
+    { refetchInterval: 5_000 },
+  )
+  const inbox = trpc.automations.inbox.useQuery(
+    { unreadOnly: true, limit: 1 },
+    { refetchInterval: 5_000 },
+  )
+
+  const filtered = useMemo(
+    () => filterAutomationRecords(automations.data?.items ?? [], { query, state: stateFilter }),
+    [automations.data?.items, query, stateFilter],
+  )
+
+  const openDetail = useCallback(
+    (id: string) => {
+      setAutomationDetailId(id)
+      setDesktopView("automations-detail")
+    },
+    [setAutomationDetailId, setDesktopView],
+  )
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault()
+        openDetail("new")
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [openDetail])
+
+  const toggleSidebar = () => {
     if (isMobile) {
       setDesktopView(null)
       setMobileViewMode("chats")
-    } else {
-      setSidebarOpen(true)
-    }
-  }, [isMobile, setDesktopView, setMobileViewMode, setSidebarOpen])
-
-  const [activeTab, setActiveTab] = useState<ViewTab>("active")
-  const [searchQuery, setSearchQuery] = useState("")
-
-  // Fetch automations via remoteTrpc
-  const { data: automationsData, isLoading } = useQuery({
-    queryKey: ["automations", "list", teamId],
-    queryFn: () => remoteTrpc.automations.listAutomations.query({ teamId: teamId! }),
-    enabled: !!teamId,
-  })
-
-  // Fetch GitHub connection status
-  const { data: githubStatus } = useQuery({
-    queryKey: ["github", "connectionStatus", teamId],
-    queryFn: () => remoteTrpc.github.getConnectionStatus.query({ teamId: teamId! }),
-    enabled: !!teamId,
-  })
-
-  // Fetch Linear integration status
-  const { data: linearStatus } = useQuery({
-    queryKey: ["linear", "integration", teamId],
-    queryFn: () => remoteTrpc.linear.getIntegration.query({ teamId: teamId! }),
-    enabled: !!teamId,
-  })
-
-  const automations = automationsData ?? []
-
-  // Filter automations by search query
-  const filteredAutomations = useMemo(() => {
-    if (!searchQuery.trim()) return automations
-    const query = searchQuery.toLowerCase()
-    return automations.filter((a: any) => a.name?.toLowerCase().includes(query))
-  }, [automations, searchQuery])
-
-  const handleNewAutomation = () => {
-    setAutomationDetailId("new")
-    setTemplateParams(null)
-    setDesktopView("automations-detail")
-  }
-
-  const handleUseTemplate = (template: (typeof AUTOMATION_TEMPLATES)[number]) => {
-    setAutomationDetailId("new")
-    setTemplateParams({
-      name: template.name,
-      platform: template.platform,
-      trigger: template.triggerType,
-      instructions: template.instructions,
-    })
-    setDesktopView("automations-detail")
-  }
-
-  const handleAutomationClick = (automationId: string) => {
-    setAutomationDetailId(automationId)
-    setTemplateParams(null)
-    setDesktopView("automations-detail")
-  }
-
-  const isGithubConnected = githubStatus?.isConnected ?? false
-  const isLinearConnected = linearStatus?.isConnected ?? false
-
-  const getTemplateDisabledReason = (platform: Platform): string | undefined => {
-    if (platform === "github" && !isGithubConnected) {
-      return "Connect GitHub in Settings to use this template"
-    }
-    if (platform === "linear" && !isLinearConnected) {
-      return "Connect Linear in Settings to use this template"
-    }
-    return undefined
-  }
-
-  // Loading state
-  if (!teamId) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Logo className="h-8 w-8 animate-pulse text-muted-foreground" />
-      </div>
-    )
+    } else setSidebarOpen(true)
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden" data-automations-page>
-      <div className="flex-1 overflow-y-auto px-4 md:px-2 py-4">
-        <div className={isMobile ? "max-w-full" : "max-w-2xl mx-auto"}>
-          {/* Header */}
-          <div className="mb-6 flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1 flex items-center gap-2">
-              {(!sidebarOpen || isMobile) && (
-                <button
-                  onClick={handleSidebarToggle}
-                  className="h-7 w-7 p-0 flex items-center justify-center hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] flex-shrink-0 rounded-md text-muted-foreground hover:text-foreground"
-                  aria-label={isMobile ? "Back to chats" : "Open sidebar"}
-                >
-                  <AlignJustify className="h-4 w-4" />
-                </button>
-              )}
-              <div>
-                <h1 className="text-lg font-semibold text-foreground">Automations</h1>
-                <p className="text-sm text-muted-foreground hidden min-420:block">
-                  Background automations for your repositories
-                </p>
-              </div>
+    <main className="h-full overflow-y-auto bg-background" aria-labelledby="automation-page-title">
+      <div className="mx-auto max-w-5xl px-4 py-5 md:px-6">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2">
+            {(!sidebarOpen || isMobile) && (
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="rounded-md p-1.5 hover:bg-muted"
+                aria-label={isMobile ? "Back to chats" : "Open sidebar"}
+              >
+                <AlignJustify className="h-4 w-4" />
+              </button>
+            )}
+            <div>
+              <h1 id="automation-page-title" className="text-lg font-semibold">
+                {AUTOMATION_A11Y.pageTitle}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Runs locally only while the Flapstack desktop app is open. At startup, each schedule
+                catches up at most once.
+              </p>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={handleNewAutomation}
-              className="h-8 px-3 rounded-lg text-sm font-medium border border-border hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground flex items-center gap-1.5 flex-shrink-0"
+              type="button"
+              onClick={() => setDesktopView("inbox")}
+              className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted"
+              aria-label={`Open automation inbox, ${inbox.data?.unreadCount ?? 0} unread`}
             >
-              <Plus className="h-4 w-4" />
-              <span className="text-sm font-medium hidden min-420:inline">New</span>
+              <Inbox className="h-4 w-4" />
+              Inbox
+              {(inbox.data?.unreadCount ?? 0) > 0 && (
+                <span className="rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
+                  {inbox.data!.unreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => openDetail("new")}
+              className="inline-flex h-8 items-center gap-2 rounded-md bg-foreground px-3 text-sm text-background hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" /> New
             </button>
           </div>
+        </header>
 
-          {/* Tabs and Search */}
-          <div className="flex items-center justify-between mb-4 gap-3">
-            <TabToggle value={activeTab} onChange={setActiveTab} />
-
-            {activeTab !== "templates" && (
-              <input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full max-w-[160px] h-8 rounded-lg text-sm bg-muted border-0 px-3 placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            )}
+        <section className="mt-5 rounded-lg border bg-card p-3" aria-label="Automation filters">
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search name, trigger, provider…"
+              aria-label={AUTOMATION_A11Y.search}
+              className="h-9 min-w-56 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <select
+              value={stateFilter}
+              onChange={(event) => setStateFilter(event.target.value as StateFilter)}
+              aria-label="Filter automations by state"
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="all">All states</option>
+              <option value="active">Active</option>
+              <option value="draft">Drafts</option>
+              <option value="paused">Paused</option>
+              <option value="error">Denied or revoked</option>
+            </select>
           </div>
+        </section>
 
-          {/* Content */}
-          {isLoading ? (
-            <div className="grid grid-cols-1 min-420:grid-cols-2 md:grid-cols-3 gap-2 mt-3">
-              {[...Array(6)].map((_, i) => (
-                <div
-                  key={i}
-                  className="bg-background border border-border rounded-[10px] p-4 animate-pulse"
-                >
-                  {/* Icons row skeleton */}
-                  <div className="flex items-center gap-1.5 mb-3">
-                    <div className="w-7 h-7 rounded-md bg-muted/50" />
-                    <div className="h-4 w-4 bg-muted/30 mx-1 rounded" />
-                    <div className="w-7 h-7 rounded-md bg-muted/50" />
-                  </div>
-                  {/* Text skeleton */}
-                  <div className="flex flex-col gap-2">
-                    <div className="h-4 bg-muted/50 rounded w-2/3" />
-                    <div className="h-3 bg-muted/30 rounded w-full" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <>
-              {/* Template Library View */}
-              {activeTab === "templates" && (
-                <div className="grid grid-cols-1 min-420:grid-cols-2 md:grid-cols-3 gap-2 mt-3">
-                  {AUTOMATION_TEMPLATES.map((template) => {
-                    const disabledReason = getTemplateDisabledReason(template.platform)
-                    return (
-                      <TemplateCard
-                        key={template.id}
-                        template={template}
-                        onUseTemplate={() => handleUseTemplate(template)}
-                        disabled={!!disabledReason}
-                        disabledReason={disabledReason}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-
-              {/* Active Automations View */}
-              {activeTab !== "templates" && (
-                <>
-                  {filteredAutomations.length > 0 ? (
-                    <div className="grid grid-cols-1 min-420:grid-cols-2 md:grid-cols-3 gap-2 mt-3">
-                      {filteredAutomations.map((automation: any) => (
-                        <AutomationCard
-                          key={automation.id}
-                          automation={automation}
-                          onClick={() => handleAutomationClick(automation.id)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col">
-                      {searchQuery ? (
-                        <div className="text-center py-12 text-muted-foreground">
-                          <p className="text-sm">No automations match your search.</p>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="text-center py-8 text-muted-foreground">
-                            <p className="text-sm">
-                              No automations yet. Get started with a template below.
-                            </p>
-                          </div>
-
-                          {/* Templates section */}
-                          <div className="mt-2">
-                            <h3 className="text-xs font-medium text-muted-foreground mb-3">
-                              Templates
-                            </h3>
-                            <div className="grid grid-cols-1 min-420:grid-cols-2 md:grid-cols-3 gap-2">
-                              {AUTOMATION_TEMPLATES.map((template) => {
-                                const disabledReason = getTemplateDisabledReason(template.platform)
-                                return (
-                                  <TemplateCard
-                                    key={template.id}
-                                    template={template}
-                                    onUseTemplate={() => handleUseTemplate(template)}
-                                    disabled={!!disabledReason}
-                                    disabledReason={disabledReason}
-                                  />
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          )}
+        <div className="sr-only" aria-live="polite">
+          {automations.isFetching
+            ? "Refreshing local automations"
+            : `${filtered.length} automations shown`}
         </div>
+        {automations.isLoading ? (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            Loading local automations…
+          </p>
+        ) : automations.error ? (
+          <ErrorState
+            message={automations.error.message}
+            retry={() => void automations.refetch()}
+          />
+        ) : filtered.length === 0 ? (
+          <div className="mt-6 rounded-lg border border-dashed p-10 text-center">
+            <p className="text-sm font-medium">No matching local automations</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Create a disabled draft, inspect its exact authority and budget, then approve it.
+            </p>
+          </div>
+        ) : (
+          <ul
+            className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+            aria-label={AUTOMATION_A11Y.list}
+          >
+            {filtered.map((record) => (
+              <li key={record.id}>
+                <AutomationCard automation={record} onClick={() => openDetail(record.id)} />
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
+    </main>
+  )
+}
+
+function ErrorState({ message, retry }: { message: string; retry: () => void }) {
+  return (
+    <div role="alert" className="mt-6 rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-sm">
+      <p className="font-medium">Automations could not be loaded.</p>
+      <p className="mt-1 text-muted-foreground">{message}</p>
+      <button type="button" onClick={retry} className="mt-3 rounded-md border px-3 py-1.5">
+        Retry
+      </button>
     </div>
   )
 }
