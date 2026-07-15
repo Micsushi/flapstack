@@ -63,6 +63,7 @@ import {
   Copy,
   Inbox,
   Workflow,
+  LayoutGrid,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -6571,6 +6572,20 @@ export function AgentsSidebar({
             >
               <BookOpen className="h-4 w-4" />
               <span>Project knowledge</span>
+            </ButtonCustom>
+            <ButtonCustom
+              variant={desktopView === "saved-workspaces" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "saved-workspaces" ? "page" : undefined}
+              onClick={() => {
+                setShowNewChatForm(false)
+                setDesktopView("saved-workspaces")
+                setSearchQuery("")
+              }}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span>Saved workspaces</span>
             </ButtonCustom>
           </>
         )}

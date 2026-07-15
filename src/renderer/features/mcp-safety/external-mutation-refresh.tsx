@@ -28,6 +28,7 @@ export function McpExternalMutationRefreshBridge() {
         Promise.all([
           utils.spawnedAgents.getTaskOverview.invalidate({ taskId }),
           utils.spawnedAgents.getLineage.invalidate({ taskId }),
+          utils.savedWorkspaces.getOperation.invalidate(),
         ]),
       chatLineage: (chatId) => utils.spawnedAgents.previewLineage.invalidate({ chatId }),
       projectVault: () => utils.projectVaults.invalidate(),

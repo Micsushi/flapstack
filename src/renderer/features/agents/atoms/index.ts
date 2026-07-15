@@ -1258,6 +1258,7 @@ export type DesktopView =
   | "usage"
   | "plan"
   | "project-vault"
+  | "saved-workspaces"
   | null
 export const desktopViewAtom = atom<DesktopView>(null)
 

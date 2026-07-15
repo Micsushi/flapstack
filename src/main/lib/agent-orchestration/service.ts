@@ -23,6 +23,7 @@ import {
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
+import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/operations"
 import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
@@ -124,6 +125,7 @@ export function createAgentOrchestrationService(databasePath: string) {
               now,
             })
           }
+          ensureOperationWorkspaceInTransaction(db, taskId)
         })
         create.immediate()
         if (!options.deferScheduling) safeTickTask(db, taskId)

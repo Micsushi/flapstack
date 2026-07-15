@@ -11,6 +11,7 @@ import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
@@ -915,6 +916,10 @@ if (gotTheLock) {
             {
               name: "Interrupted MCP run recovery",
               run: () => recoverInterruptedMcpRuns(getDatabasePath()),
+            },
+            {
+              name: "Operation workspace reconciliation",
+              run: () => reconcileOperationWorkspaces(getDatabasePath()),
             },
             {
               name: "Pending run scheduler",

@@ -84,6 +84,8 @@ import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 import { ProjectVaultView } from "../../project-vault/project-vault-view"
+import { SavedWorkspacesView } from "../../saved-workspaces"
+import { getInitialWindowParams } from "../../../contexts/WindowContext"
 import { AutomationsDetailView, AutomationsView, InboxView } from "../../automations"
 // Desktop mock
 const useIsAdmin = () => false
@@ -103,6 +105,7 @@ function readStoredProjectColors(): Record<string, string> {
 
 // Main Component
 function AgentsContentInner() {
+  const workspaceWindowParams = useMemo(() => getInitialWindowParams(), [])
   const openChatTabsRef = useRef<HTMLDivElement>(null)
   const suppressOpenChatTabClickRef = useRef(false)
   const [openChatDropTarget, setOpenChatDropTarget] = useState<{
@@ -1166,6 +1169,15 @@ function AgentsContentInner() {
           <PlanView />
         ) : desktopView === "project-vault" ? (
           <ProjectVaultView key={selectedProject?.id} />
+        ) : desktopView === "saved-workspaces" ? (
+          <SavedWorkspacesView
+            projectId={selectedProject?.id ?? null}
+            initialProjectId={workspaceWindowParams.projectId}
+            initialChatId={selectedChatId}
+            initialWorkspaceId={workspaceWindowParams.workspaceId}
+            popoutPaneId={workspaceWindowParams.paneId}
+            initialSkipPaneId={workspaceWindowParams.skipPaneId}
+          />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1304,6 +1316,15 @@ function AgentsContentInner() {
             <PlanView />
           ) : desktopView === "project-vault" ? (
             <ProjectVaultView key={selectedProject?.id} />
+          ) : desktopView === "saved-workspaces" ? (
+            <SavedWorkspacesView
+              projectId={selectedProject?.id ?? null}
+              initialProjectId={workspaceWindowParams.projectId}
+              initialChatId={selectedChatId}
+              initialWorkspaceId={workspaceWindowParams.workspaceId}
+              popoutPaneId={workspaceWindowParams.paneId}
+              initialSkipPaneId={workspaceWindowParams.skipPaneId}
+            />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (

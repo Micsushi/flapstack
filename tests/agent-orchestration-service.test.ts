@@ -7,6 +7,10 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
+import {
+  stableOperationOrchestrationId,
+  stableOperationWorkspaceId,
+} from "../src/main/lib/saved-workspaces/operations"
 import { nowEpochSeconds } from "../src/main/lib/db/timestamps"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
@@ -37,6 +41,49 @@ beforeEach(() => {
   ])
   sqlite = new Database(path)
   migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
+  // This isolated worktree intentionally omits the uncommitted migration file.
+  // Mirror authoritative 0031 table constraints and indexes in the harness only.
+  sqlite.exec(`
+    CREATE TABLE saved_workspaces (
+      id text PRIMARY KEY NOT NULL,
+      name text NOT NULL,
+      scope_type text NOT NULL,
+      project_id text REFERENCES projects(id) ON DELETE CASCADE,
+      task_id text REFERENCES tasks(id) ON DELETE CASCADE,
+      owner_kind text NOT NULL DEFAULT 'manual',
+      orchestration_id text,
+      layout_version integer NOT NULL DEFAULT 1,
+      layout_json text NOT NULL,
+      sort_order text NOT NULL DEFAULT 'a0',
+      version integer NOT NULL DEFAULT 1,
+      created_at integer NOT NULL,
+      updated_at integer NOT NULL,
+      archived_at integer,
+      CHECK (length(trim(name)) BETWEEN 1 AND 256),
+      CHECK (
+        (scope_type = 'project' AND project_id IS NOT NULL AND task_id IS NULL) OR
+        (scope_type = 'task' AND project_id IS NULL AND task_id IS NOT NULL)
+      ),
+      CHECK (
+        (owner_kind = 'manual' AND orchestration_id IS NULL) OR
+        (owner_kind = 'orchestration' AND scope_type = 'task' AND task_id IS NOT NULL AND orchestration_id IS NOT NULL)
+      ),
+      CHECK (layout_version = 1),
+      CHECK (version >= 1),
+      CHECK (length(trim(sort_order)) BETWEEN 1 AND 512),
+      CHECK (
+        json_valid(layout_json) = 1 AND
+        json_extract(layout_json, '$.version') = layout_version AND
+        length(cast(layout_json AS blob)) <= 262144
+      )
+    );
+    CREATE INDEX saved_workspaces_project_order_idx
+      ON saved_workspaces(project_id, archived_at, sort_order);
+    CREATE INDEX saved_workspaces_task_order_idx
+      ON saved_workspaces(task_id, archived_at, sort_order);
+    CREATE UNIQUE INDEX saved_workspaces_orchestration_idx
+      ON saved_workspaces(orchestration_id);
+  `)
   sqlite
     .prepare("INSERT INTO projects (id, name, path) VALUES ('project-1', 'Project', ?)")
     .run(projectPath)
@@ -57,6 +104,29 @@ afterEach(() => {
 })
 
 describe("durable agent task orchestration", () => {
+  it("keeps the isolated schema harness compatible with authoritative 0031", () => {
+    const table = sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'saved_workspaces'")
+      .get() as { sql: string }
+    expect(table.sql).toContain("length(trim(name)) BETWEEN 1 AND 256")
+    expect(table.sql).toContain("length(trim(sort_order)) BETWEEN 1 AND 512")
+    expect(table.sql).toContain("json_extract(layout_json, '$.version') = layout_version")
+    expect(table.sql).toContain("length(cast(layout_json AS blob)) <= 262144")
+    expect(
+      sqlite
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index' AND name LIKE 'saved_workspaces_%_idx'
+           ORDER BY name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "saved_workspaces_orchestration_idx" },
+      { name: "saved_workspaces_project_order_idx" },
+      { name: "saved_workspaces_task_order_idx" },
+    ])
+  })
+
   it("creates one task, attaches descendants, and atomically fills only configured slots", () => {
     sqlite
       .prepare(
@@ -76,6 +146,19 @@ describe("durable agent task orchestration", () => {
     )
     expect(sqlite.prepare("SELECT task_id FROM chats WHERE id = 'old-child'").get()).toEqual({
       task_id: overview.orchestration.taskId,
+    })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT id, task_id, owner_kind, orchestration_id
+           FROM saved_workspaces WHERE task_id = ?`,
+        )
+        .get(overview.orchestration.taskId),
+    ).toEqual({
+      id: stableOperationWorkspaceId(overview.orchestration.taskId),
+      task_id: overview.orchestration.taskId,
+      owner_kind: "orchestration",
+      orchestration_id: stableOperationOrchestrationId(overview.orchestration.taskId),
     })
     expect(
       sqlite

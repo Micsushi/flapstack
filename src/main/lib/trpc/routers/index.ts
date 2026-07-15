@@ -44,6 +44,7 @@ import { planSourcesRouter } from "./plan-sources"
 import { localModelsRouter } from "./local-models"
 import { mobileBridgeRouter } from "./mobile-bridge"
 import { taskProposalsRouter } from "./task-proposals"
+import { savedWorkspacesRouter } from "./saved-workspaces"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 import { basename } from "node:path"
@@ -106,6 +107,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     localModels: localModelsRouter,
     mobileBridge: mobileBridgeRouter,
     taskProposals: taskProposalsRouter,
+    savedWorkspaces: savedWorkspacesRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),
