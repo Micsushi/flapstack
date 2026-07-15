@@ -77,6 +77,14 @@ dependencies and consolidated live/package walkthrough pass.
 - [ ] **S4-WS06** Starting an orchestration creates one operation workspace; all
       descendant chats join its roster once, overflow stays bounded, restart
       repairs the link without replay, and workspace deletion preserves work.
+2026-07-14 partial S4-WS06 evidence: the reviewed F3 creation transaction now
+creates the operation-workspace metadata atomically, and startup reconciliation
+repairs missing metadata without replay. The bounded membership, archived
+read-only, and identity review brings Node 22 affected coverage to 42/42. The
+row stays open for the complete F3 Runtime path and live restart/roster proof.
+Explicit operation-workspace deletion now persists across startup reconciliation
+until the user regenerates the same opaque identity. The bounded delete,
+duplicate, and archived-file slice passes 16/16; no broad gate was repeated.
 
 ## Automation and Scheduler
 

@@ -16,8 +16,18 @@ const mocks = vi.hoisted(() => ({
       version: number
       layout: SavedWorkspaceLayout | null
       layoutIssue: string | null
+      archivedAt: number | null
+      owner?: { kind: "manual" } | { kind: "orchestration"; orchestrationId: string }
     }
   >,
+  operation: undefined as
+    | {
+        orchestrationId: string
+        agents: Array<{ agentId: string; chatId: string | null; chatState: "ready" | "pending" }>
+      }
+    | undefined,
+  enabledWorkspaceGets: [] as string[],
+  enabledOperationGets: [] as string[],
   invalidate: vi.fn(async () => undefined),
   mutateAsync: vi.fn(),
 }))
@@ -29,6 +39,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
         list: { invalidate: mocks.invalidate },
         get: { invalidate: mocks.invalidate },
         resolvePane: { invalidate: mocks.invalidate },
+        getOperation: { invalidate: mocks.invalidate },
       },
     }),
     savedWorkspaces: {
@@ -39,20 +50,37 @@ vi.mock("../src/renderer/lib/trpc", () => ({
         }),
       },
       get: {
-        useQuery: (
-          { workspaceId }: { workspaceId: string },
-          { enabled }: { enabled: boolean },
-        ) => ({
-          data: enabled ? mocks.records[workspaceId] : undefined,
-          error:
-            enabled && !mocks.records[workspaceId]
-              ? new Error(`Workspace ${workspaceId} was not found.`)
-              : null,
-          isLoading: false,
-        }),
+        useQuery: ({ workspaceId }: { workspaceId: string }, { enabled }: { enabled: boolean }) => {
+          if (enabled) mocks.enabledWorkspaceGets.push(workspaceId)
+          return {
+            data: enabled ? mocks.records[workspaceId] : undefined,
+            error:
+              enabled && !mocks.records[workspaceId]
+                ? new Error(`Workspace ${workspaceId} was not found.`)
+                : null,
+            isLoading: false,
+          }
+        },
       },
       create: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       saveLayout: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      rename: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      archive: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      restore: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      delete: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      previewDelete: {
+        useQuery: () => ({ data: undefined, error: null, isLoading: false }),
+      },
+      getOperation: {
+        useQuery: ({ workspaceId }: { workspaceId: string }, { enabled }: { enabled: boolean }) => {
+          if (enabled) mocks.enabledOperationGets.push(workspaceId)
+          return {
+            data: enabled ? mocks.operation : undefined,
+            error: null,
+            isLoading: false,
+          }
+        },
+      },
     },
   },
 }))
@@ -60,8 +88,21 @@ vi.mock("../src/renderer/lib/trpc", () => ({
 vi.mock("../src/renderer/features/saved-workspaces/pane-adapters", async () => {
   const react = await vi.importActual<typeof import("react")>("react")
   return {
-    WorkspacePaneAdapter: ({ pane }: { pane: { id: string; title?: string } }) =>
-      react.createElement("div", { "data-rendered-pane": pane.id }, pane.title ?? pane.id),
+    WorkspacePaneAdapter: ({
+      pane,
+      ownershipChatIds = [],
+    }: {
+      pane: { id: string; title?: string }
+      ownershipChatIds?: string[]
+    }) =>
+      react.createElement(
+        "div",
+        {
+          "data-rendered-pane": pane.id,
+          "data-ownership-chat-ids": ownershipChatIds.join(","),
+        },
+        pane.title ?? pane.id,
+      ),
     WorkspacePaneBindingForm: () => null,
   }
 })
@@ -83,6 +124,9 @@ describe("saved workspace initial window targets", () => {
     localStorage.clear()
     sessionStorage.clear()
     mocks.listLoading = false
+    mocks.enabledWorkspaceGets = []
+    mocks.enabledOperationGets = []
+    mocks.operation = undefined
     mocks.list = [
       { id: "workspace-a", name: "Workspace A" },
       { id: "workspace-b", name: "Workspace B" },
@@ -114,6 +158,33 @@ describe("saved workspace initial window targets", () => {
     )
     expect(renderedPaneIds()).toEqual(["pane-a", "pane-b"])
     expect(container.textContent).not.toContain("prior-b")
+  })
+
+  it("never fetches, renders, or claims a target before project membership is confirmed", async () => {
+    mocks.listLoading = true
+    mocks.records["foreign-workspace"] = {
+      ...workspaceRecord("foreign-workspace", "Foreign workspace", selectedAgentLayout("agent-1")),
+      owner: { kind: "orchestration", orchestrationId: "foreign-operation" },
+    }
+    mocks.operation = {
+      orchestrationId: "foreign-operation",
+      agents: [{ agentId: "agent-1", chatId: "foreign-chat", chatState: "ready" }],
+    }
+
+    await renderTarget({ initialWorkspaceId: "foreign-workspace" })
+    expect(mocks.enabledWorkspaceGets).toEqual([])
+    expect(mocks.enabledOperationGets).toEqual([])
+    expect(renderedPaneIds()).toEqual([])
+
+    mocks.listLoading = false
+    mocks.list = [{ id: "workspace-a", name: "Workspace A" }]
+    await renderTarget({ initialWorkspaceId: "foreign-workspace" })
+
+    expect(container.textContent).toContain("Workspace target needs repair")
+    expect(mocks.enabledWorkspaceGets).toEqual([])
+    expect(mocks.enabledOperationGets).toEqual([])
+    expect(renderedPaneIds()).toEqual([])
+    expect(container.querySelector("[data-ownership-chat-ids]")).toBeNull()
   })
 
   it("renders only the exact pane in a pane pop-out", async () => {
@@ -161,6 +232,56 @@ describe("saved workspace initial window targets", () => {
     expect(renderedPaneIds()).toEqual([])
   })
 
+  it("shows project repair instead of using a prior project for an exact window target", async () => {
+    await act(async () => {
+      root.render(
+        createElement(SavedWorkspacesView, {
+          projectId: null,
+          initialProjectId: "missing-project",
+          initialChatId: null,
+          initialWorkspaceId: "workspace-a",
+        }),
+      )
+    })
+
+    expect(container.textContent).toContain("Workspace project target needs repair")
+    expect(container.textContent).toContain("will not fall back")
+    expect(renderedPaneIds()).toEqual([])
+  })
+
+  it("restores an exact archived target as structurally read-only", async () => {
+    mocks.records["workspace-a"] = {
+      ...mocks.records["workspace-a"],
+      archivedAt: 123,
+    }
+    await renderTarget({ initialWorkspaceId: "workspace-a" })
+
+    expect(container.textContent).toContain("Restore")
+    expect(container.querySelector("[data-structural-read-only='true']")).not.toBeNull()
+    expect(container.querySelector('[aria-label="Add pane to this group"]')).toBeNull()
+  })
+
+  it("passes a materialized selected-agent chat into exclusive pane ownership", async () => {
+    mocks.list = [{ id: "workspace-operation", name: "Operation" }]
+    mocks.records = {
+      "workspace-operation": {
+        ...workspaceRecord("workspace-operation", "Operation", selectedAgentLayout("agent-1")),
+        owner: { kind: "orchestration", orchestrationId: "operation-1" },
+      },
+    }
+    mocks.operation = {
+      orchestrationId: "operation-1",
+      agents: [{ agentId: "agent-1", chatId: "agent-chat-1", chatState: "ready" }],
+    }
+
+    await renderTarget({ initialWorkspaceId: "workspace-operation" })
+
+    expect(
+      container.querySelector<HTMLElement>('[data-rendered-pane="selected-pane"]')?.dataset
+        .ownershipChatIds,
+    ).toBe("agent-chat-1")
+  })
+
   it("dedupes one document lifetime but reapplies the same target after reload", () => {
     const params = {
       projectId: "project-guard",
@@ -183,6 +304,7 @@ describe("saved workspace initial window targets", () => {
       root.render(
         createElement(SavedWorkspacesView, {
           projectId: "project",
+          initialProjectId: "project",
           initialChatId: null,
           ...target,
         }),
@@ -198,7 +320,7 @@ describe("saved workspace initial window targets", () => {
 })
 
 function workspaceRecord(id: string, name: string, layout: SavedWorkspaceLayout) {
-  return { id, name, version: 1, layout, layoutIssue: null }
+  return { id, name, version: 1, layout, layoutIssue: null, archivedAt: null }
 }
 
 function workspaceALayout(): SavedWorkspaceLayout {
@@ -225,6 +347,28 @@ function singlePaneLayout(paneId: string, title = paneId): SavedWorkspaceLayout 
       id: `group-${paneId}`,
       activePaneId: paneId,
       panes: [{ id: paneId, title, binding: { type: "chat", chatId: `chat-${paneId}` } }],
+    },
+  }
+}
+
+function selectedAgentLayout(agentId: string): SavedWorkspaceLayout {
+  return {
+    version: 1,
+    root: {
+      type: "tabs",
+      id: "selected-group",
+      activePaneId: "selected-pane",
+      panes: [
+        {
+          id: "selected-pane",
+          title: "Selected agent",
+          binding: {
+            type: "selected-agent",
+            orchestrationId: "operation-1",
+            agentId,
+          },
+        },
+      ],
     },
   }
 }

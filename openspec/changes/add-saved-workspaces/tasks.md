@@ -9,7 +9,7 @@
 - Out of scope: UI and broad legacy renames.
 - Acceptance: Each workspace has one project or task scope; invalid pane data fails validation; existing chats remain unchanged.
 - Verification: Migration, DTO, scope, malformed-layout, and supported-prior-schema tests.
-- Evidence (2026-07-14): Added migration `0032_saved_workspaces`, constrained
+- Evidence (2026-07-14): Added migration `0031_saved_workspaces`, constrained
   project/task scope, manual/orchestration ownership, opaque unique orchestration
   links, versioned and byte-bounded layout JSON, globally unique pane/node IDs,
   derived roster DTOs, ordering/version/archive metadata, and preserved existing
@@ -111,6 +111,28 @@
 - Out of scope: Rendering every agent simultaneously, duplicating chat/run data, or deleting/stopping work through workspace deletion.
 - Acceptance: Every new orchestration has one operation workspace; newly materialized chats appear once; the four-chat cap holds; restart repairs half-created links without replay; deleting workspace metadata preserves all work.
 - Verification: Creation-order race, unique link, dynamic spawn, selected-agent swap, cap/overflow, restart repair, deletion preservation, regeneration, accessibility, and live heterogeneous orchestration tests.
+- Code-ready evidence (2026-07-14): Added deterministic opaque operation/workspace
+  identities, a caller-transaction-safe idempotent ensure helper, non-replaying
+  reconciliation/regeneration, lineage-derived lead/descendant rosters, the
+  lead/navigator/selected-agent/activity layout, status/result projection,
+  selected-agent swap, navigator overflow, active-operation impact confirmation,
+  pane recovery, polling/invalidation, exclusive selected-agent chat ownership,
+  four-visible-chat accounting, fail-closed exact project routing, and accessible
+  operation panes. The reviewed F3 orchestration-creation transaction now calls
+  the F4 ensure helper before commit, startup reconciles missing links without
+  replay, and renderer creation invalidates the saved-workspace list. Project
+  membership now gates all workspace fetch/render/ownership, archived terminal
+  and operation controls are read-only, and reducer identity checks include
+  pinned contexts. The current Node 22 binding/review slice passes 42/42;
+  targeted TypeScript, touched ESLint, Prettier, strict OpenSpec, and diff check
+  pass. The F11 Runtime seam remains untouched: F4 does not select providers,
+  parse or copy activity, or invent pause/resume. Live heterogeneous
+  orchestration, workspace open/focus from the F3 surface, complete F3-T7/T8
+  acceptance, and this checkbox remain open. A later bounded persistence pass
+  adds durable delete intent, explicit same-identity regeneration, typed
+  operation-duplicate rejection, and archived file metadata without structural
+  controls; its affected Node 22 slice passes 16/16. The earlier 42/42 evidence
+  remains valid; no combined feature-wide gate was repeated.
 - Blocked by: S4-F4-T1, S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F3-T6, S4-F3-T7, S4-F3-T8
 - Blocks: S4-F3-T10, S4-F4-T7, S4-F12-T6
 - Context: orchestration agent chat IDs, workspace service/router, lineage graph, agent activity timeline.
@@ -124,6 +146,16 @@
 - Out of scope: Remote synchronization.
 - Acceptance: Manual and operation workspaces survive restart and one forced recovery; descendant rosters reconcile; referenced work remains intact; ownership and stale states stay honest.
 - Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, live multi-window walkthrough, and packaged preview evidence.
+- Code-ready progress (2026-07-14): Added the missing real-surface lifecycle
+  controls for rename, archived-list selection, archive, restore, metadata-only
+  delete, exact impact review, active-operation confirmation, and read-only
+  archived layouts. Project listings now include task-scoped operation workspaces,
+  and S4-WS06 is mirrored open in the feature matrix. The partial F3 transaction
+  binding and startup repair have focused headless proof only. Explicit delete
+  now survives startup reconciliation until the user regenerates from lineage;
+  operation duplication fails instead of creating stale manual panes. Live Dev,
+  forced recovery, the feature-wide gate, and package preview remain open until
+  T6 dependencies resolve and the consolidated closeout is eligible.
 - Blocked by: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5, S4-F4-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

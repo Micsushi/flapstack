@@ -9,7 +9,10 @@ import type {
   WorkspacePaneClaimResult,
 } from "../src/shared/workspace-window-ownership"
 import { WorkspaceLayoutShell } from "../src/renderer/features/saved-workspaces/workspace-layout-shell"
-import { WorkspacePaneOwnershipBoundary } from "../src/renderer/features/saved-workspaces/workspace-window-ownership"
+import {
+  workspacePaneChatIds,
+  WorkspacePaneOwnershipBoundary,
+} from "../src/renderer/features/saved-workspaces/workspace-window-ownership"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -86,6 +89,63 @@ describe("saved workspace window controls", () => {
       }),
     )
     expect(claimWorkspacePane).toHaveBeenCalledTimes(2)
+  })
+
+  it("claims the resolved selected-agent chat and fails closed while that target changes", async () => {
+    const pane = {
+      id: "selected-pane",
+      binding: {
+        type: "selected-agent" as const,
+        orchestrationId: "operation",
+        agentId: "agent-a",
+      },
+    }
+    expect(
+      workspacePaneChatIds(pane, {
+        orchestrationId: "operation",
+        agents: [{ agentId: "agent-a", chatId: "chat-a", chatState: "ready" }],
+      }),
+    ).toEqual(["chat-a"])
+    expect(
+      workspacePaneChatIds(pane, {
+        orchestrationId: "operation",
+        agents: [{ agentId: "agent-a", chatId: null, chatState: "pending" }],
+      }),
+    ).toEqual([])
+    expect(
+      workspacePaneChatIds(pane, {
+        orchestrationId: "stale-operation",
+        agents: [{ agentId: "agent-a", chatId: "chat-a", chatState: "ready" }],
+      }),
+    ).toEqual([])
+
+    const render = (chatId: string) =>
+      createElement(
+        WorkspacePaneOwnershipBoundary,
+        { workspaceId: "workspace", pane, chatIds: [chatId] },
+        createElement("p", null, `Live ${chatId}`),
+      )
+
+    await act(async () => root.render(render("chat-a")))
+    expect(claimWorkspacePane).toHaveBeenLastCalledWith(
+      {
+        projectId: undefined,
+        workspaceId: "workspace",
+        paneId: "selected-pane",
+        chatIds: ["chat-a"],
+      },
+      "claim",
+    )
+    expect(container.textContent).toContain("Live chat-a")
+
+    const nextClaim = deferred<WorkspacePaneClaimResult>()
+    claimWorkspacePane.mockReturnValueOnce(nextClaim.promise)
+    await act(async () => root.render(render("chat-b")))
+    expect(container.textContent).not.toContain("Live chat-b")
+    expect(container.textContent).toContain("Claiming pane")
+
+    await act(async () => nextClaim.resolve({ ok: true, state: "claimed", ownerStableId: "main" }))
+    expect(container.textContent).toContain("Live chat-b")
   })
 
   it("restores mounted authority state during StrictMode effect replay", async () => {

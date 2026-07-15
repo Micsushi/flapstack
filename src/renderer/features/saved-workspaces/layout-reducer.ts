@@ -235,7 +235,13 @@ function collectActiveChatGroups(root: SavedWorkspaceLayoutNode): Array<{
   visit(root, (node) => {
     if (node.type !== "tabs") return
     const active = node.panes.find((pane) => pane.id === node.activePaneId)
-    if (active?.binding.type === "chat") groups.push({ groupId: node.id, pane: active })
+    if (
+      active &&
+      (active.binding.type === "chat" ||
+        (active.binding.type === "selected-agent" && active.binding.agentId !== null))
+    ) {
+      groups.push({ groupId: node.id, pane: active })
+    }
   })
   return groups
 }
@@ -388,7 +394,13 @@ function visit(node: SavedWorkspaceLayoutNode, visitor: (node: SavedWorkspaceLay
 function hasIdentity(root: SavedWorkspaceLayoutNode, id: string): boolean {
   let found = false
   visit(root, (node) => {
-    if (node.id === id || (node.type === "tabs" && node.panes.some((pane) => pane.id === id))) {
+    if (
+      node.id === id ||
+      (node.type === "tabs" &&
+        node.panes.some(
+          (pane) => pane.id === id || pane.pinnedContext?.some((context) => context.id === id),
+        ))
+    ) {
       found = true
     }
   })

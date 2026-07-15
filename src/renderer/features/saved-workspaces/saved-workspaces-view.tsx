@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react"
-import { PanelsTopLeft, Save } from "lucide-react"
+import { Archive, PanelsTopLeft, RotateCcw, Save, Trash2 } from "lucide-react"
 import type {
   SavedWorkspaceLayout,
   SavedWorkspaceLayoutNode,
@@ -38,12 +38,14 @@ const AUTO_SAVE_DELAY_MS = 400
 
 export function SavedWorkspacesView({
   projectId,
+  initialProjectId,
   initialChatId,
   initialWorkspaceId,
   popoutPaneId,
   initialSkipPaneId,
 }: {
   projectId: string | null
+  initialProjectId?: string
   initialChatId: string | null
   initialWorkspaceId?: string
   popoutPaneId?: string
@@ -58,6 +60,9 @@ export function SavedWorkspacesView({
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string>("")
   const [addPaneGroupId, setAddPaneGroupId] = useState<string | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
+  const [renameValue, setRenameValue] = useState("")
+  const [lifecycleAction, setLifecycleAction] = useState<"archive" | "delete" | null>(null)
   const loadedWorkspaceId = useRef<string | null>(null)
   const saveInFlight = useRef(false)
   const saveQueued = useRef(false)
@@ -70,15 +75,39 @@ export function SavedWorkspacesView({
   const utils = trpc.useUtils()
 
   const list = trpc.savedWorkspaces.list.useQuery(
-    projectId ? { projectId, archive: "active" } : {},
+    projectId
+      ? {
+          projectId,
+          archive: initialWorkspaceId ? "all" : showArchived ? "archived" : "active",
+        }
+      : {},
     { enabled: Boolean(projectId) },
+  )
+  const selectedWorkspaceIsMember = Boolean(
+    projectId &&
+    selectedWorkspaceId &&
+    list.data?.some((workspace) => workspace.id === selectedWorkspaceId),
   )
   const selected = trpc.savedWorkspaces.get.useQuery(
     { workspaceId: selectedWorkspaceId ?? "" },
-    { enabled: Boolean(selectedWorkspaceId) },
+    { enabled: selectedWorkspaceIsMember },
+  )
+  const operationOwnership = trpc.savedWorkspaces.getOperation.useQuery(
+    { workspaceId: selectedWorkspaceId ?? "" },
+    {
+      enabled: Boolean(selectedWorkspaceIsMember && selected.data?.owner?.kind === "orchestration"),
+    },
   )
   const createMutation = trpc.savedWorkspaces.create.useMutation()
   const saveMutation = trpc.savedWorkspaces.saveLayout.useMutation()
+  const renameMutation = trpc.savedWorkspaces.rename.useMutation()
+  const archiveMutation = trpc.savedWorkspaces.archive.useMutation()
+  const restoreMutation = trpc.savedWorkspaces.restore.useMutation()
+  const deleteMutation = trpc.savedWorkspaces.delete.useMutation()
+  const lifecyclePreview = trpc.savedWorkspaces.previewDelete.useQuery(
+    { workspaceId: selectedWorkspaceId ?? "" },
+    { enabled: Boolean(lifecycleAction && selectedWorkspaceIsMember) },
+  )
   const initialWorkspaceMissing = Boolean(
     initialWorkspaceId &&
     list.data &&
@@ -96,6 +125,7 @@ export function SavedWorkspacesView({
     setLayout(null)
     setDirty(false)
     setStatus("")
+    setLifecycleAction(null)
     setSelectedWorkspaceId(
       initialWorkspaceId ?? (projectId ? readSavedWorkspaceSelection(projectId) : null),
     )
@@ -144,6 +174,7 @@ export function SavedWorkspacesView({
     layoutRevision.current = canRestorePending ? 1 : 0
     saveQueued.current = false
     setLayout(restoredLayout)
+    setRenameValue(record.name)
     setDirty(canRestorePending)
     setStatus(
       canRestorePending
@@ -170,6 +201,137 @@ export function SavedWorkspacesView({
     setLayout(null)
     setDirty(false)
     if (projectId) writeSavedWorkspaceSelection(projectId, workspaceId)
+  }
+
+  const resetLoadedWorkspace = (workspaceId: string | null) => {
+    workspaceGeneration.current += 1
+    loadedWorkspaceId.current = null
+    currentWorkspaceId.current = workspaceId
+    latestLayout.current = null
+    latestVersion.current = null
+    layoutRevision.current = 0
+    saveQueued.current = false
+    setSelectedWorkspaceId(workspaceId)
+    setLayout(null)
+    setDirty(false)
+  }
+
+  const toggleArchivedWorkspaces = () => {
+    if (dirty || saveInFlight.current) {
+      setStatus("Save workspace changes before changing the workspace list.")
+      return
+    }
+    const next = !showArchived
+    setShowArchived(next)
+    setLifecycleAction(null)
+    resetLoadedWorkspace(null)
+    setStatus(next ? "Showing archived workspaces." : "Showing active workspaces.")
+  }
+
+  const invalidateWorkspace = async (workspaceId: string) => {
+    await Promise.all([
+      utils.savedWorkspaces.list.invalidate(),
+      utils.savedWorkspaces.get.invalidate({ workspaceId }),
+      utils.savedWorkspaces.resolvePane.invalidate(),
+      utils.savedWorkspaces.getOperation.invalidate({ workspaceId }),
+    ])
+  }
+
+  const renameWorkspace = async (event: FormEvent) => {
+    event.preventDefault()
+    const workspace = selected.data
+    const nextName = renameValue.trim()
+    if (!workspace || !nextName || nextName === workspace.name) return
+    setStatus("Renaming workspace…")
+    try {
+      const result = await renameMutation.mutateAsync({
+        workspaceId: workspace.id,
+        expectedVersion: workspace.version,
+        name: nextName,
+      })
+      loadedWorkspaceId.current = result.workspace.id
+      latestVersion.current = result.workspace.version
+      setRenameValue(result.workspace.name)
+      setStatus("Workspace renamed.")
+      await invalidateWorkspace(result.workspace.id)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Workspace rename failed.")
+    }
+  }
+
+  const previewLifecycleAction = (action: "archive" | "delete") => {
+    if (dirty || saveInFlight.current) {
+      setStatus("Save workspace changes before changing workspace lifecycle.")
+      return
+    }
+    setLifecycleAction(action)
+    setStatus(`Review ${action} impact before confirming.`)
+  }
+
+  const confirmLifecycleAction = async () => {
+    const action = lifecycleAction
+    const workspace = selected.data
+    const preview = lifecyclePreview.data
+    if (!action || !workspace || !preview) return
+    const confirmActiveOperationImpact = Boolean(preview.operation?.active)
+    setStatus(action === "archive" ? "Archiving workspace…" : "Deleting workspace metadata…")
+    try {
+      if (action === "archive") {
+        const result = await archiveMutation.mutateAsync({
+          workspaceId: workspace.id,
+          expectedVersion: workspace.version,
+          confirmActiveOperationImpact,
+        })
+        setLifecycleAction(null)
+        await invalidateWorkspace(workspace.id)
+        if (initialWorkspaceId) {
+          loadedWorkspaceId.current = null
+          latestVersion.current = result.workspace.version
+          setStatus("Workspace archived. Referenced work remains available.")
+        } else {
+          if (projectId) writeSavedWorkspaceSelection(projectId, null)
+          resetLoadedWorkspace(null)
+          setStatus("Workspace archived. Referenced work remains available.")
+        }
+        return
+      }
+      await deleteMutation.mutateAsync({
+        workspaceId: workspace.id,
+        expectedVersion: workspace.version,
+        confirmActiveOperationImpact,
+      })
+      setLifecycleAction(null)
+      writePendingWorkspaceLayout(workspace.id, null)
+      if (projectId) writeSavedWorkspaceSelection(projectId, null)
+      resetLoadedWorkspace(null)
+      await Promise.all([
+        utils.savedWorkspaces.list.invalidate(),
+        utils.savedWorkspaces.get.invalidate({ workspaceId: workspace.id }),
+        utils.savedWorkspaces.getOperation.invalidate({ workspaceId: workspace.id }),
+      ])
+      setStatus("Workspace metadata deleted. Referenced work was preserved.")
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : `Workspace ${action} failed.`)
+    }
+  }
+
+  const restoreWorkspace = async () => {
+    const workspace = selected.data
+    if (!workspace || workspace.archivedAt === null) return
+    setStatus("Restoring workspace…")
+    try {
+      const result = await restoreMutation.mutateAsync({
+        workspaceId: workspace.id,
+        expectedVersion: workspace.version,
+      })
+      setShowArchived(false)
+      resetLoadedWorkspace(result.workspace.id)
+      if (projectId) writeSavedWorkspaceSelection(projectId, result.workspace.id)
+      await invalidateWorkspace(result.workspace.id)
+      setStatus("Workspace restored.")
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Workspace restore failed.")
+    }
   }
 
   const saveCurrent = useCallback(async () => {
@@ -325,6 +487,27 @@ export function SavedWorkspacesView({
     setAddPaneGroupId(null)
   }
 
+  const selectOperationAgent = (orchestrationId: string, agentId: string) => {
+    if (!layout || selected.data?.archivedAt != null) return
+    const selectedPane = getWorkspaceGroups(layout)
+      .flatMap((group) => group.panes)
+      .find(
+        (pane) =>
+          pane.binding.type === "selected-agent" &&
+          pane.binding.orchestrationId === orchestrationId,
+      )
+    if (!selectedPane) {
+      setStatus("This operation layout has no selected-agent pane. Add or repair one first.")
+      return
+    }
+    dispatchLayout({
+      type: "replace-binding",
+      paneId: selectedPane.id,
+      binding: { type: "selected-agent", orchestrationId, agentId },
+    })
+    setStatus("Selected agent updated.")
+  }
+
   const workspaceOptions = useMemo(() => list.data ?? [], [list.data])
   const windowLayout = useMemo(
     () =>
@@ -338,6 +521,8 @@ export function SavedWorkspacesView({
   )
   const displayedLayout = windowLayout?.kind === "ready" ? windowLayout.layout : null
   const derivedWindowLayout = Boolean(popoutPaneId || initialSkipPaneId)
+  const selectedWorkspaceArchived = selected.data?.archivedAt != null
+  const workspaceReadOnly = derivedWindowLayout || selectedWorkspaceArchived
 
   const popOutPane = async (pane: Parameters<typeof workspacePaneChatIds>[0]) => {
     if (!selectedWorkspaceId || !projectId) return
@@ -345,7 +530,7 @@ export function SavedWorkspacesView({
       projectId,
       workspaceId: selectedWorkspaceId,
       paneId: pane.id,
-      chatIds: workspacePaneChatIds(pane),
+      chatIds: workspacePaneChatIds(pane, operationOwnership.data),
     })
     setStatus(
       result?.ok
@@ -374,7 +559,10 @@ export function SavedWorkspacesView({
       projectId,
       workspaceId: selectedWorkspaceId,
       panes: getWorkspaceGroups(layout).flatMap((group) =>
-        group.panes.map((pane) => ({ paneId: pane.id, chatIds: workspacePaneChatIds(pane) })),
+        group.panes.map((pane) => ({
+          paneId: pane.id,
+          chatIds: workspacePaneChatIds(pane, operationOwnership.data),
+        })),
       ),
     })
     setStatus(
@@ -390,8 +578,14 @@ export function SavedWorkspacesView({
 
   if (!projectId) {
     return (
-      <WorkspaceNotice title="No project selected">
-        Select a project before opening saved workspaces.
+      <WorkspaceNotice
+        title={initialWorkspaceId ? "Workspace project target needs repair" : "No project selected"}
+      >
+        {initialWorkspaceId
+          ? initialProjectId
+            ? `Project ${initialProjectId} is unavailable. This window will not fall back to a previously selected project.`
+            : "This saved workspace window has no project target and will not fall back to a previously selected project."
+          : "Select a project before opening saved workspaces."}
       </WorkspaceNotice>
     )
   }
@@ -406,6 +600,18 @@ export function SavedWorkspacesView({
         )}
         {!popoutPaneId && (
           <>
+            {!initialWorkspaceId && (
+              <Button
+                type="button"
+                variant={showArchived ? "default" : "outline"}
+                onClick={toggleArchivedWorkspaces}
+                disabled={dirty || saving}
+                aria-pressed={showArchived}
+              >
+                <Archive className="mr-1 h-4 w-4" />
+                {showArchived ? "Archived" : "Active"}
+              </Button>
+            )}
             <label className="sr-only" htmlFor="saved-workspace-picker">
               Saved workspace
             </label>
@@ -440,7 +646,14 @@ export function SavedWorkspacesView({
               <Button
                 type="submit"
                 variant="outline"
-                disabled={!initialChatId || createMutation.isPending || dirty || saving}
+                disabled={
+                  !initialChatId ||
+                  createMutation.isPending ||
+                  dirty ||
+                  saving ||
+                  showArchived ||
+                  selectedWorkspaceArchived
+                }
               >
                 Create from chat
               </Button>
@@ -448,7 +661,7 @@ export function SavedWorkspacesView({
             <Button
               type="button"
               onClick={() => void saveCurrent()}
-              disabled={!dirty || saveMutation.isPending}
+              disabled={!dirty || saveMutation.isPending || selectedWorkspaceArchived}
             >
               <Save className="mr-1 h-4 w-4" /> Save
             </Button>
@@ -463,12 +676,93 @@ export function SavedWorkspacesView({
           </>
         )}
       </header>
+      {!popoutPaneId && selected.data && (
+        <section
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/10 p-2"
+          aria-label="Workspace lifecycle"
+        >
+          <form className="flex min-w-64 flex-1 items-center gap-2" onSubmit={renameWorkspace}>
+            <label className="sr-only" htmlFor="saved-workspace-rename">
+              Workspace name
+            </label>
+            <Input
+              id="saved-workspace-rename"
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              maxLength={256}
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={
+                renameMutation.isPending ||
+                !renameValue.trim() ||
+                renameValue.trim() === selected.data.name
+              }
+            >
+              Rename
+            </Button>
+          </form>
+          {selectedWorkspaceArchived ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void restoreWorkspace()}
+              disabled={restoreMutation.isPending}
+            >
+              <RotateCcw className="mr-1 h-4 w-4" /> Restore
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => previewLifecycleAction("archive")}
+              disabled={archiveMutation.isPending || dirty || saving}
+            >
+              <Archive className="mr-1 h-4 w-4" /> Archive
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => previewLifecycleAction("delete")}
+            disabled={deleteMutation.isPending || dirty || saving}
+          >
+            <Trash2 className="mr-1 h-4 w-4" /> Delete metadata
+          </Button>
+        </section>
+      )}
+      {lifecycleAction && selected.data && (
+        <WorkspaceLifecycleImpact
+          action={lifecycleAction}
+          workspaceName={selected.data.name}
+          loading={lifecyclePreview.isLoading}
+          ready={Boolean(lifecyclePreview.data)}
+          error={lifecyclePreview.error?.message ?? null}
+          operation={lifecyclePreview.data?.operation ?? null}
+          referenceCount={
+            lifecyclePreview.data
+              ? Object.values(lifecyclePreview.data.references).reduce(
+                  (count, references) => count + references.length,
+                  0,
+                )
+              : 0
+          }
+          pending={archiveMutation.isPending || deleteMutation.isPending}
+          onCancel={() => setLifecycleAction(null)}
+          onConfirm={() => void confirmLifecycleAction()}
+        />
+      )}
       <div className="min-h-5 text-xs text-muted-foreground" role="status" aria-live="polite">
         {status ||
           (!initialChatId ? "Open a chat to create a workspace." : "Select or create a workspace.")}
       </div>
       <div className="min-h-0 flex-1">
-        {initialWorkspaceMissing ? (
+        {list.isLoading || (projectId && !list.data) ? (
+          <WorkspaceNotice title="Restoring project workspaces">
+            Confirming this workspace belongs to the current project…
+          </WorkspaceNotice>
+        ) : initialWorkspaceMissing ? (
           <WorkspaceNotice title="Workspace target needs repair">
             Workspace {initialWorkspaceId} no longer exists in this project. Close this window or
             repair the saved window target.
@@ -514,14 +808,15 @@ export function SavedWorkspacesView({
               <WorkspaceLayoutShell
                 layout={displayedLayout}
                 onLayoutChange={(next, action) => {
-                  if (!derivedWindowLayout) changeLayout(next, action)
-                  else if (action.type === "activate-pane") dispatchLayout(action)
+                  if (!workspaceReadOnly) changeLayout(next, action)
+                  else if (!selectedWorkspaceArchived && action.type === "activate-pane")
+                    dispatchLayout(action)
                 }}
-                onRequestAddPane={derivedWindowLayout ? undefined : setAddPaneGroupId}
+                onRequestAddPane={workspaceReadOnly ? undefined : setAddPaneGroupId}
                 onPopOutPane={popoutPaneId ? undefined : (pane) => void popOutPane(pane)}
                 popoutPaneId={popoutPaneId}
                 onPullBackPane={popoutPaneId ? (pane) => void pullBackPane(pane) : undefined}
-                structuralReadOnly={derivedWindowLayout}
+                structuralReadOnly={workspaceReadOnly}
                 renderPane={(pane) => {
                   const group = groupForPane(pane.id)
                   return (
@@ -529,22 +824,30 @@ export function SavedWorkspacesView({
                       projectId={projectId}
                       workspaceId={selectedWorkspaceId!}
                       pane={pane}
-                      onReplaceBinding={(binding) =>
-                        dispatchLayout({ type: "replace-binding", paneId: pane.id, binding })
-                      }
+                      ownershipChatIds={workspacePaneChatIds(pane, operationOwnership.data)}
+                      readOnly={selectedWorkspaceArchived}
+                      onReplaceBinding={(binding) => {
+                        if (!selectedWorkspaceArchived)
+                          dispatchLayout({ type: "replace-binding", paneId: pane.id, binding })
+                      }}
                       onRemove={() => {
-                        if (group)
+                        if (group && !selectedWorkspaceArchived)
                           dispatchLayout({
                             type: "remove-pane",
                             groupId: group.id,
                             paneId: pane.id,
                           })
                       }}
-                      onPinContext={(context: SavedWorkspacePinnedContext) =>
-                        dispatchLayout({ type: "pin-context", paneId: pane.id, context })
-                      }
-                      onUnpinContext={(contextId) =>
-                        dispatchLayout({ type: "unpin-context", paneId: pane.id, contextId })
+                      onPinContext={(context: SavedWorkspacePinnedContext) => {
+                        if (!selectedWorkspaceArchived)
+                          dispatchLayout({ type: "pin-context", paneId: pane.id, context })
+                      }}
+                      onUnpinContext={(contextId) => {
+                        if (!selectedWorkspaceArchived)
+                          dispatchLayout({ type: "unpin-context", paneId: pane.id, contextId })
+                      }}
+                      onSelectOperationAgent={
+                        selectedWorkspaceArchived ? undefined : selectOperationAgent
                       }
                     />
                   )
@@ -553,13 +856,102 @@ export function SavedWorkspacesView({
             </div>
           </div>
         ) : (
-          <WorkspaceNotice title="No workspace layout">
-            Create a workspace from the currently open chat. Empty state does not create fake pane
-            bindings.
+          <WorkspaceNotice title={showArchived ? "No archived workspaces" : "No workspace layout"}>
+            {showArchived
+              ? "Archived workspace metadata appears here without changing referenced work."
+              : "Create a workspace from the currently open chat. Empty state does not create fake pane bindings."}
           </WorkspaceNotice>
         )}
       </div>
     </main>
+  )
+}
+
+export function WorkspaceLifecycleImpact({
+  action,
+  workspaceName,
+  loading,
+  ready,
+  error,
+  operation,
+  referenceCount,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  action: "archive" | "delete"
+  workspaceName: string
+  loading: boolean
+  ready: boolean
+  error: string | null
+  operation: {
+    status: string
+    active: boolean
+    agentCount: number
+    materializedChatCount: number
+    canRegenerateFromLineage: true
+  } | null
+  referenceCount: number
+  pending: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const title = action === "archive" ? "Archive workspace" : "Delete workspace metadata"
+  return (
+    <section
+      className="rounded-lg border border-destructive/40 bg-destructive/5 p-3"
+      role="alertdialog"
+      aria-labelledby="workspace-lifecycle-impact-title"
+      aria-describedby="workspace-lifecycle-impact-description"
+    >
+      <h2 id="workspace-lifecycle-impact-title" className="text-sm font-medium">
+        {title}: {workspaceName}
+      </h2>
+      <div
+        id="workspace-lifecycle-impact-description"
+        className="mt-1 space-y-1 text-xs text-muted-foreground"
+      >
+        {loading ? (
+          <p>Loading exact impact…</p>
+        ) : error ? (
+          <p role="alert">{error}</p>
+        ) : (
+          <>
+            <p>
+              {action === "archive"
+                ? "The workspace leaves the active list; referenced work remains unchanged."
+                : "Only workspace metadata is deleted; referenced work remains unchanged."}
+            </p>
+            <p>{referenceCount} durable references were found in this workspace.</p>
+            {operation && (
+              <p>
+                Operation {operation.status}: {operation.agentCount} agents,{" "}
+                {operation.materializedChatCount} materialized chats.{" "}
+                {operation.active
+                  ? "The operation remains active and will not be stopped."
+                  : "The operation remains preserved."}{" "}
+                {operation.canRegenerateFromLineage
+                  ? "Workspace metadata can be regenerated from lineage."
+                  : ""}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button type="button" variant="outline" autoFocus onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          onClick={onConfirm}
+          disabled={!ready || loading || Boolean(error) || pending}
+        >
+          {pending ? "Working…" : title}
+        </Button>
+      </div>
+    </section>
   )
 }
 

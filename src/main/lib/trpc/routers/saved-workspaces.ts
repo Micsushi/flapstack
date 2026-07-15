@@ -12,6 +12,12 @@ import {
   type SavedWorkspaceRecord,
 } from "../../saved-workspaces/service"
 import { resolveSavedWorkspacePane } from "../../saved-workspaces/pane-adapters"
+import {
+  getOperationWorkspaceForTask,
+  getOperationWorkspaceProjection,
+  regenerateOperationWorkspace,
+  SavedWorkspaceOperationError,
+} from "../../saved-workspaces/operations"
 import { publicProcedure, router } from "../index"
 
 const id = z.string().trim().min(1).max(200)
@@ -55,6 +61,23 @@ function lifecycleMutation<T>(operation: () => T): T {
   }
 }
 
+function operationMutation<T>(operation: () => T): T {
+  try {
+    return operation()
+  } catch (error) {
+    if (!(error instanceof SavedWorkspaceOperationError)) throw error
+    throw new TRPCError({
+      code:
+        error.code === "not-found"
+          ? "NOT_FOUND"
+          : error.code === "conflict"
+            ? "CONFLICT"
+            : "PRECONDITION_FAILED",
+      message: error.message,
+    })
+  }
+}
+
 export const savedWorkspacesRouter = router({
   list: publicProcedure
     .input(
@@ -73,6 +96,20 @@ export const savedWorkspacesRouter = router({
   get: publicProcedure
     .input(z.object({ workspaceId: id }))
     .query(({ input }) => lifecycleMutation(() => service().get(input.workspaceId))),
+
+  getOperation: publicProcedure
+    .input(z.object({ workspaceId: id }))
+    .query(({ input }) =>
+      operationMutation(() =>
+        getOperationWorkspaceProjection(getDatabasePath(), input.workspaceId),
+      ),
+    ),
+
+  getOperationForTask: publicProcedure
+    .input(z.object({ taskId: id }))
+    .query(({ input }) =>
+      operationMutation(() => getOperationWorkspaceForTask(getDatabasePath(), input.taskId)),
+    ),
 
   resolvePane: publicProcedure
     .input(z.object({ workspaceId: id, paneId: id }))
@@ -124,7 +161,13 @@ export const savedWorkspacesRouter = router({
     .mutation(({ input }) => lifecycleMutation(() => mutationResult(service().duplicate(input)))),
 
   archive: publicProcedure
-    .input(z.object({ workspaceId: id, expectedVersion }))
+    .input(
+      z.object({
+        workspaceId: id,
+        expectedVersion,
+        confirmActiveOperationImpact: z.boolean().optional(),
+      }),
+    )
     .mutation(({ input }) =>
       lifecycleMutation(() => {
         const result = service().archive(input)
@@ -144,7 +187,13 @@ export const savedWorkspacesRouter = router({
     .query(({ input }) => lifecycleMutation(() => service().previewDelete(input.workspaceId))),
 
   delete: publicProcedure
-    .input(z.object({ workspaceId: id, expectedVersion }))
+    .input(
+      z.object({
+        workspaceId: id,
+        expectedVersion,
+        confirmActiveOperationImpact: z.boolean().optional(),
+      }),
+    )
     .mutation(({ input }) =>
       lifecycleMutation(() => {
         const result = service().delete(input)
@@ -167,4 +216,15 @@ export const savedWorkspacesRouter = router({
     .mutation(({ input }) =>
       lifecycleMutation(() => mutationResult(service().repairBinding(input))),
     ),
+
+  regenerateOperation: publicProcedure.input(z.object({ taskId: id })).mutation(({ input }) =>
+    operationMutation(() => {
+      const result = regenerateOperationWorkspace(getDatabasePath(), input.taskId)
+      return {
+        workspace: service().get(result.workspaceId),
+        created: result.created,
+        invalidation: invalidation([result.workspaceId]),
+      }
+    }),
+  ),
 })

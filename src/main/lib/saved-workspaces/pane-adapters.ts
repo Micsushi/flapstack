@@ -11,6 +11,7 @@ import {
   resolvePathInWorktree,
   validateRelativePath,
 } from "../git/security/path-validation"
+import { getOperationWorkspaceProjection, SavedWorkspaceOperationError } from "./operations"
 import { SavedWorkspaceLifecycleService } from "./service"
 
 export type SavedWorkspaceTargetState = "ready" | "missing" | "stale"
@@ -51,7 +52,7 @@ export function resolveSavedWorkspacePane(
     }
   }
 
-  const target = resolveBinding(databasePath, pane.binding)
+  const target = resolveBinding(databasePath, workspace, pane.binding)
   return {
     paneId,
     ...target,
@@ -63,6 +64,7 @@ export function resolveSavedWorkspacePane(
 
 function resolveBinding(
   databasePath: string,
+  workspace: ReturnType<SavedWorkspaceLifecycleService["get"]>,
   binding: SavedWorkspacePaneBinding,
 ): Omit<SavedWorkspacePaneResolution, "paneId" | "pinnedContext"> {
   switch (binding.type) {
@@ -114,8 +116,49 @@ function resolveBinding(
       return target("ready", "Web link", "HTTP(S) link validated for explicit external opening.")
     case "agent-roster":
     case "selected-agent":
-    case "activity":
-      return target("stale", "Operation pane", "Owned by S4-F4-T6 orchestration workspaces.")
+    case "activity": {
+      if (
+        workspace.owner.kind !== "orchestration" ||
+        workspace.owner.orchestrationId !== binding.orchestrationId
+      ) {
+        return target(
+          "stale",
+          "Operation pane",
+          "The pane identity does not match this operation workspace.",
+        )
+      }
+      try {
+        const operation = getOperationWorkspaceProjection(databasePath, workspace.id)
+        if (binding.type === "selected-agent" && binding.agentId) {
+          const agent = operation.agents.find((candidate) => candidate.agentId === binding.agentId)
+          if (!agent) {
+            return target(
+              "missing",
+              "Selected agent",
+              "The selected agent is no longer present in durable lineage.",
+            )
+          }
+        }
+        return target(
+          "ready",
+          binding.type === "agent-roster"
+            ? "Agent navigator"
+            : binding.type === "selected-agent"
+              ? "Selected agent"
+              : "Operation activity",
+          "Using current durable orchestration lineage.",
+        )
+      } catch (error) {
+        if (error instanceof SavedWorkspaceOperationError) {
+          return target(
+            error.code === "not-found" ? "missing" : "stale",
+            "Operation pane",
+            error.message,
+          )
+        }
+        throw error
+      }
+    }
   }
 }
 

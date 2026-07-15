@@ -1,32 +1,59 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Button } from "../../components/ui/button"
+import type { SavedWorkspaceOperationProjection } from "../../../shared/saved-workspaces"
 import type { WorkspacePaneClaimResult } from "../../../shared/workspace-window-ownership"
 import type { SavedWorkspacePane } from "./layout-reducer"
 
-export function workspacePaneChatIds(pane: SavedWorkspacePane): string[] {
-  return pane.binding.type === "chat" ? [pane.binding.chatId] : []
+export function workspacePaneChatIds(
+  pane: SavedWorkspacePane,
+  operation?: {
+    orchestrationId: string
+    agents: Array<
+      Pick<SavedWorkspaceOperationProjection["agents"][number], "agentId" | "chatId" | "chatState">
+    >
+  },
+): string[] {
+  if (pane.binding.type === "chat") return [pane.binding.chatId]
+  if (pane.binding.type !== "selected-agent" || !pane.binding.agentId) return []
+  if (operation?.orchestrationId !== pane.binding.orchestrationId) return []
+  const agentId = pane.binding.agentId
+  const selected = operation?.agents.find((agent) => agent.agentId === agentId)
+  return selected?.chatId && selected.chatState === "ready" ? [selected.chatId] : []
 }
 
 export function WorkspacePaneOwnershipBoundary({
   projectId,
   workspaceId,
   pane,
+  chatIds,
   initiallySkipped = false,
   children,
 }: {
   projectId?: string
   workspaceId: string
   pane: SavedWorkspacePane
+  chatIds?: string[]
   initiallySkipped?: boolean
   children: ReactNode
 }) {
-  const [claim, setClaim] = useState<WorkspacePaneClaimResult | null>(null)
+  const [claimState, setClaimState] = useState<{
+    targetKey: string
+    result: WorkspacePaneClaimResult
+  } | null>(null)
   const [skipped, setSkipped] = useState(initiallySkipped)
   const [status, setStatus] = useState(initiallySkipped ? "Pane skipped in this window." : "")
   const requestGeneration = useRef(0)
   const mounted = useRef(true)
-  const boundChatId = pane.binding.type === "chat" ? pane.binding.chatId : null
-  const targetKey = `${projectId ?? ""}\0${workspaceId}\0${pane.id}\0${boundChatId ?? ""}`
+  const normalizedChatIdsKey = JSON.stringify(
+    [...new Set((chatIds ?? workspacePaneChatIds(pane)).map((chatId) => chatId.trim()))]
+      .filter(Boolean)
+      .sort(),
+  )
+  const normalizedChatIds = useMemo(
+    () => JSON.parse(normalizedChatIdsKey) as string[],
+    [normalizedChatIdsKey],
+  )
+  const targetKey = JSON.stringify([projectId ?? "", workspaceId, pane.id, normalizedChatIds])
   const activeTargetKey = useRef(targetKey)
   activeTargetKey.current = targetKey
   const target = useMemo(
@@ -34,9 +61,9 @@ export function WorkspacePaneOwnershipBoundary({
       projectId,
       workspaceId,
       paneId: pane.id,
-      chatIds: boundChatId ? [boundChatId] : [],
+      chatIds: normalizedChatIds,
     }),
-    [boundChatId, pane.id, projectId, workspaceId],
+    [normalizedChatIds, pane.id, projectId, workspaceId],
   )
 
   const claimHere = useCallback(
@@ -49,10 +76,15 @@ export function WorkspacePaneOwnershipBoundary({
         requestTargetKey === activeTargetKey.current
       const api = window.desktopApi
       if (!api?.claimWorkspacePane) {
-        if (isCurrent()) setClaim({ ok: true, state: "claimed", ownerStableId: "browser" })
+        if (isCurrent()) {
+          setClaimState({
+            targetKey: requestTargetKey,
+            result: { ok: true, state: "claimed", ownerStableId: "browser" },
+          })
+        }
         return
       }
-      if (isCurrent()) setClaim(null)
+      if (isCurrent()) setClaimState(null)
       try {
         const result = await api.claimWorkspacePane(target, mode)
         if (!isCurrent()) {
@@ -65,7 +97,7 @@ export function WorkspacePaneOwnershipBoundary({
           }
           return
         }
-        setClaim(result)
+        setClaimState({ targetKey: requestTargetKey, result })
         setSkipped(false)
         setStatus(
           result.ok
@@ -76,10 +108,13 @@ export function WorkspacePaneOwnershipBoundary({
         )
       } catch (error) {
         if (!isCurrent()) return
-        setClaim({
-          ok: false,
-          ownerStableId: "unknown",
-          conflicts: [{ kind: "workspace-pane", ownerStableId: "unknown" }],
+        setClaimState({
+          targetKey: requestTargetKey,
+          result: {
+            ok: false,
+            ownerStableId: "unknown",
+            conflicts: [{ kind: "workspace-pane", ownerStableId: "unknown" }],
+          },
         })
         setStatus(error instanceof Error ? error.message : "Pane ownership could not be confirmed.")
       }
@@ -117,6 +152,8 @@ export function WorkspacePaneOwnershipBoundary({
     },
     [target],
   )
+
+  const claim = claimState?.targetKey === targetKey ? claimState.result : null
 
   if (skipped) {
     return (

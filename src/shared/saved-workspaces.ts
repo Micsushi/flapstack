@@ -432,3 +432,43 @@ export type SavedWorkspaceScope = z.infer<typeof savedWorkspaceScopeSchema>
 export type SavedWorkspaceOwner = z.infer<typeof savedWorkspaceOwnerSchema>
 export type SavedWorkspaceRosterEntry = z.infer<typeof savedWorkspaceRosterEntrySchema>
 export type SavedWorkspaceDto = z.infer<typeof savedWorkspaceDtoSchema>
+
+export type SavedWorkspaceOperationAgent = {
+  agentId: string
+  chatId: string | null
+  chatName: string | null
+  chatState: "pending" | "ready" | "archived"
+  runId: string | null
+  parentAgentId: string | null
+  replacedAgentId: string | null
+  role: string
+  name: string
+  harness: string | null
+  status: string
+  progressPercent: number
+  resultSummary: string | null
+  stopReason: string | null
+  blockerCount: number
+  queuedAt: number
+  startedAt: number | null
+  completedAt: number | null
+}
+
+export type SavedWorkspaceOperationProjection = {
+  workspaceId: string
+  orchestrationId: string
+  taskId: string
+  taskName: string
+  projectId: string
+  initiatingChatId: string
+  initiatingChatName: string | null
+  status: string
+  roster: SavedWorkspaceRosterEntry[]
+  agents: SavedWorkspaceOperationAgent[]
+  materializedAgentCount: number
+  pendingAgentCount: number
+  overflowChatCount: number
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}

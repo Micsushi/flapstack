@@ -3,6 +3,7 @@ import { ExternalLink, Pin, Play, Trash2 } from "lucide-react"
 import {
   savedWorkspacePaneBindingSchema,
   savedWorkspacePinnedContextSchema,
+  type SavedWorkspaceOperationProjection,
   type SavedWorkspacePaneBinding,
   type SavedWorkspacePinnedContext,
 } from "../../../shared/saved-workspaces"
@@ -19,14 +20,20 @@ export function WorkspacePaneAdapter({
   projectId,
   workspaceId,
   pane,
+  ownershipChatIds,
   initiallySkipped,
   ...callbacks
-}: WorkspacePaneAdapterProps & { projectId?: string; initiallySkipped?: boolean }) {
+}: WorkspacePaneAdapterProps & {
+  projectId?: string
+  ownershipChatIds?: string[]
+  initiallySkipped?: boolean
+}) {
   return (
     <WorkspacePaneOwnershipBoundary
       projectId={projectId}
       workspaceId={workspaceId}
       pane={pane}
+      chatIds={ownershipChatIds}
       initiallySkipped={initiallySkipped}
     >
       <WorkspacePaneAdapterContent workspaceId={workspaceId} pane={pane} {...callbacks} />
@@ -37,10 +44,12 @@ export function WorkspacePaneAdapter({
 type WorkspacePaneAdapterProps = {
   workspaceId: string
   pane: SavedWorkspacePane
+  readOnly?: boolean
   onReplaceBinding: (binding: SavedWorkspacePaneBinding) => void
   onRemove: () => void
   onPinContext: (context: SavedWorkspacePinnedContext) => void
   onUnpinContext: (contextId: string) => void
+  onSelectOperationAgent?: (orchestrationId: string, agentId: string) => void
 }
 
 function WorkspacePaneAdapterContent({
@@ -50,6 +59,8 @@ function WorkspacePaneAdapterContent({
   onRemove,
   onPinContext,
   onUnpinContext,
+  onSelectOperationAgent,
+  readOnly = false,
 }: WorkspacePaneAdapterProps) {
   const resolution = trpc.savedWorkspaces.resolvePane.useQuery({ workspaceId, paneId: pane.id })
 
@@ -67,35 +78,50 @@ function WorkspacePaneAdapterContent({
         >
           {resolution.data?.message ?? "The saved target could not be restored."}
         </PaneStatus>
-        <WorkspacePaneBindingForm
-          initialBinding={pane.binding}
-          submitLabel="Repair pane"
-          onSubmit={onReplaceBinding}
-        />
-        <Button type="button" variant="outline" className="mt-3" onClick={onRemove}>
-          <Trash2 className="mr-1 h-4 w-4" /> Remove pane
-        </Button>
+        {readOnly ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Restore this archived workspace before repairing or removing panes.
+          </p>
+        ) : (
+          <>
+            <WorkspacePaneBindingForm
+              initialBinding={pane.binding}
+              submitLabel="Repair pane"
+              onSubmit={onReplaceBinding}
+            />
+            <Button type="button" variant="outline" className="mt-3" onClick={onRemove}>
+              <Trash2 className="mr-1 h-4 w-4" /> Remove pane
+            </Button>
+          </>
+        )}
       </div>
     )
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-workspace-pane-adapter={pane.binding.type}>
-      <PinnedContextBar resolutions={resolution.data.pinnedContext} onUnpin={onUnpinContext} />
+      <PinnedContextBar
+        resolutions={resolution.data.pinnedContext}
+        onUnpin={readOnly ? undefined : onUnpinContext}
+      />
       <div className="min-h-0 flex-1">
         <ReadyPane
           workspaceId={workspaceId}
           pane={pane}
           terminalCwd={resolution.data.terminalCwd}
+          readOnly={readOnly}
           onRemove={onRemove}
+          onSelectOperationAgent={readOnly ? undefined : onSelectOperationAgent}
         />
       </div>
-      <details className="shrink-0 border-t border-border bg-muted/20 px-3 py-2 text-xs">
-        <summary className="cursor-pointer select-none font-medium">
-          <Pin className="mr-1 inline h-3.5 w-3.5" /> Pin context
-        </summary>
-        <PinnedContextForm pane={pane} onSubmit={onPinContext} />
-      </details>
+      {!readOnly && (
+        <details className="shrink-0 border-t border-border bg-muted/20 px-3 py-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium">
+            <Pin className="mr-1 inline h-3.5 w-3.5" /> Pin context
+          </summary>
+          <PinnedContextForm pane={pane} onSubmit={onPinContext} />
+        </details>
+      )}
     </div>
   )
 }
@@ -104,29 +130,42 @@ function ReadyPane({
   workspaceId,
   pane,
   terminalCwd,
+  readOnly,
   onRemove,
+  onSelectOperationAgent,
 }: {
   workspaceId: string
   pane: SavedWorkspacePane
   terminalCwd: string | null
+  readOnly: boolean
   onRemove: () => void
+  onSelectOperationAgent?: (orchestrationId: string, agentId: string) => void
 }) {
   switch (pane.binding.type) {
     case "chat":
       return <WorkspaceChatPane chatId={pane.binding.chatId} />
     case "terminal":
       return terminalCwd ? (
-        <WorkspaceTerminalPane workspaceId={workspaceId} pane={pane} terminalCwd={terminalCwd} />
+        <WorkspaceTerminalPane
+          workspaceId={workspaceId}
+          pane={pane}
+          terminalCwd={terminalCwd}
+          readOnly={readOnly}
+        />
       ) : (
         <PaneStatus title="Terminal unavailable">Verified terminal directory missing.</PaneStatus>
       )
     case "file":
       return pane.binding.worktreePath ? (
-        <FileViewerSidebar
-          filePath={pane.binding.path}
-          projectPath={pane.binding.worktreePath}
-          onClose={onRemove}
-        />
+        readOnly ? (
+          <ArchivedFileReferencePane path={pane.binding.path} />
+        ) : (
+          <FileViewerSidebar
+            filePath={pane.binding.path}
+            projectPath={pane.binding.worktreePath}
+            onClose={onRemove}
+          />
+        )
       ) : null
     case "diff":
       return <ChangesPanel worktreePath={pane.binding.worktreePath} />
@@ -135,8 +174,197 @@ function ReadyPane({
     case "agent-roster":
     case "selected-agent":
     case "activity":
-      return <PaneStatus title="Operation pane">Owned by S4-F4-T6.</PaneStatus>
+      return (
+        <WorkspaceOperationPane
+          workspaceId={workspaceId}
+          binding={pane.binding}
+          onSelectAgent={onSelectOperationAgent}
+        />
+      )
   }
+}
+
+export function ArchivedFileReferencePane({ path }: { path: string }) {
+  return (
+    <PaneStatus title="Archived file reference">
+      <p className="break-all">{path}</p>
+      <p className="mt-2">Restore this workspace before opening or closing its file pane.</p>
+    </PaneStatus>
+  )
+}
+
+function WorkspaceOperationPane({
+  workspaceId,
+  binding,
+  onSelectAgent,
+}: {
+  workspaceId: string
+  binding: Extract<
+    SavedWorkspacePaneBinding,
+    { type: "agent-roster" | "selected-agent" | "activity" }
+  >
+  onSelectAgent?: (orchestrationId: string, agentId: string) => void
+}) {
+  const operation = trpc.savedWorkspaces.getOperation.useQuery(
+    { workspaceId },
+    { refetchInterval: 5_000 },
+  )
+  if (operation.isLoading) {
+    return <PaneStatus title="Restoring operation">Reading durable agent lineage…</PaneStatus>
+  }
+  if (operation.error || !operation.data) {
+    return (
+      <PaneStatus title="Operation unavailable">
+        {operation.error?.message ?? "The operation workspace could not be projected."}
+      </PaneStatus>
+    )
+  }
+  if (operation.data.orchestrationId !== binding.orchestrationId) {
+    return (
+      <PaneStatus title="Operation identity stale">
+        Repair this pane before using agent controls.
+      </PaneStatus>
+    )
+  }
+  if (binding.type === "agent-roster") {
+    return (
+      <OperationRosterPane
+        operation={operation.data}
+        onSelectAgent={
+          onSelectAgent ? (agentId) => onSelectAgent(binding.orchestrationId, agentId) : undefined
+        }
+      />
+    )
+  }
+  if (binding.type === "selected-agent") {
+    return <OperationSelectedAgentPane operation={operation.data} agentId={binding.agentId} />
+  }
+  return <OperationActivityPane operation={operation.data} />
+}
+
+export function OperationRosterPane({
+  operation,
+  onSelectAgent,
+}: {
+  operation: SavedWorkspaceOperationProjection
+  onSelectAgent?: (agentId: string) => void
+}) {
+  return (
+    <section className="flex h-full min-h-0 flex-col" aria-label="Operation agent navigator">
+      <header className="shrink-0 border-b border-border px-3 py-2">
+        <h3 className="truncate text-sm font-medium">{operation.taskName}</h3>
+        <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+          {operation.materializedAgentCount} agent chats ready · {operation.pendingAgentCount}{" "}
+          pending
+          {operation.overflowChatCount > 0
+            ? ` · ${operation.overflowChatCount} chats use navigator overflow`
+            : ""}
+        </p>
+      </header>
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        <div className="mb-2 rounded border bg-muted/20 px-2 py-1.5 text-xs">
+          Lead · {operation.initiatingChatName || "Initiating chat"}
+        </div>
+        <ul className="space-y-1" aria-label="Operation agents">
+          {operation.agents.map((agent) => (
+            <li key={agent.agentId}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-2 rounded border px-2 py-1.5 text-left text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!agent.chatId || !onSelectAgent}
+                aria-label={
+                  !onSelectAgent
+                    ? `${agent.name} selection is read-only`
+                    : agent.chatId
+                      ? `Show ${agent.name} in selected agent pane`
+                      : `${agent.name} chat is not ready`
+                }
+                onClick={() => onSelectAgent?.(agent.agentId)}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{agent.name}</span>
+                  <span className="block truncate text-muted-foreground">
+                    {agent.role} · {agent.status}
+                  </span>
+                </span>
+                <span className="shrink-0 tabular-nums">{agent.progressPercent}%</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}
+
+export function OperationSelectedAgentPane({
+  operation,
+  agentId,
+}: {
+  operation: SavedWorkspaceOperationProjection
+  agentId: string | null
+}) {
+  if (!agentId) {
+    return (
+      <PaneStatus title="Select an agent">
+        Use the agent navigator to show one descendant chat here.
+      </PaneStatus>
+    )
+  }
+  const agent = operation.agents.find((candidate) => candidate.agentId === agentId)
+  if (!agent) {
+    return <PaneStatus title="Selected agent missing">Repair the saved selection.</PaneStatus>
+  }
+  if (!agent.chatId) {
+    return (
+      <PaneStatus title={`${agent.name} is ${agent.status}`}>
+        The durable agent exists, but its chat has not materialized yet.
+      </PaneStatus>
+    )
+  }
+  if (agent.chatState === "archived") {
+    return (
+      <PaneStatus title={`${agent.name} chat archived`}>
+        The agent remains in lineage. Restore its chat or select another agent.
+      </PaneStatus>
+    )
+  }
+  return <WorkspaceChatPane chatId={agent.chatId} />
+}
+
+export function OperationActivityPane({
+  operation,
+}: {
+  operation: SavedWorkspaceOperationProjection
+}) {
+  return (
+    <section className="flex h-full min-h-0 flex-col" aria-label="Operation status and artifacts">
+      <header className="shrink-0 border-b border-border px-3 py-2">
+        <h3 className="text-sm font-medium">Operation {operation.status}</h3>
+        <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+          {operation.agents.length} agents · {operation.materializedAgentCount} chats materialized
+        </p>
+      </header>
+      <ul
+        className="min-h-0 flex-1 space-y-2 overflow-auto p-2"
+        aria-label="Agent status summaries"
+      >
+        {operation.agents.map((agent) => (
+          <li key={agent.agentId} className="rounded border p-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <strong className="truncate">{agent.name}</strong>
+              <span className="shrink-0">{agent.status}</span>
+            </div>
+            <p className="mt-1 text-muted-foreground">
+              {agent.resultSummary ||
+                agent.stopReason ||
+                "No durable result or artifact summary yet."}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
 }
 
 function WorkspaceChatPane({ chatId }: { chatId: string }) {
@@ -180,13 +408,22 @@ export function WorkspaceTerminalPane({
   workspaceId,
   pane,
   terminalCwd,
+  readOnly = false,
 }: {
   workspaceId: string
   pane: SavedWorkspacePane
   terminalCwd: string
+  readOnly?: boolean
 }) {
   const [started, setStarted] = useState(false)
   if (pane.binding.type !== "terminal") return null
+  if (readOnly) {
+    return (
+      <PaneStatus title="Archived terminal metadata">
+        Restore this workspace before starting a new terminal process.
+      </PaneStatus>
+    )
+  }
   if (!started) {
     return (
       <PaneStatus title="Terminal metadata restored">
@@ -239,7 +476,7 @@ function PinnedContextBar({
     label: string
     message: string
   }>
-  onUnpin: (contextId: string) => void
+  onUnpin?: (contextId: string) => void
 }) {
   if (resolutions.length === 0) return null
   return (
@@ -253,14 +490,16 @@ function PinnedContextBar({
             <span className="max-w-48 truncate" title={item.message}>
               {item.label} · {item.state}
             </span>
-            <button
-              type="button"
-              className="rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              aria-label={`Unpin ${item.label}`}
-              onClick={() => onUnpin(item.id)}
-            >
-              ×
-            </button>
+            {onUnpin && (
+              <button
+                type="button"
+                className="rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label={`Unpin ${item.label}`}
+                onClick={() => onUnpin(item.id)}
+              >
+                ×
+              </button>
+            )}
           </li>
         ))}
       </ul>

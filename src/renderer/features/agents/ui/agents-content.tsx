@@ -1181,6 +1181,7 @@ function AgentsContentInner() {
         ) : desktopView === "saved-workspaces" ? (
           <SavedWorkspacesView
             projectId={selectedProject?.id ?? null}
+            initialProjectId={workspaceWindowParams.projectId}
             initialChatId={selectedChatId}
             initialWorkspaceId={workspaceWindowParams.workspaceId}
             popoutPaneId={workspaceWindowParams.paneId}
@@ -1329,6 +1330,7 @@ function AgentsContentInner() {
           ) : desktopView === "saved-workspaces" ? (
             <SavedWorkspacesView
               projectId={selectedProject?.id ?? null}
+              initialProjectId={workspaceWindowParams.projectId}
               initialChatId={selectedChatId}
               initialWorkspaceId={workspaceWindowParams.workspaceId}
               popoutPaneId={workspaceWindowParams.paneId}

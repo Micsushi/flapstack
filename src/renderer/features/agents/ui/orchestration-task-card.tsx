@@ -976,6 +976,7 @@ export function OrchestrationTaskCard({
               utils.chats.list.invalidate(),
               utils.chats.get.invalidate({ id: currentChatId }),
               utils.spawnedAgents.previewLineage.invalidate(),
+              utils.savedWorkspaces.list.invalidate(),
             ])
           },
         },

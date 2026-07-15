@@ -7,9 +7,15 @@ import {
   type SavedWorkspaceLayout,
   type SavedWorkspaceOwner,
   type SavedWorkspacePaneBinding,
+  type SavedWorkspaceRosterEntry,
   type SavedWorkspaceScope,
 } from "../../../shared/saved-workspaces"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
+import {
+  deriveOperationRoster,
+  isOperationWorkspaceDeletionIntent,
+  markOperationWorkspaceDeletedInTransaction,
+} from "./operations"
 
 const WORKSPACE_COLUMNS = `
   id, name, scope_type, project_id, task_id, owner_kind, orchestration_id,
@@ -41,6 +47,7 @@ export type SavedWorkspaceRecord = {
   layoutVersion: 1
   layout: SavedWorkspaceLayout | null
   layoutIssue: string | null
+  roster: SavedWorkspaceRosterEntry[]
   sortOrder: string
   version: number
   createdAt: number
@@ -48,7 +55,10 @@ export type SavedWorkspaceRecord = {
   archivedAt: number | null
 }
 
-export type SavedWorkspaceSummary = Omit<SavedWorkspaceRecord, "layout" | "layoutIssue"> & {
+export type SavedWorkspaceSummary = Omit<
+  SavedWorkspaceRecord,
+  "layout" | "layoutIssue" | "roster"
+> & {
   layoutState: "ready" | "repair-required"
 }
 
@@ -66,6 +76,14 @@ export type SavedWorkspaceDeleteImpact = {
     worktreePaths: string[]
     browserUrls: string[]
   }
+  operation: {
+    taskId: string
+    status: string
+    active: boolean
+    agentCount: number
+    materializedChatCount: number
+    canRegenerateFromLineage: true
+  } | null
   preserves: readonly [
     "projects",
     "tasks",
@@ -127,8 +145,10 @@ export class SavedWorkspaceLifecycleService {
       const conditions: string[] = []
       const parameters: unknown[] = []
       if (input.projectId) {
-        conditions.push("scope_type = 'project' AND project_id = ?")
-        parameters.push(input.projectId)
+        conditions.push(
+          "((scope_type = 'project' AND project_id = ?) OR (scope_type = 'task' AND task_id IN (SELECT id FROM tasks WHERE project_id = ?)))",
+        )
+        parameters.push(input.projectId, input.projectId)
       }
       if (input.taskId) {
         conditions.push("scope_type = 'task' AND task_id = ?")
@@ -152,19 +172,21 @@ export class SavedWorkspaceLifecycleService {
            ORDER BY (archived_at IS NOT NULL), sort_order, updated_at DESC, id`,
         )
         .all(...parameters) as WorkspaceRow[]
-      return rows.map((row) => {
-        const record = toRecord(row)
-        const { layout, layoutIssue, ...summary } = record
-        return {
-          ...summary,
-          layoutState: layout && !layoutIssue ? "ready" : "repair-required",
-        }
-      })
+      return rows
+        .filter((row) => !isOperationWorkspaceDeletionIntent(row))
+        .map((row) => {
+          const record = toRecord(database, row, false)
+          const { layout, layoutIssue, roster: _roster, ...summary } = record
+          return {
+            ...summary,
+            layoutState: layout && !layoutIssue ? "ready" : "repair-required",
+          }
+        })
     })
   }
 
   get(workspaceId: string): SavedWorkspaceRecord {
-    return this.withDatabase((database) => toRecord(requireRow(database, workspaceId)))
+    return this.withDatabase((database) => toRecord(database, requireRow(database, workspaceId)))
   }
 
   create(input: {
@@ -201,7 +223,7 @@ export class SavedWorkspaceLifecycleService {
               now,
             )
           this.afterWrite("create")
-          return toRecord(requireRow(database, id))
+          return toRecord(database, requireRow(database, id))
         })
         .immediate(),
     )
@@ -255,6 +277,9 @@ export class SavedWorkspaceLifecycleService {
         .transaction(() => {
           const source = requireRow(database, input.workspaceId)
           requireVersion(source, input.expectedVersion)
+          if (source.owner_kind === "orchestration") {
+            fail("invalid-input", "Operation workspaces cannot be duplicated as manual workspaces.")
+          }
           const parsedLayout = savedWorkspaceLayoutJsonSchema.safeParse(source.layout_json)
           if (!parsedLayout.success) {
             fail("invalid-input", "Repair the source workspace layout before duplicating it.")
@@ -281,13 +306,17 @@ export class SavedWorkspaceLifecycleService {
               now,
             )
           this.afterWrite("duplicate")
-          return toRecord(requireRow(database, id))
+          return toRecord(database, requireRow(database, id))
         })
         .immediate(),
     )
   }
 
-  archive(input: { workspaceId: string; expectedVersion: number }): {
+  archive(input: {
+    workspaceId: string
+    expectedVersion: number
+    confirmActiveOperationImpact?: boolean
+  }): {
     workspace: SavedWorkspaceRecord
     undo: { workspaceId: string; expectedVersion: number }
   } {
@@ -295,14 +324,20 @@ export class SavedWorkspaceLifecycleService {
       input.workspaceId,
       input.expectedVersion,
       "archive",
-      (database, now) =>
-        database
+      (database, now) => {
+        requireActiveOperationImpactConfirmation(
+          database,
+          requireRow(database, input.workspaceId),
+          input.confirmActiveOperationImpact,
+        )
+        return database
           .prepare(
             `UPDATE saved_workspaces
              SET archived_at = ?, version = version + 1, updated_at = ?
              WHERE id = ? AND version = ? AND archived_at IS NULL`,
           )
-          .run(now, now, input.workspaceId, input.expectedVersion),
+          .run(now, now, input.workspaceId, input.expectedVersion)
+      },
     )
     return {
       workspace,
@@ -323,10 +358,16 @@ export class SavedWorkspaceLifecycleService {
   }
 
   previewDelete(workspaceId: string): SavedWorkspaceDeleteImpact {
-    return this.withDatabase((database) => deleteImpact(requireRow(database, workspaceId)))
+    return this.withDatabase((database) =>
+      deleteImpact(database, requireRow(database, workspaceId)),
+    )
   }
 
-  delete(input: { workspaceId: string; expectedVersion: number }): {
+  delete(input: {
+    workspaceId: string
+    expectedVersion: number
+    confirmActiveOperationImpact?: boolean
+  }): {
     deleted: true
     impact: SavedWorkspaceDeleteImpact
   } {
@@ -335,10 +376,22 @@ export class SavedWorkspaceLifecycleService {
         .transaction(() => {
           const row = requireRow(database, input.workspaceId)
           requireVersion(row, input.expectedVersion)
-          const impact = deleteImpact(row)
-          const result = database
-            .prepare("DELETE FROM saved_workspaces WHERE id = ? AND version = ?")
-            .run(input.workspaceId, input.expectedVersion)
+          requireActiveOperationImpactConfirmation(
+            database,
+            row,
+            input.confirmActiveOperationImpact,
+          )
+          const impact = deleteImpact(database, row)
+          const result =
+            row.owner_kind === "orchestration" && row.task_id
+              ? markOperationWorkspaceDeletedInTransaction(database, {
+                  workspaceId: row.id,
+                  taskId: row.task_id,
+                  expectedVersion: input.expectedVersion,
+                })
+              : database
+                  .prepare("DELETE FROM saved_workspaces WHERE id = ? AND version = ?")
+                  .run(input.workspaceId, input.expectedVersion)
           if (result.changes !== 1) conflict(database, input.workspaceId)
           this.afterWrite("delete")
           return { deleted: true as const, impact }
@@ -389,7 +442,7 @@ export class SavedWorkspaceLifecycleService {
             .run(JSON.stringify(layout.data), now, input.workspaceId, input.expectedVersion)
           if (result.changes !== 1) conflict(database, input.workspaceId)
           this.afterWrite("repair-binding")
-          return toRecord(requireRow(database, input.workspaceId))
+          return toRecord(database, requireRow(database, input.workspaceId))
         })
         .immediate(),
     )
@@ -408,7 +461,7 @@ export class SavedWorkspaceLifecycleService {
           const result = update(database, nowEpochSeconds())
           if (result.changes !== 1) conflict(database, workspaceId)
           this.afterWrite(operation)
-          return toRecord(requireRow(database, workspaceId))
+          return toRecord(database, requireRow(database, workspaceId))
         })
         .immediate(),
     )
@@ -441,7 +494,9 @@ function requireRow(database: Database.Database, workspaceId: string): Workspace
   const row = database
     .prepare(`SELECT ${WORKSPACE_COLUMNS} FROM saved_workspaces WHERE id = ?`)
     .get(workspaceId) as WorkspaceRow | undefined
-  if (!row) fail("not-found", `Saved workspace ${workspaceId} was not found.`)
+  if (!row || isOperationWorkspaceDeletionIntent(row)) {
+    fail("not-found", `Saved workspace ${workspaceId} was not found.`)
+  }
   return row
 }
 
@@ -456,16 +511,22 @@ function requireVersion(row: WorkspaceRow, expectedVersion: number): void {
 
 function conflict(database: Database.Database, workspaceId: string): never {
   const current = database
-    .prepare("SELECT version FROM saved_workspaces WHERE id = ?")
-    .get(workspaceId) as { version: number } | undefined
-  if (!current) fail("not-found", `Saved workspace ${workspaceId} was not found.`)
+    .prepare(`SELECT ${WORKSPACE_COLUMNS} FROM saved_workspaces WHERE id = ?`)
+    .get(workspaceId) as WorkspaceRow | undefined
+  if (!current || isOperationWorkspaceDeletionIntent(current)) {
+    fail("not-found", `Saved workspace ${workspaceId} was not found.`)
+  }
   fail(
     "conflict",
     `Saved workspace changed in another window. Current version is ${current.version}.`,
   )
 }
 
-function toRecord(row: WorkspaceRow): SavedWorkspaceRecord {
+function toRecord(
+  database: Database.Database,
+  row: WorkspaceRow,
+  includeRoster = true,
+): SavedWorkspaceRecord {
   const parsed = savedWorkspaceLayoutJsonSchema.safeParse(row.layout_json)
   const scope: SavedWorkspaceScope =
     row.scope_type === "project"
@@ -485,6 +546,10 @@ function toRecord(row: WorkspaceRow): SavedWorkspaceRecord {
     layoutIssue: parsed.success
       ? null
       : parsed.error.issues.map((issue) => issue.message).join(" "),
+    roster:
+      includeRoster && row.owner_kind === "orchestration" && row.task_id
+        ? deriveOperationRoster(database, row.task_id)
+        : [],
     sortOrder: row.sort_order,
     version: row.version,
     createdAt: epochSecondsToMilliseconds(row.created_at) ?? 0,
@@ -493,7 +558,7 @@ function toRecord(row: WorkspaceRow): SavedWorkspaceRecord {
   }
 }
 
-function deleteImpact(row: WorkspaceRow): SavedWorkspaceDeleteImpact {
+function deleteImpact(database: Database.Database, row: WorkspaceRow): SavedWorkspaceDeleteImpact {
   const references = {
     chatIds: new Set<string>(),
     orchestrationIds: new Set<string>(),
@@ -553,6 +618,7 @@ function deleteImpact(row: WorkspaceRow): SavedWorkspaceDeleteImpact {
       worktreePaths: [...references.worktreePaths].sort(),
       browserUrls: [...references.browserUrls].sort(),
     },
+    operation: operationImpact(database, row),
     preserves: [
       "projects",
       "tasks",
@@ -563,6 +629,48 @@ function deleteImpact(row: WorkspaceRow): SavedWorkspaceDeleteImpact {
       "orchestration-agents",
       "usage",
     ],
+  }
+}
+
+function operationImpact(
+  database: Database.Database,
+  row: WorkspaceRow,
+): SavedWorkspaceDeleteImpact["operation"] {
+  if (row.owner_kind !== "orchestration" || !row.task_id) return null
+  const operation = database
+    .prepare(
+      `SELECT o.status,
+              count(a.id) AS agent_count,
+              count(DISTINCT a.chat_id) AS materialized_chat_count
+       FROM task_orchestrations o
+       LEFT JOIN orchestration_agents a ON a.task_id = o.task_id
+       WHERE o.task_id = ?
+       GROUP BY o.task_id, o.status`,
+    )
+    .get(row.task_id) as
+    { status: string; agent_count: number; materialized_chat_count: number } | undefined
+  if (!operation) return null
+  return {
+    taskId: row.task_id,
+    status: operation.status,
+    active: !["completed", "failed", "stopped"].includes(operation.status),
+    agentCount: operation.agent_count,
+    materializedChatCount: operation.materialized_chat_count,
+    canRegenerateFromLineage: true,
+  }
+}
+
+function requireActiveOperationImpactConfirmation(
+  database: Database.Database,
+  row: WorkspaceRow,
+  confirmed: boolean | undefined,
+): void {
+  const impact = operationImpact(database, row)
+  if (impact?.active && !confirmed) {
+    fail(
+      "invalid-input",
+      "Preview and confirm the active operation impact before archiving or deleting this workspace.",
+    )
   }
 }
 

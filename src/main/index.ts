@@ -18,6 +18,7 @@ import {
 import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
 import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
 import { AutomationScheduler } from "./lib/automation/scheduler"
+import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
@@ -948,6 +949,10 @@ if (gotTheLock) {
                 })
                 await automationScheduler.start()
               },
+            },
+            {
+              name: "Operation workspace reconciliation",
+              run: () => reconcileOperationWorkspaces(getDatabasePath()),
             },
             {
               name: "Pending run scheduler",

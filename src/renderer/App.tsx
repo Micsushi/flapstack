@@ -129,6 +129,7 @@ function AppContent() {
             ...payload.chatIds.map((chatId) => trpcUtils.chats.get.invalidate({ id: chatId })),
             trpcUtils.spawnedAgents.getTaskOverview.invalidate({ taskId: payload.taskId }),
             trpcUtils.spawnedAgents.getLineage.invalidate({ taskId: payload.taskId }),
+            trpcUtils.savedWorkspaces.getOperation.invalidate(),
             ...payload.chatIds.map((chatId) =>
               trpcUtils.spawnedAgents.previewLineage.invalidate({ chatId }),
             ),
@@ -154,6 +155,7 @@ function AppContent() {
       trpcUtils.chats.listArchived,
       trpcUtils.projects.list,
       trpcUtils.projects.listArchived,
+      trpcUtils.savedWorkspaces.getOperation,
       trpcUtils.spawnedAgents.getLineage,
       trpcUtils.spawnedAgents.getTaskOverview,
       trpcUtils.spawnedAgents.previewLineage,
@@ -209,6 +211,7 @@ function AppContent() {
     if (params.workspaceId) {
       setShowNewChatForm(false)
       setDesktopView("saved-workspaces")
+      setSelectedProject(null)
       if (params.projectId) {
         void trpcUtils.projects.list.fetch().then((projects) => {
           const project = projects.find((item) => item.id === params.projectId)
