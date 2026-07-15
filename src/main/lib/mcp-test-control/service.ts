@@ -1842,13 +1842,15 @@ export async function launchHarnessTestRun(input: {
     worktreePath: project.path,
     projectPath: project.path,
   } as const
-  const { createMainRunLauncher } = await import("../main-run-launcher")
-  void createMainRunLauncher()(run).catch((error: unknown) =>
-    console.warn(
-      `[dev-mcp] ${harness} test run ${runId} ended with:`,
-      error instanceof Error ? error.message : "unknown failure",
-    ),
-  )
+  const { getMainRuntimeLaunchService } = await import("../main-run-launcher")
+  void getMainRuntimeLaunchService(getDatabasePath())
+    .launch(run)
+    .catch((error: unknown) =>
+      console.warn(
+        `[dev-mcp] ${harness} test run ${runId} ended with:`,
+        error instanceof Error ? error.message : "unknown failure",
+      ),
+    )
   return {
     launched: true,
     runId,

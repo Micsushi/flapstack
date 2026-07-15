@@ -320,6 +320,11 @@ describe("project vault run context", () => {
     database
       .insert(agentRuns)
       .values({
+        ...constructRuntimeSnapshot(database, {
+          chatId,
+          harness,
+          permission: runtimePermissionSnapshot("read-only", null),
+        }),
         id,
         chatId,
         harness,

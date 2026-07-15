@@ -163,6 +163,7 @@ function createTestSchema() {
       custom_permissions text,
       harness text,
       model text,
+      runtime_preference text,
       created_at integer,
       updated_at integer,
       archived_at integer,
@@ -177,6 +178,16 @@ function createTestSchema() {
       initiator_chat_id text,
       parent_run_id text,
       ancestor_chat_ids text
+    )`,
+    `CREATE TABLE agent_runtime_defaults (
+      id text PRIMARY KEY NOT NULL,
+      scope_type text NOT NULL,
+      scope_id text,
+      harness text NOT NULL,
+      preference text NOT NULL,
+      version integer DEFAULT 1 NOT NULL,
+      created_at integer,
+      updated_at integer
     )`,
     "CREATE INDEX chats_worktree_path_idx ON chats(worktree_path)",
     "CREATE INDEX chats_task_id_idx ON chats(task_id)",
@@ -214,7 +225,15 @@ function createTestSchema() {
       started_at integer,
       completed_at integer,
       before_checkpoint_id text,
-      after_checkpoint_id text
+      after_checkpoint_id text,
+      runtime_snapshot_version integer DEFAULT 0 NOT NULL,
+      runtime_preference text DEFAULT 'flapstack-native' NOT NULL,
+      runtime_preference_source text DEFAULT 'legacy' NOT NULL,
+      resolved_runtime text DEFAULT 'flapstack-native' NOT NULL,
+      runtime_adapter_version text DEFAULT 'legacy-stage3' NOT NULL,
+      runtime_protocol_version text DEFAULT 'legacy-stage3' NOT NULL,
+      runtime_capability_snapshot text DEFAULT '{}' NOT NULL,
+      runtime_control_snapshot text DEFAULT '{}' NOT NULL
     )`,
     "CREATE INDEX agent_runs_chat_id_idx ON agent_runs(chat_id)",
     `CREATE TABLE checkpoints (

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const mocks = vi.hoisted(() => ({
   checkOfflineFallback: vi.fn(),
@@ -191,8 +192,12 @@ function seedConversation(
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, initial_prompt, status, started_at
-    ) VALUES (?, 'chat-1', 'sub-1', 'claude-code', 'full-access', ?, ?, ?, ?, ?)`,
+      prompt_message_id, initial_prompt, status, started_at,
+      runtime_snapshot_version, runtime_preference, runtime_preference_source,
+      resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+      runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'chat-1', 'sub-1', 'claude-code', 'full-access', ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   for (const run of runs) {
     insert.run(
@@ -202,6 +207,7 @@ function seedConversation(
       `Prompt for ${run.id}`,
       run.status,
       run.startedAt,
+      ...testRuntimeSnapshotSqlValues("claude-code"),
     )
   }
   sqlite.close()

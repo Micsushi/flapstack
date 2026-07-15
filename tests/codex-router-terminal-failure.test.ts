@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const mocks = vi.hoisted(() => ({
   createACPProvider: vi.fn(),
@@ -298,16 +299,15 @@ function seedPendingRun(sqlite: Database.Database): void {
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, initial_prompt, status, started_at, runtime_snapshot_version,
-        runtime_preference, runtime_preference_source, resolved_runtime,
-        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-        runtime_control_snapshot
+        prompt_message_id, initial_prompt, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
       ) VALUES ('run-auth', 'chat-auth', 'sub-auth', 'codex', 'full-access', ?,
         'mcp-auth-prompt', 'Test provider auth failure', 'pending', 1,
-        1, 'auto', 'product', 'codex', 'test-fixture', 'test-fixture',
-        '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+        ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory)
+    .run(directory, ...testRuntimeSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO mcp_audit_records (
@@ -325,16 +325,14 @@ function seedSecondPendingRun(): void {
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, status, started_at, runtime_snapshot_version,
-        runtime_preference, runtime_preference_source, resolved_runtime,
-        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
-        runtime_control_snapshot
+        prompt_message_id, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
       ) VALUES ('run-second', 'chat-auth', 'sub-auth', 'codex', 'full-access', ?,
-        'mcp-second-prompt', 'pending', 2,
-        1, 'auto', 'product', 'codex', 'test-fixture', 'test-fixture',
-        '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+        'mcp-second-prompt', 'pending', 2, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory)
+    .run(directory, ...testRuntimeSnapshotSqlValues())
   sqlite.close()
 }
 

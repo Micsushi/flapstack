@@ -10,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { readMcpCallerIdentity } from "../src/main/lib/mcp-control/identity"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const transports: StdioClientTransport[] = []
 const directories: string[] = []
@@ -42,9 +43,15 @@ describe("Flapstack MCP stdio transport", () => {
       .run()
     database
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot, status, started_at) VALUES ('run-transport-test', 'chat-transport-test', 'codex', 'read-only', 1, 'flapstack-native', 'product', 'flapstack-native', 'test', 'test', '{}', '{}', 'running', 0)",
+        `INSERT INTO agent_runs (
+          id, chat_id, harness, permission_mode, status, started_at,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES ('run-transport-test', 'chat-transport-test', 'codex', 'read-only',
+          'running', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run()
+      .run(...testRuntimeSnapshotSqlValues())
     database.close()
     const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
     const transport = new StdioClientTransport({

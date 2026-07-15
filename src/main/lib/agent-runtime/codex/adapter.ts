@@ -22,6 +22,7 @@ import {
   type CodexProtocolClient,
   type CodexProtocolServerRequest,
 } from "./protocol-client"
+import { sanitizeRuntimeText } from "../sanitizer"
 
 const execFileAsync = promisify(execFile)
 const PERMISSION_TIMEOUT_MS = 60_000
@@ -39,6 +40,8 @@ type CodexRunState = {
   uncertain: boolean
   streaming: boolean
   abortListener: (() => void) | null
+  cancellationPromise: Promise<void> | null
+  cancelled: boolean
 }
 
 type CodexRuntimeAdapterOptions = {
@@ -54,6 +57,9 @@ type CodexRuntimeAdapterOptions = {
   resolvePersistedSession?: (
     context: RuntimeAdapterContext,
   ) => Promise<RuntimeAdapterSession | null> | RuntimeAdapterSession | null
+  resolvePersistedTurn?: (
+    context: RuntimeAdapterContext,
+  ) => Promise<RuntimeAdapterTurn | null> | RuntimeAdapterTurn | null
   requestPermission?: (
     context: RuntimeAdapterContext,
     request: CodexProtocolServerRequest,
@@ -321,15 +327,44 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
 
   async cancel(context: RuntimeAdapterContext, _reason: string): Promise<void> {
     const state = this.states.get(context.runId)
-    if (!state?.threadId || !state.turnId || state.terminal) return
+    if (!state) return await this.cancelPersisted(context)
+    if (!state.threadId || !state.turnId || state.terminal || state.cancelled) {
+      await state.cancellationPromise
+      return
+    }
+    if (state.cancellationPromise) return await state.cancellationPromise
+    state.cancelled = true
+    state.cancellationPromise = (async () => {
+      try {
+        await state.client.request("turn/interrupt", {
+          threadId: state.threadId,
+          turnId: state.turnId,
+        })
+      } catch (error) {
+        state.uncertain = true
+        throw error
+      }
+    })()
+    return await state.cancellationPromise
+  }
+
+  private async cancelPersisted(context: RuntimeAdapterContext): Promise<void> {
+    const session = await this.options.resolvePersistedSession?.(context)
+    const turn = await this.options.resolvePersistedTurn?.(context)
+    const threadId = requiredThreadId(
+      session ?? { providerSessionId: null, providerThreadId: null },
+      "cancel persisted turn",
+    )
+    const turnId = requiredString(turn?.providerTurnId, "Cannot cancel without providerTurnId")
+    const threadParams = await this.options.resolveThreadParams(context, "resume")
+    const client = await this.createClient({
+      cwd: typeof threadParams.cwd === "string" ? threadParams.cwd : process.cwd(),
+    })
     try {
-      await state.client.request("turn/interrupt", {
-        threadId: state.threadId,
-        turnId: state.turnId,
-      })
-    } catch (error) {
-      state.uncertain = true
-      throw error
+      await initialize(client)
+      await client.request("turn/interrupt", { threadId, turnId })
+    } finally {
+      await this.closeForReconciliation(client, context)
     }
   }
 
@@ -368,7 +403,11 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     if (!state) return
     if (state.abortListener) context.signal.removeEventListener("abort", state.abortListener)
     this.states.delete(context.runId)
-    await state.client.close()
+    try {
+      await state.cancellationPromise?.catch(() => undefined)
+    } finally {
+      await state.client.close()
+    }
   }
 
   private async createState(context: RuntimeAdapterContext): Promise<CodexRunState> {
@@ -393,6 +432,8 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       uncertain: false,
       streaming: false,
       abortListener: null,
+      cancellationPromise: null,
+      cancelled: false,
     }
     client.setRequestHandler((request) => this.handleServerRequest(context, request))
     this.states.set(context.runId, state)
@@ -771,7 +812,10 @@ function string(value: unknown): string | null {
 }
 
 function safeMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return sanitizeRuntimeText(error instanceof Error ? error.message : String(error), {
+    maxLength: 500,
+    mode: "diagnostic",
+  })
 }
 
 function boundedMessage(error: unknown): string {

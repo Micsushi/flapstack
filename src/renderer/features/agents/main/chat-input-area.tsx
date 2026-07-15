@@ -72,10 +72,12 @@ import {
   subChatModelIdAtomFamily,
   subChatModeAtomFamily,
   selectedTargetWorktreePathAtomFamily,
+  selectedAgentChatIdAtom,
   getNextMode,
   type AgentMode,
   type SubChatFileChange,
 } from "../atoms"
+import { RuntimeSelector, productRuntime, runtimePreferenceLabel } from "../runtime-settings"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
@@ -127,6 +129,7 @@ import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import { registerPermissionUiTestControl } from "../lib/permission-ui-test-control"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
+import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
 import {
   customPermissionCapabilityKeys,
   disabledCustomPermissions,
@@ -473,6 +476,20 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [hasContent, setHasContent] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
+  const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
+  const { data: runtimeChat } = trpc.chats.get.useQuery({ id: parentChatId })
+  const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
+  const runtimePreference = (runtimeChat?.runtimePreference ?? "auto") as AgentRuntimePreference
+  const resolvedRuntimePreference =
+    runtimePreference === "auto" ? productRuntime(provider) : runtimePreference
+  const runtimeBlockedReason = runtimeReleases.find(
+    (release) => release.runtime === resolvedRuntimePreference && !release.enabledForNewLaunches,
+  )?.reason
+  const [pendingRuntimeContinuation, setPendingRuntimeContinuation] =
+    useState<AgentRuntimePreference | null>(null)
+  const runtimeContinuationRequestRef = useRef<string | null>(null)
+  const setRuntimePreferenceMutation = trpc.chats.setRuntimePreference.useMutation()
+  const continueWithRuntimeMutation = trpc.chats.continueWithRuntime.useMutation()
   const selectedTargetWorktreePathAtom = useMemo(
     () => selectedTargetWorktreePathAtomFamily(subChatId),
     [subChatId],
@@ -486,6 +503,60 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [customWorktreeError, setCustomWorktreeError] = useState<string | null>(null)
   const [isValidatingCustomWorktree, setIsValidatingCustomWorktree] = useState(false)
   const trpcUtils = trpc.useUtils()
+  const handleRuntimeChange = useCallback(
+    async (preference: AgentRuntimePreference) => {
+      if (preference === runtimePreference || isStreaming) return
+      try {
+        await setRuntimePreferenceMutation.mutateAsync({ chatId: parentChatId, preference })
+        await Promise.all([
+          trpcUtils.chats.get.invalidate({ id: parentChatId }),
+          trpcUtils.chats.list.invalidate(),
+        ])
+        toast.success(`Runtime changed to ${runtimePreferenceLabel(preference)}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes("Started chats cannot change Runtime")) {
+          runtimeContinuationRequestRef.current = crypto.randomUUID()
+          setPendingRuntimeContinuation(preference)
+          return
+        }
+        toast.error(message)
+      }
+    },
+    [
+      isStreaming,
+      parentChatId,
+      runtimePreference,
+      setRuntimePreferenceMutation,
+      trpcUtils.chats.get,
+      trpcUtils.chats.list,
+    ],
+  )
+  const confirmRuntimeContinuation = useCallback(async () => {
+    if (!pendingRuntimeContinuation || continueWithRuntimeMutation.isPending) return
+    const requestId = runtimeContinuationRequestRef.current ?? crypto.randomUUID()
+    runtimeContinuationRequestRef.current = requestId
+    try {
+      const created = await continueWithRuntimeMutation.mutateAsync({
+        sourceChatId: parentChatId,
+        preference: pendingRuntimeContinuation,
+        requestId,
+      })
+      await trpcUtils.chats.list.invalidate()
+      setPendingRuntimeContinuation(null)
+      runtimeContinuationRequestRef.current = null
+      setSelectedChatId(created.chatId)
+      toast.success(`Continued with ${runtimePreferenceLabel(created.runtimePreference)}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }, [
+    continueWithRuntimeMutation,
+    parentChatId,
+    pendingRuntimeContinuation,
+    setSelectedChatId,
+    trpcUtils.chats.list,
+  ])
   const updateTargetWorktreePath = useCallback(
     (path: string | null) => {
       setStoredTargetWorktreePath(path)
@@ -2336,6 +2407,12 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                       }}
                     />
+                    <RuntimeSelector
+                      harness={provider}
+                      value={runtimePreference}
+                      onChange={(preference) => void handleRuntimeChange(preference)}
+                      disabled={isStreaming || setRuntimePreferenceMutation.isPending}
+                    />
                   </div>
 
                   <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
@@ -2692,7 +2769,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                           textContexts.length === 0 &&
                           (diffTextContexts?.length ?? 0) === 0 &&
                           queueLength === 0) ||
-                        isUploading
+                        isUploading ||
+                        Boolean(runtimeBlockedReason)
                       }
                       hasContent={
                         hasContent ||
@@ -2723,6 +2801,11 @@ export const ChatInputArea = memo(function ChatInputArea({
                 </div>
               </PromptInputActions>
             </PromptInput>
+            {runtimeBlockedReason ? (
+              <p role="alert" className="mt-2 px-2 text-xs text-amber-600 dark:text-amber-300">
+                {runtimeBlockedReason} Continue with Flapstack Native to launch now.
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -2764,6 +2847,42 @@ export const ChatInputArea = memo(function ChatInputArea({
         projectPath={projectPath}
         mode={subChatMode}
       />
+
+      <AlertDialog
+        open={pendingRuntimeContinuation !== null}
+        onOpenChange={(open) => {
+          if (open || continueWithRuntimeMutation.isPending) return
+          setPendingRuntimeContinuation(null)
+          runtimeContinuationRequestRef.current = null
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Continue with {runtimePreferenceLabel(pendingRuntimeContinuation ?? "auto")}?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="mt-2">
+              This started chat stays unchanged. Flapstack creates one new sidebar chat, starts a
+              fresh provider session on its first turn, and imports only visible history as labeled
+              context.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={continueWithRuntimeMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={() => void confirmRuntimeContinuation()}
+              disabled={continueWithRuntimeMutation.isPending}
+            >
+              {continueWithRuntimeMutation.isPending
+                ? "Continuing…"
+                : `Continue with ${runtimePreferenceLabel(pendingRuntimeContinuation ?? "auto")}`}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={pendingPermissionMode !== null}

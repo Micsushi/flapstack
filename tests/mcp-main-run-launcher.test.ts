@@ -58,7 +58,7 @@ afterEach(() => {
 
 describe("MCP main run launcher", () => {
   it("reuses the queued run identity for Codex and Claude launches", async () => {
-    const launch = createMainRunLauncher()
+    const launch = createMainRunLauncher({ databasePath: path })
     await launch(queuedRun("queued-codex", "codex"))
     await launch(queuedRun("queued-claude", "claude-code"))
 
@@ -71,7 +71,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("passes durable per-worker reasoning effort to supported harness launches", async () => {
-    const launch = createMainRunLauncher()
+    const launch = createMainRunLauncher({ databasePath: path })
     await launch({
       ...queuedRun("effort-codex", "codex"),
       model: "gpt-5.3-codex-spark",
@@ -93,7 +93,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("uses the normal Cursor and OpenCode-backed launch paths", async () => {
-    const launch = createMainRunLauncher()
+    const launch = createMainRunLauncher({ databasePath: path })
     await launch({ ...queuedRun("queued-cursor", "cursor-agent"), model: "cursor-model" })
     await launch({ ...queuedRun("queued-openrouter", "openrouter"), model: "openai/gpt-5" })
 
@@ -115,7 +115,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("maps disabled Codex reasoning to the lowest provider-supported model variant", async () => {
-    const launch = createMainRunLauncher()
+    const launch = createMainRunLauncher({ databasePath: path })
     await launch({
       ...queuedRun("minimal-codex", "codex"),
       model: "gpt-5.3-codex-spark",
@@ -132,7 +132,7 @@ describe("MCP main run launcher", () => {
   })
 
   it("replaces stale Codex model effort suffixes with the durable run effort", async () => {
-    const launch = createMainRunLauncher()
+    const launch = createMainRunLauncher({ databasePath: path })
     await launch({
       ...queuedRun("stale-slash-effort", "codex"),
       model: "gpt-5.3-codex-spark/low",
@@ -158,8 +158,8 @@ describe("MCP main run launcher", () => {
     seedRun("mcp-queued", "pending", "mcp-queued-prompt", "claude-code")
     seedRun("ordinary-queued", "pending", "ordinary-queued-prompt", "codex")
 
-    expect(recoverInterruptedMcpRuns(path)).toBe(1)
-    expect(recoverInterruptedMcpRuns(path)).toBe(0)
+    expect(await recoverInterruptedMcpRuns(path)).toBe(1)
+    expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY id").all()).toEqual([
       { id: "mcp-interrupted", status: "pending" },
       { id: "mcp-queued", status: "pending" },
@@ -227,7 +227,31 @@ describe("MCP main run launcher", () => {
     expect(order).toEqual(["shared-first", "shared-second"])
   })
 
-  it("keeps a newer queued run authoritative during interrupted-run recovery", () => {
+  it("fails one corrupt claimed snapshot and continues draining other runs", async () => {
+    seedRun("corrupt", "pending", "mcp-corrupt", "codex")
+    seedRun("healthy", "pending", "mcp-healthy", "claude-code")
+    sqlite.exec("DROP TRIGGER agent_runs_runtime_snapshot_immutable")
+    sqlite
+      .prepare("UPDATE agent_runs SET runtime_capability_snapshot = '{' WHERE id = 'corrupt'")
+      .run()
+    const launched: string[] = []
+
+    await expect(
+      drainPendingMcpRuns(
+        path,
+        async (run) => {
+          launched.push(run.runId)
+        },
+        { waitForCompletion: true },
+      ),
+    ).resolves.toBe(1)
+    expect(launched).toEqual(["healthy"])
+    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'corrupt'").get()).toEqual({
+      status: "failure",
+    })
+  })
+
+  it("keeps a newer queued run authoritative during interrupted-run recovery", async () => {
     seedSharedConversationRuns()
     sqlite
       .prepare(
@@ -238,7 +262,7 @@ describe("MCP main run launcher", () => {
       .run()
     sqlite.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'").run()
 
-    expect(recoverInterruptedMcpRuns(path)).toBe(0)
+    expect(await recoverInterruptedMcpRuns(path)).toBe(0)
 
     expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY started_at").all()).toEqual([
       { id: "shared-first", status: "cancelled" },
@@ -248,6 +272,43 @@ describe("MCP main run launcher", () => {
       sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
     ).toEqual({ run_status: "pending" })
   })
+
+  it.each([
+    { reconciled: "completed", terminal: "success" },
+    { reconciled: "cancelled", terminal: "cancelled" },
+    { reconciled: "failed", terminal: "failure" },
+  ] as const)(
+    "projects recovered $reconciled atomically without overwriting a claimed successor",
+    async ({ reconciled, terminal }) => {
+      seedSharedConversationRuns("codex")
+      sqlite.prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'shared-first'").run()
+      sqlite.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'").run()
+
+      await expect(
+        recoverInterruptedMcpRuns(path, {
+          reconcile: async () => {
+            sqlite
+              .prepare("UPDATE agent_runs SET status = 'running' WHERE id = 'shared-second'")
+              .run()
+            sqlite
+              .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = 'shared-sub'")
+              .run()
+            return reconciled
+          },
+        }),
+      ).resolves.toBe(0)
+
+      expect(sqlite.prepare("SELECT id, status FROM agent_runs ORDER BY started_at").all()).toEqual(
+        [
+          { id: "shared-first", status: terminal },
+          { id: "shared-second", status: "running" },
+        ],
+      )
+      expect(
+        sqlite.prepare("SELECT run_status FROM sub_chats WHERE id = 'shared-sub'").get(),
+      ).toEqual({ run_status: "running" })
+    },
+  )
 
   it.each(["codex", "claude-code"] as const)(
     "recovers two legacy queued %s turns before routing them in exact transcript order",
@@ -292,7 +353,7 @@ describe("MCP main run launcher", () => {
       }
       const routed = harness === "codex" ? harnessMocks.codex : harnessMocks.claude
       routed.mockImplementation(route)
-      const launch = createMainRunLauncher()
+      const launch = createMainRunLauncher({ databasePath: path })
 
       expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
       expect(await drainPendingMcpRuns(path, launch, { waitForCompletion: true })).toBe(1)
@@ -322,7 +383,9 @@ describe("MCP main run launcher", () => {
       .run(JSON.stringify({ runId: "auth-failure" }))
     harnessMocks.codex.mockResolvedValue(authErrorStream())
 
-    await drainPendingMcpRuns(path, createMainRunLauncher(), { waitForCompletion: true })
+    await drainPendingMcpRuns(path, createMainRunLauncher({ databasePath: path }), {
+      waitForCompletion: true,
+    })
 
     expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'auth-failure'").get()).toEqual(
       { status: "failure" },
@@ -364,7 +427,9 @@ describe("MCP main run launcher", () => {
       )
       .run(JSON.stringify({ runId: "orchestrated-run" }))
 
-    await drainPendingMcpRuns(path, createMainRunLauncher(), { waitForCompletion: true })
+    await drainPendingMcpRuns(path, createMainRunLauncher({ databasePath: path }), {
+      waitForCompletion: true,
+    })
 
     const correlated = sqlite
       .prepare(
@@ -463,6 +528,38 @@ describe("MCP main run launcher", () => {
 })
 
 function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAgentRun {
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO chats
+       (id, name, scope, permission_mode, harness, worktree_path)
+       VALUES ('chat', 'Direct', 'global', 'full-access', ?, '/tmp/worktree')`,
+    )
+    .run(harness)
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO sub_chats
+       (id, chat_id, harness, permission_mode, worktree_path, run_status, messages)
+       VALUES ('sub-chat', 'chat', ?, 'full-access', '/tmp/worktree', 'running', '[]')`,
+    )
+    .run(harness)
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO agent_runs (
+        id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
+        prompt_message_id, initial_prompt, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, 'chat', 'sub-chat', ?, 'full-access', '/tmp/worktree', ?,
+        'Continue queued work.', 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      runId,
+      harness,
+      `mcp-${runId}`,
+      Date.now(),
+      ...testRuntimeSnapshotSqlValues(harness === "claude-code" ? "claude-code" : "codex"),
+    )
   return {
     runId,
     chatId: "chat",
@@ -478,7 +575,9 @@ function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAge
   }
 }
 
-function seedSharedConversationRuns(): void {
+function seedSharedConversationRuns(
+  runtime: "flapstack-native" | "codex" = "flapstack-native",
+): void {
   sqlite
     .prepare(
       `INSERT INTO chats (id, name, scope, permission_mode, harness, worktree_path)
@@ -498,14 +597,15 @@ function seedSharedConversationRuns(): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
-      runtime_preference_source, resolved_runtime, runtime_adapter_version,
-      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
-    ) VALUES (?, 'shared-chat', 'shared-sub', 'codex', 'full-access', '/tmp/worktree',
-      ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      prompt_message_id, status, started_at,
+      runtime_snapshot_version, runtime_preference, runtime_preference_source,
+      resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+      runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'shared-chat', 'shared-sub', 'codex', 'full-access', '/tmp/worktree', ?, 'pending', ?,
+      ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("shared-first", "mcp-first", 1, ...testRuntimeSnapshotSqlValues())
-  insert.run("shared-second", "mcp-second", 2, ...testRuntimeSnapshotSqlValues())
+  insert.run("shared-first", "mcp-first", 1, ...testRuntimeSnapshotSqlValues("codex", runtime))
+  insert.run("shared-second", "mcp-second", 2, ...testRuntimeSnapshotSqlValues("codex", runtime))
 }
 
 function seedQueuedTurns(harness: "codex" | "claude-code"): void {
@@ -530,11 +630,12 @@ function seedQueuedTurns(harness: "codex" | "claude-code"): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
-      runtime_preference_source, resolved_runtime, runtime_adapter_version,
-      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
-    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree',
-      ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      prompt_message_id, status, started_at,
+      runtime_snapshot_version, runtime_preference, runtime_preference_source,
+      resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+      runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree', ?, 'pending', ?,
+      ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   insert.run(
     "ordered-first",
@@ -588,10 +689,12 @@ function seedRun(
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
-        runtime_preference_source, resolved_runtime, runtime_adapter_version,
-        runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
-      ) VALUES (?, ?, ?, ?, 'full-access', '/tmp/worktree', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        prompt_message_id, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, ?, ?, ?, 'full-access', '/tmp/worktree', ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       runId,

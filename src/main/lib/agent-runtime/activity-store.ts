@@ -26,6 +26,12 @@ import {
   type UnknownAgentActivity,
 } from "../../../shared/agent-activity"
 import { RESOLVED_AGENT_RUNTIMES, type ResolvedAgentRuntime } from "../../../shared/agent-runtime"
+import {
+  isRuntimeSecretKey,
+  sanitizeRuntimeDedupKey,
+  sanitizeRuntimeText,
+  sanitizeRuntimeValue,
+} from "./sanitizer"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -492,13 +498,19 @@ function sanitizeAppend(inputValue: AgentActivityAppend): AgentActivityAppend {
   if (input.kind === "provider-visible-reasoning" && input.displayClass !== "provider-visible") {
     throw invalid("Provider-visible reasoning requires provider-visible display class.")
   }
-  const payload =
+  const boundedPayload =
     input.kind === "opaque-metadata" || input.kind === "private-metadata"
       ? {
           ...input.payload,
           metadata: boundMetadata(input.payload.metadata, privatePayload),
         }
       : input.payload
+  const payload = sanitizeRuntimeValue(boundedPayload, {
+    maxDepth: MAX_AGENT_ACTIVITY_METADATA_DEPTH,
+    maxEntries: MAX_AGENT_ACTIVITY_METADATA_ENTRIES,
+    maxString: MAX_AGENT_ACTIVITY_METADATA_STRING,
+    mode: agentContentKind(input.kind) ? "agent-content" : "diagnostic",
+  }) as AgentActivityAppend["payload"]
   const payloadJson = JSON.stringify(payload)
   if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
     throw new AgentActivityError(
@@ -506,7 +518,11 @@ function sanitizeAppend(inputValue: AgentActivityAppend): AgentActivityAppend {
       `Activity payload exceeds ${MAX_AGENT_ACTIVITY_PAYLOAD_BYTES} bytes.`,
     )
   }
-  return { ...input, payload } as AgentActivityAppend
+  return {
+    ...input,
+    dedupKey: sanitizeRuntimeDedupKey(input.dedupKey),
+    payload,
+  } as AgentActivityAppend
 }
 
 function boundMetadata(value: unknown, redactStrings: boolean, depth = 0): BoundedActivityMetadata {
@@ -675,18 +691,23 @@ function redactExportValue(value: unknown): unknown {
 }
 
 function redactSecretText(value: string): string {
-  return value
-    .replace(
-      /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi,
-      "[redacted-private-key]",
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(/\b(?:sk|ghp|gho|github_pat|xox[baprs])-[-A-Za-z0-9_]{8,}\b/g, "[redacted-credential]")
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted-jwt]")
+  return sanitizeRuntimeText(value, { mode: "agent-content", maxLength: value.length })
 }
 
 function isSecretKey(key: string): boolean {
-  return /(?:secret|token|password|credential|api[_-]?key|private[_-]?key|authorization)/i.test(key)
+  return isRuntimeSecretKey(key)
+}
+
+function agentContentKind(kind: AgentActivityKind): boolean {
+  return [
+    "agent-text",
+    "reasoning-summary",
+    "provider-visible-reasoning",
+    "plan",
+    "tool",
+    "command",
+    "patch",
+  ].includes(kind)
 }
 
 function addInFilter(

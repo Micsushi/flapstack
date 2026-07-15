@@ -9,6 +9,7 @@ import {
   type RuntimeLaunchControls,
   type RuntimePermissionSnapshot,
 } from "../../../shared/agent-runtime"
+import { checkRuntimeCompatibility } from "./compatibility"
 import type { RunPermissionMode } from "../../../shared/harness-types"
 import { createRuntimeDefaultsService } from "./defaults"
 import { AgentRuntimeResolutionError, assertResolvedAgentRuntime } from "./resolver"
@@ -168,6 +169,40 @@ export function interpretRuntimeSnapshot(row: Record<string, unknown>): RuntimeS
   }
 }
 
+export function resolvedLaunchFromSnapshotRow(row: Record<string, unknown>): ResolvedRuntimeLaunch {
+  const snapshot = interpretRuntimeSnapshot(row)
+  const harness = String(row.harness)
+  const compatibility = checkRuntimeCompatibility(harness, snapshot.resolvedRuntime)
+  if (!compatibility.compatible) throw new AgentRuntimeResolutionError(compatibility.reason)
+  return {
+    schemaVersion: 1,
+    harness,
+    model: typeof row.model === "string" ? row.model : null,
+    requestedPreference: snapshot.runtimePreference,
+    preferenceSource: snapshot.runtimePreferenceSource,
+    resolvedRuntime: snapshot.resolvedRuntime,
+    compatibility,
+    versions: {
+      adapterVersion: snapshot.runtimeAdapterVersion,
+      protocolVersion: snapshot.runtimeProtocolVersion,
+    },
+    capabilities: parseSnapshotJson(
+      snapshot.runtimeCapabilitySnapshot,
+      snapshot.runtimeSnapshotVersion === 0 ? LEGACY_RUNTIME_CAPABILITIES : null,
+      "Runtime capability snapshot",
+    ),
+    controls: parseSnapshotJson(
+      snapshot.runtimeControlSnapshot,
+      snapshot.runtimeSnapshotVersion === 0 ? DEFAULT_RUNTIME_CONTROLS : null,
+      "Runtime control snapshot",
+    ),
+    permission: runtimePermissionSnapshot(
+      String(row.permission_mode ?? row.permissionMode) as RunPermissionMode,
+      row.custom_permissions ?? row.customPermissions,
+    ),
+  }
+}
+
 export function runtimeSnapshotSqlValues(snapshot: RuntimeSnapshotColumns): readonly unknown[] {
   return [
     snapshot.runtimeSnapshotVersion,
@@ -207,4 +242,15 @@ function rawClient(database: DatabaseLike): Sqlite {
     return database as Sqlite
   }
   return (database as unknown as { $client: Sqlite }).$client
+}
+
+function parseSnapshotJson<T>(value: string, legacy: T | null, label: string): T {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as T
+  } catch {
+    // Fail below with a bounded diagnostic.
+  }
+  if (legacy) return legacy
+  throw new Error(`${label} is corrupt.`)
 }

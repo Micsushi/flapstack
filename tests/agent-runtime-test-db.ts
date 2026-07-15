@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { getFlapstackNativeDiagnostics } from "../src/main/lib/agent-runtime/flapstack-native"
 
 export function createLegacyRuntimeDatabase(filename = ":memory:"): Database.Database {
   const database = new Database(filename)
@@ -104,14 +105,22 @@ export function seedRuntimeRun(
 
 export function testRuntimeSnapshotSqlValues(
   harness: "codex" | "claude-code" = "codex",
+  runtime: "codex" | "claude-code" | "flapstack-native" = "flapstack-native",
 ): readonly unknown[] {
+  const versions =
+    runtime === "flapstack-native"
+      ? getFlapstackNativeDiagnostics(harness).versions
+      : {
+          adapterVersion: `${runtime}-test-adapter`,
+          protocolVersion: `${harness}-test-protocol`,
+        }
   return [
     1,
-    harness,
-    "product",
-    harness,
-    "test-adapter",
-    "test-protocol",
+    runtime,
+    "chat",
+    runtime,
+    versions.adapterVersion,
+    versions.protocolVersion,
     JSON.stringify({
       schemaVersion: 1,
       status: "available",

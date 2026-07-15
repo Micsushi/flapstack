@@ -111,6 +111,30 @@ describe("direct Codex Runtime recovery", () => {
     expect(await uncertainAdapter.reconcile(runtimeContext())).toBe("uncertain")
   })
 
+  it("interrupts a recovered turn only from exact persisted thread and turn identity", async () => {
+    const client = new FakeCodexProtocolClient()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolvePersistedSession: () => ({
+        providerSessionId: "session-restart",
+        providerThreadId: "thread-restart",
+      }),
+      resolvePersistedTurn: () => ({ providerTurnId: "turn-restart" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+
+    await adapter.cancel(runtimeContext(), "operator")
+
+    expect(client.requests).toContainEqual({
+      method: "turn/interrupt",
+      params: { threadId: "thread-restart", turnId: "turn-restart" },
+    })
+    expect(client.closed).toBe(true)
+  })
+
   it("preserves uncertain reconciliation when cleanup fails", async () => {
     const client = new FakeCodexProtocolClient()
     client.responses.set("thread/read", new Error("read failed"))

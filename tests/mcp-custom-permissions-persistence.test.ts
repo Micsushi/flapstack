@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import { closeDatabase } from "../src/main/lib/db"
 import { evaluateMcpToolGate } from "../src/main/lib/mcp-control/gate"
 import {
@@ -118,10 +119,14 @@ describe("durable MCP custom permissions", () => {
     sqlite
       .prepare(
         `INSERT INTO agent_runs
-          (id, chat_id, harness, permission_mode, custom_permissions, status)
-         VALUES ('run-1', 'chat-1', 'codex', 'custom', ?, 'running')`,
+          (id, chat_id, harness, permission_mode, custom_permissions, status,
+           runtime_snapshot_version, runtime_preference, runtime_preference_source,
+           resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+           runtime_capability_snapshot, runtime_control_snapshot)
+         VALUES ('run-1', 'chat-1', 'codex', 'custom', ?, 'running',
+           ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(JSON.stringify(runPermissions))
+      .run(JSON.stringify(runPermissions), ...testRuntimeSnapshotSqlValues())
     sqlite
       .prepare("UPDATE chats SET custom_permissions = ? WHERE id = 'chat-1'")
       .run(JSON.stringify({ ...toggles, productMcpRead: false }))

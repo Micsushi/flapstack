@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { sanitizeRuntimeText } from "../sanitizer"
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
@@ -178,7 +179,12 @@ class ProcessCodexProtocolClient implements CodexProtocolClient {
   }
 
   diagnostics(): string {
-    return this.stderr
+    return boundStderr(
+      sanitizeRuntimeText(this.stderr, {
+        maxLength: Math.max(1, this.stderr.length),
+        mode: "diagnostic",
+      }),
+    )
   }
 
   isAlive(): boolean {

@@ -2,6 +2,8 @@ import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
+import type { ResolvedRuntimeLaunch } from "../../shared/agent-runtime"
+import { resolvedLaunchFromSnapshotRow } from "./agent-runtime/snapshot"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
 import { claimPendingRunWithinUsageBudget } from "./usage/budgets"
@@ -18,33 +20,112 @@ export type QueuedAgentRun = {
   customPermissions: string | null
   worktreePath: string | null
   projectPath: string | null
+  runtimeLaunch?: ResolvedRuntimeLaunch
 }
 
 export type AgentRunLauncher = (run: QueuedAgentRun) => Promise<void>
 
+export type AgentRunReconciliationState =
+  "running" | "completed" | "cancelled" | "failed" | "uncertain"
+
+export type InterruptedRuntimeRecoveryAuthority = {
+  reconcile(run: QueuedAgentRun): Promise<AgentRunReconciliationState>
+}
+
 type Row = Record<string, unknown>
 
-/** App restart ends provider streams; requeue MCP work and cancel everything else. */
-export function recoverInterruptedMcpRuns(databasePath: string): number {
+/** Projects durable run truth without invoking a provider authority. */
+export function loadAgentRunReconciliationState(
+  databasePath: string,
+  runId: string,
+): AgentRunReconciliationState {
   const db = new Database(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
+    const row = db.prepare("SELECT status FROM agent_runs WHERE id = ?").get(runId) as
+      { status: string } | undefined
+    if (!row) return "uncertain"
+    if (row.status === "running") return "running"
+    if (row.status === "success") return "completed"
+    if (row.status === "cancelled") return "cancelled"
+    if (row.status === "failure") return "failed"
+    return "uncertain"
+  } finally {
+    db.close()
+  }
+}
+
+/** Loads one still-running durable launch by identity without resolving or replaying it. */
+export function loadRunningAgentRun(databasePath: string, runId: string): QueuedAgentRun | null {
+  const db = new Database(databasePath)
+  db.pragma("foreign_keys = ON")
+  db.pragma("busy_timeout = 5000")
+  try {
+    const runtimeProjection = runtimeSnapshotProjection(db)
+    const row = db
+      .prepare(
+        `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
+          r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
+          r.initial_prompt, s.messages, c.project_id, p.path project_path,
+          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
+         FROM agent_runs r
+         JOIN chats c ON c.id = r.chat_id
+         JOIN sub_chats s ON s.id = r.sub_chat_id
+         LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
+         WHERE r.id = ? AND r.status = 'running' AND r.completed_at IS NULL`,
+      )
+      .get(runId) as Row | undefined
+    return row ? queuedRun(row) : null
+  } finally {
+    db.close()
+  }
+}
+
+/** Native MCP can requeue. Direct Runtime intent must reconcile and never replay. */
+export async function recoverInterruptedMcpRuns(
+  databasePath: string,
+  authority?: InterruptedRuntimeRecoveryAuthority,
+): Promise<number> {
+  const db = new Database(databasePath)
+  db.pragma("foreign_keys = ON")
+  db.pragma("busy_timeout = 5000")
+  try {
+    const runtimeProjection = runtimeSnapshotProjection(db)
+    const runs = db
+      .prepare(
+        `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
+          r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
+          r.initial_prompt, s.messages, c.project_id, p.path project_path,
+          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
+         FROM agent_runs r
+         JOIN chats c ON c.id = r.chat_id
+         JOIN sub_chats s ON s.id = r.sub_chat_id
+         LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
+         WHERE r.status = 'running' AND r.completed_at IS NULL`,
+      )
+      .all() as Row[]
+    const direct: QueuedAgentRun[] = []
+    const affectedSubChats = new Set<string>()
+    let recovered = 0
+    const now = nowEpochSeconds()
     const recover = db.transaction(() => {
-      const runs = db
-        .prepare(
-          `SELECT id, sub_chat_id, prompt_message_id FROM agent_runs
-           WHERE status = 'running' AND completed_at IS NULL`,
-        )
-        .all() as Row[]
-      const affectedSubChats = new Set<string>()
-      let recovered = 0
-      const now = nowEpochSeconds()
       for (const run of runs) {
         affectedSubChats.add(String(run.sub_chat_id))
         const isMcp =
           typeof run.prompt_message_id === "string" && run.prompt_message_id.startsWith("mcp-")
-        if (isMcp) {
+        const runtime = String(run.resolved_runtime ?? "flapstack-native")
+        if (runtime === "codex" || runtime === "claude-code") {
+          try {
+            const queued = queuedRun(run)
+            if (!queued) throw new Error("Interrupted direct Runtime has no durable prompt.")
+            direct.push(queued)
+          } catch {
+            markFailed(db, String(run.id), String(run.sub_chat_id))
+          }
+        } else if (isMcp && runtime === "flapstack-native") {
           db.prepare("UPDATE agent_runs SET status = 'pending' WHERE id = ?").run(run.id)
           recovered += 1
         } else {
@@ -69,9 +150,20 @@ export function recoverInterruptedMcpRuns(databasePath: string): number {
            ), run_status), updated_at = ? WHERE id = ?`,
         ).run(subChatId, subChatId, now, subChatId)
       }
-      return recovered
     })
-    return recover.immediate()
+    recover.immediate()
+    for (const run of direct) {
+      let state: AgentRunReconciliationState = "uncertain"
+      try {
+        state = authority ? await authority.reconcile(run) : "uncertain"
+      } catch {
+        state = "uncertain"
+      }
+      if (state === "uncertain" || state === "failed") markFailed(db, run.runId, run.subChatId)
+      else if (state === "completed") projectTerminalRun(db, run.runId, run.subChatId, "success")
+      else if (state === "cancelled") projectTerminalRun(db, run.runId, run.subChatId, "cancelled")
+    }
+    return recovered
   } finally {
     db.close()
   }
@@ -93,10 +185,11 @@ export async function drainPendingMcpRuns(
   let started = 0
   const launches: Promise<void>[] = []
   try {
+    const runtimeProjection = runtimeSnapshotProjection(db)
     const pending = db
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
-          r.custom_permissions,
+          r.custom_permissions, ${runtimeProjection},
           r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages,
           c.project_id, p.path project_path,
           json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
@@ -127,7 +220,14 @@ export async function drainPendingMcpRuns(
       const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
       if (!claimed.claimed) continue
       db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
-      const run = queuedRun(row)
+      let run: QueuedAgentRun | null = null
+      try {
+        run = queuedRun(row)
+      } catch (error) {
+        markFailed(db, String(row.id), String(row.sub_chat_id))
+        appendCorruptLaunchAudit(db, row, error)
+        continue
+      }
       if (!run) {
         markFailed(db, String(row.id), String(row.sub_chat_id))
         continue
@@ -150,6 +250,28 @@ export async function drainPendingMcpRuns(
   } finally {
     db.close()
   }
+}
+
+function appendCorruptLaunchAudit(db: Database.Database, row: Row, error: unknown): void {
+  const run: QueuedAgentRun = {
+    runId: String(row.id),
+    chatId: String(row.chat_id),
+    subChatId: String(row.sub_chat_id),
+    harness: row.harness as AgentHarness,
+    prompt: "[corrupt Runtime snapshot]",
+    model: typeof row.model === "string" ? row.model : null,
+    reasoningEffort: null,
+    permissionMode: String(row.permission_mode),
+    customPermissions: null,
+    worktreePath: null,
+    projectPath: null,
+  }
+  appendLaunchAudit(
+    db,
+    run,
+    "failed",
+    error instanceof Error ? error.message : "Corrupt Runtime snapshot.",
+  )
 }
 
 /** @deprecated Use the MCP-specific name; retained for existing callers. */
@@ -267,6 +389,7 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     customPermissions: typeof row.custom_permissions === "string" ? row.custom_permissions : null,
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
+    runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
   }
 }
 
@@ -300,18 +423,46 @@ function findPrompt(messagesValue: unknown, promptMessageId: unknown): string {
 }
 
 function markFailed(db: Database.Database, runId: string, subChatId: string): void {
+  projectTerminalRun(db, runId, subChatId, "failure")
+}
+
+function projectTerminalRun(
+  db: Database.Database,
+  runId: string,
+  subChatId: string,
+  terminal: "success" | "failure" | "cancelled",
+): void {
   const now = nowEpochSeconds()
-  db.prepare(
-    "UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ? AND completed_at IS NULL",
-  ).run(now, runId)
-  db.prepare(
-    `UPDATE sub_chats
-     SET run_status = COALESCE((
-       SELECT status FROM agent_runs
-       WHERE sub_chat_id = ? AND id <> ? AND status IN ('pending', 'running')
-       ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
-       LIMIT 1
-     ), 'failure')
-     WHERE id = ?`,
-  ).run(subChatId, runId, subChatId)
+  const project = () => {
+    const transition = db
+      .prepare(
+        `UPDATE agent_runs SET status = ?, completed_at = ?
+         WHERE id = ? AND status IN ('pending','running') AND completed_at IS NULL`,
+      )
+      .run(terminal, now, runId)
+    if (transition.changes === 0) return
+    db.prepare(
+      `UPDATE sub_chats SET run_status = COALESCE((
+         SELECT status FROM agent_runs
+         WHERE sub_chat_id = ? AND id <> ? AND status IN ('pending','running')
+         ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
+         LIMIT 1
+       ), ?), updated_at = ? WHERE id = ?`,
+    ).run(subChatId, runId, terminal, now, subChatId)
+  }
+  if (db.inTransaction) project()
+  else db.transaction(project).immediate()
+}
+
+function runtimeSnapshotProjection(db: Database.Database): string {
+  const columns = db.prepare("PRAGMA table_info(agent_runs)").all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === "runtime_snapshot_version")) {
+    return `r.runtime_snapshot_version, r.runtime_preference,
+      r.runtime_preference_source, r.resolved_runtime, r.runtime_adapter_version,
+      r.runtime_protocol_version, r.runtime_capability_snapshot, r.runtime_control_snapshot`
+  }
+  return `0 runtime_snapshot_version, 'flapstack-native' runtime_preference,
+    'legacy' runtime_preference_source, 'flapstack-native' resolved_runtime,
+    'legacy-stage3' runtime_adapter_version, 'legacy-stage3' runtime_protocol_version,
+    '{}' runtime_capability_snapshot, '{}' runtime_control_snapshot`
 }

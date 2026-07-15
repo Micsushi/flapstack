@@ -230,6 +230,7 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection } from "./isolated-messages-section"
+import { RuntimeActivityPanel } from "../runtime-activity/runtime-activity-panel"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
 // import type { PlanType } from "@/lib/config/subscription-plans"
@@ -1733,6 +1734,16 @@ const ChatViewInner = memo(function ChatViewInner({
   const notifiedPendingQuestionIdsRef = useRef<Set<string>>(new Set())
   const isVisiblePane = isActive || isSplitPane
   const { notifyAgentNeedsInput } = useDesktopNotifications()
+  const { data: runtimeActivityPresence } = trpc.agentActivity.list.useQuery(
+    {
+      chatId: parentChatId,
+      limit: 1,
+      direction: "backward",
+      corruptionMode: "redacted-placeholder",
+    },
+    { enabled: Boolean(parentChatId), refetchInterval: isActive ? 1_000 : false },
+  )
+  const hasRuntimeActivity = (runtimeActivityPresence?.events.length ?? 0) > 0
 
   // Keep isActive in ref for use in callbacks (avoid stale closures)
   const isVisiblePaneRef = useRef(isVisiblePane)
@@ -4709,22 +4720,30 @@ const ChatViewInner = memo(function ChatViewInner({
               {/* ISOLATED: Messages rendered via Jotai atom subscription
                 Each component subscribes to specific atoms and only re-renders when those change
                 KEY: Force remount on subChatId change to ensure fresh atom reads after syncMessages */}
-              <IsolatedMessagesSection
-                key={subChatId}
-                subChatId={subChatId}
-                chatId={parentChatId}
-                isMobile={isMobile}
-                sandboxSetupStatus={sandboxSetupStatus}
-                stickyTopClass={stickyTopClass}
-                sandboxSetupError={sandboxSetupError}
-                onRetrySetup={onRetrySetup}
-                UserBubbleComponent={AgentUserMessageBubble}
-                ToolCallComponent={AgentToolCall}
-                MessageGroupWrapper={MessageGroup}
-                toolRegistry={AgentToolRegistry}
-                onRollback={handleRollback}
-                onFork={handleForkFromMessage}
-              />
+              {hasRuntimeActivity ? (
+                <RuntimeActivityPanel
+                  chatId={parentChatId}
+                  legacyMessages={messages}
+                  isStreaming={isStreaming}
+                />
+              ) : (
+                <IsolatedMessagesSection
+                  key={subChatId}
+                  subChatId={subChatId}
+                  chatId={parentChatId}
+                  isMobile={isMobile}
+                  sandboxSetupStatus={sandboxSetupStatus}
+                  stickyTopClass={stickyTopClass}
+                  sandboxSetupError={sandboxSetupError}
+                  onRetrySetup={onRetrySetup}
+                  UserBubbleComponent={AgentUserMessageBubble}
+                  ToolCallComponent={AgentToolCall}
+                  MessageGroupWrapper={MessageGroup}
+                  toolRegistry={AgentToolRegistry}
+                  onRollback={handleRollback}
+                  onFork={handleForkFromMessage}
+                />
+              )}
             </div>
           </div>
         </div>

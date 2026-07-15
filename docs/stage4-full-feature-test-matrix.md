@@ -162,9 +162,58 @@ tests do not substitute for live UI or packaged evidence.
       separate and completes create, preview, workflow-bind, standalone-launch,
       duplicate, import, export, and archive flows with keyboard/screen-reader use.
 
+## Agent Runtimes
+
+Automated closeout on Node 22: `npm run check` passed full lint, repository
+formatting, TypeScript, 206 test files/1,611 tests with 3 skips, and production
+main/preload/renderer builds. Strict OpenSpec validation passed. These results
+do not close the live/provider/package rows below.
+
+- [ ] **S4-AR01** Stage 3 migration and rollback preserve messages, sessions,
+      snapshots, checkpoints, usage, audit, and legacy rendering.
+  - Automated: pass — ordered 0032/0033 migration, reopen, rollback, immutable
+    snapshot, activity, and frozen Stage 3 fixtures.
+- [ ] **S4-AR02** Resolver precedence and compatibility match Settings, New Chat,
+      direct, MCP, retry, and orchestration launch inputs without silent fallback.
+  - Automated: pass — resolver/run-creation/Settings/registry/router-guard suites.
+- [ ] **S4-AR03** Direct Codex fixture/live runs preserve displayable native event
+      identity, ordering, sections, permissions, usage, lifecycle, and recovery.
+  - Fixture and pinned macOS package smoke: pass. Credentialed live: open —
+    installed `0.144.2` does not match pinned `0.144.1`; the adapter fails closed.
+- [ ] **S4-AR04** Claude Code fixture/live runs preserve message, tool, hook,
+      subagent, usage, provider-visible thinking, session, and recovery semantics.
+  - Fixture and pinned macOS package smoke: pass. Credentialed live: open.
+- [ ] **S4-AR05** Flapstack Native preserves the Stage 3 provider pipeline for
+      every harness and remains an explicit rollback choice.
+  - Automated and macOS package smoke: pass. Consolidated live walkthrough: open.
+- [ ] **S4-AR06** Durable activity is ordered, paginated, replayable, private-safe,
+      corruption-aware, and stable across restart/window invalidation.
+  - Automated: pass, including 10,000 durable events and multi-window invalidation.
+- [ ] **S4-AR07** Shared transcript formatting, search, copy, export, keyboard,
+      screen-reader, streaming, and 10,000-event budgets pass.
+  - Automated: pass — 10,000-event headless budget 244 ms/1,500 ms. Dev launch
+    and exact checkout/profile verification passed; live visual comparison is
+    open because the Mac session was locked.
+- [ ] **S4-AR08** Settings, empty-chat mutation, active-run blocking, exact-once
+      continuation, retry, undo, restart, and privacy-safe diagnostics pass.
+  - Automated: pass. Live Settings/continue/reopen/multi-window walkthrough: open.
+- [ ] **S4-AR09** Registry dispatch proves three adapters and mixed Runtime workers
+      under one provider-neutral coordination contract without widened authority.
+  - Automated production authority and fake-adapter/mixed-worker contract: pass.
+    One database-profile service owns registry/coordinator, concrete disabled
+    recovery factories, durable run-id reconciliation/cancellation, and all
+    queued launch call sites. Credentialed direct dispatch remains open; direct
+    release flags remain disabled.
+- [ ] **S4-AR10** Credentialed direct/continue/restart/mixed-worker walkthroughs
+      and packaged macOS smoke pass; Windows/Linux remain open until observed.
+  - Package: pass — arm64 binary inspection/smoke reported Codex `0.144.1`, Claude
+    `2.1.207`, and Electron `39.8.10`; speech sidecars passed. Credentialed UI,
+    Windows, and Linux remain open because the Mac session was locked and those
+    environments were not observed.
+
 ## Integrated Live and Package Gate
 
-- [ ] **S4-I01** `npm run dev:verify` identifies this checkout and the
+- [x] **S4-I01** `npm run dev:verify` identifies this checkout and the
       `Flapstack Dev` profile after the final restart.
 - [ ] **S4-I02** One project workflow exercises all eleven Stage 4 features across
       knowledge, extensions, orchestration, workspaces, automation, local models,
@@ -172,5 +221,7 @@ tests do not substitute for live UI or packaged evidence.
       workflow/standalone agent profiles.
 - [ ] **S4-I03** `npm run package:preview:mac` opens the preview profile and the
       same workflow passes without development-only paths.
+  - Packaging, arm64 binary inspection, and packaged smoke passed. Opening the
+    preview UI/workflow remains open because the Mac session was locked.
 - [ ] **S4-I04** Windows and Linux package rows remain open until actually
       observed on those platforms.

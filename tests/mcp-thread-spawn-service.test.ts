@@ -208,7 +208,7 @@ describe("MCP cross-harness thread spawn service", () => {
     approvals.shutdown()
   })
 
-  it("requeues an interrupted claimed MCP run on app restart", async () => {
+  it("fails an interrupted direct MCP run without replay when no recovery authority exists", async () => {
     const result = await createMcpMutationService(path).invoke(
       "spawn_thread",
       { chatId: "codex-root" },
@@ -224,10 +224,10 @@ describe("MCP cross-harness thread spawn service", () => {
     await drainPendingAgentRuns(path, async () => undefined)
     expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "running" })
 
-    expect(recoverInterruptedMcpRuns(path)).toBe(1)
-    expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "pending" })
+    expect(await recoverInterruptedMcpRuns(path)).toBe(0)
+    expect(sqlite.prepare("SELECT status FROM agent_runs").get()).toEqual({ status: "failure" })
     expect(
       sqlite.prepare("SELECT run_status FROM sub_chats WHERE run_status IS NOT NULL").get(),
-    ).toEqual({ run_status: "pending" })
+    ).toEqual({ run_status: "failure" })
   })
 })

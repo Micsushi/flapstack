@@ -81,6 +81,7 @@ import {
 } from "../../extension-management"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
 import {
   buildProjectVaultRunContext,
   persistProjectVaultContextManifest,
@@ -1166,6 +1167,7 @@ async function createCodexRun(params: {
     model: params.model,
     permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
   })
+  assertFlapstackNativeProviderRouter({ harness: "codex", snapshot: runtimeSnapshot })
 
   db.update(agentRuns)
     .set({

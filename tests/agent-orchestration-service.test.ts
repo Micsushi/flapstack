@@ -211,14 +211,14 @@ describe("durable agent task orchestration", () => {
     sqlite
       .prepare(
         `INSERT INTO agent_runs (
-          id, chat_id, sub_chat_id, harness, permission_mode,
+          id, chat_id, sub_chat_id, harness, permission_mode, status, started_at,
           runtime_snapshot_version, runtime_preference, runtime_preference_source,
           resolved_runtime, runtime_adapter_version, runtime_protocol_version,
-          runtime_capability_snapshot, runtime_control_snapshot, status, started_at
-        ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode, 'running', ?,
           runtime_snapshot_version, runtime_preference, runtime_preference_source,
           resolved_runtime, runtime_adapter_version, runtime_protocol_version,
-          runtime_capability_snapshot, runtime_control_snapshot, 'running', ?
+          runtime_capability_snapshot, runtime_control_snapshot
           FROM agent_runs WHERE id = ?`,
       )
       .run(nowEpochSeconds() + 1, first.runId)

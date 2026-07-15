@@ -604,7 +604,15 @@ function setup() {
       started_at integer,
       completed_at integer,
       before_checkpoint_id text,
-      after_checkpoint_id text
+      after_checkpoint_id text,
+      runtime_snapshot_version integer NOT NULL DEFAULT 0,
+      runtime_preference text NOT NULL DEFAULT 'flapstack-native',
+      runtime_preference_source text NOT NULL DEFAULT 'legacy',
+      resolved_runtime text NOT NULL DEFAULT 'flapstack-native',
+      runtime_adapter_version text NOT NULL DEFAULT 'legacy-stage3',
+      runtime_protocol_version text NOT NULL DEFAULT 'legacy-stage3',
+      runtime_capability_snapshot text NOT NULL DEFAULT '{}',
+      runtime_control_snapshot text NOT NULL DEFAULT '{}'
     );
   `)
   sqlite.prepare("INSERT INTO projects (id) VALUES ('project-1')").run()

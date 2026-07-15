@@ -7,6 +7,7 @@ import type {
 } from "../../../../shared/agent-activity"
 import { MAX_AGENT_ACTIVITY_PAYLOAD_BYTES } from "../../../../shared/agent-activity"
 import type { RuntimeLaunchControls } from "../../../../shared/agent-runtime"
+import { sanitizeRuntimeText } from "../sanitizer"
 
 type JsonRecord = Record<string, unknown>
 type BlockState = { type: string; id: string | null; name: string | null }
@@ -668,12 +669,9 @@ export function mapClaudePermissionActivity(input: {
 }
 
 export function sanitizeClaudeDiagnostic(value: string): string {
-  return value
-    .replace(/\b(?:Bearer\s+)?(?:sk|sess|token)-[A-Za-z0-9._-]+\b/gi, "[secret]")
-    .replace(/(?:\/Users|\/home|\/tmp)\/[^\s'\"]+/g, "[path]")
-    .replace(/[A-Za-z]:\\[^\s'\"]+/g, "[path]")
-    .replace(/\b(ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=[^\s]+/g, "$1=[secret]")
-    .slice(0, 2_048)
+  return sanitizeRuntimeText(value, { maxLength: 2_048, mode: "diagnostic" })
+    .replace(/\[redacted-path\]/g, "[path]")
+    .replace(/\[redacted(?:-[^\]]+)?\]/g, "[secret]")
 }
 
 function activity<K extends AgentActivityAppend["kind"]>(

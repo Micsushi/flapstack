@@ -1335,9 +1335,10 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   db.prepare(
     `INSERT INTO chats (
       id, name, project_id, task_id, scope, permission_mode, custom_permissions, harness, model,
+      runtime_preference,
       parent_chat_id, initiator_chat_id, parent_run_id, ancestor_chat_ids,
       worktree_path, branch, base_branch, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     chatId,
     definition.name ?? definition.role,
@@ -1347,6 +1348,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     definition.customPermissions ? JSON.stringify(definition.customPermissions) : null,
     definition.harness,
     definition.model ?? null,
+    definition.runtimePreference ?? null,
     parentChatId,
     orchestration.initiating_chat_id,
     parentAgent?.run_id ?? null,

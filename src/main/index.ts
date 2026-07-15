@@ -9,7 +9,7 @@ import {
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
-import { createMainRunLauncher } from "./lib/main-run-launcher"
+import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
 import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
@@ -912,7 +912,13 @@ if (gotTheLock) {
             },
             {
               name: "Interrupted MCP run recovery",
-              run: () => recoverInterruptedMcpRuns(getDatabasePath()),
+              run: () => {
+                const databasePath = getDatabasePath()
+                return recoverInterruptedMcpRuns(
+                  databasePath,
+                  getMainRuntimeLaunchService(databasePath),
+                )
+              },
             },
             {
               name: "Automation scheduler",
@@ -931,25 +937,26 @@ if (gotTheLock) {
             {
               name: "Pending run scheduler",
               run: () => {
-                const pendingRunLauncher = createMainRunLauncher()
-                const orchestrationService = createAgentOrchestrationService(getDatabasePath())
+                const databasePath = getDatabasePath()
+                const runtimeLaunchService = getMainRuntimeLaunchService(databasePath)
+                const pendingRunLauncher = runtimeLaunchService.launch
+                const orchestrationService = createAgentOrchestrationService(databasePath)
                 const launchPendingRuns = async () => {
                   if (pendingRunDrainActive) return
                   pendingRunDrainActive = true
                   try {
                     orchestrationService.tickAll()
                     for (const request of orchestrationService.listCancellationRequests()) {
-                      if (request.harness === "codex") cancelActiveCodexRun(request)
-                      else cancelActiveClaudeSession(request)
-                      orchestrationService.acknowledgeCancellationRequest(request.runId)
+                      const handled = await runtimeLaunchService.cancel(
+                        request.runId,
+                        "orchestration-cancelled",
+                      )
+                      if (handled) {
+                        orchestrationService.acknowledgeCancellationRequest(request.runId)
+                      }
                     }
                     for (const request of stopRunningRunsOverUsageBudget(initDatabase())) {
-                      if (request.harness === "codex") cancelActiveCodexRun(request)
-                      else if (request.harness === "claude-code") cancelActiveClaudeSession(request)
-                      else if (request.harness === "cursor-agent") cancelActiveCursorRun(request)
-                      else if (request.harness === "openrouter" || request.harness === "nanogpt") {
-                        cancelActiveOpencodeRun(request)
-                      }
+                      await runtimeLaunchService.cancel(request.runId, "usage-budget-exceeded")
                     }
                     await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
                   } catch (error) {
