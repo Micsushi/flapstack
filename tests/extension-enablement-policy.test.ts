@@ -17,6 +17,7 @@ import {
   filterClaudeExtensionMcpServers,
   filterCodexExtensionMcpServers,
   getClaudeExtensionSdkOptions,
+  previewClearExtensionEnablementPolicy,
   resolveExtensionEnablement,
   setExtensionEnablementPolicy,
   UnsupportedExtensionPolicyScopeError,
@@ -94,6 +95,13 @@ describe("extension enablement policy", () => {
         taskId: "task-1",
       }),
     ).toMatchObject({ enabled: false, source: "task" })
+
+    expect(
+      previewClearExtensionEnablementPolicy(database, {
+        target,
+        location: { type: "task", projectId: "project-1", taskId: "task-1" },
+      }),
+    ).toMatchObject({ enabled: true, source: "project" })
 
     clearExtensionEnablementPolicy(database, {
       target,
@@ -438,6 +446,14 @@ describe("extension enablement policy", () => {
     expect(
       cursorSource.indexOf("const extensionContext = await buildExtensionRunContext"),
     ).toBeLessThan(cursorSource.indexOf("child = spawn(binary, args"))
+
+    const directRuntimeSource = readFileSync("src/main/lib/main-run-launcher.ts", "utf8")
+    expect(directRuntimeSource).toContain('resolveExtensionAuthority(context, "codex")')
+    expect(directRuntimeSource).toContain("applyCodexExtensionPolicyConfig")
+    expect(directRuntimeSource).toContain('resolveExtensionAuthority(context, "claude-code")')
+    expect(directRuntimeSource).toContain("getClaudeExtensionSdkOptions")
+    expect(directRuntimeSource).toContain("filterClaudeExtensionMcpServers")
+    expect(directRuntimeSource).toContain("assertRegisteredFilesystemRoot")
   })
 })
 

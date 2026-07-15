@@ -123,6 +123,12 @@ export function getExtensionPolicyScopeSupport(
       reason: `The ${parsed.harness} ${parsed.kind} ${parsed.nativeScope} capability is ${capability.inventory}.`,
     }
   }
+  if (parsed.kind === "hook") {
+    return {
+      support: "unsupported",
+      reason: "Managed hooks use their explicit validated lifecycle instead of run policy.",
+    }
+  }
   if (capability.runtimeConsumption !== "supported") {
     return {
       support: "unsupported",
@@ -220,6 +226,33 @@ export function resolveExtensionEnablement(
   database: Database,
   input: { target: ExtensionPolicyTarget; projectId?: string; taskId?: string },
 ): ResolvedExtensionEnablement {
+  return resolveExtensionEnablementInternal(database, input)
+}
+
+export function previewClearExtensionEnablementPolicy(
+  database: Database,
+  input: { target: ExtensionPolicyTarget; location: ExtensionPolicyLocation },
+): ResolvedExtensionEnablement {
+  const location = extensionPolicyLocationSchema.parse(input.location)
+  validateLocation(database, location)
+  return resolveExtensionEnablementInternal(
+    database,
+    {
+      target: input.target,
+      ...(location.type === "project" ? { projectId: location.projectId } : {}),
+      ...(location.type === "task"
+        ? { projectId: location.projectId, taskId: location.taskId }
+        : {}),
+    },
+    location,
+  )
+}
+
+function resolveExtensionEnablementInternal(
+  database: Database,
+  input: { target: ExtensionPolicyTarget; projectId?: string; taskId?: string },
+  ignoredLocation?: ExtensionPolicyLocation,
+): ResolvedExtensionEnablement {
   const target = extensionPolicyTargetSchema.parse(input.target)
   const context = validateContext(database, input.projectId, input.taskId)
   const supportedScopes = extensionPolicyScopes.filter(
@@ -268,6 +301,12 @@ export function resolveExtensionEnablement(
     )
     .all()
   for (const candidate of precedence) {
+    if (
+      ignoredLocation?.type === candidate.source &&
+      policyScopeId(ignoredLocation) === candidate.scopeId
+    ) {
+      continue
+    }
     const row = rows.find(
       (entry) => entry.scopeType === candidate.source && entry.scopeId === candidate.scopeId,
     )

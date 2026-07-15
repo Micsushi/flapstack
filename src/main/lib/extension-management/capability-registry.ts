@@ -227,9 +227,9 @@ export const extensionBaselineGaps: ExtensionBaselineGap[] = [
   {
     id: "hook-lifecycle",
     currentBehavior:
-      "Managed Claude Code and Codex hook records validate, dry-run, audit, and enable explicitly but are not injected into native harness runtimes.",
+      "Managed Claude Code and Codex hook records validate, dry-run, audit, enable explicitly, and are injected into direct native harness launches.",
     additiveNeed:
-      "Prove live enable/disable and add native runtime consumption without weakening the managed safety gate.",
+      "Retain T6 ownership of live enable/disable and provider-observed runtime evidence without weakening the managed safety gate.",
     owner: "S4-F1-T6",
   },
 ]
@@ -384,11 +384,11 @@ function managedHooks(harness: "claude-code" | "codex"): CapabilityOverride[] {
       scope,
       "supported",
       ["enable", "disable"],
-      "not-consumed",
+      "supported",
       ["<Flapstack userData>/data/hook-management.json"],
       "none",
       [
-        "Hooks use a managed import-default-off registry with validation, bounded dry-run, approval, and audit; native runtime trigger wiring remains unavailable.",
+        "Hooks use a managed import-default-off registry with validation, bounded dry-run, approval, audit, and launch-scoped native runtime injection without mutating provider files.",
       ],
     ),
   )

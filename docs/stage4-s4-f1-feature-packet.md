@@ -5,9 +5,9 @@ Date: 2026-07-14
 ## Scope and state
 
 - Feature: S4-F1 Unified Skills and Hooks Manager, T1 through T7.
-- Base: detached `99181e81798e4c7289a105ec0d84999939d4fb9f`.
-- Feature diff: 31 paths after removing both F6-only permission hunks and
-  applying the bounded F1 review fixes.
+- Base: detached `bc3f81479ed66d39b2b29970fc745cab4c18a6dd`.
+- This packet contains only the additional F1 repairs made after the integrated
+  T1-T7 audit: 20 tracked paths before temporary dependency-link removal.
 - Accepted integration work was reused, then completed in this feature
   worktree. No commit, merge, push, or task finalization was performed.
 - T1, T2, and T4 retain accepted completion. T3, T5, T6, and T7 remain open for
@@ -43,8 +43,31 @@ Date: 2026-07-14
 - Project-hook enablement revalidates its registered root before requesting
   approval and again after approval before persisting. Disable remains
   stale-root-safe.
+- Stage 4 direct Codex and Claude launches now consume durable extension policy
+  and fail closed on stale filesystem-root authority before provider access.
+- Enabled managed hooks are resolved at launch. Claude uses bounded managed
+  callbacks; Codex uses modern lifecycle config. Provider hook files remain
+  untouched.
+- Policy overrides can be cleared from the manager to restore inheritance.
+  Project changes reset stale task context and stale projects remain read-only.
 
 ## Verification
+
+### Final `bc3f814` repair lane
+
+- Node 22.23.1 focused F1/runtime suite: 14 files / 164 tests passed.
+- TypeScript, touched-file ESLint, touched-file Prettier, strict OpenSpec, and
+  `git diff --check` passed.
+- The one repository-wide `npm run check` attempt acquired the heavy lock and
+  passed repository ESLint, then stopped at repository Prettier because the
+  unchanged `drizzle/meta/0031_snapshot.json` through `0034_snapshot.json`
+  files are not formatted. The test and build phases therefore did not run.
+  Those four migration snapshots are outside F1 and byte-unchanged in this
+  lane.
+- No UI lease was acquired. No Dev, package, provider, screen-reader, Windows,
+  or Linux evidence was observed or checked by this owner.
+
+### Reused integrated evidence
 
 - Node 22 focused F1 suite: 11 files, 144 tests passed.
 - Node 22 repository gate: `npm run check` passed; 175 files, 1,358 tests passed,
@@ -79,7 +102,7 @@ Date: 2026-07-14
   enable, file-store reload, disable, and a second reload all passed. Temporary
   state was removed and no provider extension file or config was touched.
 - The hook smoke used a controlled approval stub. It does not prove the live
-  Stage 3 approval surface or native harness hook consumption.
+  Stage 3 approval surface or provider-observed hook execution.
 - Packaged Claude and Codex authentication status succeeded, and an isolated
   Codex API-key credential exists. No provider-policy run was claimed because
   authentication/version proof does not observe whether Flapstack policy
@@ -91,8 +114,9 @@ Date: 2026-07-14
 
 - Apply and restart user/project/task policy changes against supported provider
   runs, including a package built from the final F1 source.
-- Live hook approval/UI interaction and one supported native harness runtime
-  execution. Native hook trigger injection remains explicitly `not-consumed`.
+- Live hook approval/UI interaction and one provider-observed supported native
+  harness execution. Headless launch injection is implemented but is not UI or
+  provider evidence.
 - Keyboard plus screen-reader observation and platform/package accessibility.
 - Windows/Linux and physical-device rows not exercised.
 - S4-SH01 through S4-SH04 remain unchecked until their full declared matrix

@@ -72,7 +72,9 @@
   commands/custom agents and Cursor commands fail closed before launch because
   their pinned harnesses expose no per-extension discovery filter. Node 22
   focused tests pass 13 migration, precedence, restart, unsupported-scope,
-  adversarial collision, launch-filter, and router-order cases. Completion
+  adversarial collision, launch-filter, and router-order cases. Direct Stage 4
+  Codex and Claude Runtime launches now consume the same policy
+  and reject stale registered-root authority before provider access. Completion
   remains unchecked pending live provider behavior plus Dev-profile and packaged
   restart proof; no provider-native extension content was edited. See
   `docs/stage4-s4-f1-t3-extension-policy.md`.
@@ -122,8 +124,11 @@
   preview/diff confirmations; honest unsupported states; and keyboard/screen-
   reader contracts are covered headlessly. Managed hooks now complete the same
   preview-confirmed validation, bounded dry-run, enable, and disable lifecycle,
-  with current-revision and Tier 3 approval gates visible in the UI. A verified
-  Dev-profile walkthrough now proves that a stale selected-project root retains
+  with current-revision and Tier 3 approval gates visible in the UI. The policy
+  surface also previews clearing the selected-scope override so the
+  result inherits lower-precedence state, and project changes clear stale task
+  context. UI observation remains owned by the serialized tester. A prior
+  verified Dev-profile walkthrough proves that a stale selected-project root retains
   user inventory while project mutation fails closed, and that a registered
   project enables an exact, review-gated policy preview; the preview was
   cancelled without mutation. Completion remains unchecked because applied
@@ -153,7 +158,7 @@
   smoke used the real bounded runner and file store to prove disabled import,
   validation, `/usr/bin/true` dry-run, enable/reload, and disable/reload without
   touching provider files. Completion remains unchecked because live Settings
-  approval, native harness runtime consumption, and final-source packaged UI
+  approval, provider-observed hook execution, and final-source packaged UI
   evidence are unverified; see `docs/stage4-s4-f1-t6-hook-safety.md`.
 
 ### S4-F1-T7 — Close unified extension acceptance

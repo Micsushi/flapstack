@@ -25,6 +25,14 @@
   a registered root and revalidate its canonical identity immediately before a
   dry-run, before enable approval, and again after approval before persistence.
   Disable remains available when that former root is stale.
+- Runtime resolution rechecks the current run root, hook revision, validation,
+  dry-run result, harness, and exact project authority before provider launch.
+- Direct Claude launches receive SDK hook callbacks backed by a shell-free,
+  timeout-bound, abortable runner with a sanitized environment and one 64 KiB
+  output budget. Direct Codex launches receive lifecycle hook config only for
+  validated modern Codex events. Neither path mutates provider hook files.
+- The private state reader opens with no-follow semantics and verifies the
+  opened descriptor identity, blocking symlink swaps and stale path reads.
 
 ## Unified manager integration
 
@@ -35,17 +43,16 @@
   disables later actions in the renderer and fails closed again in the service.
 - Dry-run previews show the exact shell-free command and timeout before the Tier
   3 approval request. Enablement requires a separate Tier 3 approval.
-- Lifecycle state and the honest `not-consumed` native-runtime limitation are
-  visible together; managed enablement is never presented as native trigger
-  injection.
+- Lifecycle state and direct-runtime consumption support are visible together;
+  unsupported harness and scope combinations remain explicit.
 
 ## Deliberate Limits
 
 - No cross-harness hook conversion or copy path was added.
 - No database migration or policy migration `0030` was changed.
-- Native provider trigger wiring remains unavailable and is reported as
-  `not-consumed`; this task does not claim that a managed enabled record is
-  already injected into an external harness.
+- Native provider files are never rewritten. Launch-scoped injection applies
+  only to direct Claude Code and Codex Runtime adapters; legacy provider routers
+  keep their existing authority.
 - The consolidated closeout executed `/usr/bin/true` through the real bounded
   runner and private file store in a temporary profile. Its approval gate was a
   controlled approval stub, not the live Stage 3 approval UI, and no native
@@ -63,11 +70,20 @@
   validated it, executed a real bounded dry-run, enabled it, reloaded the file
   store, disabled it, and reloaded again. Enabled and disabled states survived
   their respective reloads; the temporary profile was removed.
+- Runtime-resolution, Codex config, Claude callback, stale-root, and real
+  shell-free callback execution are covered headlessly.
 
 ## Remaining Proof
 
 - Live Settings approval and UI-driven enable/disable/restart walkthrough.
-- Native harness runtime-consumption wiring and one real supported-harness
-  execution per promoted hook surface.
+- One provider-observed supported-harness hook execution per promoted surface.
 - Final-source packaged preview interaction, Windows, and Linux evidence.
 - Integrated S4-SH01 through S4-SH04 acceptance.
+
+## Recovery
+
+Disable is always the first recovery action. If project identity is stale,
+disable remains available from the stored record; validation, dry-run, enable,
+and launch all fail closed. If the state file is unreadable or replaced, no
+managed hook is launched. Repair or remove the private state file, then import,
+validate, dry-run, and approve again.

@@ -110,6 +110,13 @@ describe("extension policy production router", () => {
       caller.resolveEnablement({ extensionId: extensionId!, cwd: projectRoot, location }),
     ).resolves.toMatchObject({ enabled: false, source: "task" })
     await expect(
+      caller.previewClearEnablementPolicy({
+        extensionId: extensionId!,
+        cwd: projectRoot,
+        location,
+      }),
+    ).resolves.toMatchObject({ enabled: true, source: "fixed-default" })
+    await expect(
       caller.clearEnablementPolicy({ extensionId: extensionId!, cwd: projectRoot, location }),
     ).resolves.toMatchObject({ enabled: true, source: "fixed-default" })
     await vi.waitFor(() => expect(received).toHaveLength(2))

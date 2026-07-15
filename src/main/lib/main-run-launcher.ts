@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import { existsSync } from "node:fs"
 import { createAppRouter } from "./trpc/routers"
 import {
@@ -40,11 +41,38 @@ import {
 import { RUNTIME_RELEASE_POLICY } from "./agent-runtime/release-policy"
 import { sanitizeRuntimeText } from "./agent-runtime/sanitizer"
 import { getDatabasePath } from "./db"
+import * as schema from "./db/schema"
 import { nowEpochSeconds } from "./db/timestamps"
 import {
   createFlapstackNativeAdapterFactory,
   type FlapstackNativeProviderDelegation,
 } from "./agent-runtime/flapstack-native"
+import {
+  applyCodexExtensionPolicyConfig,
+  buildExtensionRunContext,
+  buildManagedClaudeHookOptions,
+  buildManagedCodexHookConfig,
+  FileHookStateStore,
+  filterClaudeExtensionMcpServers,
+  getClaudeExtensionSdkOptions,
+  NodeManagedHookRuntimeExecutor,
+  resolveEnabledManagedHooks,
+  type ExtensionLaunchPolicy,
+  type HookRecord,
+  type HookStateStore,
+  type ManagedHookRuntimeExecutor,
+} from "./extension-management"
+import { assertRegisteredFilesystemRoot } from "./git/security/path-validation"
+import {
+  getMergedGlobalMcpServers,
+  getMergedLocalProjectMcpServers,
+  readClaudeConfig,
+  readClaudeDirConfig,
+  readProjectMcpJson,
+  type McpServerConfig,
+} from "./claude-config"
+import { discoverPluginMcpServers } from "./plugins"
+import { getApprovedPluginMcpServers, getEnabledPlugins } from "./trpc/routers/claude-settings"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -55,6 +83,8 @@ export type MainRunLauncherOptions = {
   enableClaudeCode?: boolean
   permissionHandler?: (runId: string, request: unknown) => Promise<unknown>
   inputHandler?: (runId: string, request: unknown) => Promise<unknown>
+  hookStore?: HookStateStore
+  hookRuntimeExecutor?: ManagedHookRuntimeExecutor
 }
 
 export type RuntimeStructuredOutput = Readonly<{
@@ -75,11 +105,15 @@ export class MainRuntimeLaunchService {
   private readonly persistedCancellations = new Map<string, Promise<boolean>>()
   private readonly persistedOperations = new Map<string, Promise<void>>()
   private readonly databasePath: string
+  private readonly hookStore: HookStateStore
+  private readonly hookRuntimeExecutor: ManagedHookRuntimeExecutor
   private permissionHandler?: MainRunLauncherOptions["permissionHandler"]
   private inputHandler?: MainRunLauncherOptions["inputHandler"]
 
   constructor(options: MainRunLauncherOptions) {
     this.databasePath = options.databasePath ?? getDatabasePath()
+    this.hookStore = options.hookStore ?? new FileHookStateStore()
+    this.hookRuntimeExecutor = options.hookRuntimeExecutor ?? new NodeManagedHookRuntimeExecutor()
     this.permissionHandler = options.permissionHandler
     this.inputHandler = options.inputHandler
     const nativeFactory = createFlapstackNativeAdapterFactory({
@@ -93,10 +127,18 @@ export class MainRuntimeLaunchService {
       options.codexFactory ??
       (createCodexRuntimeAdapterFactory({
         appendActivity: (runId, events) => this.appendActivity(runId, events),
-        resolveThreadParams: (context) => ({
-          cwd: this.resolveRunCwd(context.runId),
-          ...codexPermissionOptions(context.launch.permission.mode),
-        }),
+        resolveThreadParams: async (context) => {
+          const authority = await this.resolveExtensionAuthority(context, "codex")
+          const config = applyCodexExtensionPolicyConfig(
+            buildManagedCodexHookConfig(authority.hooks),
+            authority.policy,
+          )
+          return {
+            cwd: authority.cwd,
+            ...codexPermissionOptions(context.launch.permission.mode),
+            ...(Object.keys(config).length > 0 ? { config } : {}),
+          }
+        },
         resolvePersistedSession: (context) => this.loadPersistedSession(context.runId),
         resolvePersistedTurn: (context) => this.loadPersistedTurn(context.runId),
         requestPermission: (context, request) =>
@@ -350,14 +392,31 @@ export class MainRuntimeLaunchService {
           unavailableReason: existsSync(binary) ? null : "Bundled Claude Code binary is missing.",
         }
       },
-      buildQueryOptions: async (context) => ({
-        cwd: this.resolveRunCwd(context.runId),
-        pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
-        includePartialMessages: true,
-        settingSources: ["project", "user"],
-        ...claudePermissionOptions(context.launch.permission.mode),
-        ...(context.launch.model ? { model: context.launch.model } : {}),
-      }),
+      buildQueryOptions: async (context) => {
+        const authority = await this.resolveExtensionAuthority(context, "claude-code")
+        const sdkOptions = getClaudeExtensionSdkOptions(authority.policy)
+        const hooks = buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
+          this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+        )
+        const mcpServers =
+          authority.policy.disabledMcpNames.length > 0
+            ? filterClaudeExtensionMcpServers(
+                await loadClaudeMcpServers(authority.cwd),
+                authority.policy,
+              )
+            : undefined
+        return {
+          cwd: authority.cwd,
+          pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
+          includePartialMessages: true,
+          settingSources: ["project", "user"],
+          ...claudePermissionOptions(context.launch.permission.mode),
+          ...(context.launch.model ? { model: context.launch.model } : {}),
+          ...sdkOptions,
+          ...(mcpServers ? { mcpServers } : {}),
+          ...(Object.keys(hooks).length > 0 ? { hooks, includeHookEvents: true } : {}),
+        }
+      },
       loadSession: async (context) => {
         const session = await this.loadPersistedSession(context.runId)
         return session?.providerSessionId ? { sessionId: session.providerSessionId } : null
@@ -626,6 +685,51 @@ export class MainRuntimeLaunchService {
     }
   }
 
+  private async resolveExtensionAuthority(
+    context: RuntimeAdapterContext,
+    harness: "codex" | "claude-code",
+  ): Promise<{ cwd: string; policy: ExtensionLaunchPolicy; hooks: HookRecord[] }> {
+    const sqlite = this.open()
+    try {
+      const database = drizzle(sqlite, { schema })
+      const requestedCwd = this.resolveRunCwd(context.runId)
+      const resolveRoot = (path: string): string => {
+        try {
+          return assertRegisteredFilesystemRoot(path, database).canonicalPath
+        } catch (error) {
+          const alias = database
+            .select({ path: schema.filesystemRootRegistrations.path })
+            .from(schema.filesystemRootRegistrations)
+            .all()
+            .find((entry) => {
+              try {
+                return assertRegisteredFilesystemRoot(entry.path, database).canonicalPath === path
+              } catch {
+                return false
+              }
+            })
+          if (!alias) throw error
+          return assertRegisteredFilesystemRoot(alias.path, database).canonicalPath
+        }
+      }
+      const cwd = resolveRoot(requestedCwd)
+      const extension = await buildExtensionRunContext(database, {
+        chatId: context.chatId,
+        harness,
+        cwd,
+      })
+      const hooks = resolveEnabledManagedHooks({
+        store: this.hookStore,
+        harness,
+        cwd,
+        resolveProjectCwd: resolveRoot,
+      })
+      return { cwd, policy: extension.launchPolicy, hooks }
+    } finally {
+      sqlite.close()
+    }
+  }
+
   private requireRunRow(db: Database.Database, runId: string) {
     const row = db.prepare("SELECT id, sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
       { id: string; sub_chat_id: string | null } | undefined
@@ -639,6 +743,38 @@ export class MainRuntimeLaunchService {
     db.pragma("busy_timeout = 5000")
     return db
   }
+}
+
+async function loadClaudeMcpServers(cwd: string): Promise<Record<string, McpServerConfig>> {
+  const [config, dirConfig, projectJson, enabledPlugins, pluginConfigs, approvedPlugins] =
+    await Promise.all([
+      readClaudeConfig(),
+      readClaudeDirConfig(),
+      readProjectMcpJson(cwd),
+      getEnabledPlugins(),
+      discoverPluginMcpServers(),
+      getApprovedPluginMcpServers(),
+    ])
+  const [globalServers, projectConfigServers] = await Promise.all([
+    getMergedGlobalMcpServers(config, dirConfig),
+    getMergedLocalProjectMcpServers(cwd, config, dirConfig),
+  ])
+  const projectServers = { ...projectJson, ...projectConfigServers }
+  const pluginServers: Record<string, McpServerConfig> = {}
+  for (const plugin of pluginConfigs) {
+    if (!enabledPlugins.includes(plugin.pluginSource)) continue
+    for (const [name, server] of Object.entries(plugin.mcpServers)) {
+      const identifier = `${plugin.pluginSource}:${name}`
+      if (
+        approvedPlugins.includes(identifier) &&
+        !(name in globalServers) &&
+        !(name in projectServers)
+      ) {
+        pluginServers[name] = server
+      }
+    }
+  }
+  return { ...pluginServers, ...globalServers, ...projectServers }
 }
 
 export function getMainRuntimeLaunchService(

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   createExtensionManagerState,
+  clearPolicyDiff,
   exactPolicyDiff,
   extensionManagerInventoryStatus,
   extensionManagerPolicyMutationCwd,
@@ -137,6 +138,18 @@ describe("unified extension manager reducer", () => {
     ).toContain('"taskOverride":false')
   })
 
+  it("renders the exact inherited-policy diff after clearing an override", () => {
+    expect(
+      clearPolicyDiff({
+        scope: "project",
+        currentEnabled: false,
+        currentSource: "project",
+        inheritedEnabled: true,
+        inheritedSource: "user",
+      }),
+    ).toContain('"sourceAfter":"user"')
+  })
+
   it("distinguishes loading, error, stale-error, refreshing, empty, and ready inventory", () => {
     expect(
       extensionManagerInventoryStatus({ count: 0, loading: true, fetching: true, hasError: false }),
@@ -248,6 +261,8 @@ describe("unified extension manager accessibility contract", () => {
       "applyNativeMutation.useMutation",
       "previewCrossHarnessCopy.query",
       "setEnablementPolicy.useMutation",
+      "clearEnablementPolicy.useMutation",
+      "previewClearEnablementPolicy.query",
       "hooksManagement.listInventory.useQuery",
       "hooksManagement.previewCommand.query",
       "hooksManagement.validateHook.useMutation",

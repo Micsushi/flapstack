@@ -204,6 +204,26 @@ export function exactPolicyDiff(input: {
   return `- ${before}\n+ ${after}`
 }
 
+export function clearPolicyDiff(input: {
+  scope: "user" | "project" | "task"
+  currentEnabled: boolean
+  currentSource: string
+  inheritedEnabled: boolean
+  inheritedSource: string
+}): string {
+  const before = JSON.stringify({
+    resolvedBefore: input.currentEnabled ? "enabled" : "disabled",
+    sourceBefore: input.currentSource,
+    [`${input.scope}Override`]: input.currentEnabled,
+  })
+  const after = JSON.stringify({
+    [`${input.scope}Override`]: "removed",
+    resolvedAfter: input.inheritedEnabled ? "enabled" : "disabled",
+    sourceAfter: input.inheritedSource,
+  })
+  return `- ${before}\n+ ${after}`
+}
+
 export function extensionManagerInventoryStatus(input: {
   count: number
   loading: boolean

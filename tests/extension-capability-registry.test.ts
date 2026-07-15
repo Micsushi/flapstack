@@ -157,7 +157,7 @@ describe("Stage 3 extension capability baseline", () => {
     }
   })
 
-  it("promotes managed hooks while keeping native runtime consumption honest", async () => {
+  it("promotes managed hooks with direct native runtime consumption", async () => {
     const state = await hooksManagementRouter
       .createCaller({ getWindow: () => null })
       .getCapabilities()
@@ -174,7 +174,7 @@ describe("Stage 3 extension capability baseline", () => {
         ).toMatchObject({
           inventory: "supported",
           mutations: ["enable", "disable"],
-          runtimeConsumption: "not-consumed",
+          runtimeConsumption: "supported",
         })
       }
     }

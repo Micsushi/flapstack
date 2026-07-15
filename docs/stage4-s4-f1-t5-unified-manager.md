@@ -5,11 +5,12 @@
 - One shared Settings component now inventories native extensions, plugin inventory, and managed hooks.
 - Harness, kind, source, native-scope, and normalized text filters are independent.
 - Every row shows its native or managed source path, capability-registry support, runtime-consumption state, and limitations.
-- User, project, and task policy resolution is visible. Unsupported policy scopes cannot write state.
+- User, project, and task policy resolution is visible. Unsupported policy scopes cannot write state. An explicit-scope override can be previewed and cleared to inherit the next lower-precedence result.
 - Native create/edit and cross-harness copy use the existing preview DTOs. Apply requires a second explicit review checkbox and the preview hashes.
-- Disable/enable policy changes and managed-hook disablement show an exact policy or lifecycle diff before confirmation.
+- Disable/enable/clear policy changes and managed-hook disablement show an exact policy or lifecycle diff before confirmation.
 - Hook imports show exact command validation and remain disabled after import. The same surface previews validation, bounded dry-run, enablement, and disablement; dry-run and enablement each require Tier 3 approval and current-revision evidence.
 - Search shortcut, labelled controls, live result count, roving listbox focus, arrow/Home/End navigation, and screen-reader selection state are covered by headless contracts.
+- Changing selected project clears pending previews and stale task context before scoped inventory is reused.
 
 ## Consolidated headless verification
 

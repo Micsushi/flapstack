@@ -19,6 +19,7 @@ import type { ProviderExtensionManifest } from "../../../../main/lib/provider-ex
 import { selectedChatScopeAtom, selectedProjectAtom } from "../../../features/agents/atoms"
 import {
   createExtensionManagerState,
+  clearPolicyDiff,
   exactPolicyDiff,
   extensionManagerHarnesses,
   extensionManagerKinds,
@@ -130,6 +131,7 @@ type ActionPreview =
       extensionId: string
       location: PolicyLocation
       enabled: boolean
+      operation: "set" | "clear"
     }
   | {
       type: "hook-import"
@@ -216,6 +218,7 @@ export function AgentsProviderExtensionsTab({
   const [taskId, setTaskId] = useState(
     selectedChatScope?.type === "task" ? selectedChatScope.id : "",
   )
+  const [policyOperation, setPolicyOperation] = useState<"set" | "clear">("set")
   const listRefs = useRef(new Map<string, HTMLButtonElement>())
   const searchRef = useRef<HTMLInputElement>(null)
   const restoreInventoryFocus = useCallback(() => {
@@ -252,6 +255,7 @@ export function AgentsProviderExtensionsTab({
   const applyCopy = trpc.providerExtensions.applyCrossHarnessCopy.useMutation()
   const restoreNative = trpc.providerExtensions.restoreNativeBackup.useMutation()
   const setPolicy = trpc.providerExtensions.setEnablementPolicy.useMutation()
+  const clearPolicy = trpc.providerExtensions.clearEnablementPolicy.useMutation()
   const importHook = trpc.hooksManagement.importHook.useMutation()
   const validateHook = trpc.hooksManagement.validateHook.useMutation()
   const dryRunHook = trpc.hooksManagement.dryRunHook.useMutation()
@@ -270,6 +274,24 @@ export function AgentsProviderExtensionsTab({
     dispatch({ type: "filter", key: "kind", value: initialKind })
     setDraft((current) => ({ ...current, kind: draftKind(initialKind) }))
   }, [initialKind])
+
+  useEffect(() => {
+    setPolicyScope(selectedProject ? "project" : "user")
+    setTaskId("")
+    setPreview(null)
+    dispatch({ type: "cancel" })
+  }, [selectedProject?.id])
+
+  useEffect(() => {
+    if (
+      selectedChatScope?.type === "task" &&
+      tasks.data?.some((task) => task.id === selectedChatScope.id)
+    ) {
+      setTaskId(selectedChatScope.id)
+    } else if (tasks.data) {
+      setTaskId("")
+    }
+  }, [selectedChatScope?.id, selectedChatScope?.type, tasks.data])
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -375,6 +397,7 @@ export function AgentsProviderExtensionsTab({
     applyCopy.isPending ||
     restoreNative.isPending ||
     setPolicy.isPending ||
+    clearPolicy.isPending ||
     importHook.isPending ||
     validateHook.isPending ||
     dryRunHook.isPending ||
@@ -518,17 +541,37 @@ export function AgentsProviderExtensionsTab({
         next = nativePreview("Delete native extension", "delete", selectedTarget, undefined, result)
       } else if (state.flow === "policy" && selected?.native && policyLocation) {
         const enabled = !selected.native.resolved.enabled
+        const clearing = policyOperation === "clear"
+        const inherited = clearing
+          ? await trpcClient.providerExtensions.previewClearEnablementPolicy.query({
+              extensionId: selected.native.extension.id,
+              cwd: extensionManagerPolicyMutationCwd(policyLocation.type, verifiedProject?.path),
+              location: policyLocation,
+            })
+          : null
         next = {
           type: "policy",
-          title: enabled ? "Enable extension policy" : "Disable extension policy",
+          title: clearing
+            ? "Clear extension policy override"
+            : enabled
+              ? "Enable extension policy"
+              : "Disable extension policy",
           path: `${policyScope} policy record · ${selected.path}`,
           support: policySupported ? "supported" : "unsupported",
-          diff: exactPolicyDiff({
-            scope: policyScope,
-            enabled,
-            currentEnabled: selected.native.resolved.enabled,
-            currentSource: selected.native.resolved.source,
-          }),
+          diff: clearing
+            ? clearPolicyDiff({
+                scope: policyScope,
+                currentEnabled: selected.native.resolved.enabled,
+                currentSource: selected.native.resolved.source,
+                inheritedEnabled: inherited!.enabled,
+                inheritedSource: inherited!.source,
+              })
+            : exactPolicyDiff({
+                scope: policyScope,
+                enabled,
+                currentEnabled: selected.native.resolved.enabled,
+                currentSource: selected.native.resolved.source,
+              }),
           warnings: policySupported
             ? []
             : [
@@ -538,6 +581,7 @@ export function AgentsProviderExtensionsTab({
           extensionId: selected.native.extension.id,
           location: policyLocation,
           enabled,
+          operation: policyOperation,
         }
       } else if (state.flow?.startsWith("hook-") && selected?.hook) {
         const action = state.flow.slice("hook-".length) as
@@ -622,6 +666,7 @@ export function AgentsProviderExtensionsTab({
   }, [
     draft,
     policyLocation,
+    policyOperation,
     policyScope,
     policySupported,
     selected,
@@ -684,12 +729,13 @@ export function AgentsProviderExtensionsTab({
         }
       } else if (preview.type === "policy") {
         if (preview.support !== "supported") throw new Error("Unsupported policy cannot be applied")
-        await setPolicy.mutateAsync({
+        const input = {
           extensionId: preview.extensionId,
           cwd: extensionManagerPolicyMutationCwd(preview.location.type, verifiedProject?.path),
           location: preview.location,
-          enabled: preview.enabled,
-        })
+        }
+        if (preview.operation === "clear") await clearPolicy.mutateAsync(input)
+        else await setPolicy.mutateAsync({ ...input, enabled: preview.enabled })
       } else if (preview.type === "hook-import") {
         if (!preview.validation.valid) throw new Error("Invalid hooks cannot be imported")
         await importHook.mutateAsync(preview.draft)
@@ -732,6 +778,7 @@ export function AgentsProviderExtensionsTab({
   }, [
     applyCopy,
     applyNative,
+    clearPolicy,
     dryRunHook,
     importHook,
     preview,
@@ -984,8 +1031,9 @@ export function AgentsProviderExtensionsTab({
             onEdit={beginEdit}
             onCopy={beginCopy}
             onDelete={beginDelete}
-            onPolicy={() => {
+            onPolicy={(operation) => {
               setPreview(null)
+              setPolicyOperation(operation)
               dispatch({ type: "begin", flow: "policy" })
             }}
             onHookAction={(action) => {
@@ -1031,7 +1079,7 @@ function DetailPanel({
   onEdit: () => void
   onCopy: () => void
   onDelete: () => void
-  onPolicy: () => void
+  onPolicy: (operation: "set" | "clear") => void
   onHookAction: (action: "validate" | "dry-run" | "enable" | "disable") => void
 }) {
   const nativeAdapter = hasNativeAdapter(item.kind)
@@ -1172,10 +1220,25 @@ function DetailPanel({
                 `The ${policyScope} scope is unsupported or incomplete.`}
             </p>
           )}
-          <Button variant="outline" size="sm" disabled={!canDisable} onClick={onPolicy}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canDisable}
+            onClick={() => onPolicy("set")}
+          >
             <ShieldOff className="mr-1.5 h-3.5 w-3.5" />
             {item.native.resolved.enabled ? "Preview disable" : "Preview enable"}
           </Button>
+          {item.native.resolved.source === policyScope && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!policySupported}
+              onClick={() => onPolicy("clear")}
+            >
+              Preview inherit
+            </Button>
+          )}
         </div>
       )}
       {item.hook && (

@@ -1,4 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -6,7 +14,11 @@ import {
   FileHookStateStore,
   HookLifecycleService,
   MemoryHookStateStore,
+  NodeManagedHookRuntimeExecutor,
+  buildManagedClaudeHookOptions,
+  buildManagedCodexHookConfig,
   parseHookCommand,
+  resolveEnabledManagedHooks,
   validateHookDraft,
   type HookApprovalDecision,
   type HookAuditEvent,
@@ -82,17 +94,25 @@ describe("hook validation and command preview", () => {
     })
   })
 
-  it("rejects unsupported harness events and fake Codex matchers", () => {
+  it("accepts modern Codex lifecycle matchers and rejects unsupported events", () => {
     expect(
       validateHookDraft(
         draft({ harness: "codex", event: "PreToolUse", matcher: "shell", command: "notify ok" }),
       ),
+    ).toMatchObject({ valid: true, issues: [] })
+    expect(
+      validateHookDraft(
+        draft({ harness: "codex", event: "agent-turn-complete", command: "notify ok" }),
+      ),
     ).toMatchObject({
       valid: false,
-      issues: [
-        expect.objectContaining({ path: "event" }),
-        expect.objectContaining({ path: "matcher" }),
-      ],
+      issues: [expect.objectContaining({ path: "event" })],
+    })
+    expect(
+      validateHookDraft(draft({ harness: "codex", event: "Stop", matcher: "[" })),
+    ).toMatchObject({
+      valid: false,
+      issues: [expect.objectContaining({ path: "matcher" })],
     })
   })
 })
@@ -325,6 +345,26 @@ describe("hook lifecycle", () => {
     expect(approval).toHaveBeenCalledTimes(approvalsBefore)
   })
 
+  it("rejects a stale project root before validation without persisting", async () => {
+    let stale = false
+    const store = new MemoryHookStateStore()
+    const service = new HookLifecycleService(
+      store,
+      successfulRunner(),
+      undefined,
+      undefined,
+      (cwd) => {
+        if (stale) throw new Error("Registered root identity cannot be verified")
+        return cwd
+      },
+    )
+    const imported = await service.import(draft({ scope: "project", cwd: "/registered/project" }))
+    stale = true
+
+    await expect(service.validate(imported.id)).rejects.toThrow(/root identity/i)
+    expect(service.list()).toEqual([imported])
+  })
+
   it("rejects a project root that becomes stale during enable approval", async () => {
     let stale = false
     const resolveProjectCwd = vi.fn((cwd: string) => {
@@ -427,5 +467,96 @@ describe("hook lifecycle", () => {
     symlinkSync(target, linked)
 
     expect(() => new FileHookStateStore(linked).read()).toThrow(/fail-closed/i)
+  })
+
+  it("resolves only current, enabled, runtime-ready hooks and fails closed on stale roots", async () => {
+    const store = new MemoryHookStateStore()
+    const resolveProjectCwd = vi.fn((cwd: string) => cwd.replace("/alias", "/canonical"))
+    const service = new HookLifecycleService(
+      store,
+      successfulRunner(),
+      { request: async () => "approved" },
+      undefined,
+      resolveProjectCwd,
+    )
+    const user = await service.import(draft({ name: "user" }))
+    const project = await service.import(
+      draft({ name: "project", scope: "project", cwd: "/alias/project" }),
+    )
+    for (const record of [user, project]) {
+      await service.validate(record.id)
+      await service.dryRun(record.id)
+      await service.setEnabled(record.id, true)
+    }
+
+    expect(
+      resolveEnabledManagedHooks({
+        store,
+        harness: "claude-code",
+        cwd: "/canonical/project",
+        resolveProjectCwd,
+      }).map((record) => record.definition.name),
+    ).toEqual(["user", "project"])
+    expect(() =>
+      resolveEnabledManagedHooks({
+        store,
+        harness: "claude-code",
+        cwd: "/stale/project",
+        resolveProjectCwd: () => {
+          throw new Error("Registered root identity cannot be verified")
+        },
+      }),
+    ).toThrow(/root identity/i)
+  })
+
+  it("builds provider-native hook launch options", async () => {
+    const codexStore = new MemoryHookStateStore()
+    const service = new HookLifecycleService(codexStore, successfulRunner(), {
+      request: async () => "approved",
+    })
+    const imported = await service.import(
+      draft({ harness: "codex", event: "PreToolUse", matcher: "shell" }),
+    )
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    const enabled = (await service.setEnabled(imported.id, true)).record
+    expect(buildManagedCodexHookConfig([enabled])).toMatchObject({
+      features: { hooks: true },
+      hooks: { PreToolUse: [{ matcher: "shell", hooks: [{ type: "command" }] }] },
+    })
+
+    const execute = vi.fn(async () => ({ continue: true }))
+    const claude = { ...enabled, definition: { ...enabled.definition, harness: "claude-code" } }
+    const options = buildManagedClaudeHookOptions([claude], execute)
+    const signal = new AbortController().signal
+    await options.PreToolUse![0]!.hooks[0]!({ tool_name: "Write" }, undefined, { signal })
+    expect(execute).toHaveBeenCalledWith(claude, { tool_name: "Write" }, signal)
+  })
+
+  it("executes managed hooks shell-free with bounded JSON output", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-hook-runtime-"))
+    directories.push(directory)
+    const script = join(directory, "hook.mjs")
+    writeFileSync(
+      script,
+      'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify({ cwd: process.cwd() })))',
+    )
+    const store = new MemoryHookStateStore()
+    const service = new HookLifecycleService(store, successfulRunner(), {
+      request: async () => "approved",
+    })
+    const imported = await service.import(draft({ command: `node ${script}` }))
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    const enabled = (await service.setEnabled(imported.id, true)).record
+
+    await expect(
+      new NodeManagedHookRuntimeExecutor().execute(
+        enabled,
+        { hook_event_name: "PostToolUse" },
+        new AbortController().signal,
+        directory,
+      ),
+    ).resolves.toEqual({ cwd: realpathSync(directory) })
   })
 })
