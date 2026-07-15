@@ -1,12 +1,14 @@
 import { createConnection } from "node:net"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  invalidationForProjectVaultChange,
   invalidationForProductMcpMutation,
   parseProductMcpRendererInvalidation,
   PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV,
   type ProductMcpRendererInvalidation,
 } from "../src/shared/product-mcp-invalidation"
 import {
+  broadcastProductInvalidationToWindows,
   publishLocalProductInvalidation,
   publishProductMcpInvalidation,
   startProductMcpInvalidationBridge,
@@ -19,6 +21,7 @@ import {
 } from "../src/main/lib/extension-management"
 import { publishHookExtensionChange } from "../src/main/lib/trpc/routers/hooks-management"
 import {
+  createProjectVaultQueryInvalidator,
   createProductMcpInvalidationCoalescer,
   createProductMcpRendererInvalidator,
 } from "../src/renderer/features/mcp-safety/external-mutation-refresh-model"
@@ -29,6 +32,137 @@ afterEach(() => {
 })
 
 describe("product MCP external mutation refresh", () => {
+  it("keeps project-vault change payloads bounded and content-free", () => {
+    const event = invalidationForProjectVaultChange({
+      projectId: "project-1",
+      sectionId: "context",
+      revision: 3,
+      kind: "conflict-resolved",
+    })
+
+    expect(event).toEqual({
+      version: 1,
+      source: "product-mcp",
+      domains: ["vaults"],
+      vaultChanges: [
+        {
+          projectId: "project-1",
+          sectionId: "context",
+          revision: 3,
+          kind: "conflict-resolved",
+        },
+      ],
+    })
+    expect(Object.keys(event.vaultChanges![0]!)).toEqual([
+      "projectId",
+      "sectionId",
+      "revision",
+      "kind",
+    ])
+    expect(JSON.stringify(event)).not.toMatch(/markdown|snippet|secret|path|provider/i)
+    expect(
+      parseProductMcpRendererInvalidation({
+        ...event,
+        vaultChanges: [{ ...event.vaultChanges![0], content: "must-not-cross" }],
+      }),
+    ).toBeNull()
+    expect(
+      parseProductMcpRendererInvalidation({
+        ...event,
+        vaultChanges: [{ ...event.vaultChanges![0], projectId: "p".repeat(257) }],
+      }),
+    ).toBeNull()
+  })
+
+  it("broadcasts once to both live windows and safely skips destroyed renderers", () => {
+    const event = invalidationForProjectVaultChange({
+      projectId: "project-1",
+      sectionId: "context",
+      revision: 3,
+      kind: "conflict-resolved",
+    })
+    const first = vi.fn()
+    const second = vi.fn()
+    const destroyed = vi.fn()
+    const vanished = vi.fn(() => {
+      throw new Error("renderer vanished")
+    })
+
+    expect(
+      broadcastProductInvalidationToWindows(event, [
+        { isDestroyed: () => false, webContents: { send: first } },
+        { isDestroyed: () => false, webContents: { send: second } },
+        { isDestroyed: () => true, webContents: { send: destroyed } },
+        { isDestroyed: () => false, webContents: { send: vanished } },
+      ]),
+    ).toBe(2)
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).toHaveBeenCalledOnce()
+    expect(first).toHaveBeenCalledWith("product-mcp:renderer-invalidation", event)
+    expect(second).toHaveBeenCalledWith("product-mcp:renderer-invalidation", event)
+    expect(destroyed).not.toHaveBeenCalled()
+    expect(vanished).toHaveBeenCalledOnce()
+  })
+
+  it("routes an exact vault change without invalidating unrelated projects or sections", async () => {
+    const calls: string[] = []
+    const projectVault = createProjectVaultQueryInvalidator({
+      project: ({ projectId }) => calls.push(`project:${projectId}`),
+      list: ({ projectId }) => calls.push(`list:${projectId}`),
+      get: ({ projectId, sectionId }) => calls.push(`get:${projectId}:${sectionId}`),
+      backups: ({ projectId, sectionId }) => calls.push(`backups:${projectId}:${sectionId}`),
+      backup: ({ projectId, sectionId }) => calls.push(`backup:${projectId}:${sectionId}`),
+      search: ({ projectId }) => calls.push(`search:${projectId}`),
+    })
+    const invalidate = createProductMcpRendererInvalidator({
+      projectsList: vi.fn(),
+      projectsArchived: vi.fn(),
+      tasksList: vi.fn(),
+      tasksArchived: vi.fn(),
+      task: vi.fn(),
+      chatsList: vi.fn(),
+      chatsArchived: vi.fn(),
+      chat: vi.fn(),
+      runsForChat: vi.fn(),
+      run: vi.fn(),
+      attachmentsForChat: vi.fn(),
+      approvals: vi.fn(),
+      audit: vi.fn(),
+      orchestrationTask: vi.fn(),
+      chatLineage: vi.fn(),
+      projectVault,
+      automations: vi.fn(),
+      taskProposals: vi.fn(),
+      planSources: vi.fn(),
+      providerExtensions: vi.fn(),
+    })
+
+    await invalidate(
+      invalidationForProjectVaultChange({
+        projectId: "project-1",
+        sectionId: "context",
+        revision: 3,
+        kind: "conflict-resolved",
+      }),
+    )
+
+    expect(calls).toEqual([
+      "list:project-1",
+      "get:project-1:context",
+      "backups:project-1:context",
+      "backup:project-1:context",
+      "search:project-1",
+    ])
+
+    await invalidate({
+      version: 1,
+      source: "product-mcp",
+      domains: ["vaults"],
+      projectIds: ["project-2"],
+    })
+    expect(calls.at(-1)).toBe("project:project-2")
+  })
+
   it("publishes only successful changed product mutations after their response", () => {
     expect(
       invalidationForProductMcpMutation(

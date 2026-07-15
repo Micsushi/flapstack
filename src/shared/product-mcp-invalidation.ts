@@ -21,6 +21,33 @@ export const productMcpInvalidationDomains = [
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]
 
+export const projectVaultChangeKinds = [
+  "section-saved",
+  "conflict-resolved",
+  "backup-restored",
+  "external-change-adopted",
+] as const
+
+export type ProjectVaultChangeKind = (typeof projectVaultChangeKinds)[number]
+
+export const projectVaultInvalidationSectionIds = [
+  "index",
+  "handoff",
+  "decisions",
+  "context",
+  "tasks",
+  "logs",
+] as const
+
+export type ProjectVaultInvalidationSectionId = (typeof projectVaultInvalidationSectionIds)[number]
+
+export type ProjectVaultRendererChange = {
+  projectId: string
+  sectionId: ProjectVaultInvalidationSectionId
+  revision: number
+  kind: ProjectVaultChangeKind
+}
+
 export type ProductMcpRendererInvalidation = {
   version: 1
   source: "product-mcp"
@@ -31,6 +58,7 @@ export type ProductMcpRendererInvalidation = {
   taskIds?: string[]
   automationIds?: string[]
   proposalIds?: string[]
+  vaultChanges?: ProjectVaultRendererChange[]
 }
 
 const allowedKeys = new Set([
@@ -43,8 +71,12 @@ const allowedKeys = new Set([
   "taskIds",
   "automationIds",
   "proposalIds",
+  "vaultChanges",
 ])
 const domains = new Set<string>(productMcpInvalidationDomains)
+const vaultChangeKinds = new Set<string>(projectVaultChangeKinds)
+const vaultSectionIds = new Set<string>(projectVaultInvalidationSectionIds)
+const vaultChangeKeys = new Set(["projectId", "sectionId", "revision", "kind"])
 
 /** Strictly copy the product event allowlist. Unknown fields are rejected. */
 export function parseProductMcpRendererInvalidation(
@@ -77,6 +109,11 @@ export function parseProductMcpRendererInvalidation(
     if (!isBoundedIds(ids)) return null
     event[key] = unique(ids)
   }
+  if (record.vaultChanges !== undefined) {
+    if (!event.domains.includes("vaults") || !isBoundedVaultChanges(record.vaultChanges))
+      return null
+    event.vaultChanges = uniqueBy(record.vaultChanges, (change) => JSON.stringify(change))
+  }
   return event
 }
 
@@ -100,7 +137,25 @@ export function mergeProductMcpRendererInvalidations(
     const ids = unique(events.flatMap((event) => event[key] ?? []))
     if (ids.length > 0) merged[key] = ids
   }
+  const vaultChanges = uniqueBy(
+    events.flatMap((event) => event.vaultChanges ?? []),
+    (change) => JSON.stringify(change),
+  )
+  if (vaultChanges.length > 0) merged.vaultChanges = vaultChanges
   return merged
+}
+
+export function invalidationForProjectVaultChange(
+  change: ProjectVaultRendererChange,
+): ProductMcpRendererInvalidation {
+  const event = parseProductMcpRendererInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["vaults"],
+    vaultChanges: [change],
+  })
+  if (!event) throw new Error("Project vault invalidation payload is invalid.")
+  return event
 }
 
 /** Map successful durable product mutations to the smallest renderer refresh set. */
@@ -239,6 +294,40 @@ function isBoundedIds(value: unknown): value is string[] {
   )
 }
 
+function isBoundedVaultChanges(value: unknown): value is ProjectVaultRendererChange[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 100 &&
+    value.every((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false
+      const change = entry as Record<string, unknown>
+      return (
+        !Object.keys(change).some((key) => !vaultChangeKeys.has(key)) &&
+        typeof change.projectId === "string" &&
+        change.projectId.length > 0 &&
+        change.projectId.length <= 256 &&
+        typeof change.sectionId === "string" &&
+        vaultSectionIds.has(change.sectionId) &&
+        Number.isSafeInteger(change.revision) &&
+        (change.revision as number) > 0 &&
+        typeof change.kind === "string" &&
+        vaultChangeKinds.has(change.kind)
+      )
+    })
+  )
+}
+
 function unique<T>(values: readonly T[]): T[] {
   return [...new Set(values)]
+}
+
+function uniqueBy<T>(values: readonly T[], key: (value: T) => string): T[] {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const identity = key(value)
+    if (seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  })
 }

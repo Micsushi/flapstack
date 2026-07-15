@@ -36,10 +36,10 @@ import {
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
 import {
+  broadcastProductInvalidationToWindows,
   startProductMcpInvalidationBridge,
   type ProductMcpInvalidationBridge,
 } from "./lib/mcp-control/invalidation-bridge"
-import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
 import {
@@ -925,11 +925,7 @@ if (gotTheLock) {
               run: async () => {
                 productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
                   onInvalidation: (payload) => {
-                    for (const window of BrowserWindow.getAllWindows()) {
-                      if (!window.isDestroyed()) {
-                        window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
-                      }
-                    }
+                    broadcastProductInvalidationToWindows(payload, BrowserWindow.getAllWindows())
                   },
                 })
               },

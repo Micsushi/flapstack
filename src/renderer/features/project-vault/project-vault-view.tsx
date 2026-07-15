@@ -49,6 +49,7 @@ import { agentsSettingsDialogActiveTabAtom } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
 import { desktopViewAtom, selectedProjectAtom } from "../agents/atoms"
 import {
+  applyVaultEditorExternalSnapshot,
   createVaultEditorState,
   hasVaultEditorChanges,
   hasUnsavedVaultDrafts,
@@ -183,8 +184,8 @@ export function ProjectVaultView() {
     const snapshot = toSnapshot(readQuery.data)
     setEditors((current) => {
       const existing = current[selectedSectionId]
-      if (existing && (hasVaultEditorChanges(existing) || existing.conflict)) return current
-      return { ...current, [selectedSectionId]: createVaultEditorState(snapshot) }
+      const next = applyVaultEditorExternalSnapshot(existing, snapshot)
+      return next === existing ? current : { ...current, [selectedSectionId]: next }
     })
   }, [readQuery.data, selectedSectionId])
 
@@ -295,6 +296,7 @@ export function ProjectVaultView() {
           ? { expectedCurrentContentHash: resolution.currentContentHash }
           : {}),
         content: editor.draft,
+        changeKind: resolution ? "conflict-resolved" : "section-saved",
       })
       await refreshSection(selectedSectionId, { submittedRevision })
       setOperationStatus({

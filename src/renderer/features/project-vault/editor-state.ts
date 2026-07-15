@@ -28,6 +28,29 @@ export function markVaultEditorConflict(
   return { ...state, conflict: current }
 }
 
+export function applyVaultEditorExternalSnapshot(
+  state: VaultEditorState | undefined,
+  current: VaultDocumentSnapshot,
+): VaultEditorState {
+  if (!state) return createVaultEditorState(current)
+  const changed =
+    current.version !== state.base.version ||
+    current.contentHash !== state.base.contentHash ||
+    current.currentContentHash !== state.base.currentContentHash ||
+    current.externallyModified !== state.base.externallyModified
+  if (!changed) return state
+  if (hasVaultEditorChanges(state) || state.conflict) {
+    if (
+      state.conflict?.version === current.version &&
+      state.conflict.currentContentHash === current.currentContentHash
+    ) {
+      return state
+    }
+    return markVaultEditorConflict(state, current)
+  }
+  return createVaultEditorState(current)
+}
+
 export function hasVaultEditorChanges(state: VaultEditorState): boolean {
   return state.draft !== state.base.content
 }
