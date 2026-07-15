@@ -7,9 +7,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { migrateDatabase } from "../src/main/lib/db/migrate"
+import {
+  migrateDatabase,
+  normalizeMultiAgentOperationsTransitionMigration,
+} from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
-import { recoverInterruptedMcpRuns } from "../src/main/lib/run-launch-service"
+import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "../src/main/lib/run-launch-service"
 
 const sourceMigrations = resolve(process.cwd(), "drizzle")
 const directories: string[] = []
@@ -69,6 +72,153 @@ describe("Stage 3 migration rebase", () => {
       ])
     } finally {
       sqlite.close()
+    }
+  })
+
+  it("runs canonical 0035 normally for a fresh profile", () => {
+    const { sqlite } = database("fresh-canonical-0035")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      const entry = migrationEntry("0035_multi_agent_operations")
+      const hash = createHash("sha256")
+        .update(readFileSync(join(sourceMigrations, `${entry.tag}.sql`), "utf8"))
+        .digest("hex")
+
+      expect(tableNames(sqlite)).toContain("orchestration_transition_events")
+      expect(
+        sqlite
+          .prepare("SELECT hash FROM __drizzle_migrations WHERE created_at = ?")
+          .get(entry.when),
+      ).toEqual({ hash })
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("repairs a supported pre-table 0035 profile exactly once and preserves data", async () => {
+    const { path, sqlite } = database("missing-transition-table")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      sqlite
+        .prepare(
+          `INSERT INTO orchestration_templates
+             (id, name, version, definition_json, created_at, updated_at)
+           VALUES ('preserved-template', 'Preserved', 1, '{"schemaVersion":1}', 1, 1)`,
+        )
+        .run()
+      sqlite.exec("DROP TABLE orchestration_transition_events")
+      const entry = migrationEntry("0035_multi_agent_operations")
+      sqlite
+        .prepare("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?")
+        .run("bcd3c32d26d654245b9534525d42b980acad6ed05e6f5b0d1ae7a8b42077b04e", entry.when)
+      expect(tableNames(sqlite)).not.toContain("orchestration_transition_events")
+
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(true)
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(false)
+
+      expect(tableNames(sqlite)).toContain("orchestration_transition_events")
+      expect(
+        sqlite
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name",
+          )
+          .all("orchestration_transition_events"),
+      ).toEqual([
+        { name: "orchestration_transition_dedup_idx" },
+        { name: "orchestration_transition_task_order_idx" },
+        { name: "sqlite_autoindex_orchestration_transition_events_1" },
+      ])
+      expect(sqlite.prepare("SELECT name FROM orchestration_templates").all()).toEqual([
+        { name: "Preserved" },
+      ])
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+          .get(entry.when),
+      ).toEqual({ count: 1 })
+      expect(await drainPendingMcpRuns(path, async () => {})).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("leaves an already-complete 0035 profile unchanged", () => {
+    const { sqlite } = database("complete-0035")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      const before = sqlite
+        .prepare(
+          "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? OR name = ? ORDER BY type, name",
+        )
+        .all("orchestration_transition_events", "orchestration_transition_events")
+
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(false)
+      expect(
+        sqlite
+          .prepare(
+            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? OR name = ? ORDER BY type, name",
+          )
+          .all("orchestration_transition_events", "orchestration_transition_events"),
+      ).toEqual(before)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("fails closed for recorded 0035 with missing or partial authority", () => {
+    const missing = database("missing-0035-authority").sqlite
+    const partial = database("partial-0035-authority").sqlite
+    const hostile = database("hostile-0035-authority").sqlite
+    try {
+      const entry = migrationEntry("0035_multi_agent_operations")
+      for (const sqlite of [missing, partial, hostile]) {
+        sqlite.exec(
+          "CREATE TABLE __drizzle_migrations (id integer PRIMARY KEY AUTOINCREMENT, hash text NOT NULL, created_at numeric)",
+        )
+        sqlite
+          .prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('legacy', ?)")
+          .run(entry.when)
+      }
+      partial.exec("CREATE TABLE task_orchestrations (task_id text NOT NULL)")
+      hostile.exec(`
+        CREATE TABLE task_orchestrations (task_id text PRIMARY KEY NOT NULL);
+        CREATE TABLE orchestration_transition_events (
+          id text,
+          dedup_key text,
+          task_id text,
+          entity_type text,
+          entity_id text,
+          agent_id text,
+          run_id text,
+          kind text,
+          phase text,
+          summary text,
+          created_at integer
+        );
+        CREATE INDEX orchestration_transition_dedup_idx
+          ON orchestration_transition_events (id);
+        CREATE UNIQUE INDEX orchestration_transition_task_order_idx
+          ON orchestration_transition_events (created_at);
+      `)
+      const hostileSchemaBefore = sqliteSchema(hostile)
+
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(missing, sourceMigrations),
+      ).toThrow(/missing task_orchestrations authority/i)
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(partial, sourceMigrations),
+      ).toThrow(/missing task_orchestrations authority/i)
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(hostile, sourceMigrations),
+      ).toThrow(/malformed or partial/i)
+      expect(tableNames(missing)).not.toContain("orchestration_transition_events")
+      expect(tableNames(partial)).not.toContain("orchestration_transition_events")
+      expect(sqliteSchema(hostile)).toEqual(hostileSchemaBefore)
+    } finally {
+      missing.close()
+      partial.close()
+      hostile.close()
     }
   })
 
@@ -667,6 +817,17 @@ function tableNames(sqlite: Database.Database): string[] {
       name: string
     }>
   ).map((row) => row.name)
+}
+
+function sqliteSchema(sqlite: Database.Database): Array<{
+  type: string
+  name: string
+  table: string
+  sql: string | null
+}> {
+  return sqlite
+    .prepare("SELECT type, name, tbl_name AS 'table', sql FROM sqlite_master ORDER BY type, name")
+    .all() as Array<{ type: string; name: string; table: string; sql: string | null }>
 }
 
 function triggerNames(sqlite: Database.Database): string[] {

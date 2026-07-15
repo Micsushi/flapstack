@@ -15,16 +15,34 @@ export function useFocusInputOnEnter(
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle Enter without modifiers
-      if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) {
+      if (
+        e.defaultPrevented ||
+        e.key !== "Enter" ||
+        e.shiftKey ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey
+      ) {
         return
       }
 
       // Don't handle if inside a dialog/modal/overlay
-      const target = e.target as HTMLElement
+      const target = e.target instanceof Element ? e.target : null
+      if (!target) return
       const isInsideOverlay = target.closest(
         '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper], [data-state="open"]',
       )
       if (isInsideOverlay) {
+        return
+      }
+
+      // Native controls and composite widgets own Enter. Never turn their
+      // activation into an unrelated composer focus change.
+      if (
+        target.closest(
+          'button, a[href], input, textarea, select, summary, [contenteditable="true"], [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="treeitem"]',
+        )
+      ) {
         return
       }
 
