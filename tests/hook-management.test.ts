@@ -146,6 +146,35 @@ describe("hook lifecycle", () => {
     })
   })
 
+  it("requires explicit disable before validating or dry-running an enabled hook", async () => {
+    const runner = successfulRunner()
+    const approval = vi.fn(async (): Promise<HookApprovalDecision> => "approved")
+    const onStateChange = vi.fn()
+    const service = new HookLifecycleService(
+      new MemoryHookStateStore(),
+      runner,
+      { request: approval },
+      undefined,
+      undefined,
+      onStateChange,
+    )
+    const imported = await service.import(draft())
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    await service.setEnabled(imported.id, true)
+    const before = service.list()[0]
+    const changesBefore = onStateChange.mock.calls.length
+    const runsBefore = vi.mocked(runner.run).mock.calls.length
+    const approvalsBefore = approval.mock.calls.length
+
+    await expect(service.validate(imported.id)).rejects.toThrow(/disable.*before validation/i)
+    await expect(service.dryRun(imported.id)).rejects.toThrow(/disable.*before dry-run/i)
+    expect(service.list()[0]).toEqual(before)
+    expect(onStateChange).toHaveBeenCalledTimes(changesBefore)
+    expect(runner.run).toHaveBeenCalledTimes(runsBefore)
+    expect(approval).toHaveBeenCalledTimes(approvalsBefore)
+  })
+
   it("fails closed on timeout and never asks for enable approval", async () => {
     const runner: HookDryRunRunner = {
       run: vi.fn(async () => ({
@@ -264,6 +293,67 @@ describe("hook lifecycle", () => {
     expect(resolveProjectCwd).toHaveBeenNthCalledWith(1, "/alias/project")
     expect(resolveProjectCwd).toHaveBeenNthCalledWith(2, "/canonical/project")
     expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/canonical/project" }))
+  })
+
+  it("rejects a stale project root before enable approval without persisting", async () => {
+    let stale = false
+    const resolveProjectCwd = vi.fn((cwd: string) => {
+      if (stale) throw new Error("Registered root identity cannot be verified")
+      return cwd
+    })
+    const approval = vi.fn(async (): Promise<HookApprovalDecision> => "approved")
+    const onStateChange = vi.fn()
+    const service = new HookLifecycleService(
+      new MemoryHookStateStore(),
+      successfulRunner(),
+      { request: approval },
+      undefined,
+      resolveProjectCwd,
+      onStateChange,
+    )
+    const imported = await service.import(draft({ scope: "project", cwd: "/registered/project" }))
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    const before = service.list()[0]
+    const changesBefore = onStateChange.mock.calls.length
+    const approvalsBefore = approval.mock.calls.length
+    stale = true
+
+    await expect(service.setEnabled(imported.id, true)).rejects.toThrow(/root identity/i)
+    expect(service.list()[0]).toEqual(before)
+    expect(onStateChange).toHaveBeenCalledTimes(changesBefore)
+    expect(approval).toHaveBeenCalledTimes(approvalsBefore)
+  })
+
+  it("rejects a project root that becomes stale during enable approval", async () => {
+    let stale = false
+    const resolveProjectCwd = vi.fn((cwd: string) => {
+      if (stale) throw new Error("Registered root identity cannot be verified")
+      return cwd
+    })
+    const approval = vi.fn(async (input: { action: "dry-run" | "enable" }) => {
+      if (input.action === "enable") stale = true
+      return "approved" as HookApprovalDecision
+    })
+    const onStateChange = vi.fn()
+    const service = new HookLifecycleService(
+      new MemoryHookStateStore(),
+      successfulRunner(),
+      { request: approval },
+      undefined,
+      resolveProjectCwd,
+      onStateChange,
+    )
+    const imported = await service.import(draft({ scope: "project", cwd: "/registered/project" }))
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    const before = service.list()[0]
+    const changesBefore = onStateChange.mock.calls.length
+
+    await expect(service.setEnabled(imported.id, true)).rejects.toThrow(/root identity/i)
+    expect(service.list()[0]).toEqual(before)
+    expect(onStateChange).toHaveBeenCalledTimes(changesBefore)
+    expect(approval).toHaveBeenLastCalledWith(expect.objectContaining({ action: "enable" }))
   })
 
   it("keeps commands and output secrets out of audit events", async () => {

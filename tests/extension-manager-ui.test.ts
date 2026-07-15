@@ -297,4 +297,20 @@ describe("unified extension manager accessibility contract", () => {
     expect(source).toContain('aria-label="Managed hook lifecycle actions"')
     expect(source).toContain("Native harness consumption remains")
   })
+
+  it("requires explicit disable before enabled-hook validation or dry-run", () => {
+    expect(source).toContain(
+      '(action === "validate" && !selected.hook.enabled && Boolean(validation?.valid))',
+    )
+    expect(source).toContain(
+      '(action === "dry-run" && !selected.hook.enabled && validationCurrent)',
+    )
+    expect(source).toContain("Disable this hook before validation or dry-run.")
+    expect(source).toMatch(
+      /disabled=\{item\.hook\.enabled\}[\s\S]{0,160}onClick=\{\(\) => onHookAction\("validate"\)\}/,
+    )
+    expect(source).toMatch(
+      /disabled=\{\s*item\.hook\.enabled \|\|[\s\S]{0,180}onClick=\{\(\) => onHookAction\("dry-run"\)\}/,
+    )
+  })
 })

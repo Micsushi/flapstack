@@ -38,6 +38,11 @@ Date: 2026-07-14
 - Persisted hook lifecycle changes publish provider-extension invalidation to
   every window. Denied or failed actions publish only when the stored record
   actually changed.
+- Enabled hooks reject validation and dry-run until an explicit disable action;
+  rejected attempts preserve the record and publish no invalidation.
+- Project-hook enablement revalidates its registered root before requesting
+  approval and again after approval before persisting. Disable remains
+  stale-root-safe.
 
 ## Verification
 
@@ -51,18 +56,43 @@ Date: 2026-07-14
 - Final review-fix gate passed under Node 22: 15 focused F1 files / 176 tests,
   TypeScript, focused ESLint, and `git diff --check`. Both permission files
   byte-match base and are absent from the feature diff.
+- Hook-authority review gate passed under Node 22: 15 focused F1 files / 180
+  tests, TypeScript, focused ESLint, formatting, and `git diff --check`. No full
+  repository, package, or UI gate was rerun for this bounded correction.
 - `npm run dev:verify` proved this checkout and the Flapstack Dev profile.
 - Electron Dev walkthrough proved stale-root inventory fallback and disabled
   project mutation, then registered-project inventory and an exact supported
   policy preview. The preview was cancelled; no live policy mutation occurred.
 
+## Consolidated acceptance closeout
+
+- The shared heavy lock was free. One unsigned macOS arm64 Preview package,
+  binary inspection, and bundled-runtime smoke passed for Electron 39.8.10,
+  Claude 2.1.207, Codex 0.144.1, Whisper, Parakeet, better-sqlite3, and packaged
+  license files. No signing identity was available.
+- `package:preview:mac` packages existing `out/` and does not build it. The
+  packaged `out/` timestamp predates the final hook-authority fixes, so the
+  successful smoke proves packaging infrastructure and pinned runtimes only;
+  it does not prove the final F1 source in-package.
+- A temporary isolated profile exercised the production hook service with the
+  real bounded runner and `/usr/bin/true`: disabled import, validation, dry-run,
+  enable, file-store reload, disable, and a second reload all passed. Temporary
+  state was removed and no provider extension file or config was touched.
+- The hook smoke used a controlled approval stub. It does not prove the live
+  Stage 3 approval surface or native harness hook consumption.
+- Packaged Claude and Codex authentication status succeeded, and an isolated
+  Codex API-key credential exists. No provider-policy run was claimed because
+  authentication/version proof does not observe whether Flapstack policy
+  changed native extension consumption.
+- macOS reports `CGSSessionScreenIsLocked=Yes` and `UserIsActive=0`. No visual,
+  screen-reader, or packaged interaction row was attempted or claimed.
+
 ## Truthful remaining gaps
 
 - Apply and restart user/project/task policy changes against supported provider
-  runs, including packaged preview.
-- Live hook approval, dry-run, enable, disable, restart, and one supported native
-  harness runtime execution. Native hook trigger injection remains explicitly
-  `not-consumed`.
+  runs, including a package built from the final F1 source.
+- Live hook approval/UI interaction and one supported native harness runtime
+  execution. Native hook trigger injection remains explicitly `not-consumed`.
 - Keyboard plus screen-reader observation and platform/package accessibility.
 - Windows/Linux and physical-device rows not exercised.
 - S4-SH01 through S4-SH04 remain unchecked until their full declared matrix

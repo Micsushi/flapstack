@@ -413,6 +413,9 @@ export class HookLifecycleService {
       const records = this.store.read()
       const index = findRecord(records, id)
       const current = records[index]!
+      if (current.enabled) {
+        throw new Error("Enabled hooks must be disabled before validation")
+      }
       const validation = validateHookDraft({ id, ...current.definition })
       const record: HookRecord = {
         ...current,
@@ -434,6 +437,9 @@ export class HookLifecycleService {
       const records = this.store.read()
       const index = findRecord(records, id)
       const current = records[index]!
+      if (current.enabled) {
+        throw new Error("Enabled hooks must be disabled before dry-run")
+      }
       const validation = validateHookDraft({ id, ...current.definition })
       if (!validation.valid || !validation.preview) {
         const invalid: HookRecord = {
@@ -565,6 +571,9 @@ export class HookLifecycleService {
     const candidate = await this.mutex.runExclusive(() => {
       const record = readRecord(this.store, id)
       assertEnableReady(record)
+      if (record.definition.scope === "project") {
+        this.resolveProjectCwd(record.definition.cwd!)
+      }
       this.writeAudit("enable", "approval-required", record)
       return record
     })
@@ -599,6 +608,9 @@ export class HookLifecycleService {
         throw new Error("Hook changed while approval was pending")
       }
       assertEnableReady(current)
+      if (current.definition.scope === "project") {
+        this.resolveProjectCwd(current.definition.cwd!)
+      }
       const record: HookRecord = {
         ...current,
         state: "enabled",

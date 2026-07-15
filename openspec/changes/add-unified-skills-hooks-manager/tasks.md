@@ -148,9 +148,13 @@
   lifecycle, registered-root revalidation, bounded mockable dry-run, explicit
   enable/disable state, Tier 3 Stage 3 approval, append-only redacted audit, and
   one unified lifecycle UI. Node 22 consolidated F1 coverage passes 11 files / 144
-  tests; TypeScript and focused ESLint pass. Completion remains unchecked because live
-  Settings/restart/package evidence and native harness runtime consumption are
-  unverified; see `docs/stage4-s4-f1-t6-hook-safety.md`.
+  tests; the corrected review slice passes 15 files / 180 tests plus TypeScript,
+  formatting, focused ESLint, and diff checking. A temporary production-service
+  smoke used the real bounded runner and file store to prove disabled import,
+  validation, `/usr/bin/true` dry-run, enable/reload, and disable/reload without
+  touching provider files. Completion remains unchecked because live Settings
+  approval, native harness runtime consumption, and final-source packaged UI
+  evidence are unverified; see `docs/stage4-s4-f1-t6-hook-safety.md`.
 
 ### S4-F1-T7 — Close unified extension acceptance
 
@@ -164,3 +168,11 @@
 - Blocked by: S4-F1-T3, S4-F1-T4, S4-F1-T5, S4-F1-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.
+- Consolidated partial closeout: with the heavy lock free, one unsigned macOS
+  arm64 Preview package/inspection/smoke passed for Electron 39.8.10, Claude
+  2.1.207, Codex 0.144.1, Whisper, Parakeet, better-sqlite3, and license files.
+  The package command consumes existing `out/` and does not build; `out/`
+  predates the final hook-authority fixes, so this is packaging-infrastructure
+  evidence only, not final-source packaged acceptance. The Mac reports
+  `CGSSessionScreenIsLocked=Yes`, so no package interaction or accessibility
+  row is inferred. T3, T5, T6, T7, and S4-SH01 through S4-SH04 remain open.

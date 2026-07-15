@@ -555,8 +555,8 @@ export function AgentsProviderExtensionsTab({
         const dryRunCurrent =
           selected.hook.dryRun?.success && selected.hook.dryRun.revision === selected.hook.revision
         const supported =
-          (action === "validate" && Boolean(validation?.valid)) ||
-          (action === "dry-run" && validationCurrent) ||
+          (action === "validate" && !selected.hook.enabled && Boolean(validation?.valid)) ||
+          (action === "dry-run" && !selected.hook.enabled && validationCurrent) ||
           (action === "enable" && validationCurrent && dryRunCurrent && !selected.hook.enabled) ||
           (action === "disable" && selected.hook.enabled)
         const after =
@@ -601,7 +601,11 @@ export function AgentsProviderExtensionsTab({
                 ? ["Tier 3 approval is required before enablement."]
                 : []),
             ...(!supported && validation?.valid
-              ? [`The ${action} lifecycle preconditions are not complete for this revision.`]
+              ? [
+                  selected.hook.enabled && (action === "validate" || action === "dry-run")
+                    ? "Disable this hook before validation or dry-run."
+                    : `The ${action} lifecycle preconditions are not complete for this revision.`,
+                ]
               : []),
           ],
           hookId: selected.hook.id,
@@ -1208,14 +1212,21 @@ function DetailPanel({
             {item.capability.runtimeConsumption}.
           </p>
           <div className="flex flex-wrap gap-2" aria-label="Managed hook lifecycle actions">
-            <Button variant="outline" size="sm" onClick={() => onHookAction("validate")}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={item.hook.enabled}
+              onClick={() => onHookAction("validate")}
+            >
               Preview validation
             </Button>
             <Button
               variant="outline"
               size="sm"
               disabled={
-                !item.hook.validation?.valid || item.hook.validation.revision !== item.hook.revision
+                item.hook.enabled ||
+                !item.hook.validation?.valid ||
+                item.hook.validation.revision !== item.hook.revision
               }
               onClick={() => onHookAction("dry-run")}
             >

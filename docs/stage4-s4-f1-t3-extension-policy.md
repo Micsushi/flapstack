@@ -84,6 +84,10 @@ build pass.
 
 ## Remaining proof
 
+- The packaged Claude 2.1.207 and Codex 0.144.1 binaries both reported an
+  authenticated account, and an isolated API-key credential is available for
+  Codex. Version/authentication alone does not prove that a Flapstack policy
+  changed provider discovery, so no credentialed T3 provider run is claimed.
 - Live provider runs must confirm Claude and Codex honor the applied native
   filters and that unsupported Cursor/Claude surfaces show their launch block.
 - The unified Settings UI and accessibility walkthrough belong to S4-F1-T5.
