@@ -222,8 +222,36 @@
     {
       "idx": 31,
       "version": "6",
-      "when": 1784054923088,
-      "tag": "0031_mobile_pairing_identity",
+      "when": 1784068210409,
+      "tag": "0031_saved_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1784072034666,
+      "tag": "0032_agent_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1784074787318,
+      "tag": "0033_agent_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1784078645487,
+      "tag": "0034_coordination_engines",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1784081445748,
+      "tag": "0035_multi_agent_operations",
       "breakpoints": true
     }
   ]

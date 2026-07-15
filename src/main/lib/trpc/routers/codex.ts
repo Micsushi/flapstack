@@ -80,6 +80,7 @@ import {
   type ExtensionLaunchPolicy,
 } from "../../extension-management"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import {
   buildProjectVaultRunContext,
   persistProjectVaultContextManifest,
@@ -1159,6 +1160,13 @@ async function createCodexRun(params: {
     return existingRun
   }
 
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: params.chatId,
+    harness: "codex",
+    model: params.model,
+    permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
+  })
+
   db.update(agentRuns)
     .set({
       status: "cancelled",
@@ -1176,6 +1184,7 @@ async function createCodexRun(params: {
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       id: params.runId,
       chatId: params.chatId,
       subChatId: params.subChatId,

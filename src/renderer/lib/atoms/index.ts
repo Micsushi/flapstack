@@ -176,6 +176,7 @@ export type SettingsTab =
   | "permissions"
   | "models"
   | "local-models"
+  | "coordination"
   | "api-providers"
   | "voice"
   | "skills"

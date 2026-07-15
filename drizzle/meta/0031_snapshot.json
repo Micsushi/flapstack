@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dbdf223f-8e81-4230-8423-cd58e9133f63",
+  "id": "d769ba96-1e00-4962-9717-852ef52b1553",
   "prevId": "90c2e68d-5aed-4f6f-96e0-a3d8956d55b6",
   "tables": {
     "agent_runs": {
@@ -2310,493 +2310,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "mobile_auth_challenges": {
-      "name": "mobile_auth_challenges",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "device_id": {
-          "name": "device_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "challenge_hash": {
-          "name": "challenge_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "issued_at": {
-          "name": "issued_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consumed_at": {
-          "name": "consumed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "mobile_auth_challenges_hash_idx": {
-          "name": "mobile_auth_challenges_hash_idx",
-          "columns": ["challenge_hash"],
-          "isUnique": true
-        },
-        "mobile_auth_challenges_device_idx": {
-          "name": "mobile_auth_challenges_device_idx",
-          "columns": ["device_id", "expires_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "mobile_auth_challenges_device_id_mobile_devices_id_fk": {
-          "name": "mobile_auth_challenges_device_id_mobile_devices_id_fk",
-          "tableFrom": "mobile_auth_challenges",
-          "tableTo": "mobile_devices",
-          "columnsFrom": ["device_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "mobile_auth_challenges_expiry_check": {
-          "name": "mobile_auth_challenges_expiry_check",
-          "value": "\"mobile_auth_challenges\".\"expires_at\" > \"mobile_auth_challenges\".\"issued_at\""
-        }
-      }
-    },
-    "mobile_device_audit_records": {
-      "name": "mobile_device_audit_records",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "device_id": {
-          "name": "device_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "event": {
-          "name": "event",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "summary": {
-          "name": "summary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "mobile_device_audit_created_idx": {
-          "name": "mobile_device_audit_created_idx",
-          "columns": ["created_at"],
-          "isUnique": false
-        },
-        "mobile_device_audit_device_idx": {
-          "name": "mobile_device_audit_device_idx",
-          "columns": ["device_id", "created_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "mobile_device_audit_outcome_check": {
-          "name": "mobile_device_audit_outcome_check",
-          "value": "\"mobile_device_audit_records\".\"outcome\" in ('allowed', 'denied', 'failed')"
-        }
-      }
-    },
-    "mobile_device_sessions": {
-      "name": "mobile_device_sessions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "device_id": {
-          "name": "device_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_hash": {
-          "name": "token_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "issued_at": {
-          "name": "issued_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_seen_at": {
-          "name": "last_seen_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "idle_expires_at": {
-          "name": "idle_expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "absolute_expires_at": {
-          "name": "absolute_expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_version": {
-          "name": "scope_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "rotation": {
-          "name": "rotation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "revoked_at": {
-          "name": "revoked_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "mobile_device_sessions_token_idx": {
-          "name": "mobile_device_sessions_token_idx",
-          "columns": ["token_hash"],
-          "isUnique": true
-        },
-        "mobile_device_sessions_device_idx": {
-          "name": "mobile_device_sessions_device_idx",
-          "columns": ["device_id", "revoked_at"],
-          "isUnique": false
-        },
-        "mobile_device_sessions_expiry_idx": {
-          "name": "mobile_device_sessions_expiry_idx",
-          "columns": ["idle_expires_at", "absolute_expires_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "mobile_device_sessions_device_id_mobile_devices_id_fk": {
-          "name": "mobile_device_sessions_device_id_mobile_devices_id_fk",
-          "tableFrom": "mobile_device_sessions",
-          "tableTo": "mobile_devices",
-          "columnsFrom": ["device_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "mobile_device_sessions_scope_version_check": {
-          "name": "mobile_device_sessions_scope_version_check",
-          "value": "\"mobile_device_sessions\".\"scope_version\" >= 1"
-        },
-        "mobile_device_sessions_rotation_check": {
-          "name": "mobile_device_sessions_rotation_check",
-          "value": "\"mobile_device_sessions\".\"rotation\" >= 0"
-        },
-        "mobile_device_sessions_expiry_check": {
-          "name": "mobile_device_sessions_expiry_check",
-          "value": "\"mobile_device_sessions\".\"idle_expires_at\" > \"mobile_device_sessions\".\"last_seen_at\" and \"mobile_device_sessions\".\"absolute_expires_at\" > \"mobile_device_sessions\".\"issued_at\" and \"mobile_device_sessions\".\"idle_expires_at\" <= \"mobile_device_sessions\".\"absolute_expires_at\""
-        }
-      }
-    },
-    "mobile_devices": {
-      "name": "mobile_devices",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "public_key_algorithm": {
-          "name": "public_key_algorithm",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "public_key": {
-          "name": "public_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "public_key_fingerprint": {
-          "name": "public_key_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_seen_at": {
-          "name": "last_seen_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revoked_at": {
-          "name": "revoked_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revocation_reason": {
-          "name": "revocation_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "scope_version": {
-          "name": "scope_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        }
-      },
-      "indexes": {
-        "mobile_devices_public_key_idx": {
-          "name": "mobile_devices_public_key_idx",
-          "columns": ["public_key_fingerprint"],
-          "isUnique": true
-        },
-        "mobile_devices_revoked_idx": {
-          "name": "mobile_devices_revoked_idx",
-          "columns": ["revoked_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "mobile_devices_algorithm_check": {
-          "name": "mobile_devices_algorithm_check",
-          "value": "\"mobile_devices\".\"public_key_algorithm\" in ('Ed25519', 'P-256')"
-        },
-        "mobile_devices_scope_version_check": {
-          "name": "mobile_devices_scope_version_check",
-          "value": "\"mobile_devices\".\"scope_version\" >= 1"
-        }
-      }
-    },
-    "mobile_pairing_tokens": {
-      "name": "mobile_pairing_tokens",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_hash": {
-          "name": "token_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "certificate_fingerprint": {
-          "name": "certificate_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consumed_at": {
-          "name": "consumed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "mobile_pairing_tokens_hash_idx": {
-          "name": "mobile_pairing_tokens_hash_idx",
-          "columns": ["token_hash"],
-          "isUnique": true
-        },
-        "mobile_pairing_tokens_expiry_idx": {
-          "name": "mobile_pairing_tokens_expiry_idx",
-          "columns": ["expires_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "mobile_pairing_tokens_expiry_check": {
-          "name": "mobile_pairing_tokens_expiry_check",
-          "value": "\"mobile_pairing_tokens\".\"expires_at\" > \"mobile_pairing_tokens\".\"created_at\""
-        }
-      }
-    },
-    "mobile_session_nonces": {
-      "name": "mobile_session_nonces",
-      "columns": {
-        "session_id": {
-          "name": "session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "nonce_hash": {
-          "name": "nonce_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "used_at": {
-          "name": "used_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "mobile_session_nonces_used_idx": {
-          "name": "mobile_session_nonces_used_idx",
-          "columns": ["used_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "mobile_session_nonces_session_id_mobile_device_sessions_id_fk": {
-          "name": "mobile_session_nonces_session_id_mobile_device_sessions_id_fk",
-          "tableFrom": "mobile_session_nonces",
-          "tableTo": "mobile_device_sessions",
-          "columnsFrom": ["session_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "mobile_session_nonces_session_id_nonce_hash_pk": {
-          "columns": ["session_id", "nonce_hash"],
-          "name": "mobile_session_nonces_session_id_nonce_hash_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "orchestration_agents": {
       "name": "orchestration_agents",
       "columns": {
@@ -3615,6 +3128,182 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "saved_workspaces": {
+      "name": "saved_workspaces",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope_type": {
+          "name": "scope_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "owner_kind": {
+          "name": "owner_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'manual'"
+        },
+        "orchestration_id": {
+          "name": "orchestration_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "layout_version": {
+          "name": "layout_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "layout_json": {
+          "name": "layout_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'a0'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "saved_workspaces_project_order_idx": {
+          "name": "saved_workspaces_project_order_idx",
+          "columns": ["project_id", "archived_at", "sort_order"],
+          "isUnique": false
+        },
+        "saved_workspaces_task_order_idx": {
+          "name": "saved_workspaces_task_order_idx",
+          "columns": ["task_id", "archived_at", "sort_order"],
+          "isUnique": false
+        },
+        "saved_workspaces_orchestration_idx": {
+          "name": "saved_workspaces_orchestration_idx",
+          "columns": ["orchestration_id"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "saved_workspaces_project_id_projects_id_fk": {
+          "name": "saved_workspaces_project_id_projects_id_fk",
+          "tableFrom": "saved_workspaces",
+          "tableTo": "projects",
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "saved_workspaces_task_id_tasks_id_fk": {
+          "name": "saved_workspaces_task_id_tasks_id_fk",
+          "tableFrom": "saved_workspaces",
+          "tableTo": "tasks",
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "saved_workspaces_name_check": {
+          "name": "saved_workspaces_name_check",
+          "value": "length(trim(\"saved_workspaces\".\"name\")) between 1 and 256"
+        },
+        "saved_workspaces_scope_check": {
+          "name": "saved_workspaces_scope_check",
+          "value": "(\n        (\"saved_workspaces\".\"scope_type\" = 'project' and \"saved_workspaces\".\"project_id\" is not null and \"saved_workspaces\".\"task_id\" is null) or\n        (\"saved_workspaces\".\"scope_type\" = 'task' and \"saved_workspaces\".\"project_id\" is null and \"saved_workspaces\".\"task_id\" is not null)\n      )"
+        },
+        "saved_workspaces_owner_check": {
+          "name": "saved_workspaces_owner_check",
+          "value": "(\n        (\"saved_workspaces\".\"owner_kind\" = 'manual' and \"saved_workspaces\".\"orchestration_id\" is null) or\n        (\"saved_workspaces\".\"owner_kind\" = 'orchestration' and \"saved_workspaces\".\"scope_type\" = 'task' and \"saved_workspaces\".\"task_id\" is not null and \"saved_workspaces\".\"orchestration_id\" is not null)\n      )"
+        },
+        "saved_workspaces_layout_version_check": {
+          "name": "saved_workspaces_layout_version_check",
+          "value": "\"saved_workspaces\".\"layout_version\" = 1"
+        },
+        "saved_workspaces_version_check": {
+          "name": "saved_workspaces_version_check",
+          "value": "\"saved_workspaces\".\"version\" >= 1"
+        },
+        "saved_workspaces_sort_order_check": {
+          "name": "saved_workspaces_sort_order_check",
+          "value": "length(trim(\"saved_workspaces\".\"sort_order\")) between 1 and 512"
+        },
+        "saved_workspaces_layout_json_check": {
+          "name": "saved_workspaces_layout_json_check",
+          "value": "json_valid(\"saved_workspaces\".\"layout_json\") = 1 and json_extract(\"saved_workspaces\".\"layout_json\", '$.version') = \"saved_workspaces\".\"layout_version\" and length(cast(\"saved_workspaces\".\"layout_json\" as blob)) <= 262144"
+        }
+      }
     },
     "sub_chats": {
       "name": "sub_chats",

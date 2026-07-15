@@ -34,6 +34,11 @@ import {
   type ResolvedAutomationTarget,
 } from "./targets"
 import type { LeasedAutomationOccurrence } from "./scheduler"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "../agent-runtime/snapshot"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -614,12 +619,24 @@ export class AutomationExecutionService {
               now,
             )
       const runId = this.createId()
+      const runtimeSnapshot = constructRuntimeSnapshot(database, {
+        chatId: chat.chatId,
+        harness: prepared.plan.run.harness,
+        model: prepared.plan.run.model ?? null,
+        permission: runtimePermissionSnapshot(
+          prepared.plan.run.permissionMode,
+          prepared.plan.run.customPermissions,
+        ),
+      })
       database
         .prepare(
           `INSERT INTO agent_runs (
              id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-             worktree_path, prompt_message_id, initial_prompt, status, started_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+             worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
+             runtime_preference, runtime_preference_source, resolved_runtime,
+             runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+             runtime_control_snapshot, status, started_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
         )
         .run(
           runId,
@@ -634,6 +651,7 @@ export class AutomationExecutionService {
           prepared.preview.worktreeSnapshot.path,
           `automation-${occurrence.id}-${attempt}`,
           prepared.plan.run.prompt,
+          ...runtimeSnapshotSqlValues(runtimeSnapshot),
           now,
         )
       database

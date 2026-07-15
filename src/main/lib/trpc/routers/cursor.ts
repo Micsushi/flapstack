@@ -41,6 +41,7 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 
 const HARNESS = "cursor-agent" as const
 
@@ -172,6 +173,13 @@ async function createCursorRun(params: {
   const existingRun = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
   if (existingRun) return existingRun
 
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: params.chatId,
+    harness: HARNESS,
+    model: params.model,
+    permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
+  })
+
   // Cancel stale running rows for this sub-chat (Codex fix pattern).
   db.update(agentRuns)
     .set({ status: "cancelled", completedAt: new Date() })
@@ -187,6 +195,7 @@ async function createCursorRun(params: {
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       id: params.runId,
       chatId: params.chatId,
       subChatId: params.subChatId,

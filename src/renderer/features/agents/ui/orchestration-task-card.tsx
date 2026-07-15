@@ -28,6 +28,8 @@ import { Input } from "../../../components/ui/input"
 import { Textarea } from "../../../components/ui/textarea"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
+import { OrchestrationActivityPanel } from "./orchestration-activity-panel"
 
 type AgentEditorMode =
   | { kind: "create-orchestration"; createTask: boolean }
@@ -224,7 +226,6 @@ export function OrchestrationOverviewCard({
   onAdd: () => void
 }) {
   const { orchestration, aggregate, agents } = overview
-  const navigation = getLineageNavigation(overview, lineage, currentChatId)
   const cost = formatOrchestrationCost(
     aggregate.exactCostUsdMicros,
     aggregate.providerReportedCostUsdMicros,
@@ -347,36 +348,13 @@ export function OrchestrationOverviewCard({
         <p className="text-[10px] text-muted-foreground">Stop at {stopConditions.join(" · ")}</p>
       )}
 
-      {(navigation.parentChatId || navigation.childChats.length > 0) && (
-        <div className="rounded-md border border-border/60 p-2">
-          <div className="mb-1.5 text-[10px] font-medium text-muted-foreground">Lineage</div>
-          <div className="flex flex-wrap gap-1">
-            {navigation.parentChatId && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 px-2 text-[10px]"
-                onClick={() => onNavigate(navigation.parentChatId!)}
-                aria-label="Open parent agent chat"
-              >
-                <GitFork className="mr-1 h-3 w-3 rotate-180" /> Parent
-              </Button>
-            )}
-            {navigation.childChats.map((child) => (
-              <Button
-                key={child.id}
-                variant="outline"
-                size="sm"
-                className="h-6 max-w-full px-2 text-[10px]"
-                onClick={() => onNavigate(child.id)}
-                aria-label={`Open child agent chat ${child.label}`}
-              >
-                <GitFork className="mr-1 h-3 w-3" /> <span className="truncate">{child.label}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
+      <OrchestrationLineageTree
+        lineage={lineage}
+        onNavigate={onNavigate}
+        currentChatId={currentChatId}
+      />
+
+      <OrchestrationActivityPanel taskId={orchestration.taskId} agents={agents} />
 
       <ul aria-label="Orchestration agents" className="space-y-1.5">
         {agents.map((agent) => (
@@ -582,6 +560,26 @@ function AgentEditorDialog({
             >
               <option value="codex">Codex</option>
               <option value="claude-code">Claude Code</option>
+            </select>
+          </label>
+          <label className="text-xs">
+            Runtime preference
+            <select
+              className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              value={definition.runtimePreference ?? "auto"}
+              onChange={(event) =>
+                setDefinition({
+                  ...definition,
+                  runtimePreference: event.target.value as NonNullable<
+                    OrchestrationAgentDefinition["runtimePreference"]
+                  >,
+                })
+              }
+            >
+              <option value="auto">Auto</option>
+              <option value="codex">Codex</option>
+              <option value="claude-code">Claude Code</option>
+              <option value="flapstack-native">Flapstack native</option>
             </select>
           </label>
           <label className="text-xs">

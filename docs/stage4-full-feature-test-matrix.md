@@ -44,6 +44,23 @@ tests do not substitute for live UI or packaged evidence.
       and show partial failures honestly.
 - [ ] **S4-MA05** Restart preserves queue, budgets, lineage, stop reason, and
       cancellation intent.
+- [ ] **S4-MA06** Engine selection resolves per-launch, project, global, then
+      `workflow` default; the stored engine snapshot cannot change mid-run and an
+      unsupported native mode never falls back silently.
+- [ ] **S4-MA07** A deterministic workflow runs parallel and dependent phases,
+      validates structured output, fails closed at required barriers, and resumes
+      from durable checkpoints without replaying completed workers.
+- [ ] **S4-MA08** Codex V2 preserves named task paths, selective context forks,
+      mailbox/follow-up/interrupt semantics, and reusable worker identity.
+- [ ] **S4-MA09** Codex V1 remains visibly legacy and preserves ID-based
+      spawn/send/wait/resume/close behavior without synthetic V2 features.
+- [ ] **S4-MA10** Mixed-runtime workflow activity preserves agent/run/runtime
+      provenance and adds ordered workflow, mailbox, dependency, spawn, warning,
+      and usage events without copying or relabeling provider reasoning.
+
+Code-ready evidence for S4-MA01 through S4-MA10 is recorded in
+`docs/stage4-s4-f3-multi-agent-operations.md`. Rows remain open until the F4/F11
+dependencies and consolidated live/package walkthrough pass.
 
 ## Saved Workspaces
 

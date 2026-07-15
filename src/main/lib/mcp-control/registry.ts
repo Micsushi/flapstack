@@ -81,6 +81,13 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "list_orchestrations",
+    description: "List the caller-visible orchestration fleet without scheduling work.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
     name: "list_chats",
     description: "List caller-visible chats.",
     tier: 0,

@@ -24,6 +24,12 @@ import type {
   McpControlResponse,
   McpMutationService,
 } from "./types"
+import type { RunPermissionMode } from "../../../shared/harness-types"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "../agent-runtime/snapshot"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
@@ -212,13 +218,22 @@ function launchRun(
       "Custom permission settings are missing for this conversation.",
     )
   }
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: input.chatId,
+    harness,
+    model: (subChat.model ?? chat.model ?? null) as string | null,
+    permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
+  })
   const transaction = db.transaction(() => {
     db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
     db.prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-        worktree_path, prompt_message_id, initial_prompt, vault_context_sections, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
+        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+        runtime_control_snapshot, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
@@ -233,6 +248,7 @@ function launchRun(
       input.vaultContextSectionIds === undefined
         ? null
         : JSON.stringify(input.vaultContextSectionIds),
+      ...runtimeSnapshotSqlValues(runtimeSnapshot),
       nowEpochSeconds(),
     )
   })
@@ -525,11 +541,22 @@ async function spawnThread(
       now,
     )
     if (runId) {
+      const runtimeSnapshot = constructRuntimeSnapshot(db, {
+        chatId,
+        harness: contract.plan.targetHarness,
+        permission: runtimePermissionSnapshot(
+          contract.plan.permission.mode,
+          contract.plan.permission.customPermissions,
+        ),
+      })
       db.prepare(
         `INSERT INTO agent_runs (
           id, chat_id, sub_chat_id, harness, permission_mode, custom_permissions, worktree_path,
-          prompt_message_id, initial_prompt, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          prompt_message_id, initial_prompt, runtime_snapshot_version, runtime_preference,
+          runtime_preference_source, resolved_runtime, runtime_adapter_version,
+          runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
+          status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
@@ -542,6 +569,7 @@ async function spawnThread(
         resolved.worktreePath,
         promptMessageId,
         contract.plan.launch.initialPrompt,
+        ...runtimeSnapshotSqlValues(runtimeSnapshot),
         now,
       )
     }

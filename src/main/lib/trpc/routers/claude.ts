@@ -60,6 +60,7 @@ import {
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 import { createRollbackStash } from "../../git/stash"
 import {
   buildHarnessContextBundle,
@@ -272,6 +273,15 @@ async function createClaudeAgentRun(input: {
   const run = db
     .insert(agentRuns)
     .values({
+      ...constructRuntimeSnapshot(db, {
+        chatId: input.chatId,
+        harness: HARNESS,
+        model: input.model,
+        permission: runtimePermissionSnapshot(
+          input.permissionMode,
+          input.customPermissions ?? null,
+        ),
+      }),
       ...(input.runId ? { id: input.runId } : {}),
       chatId: input.chatId,
       subChatId: input.subChatId,

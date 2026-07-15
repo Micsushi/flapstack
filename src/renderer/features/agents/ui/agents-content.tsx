@@ -85,6 +85,7 @@ import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 import { ProjectVaultView } from "../../project-vault/project-vault-view"
 import { AutomationsDetailView, AutomationsView, InboxView } from "../../automations"
+import { OrchestrationFleetView } from "../../orchestration-fleet/orchestration-fleet-view"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -1166,6 +1167,8 @@ function AgentsContentInner() {
           <PlanView />
         ) : desktopView === "project-vault" ? (
           <ProjectVaultView key={selectedProject?.id} />
+        ) : desktopView === "orchestration-fleet" ? (
+          <OrchestrationFleetView />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1304,6 +1307,8 @@ function AgentsContentInner() {
             <PlanView />
           ) : desktopView === "project-vault" ? (
             <ProjectVaultView key={selectedProject?.id} />
+          ) : desktopView === "orchestration-fleet" ? (
+            <OrchestrationFleetView />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (

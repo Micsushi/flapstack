@@ -1,5 +1,7 @@
 import Database from "better-sqlite3"
 import { z } from "zod"
+import { orchestrationFleetQuerySchema } from "../../../shared/agent-orchestration"
+import { queryOrchestrationFleet } from "../agent-orchestration/fleet"
 import type { McpCallerIdentity } from "./types"
 
 const PAGE_MAX = 50
@@ -17,6 +19,9 @@ const listTasksSchema = z
     includeArchived: z.boolean().default(false),
   })
   .strict()
+const listOrchestrationsSchema = orchestrationFleetQuerySchema.extend({
+  limit: z.number().int().min(1).max(PAGE_MAX).default(20),
+})
 const listChatsSchema = z
   .object({
     ...pageShape,
@@ -50,6 +55,7 @@ const searchSchema = z
 export const mcpReadInputShapes: Record<string, z.ZodRawShape | undefined> = {
   list_projects: listProjectsSchema.shape,
   list_tasks: listTasksSchema.shape,
+  list_orchestrations: listOrchestrationsSchema.shape,
   list_chats: listChatsSchema.shape,
   list_runs: listRunsSchema.shape,
   list_worktrees: listWorktreesSchema.shape,
@@ -211,6 +217,34 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
             updatedAt: timestamp(r.updated_at),
           })),
         }
+      }
+      if (name === "list_orchestrations") {
+        const input = listOrchestrationsSchema.parse(rawInput)
+        if (scope.taskId && input.taskIds.some((taskId) => taskId !== scope.taskId)) {
+          fail("out-of-scope", "Task is outside the caller scope.")
+        }
+        if (
+          scope.projectId &&
+          input.projectIds.some((projectId) => projectId !== scope.projectId)
+        ) {
+          fail("out-of-scope", "Project is outside the caller scope.")
+        }
+        return queryOrchestrationFleet(
+          {
+            prepare(sql: string) {
+              return {
+                all: (...params: unknown[]) => store.all(sql, params),
+              }
+            },
+          },
+          input,
+          {
+            visibleTaskId:
+              scope.taskId ??
+              (scope.kind === "global" || scope.projectId ? null : "__caller-chat-only__"),
+            visibleProjectId: scope.taskId ? null : scope.projectId,
+          },
+        )
       }
       if (name === "list_chats") {
         const input = listChatsSchema.parse(rawInput)

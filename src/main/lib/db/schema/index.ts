@@ -39,7 +39,10 @@ export const projects = sqliteTable("projects", {
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   chats: many(chats),
   tasks: many(tasks),
+  savedWorkspaces: many(savedWorkspaces),
   taskProposals: many(taskProposals),
+  agentRuntimeDefaults: many(agentRuntimeDefaults),
+  coordinationEngineDefaults: many(coordinationEngineDefaults),
   vault: one(projectVaults),
   planSourceRegistrations: many(planSourceRegistrations),
 }))
@@ -259,6 +262,7 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
     references: [projects.id],
   }),
   chats: many(chats),
+  savedWorkspaces: many(savedWorkspaces),
   attachments: many(attachments),
   orchestration: one(taskOrchestrations, {
     fields: [tasks.id],
@@ -393,12 +397,102 @@ export const taskOrchestrations = sqliteTable(
     stopConditions: text("stop_conditions").notNull().default("{}"),
     stopReason: text("stop_reason"),
     blockerCount: integer("blocker_count").notNull().default(0),
+    // Version 0 preserves Stage 3 history as workflow-legacy-graph. New rows
+    // write version 1 before scheduler/provider work starts.
+    engineSnapshotVersion: integer("engine_snapshot_version").notNull().default(0),
+    coordinationEngine: text("coordination_engine").notNull().default("workflow"),
+    coordinationEngineVersion: text("coordination_engine_version")
+      .notNull()
+      .default("workflow-legacy-graph"),
+    coordinationEngineSource: text("coordination_engine_source").notNull().default("legacy"),
+    coordinationEngineCapabilitySnapshot: text("coordination_engine_capability_snapshot")
+      .notNull()
+      .default(
+        '{"schemaVersion":1,"engine":"workflow","engineVersion":"workflow-legacy-graph","status":"legacy","capturedAt":null,"capabilities":["durable-workflow"],"limitations":["Historical Stage 3 graph orchestration."],"unavailableReason":null}',
+      ),
+    coordinationEngineProviderIdentity: text("coordination_engine_provider_identity")
+      .notNull()
+      .default("null"),
+    policyVersion: integer("policy_version").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     startedAt: integer("started_at", { mode: "timestamp" }),
     completedAt: integer("completed_at", { mode: "timestamp" }),
   },
-  (table) => [index("task_orchestrations_status_idx").on(table.status)],
+  (table) => [
+    index("task_orchestrations_status_idx").on(table.status),
+    index("task_orchestrations_engine_idx").on(table.coordinationEngine, table.status),
+    check(
+      "task_orchestrations_engine_check",
+      sql`${table.coordinationEngine} in ('workflow', 'codex-v2', 'codex-v1')`,
+    ),
+    check(
+      "task_orchestrations_engine_source_check",
+      sql`${table.coordinationEngineSource} in ('per-launch', 'project', 'global', 'product', 'legacy')`,
+    ),
+    check(
+      "task_orchestrations_engine_snapshot_check",
+      sql`coalesce((
+        ${table.engineSnapshotVersion} = 0
+        and ${table.coordinationEngine} = 'workflow'
+        and ${table.coordinationEngineVersion} = 'workflow-legacy-graph'
+        and ${table.coordinationEngineSource} = 'legacy'
+        and ${table.coordinationEngineCapabilitySnapshot} = '{"schemaVersion":1,"engine":"workflow","engineVersion":"workflow-legacy-graph","status":"legacy","capturedAt":null,"capabilities":["durable-workflow"],"limitations":["Historical Stage 3 graph orchestration."],"unavailableReason":null}'
+        and ${table.coordinationEngineProviderIdentity} = 'null'
+      ) or (
+        ${table.engineSnapshotVersion} = 1
+        and ${table.coordinationEngineSource} in ('per-launch', 'project', 'global', 'product')
+        and length(trim(${table.coordinationEngineVersion})) between 1 and 128
+        and (
+          (${table.coordinationEngine} = 'workflow' and ${table.coordinationEngineVersion} = 'workflow-v1') or
+          (${table.coordinationEngine} = 'codex-v2' and ${table.coordinationEngineVersion} = 'codex-v2-v1') or
+          (${table.coordinationEngine} = 'codex-v1' and ${table.coordinationEngineVersion} = 'codex-v1-v1')
+        )
+        and json_valid(${table.coordinationEngineCapabilitySnapshot}) = 1
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$') = 'object'
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$.schemaVersion') = 'integer'
+        and json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.schemaVersion') = 1
+        and json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.engine') = ${table.coordinationEngine}
+        and json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.engineVersion') = ${table.coordinationEngineVersion}
+        and json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.status') = 'available'
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$.capturedAt') = 'text'
+        and length(trim(json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.capturedAt'))) between 1 and 128
+        and julianday(json_extract(${table.coordinationEngineCapabilitySnapshot}, '$.capturedAt')) is not null
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$.capabilities') = 'array'
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$.limitations') = 'array'
+        and json_type(${table.coordinationEngineCapabilitySnapshot}, '$.unavailableReason') = 'null'
+        and json_valid(${table.coordinationEngineProviderIdentity}) = 1
+        and (
+          json_type(${table.coordinationEngineProviderIdentity}, '$') = 'null' or
+          (
+            json_type(${table.coordinationEngineProviderIdentity}, '$') = 'object'
+            and json_type(${table.coordinationEngineProviderIdentity}, '$.schemaVersion') = 'integer'
+            and json_extract(${table.coordinationEngineProviderIdentity}, '$.schemaVersion') = 1
+            and json_extract(${table.coordinationEngineProviderIdentity}, '$.engine') = ${table.coordinationEngine}
+            and (
+              (${table.coordinationEngine} = 'workflow'
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.workflowRunId') = 'text'
+                and length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.workflowRunId'))) between 1 and 512) or
+              (${table.coordinationEngine} = 'codex-v2'
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.canonicalTaskPath') = 'text'
+                and length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.canonicalTaskPath'))) between 1 and 1024
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.taskName') = 'text'
+                and length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.taskName'))) between 1 and 200
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.providerTaskId') in ('null', 'text')
+                and (json_type(${table.coordinationEngineProviderIdentity}, '$.providerTaskId') = 'null'
+                  or length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.providerTaskId'))) between 1 and 512)) or
+              (${table.coordinationEngine} = 'codex-v1'
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.providerAgentId') = 'text'
+                and length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.providerAgentId'))) between 1 and 512
+                and json_type(${table.coordinationEngineProviderIdentity}, '$.nickname') in ('null', 'text')
+                and (json_type(${table.coordinationEngineProviderIdentity}, '$.nickname') = 'null'
+                  or length(trim(json_extract(${table.coordinationEngineProviderIdentity}, '$.nickname'))) between 1 and 160))
+            )
+          )
+        )
+      ), 0)`,
+    ),
+  ],
 )
 
 export const taskOrchestrationsRelations = relations(taskOrchestrations, ({ one, many }) => ({
@@ -461,6 +555,500 @@ export const orchestrationAgentsRelations = relations(orchestrationAgents, ({ on
   run: one(agentRuns, { fields: [orchestrationAgents.runId], references: [agentRuns.id] }),
 }))
 
+// ============ SAVED WORKSPACES ============
+// `SavedWorkspace` is the durable multi-surface product object. Legacy
+// workspace IDs elsewhere still identify chats or terminal process scopes and
+// are intentionally not migrated into this table.
+export const savedWorkspaces = sqliteTable(
+  "saved_workspaces",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    scopeType: text("scope_type").notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    ownerKind: text("owner_kind").notNull().default("manual"),
+    // Stage 3 orchestration rows are keyed by task_id. Do not treat that task
+    // identity as the stable orchestration identity. T6 resolves this opaque
+    // link against authoritative orchestration data before writing it.
+    orchestrationId: text("orchestration_id"),
+    layoutVersion: integer("layout_version").notNull().default(1),
+    layoutJson: text("layout_json").notNull(),
+    sortOrder: text("sort_order").notNull().default("a0"),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("saved_workspaces_project_order_idx").on(
+      table.projectId,
+      table.archivedAt,
+      table.sortOrder,
+    ),
+    index("saved_workspaces_task_order_idx").on(table.taskId, table.archivedAt, table.sortOrder),
+    uniqueIndex("saved_workspaces_orchestration_idx").on(table.orchestrationId),
+    check("saved_workspaces_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+    check(
+      "saved_workspaces_scope_check",
+      sql`(
+        (${table.scopeType} = 'project' and ${table.projectId} is not null and ${table.taskId} is null) or
+        (${table.scopeType} = 'task' and ${table.projectId} is null and ${table.taskId} is not null)
+      )`,
+    ),
+    check(
+      "saved_workspaces_owner_check",
+      sql`(
+        (${table.ownerKind} = 'manual' and ${table.orchestrationId} is null) or
+        (${table.ownerKind} = 'orchestration' and ${table.scopeType} = 'task' and ${table.taskId} is not null and ${table.orchestrationId} is not null)
+      )`,
+    ),
+    check("saved_workspaces_layout_version_check", sql`${table.layoutVersion} = 1`),
+    check("saved_workspaces_version_check", sql`${table.version} >= 1`),
+    check(
+      "saved_workspaces_sort_order_check",
+      sql`length(trim(${table.sortOrder})) between 1 and 512`,
+    ),
+    check(
+      "saved_workspaces_layout_json_check",
+      sql`json_valid(${table.layoutJson}) = 1 and json_extract(${table.layoutJson}, '$.version') = ${table.layoutVersion} and length(cast(${table.layoutJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const savedWorkspacesRelations = relations(savedWorkspaces, ({ one }) => ({
+  project: one(projects, {
+    fields: [savedWorkspaces.projectId],
+    references: [projects.id],
+  }),
+  task: one(tasks, {
+    fields: [savedWorkspaces.taskId],
+    references: [tasks.id],
+  }),
+}))
+
+// ============ AGENT RUNTIME DEFAULTS ============
+// Runtime selection is keyed by harness, not model vendor. Global defaults use
+// a null scope ID; project rows cascade with their owning project.
+export const agentRuntimeDefaults = sqliteTable(
+  "agent_runtime_defaults",
+  {
+    id: text("id").primaryKey(),
+    scopeType: text("scope_type").notNull(),
+    scopeId: text("scope_id").references(() => projects.id, { onDelete: "cascade" }),
+    harness: text("harness").notNull(),
+    preference: text("preference").notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("agent_runtime_defaults_global_idx")
+      .on(table.harness)
+      .where(sql`${table.scopeType} = 'global'`),
+    uniqueIndex("agent_runtime_defaults_project_idx")
+      .on(table.scopeId, table.harness)
+      .where(sql`${table.scopeType} = 'project'`),
+    check(
+      "agent_runtime_defaults_scope_check",
+      sql`(
+        (${table.scopeType} = 'global' and ${table.scopeId} is null) or
+        (${table.scopeType} = 'project' and ${table.scopeId} is not null)
+      )`,
+    ),
+    check(
+      "agent_runtime_defaults_preference_check",
+      sql`${table.preference} in ('auto', 'codex', 'claude-code', 'flapstack-native')`,
+    ),
+    check("agent_runtime_defaults_version_check", sql`${table.version} >= 1`),
+  ],
+)
+
+export const agentRuntimeDefaultsRelations = relations(agentRuntimeDefaults, ({ one }) => ({
+  project: one(projects, {
+    fields: [agentRuntimeDefaults.scopeId],
+    references: [projects.id],
+  }),
+}))
+
+// ============ COORDINATION ENGINE DEFAULTS ============
+// Selection is independent from Agent Runtime. Global and project defaults are
+// resolved before one immutable orchestration snapshot is written.
+export const coordinationEngineDefaults = sqliteTable(
+  "coordination_engine_defaults",
+  {
+    id: text("id").primaryKey(),
+    scopeType: text("scope_type").notNull(),
+    scopeId: text("scope_id").references(() => projects.id, { onDelete: "cascade" }),
+    engine: text("engine").notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("coordination_engine_defaults_global_idx")
+      .on(table.scopeType)
+      .where(sql`${table.scopeType} = 'global'`),
+    uniqueIndex("coordination_engine_defaults_project_idx")
+      .on(table.scopeId)
+      .where(sql`${table.scopeType} = 'project'`),
+    check(
+      "coordination_engine_defaults_scope_check",
+      sql`(
+        (${table.scopeType} = 'global' and ${table.scopeId} is null) or
+        (${table.scopeType} = 'project' and ${table.scopeId} is not null)
+      )`,
+    ),
+    check(
+      "coordination_engine_defaults_engine_check",
+      sql`${table.engine} in ('workflow', 'codex-v2', 'codex-v1')`,
+    ),
+    check("coordination_engine_defaults_version_check", sql`${table.version} >= 1`),
+  ],
+)
+
+export const coordinationEngineDefaultsRelations = relations(
+  coordinationEngineDefaults,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [coordinationEngineDefaults.scopeId],
+      references: [projects.id],
+    }),
+  }),
+)
+
+// ============ MULTI-AGENT OPERATIONS ============
+export const orchestrationAuthorityApprovals = sqliteTable(
+  "orchestration_authority_approvals",
+  {
+    auditId: text("audit_id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    toolName: text("tool_name").notNull(),
+    consumedAt: integer("consumed_at").notNull(),
+  },
+  (table) => [
+    index("orchestration_authority_task_idx").on(table.taskId, table.consumedAt),
+    check(
+      "orchestration_authority_tool_check",
+      sql`${table.toolName} in ('orchestration.policy.relax','orchestration.template.launch')`,
+    ),
+  ],
+)
+
+export const orchestrationPolicyVersions = sqliteTable(
+  "orchestration_policy_versions",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    policyJson: text("policy_json").notNull(),
+    changeKind: text("change_kind").notNull(),
+    approvalAuditId: text("approval_audit_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.version] }),
+    index("orchestration_policy_task_idx").on(table.taskId, table.version),
+    uniqueIndex("orchestration_policy_approval_once_idx")
+      .on(table.approvalAuditId)
+      .where(sql`${table.approvalAuditId} is not null`),
+    check(
+      "orchestration_policy_json_check",
+      sql`json_valid(${table.policyJson}) = 1 and length(cast(${table.policyJson} as blob)) <= 65536`,
+    ),
+    check(
+      "orchestration_policy_change_check",
+      sql`${table.changeKind} in ('initial','tighten','relax','mixed','unchanged')`,
+    ),
+    check(
+      "orchestration_policy_approval_check",
+      sql`(${table.changeKind} in ('relax','mixed') and ${table.approvalAuditId} is not null) or ${table.changeKind} not in ('relax','mixed')`,
+    ),
+  ],
+)
+
+export const orchestrationTemplates = sqliteTable(
+  "orchestration_templates",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    definitionJson: text("definition_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    archivedAt: integer("archived_at"),
+  },
+  (table) => [
+    check("orchestration_templates_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+    check("orchestration_templates_version_check", sql`${table.version} >= 1`),
+    check(
+      "orchestration_templates_json_check",
+      sql`json_valid(${table.definitionJson}) = 1 and json_extract(${table.definitionJson}, '$.schemaVersion') = 1 and length(cast(${table.definitionJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationMessages = sqliteTable(
+  "orchestration_messages",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => orchestrationAgents.id, { onDelete: "set null" }),
+    direction: text("direction").notNull(),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    body: text("body"),
+    providerMessageId: text("provider_message_id"),
+    actionIntentId: text("action_intent_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("orchestration_messages_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    uniqueIndex("orchestration_messages_action_intent_idx")
+      .on(table.actionIntentId)
+      .where(sql`${table.actionIntentId} is not null`),
+    check(
+      "orchestration_messages_direction_check",
+      sql`${table.direction} in ('inbound','outbound')`,
+    ),
+    check(
+      "orchestration_messages_kind_check",
+      sql`${table.kind} in ('message','follow-up','interrupt','mailbox')`,
+    ),
+    check(
+      "orchestration_messages_state_check",
+      sql`${table.state} in ('recorded','queued','delivered','failed','uncertain')`,
+    ),
+    check(
+      "orchestration_messages_body_check",
+      sql`${table.body} is null or length(cast(${table.body} as blob)) <= 40000`,
+    ),
+  ],
+)
+
+export const orchestrationWorkflowRuns = sqliteTable(
+  "orchestration_workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    definitionJson: text("definition_json").notNull(),
+    approvalAuditId: text("approval_audit_id"),
+    stopIntent: integer("stop_intent", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_workflow_approval_once_idx")
+      .on(table.approvalAuditId)
+      .where(sql`${table.approvalAuditId} is not null`),
+    check(
+      "orchestration_workflow_status_check",
+      sql`${table.status} in ('queued','running','waiting','blocked','paused','completed','failed','stopped','uncertain')`,
+    ),
+    check(
+      "orchestration_workflow_definition_check",
+      sql`json_valid(${table.definitionJson}) = 1 and length(cast(${table.definitionJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationWorkflowCheckpoints = sqliteTable(
+  "orchestration_workflow_checkpoints",
+  {
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => orchestrationWorkflowRuns.id, { onDelete: "cascade" }),
+    stepId: text("step_id").notNull(),
+    status: text("status").notNull(),
+    outputJson: text("output_json"),
+    error: text("error"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workflowRunId, table.stepId] }),
+    check(
+      "orchestration_workflow_checkpoint_status_check",
+      sql`${table.status} in ('pending','running','waiting','blocked','completed','failed','uncertain','skipped')`,
+    ),
+    check(
+      "orchestration_workflow_checkpoint_output_check",
+      sql`${table.outputJson} is null or (json_valid(${table.outputJson}) = 1 and length(cast(${table.outputJson} as blob)) <= 65536)`,
+    ),
+  ],
+)
+
+export const coordinationActionIntents = sqliteTable(
+  "coordination_action_intents",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    engine: text("engine").notNull(),
+    action: text("action").notNull(),
+    targetAgentId: text("target_agent_id"),
+    payloadJson: text("payload_json").notNull(),
+    state: text("state").notNull(),
+    providerIdentityJson: text("provider_identity_json").notNull(),
+    resultJson: text("result_json"),
+    claimOwner: text("claim_owner"),
+    claimExpiresAt: integer("claim_expires_at"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("coordination_action_idempotency_idx").on(table.idempotencyKey),
+    index("coordination_action_task_state_idx").on(table.taskId, table.state, table.createdAt),
+    index("coordination_action_claim_idx").on(table.state, table.claimExpiresAt),
+    check("coordination_action_engine_check", sql`${table.engine} in ('codex-v2','codex-v1')`),
+    check(
+      "coordination_action_state_check",
+      sql`${table.state} in ('dispatching','running','waiting','completed','cancelled','uncertain','failed')`,
+    ),
+    check(
+      "coordination_action_payload_check",
+      sql`json_valid(${table.payloadJson}) = 1 and length(cast(${table.payloadJson} as blob)) <= 65536`,
+    ),
+    check("coordination_action_identity_check", sql`json_valid(${table.providerIdentityJson}) = 1`),
+    check(
+      "coordination_action_result_check",
+      sql`${table.resultJson} is null or (json_valid(${table.resultJson}) = 1 and length(cast(${table.resultJson} as blob)) <= 65536)`,
+    ),
+    check(
+      "coordination_action_claim_check",
+      sql`(${table.claimOwner} is null and ${table.claimExpiresAt} is null) or (length(${table.claimOwner}) between 1 and 200 and ${table.claimExpiresAt} is not null)`,
+    ),
+  ],
+)
+
+export const orchestrationTransitionEvents = sqliteTable(
+  "orchestration_transition_events",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    agentId: text("agent_id"),
+    runId: text("run_id"),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    summary: text("summary"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_transition_dedup_idx").on(table.dedupKey),
+    index("orchestration_transition_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    check(
+      "orchestration_transition_summary_check",
+      sql`${table.summary} is null or (substr(${table.summary},1,17) = 'Activity summary:' and length(cast(${table.summary} as blob)) <= 4096)`,
+    ),
+  ],
+)
+
+export const orchestrationControlIntents = sqliteTable(
+  "orchestration_control_intents",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    state: text("state").notNull(),
+    previewJson: text("preview_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    check("orchestration_control_action_check", sql`${table.action} in ('pause','resume','stop')`),
+    check(
+      "orchestration_control_state_check",
+      sql`${table.state} in ('pending','partial','completed')`,
+    ),
+    check(
+      "orchestration_control_preview_check",
+      sql`json_valid(${table.previewJson}) = 1 and length(cast(${table.previewJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationControlTargets = sqliteTable(
+  "orchestration_control_targets",
+  {
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => orchestrationControlIntents.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    runId: text("run_id"),
+    state: text("state").notNull(),
+    error: text("error"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.intentId, table.agentId] }),
+    check(
+      "orchestration_control_target_state_check",
+      sql`${table.state} in ('pending','processing','no-run','reconciled','failed')`,
+    ),
+    check(
+      "orchestration_control_target_error_check",
+      sql`${table.error} is null or length(cast(${table.error} as blob)) <= 1024`,
+    ),
+  ],
+)
+
+export const orchestrationActivityEvents = sqliteTable(
+  "orchestration_activity_events",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => orchestrationAgents.id, { onDelete: "set null" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    sourceActivityEventId: text("source_activity_event_id").references(
+      () => agentActivityEvents.eventId,
+      { onDelete: "set null" },
+    ),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    summary: text("summary"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_activity_dedup_idx").on(table.dedupKey),
+    index("orchestration_activity_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    check(
+      "orchestration_activity_kind_check",
+      sql`${table.kind} in ('workflow-phase','checkpoint','dependency','spawn','replacement','mailbox','coordination','warning','usage','aggregate-status')`,
+    ),
+    check(
+      "orchestration_activity_summary_check",
+      sql`${table.summary} is null or (substr(${table.summary},1,17) = 'Activity summary:' and length(cast(${table.summary} as blob)) <= 4096)`,
+    ),
+  ],
+)
+
 // ============ CHATS ============
 export const chats = sqliteTable(
   "chats",
@@ -479,6 +1067,7 @@ export const chats = sqliteTable(
       .default(false),
     harness: text("harness"),
     model: text("model"),
+    runtimePreference: text("runtime_preference"),
     // Cross-harness spawning keeps enough durable lineage to reject loops and
     // explain where a thread came from without depending on a live process.
     parentChatId: text("parent_chat_id"),
@@ -569,6 +1158,20 @@ export const agentRuns = sqliteTable(
     // Exact run override and the immutable provenance report for the context used.
     vaultContextSections: text("vault_context_sections"),
     vaultContextManifest: text("vault_context_manifest"),
+    // Version 0 is reserved for rows migrated from Stage 3. Every new launch
+    // writes version 1 before pending/running intent.
+    runtimeSnapshotVersion: integer("runtime_snapshot_version").notNull().default(0),
+    runtimePreference: text("runtime_preference").notNull().default("flapstack-native"),
+    runtimePreferenceSource: text("runtime_preference_source").notNull().default("legacy"),
+    resolvedRuntime: text("resolved_runtime").notNull().default("flapstack-native"),
+    runtimeAdapterVersion: text("runtime_adapter_version").notNull().default("legacy-stage3"),
+    runtimeProtocolVersion: text("runtime_protocol_version").notNull().default("legacy-stage3"),
+    runtimeCapabilitySnapshot: text("runtime_capability_snapshot")
+      .notNull()
+      .default('{"schemaVersion":1,"status":"legacy"}'),
+    runtimeControlSnapshot: text("runtime_control_snapshot")
+      .notNull()
+      .default('{"schemaVersion":1}'),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
@@ -589,6 +1192,117 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   }),
   checkpoints: many(checkpoints),
   manifest: many(fileChangeManifests),
+  activityEvents: many(agentActivityEvents),
+  activitySequence: one(agentActivitySequences),
+}))
+
+// ============ AGENT RUNTIME ACTIVITY ============
+// Provider events are append-only during normal operation. Explicit retention
+// and redaction maintenance preserve identity and order while removing payload.
+export const agentActivitySequences = sqliteTable(
+  "agent_activity_sequences",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    nextSequence: integer("next_sequence").notNull().default(1),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [check("agent_activity_sequences_next_check", sql`${table.nextSequence} >= 1`)],
+)
+
+export const agentActivitySequencesRelations = relations(agentActivitySequences, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [agentActivitySequences.runId],
+    references: [agentRuns.id],
+  }),
+}))
+
+export const agentActivityEvents = sqliteTable(
+  "agent_activity_events",
+  {
+    storageId: integer("storage_id").primaryKey({ autoIncrement: true }),
+    eventId: text("event_id").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    subChatId: text("sub_chat_id"),
+    orchestrationAgentId: text("orchestration_agent_id"),
+    runtime: text("runtime").notNull(),
+    harness: text("harness").notNull(),
+    provider: text("provider").notNull(),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    displayClass: text("display_class").notNull(),
+    privacyClass: text("privacy_class").notNull(),
+    redactionState: text("redaction_state").notNull().default("none"),
+    redactionReason: text("redaction_reason"),
+    providerTimestamp: integer("provider_timestamp"),
+    receivedAt: integer("received_at").notNull(),
+    providerEventId: text("provider_event_id"),
+    providerSessionId: text("provider_session_id"),
+    providerThreadId: text("provider_thread_id"),
+    providerTurnId: text("provider_turn_id"),
+    providerItemId: text("provider_item_id"),
+    providerParentItemId: text("provider_parent_item_id"),
+    providerMessageId: text("provider_message_id"),
+    providerToolId: text("provider_tool_id"),
+    summaryIndex: integer("summary_index"),
+    contentIndex: integer("content_index"),
+    partIndex: integer("part_index"),
+    sectionBoundary: text("section_boundary"),
+    dedupKey: text("dedup_key"),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("agent_activity_events_event_id_idx").on(table.eventId),
+    uniqueIndex("agent_activity_events_run_sequence_idx").on(table.runId, table.sequence),
+    uniqueIndex("agent_activity_events_run_dedup_idx")
+      .on(table.runId, table.dedupKey)
+      .where(sql`${table.dedupKey} is not null`),
+    index("agent_activity_events_chat_storage_idx").on(table.chatId, table.storageId),
+    index("agent_activity_events_run_storage_idx").on(table.runId, table.storageId),
+    index("agent_activity_events_received_idx").on(table.receivedAt, table.storageId),
+    check("agent_activity_events_sequence_check", sql`${table.sequence} >= 1`),
+    check(
+      "agent_activity_events_runtime_check",
+      sql`${table.runtime} in ('codex', 'claude-code', 'flapstack-native')`,
+    ),
+    check(
+      "agent_activity_events_kind_check",
+      sql`${table.kind} in ('lifecycle', 'status', 'agent-text', 'reasoning-summary', 'provider-visible-reasoning', 'plan', 'tool', 'command', 'patch', 'permission', 'hook', 'subagent', 'warning', 'compaction', 'usage', 'opaque-metadata', 'private-metadata')`,
+    ),
+    check(
+      "agent_activity_events_phase_check",
+      sql`${table.phase} in ('queued', 'started', 'delta', 'updated', 'completed', 'failed', 'cancelled', 'snapshot')`,
+    ),
+    check(
+      "agent_activity_events_display_check",
+      sql`${table.displayClass} in ('summary', 'provider-visible', 'status', 'tool', 'private', 'metadata')`,
+    ),
+    check(
+      "agent_activity_events_privacy_check",
+      sql`${table.privacyClass} in ('public', 'sensitive', 'private', 'encrypted')`,
+    ),
+    check(
+      "agent_activity_events_redaction_check",
+      sql`${table.redactionState} in ('none', 'redacted', 'retained-redaction', 'corrupt')`,
+    ),
+    check(
+      "agent_activity_events_payload_check",
+      sql`json_valid(${table.payloadJson}) = 1 and length(cast(${table.payloadJson} as blob)) <= 65536`,
+    ),
+  ],
+)
+
+export const agentActivityEventsRelations = relations(agentActivityEvents, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [agentActivityEvents.runId],
+    references: [agentRuns.id],
+  }),
 }))
 
 // ============ LOCAL AUTOMATION ============
@@ -1058,162 +1772,6 @@ export const mcpAuditRecords = sqliteTable(
     index("mcp_audit_records_invocation_id_idx").on(table.invocationId),
   ],
 )
-
-// ============ MOBILE DEVICE IDENTITY ============
-// Pairing and session secrets are stored only as hashes. Public-key material is
-// intentionally the only device credential persisted by the desktop.
-export const mobilePairingTokens = sqliteTable(
-  "mobile_pairing_tokens",
-  {
-    id: text("id").primaryKey(),
-    tokenHash: text("token_hash").notNull(),
-    certificateFingerprint: text("certificate_fingerprint").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
-    consumedAt: integer("consumed_at", { mode: "timestamp" }),
-  },
-  (table) => [
-    uniqueIndex("mobile_pairing_tokens_hash_idx").on(table.tokenHash),
-    index("mobile_pairing_tokens_expiry_idx").on(table.expiresAt),
-    check("mobile_pairing_tokens_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
-  ],
-)
-
-export const mobileDevices = sqliteTable(
-  "mobile_devices",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    publicKeyAlgorithm: text("public_key_algorithm").notNull(),
-    publicKey: text("public_key").notNull(),
-    publicKeyFingerprint: text("public_key_fingerprint").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
-    revokedAt: integer("revoked_at", { mode: "timestamp" }),
-    revocationReason: text("revocation_reason"),
-    scopeVersion: integer("scope_version").notNull().default(1),
-  },
-  (table) => [
-    uniqueIndex("mobile_devices_public_key_idx").on(table.publicKeyFingerprint),
-    index("mobile_devices_revoked_idx").on(table.revokedAt),
-    check(
-      "mobile_devices_algorithm_check",
-      sql`${table.publicKeyAlgorithm} in ('Ed25519', 'P-256')`,
-    ),
-    check("mobile_devices_scope_version_check", sql`${table.scopeVersion} >= 1`),
-  ],
-)
-
-export const mobileAuthChallenges = sqliteTable(
-  "mobile_auth_challenges",
-  {
-    id: text("id").primaryKey(),
-    deviceId: text("device_id")
-      .notNull()
-      .references(() => mobileDevices.id, { onDelete: "cascade" }),
-    challengeHash: text("challenge_hash").notNull(),
-    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
-    consumedAt: integer("consumed_at", { mode: "timestamp" }),
-  },
-  (table) => [
-    uniqueIndex("mobile_auth_challenges_hash_idx").on(table.challengeHash),
-    index("mobile_auth_challenges_device_idx").on(table.deviceId, table.expiresAt),
-    check("mobile_auth_challenges_expiry_check", sql`${table.expiresAt} > ${table.issuedAt}`),
-  ],
-)
-
-export const mobileDeviceSessions = sqliteTable(
-  "mobile_device_sessions",
-  {
-    id: text("id").primaryKey(),
-    deviceId: text("device_id")
-      .notNull()
-      .references(() => mobileDevices.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull(),
-    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
-    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
-    idleExpiresAt: integer("idle_expires_at", { mode: "timestamp" }).notNull(),
-    absoluteExpiresAt: integer("absolute_expires_at", { mode: "timestamp" }).notNull(),
-    scopeVersion: integer("scope_version").notNull(),
-    rotation: integer("rotation").notNull().default(0),
-    revokedAt: integer("revoked_at", { mode: "timestamp" }),
-  },
-  (table) => [
-    uniqueIndex("mobile_device_sessions_token_idx").on(table.tokenHash),
-    index("mobile_device_sessions_device_idx").on(table.deviceId, table.revokedAt),
-    index("mobile_device_sessions_expiry_idx").on(table.idleExpiresAt, table.absoluteExpiresAt),
-    check("mobile_device_sessions_scope_version_check", sql`${table.scopeVersion} >= 1`),
-    check("mobile_device_sessions_rotation_check", sql`${table.rotation} >= 0`),
-    check(
-      "mobile_device_sessions_expiry_check",
-      sql`${table.idleExpiresAt} > ${table.lastSeenAt} and ${table.absoluteExpiresAt} > ${table.issuedAt} and ${table.idleExpiresAt} <= ${table.absoluteExpiresAt}`,
-    ),
-  ],
-)
-
-export const mobileSessionNonces = sqliteTable(
-  "mobile_session_nonces",
-  {
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => mobileDeviceSessions.id, { onDelete: "cascade" }),
-    nonceHash: text("nonce_hash").notNull(),
-    usedAt: integer("used_at", { mode: "timestamp" }).notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.sessionId, table.nonceHash] }),
-    index("mobile_session_nonces_used_idx").on(table.usedAt),
-  ],
-)
-
-// Deliberately no foreign key: device audit survives later device cleanup.
-export const mobileDeviceAuditRecords = sqliteTable(
-  "mobile_device_audit_records",
-  {
-    id: text("id").primaryKey(),
-    deviceId: text("device_id"),
-    event: text("event").notNull(),
-    outcome: text("outcome").notNull(),
-    summary: text("summary").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-  },
-  (table) => [
-    index("mobile_device_audit_created_idx").on(table.createdAt),
-    index("mobile_device_audit_device_idx").on(table.deviceId, table.createdAt),
-    check(
-      "mobile_device_audit_outcome_check",
-      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
-    ),
-  ],
-)
-
-export const mobileDevicesRelations = relations(mobileDevices, ({ many }) => ({
-  challenges: many(mobileAuthChallenges),
-  sessions: many(mobileDeviceSessions),
-}))
-
-export const mobileAuthChallengesRelations = relations(mobileAuthChallenges, ({ one }) => ({
-  device: one(mobileDevices, {
-    fields: [mobileAuthChallenges.deviceId],
-    references: [mobileDevices.id],
-  }),
-}))
-
-export const mobileDeviceSessionsRelations = relations(mobileDeviceSessions, ({ one, many }) => ({
-  device: one(mobileDevices, {
-    fields: [mobileDeviceSessions.deviceId],
-    references: [mobileDevices.id],
-  }),
-  nonces: many(mobileSessionNonces),
-}))
-
-export const mobileSessionNoncesRelations = relations(mobileSessionNonces, ({ one }) => ({
-  session: one(mobileDeviceSessions, {
-    fields: [mobileSessionNonces.sessionId],
-    references: [mobileDeviceSessions.id],
-  }),
-}))
 
 // ============ MCP APPROVAL REQUESTS ============
 // Cross-process coordination only. The harness-owned MCP child keeps grants in
