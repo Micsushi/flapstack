@@ -40,6 +40,7 @@ import {
 import { selectedProjectAtom } from "../agents/atoms"
 import { PlanPromotionDialog } from "./plan-promotion-dialog"
 import { PlanSourceComparisonDialog } from "./plan-source-comparison-dialog"
+import { PlanKanbanDevFixtures } from "./plan-kanban-dev-fixtures"
 
 const INITIAL_STATE: PlanViewState = { selectedSourceId: null, query: "", status: "all" }
 const STATUS_FILTERS: Array<{ value: PlanStatusFilter; label: string }> = [
@@ -195,6 +196,10 @@ export function PlanView() {
             )}
           </div>
         </div>
+
+        {import.meta.env.DEV && (
+          <PlanKanbanDevFixtures projectId={projectId} onDatasetChanged={refresh} />
+        )}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(240px,1fr)_minmax(220px,1fr)_auto]">
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
