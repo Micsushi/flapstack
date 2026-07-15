@@ -214,7 +214,7 @@ function fleetProviderSql(agentAlias: string, runAlias: string) {
   return `lower(coalesce(
     nullif(json_extract(${agentAlias}.definition, '$.provider'), ''),
     CASE lower(coalesce(json_extract(${agentAlias}.definition, '$.harness'), ${runAlias}.harness, ''))
-      WHEN 'codex' THEN 'openai'
+      WHEN 'codex' THEN 'codex'
       WHEN 'claude-code' THEN 'anthropic'
       WHEN 'cursor-agent' THEN 'cursor'
       WHEN 'openrouter' THEN 'openrouter'
