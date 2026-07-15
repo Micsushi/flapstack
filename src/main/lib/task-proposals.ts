@@ -433,7 +433,13 @@ function approveOne(
   for (const task of statusTasks) {
     const order = orders.get(task.id)
     if (order && order !== task.board_order) {
-      database.prepare("UPDATE tasks SET board_order = ? WHERE id = ?").run(order, task.id)
+      database
+        .prepare(
+          `UPDATE tasks
+           SET board_order = ?, version = version + 1, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(order, now, task.id)
     }
   }
 

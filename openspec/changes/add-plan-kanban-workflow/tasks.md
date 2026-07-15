@@ -31,7 +31,10 @@
 ### S4-F9-T3 — Build the read-only Plan view
 
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. Node 22 focused `plan-view` tests pass 6 pure selector/reducer/service cases; focused ESLint, Prettier, targeted strict TypeScript, and strict OpenSpec validation pass. The live OpenSpec/Markdown and accessibility walkthrough remains prohibited and unverified, so completion stays open.
+- Evidence: Code-ready/manual-verification-remaining. The production Plan route and read-only
+  renderer remain wired; the Node 22 F9 headless gate passes source, selector/reducer/service,
+  renderer, stale, and malformed-state coverage. The live OpenSpec/Markdown and accessibility
+  walkthrough remains unverified, so completion stays open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Users browse stage/feature/task plan hierarchy and distinguish proposed, active, built, stale, and malformed sources.
 - Scope: Project Plan navigation; source selector; hierarchy/requirements/task rendering; status/limitation badges; search/filter; source open; candidate promotion affordance; progress capsule; accessibility.
@@ -54,6 +57,8 @@
   `Flapstack Dev`; authenticated app-control created and listed five real task fixtures and one
   linked task chat. The Mac was locked, so real task navigation, drag/drop, keyboard,
   screen-reader, stale/error, and UI-state walkthroughs remain unverified.
+  The final F9 audit also wired the durable task board into the production **Tasks** route and
+  added a route regression; live route proof remains open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Project Kanban lists and moves durable tasks in fixed columns.
 - Scope: Task board query; backlog/planned/in-progress/review/done columns; ordering/rebalance; versioned move; filters; archive/done; card task/chat/run summaries; keyboard drag alternative; accessibility.
@@ -105,8 +110,9 @@
 
 - [ ] Completion: acceptance and verification passed
 - Evidence: Code-ready/manual-verification-remaining. Node 22 full headless F9 regression passes
-  49 tests across 8 suites, including source edits, linked task/proposal comparisons, stale
-  two-window moves, promotion deduplication, proposal decision races, and renderer invalidation.
+  101 tests across 16 suites, including source edits and recovery, linked task/proposal
+  comparisons, stale two-window moves, promotion deduplication, proposal decision races,
+  versioned rebalance, production route wiring, audit, and renderer invalidation.
   Full strict TypeScript, repo-wide ESLint, focused Prettier, production build, `git diff --check`,
   and strict OpenSpec validation pass. Live Plan/Kanban compare UI, accessibility, and real
   multi-window refresh walkthroughs remain prohibited and unverified, so completion stays open.
@@ -123,6 +129,14 @@
 ### S4-F9-T8 — Close Plan and Kanban acceptance
 
 - [ ] Completion: acceptance and verification passed
+- Evidence: Code-ready/manual-verification-remaining. The Node 22 feature-wide F9 headless gate
+  passes 101 tests across 16 suites. Production Tasks routing, serialized source recovery,
+  versioned reorder conflicts, and operator docs are covered. Full ESLint, strict TypeScript,
+  touched Prettier, production build, strict OpenSpec, and diff checks pass. The canonical
+  `npm run check` stops at four untouched baseline Drizzle snapshots
+  (`0031_snapshot.json`-`0034_snapshot.json`) that fail repository Prettier. Live Plan/Kanban UI,
+  accessibility, real multi-window, `npm run dev:verify`, and packaged preview evidence remains
+  open, so completion and S4-PK01-S4-PK03 stay open.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Plan browsing, real-task Kanban, promotion, AI approval, and divergence pass integrated evidence.
 - Scope: Full gate; matrix S4-PK01–S4-PK03; migrations; two-window races; OpenSpec/Markdown; proposal approve/deny; no auto-run; docs; package preview.

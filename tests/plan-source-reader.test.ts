@@ -330,6 +330,56 @@ describe("plan source registry and watcher contracts", () => {
     await watcher.close()
     expect(adapter.closed).toBe(true)
   })
+
+  it("serializes overlapping refreshes and emits only the newest coalesced snapshot", async () => {
+    const root = projectRoot()
+    mkdirSync(join(root, "docs"))
+    const planPath = join(root, "docs", "plan.md")
+    writeFileSync(planPath, "# Initial plan\n")
+    const adapter = new FakeWatchAdapter()
+    const events: Array<
+      Parameters<
+        NonNullable<ConstructorParameters<typeof PlanSourceRefreshWatcher>[0]["onRefresh"]>
+      >[0]
+    > = []
+    let releaseRefresh = () => {}
+    let markRefreshStarted = () => {}
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve
+    })
+    const refreshBlocked = new Promise<void>((resolve) => {
+      releaseRefresh = resolve
+    })
+    let configReads = 0
+    const watcher = new PlanSourceRefreshWatcher({
+      loadConfig: async () => {
+        configReads += 1
+        if (configReads === 2) {
+          markRefreshStarted()
+          await refreshBlocked
+        }
+        return { projectId: "project-1", rootPath: root, markdownPaths: ["docs/plan.md"] }
+      },
+      onRefresh: (event) => events.push(event),
+      debounceMs: 5,
+      watchFactory: () => adapter,
+    })
+    await watcher.start()
+
+    writeFileSync(planPath, "# First change\n")
+    adapter.emitAll("change", planPath)
+    await refreshStarted
+    writeFileSync(planPath, "# Newest change\n")
+    adapter.emitAll("change", planPath)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    releaseRefresh()
+
+    await vi.waitFor(() => expect(events).toHaveLength(1))
+    expect(events[0]!.changedPaths).toEqual([planPath])
+    expect(events[0]!.snapshot.sources[0]!.candidates[0]!.title).toBe("Newest change")
+    expect(configReads).toBe(3)
+    await watcher.close()
+  })
 })
 
 class FakeWatchAdapter implements PlanSourceWatchAdapter {

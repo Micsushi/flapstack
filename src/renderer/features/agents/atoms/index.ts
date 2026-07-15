@@ -1257,6 +1257,7 @@ export type DesktopView =
   | "inbox"
   | "settings"
   | "usage"
+  | "tasks"
   | "plan"
   | "project-vault"
   | "saved-workspaces"

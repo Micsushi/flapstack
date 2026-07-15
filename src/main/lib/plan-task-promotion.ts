@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { and, asc, eq, isNull } from "drizzle-orm"
+import { and, asc, eq, isNull, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { ProjectPlanSnapshot } from "../../shared/plan-sources"
 import type {
@@ -270,14 +270,21 @@ export function promotePlanCandidate(
       .orderBy(asc(tasks.boardOrder), asc(tasks.createdAt), asc(tasks.id))
       .all()
     const orders = createRebalancedBoardOrders([...statusTasks.map((task) => task.id), taskId])
+    const now = new Date()
     for (const statusTask of statusTasks) {
       const boardOrder = orders.get(statusTask.id)
       if (boardOrder && boardOrder !== statusTask.boardOrder) {
-        tx.update(tasks).set({ boardOrder }).where(eq(tasks.id, statusTask.id)).run()
+        tx.update(tasks)
+          .set({
+            boardOrder,
+            version: sql`${tasks.version} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(tasks.id, statusTask.id))
+          .run()
       }
     }
 
-    const now = new Date()
     const task = tx
       .insert(tasks)
       .values({

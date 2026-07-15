@@ -21,6 +21,8 @@ records remaining release authority and cleanup.
 historical criteria record and crosswalk.
 Stage 4 portability behavior and operating limits are documented in
 [Portability and Private Sync](docs/portability-and-private-sync.md).
+Stage 4 plan-source, task-board, promotion, proposal, and concurrency contracts
+are documented in [Plan and Kanban](docs/plan-and-kanban.md).
 The research-only dynamic-vocabulary architecture is explicitly deferred: it is
 not an approved Stage 2 requirement and is not claimed as implemented.
 

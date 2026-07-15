@@ -187,6 +187,12 @@ describe("plan and Kanban consistency", () => {
   it("deduplicates a promotion race into one durable task and idle chat", () => {
     const { database, sqlite } = testDatabase("promotion-race")
     try {
+      sqlite
+        .prepare(
+          `INSERT INTO tasks (id, project_id, name, status, board_order, version)
+           VALUES ('existing-task', 'project-1', 'Existing', 'in-progress', 'a0', 5)`,
+        )
+        .run()
       const reference = {
         sourceProjectId: "project-1",
         sourceId: "source-1",
@@ -214,7 +220,10 @@ describe("plan and Kanban consistency", () => {
       })
       expect([first.created, second.created].sort()).toEqual([false, true])
       expect(second.task.id).toBe(first.task.id)
-      expect(sqlite.prepare("SELECT count(*) count FROM tasks").get()).toEqual({ count: 1 })
+      expect(sqlite.prepare("SELECT count(*) count FROM tasks").get()).toEqual({ count: 2 })
+      expect(sqlite.prepare("SELECT version FROM tasks WHERE id = 'existing-task'").get()).toEqual({
+        version: 6,
+      })
       expect(sqlite.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 1 })
       expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
     } finally {
@@ -229,6 +238,12 @@ describe("plan and Kanban consistency", () => {
         .prepare(
           `INSERT INTO chats (id, name, project_id, scope, permission_mode)
            VALUES ('caller-chat', 'Caller', 'project-1', 'project', 'ask-before-edits')`,
+        )
+        .run()
+      sqlite
+        .prepare(
+          `INSERT INTO tasks (id, project_id, name, status, board_order, version)
+           VALUES ('existing-task', 'project-1', 'Existing', 'planned', 'a0', 5)`,
         )
         .run()
       const service = new TaskProposalService(path, { now: () => 1000 })
@@ -265,7 +280,10 @@ describe("plan and Kanban consistency", () => {
         status: "approved",
         version: 2,
       })
-      expect(sqlite.prepare("SELECT count(*) count FROM tasks").get()).toEqual({ count: 1 })
+      expect(sqlite.prepare("SELECT count(*) count FROM tasks").get()).toEqual({ count: 2 })
+      expect(sqlite.prepare("SELECT version FROM tasks WHERE id = 'existing-task'").get()).toEqual({
+        version: 6,
+      })
       expect(
         sqlite.prepare("SELECT count(*) count FROM chats WHERE task_id IS NOT NULL").get(),
       ).toEqual({ count: 1 })

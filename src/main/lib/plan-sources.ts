@@ -661,6 +661,8 @@ export class PlanSourceRefreshWatcher {
   private timer: NodeJS.Timeout | null = null
   private changedPaths = new Set<string>()
   private fingerprints: Record<string, string> = {}
+  private refreshInFlight = false
+  private refreshQueued = false
   private disposed = false
 
   constructor(private readonly options: PlanSourceWatcherOptions) {}
@@ -706,21 +708,45 @@ export class PlanSourceRefreshWatcher {
   private async refresh(): Promise<void> {
     this.timer = null
     if (this.disposed) return
-    const changedPaths = [...this.changedPaths].sort()
-    this.changedPaths.clear()
+    if (this.refreshInFlight) {
+      this.refreshQueued = true
+      return
+    }
+    this.refreshInFlight = true
+    let activePaths: string[] = []
     try {
-      const config = await this.options.loadConfig()
-      const snapshot = await readProjectPlanSources(config, {
-        expectedFingerprints: this.fingerprints,
-      })
-      this.options.onRefresh({
-        type: "refresh-required",
-        projectId: config.projectId,
-        changedPaths,
-        snapshot,
-      })
+      do {
+        if (this.timer) clearTimeout(this.timer)
+        this.timer = null
+        this.refreshQueued = false
+        activePaths = [...this.changedPaths].sort()
+        this.changedPaths.clear()
+        const config = await this.options.loadConfig()
+        const snapshot = await readProjectPlanSources(config, {
+          expectedFingerprints: this.fingerprints,
+        })
+        if (this.disposed) return
+        if (this.refreshQueued || this.changedPaths.size > 0) {
+          for (const path of activePaths) this.changedPaths.add(path)
+          continue
+        }
+        this.options.onRefresh({
+          type: "refresh-required",
+          projectId: config.projectId,
+          changedPaths: activePaths,
+          snapshot,
+        })
+        this.fingerprints = Object.fromEntries(
+          snapshot.sources.map((source) => [source.id, source.fingerprint]),
+        )
+        activePaths = []
+      } while (this.refreshQueued || this.changedPaths.size > 0)
     } catch (error) {
+      for (const path of activePaths) this.changedPaths.add(path)
       this.reportError(error)
+    } finally {
+      this.refreshInFlight = false
+      if (!this.disposed && this.refreshQueued) this.scheduleRefresh()
     }
   }
 

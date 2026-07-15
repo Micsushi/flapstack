@@ -6505,6 +6505,22 @@ export function AgentsSidebar({
           <span>Orchestration fleet</span>
         </ButtonCustom>
         <ButtonCustom
+          variant={desktopView === "tasks" ? "secondary" : "ghost"}
+          size="sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={desktopView === "tasks" ? "page" : undefined}
+          onClick={() => {
+            setSelectedChatId(null)
+            setSelectedDraftId(null)
+            setShowNewChatForm(false)
+            setDesktopView("tasks")
+            setSearchQuery("")
+          }}
+        >
+          <ClipboardList className="h-4 w-4" />
+          <span>Tasks</span>
+        </ButtonCustom>
+        <ButtonCustom
           variant={
             desktopView === "automations" || desktopView === "automations-detail"
               ? "secondary"

@@ -70,6 +70,7 @@ import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-d
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { SettingsContent } from "../../settings/settings-content"
 import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
+import { KanbanView } from "../../kanban"
 import { PlanView } from "../../plan"
 import {
   ContextMenu,
@@ -1174,6 +1175,8 @@ function AgentsContentInner() {
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
           </div>
+        ) : desktopView === "tasks" ? (
+          <KanbanView />
         ) : desktopView === "plan" ? (
           <PlanView />
         ) : desktopView === "project-vault" ? (
@@ -1323,6 +1326,8 @@ function AgentsContentInner() {
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />
             </div>
+          ) : desktopView === "tasks" ? (
+            <KanbanView />
           ) : desktopView === "plan" ? (
             <PlanView />
           ) : desktopView === "project-vault" ? (

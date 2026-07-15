@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { trpc } from "../../lib/trpc"
 import {
   agentsSidebarOpenAtom,
+  desktopViewAtom,
   selectedAgentChatIdAtom,
   selectedChatScopeAtom,
   selectedDraftIdAtom,
@@ -34,6 +35,7 @@ export function KanbanView() {
   const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom)
   const [selectedProject, setSelectedProject] = useAtom(selectedProjectAtom)
   const setSelectedChatScope = useSetAtom(selectedChatScopeAtom)
+  const setDesktopView = useSetAtom(desktopViewAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
@@ -105,10 +107,12 @@ export function KanbanView() {
       setSelectedDraftId(null)
       setSelectedChatId(chatId)
       setShowNewChatForm(false)
+      setDesktopView(null)
     },
     [
       setSelectedChatId,
       setSelectedChatScope,
+      setDesktopView,
       setSelectedDraftId,
       setSelectedProject,
       setShowNewChatForm,
