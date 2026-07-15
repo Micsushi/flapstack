@@ -10,6 +10,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 import { agentRuns, chats, projects, tasks } from "../src/main/lib/db/schema"
 import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+} from "../src/main/lib/agent-runtime/snapshot"
+import {
   buildProjectVaultRunContext,
   persistProjectVaultContextManifest,
   ProjectVaultContextRejectedError,
@@ -311,6 +315,11 @@ describe("project vault run context", () => {
     database
       .insert(agentRuns)
       .values({
+        ...constructRuntimeSnapshot(database, {
+          chatId,
+          harness,
+          permission: runtimePermissionSnapshot("read-only", null),
+        }),
         id,
         chatId,
         harness,

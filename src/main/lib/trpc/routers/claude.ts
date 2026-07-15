@@ -60,6 +60,8 @@ import {
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
 import { createRollbackStash } from "../../git/stash"
 import {
   buildHarnessContextBundle,
@@ -269,9 +271,17 @@ async function createClaudeAgentRun(input: {
     const existing = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
     if (existing) return existing
   }
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: input.chatId,
+    harness: HARNESS,
+    model: input.model,
+    permission: runtimePermissionSnapshot(input.permissionMode, input.customPermissions ?? null),
+  })
+  assertFlapstackNativeProviderRouter({ harness: HARNESS, snapshot: runtimeSnapshot })
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       ...(input.runId ? { id: input.runId } : {}),
       chatId: input.chatId,
       subChatId: input.subChatId,

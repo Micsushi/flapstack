@@ -19,6 +19,7 @@ import {
   voiceArtifacts,
 } from "../db"
 import { bindRegisteredFilesystemRoot } from "../git/security/path-validation"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
 import { getRunChangeReview, getRunChangeSet, undoRunChangeSet } from "../run-change-undo"
 import { getUsageProviders } from "../usage/registry"
 import { runManualRefresh } from "../usage/catch-up"
@@ -329,6 +330,12 @@ export async function createCarryoverRunFixture(input: {
       const run = tx
         .insert(agentRuns)
         .values({
+          ...constructRuntimeSnapshot(db, {
+            chatId: chat.id,
+            harness: "codex",
+            model: "gpt-5.5",
+            permission: runtimePermissionSnapshot("read-only", null),
+          }),
           chatId: chat.id,
           subChatId: subChat.id,
           harness: "codex",

@@ -80,10 +80,9 @@ describe("mobile-pairing", () => {
           "mobile_device_audit_records",
         ]),
       )
-      expect(sqliteJournal().entries.at(-1)).toMatchObject({
-        idx: 31,
-        tag: "0031_mobile_pairing_identity",
-      })
+      expect(sqliteJournal().entries).toContainEqual(
+        expect.objectContaining({ idx: 31, tag: "0031_mobile_pairing_identity" }),
+      )
       expect(
         legacy
           .prepare("SELECT name, path FROM projects WHERE id = 'pairing-upgrade-project'")

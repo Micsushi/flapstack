@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import {
   archiveTaskKanbanCard,
@@ -76,14 +77,16 @@ describe("task Kanban service", () => {
         )
         .run()
       sqlite.prepare("UPDATE chats SET archived_at = 130 WHERE id = 'chat-old'").run()
-      sqlite
-        .prepare(
-          `INSERT INTO agent_runs
-             (id, chat_id, harness, permission_mode, status, started_at)
-           VALUES ('run-1', 'chat-1', 'codex', 'read-only', 'running', 125),
-                  ('run-2', 'chat-old', 'codex', 'read-only', 'success', 100)`,
-        )
-        .run()
+      const insertRun = sqlite.prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, harness, permission_mode, status, started_at,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES (?, ?, 'codex', 'read-only', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      insertRun.run("run-1", "chat-1", "running", 125, ...testRuntimeSnapshotSqlValues())
+      insertRun.run("run-2", "chat-old", "success", 100, ...testRuntimeSnapshotSqlValues())
 
       const cards = listTaskKanban(database, {})
 

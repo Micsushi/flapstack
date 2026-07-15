@@ -405,7 +405,7 @@ describe("extension enablement policy", () => {
     const journal = JSON.parse(readFileSync(join(migrations, "meta", "_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.slice(-3)).toEqual([
+    expect(journal.entries.slice(29, 32)).toEqual([
       expect.objectContaining({ idx: 29, tag: "0029_advanced_usage_contracts" }),
       expect.objectContaining({ idx: 30, tag: "0030_extension_enablement_policy" }),
       expect.objectContaining({ idx: 31, tag: "0031_mobile_pairing_identity" }),

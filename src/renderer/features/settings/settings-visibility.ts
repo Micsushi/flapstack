@@ -65,6 +65,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "runtimes",
+    label: "Runtimes",
+    description: "Select Runtime defaults per harness and project",
+    keywords: ["agent runtime", "codex", "claude code", "native", "automatic"],
+    section: "advanced",
+    released: true,
+  },
+  {
     id: "local-models",
     label: "Local Models",
     description: "Connect Ollama and inspect local model capabilities and permissions",
@@ -179,6 +187,20 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "runtime-settings-table",
+    "runtimes",
+    "Runtime defaults",
+    "Choose Automatic or an explicit compatible Runtime per harness and project",
+    ["agent runtime", "inherit", "override", "reset", "compatibility"],
+  ),
+  control(
+    "runtime-diagnostics",
+    "runtimes",
+    "Runtime diagnostics",
+    "Inspect native adapter availability and exact blocked reasons",
+    ["adapter", "protocol", "version", "unavailable", "troubleshoot"],
+  ),
   control(
     "local-model-endpoint",
     "local-models",

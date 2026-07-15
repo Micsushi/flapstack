@@ -36,6 +36,7 @@ const SETTINGS_TAB_ICONS: Partial<
   appearance: EyeOpenFilledIcon,
   projects: FolderFilledIcon,
   models: BrainFilledIcon,
+  runtimes: SlidersFilledIcon,
   "local-models": HardDrive,
   "api-providers": BrainFilledIcon,
   voice: Mic,

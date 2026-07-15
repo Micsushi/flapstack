@@ -11,6 +11,7 @@ import { createMcpTaskProposalService } from "../src/main/lib/mcp-control/task-p
 import { getMcpControlTool, invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
 import { TaskProposalError, TaskProposalService } from "../src/main/lib/task-proposals"
 import { taskProposalsRouter } from "../src/main/lib/trpc/routers/task-proposals"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import {
   AI_TASK_PROPOSAL_BATCH_CAP,
   AI_TASK_PROPOSAL_PENDING_CAP,
@@ -64,10 +65,14 @@ beforeEach(() => {
   sqlite
     .prepare(
       `INSERT INTO agent_runs
-         (id, chat_id, harness, permission_mode, status)
-       VALUES ('caller-run', 'caller', 'codex', 'full-access', 'running')`,
+         (id, chat_id, harness, permission_mode, status,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot)
+       VALUES ('caller-run', 'caller', 'codex', 'full-access', 'running',
+         ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run()
+    .run(...testRuntimeSnapshotSqlValues())
   service = new TaskProposalService(databasePath, { now: () => now })
   process.env.FLAPSTACK_DB_PATH = databasePath
 })

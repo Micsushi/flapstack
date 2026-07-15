@@ -21,7 +21,7 @@ afterEach(() => {
 })
 
 describe("Stage 3 migration rebase", () => {
-  it("builds a fresh profile with safe Stage 3 defaults and append-only audit", () => {
+  it("builds a fresh profile with safe Stage 3 defaults and append-only audit", async () => {
     const { path, sqlite } = database("fresh")
     try {
       migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
@@ -32,7 +32,7 @@ describe("Stage 3 migration rebase", () => {
         .run()
 
       expectStage3Schema(sqlite, "fresh-chat")
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }
@@ -72,7 +72,7 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
-  it("upgrades the current main-era migration state once without duplicate schema", () => {
+  it("upgrades the current main-era migration state once without duplicate schema", async () => {
     const { path, sqlite, directory } = database("main-era")
     try {
       const mainMigrations = migrationSubset(directory, 16)
@@ -87,7 +87,7 @@ describe("Stage 3 migration rebase", () => {
       migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
 
       expectStage3Schema(sqlite, "main-chat")
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }
@@ -192,7 +192,7 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
-  it("reconciles the legacy Stage 3 chain after applying its missing main-era migration", () => {
+  it("reconciles the legacy Stage 3 chain after applying its missing main-era migration", async () => {
     const { path, sqlite, directory } = database("legacy")
     try {
       const preVoiceDurationMigrations = migrationSubset(directory, 15)
@@ -222,7 +222,7 @@ describe("Stage 3 migration rebase", () => {
       expect(
         sqlite.prepare("SELECT id FROM mcp_audit_records WHERE id = 'legacy-audit'").all(),
       ).toEqual([{ id: "legacy-audit" }])
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }

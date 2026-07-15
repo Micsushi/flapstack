@@ -30,6 +30,11 @@ import {
   providerForHarness,
   resolveUsageBudgets,
 } from "../usage/budgets"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "../agent-runtime/snapshot"
 
 type Row = Record<string, unknown>
 type Sqlite = Database.Database
@@ -1273,9 +1278,10 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   db.prepare(
     `INSERT INTO chats (
       id, name, project_id, task_id, scope, permission_mode, custom_permissions, harness, model,
+      runtime_preference,
       parent_chat_id, initiator_chat_id, parent_run_id, ancestor_chat_ids,
       worktree_path, branch, base_branch, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     chatId,
     definition.name ?? definition.role,
@@ -1285,6 +1291,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     definition.customPermissions ? JSON.stringify(definition.customPermissions) : null,
     definition.harness,
     definition.model ?? null,
+    definition.runtimePreference ?? null,
     parentChatId,
     orchestration.initiating_chat_id,
     parentAgent?.run_id ?? null,
@@ -1295,6 +1302,12 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     now,
     now,
   )
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId,
+    harness: definition.harness,
+    model: definition.model ?? null,
+    permission: runtimePermissionSnapshot(definition.permissionMode, definition.customPermissions),
+  })
   db.prepare(
     `INSERT INTO sub_chats (
       id, chat_id, harness, model, permission_mode, worktree_path, run_status, messages, created_at, updated_at
@@ -1312,8 +1325,11 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   db.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-      worktree_path, prompt_message_id, initial_prompt, status, started_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
+      runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version,
+      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
+      status, started_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
   ).run(
     runId,
     chatId,
@@ -1325,6 +1341,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     worktree.path,
     promptMessageId,
     prompt,
+    ...runtimeSnapshotSqlValues(runtimeSnapshot),
     now,
   )
   db.prepare(

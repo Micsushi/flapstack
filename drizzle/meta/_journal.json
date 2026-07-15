@@ -225,6 +225,20 @@
       "when": 1784054923088,
       "tag": "0031_mobile_pairing_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1784072034666,
+      "tag": "0032_agent_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1784074787318,
+      "tag": "0033_agent_activity",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,366 @@
+# S4-F11 — Agent Runtimes
+
+Shared pickup context: `implementation-context.md`. Every task owner must read
+that file plus `proposal.md`, `design.md`, and the delta spec before editing.
+
+### S4-F11-T1 — Freeze the Stage 3 runtime baseline
+
+- [x] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Baseline research and fixture inventory; documentation/test data only.
+- Outcome: Every later owner receives one versioned source map and loss matrix for the exact completed Stage 3 behavior being preserved or replaced.
+- Required inputs: Clean `codex/stage3-integration` tag `stage3-final` at `a674784`; installed package lock; Stage 3 provider/reasoning tests and release evidence; pinned Codex/Claude reference snapshots.
+- Deliverables:
+  - Add `stage3-baseline.md` beside this board with source-linked launch, session, cancellation, shutdown, permission, persistence, settings, continuation, reasoning, and renderer flows.
+  - Record the current schema fields and every code path that creates an `agent_runs` row, including direct UI, MCP, and orchestration launches.
+  - Record Codex App Server -> ACP -> AI SDK -> Flapstack transformations, naming each identity, index, section, or event kind lost or synthesized at each hop.
+  - Record Claude Agent SDK -> transformer -> message persistence transformations, including thinking, hooks, tools, subagents, UUIDs, parent-tool lineage, resume, and fork behavior.
+  - Create a sanitized fixture manifest under `tests/fixtures/agent-runtime/README.md` identifying existing fixtures, missing captures, provider/package versions, provenance, and privacy class.
+  - Record which checks are automated and which still require credentials, live UI, packaged app, or unsupported OS evidence.
+- Owned seams: `openspec/changes/add-agent-runtimes/stage3-baseline.md` and fixture manifest only. Existing source behavior is read-only.
+- Parallel boundary: Runs first. No downstream Runtime task starts from guessed Stage 3 behavior.
+- Out of scope: Runtime types, schema migrations, adapters, renderer changes, settings changes, or changing Stage 3.
+- Acceptance:
+  - Baseline commit, package versions, source files, entry points, persisted fields, and current tests are exact and reproducible.
+  - Every downstream task context points to a real interface or an explicitly proposed new interface.
+  - Codex and Claude event-loss tables distinguish provider-visible content, generated summaries, opaque metadata, and private content.
+  - Dirty worktree-only behavior is excluded; unavailable evidence is labeled, never inferred.
+  - No implementation decision contradicts `design.md` or the delta spec.
+- Verification:
+  - `git status --short` and `git rev-parse HEAD` prove the Stage 3 source is clean `a674784`.
+  - `npm test -- tests/reasoning-output-contract.test.ts tests/codex-transport-decision.test.ts tests/codex-reasoning-output-normalizer.test.ts tests/claude-transform-reasoning-output.test.ts tests/chat-handoff.test.ts tests/stage3-migration-rebase.test.ts` passes on the synchronized baseline.
+  - Package versions match `package-lock.json`; every baseline link resolves; strict OpenSpec validation passes.
+- Automated evidence: immutable `git archive a674784` replay passed 6 files/70 tests; descendant `99181e8` passed the same 6 files/73 tests, with only three added migration cases. Node 22 TypeScript, full lint, full formatting, production build, 93/93 baseline links, and strict authoritative OpenSpec passed.
+- Manual verification remaining: no fresh credentialed provider, live UI, packaged app, Windows, or Linux evidence is claimed by this headless baseline task.
+- Handoff evidence: Baseline commit, package/version table, schema/run-creation map, Codex loss matrix, Claude loss matrix, fixture inventory, focused test output, and explicit live/manual gaps.
+- Blocked by: Stage 3 `stage3-final` tag `a674784` available to Stage 4 integration
+- Blocks: S4-F11-T2, S4-F12-T1
+- Context: `implementation-context.md`; `src/shared/harness-types.ts`; `src/main/lib/db/schema/index.ts`; provider routers; reasoning fixtures; Stage 3 matrix and release notes.
+
+### S4-F11-T2 — Add Runtime contracts, compatibility, resolution, and migrations
+
+- [x] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Shared Runtime contract and database authority.
+- Outcome: UI, direct launches, MCP launches, provider adapters, and orchestration workers resolve the same compatible immutable Runtime before work starts.
+- Required inputs: Completed T1 baseline; current harness/permission types; chat/subchat/run schemas; project settings patterns; migration conventions.
+- Deliverables:
+  - Add shared `AgentRuntimePreference`, `ResolvedAgentRuntime`, preference-source, compatibility, capability-snapshot, launch-snapshot, control, version, and adapter lifecycle types.
+  - Add a pure harness/runtime compatibility matrix: Codex permits Codex or Native; Claude Code permits Claude Code or Native; Cursor, OpenRouter, NanoGPT, local, custom, and generic harnesses permit Native only.
+  - Add a deterministic resolver implementing chat > project-per-harness > global-per-harness > product mapping.
+  - Add a main-process defaults service with optimistic versioning and DTO/router inputs for global and project scope.
+  - Add additive schema/migrations for durable defaults, chat preference, and immutable run Runtime snapshots. Preserve `sub_chats.session_id` as provider-session identity.
+  - Add the `HarnessAdapter` interface and a registry contract without registering provider implementations; T9 owns final registry wiring.
+  - Add legacy interpretation helpers so missing historical Runtime fields read as versioned `flapstack-native` without rewriting messages.
+  - Route every run-creation path through one snapshot constructor or fail before provider intent is dispatched.
+- Proposed owned seams: `src/shared/agent-runtime.ts`; `src/main/lib/agent-runtime/{compatibility,resolver,defaults,types}.ts`; `src/main/lib/db/schema/index.ts`; `src/main/lib/db/migrate.ts`; generated migration files; Runtime DTO/router files; focused tests.
+- Parallel boundary: This owner alone changes shared Runtime types and the first Runtime migration. Adapter owners consume these contracts and do not redefine them.
+- Out of scope: Provider processes, provider event parsing, activity persistence, transcript UI, settings UI, or orchestration-engine behavior.
+- Acceptance:
+  - Resolver output includes preference source, harness, model, resolved Runtime, adapter/protocol versions or unresolved probe state, controls, and capability reason.
+  - Product mapping is Codex harness -> `codex`, Claude Code harness -> `claude-code`, everything else -> `flapstack-native`.
+  - An explicit unavailable selection returns a typed blocking error and exact reason; it never mutates the preference or selects Native automatically.
+  - A run cannot enter pending/running state without a non-null immutable Runtime snapshot.
+  - UI, MCP, retry, restart, and orchestration launch inputs use the same resolver contract.
+  - Existing Stage 3 databases migrate transactionally; existing messages/session IDs remain byte-for-byte unchanged; rollback leaves legacy data readable.
+  - Concurrent settings writes detect stale versions instead of last-write-wins corruption.
+- Verification:
+  - Add `tests/agent-runtime-resolver.test.ts`, `tests/agent-runtime-compatibility.test.ts`, `tests/agent-runtime-migration.test.ts`, and run-creation coverage.
+  - Cover every harness/preference/scope combination, missing project, archived chat, stale settings version, unavailable adapter, retry, MCP launch, orchestration launch stub, and legacy database fixture.
+  - Run focused tests, `npm run ts:check`, `npm run lint`, migration forward/reopen tests, and strict OpenSpec validation.
+- Automated evidence: Node 22 Runtime suite passed 5 files/128 tests; migrated MCP carryover controls passed 4 tests; the exact 12-site run-insert audit passed; the frozen Stage 3 replay passed 6 files/73 tests after authoritative `0032_agent_runtime` SQL, snapshot, and journal generation. TypeScript, full lint, focused Prettier, diff check, production build, and strict OpenSpec validation passed. Coverage includes immutable snapshots, terminal-to-active rejection, active-to-terminal legacy cleanup, rollback defaults, missing/archived project rejection, scoped `auto` precedence, unavailable adapters, retry/restart, MCP, test-control, and orchestration launch stubs.
+- Handoff evidence: Public type/API summary, migration IDs and schema diff, resolver truth table, every run-creation call site changed, legacy behavior proof, focused command output, and downstream adapter notes.
+- Blocked by: S4-F11-T1
+- Blocks: S4-F11-T3, S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T8, S4-F11-T9, S4-F3-T6, S4-F12-T2
+- Context: `implementation-context.md`; `src/shared/harness-types.ts`; `src/main/lib/harness/provider-capabilities.ts`; `src/main/lib/db/schema/index.ts`; `src/main/lib/db/migrate.ts`; `src/main/lib/main-run-launcher.ts`; `src/main/lib/mcp-control/mutation-service.ts`.
+
+### S4-F11-T3 — Add durable ordered Runtime activity
+
+- [x] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Provider-neutral activity persistence and replay.
+- Outcome: Every adapter can append, query, deduplicate, and replay one privacy-safe ordered activity stream without pretending reasoning is a tool.
+- Required inputs: T2 Runtime types/migrations; Stage 3 reasoning privacy contract; message persistence, usage, audit, export, and restart conventions.
+- Deliverables:
+  - Add the typed `AgentActivityEvent` union and display/privacy classes for lifecycle, status, agent text, reasoning summary, provider-visible reasoning, plan, tool, command, patch, permission, hook, subagent, warning, compaction, usage, opaque metadata, and private metadata.
+  - Add append-only `agent_activity_events` storage keyed by run with stable Flapstack sequence, provider timestamp/identity/indices, parent identity, dedup key, bounded typed payload, privacy class, and redaction state.
+  - Add one run-scoped sequencer and transactional batch append service safe under concurrent provider callbacks and retry delivery.
+  - Add paginated query/replay DTOs, run/chat filters, retention/export hooks, corruption handling, and multi-window invalidation.
+  - Add a legacy bridge that can project existing message parts into the shared renderer without writing invented events back to the database.
+  - Define unknown-event behavior: bounded metadata may persist; execution-, permission-, or identity-critical unknowns fail closed through the adapter.
+- Proposed owned seams: `src/shared/agent-activity.ts`; `src/main/lib/agent-runtime/activity-store.ts`; activity DTO/router; schema/migration extension after T2; export/redaction hook; focused fixtures/tests.
+- Parallel boundary: This owner alone changes the activity envelope, table, sequencer, and append/query API. Provider owners only emit the agreed union.
+- Out of scope: Codex/Claude parsing, Native adapter behavior, activity UI, orchestration aggregate events, or changing existing message JSON.
+- Acceptance:
+  - Concurrent callbacks receive one deterministic persisted sequence without gaps caused by duplicate retries.
+  - Provider thread/turn/item/message/tool/parent IDs and summary/content indices survive where supplied.
+  - Duplicate stable provider events are idempotent; genuinely repeated text with different provider identity remains distinct.
+  - Text classified private/encrypted is rejected or redacted before persistence; queries never return it as display text.
+  - Malformed/oversized payloads fail without corrupting the run transcript or transaction.
+  - Pagination, restart replay, retention, export, and legacy projection preserve ordering and provenance.
+- Verification:
+  - Add `tests/agent-activity-store.test.ts`, `tests/agent-activity-ordering.test.ts`, `tests/agent-activity-privacy.test.ts`, and migration/restart fixtures.
+  - Include property tests for interleaving/dedup, crash between batch writes, maximum payload boundaries, corrupt rows, missing parents, pagination, redaction, and legacy bridge output.
+  - Run focused tests, `npm run ts:check`, `npm run lint`, and strict OpenSpec validation.
+- Automated evidence: Node 22 activity coverage passed 5 files/24 tests, including exact Drizzle/0033 CHECK and index-name parity, 40 randomized interleaving/retry properties, durable high-water behavior across tail/all retention deletion and restart, dedup and transaction-rollback counter stability, canonical one-way SQL redaction with display/payload smuggling rejection, a 1,101-row bounded export window, migration/reopen/restart, missing parents, pagination, retention/export/redaction, corruption, private/encrypted rejection, bounded unknown metadata, critical-unknown fail-closed behavior, multi-window invalidation, and legacy projection without writes. The 10,000-event fixture appended in 443.5 ms and replayed in 51.5 ms. The frozen Stage 3 Runtime replay passed 6 files/73 tests. TypeScript, touched ESLint, focused Prettier, production build, diff check, and strict OpenSpec validation passed. Authoritative `0033_agent_activity.sql`, snapshot, and journal metadata were generated after integrated `0032_agent_runtime.sql`.
+- Handoff evidence: Event-kind table, SQL/schema diff, append/query API examples, ordering/dedup invariants, privacy review, performance measurements for large batches, and focused test output.
+- Blocked by: S4-F11-T2
+- Blocks: S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T7, S4-F11-T9, S4-F3-T9
+- Context: `implementation-context.md`; `src/shared/reasoning-output/`; message persistence; usage/audit redaction; chat-visible-content; run status authority.
+
+### S4-F11-T4 — Implement the direct Codex Runtime adapter
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Codex Runtime only.
+- Outcome: A Codex `HarnessAdapter` speaks directly to the pinned App Server and preserves displayable native session/activity semantics while Flapstack retains launch, permission, audit, and run authority.
+- Required inputs: T1 Codex loss map/fixtures; T2 adapter and snapshot contracts; T3 activity API; current Codex binary resolution, permission bridge, MCP registration, and cancellation behavior.
+- Deliverables:
+  - Add a pinned JSON-RPC App Server client with process startup, initialize handshake, request/notification correlation, bounded buffering, stderr diagnostics, shutdown, and orphan cleanup.
+  - Implement account/model/capability discovery and protocol-version probing with exact unavailable reasons.
+  - Implement thread start/resume/fork/archive and turn start/cancel/completion without replaying uncertain intent after restart.
+  - Map item started/completed, agent message, plan, reasoning summary/text/section, tool, command, patch, permission, usage, warning, compaction, error, and lifecycle events into T3 activity.
+  - Preserve provider thread, turn, item, parent, summary index, content index, and section identity.
+  - Reuse Flapstack worktree, prompt/context, image, attachment, permission, MCP, checkpoint, usage, and audit ownership; do not duplicate those policies in the adapter.
+  - Add sanitized protocol fixtures generated from the pinned Codex version and drift diagnostics for unknown methods/events.
+- Proposed owned seams: `src/main/lib/agent-runtime/codex/`; Codex adapter fixtures/tests; minimal reuse changes under `src/main/lib/codex/`. Export an adapter factory but do not edit the central registry owned by T9.
+- Parallel boundary: May run with T5 and T6. Do not edit Claude/Native modules, shared Runtime/activity types, central registry, Settings, transcript UI, or F3 coordination engines.
+- Out of scope: Codex desktop UI cloning, ACP removal, Codex V1/V2 multi-agent tools, private/encrypted chain-of-thought, or provider-independent launch wiring.
+- Acceptance:
+  - The adapter passes the shared lifecycle contract and capability probe against the pinned binary.
+  - Same-run fixtures preserve every displayable native identity, index, boundary, and event kind with no unexplained loss.
+  - Reasoning summaries are labeled summaries; raw text renders only when explicitly provider-displayable; encrypted/private material never enters text payloads.
+  - Permission requests and cancellation preserve Stage 3 safety and terminal-state truth.
+  - Unknown execution/permission semantics block; unknown harmless metadata remains bounded and diagnosable.
+  - Restart reconciliation never duplicates a thread/turn or silently marks an uncertain turn successful.
+  - Existing ACP remains untouched for explicit Flapstack Native selection.
+- Verification:
+  - Add Codex protocol golden fixtures and `tests/codex-runtime-adapter.test.ts`, `tests/codex-runtime-events.test.ts`, `tests/codex-runtime-recovery.test.ts`, and version-drift coverage.
+  - Exercise handshake failure, auth unavailable, model mismatch, MCP registration, permission allow/deny/timeout, images, cancel race, process crash, restart, compaction, unknown event, and cleanup.
+  - Compare fixture semantics against the cloned Codex App Server/TUI; run a real supported Codex walkthrough and package-path smoke when credentials/UI are available.
+- Automated evidence: Node 22 integrated Codex coverage passed 9 files/49 tests, including the 3-file direct Runtime suite with 27 tests plus Stage 3 MCP, permission, reasoning, router, and transport regressions. Incremental bounded NDJSON framing, malformed/oversized/final-partial stdout, request/notification/server-request caps, sync and async write failure, signal-exit and stubborn-child cleanup, typed probe/reconcile cleanup failure, auth/model/version drift, exact provider identities, permission/cancel races, restart no-replay, private reasoning exclusion, critical-unknown failure, and bounded metadata all passed. TypeScript, scoped ESLint, focused Prettier, strict OpenSpec, JSONL parsing, byte-exact preservation, and diff checks passed. A production build passed before the final bounded transport fixes and was not rerun after them.
+- Remaining acceptance: The installed Codex binary is `0.144.2` while the direct adapter intentionally pins `0.144.1`, so the real credentialed supported-binary lifecycle remains open and fails closed. Preview-package binary inspection/smoke passed with bundled Codex `0.144.1`, but the locked Mac prevented a packaged UI/provider walkthrough. No credentialed provider or live UI evidence is inferred.
+- Handoff evidence: Pinned protocol/version, adapter API, event mapping table, unsupported events, fixture provenance/redaction, permission/recovery results, live/package proof or exact blocker, and focused command output.
+- Blocked by: S4-F11-T2, S4-F11-T3
+- Blocks: S4-F11-T7, S4-F11-T8, S4-F11-T9, S4-F11-T10
+- Context: `implementation-context.md`; `src/main/lib/trpc/routers/codex.ts`; `src/main/lib/harness/codex-transport-decision.ts`; `src/main/lib/codex/permission-bridge.ts`; `src/main/lib/codex/mcp-stdio.ts`; Codex protocol reference snapshot.
+
+### S4-F11-T5 — Implement the native Claude Code Runtime adapter
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Claude Code Runtime only.
+- Outcome: A Claude Code `HarnessAdapter` preserves Agent SDK session, content, thinking, tool, hook, result, and subagent semantics without synthetic reasoning tools.
+- Required inputs: T1 Claude loss map/fixtures; T2 adapter/control contracts; T3 activity API; current SDK query/session/persistence helpers and permission flow.
+- Deliverables:
+  - Add typed mapping for system/init, stream events, assistant content blocks, result, usage, errors, tools, permissions, hooks, and child/subagent activity.
+  - Preserve SDK session ID, message UUID, `parent_tool_use_id`, tool ID, content-block index, stop/result identity, and provider timestamps where supplied.
+  - Emit provider-visible thinking as reasoning activity, never `tool-ReasoningOutput`.
+  - Split current coupled input into independent model thinking/effort, reasoning display, subagent forwarding, and hook-diagnostic controls.
+  - Reuse existing resume, resume-at, fork, stale-session retry, cancellation, permission, worktree, checkpoint, usage, and message UUID behavior.
+  - Reconcile restart/session uncertainty without duplicating a query or discarding persisted activity.
+  - Keep the transformed Stage 3 Claude path unchanged for explicit Flapstack Native.
+- Proposed owned seams: `src/main/lib/agent-runtime/claude-code/`; Claude adapter fixtures/tests; minimal reusable fixes under `src/main/lib/claude/`. Export an adapter factory but do not edit the central registry owned by T9.
+- Parallel boundary: May run with T4 and T6. Do not edit Codex/Native modules, shared Runtime/activity types, central registry, Settings, transcript UI, or profile/workflow code.
+- Out of scope: Reimplementing Claude Code, agent teams, hidden system prompts, private reasoning, or deleting the legacy transformer.
+- Acceptance:
+  - Thinking is stored/rendered through reasoning activity and never appears as a tool call.
+  - Content block order, UUIDs, parent-tool lineage, hooks, child provenance, result/usage, and session identity survive fixture round trips.
+  - All four controls operate independently across every supported combination.
+  - Existing permissions, resume/fork, stale-session retry, cancellation, and terminal-state behavior remain correct.
+  - Unknown execution/permission/session-critical SDK variants fail closed with sanitized diagnostics.
+  - Native and Flapstack Native Claude paths can coexist without sharing mutable session state.
+- Verification:
+  - Add `tests/claude-runtime-adapter.test.ts`, `tests/claude-runtime-events.test.ts`, `tests/claude-runtime-controls.test.ts`, and `tests/claude-runtime-recovery.test.ts` using captured sanitized SDK fixtures.
+  - Cover partial messages, thinking start/delta/stop, interleaved tools, nested child tools, hooks with reasoning hidden, cancellation, resume, resume-at, fork, stale session, duplicate delivery, unknown variant, and restart.
+  - Run existing Claude persistence/session/queue/terminal tests, a real supported Claude walkthrough, and package-path smoke when available.
+- Handoff evidence: SDK/version table, event mapping, control truth table, session/recovery behavior, fixture provenance/redaction, live/package proof or exact blocker, and focused command output.
+- Code-ready evidence: The native Claude Code adapter now pins Agent SDK `0.3.207` and Claude Code `2.1.207`, maps bounded SDK lifecycle/content/thinking/tool/hook/subagent/result/usage events into durable T3 activity, preserves provider identities, splits all four controls, reuses Stage 3 resume/fork/stale-session/cancellation seams, and fails closed on protocol drift or uncertain stream termination without replay. Integrated Node 22 proof passed nine focused Runtime/activity files with 161 tests, TypeScript, scoped ESLint/Prettier, strict OpenSpec, and diff check; the worker also passed seven Stage 3 Claude regression files and a production build before the final bounded cleanup fixes. Preview-package binary inspection/smoke passed with Claude `2.1.207`; completion remains open because the fixture is repo-derived synthetic rather than a captured provider corpus, and credentialed supported-version plus packaged UI/provider proof remain unobserved.
+- Blocked by: S4-F11-T2, S4-F11-T3
+- Blocks: S4-F11-T7, S4-F11-T8, S4-F11-T9, S4-F11-T10
+- Context: `implementation-context.md`; `src/main/lib/trpc/routers/claude.ts`; `src/main/lib/claude/transform.ts`; session/persistence helpers; Claude Agent SDK types.
+
+### S4-F11-T6 — Implement Flapstack Native compatibility
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Legacy/generic Runtime compatibility only.
+- Outcome: Existing chats and every generic harness keep Stage 3 behavior behind one explicit `flapstack-native` adapter with honest capability limits and rollback.
+- Required inputs: T1 provider/fixture inventory; T2 adapter/resolution/legacy helpers; T3 activity bridge; current Codex ACP, transformed Claude, Cursor, OpenRouter, NanoGPT, and local paths.
+- Deliverables:
+  - Implement a Native adapter that delegates to current provider launch/session paths without changing their model/tool loop semantics.
+  - Support explicit Native for Codex and Claude Code and required Native for Cursor, OpenRouter, NanoGPT, local, custom, and generic providers.
+  - Preserve current AI SDK messages, normalized tools, `tool-ReasoningOutput`, provider session IDs, permissions, cancellation, continuation, search, copy, export, and history reload.
+  - Project lossless current events into T3 activity where identity exists; otherwise use the legacy renderer bridge without inventing identity.
+  - Expose adapter/version/capability diagnostics and explicit user-selected rollback behavior.
+  - Prove migration performs no provider replay, message rewrite, session rewrite, or duplicate event persistence.
+- Proposed owned seams: `src/main/lib/agent-runtime/flapstack-native/`; Native compatibility fixtures/tests; minimal delegation hooks in current provider routers. Export an adapter factory but do not edit the central registry owned by T9.
+- Parallel boundary: May run with T4 and T5. Do not refactor provider internals merely for style, edit native adapters, change shared contracts/schema, or remove legacy UI.
+- Out of scope: Improving native fidelity, changing provider permissions, replacing OpenCode/Cursor transports, or deleting the synthetic reasoning bridge.
+- Acceptance:
+  - All Stage 3 provider/reasoning fixtures render and persist unchanged under Native.
+  - Generic harnesses cannot resolve Codex or Claude Code Runtime.
+  - Explicit Native on Codex/Claude uses existing provider sessions and appears clearly in diagnostics.
+  - Historical rows with missing Runtime metadata open, search, copy, export, resume where supported, cancel, and survive restart without rewrite.
+  - Runtime disable/rollback changes defaults only; it does not delete snapshots, events, chats, runs, messages, or session IDs.
+- Verification:
+  - Add `tests/flapstack-native-runtime.test.ts` and migration/history snapshots.
+  - Run the complete Stage 3 reasoning fixture suite plus Codex/Claude/Cursor/OpenRouter/NanoGPT session, cancellation, continuation, search/copy/export, and restart coverage.
+  - Compare pre/post serialized histories and migration databases byte-for-byte for fields not intentionally added.
+- Handoff evidence: Provider delegation matrix, compatibility limitations, pre/post fixture results, migration diff, rollback proof, focused test output, and any credentialed provider gaps.
+- Code-ready evidence: The explicit `flapstack-native` factory now delegates lifecycle calls without changing Stage 3 chunks, exposes typed provider-path/version/capability limitations for Codex ACP, transformed Claude, Cursor, OpenCode-backed OpenRouter/NanoGPT, local, custom, and generic paths, projects only bounded identity-bearing batches into T3 with restart-safe dedup keys, and preserves all stored data during default-only rollback. Integrated Node 22 proof passed five focused Runtime/activity files with 160 tests, TypeScript, scoped ESLint/Prettier, strict OpenSpec, and diff check; the worker additionally passed 25 Stage 3/provider files with 263 tests and three skips plus six search/copy/export control files with 75 tests. Production registry/delegation wiring is now present and preview-package smoke passed; completion remains open for credentialed provider/live UI proof and T9 feature-wide acceptance. No unobserved provider/UI/OS claim is inferred.
+- Blocked by: S4-F11-T2, S4-F11-T3
+- Blocks: S4-F11-T7, S4-F11-T8, S4-F11-T9, S4-F11-T10
+- Context: `implementation-context.md`; provider routers/transports; `src/shared/reasoning-output/`; `src/shared/chat-visible-content.ts`; Stage 3 provider closeout matrix.
+
+### S4-F11-T7 — Build the shared Runtime activity timeline
+
+- [x] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Transcript rendering and Runtime activity controls only.
+- Outcome: One accessible, performant transcript renders Codex, Claude Code, and Native semantics without three duplicated chat applications.
+- Required inputs: T3 query/event contract; stable event mappings from T4-T6; existing message list, reasoning row, search/copy/export, status, and multi-window patterns; root `ui-design.md`.
+- Deliverables:
+  - Add a shared virtualized activity timeline and formatter interface over persisted activity plus legacy message projection.
+  - Add Codex formatting for live status heading, sectioned reasoning summaries, plans, items, commands, patches, warnings, usage, and compaction.
+  - Add Claude formatting for provider-visible thinking, content blocks, tools, permissions, hooks, subagents, result, and usage.
+  - Preserve Native's current generic message/reasoning/tool presentation.
+  - Add honest labels (`Reasoning summary`, `Provider-visible thinking`, `Activity summary`, `Private reasoning unavailable`), provenance, timestamps, duration, status, expand/collapse, transcript mode, copy, export, search indexing, and diagnostics link.
+  - Add independent UI controls for model effort/thinking, reasoning display, child/subagent activity, and hook diagnostics; controls only appear when supported.
+  - Batch streaming updates, virtualize large history, preserve scroll/selection, and invalidate correctly across windows/restart.
+- Proposed owned seams: new Runtime activity components under `src/renderer/features/agents/`; `assistant-message-item.tsx`; `messages-list.tsx`; `agent-reasoning-output.tsx` compatibility; search/copy/export adapters; focused UI fixtures/tests.
+- Parallel boundary: Starts after provider event contracts settle. This owner does not change provider parsing, activity schema, runtime resolution, chat creation, Settings defaults, or orchestration aggregation.
+- Out of scope: Pixel-cloning Codex desktop/Claude Code, showing private chain-of-thought, generating new reasoning prose, or rebuilding the full chat UI per Runtime.
+- Acceptance:
+  - Runtime-specific identity, order, sections, parentage, labels, and lifecycle remain visible and truthful.
+  - Completed reasoning defaults collapsed; active work remains understandable; all states are keyboard and screen-reader accessible.
+  - Generated progress prose is never labeled reasoning.
+  - Private/opaque events expose only allowed status/metadata and never text.
+  - Each control changes only its matching persisted launch input.
+  - Search/copy/export include allowed visible content and exclude private/opaque payloads.
+  - A 10,000-event fixture meets the recorded render/update/scroll budget without dropping events.
+  - History reload, window reopen, and multi-window invalidation reproduce the same timeline.
+- Verification:
+  - Add component, accessibility, formatter, search/copy/export, streaming batch, and 10k-event performance tests plus visual fixtures for all three Runtimes.
+  - Prove the chosen `.test.tsx` files are actually collected by Vitest; update test configuration if required.
+  - Run focused UI tests, `npm run ts:check`, `npm run lint`, and live Codex/Claude comparison when UI/provider access exists.
+- Automated evidence: Node 22 formatter/order/pagination/filter/copy/export/privacy/component/accessibility/performance coverage passed 6 files/17 tests before production wiring and passed again inside the 37-file/316-test integrated Runtime run. The `.test.tsx` suites were collected. The 10,000-event projection/filter/export/virtualization fixture completed in 244 ms against a 1,500 ms budget. Full lint, repository Prettier, TypeScript, 206 files/1,611 tests with 3 skips, and the production build passed. Production chat wiring queries durable activity, preserves the pure legacy projection when no activity exists, paginates backward in 500-row pages, polls live rows, exposes diagnostics, and keeps error/loading/stale/empty/live states accessible.
+- Manual verification remaining: the UI lease was acquired, `npm run dev` migrated and launched the exact checkout, and `npm run dev:verify` passed against the isolated `Flapstack Dev` profile. The Mac session was locked, so the accessibility-tree/visual comparison and screenshots remain open. Preview-package binary inspection/smoke passed for bundled Codex `0.144.1`, Claude `2.1.207`, Electron `39.8.10`, and the native speech sidecars. No credentialed provider, Windows, or Linux evidence is claimed; direct Codex live use is also blocked by the installed `0.144.2` versus pinned `0.144.1` protocol gate.
+- Handoff evidence: Component/formatter map, screenshots or fixture snapshots, accessibility results, control matrix, performance numbers, search/copy/export privacy proof, test collection proof, and live gaps.
+- Blocked by: S4-F11-T3, S4-F11-T4, S4-F11-T5, S4-F11-T6
+- Blocks: S4-F11-T8, S4-F11-T10, S4-F3-T9
+- Context: `implementation-context.md`; root `ui-design.md`; transcript/reasoning components; renderer atoms; Settings/search architecture.
+
+### S4-F11-T8 — Add Runtime Settings, chat selection, and safe continuation
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: User configuration and chat lifecycle UX.
+- Outcome: Users can set Runtime defaults per harness/project, choose per chat, understand the resolved value, and continue a started chat under another Runtime without session corruption.
+- Required inputs: T2 resolver/defaults API; adapter capabilities from T4-T6; T7 shared controls/presentation; current Settings search, new-chat form, chat router, handoff/export, active-run, undo, and multi-window patterns.
+- Deliverables:
+  - Add searchable Settings Runtime table with one row per harness, `Automatic`, allowed explicit values, inherited/project override state, unavailable reason, reset, optimistic conflict, and diagnostics.
+  - Add project-per-harness overrides and a Runtime selector to new-chat/input controls using the short UI label `Runtime`.
+  - Show preference, source, resolved Runtime, adapter/protocol version, capability state, and control snapshot in chat/run details.
+  - Allow empty chats to mutate preference in place only when no provider turn/session exists.
+  - Add `Continue with <Runtime>` for started chats: validate capability, create exactly one new visible chat/subchat/provider session, attach explicit visible-history context, preserve source history/lineage, and focus the new chat only after success.
+  - Block changes during active runs; handle double-click, retry, partial transaction failure, undo, restart, and multi-window invalidation.
+  - Add audit/diagnostic records without logging prompts, private activity, secrets, or hidden provider state.
+- Proposed owned seams: Settings tabs/search; `new-chat-form.tsx`; `chat-input-area.tsx`; chat details; `src/main/lib/chat-handoff.ts`; chat router mutation; Runtime UI state and focused tests.
+- Parallel boundary: This owner does not wire the central adapter registry or orchestration worker launch; T9 owns that shared integration. It does not change event rendering or provider adapters.
+- Out of scope: Switching an active provider session, transferring hidden provider state, changing coordination engine, or selecting Agent Profiles.
+- Acceptance:
+  - UI and resolver show identical precedence and compatibility for every harness/scope.
+  - Invalid/unavailable combinations cannot launch and show an exact repair path; no silent fallback occurs.
+  - Empty-chat mutation preserves chat ID and creates no provider session/run.
+  - Started-chat continuation creates exactly one new sidebar chat and one new provider session, preserves the source unchanged, and labels imported visible history as context.
+  - Failure before commit creates nothing; failure after intent is recoverable without duplicate chats/sessions.
+  - Active-run races, rapid clicks, window close/reopen, and concurrent Settings edits remain deterministic.
+  - Runtime labels are short in UI while diagnostics retain full technical identity.
+- Verification:
+  - Add `tests/agent-runtime-settings.test.ts`, `tests/agent-runtime-chat-selection.test.ts`, and `tests/agent-runtime-continuation.test.ts` plus component/accessibility coverage.
+  - Cover global/project/chat precedence, unavailable adapter, empty mutation, first-turn boundary, active-run lock, exact-one race, failed handoff, undo, restart, multi-window invalidation, search discovery, and privacy-safe audit.
+  - Run focused tests, `npm run ts:check`, `npm run lint`, and a verified live UI walkthrough when available.
+- Automated evidence so far: Node 22 Settings/search/selection/continuation coverage passed 5 files/26 tests, including inherited/project state, release reasons, compatible options, empty-chat identity preservation, active/started/incompatible blocking, atomic exact-once continuation, multi-conversation visible-history context, hidden file exclusion, retry identity, undo, and no copied provider identity. These suites also passed in the full 206-file gate. Production Settings, New Chat, active-chat selector/dialog, diagnostics, release-gate alerts, and fail-closed Native-router guard compile and build.
+- Remaining acceptance: `npm run dev` and exact-checkout/profile verification passed under the acquired UI lease, but the Mac session was locked. Live Settings/New Chat/continue/reopen/multi-window inspection and the first-turn fresh provider-session walkthrough therefore remain open. Direct Codex/Claude choices remain disabled pending credentialed live gates; their pinned preview-package binaries passed inspection/smoke.
+- Handoff evidence: Settings/selector screenshots or fixtures, precedence UI matrix, continuation transaction diagram, race/restart results, audit example with redaction, focused command output, and live proof or blocker.
+- Blocked by: S4-F11-T2, S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T7
+- Blocks: S4-F11-T9, S4-F11-T10, S4-F12-T6
+- Context: `implementation-context.md`; Settings shell/search; new-chat/input controls; chats router; chat handoff/export; active run status; product invalidation.
+
+### S4-F11-T9 — Integrate the Runtime registry and orchestration-worker launch seam
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Central launch integration; sole owner of the adapter registry and Runtime/orchestration boundary.
+- Outcome: Every direct, MCP, retry, and multi-agent worker launch uses one registered adapter selected from one persisted Runtime snapshot, while coordination remains provider-neutral.
+- Required inputs: T2 resolver/registry contract; T3 activity service; adapter factories from T4-T6; T8 chat preference behavior; S4-F3-T6 coordination-engine/agent contract; Stage 3 main launcher and orchestration service.
+- Deliverables:
+  - Wire `codex`, `claude-code`, and `flapstack-native` factories into the central Runtime registry with capability probes, version diagnostics, disable flags, and no silent fallback.
+  - Replace provider switch ownership in the production launch bridge with resolve -> snapshot -> persist intent -> select adapter -> launch/reconcile.
+  - Route UI, MCP, retry, restart reconciliation, and orchestration worker materialization through the same bridge.
+  - Add an orchestration worker Runtime preference/override input that is intersected with harness compatibility, permissions, budgets, worktree, profile snapshot, and engine policy.
+  - Persist worker Runtime and adapter versions on the run before dispatch; link orchestration agent/run/activity identity without copying provider events into orchestration rows.
+  - Expose provider-neutral lifecycle/cancel/input callbacks to S4-F3 engines and preserve uncertain-spawn no-replay behavior.
+  - Add registry/launch diagnostics and a capability-disabled path that blocks new native launches while leaving existing snapshots/history readable.
+- Proposed owned seams: `src/main/lib/agent-runtime/registry.ts`; production launch coordinator; `main-run-launcher.ts`; minimal orchestration service/shared-contract integration; MCP launch bridge; focused integration tests.
+- Parallel boundary: This is the only task allowed to edit the central adapter registry and shared launch dispatch. Provider owners export factories; F3 owners consume this seam and keep engine scheduling separate.
+- Out of scope: Workflow/Codex engine algorithms, fleet UI, orchestration aggregate activity rendering, provider parsing, Runtime Settings UI, or Agent Profile resolution.
+- Acceptance:
+  - Every launch path persists the same immutable Runtime snapshot before provider intent.
+  - Each orchestration worker may resolve a different compatible Runtime without changing the orchestration engine.
+  - Incompatible/unavailable worker choices fail before spawn with exact agent/harness/runtime reason and no run/session duplication.
+  - Runtime cannot widen the resolved permission/budget/worktree/profile/descendant envelope.
+  - Coordination state references authoritative Runtime activity rather than parsing or copying provider text.
+  - Cancel/restart/uncertain-spawn behavior remains idempotent across all three adapters.
+  - Disabling a native adapter blocks only new matching launches and preserves existing data/diagnostics.
+- Verification:
+  - Add `tests/agent-runtime-registry.test.ts`, `tests/agent-runtime-launch-integration.test.ts`, and `tests/agent-runtime-orchestration-bridge.test.ts`.
+  - Cover UI/MCP/retry launch parity, three-adapter dispatch, mixed workers, incompatible overrides, permission intersection, budget/worktree limits, cancel, crash/restart, uncertain spawn, adapter disable, and activity reference integrity.
+  - Run existing main launcher and orchestration service suites, focused Runtime tests, `npm run ts:check`, and `npm run lint`.
+- Automated evidence so far: The post-review Node 22 Runtime/main/recovery/privacy correction gate passed 39 files/356 tests. The bounded re-review gate now passes 6 main/coordinator/recovery files and 69 tests. Production now owns one database-profile Runtime launch service and reuses its registry/coordinator for queued MCP, automation/retry, orchestration-worker launch, startup reconciliation, cancellation, provider input/permission callbacks, and diagnostics. The service registers concrete Codex, Claude Code, and Native factories while truthfully disabling new direct launches; disabled direct factories remain usable for recovery. Adapters are the single authoritative activity persistence layer; coordinator orchestration callbacks only reference already-persisted events. Codex-shaped events without dedup/provider event identity store exactly once and carry one orchestration identity. Active/starting reconciliation consults coordinator state without a second provider authority; persisted reconcile/cancel operations serialize per run; durable success/cancelled/failure project as known terminal without provider access across service recreation; terminal lifecycle and outer recovery projection use transition-wins-only compare-and-set semantics, so stale callbacks cannot alter run, subchat, or activity truth. Recovery terminal CAS plus subchat projection is one immediate transaction and selects a newer same-subchat pending/running run; completed, cancelled, and failed race fixtures all preserve the claimed successor. Tests also cover durable intent before provider calls, transactional session/turn/activity/lifecycle identity, crash windows, direct restart no-replay, corrupt-snapshot isolation, cleanup-failure non-acknowledgement, unacknowledged uncertain cancellation, sanitizer/privacy/export, mixed worker preferences, permission/worktree/budget preservation, and authoritative activity references. The earlier full Node 22 206-file/1,611-test gate remains the feature baseline; it was not repeated for focused corrections. The T9 contract checkpoint remains: F3 owns provider-neutral lifecycle/activity consumption; T9 owns preference resolution, immutable snapshots, registry selection, dispatch, reconciliation, and authoritative cancellation.
+- Remaining acceptance: T9 stays open. Credentialed UI direct/continue/restart/mixed-worker dispatch remains unobserved, so release-gated Codex/Claude new launches remain disabled. Stage 3 provider routers fail closed if handed a direct Runtime snapshot instead of silently acting as Native.
+- Handoff evidence: Registry table, launch sequence, every dispatch call site, orchestration DTO change, permission/budget intersection proof, mixed-worker fixture, restart results, and focused command output.
+- Blocked by: S4-F11-T2, S4-F11-T3, S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T8, S4-F3-T6
+- Blocks: S4-F11-T10, S4-F3-T7, S4-F3-T8, S4-F12-T5
+- Context: `implementation-context.md`; `src/main/lib/main-run-launcher.ts`; `src/main/lib/run-launch-service.ts`; `src/main/lib/mcp-control/mutation-service.ts`; `src/main/lib/agent-orchestration/service.ts`; S4-F3 design/tasks.
+
+### S4-F11-T10 — Close Agent Runtime acceptance
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S4 / Feature S4-F11
+- Owner lane: Feature integration, evidence, diagnostics, documentation, and release gate.
+- Outcome: All three Runtimes pass migration, provider fidelity, recovery, UI, mixed-worker, performance, accessibility, and package evidence with truthful limitations.
+- Required inputs: Completed T4-T9 code and handoffs; Stage 4 matrix rows S4-AR01 through S4-AR10; Stage 3 migration fixtures; supported Codex/Claude credentials; diagnostics and manual test guide.
+- Deliverables:
+  - Reconcile all task handoffs and close unexplained contract/event/fixture gaps without absorbing unrelated F3/F12 scope.
+  - Add one automated Runtime feature suite covering resolver, migration, activity, adapters, Native regression, UI, continuation, launch registry, mixed workers, restart, privacy, and rollback.
+  - Add Runtime diagnostics showing selected preference/source, resolved Runtime, compatibility, adapter/protocol versions, controls, session identity class, activity counts, and sanitized last error.
+  - Complete user/developer docs for Runtime selection, compatibility, Continue with Runtime, privacy limits, rollback, troubleshooting, and fixture capture/redaction.
+  - Execute matrix S4-AR01 through S4-AR10 and record automated, live, provider, performance, accessibility, restart, and package evidence separately.
+  - Enable `auto` native defaults for new Codex/Claude chats only after their capability, fixture, restart, live, and package gates pass; otherwise keep that native default disabled with visible reason.
+- Owned seams: Runtime acceptance tests, diagnostics, docs, matrix evidence, and only integration fixes required to satisfy already-defined contracts.
+- Parallel boundary: Final task. New architecture or feature scope discovered here returns to the owning task/change instead of being hidden inside closeout.
+- Out of scope: Codex desktop pixel parity, private chain-of-thought, Claude agent teams, F3 engine acceptance, S4-F12 Profile Studio/marketplace, or unobserved OS/provider claims.
+- Acceptance:
+  - All ten Runtime tasks and S4-AR01 through S4-AR10 have pass/fail evidence.
+  - New supported Codex/Claude chats resolve native only when the adapter probe and required evidence pass; generic providers always remain Native.
+  - Same-run native fixtures have no unexplained displayable identity, ordering, section, lineage, tool, permission, usage, or lifecycle loss.
+  - Migration, switching, cancellation, forced restart, adapter disable, and rollback preserve history, snapshots, session authority, permissions, activity, checkpoints, usage, and audit truth.
+  - No private/encrypted reasoning appears in database text, renderer, copy/export, diagnostics, logs, or audit.
+  - Shared transcript meets accessibility and 10k-event performance budgets.
+  - Mixed Codex/Claude/Native worker launch proves independent Runtime snapshots under one coordination contract.
+  - Documentation and diagnostics let a new owner reproduce every supported/unavailable state.
+- Verification:
+  - Node 22 `npm run check`.
+  - `npx --yes @fission-ai/openspec@latest validate add-agent-runtimes --strict --no-interactive`.
+  - Migration/fixture/privacy/performance/accessibility suites and exact test-collection proof.
+  - `npm run dev`, then `npm run dev:verify`, followed by real supported Codex and Claude direct/continue/restart/mixed-worker walkthroughs.
+  - `npm run package:preview:mac` plus packaged Runtime smoke. Windows/Linux/provider/device rows remain open until observed.
+- Automated evidence so far: Node 22 `npm run check` passed full lint, full Prettier, TypeScript, 206 test files/1,611 tests with 3 skips, and production main/preload/renderer builds before the production-seam review. The first post-review focused correction gate passed 39 Runtime/main/recovery/privacy files and 356 tests. The bounded re-review gate now passes 6 main/coordinator/recovery files and 69 tests, adding single-write Codex activity/orchestration-link proof, active/starting and persisted reconcile/cancel races, durable five-state terminal reconciliation, process-recreation proof, terminal compare-and-set callback races, and atomic recovery projection with a claimed same-subchat successor. Together they cover restarted run-id reconcile/cancel, exact-once cancel races, cleanup-failure non-acknowledgement, uncertain-no-replay, stable run/subchat/activity terminal truth, durable identity/activity, corrupt-snapshot isolation, bounded sanitization, accessibility, and 10,000-event performance. Strict `add-agent-runtimes` OpenSpec validation and diff checks pass. The full repo/build/package/UI gates were intentionally not repeated for the corrections.
+- Closeout evidence: the UI lease was acquired; `npm run dev` completed migrations and launched; `npm run dev:verify` identified this exact checkout and the isolated `Flapstack Dev` profile. The Mac session was locked, so no visual walkthrough is claimed. Under the free heavy-job lease, `npm run package:preview:mac`, packaged binary inspection, and packaged smoke passed for arm64 Flapstack/Electron/Codex/Claude/Whisper/Parakeet/better-sqlite3; bundled Codex reported `0.144.1`, Claude `2.1.207`, and Electron `39.8.10`.
+- Remaining acceptance: T10 stays open. Credentialed direct Codex/Claude and live continue/restart/mixed-worker UI walkthroughs remain open because the Mac session was locked; Windows/Linux/provider/device evidence also remains open. The direct release policy stays disabled. Preview-package smoke passed, but Codex also remains blocked by installed `0.144.2` versus pinned `0.144.1`.
+- Handoff evidence: Final matrix, commands/log summaries, Runtime diagnostics capture, live/provider/package evidence, unresolved external blockers, migration/rollback result, and links to user/developer docs.
+- Blocked by: S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T7, S4-F11-T8, S4-F11-T9
+- Blocks: S4-F3-T10, Stage S4 integrated exit
+- Context: `implementation-context.md`; `docs/stage4-full-feature-test-matrix.md`; Runtime diagnostics; Stage 3 provider/reasoning evidence; package/manual test guidance.

@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
+import { agentRuntimePreferenceSchema } from "./agent-runtime"
 
 const idSchema = z.string().trim().min(1).max(200)
 
@@ -85,6 +86,7 @@ export const orchestrationAgentDefinitionSchema = z
     provider: z.string().trim().min(1).max(120).optional(),
     model: z.string().trim().min(1).max(200).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+    runtimePreference: agentRuntimePreferenceSchema.optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: z
       .object({

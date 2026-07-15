@@ -40,6 +40,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   chats: many(chats),
   tasks: many(tasks),
   taskProposals: many(taskProposals),
+  agentRuntimeDefaults: many(agentRuntimeDefaults),
   vault: one(projectVaults),
   planSourceRegistrations: many(planSourceRegistrations),
 }))
@@ -461,6 +462,50 @@ export const orchestrationAgentsRelations = relations(orchestrationAgents, ({ on
   run: one(agentRuns, { fields: [orchestrationAgents.runId], references: [agentRuns.id] }),
 }))
 
+// ============ AGENT RUNTIME DEFAULTS ============
+// Runtime selection is keyed by harness, not model vendor. Global defaults use
+// a null scope ID; project rows cascade with their owning project.
+export const agentRuntimeDefaults = sqliteTable(
+  "agent_runtime_defaults",
+  {
+    id: text("id").primaryKey(),
+    scopeType: text("scope_type").notNull(),
+    scopeId: text("scope_id").references(() => projects.id, { onDelete: "cascade" }),
+    harness: text("harness").notNull(),
+    preference: text("preference").notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("agent_runtime_defaults_global_idx")
+      .on(table.harness)
+      .where(sql`${table.scopeType} = 'global'`),
+    uniqueIndex("agent_runtime_defaults_project_idx")
+      .on(table.scopeId, table.harness)
+      .where(sql`${table.scopeType} = 'project'`),
+    check(
+      "agent_runtime_defaults_scope_check",
+      sql`(
+        (${table.scopeType} = 'global' and ${table.scopeId} is null) or
+        (${table.scopeType} = 'project' and ${table.scopeId} is not null)
+      )`,
+    ),
+    check(
+      "agent_runtime_defaults_preference_check",
+      sql`${table.preference} in ('auto', 'codex', 'claude-code', 'flapstack-native')`,
+    ),
+    check("agent_runtime_defaults_version_check", sql`${table.version} >= 1`),
+  ],
+)
+
+export const agentRuntimeDefaultsRelations = relations(agentRuntimeDefaults, ({ one }) => ({
+  project: one(projects, {
+    fields: [agentRuntimeDefaults.scopeId],
+    references: [projects.id],
+  }),
+}))
+
 // ============ CHATS ============
 export const chats = sqliteTable(
   "chats",
@@ -479,6 +524,7 @@ export const chats = sqliteTable(
       .default(false),
     harness: text("harness"),
     model: text("model"),
+    runtimePreference: text("runtime_preference"),
     // Cross-harness spawning keeps enough durable lineage to reject loops and
     // explain where a thread came from without depending on a live process.
     parentChatId: text("parent_chat_id"),
@@ -569,6 +615,20 @@ export const agentRuns = sqliteTable(
     // Exact run override and the immutable provenance report for the context used.
     vaultContextSections: text("vault_context_sections"),
     vaultContextManifest: text("vault_context_manifest"),
+    // Version 0 is reserved for rows migrated from Stage 3. Every new launch
+    // writes version 1 before pending/running intent.
+    runtimeSnapshotVersion: integer("runtime_snapshot_version").notNull().default(0),
+    runtimePreference: text("runtime_preference").notNull().default("flapstack-native"),
+    runtimePreferenceSource: text("runtime_preference_source").notNull().default("legacy"),
+    resolvedRuntime: text("resolved_runtime").notNull().default("flapstack-native"),
+    runtimeAdapterVersion: text("runtime_adapter_version").notNull().default("legacy-stage3"),
+    runtimeProtocolVersion: text("runtime_protocol_version").notNull().default("legacy-stage3"),
+    runtimeCapabilitySnapshot: text("runtime_capability_snapshot")
+      .notNull()
+      .default('{"schemaVersion":1,"status":"legacy"}'),
+    runtimeControlSnapshot: text("runtime_control_snapshot")
+      .notNull()
+      .default('{"schemaVersion":1}'),
     status: text("status").notNull().default("running"),
     startedAt: integer("started_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     completedAt: integer("completed_at", { mode: "timestamp" }),
@@ -589,6 +649,117 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
   }),
   checkpoints: many(checkpoints),
   manifest: many(fileChangeManifests),
+  activityEvents: many(agentActivityEvents),
+  activitySequence: one(agentActivitySequences),
+}))
+
+// ============ AGENT RUNTIME ACTIVITY ============
+// Provider events are append-only during normal operation. Explicit retention
+// and redaction maintenance preserve identity and order while removing payload.
+export const agentActivitySequences = sqliteTable(
+  "agent_activity_sequences",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    nextSequence: integer("next_sequence").notNull().default(1),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [check("agent_activity_sequences_next_check", sql`${table.nextSequence} >= 1`)],
+)
+
+export const agentActivitySequencesRelations = relations(agentActivitySequences, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [agentActivitySequences.runId],
+    references: [agentRuns.id],
+  }),
+}))
+
+export const agentActivityEvents = sqliteTable(
+  "agent_activity_events",
+  {
+    storageId: integer("storage_id").primaryKey({ autoIncrement: true }),
+    eventId: text("event_id").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    subChatId: text("sub_chat_id"),
+    orchestrationAgentId: text("orchestration_agent_id"),
+    runtime: text("runtime").notNull(),
+    harness: text("harness").notNull(),
+    provider: text("provider").notNull(),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    displayClass: text("display_class").notNull(),
+    privacyClass: text("privacy_class").notNull(),
+    redactionState: text("redaction_state").notNull().default("none"),
+    redactionReason: text("redaction_reason"),
+    providerTimestamp: integer("provider_timestamp"),
+    receivedAt: integer("received_at").notNull(),
+    providerEventId: text("provider_event_id"),
+    providerSessionId: text("provider_session_id"),
+    providerThreadId: text("provider_thread_id"),
+    providerTurnId: text("provider_turn_id"),
+    providerItemId: text("provider_item_id"),
+    providerParentItemId: text("provider_parent_item_id"),
+    providerMessageId: text("provider_message_id"),
+    providerToolId: text("provider_tool_id"),
+    summaryIndex: integer("summary_index"),
+    contentIndex: integer("content_index"),
+    partIndex: integer("part_index"),
+    sectionBoundary: text("section_boundary"),
+    dedupKey: text("dedup_key"),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("agent_activity_events_event_id_idx").on(table.eventId),
+    uniqueIndex("agent_activity_events_run_sequence_idx").on(table.runId, table.sequence),
+    uniqueIndex("agent_activity_events_run_dedup_idx")
+      .on(table.runId, table.dedupKey)
+      .where(sql`${table.dedupKey} is not null`),
+    index("agent_activity_events_chat_storage_idx").on(table.chatId, table.storageId),
+    index("agent_activity_events_run_storage_idx").on(table.runId, table.storageId),
+    index("agent_activity_events_received_idx").on(table.receivedAt, table.storageId),
+    check("agent_activity_events_sequence_check", sql`${table.sequence} >= 1`),
+    check(
+      "agent_activity_events_runtime_check",
+      sql`${table.runtime} in ('codex', 'claude-code', 'flapstack-native')`,
+    ),
+    check(
+      "agent_activity_events_kind_check",
+      sql`${table.kind} in ('lifecycle', 'status', 'agent-text', 'reasoning-summary', 'provider-visible-reasoning', 'plan', 'tool', 'command', 'patch', 'permission', 'hook', 'subagent', 'warning', 'compaction', 'usage', 'opaque-metadata', 'private-metadata')`,
+    ),
+    check(
+      "agent_activity_events_phase_check",
+      sql`${table.phase} in ('queued', 'started', 'delta', 'updated', 'completed', 'failed', 'cancelled', 'snapshot')`,
+    ),
+    check(
+      "agent_activity_events_display_check",
+      sql`${table.displayClass} in ('summary', 'provider-visible', 'status', 'tool', 'private', 'metadata')`,
+    ),
+    check(
+      "agent_activity_events_privacy_check",
+      sql`${table.privacyClass} in ('public', 'sensitive', 'private', 'encrypted')`,
+    ),
+    check(
+      "agent_activity_events_redaction_check",
+      sql`${table.redactionState} in ('none', 'redacted', 'retained-redaction', 'corrupt')`,
+    ),
+    check(
+      "agent_activity_events_payload_check",
+      sql`json_valid(${table.payloadJson}) = 1 and length(cast(${table.payloadJson} as blob)) <= 65536`,
+    ),
+  ],
+)
+
+export const agentActivityEventsRelations = relations(agentActivityEvents, ({ one }) => ({
+  run: one(agentRuns, {
+    fields: [agentActivityEvents.runId],
+    references: [agentRuns.id],
+  }),
 }))
 
 // ============ LOCAL AUTOMATION ============

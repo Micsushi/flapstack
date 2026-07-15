@@ -1,0 +1,24 @@
+{"method":"thread/started","params":{"thread":{"id":"thread-1","sessionId":"session-1"}},"emittedAtMs":1000}
+{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}},"emittedAtMs":1001}
+{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"message-1","text":"","phase":"commentary"}},"emittedAtMs":1002}
+{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"message-1","delta":"VISIBLE_MESSAGE_A"},"emittedAtMs":1003}
+{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"message-1","text":"VISIBLE_MESSAGE_A","phase":"commentary"}},"emittedAtMs":1004}
+{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-1","summary":[],"content":[]}},"emittedAtMs":1005}
+{"method":"item/reasoning/summaryPartAdded","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","summaryIndex":0},"emittedAtMs":1006}
+{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","summaryIndex":0,"delta":"VISIBLE_SUMMARY_A"},"emittedAtMs":1007}
+{"method":"item/reasoning/textDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","contentIndex":0,"delta":"PRIVATE_REASONING_A"},"emittedAtMs":1008}
+{"method":"item/reasoning/textDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","contentIndex":1,"displayable":true,"delta":"VISIBLE_REASONING_A"},"emittedAtMs":1009}
+{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-1","summary":["VISIBLE_SUMMARY_A"],"content":["PRIVATE_REASONING_A"]}},"emittedAtMs":1010}
+{"method":"turn/plan/updated","params":{"threadId":"thread-1","turnId":"turn-1","explanation":"VISIBLE_PLAN_A","plan":[{"id":"plan-1","step":"Test adapter","status":"inProgress"}]},"emittedAtMs":1011}
+{"method":"item/plan/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"plan-1","delta":"VISIBLE_PLAN_DELTA_A"},"emittedAtMs":1012}
+{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"commandExecution","id":"command-1","command":"printf fixture","cwd":"/redacted","status":"inProgress","aggregatedOutput":null,"exitCode":null}},"emittedAtMs":1013}
+{"method":"item/commandExecution/outputDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"command-1","delta":"COMMAND_OUTPUT_A"},"emittedAtMs":1014}
+{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"commandExecution","id":"command-1","command":"printf fixture","cwd":"/redacted","status":"completed","aggregatedOutput":"COMMAND_OUTPUT_A","exitCode":0}},"emittedAtMs":1015}
+{"method":"item/fileChange/patchUpdated","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"patch-1","changes":[{"kind":"update","path":"fixture.ts"}]},"emittedAtMs":1016}
+{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"fileChange","id":"patch-1","status":"completed","changes":[{"kind":"update","path":"fixture.ts"}]}},"emittedAtMs":1017}
+{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"mcpToolCall","id":"tool-1","server":"fixture","tool":"read","status":"completed","result":{"summary":"TOOL_RESULT_A"}}},"emittedAtMs":1018}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"inputTokens":10,"cachedInputTokens":2,"outputTokens":4,"reasoningOutputTokens":1}}},"emittedAtMs":1019}
+{"method":"warning","params":{"threadId":"thread-1","message":"WARNING_A"},"emittedAtMs":1020}
+{"method":"thread/compacted","params":{"threadId":"thread-1","turnId":"turn-1"},"emittedAtMs":1021}
+{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","error":null}},"emittedAtMs":1022}
+

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const mocks = vi.hoisted(() => ({
   checkOfflineFallback: vi.fn(),
@@ -180,11 +181,15 @@ function seedLegacyQueue(sqlite: Database.Database): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at
-    ) VALUES (?, 'chat-order', 'sub-order', 'claude-code', 'full-access', ?, ?, 'pending', ?)`,
+      prompt_message_id, status, started_at,
+      runtime_snapshot_version, runtime_preference, runtime_preference_source,
+      resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+      runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'chat-order', 'sub-order', 'claude-code', 'full-access', ?, ?, 'pending', ?,
+      ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("run-a", directory, "mcp-order-a", 1)
-  insert.run("run-b", directory, "mcp-order-b", 2)
+  insert.run("run-a", directory, "mcp-order-a", 1, ...testRuntimeSnapshotSqlValues("claude-code"))
+  insert.run("run-b", directory, "mcp-order-b", 2, ...testRuntimeSnapshotSqlValues("claude-code"))
 }
 
 function readVisibleTranscript(): string[] {
