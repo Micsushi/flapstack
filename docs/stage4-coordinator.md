@@ -18,8 +18,9 @@ without touching `main` or Stage 3 worktrees.
 - One Stage 4 feature per worker and one long-lived isolated worktree per
   feature. OpenSpec tasks remain acceptance checkpoints, not worktree or agent
   boundaries.
-- Refill a worker slot only after the coordinator accepts and integrates the
-  prior feature or records its exact external blocker.
+- Refill a worker slot after the coordinator accepts the feature's code and
+  headless evidence. An exact UI-only external blocker is recorded and deferred
+  to the final Stage 4 UI sweep; it does not hold the worker slot.
 - Do not create hidden subagents. Use visible user-owned Codex tasks.
 
 ## Dispatch Loop
@@ -40,8 +41,9 @@ without touching `main` or Stage 3 worktrees.
    reviews and preserves the complete feature diff before releasing the worker.
 8. Review the complete feature diff. Reject stale, overlapping, unverified, or
    scope-expanded work and return concrete fixes to the same feature owner.
-9. Run one conflict-sensitive feature gate, update the authoritative task board,
-   then commit the accepted feature to `codex/stage4-features`.
+9. Run one conflict-sensitive feature gate and update the authoritative task
+   board. Preserve and integrate the code-accepted packet when current Git
+   authority allows it, while keeping UI-dependent completion unchecked.
 10. Recompute dependencies and immediately assign the next feature to the freed
     worker slot.
 
@@ -66,8 +68,9 @@ repeat broad gates after every task checkpoint:
 3. Focused TypeScript, ESLint, Prettier, production build, and strict OpenSpec.
 4. One feature-wide gate after the feature code path is complete.
 5. Full `npm run check` at dependency-integration milestones and Stage 4 exit.
-6. One consolidated real-UI walkthrough at feature closeout when acceptance
-   genuinely requires visual or interactive proof.
+6. One consolidated real-UI walkthrough after all Stage 4 feature code is
+   accepted. Run UI earlier only when a concrete interface contract cannot be
+   resolved through component tests or authenticated app-control evidence.
 
 Respect `/tmp/flapstack-heavy-job.lock`. Never steal or bypass it. When held,
 run focused direct checks and retry the full gate later.

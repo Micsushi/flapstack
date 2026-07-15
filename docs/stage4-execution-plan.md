@@ -42,6 +42,9 @@ During and after work:
    provider, and OS evidence open until observed.
 4. Update authoritative task checkboxes and evidence only after their acceptance
    is real.
+5. Release the feature owner after code/headless acceptance. UI-only evidence
+   remains named and unchecked for the consolidated Stage 4 UI sweep instead of
+   holding the worker slot.
 
 Suggested branch names use `codex/s4-fN-feature-name`. One feature branch should
 contain one reviewable feature outcome with small internal checkpoint commits.
@@ -130,17 +133,20 @@ schema, or generated-file seam.
 - S4-F12-T7 promotes only starter agent types that pass the approved capability,
   safety, prompt-injection, and cross-runtime evaluation gates.
 
-### Wave 6 — Close each feature independently
+### Wave 6 — Close each feature's code and headless acceptance
 
 - S4-F1-T7, S4-F2-T6, S4-F3-T10, S4-F4-T7, S4-F5-T8, S4-F6-T8,
   S4-F7-T7, S4-F8-T8, S4-F9-T8, S4-F11-T10, and S4-F12-T8.
-- A feature can close only when its focused tests, documentation, recovery or
-  rollback path, required live walkthrough, and feature matrix rows are truthful.
+- A feature's code packet can close when focused tests, documentation, recovery
+  or rollback, and headless evidence pass. Required visual or interactive rows
+  remain named and unchecked for Wave 7.
 
 ### Wave 7 — Integrated Stage 4 exit
 
 - Exercise all eleven features in one project using
   `docs/stage4-full-feature-test-matrix.md`.
+- Run one consolidated unlocked-Mac UI, accessibility, multi-window, and direct
+  interaction sweep for every deferred visual row.
 - Run Node 22 `npm run check` and strict validation for all eleven OpenSpec changes.
 - Start live development only with `npm run dev`; run `npm run dev:verify`
   before claiming the Stage 4 checkout and `Flapstack Dev` profile are running.
