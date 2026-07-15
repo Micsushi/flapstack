@@ -97,7 +97,8 @@ Voice (reuses Agent Hotline):
 - Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
 - Per-OS speech adapters with an offline/local path kept as a supported default.
-- Dynamic vocabulary remains deferred pending a future approved OpenSpec change.
+- Dynamic speech vocabulary is planned in Stage 5 S5-F1 as part of voice-input
+  usability and language polish.
 
 Usage tracking (reuses onWatch):
 
@@ -186,11 +187,33 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - Reusable Agent Profiles and Personalities for deterministic workflow roles
   and standalone named specialists without expanding their authority.
 
-Stage 4 is the final planned stage for now. New ideas stay parked until the user
-explicitly adds them to Stage 4 or creates a later stage.
 Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
 [Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
 and [execution plan](docs/stage4-execution-plan.md).
+
+### Stage 5: Product Polish, Personalization, and Reach
+
+- Product-wide UI/UX, navigation, Settings, accessibility, and recovery polish.
+- Guided first-run tutorial, work-style questions, feature explanations, and
+  reversible progressive UI visibility.
+- One Agent Profile concept with reusable versioned Markdown personalities,
+  universal new-chat/sub-agent selection, and honest effort/speed compatibility.
+- Secure cross-agent mobile companion over a default-off local PWA bridge.
+- Visual context capture, redaction, artifacts, agent context, and standalone helper.
+- Advanced terminal-grid and swarm workspaces over existing durable identities.
+- Final Runtime/orchestration composition for schemas, control, activity, and recovery.
+- Optional OpenAI/Anthropic organization usage APIs with exact provenance.
+- Versioned performance budgets, scale/soak testing, and regression gates.
+- Signed/notarized macOS plus native Windows/Linux public distribution.
+- Obsidian-compatible project knowledge graph: six seed notes, custom Markdown
+  nodes/folders, Wikilinks/backlinks, graph views, and same-folder Obsidian opening.
+- One integrated exact-SHA Stage 5 release gate.
+
+Stage 5 starts only after full Stage 4 acceptance. Its twelve OpenSpec feature
+boards contain 97 pickup-ready tasks; see the
+[Stage 5 router](openspec/stages/s5-product-polish-personalization-reach/README.md),
+[execution plan](docs/stage5-execution-plan.md), and
+[test matrix](docs/stage5-full-feature-test-matrix.md).
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
 dictation; no separate Flapstack voice platform is planned.

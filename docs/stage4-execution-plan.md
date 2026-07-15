@@ -1,7 +1,7 @@
 # Stage 4 Execution Plan
 
-Stage 4 is the final planned Flapstack stage. Its eleven feature boards contain 87
-independently pick-up-able tasks. This document orders those boards without
+Stage 4 is the prerequisite operating-environment stage for Stage 5. Its eleven
+feature boards contain 87 independently pick-up-able tasks. This document orders those boards without
 duplicating task state; the checkbox in each OpenSpec `tasks.md` is authoritative.
 
 ## Baseline and entry gate
@@ -183,7 +183,9 @@ schema, or generated-file seam.
   -> Flapstack Native; chat, project-per-harness, and global-per-harness overrides
   are durable, capability-gated, and never silently downgraded.
 
-## Parked after Stage 4
+## Stage 5 boundary
 
-There is no Stage 5 roadmap. Mobile control and screenshot/visual-context tooling
-remain parked with no Stage 4 task until deliberately promoted.
+Mobile control, screenshot/visual-context tooling, terminal-grid/swarm views,
+onboarding, reusable personalities, product polish, performance, organization
+usage, and public distribution are promoted into Stage 5. They remain outside
+Stage 4 acceptance. See docs/stage5-execution-plan.md.

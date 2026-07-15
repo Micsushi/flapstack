@@ -1,81 +1,41 @@
-# Future release considerations
+# Future Work Promoted to Stage 5
 
-These items are intentionally outside Stage 3 acceptance. Their absence must
-not block Stage 3 completion or turn a passing Preview validation into a
-release failure.
+This file is a compatibility router for links created before Stage 5 existed.
+It is no longer an independent backlog. Every previously parked item is now
+planned under **Stage 5 — Product Polish, Personalization, and Reach**.
 
-## Cross-agent mobile companion
+Stage 5 remains planned, not active. It starts only after every Stage 4
+acceptance row is closed with the required automated, live, package, device,
+credential, accessibility, performance, and documentation evidence.
 
-All phone connection, pairing, remote-control, PWA, and mobile notification work
-is intentionally outside Stage 4 and must not block its completion.
+## Promotion map
 
-Existing mobile contracts, default-off LAN HTTPS bridge, device pairing, and
-sequenced snapshot/event recovery are preserved on local branch
-`codex/future-mobile-companion` at `65169c6`. Resume that branch only when the
-future mobile feature is explicitly promoted again.
+| Previous future item                                                                                                   | Stage 5 owner                                        |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Broad UI/UX cleanup, consistency, accessibility, and visual polish                                                     | S5-F1 — Product-wide UI/UX polish                    |
+| Dynamic speech vocabulary and voice-input language polish                                                              | S5-F1 — Product-wide UI/UX polish                    |
+| First-run tutorial, setup questionnaire, feature visibility, explanations, and alphabetical Settings groups            | S5-F2 — Guided onboarding and feature visibility     |
+| Agent Profile chooser, reusable Markdown personalities, launch defaults, speed/effort, and descendant behavior         | S5-F3 — Agent Profiles and reusable personalities    |
+| Phone pairing, monitoring, steering, approvals, PWA, and mobile notifications                                          | S5-F4 — Cross-agent mobile companion                 |
+| Screenshot capture, visual attachments, annotation, and visual context provenance                                      | S5-F5 — Visual context and screenshot capture        |
+| Terminal grids, saved layouts, multi-agent workspaces, and swarm controls                                              | S5-F6 — Terminal-grid and swarm workspaces           |
+| Stage 4 F3/F11 ownership, structured-output, control, activity, and recovery follow-ups                                | S5-F7 — Runtime/orchestration composition            |
+| OpenAI and Anthropic organization usage/cost APIs                                                                      | S5-F8 — Organization usage APIs                      |
+| Startup, interaction, streaming, concurrency, memory, and long-run performance                                         | S5-F9 — Performance and scale                        |
+| Public signed/notarized macOS distribution plus native Windows and Linux acceptance                                    | S5-F10 — Cross-platform public distribution          |
+| Six seed notes, custom Markdown nodes/folders, Wikilinks/backlinks, graph/list views, and same-folder Obsidian opening | S5-F12 — Obsidian-compatible project knowledge graph |
+| One integrated release candidate and public support statement                                                          | S5-F11 — Integrated Stage 5 release                  |
 
-## Organization usage APIs
+The preserved mobile implementation remains on
+`codex/future-mobile-companion` at `65169c6`; S5-F4 must rebase and audit that
+work instead of treating it as accepted evidence.
 
-- OpenAI Admin organization usage/cost validation (`U6-01`) is deferred.
-- Anthropic Admin organization usage/cost validation (`U6-02`) is deferred.
-- No OpenAI or Anthropic Admin key is required for Stage 3.
-- Existing optional credential fields and adapters may remain, but Stage 3
-  makes no live organization-wide accuracy claim for them.
-- A future pass can decide whether to retain the surfaces, then test them with
-  low-value organization credentials and sanitized provider evidence.
+## Authoritative planning
 
-Stage 3 still validates personal Codex and Claude quota sources plus
-credentialed Cursor, OpenRouter, and NanoGPT behavior where their separate
-matrices require it.
+- Stage router: `openspec/stages/s5-product-polish-personalization-reach/README.md`
+- Execution order and dependency gates: `docs/stage5-execution-plan.md`
+- Integrated acceptance matrix: `docs/stage5-full-feature-test-matrix.md`
+- Feature task boards: the twelve Stage 5 changes under `openspec/changes/`
 
-## Performance testing
-
-- Future task: run a dedicated performance-testing pass before public release.
-- Measure startup time, UI responsiveness, CPU and memory use, and agent/terminal
-  streaming under large projects, long-running sessions, and concurrent agents.
-- Record repeatable baselines, target thresholds, tested hardware and platforms,
-  and any regressions or follow-up work.
-
-## Public macOS distribution
-
-Stage 3 accepts an unsigned macOS Preview package for local functional,
-resource, architecture, migration, and cleanup testing. It does not publish a
-public macOS binary.
-
-Before Flapstack publishes DMG or ZIP downloads for general users:
-
-1. Enroll in the Apple Developer Program.
-2. Create and install a Developer ID Application certificate.
-3. Add notarization credentials and packaging configuration.
-4. Sign, notarize, and staple the release artifacts.
-5. Verify Gatekeeper installation and first launch on a clean Mac profile.
-6. Document certificate ownership, renewal, CI secret handling, and recovery.
-
-Apple signing and notarization are public-distribution gates, not Stage 3
-feature-completion gates.
-
-## Windows and Linux acceptance
-
-Stage 3 release acceptance is macOS arm64 only. Native Windows and Linux
-package, UI, service, and secret-store validation is deferred to the end of
-Stage 4 and does not block Stage 3 completion.
-
-Stage 3 still keeps the shared cross-platform contracts and automated platform
-fixtures green. It does not claim native Windows or Linux runtime parity from
-macOS evidence. The Stage 4 closeout must run each native matrix on real target
-hosts, record any platform-specific repair, and update the support statement
-before those platforms are promoted.
-
-## Stage 4 F3/F11 runtime composition follow-ups
-
-- F11 should expose its owned Codex App Server request/version authority through
-  F3's `codexCoordination` consumer port. F3 must not create a second provider
-  process or notification parser.
-- F11 should forward F3's queued-run `outputSchema` to each supported adapter's
-  public structured-output option. F3 already validates the final durable
-  activity projection and fails closed when output is absent or invalid.
-- Provider-neutral active-run pause/resume remains an optional F11 method.
-  Until composed, F3 cascade control records no false paused/resumed state.
-- Live request compatibility, credentials, provider permissions, package
-  residency, and native Windows path proof remain acceptance evidence, not a
-  reason to duplicate provider ownership in F3.
+The OpenSpec task boards are the sole completion checklists. This router must
+not acquire parallel checkboxes or redefine Stage 5 scope.
