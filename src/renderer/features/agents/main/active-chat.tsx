@@ -64,6 +64,7 @@ import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
+import { StartAgentDialog } from "../../agent-profiles/start-agent-dialog"
 import { useCommitActions } from "../../changes/components/commit-input"
 import { DiffCenterPeekDialog } from "../../changes/components/diff-center-peek-dialog"
 import { DiffFullPageView } from "../../changes/components/diff-full-page-view"
@@ -5468,6 +5469,7 @@ export function ChatView({
 
   // Open Locally dialog state
   const [openLocallyDialogOpen, setOpenLocallyDialogOpen] = useState(false)
+  const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
 
   // Auto-import hook for "Open Locally"
   const { getMatchingProjects, autoImport, isImporting } = useAutoImport()
@@ -7515,6 +7517,12 @@ Make sure to preserve all functionality from both branches when resolving confli
   return (
     <FileOpenProvider onOpenFile={setFileViewerPath}>
       <TextSelectionProvider>
+        <StartAgentDialog
+          open={startAgentDialogOpen}
+          onOpenChange={setStartAgentDialogOpen}
+          source={{ kind: "chat", chatId }}
+          projectId={agentChat?.projectId ?? null}
+        />
         {/* File Search Dialog (Cmd+P) */}
         {worktreePath && (
           <FileSearchDialog
@@ -7606,6 +7614,20 @@ Make sure to preserve all functionality from both branches when resolving confli
                               <TooltipContent side="bottom">Open parent agent chat</TooltipContent>
                             </Tooltip>
                           )}
+                          <Tooltip delayDuration={300}>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="ml-1 h-6 w-6"
+                                onClick={() => setStartAgentDialogOpen(true)}
+                                aria-label="Start named agent from this chat"
+                              >
+                                <AgentIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom">Start named agent</TooltipContent>
+                          </Tooltip>
                           {/* Open Locally button - desktop only, sandbox mode */}
                           {showOpenLocally && (
                             <Tooltip delayDuration={500}>

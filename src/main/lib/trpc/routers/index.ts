@@ -48,6 +48,7 @@ import { agentActivityRouter } from "./agent-activity"
 import { savedWorkspacesRouter } from "./saved-workspaces"
 import { coordinationEnginesRouter } from "./coordination-engines"
 import { orchestrationOperationsRouter } from "./orchestration-operations"
+import { agentProfilesRouter } from "./agent-profiles"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 import { basename } from "node:path"
@@ -114,6 +115,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     savedWorkspaces: savedWorkspacesRouter,
     coordinationEngines: coordinationEnginesRouter,
     orchestrationOperations: orchestrationOperationsRouter,
+    agentProfiles: agentProfilesRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),

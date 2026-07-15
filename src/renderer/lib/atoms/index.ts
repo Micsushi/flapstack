@@ -178,6 +178,7 @@ export type SettingsTab =
   | "runtimes"
   | "local-models"
   | "coordination"
+  | "agent-profiles"
   | "api-providers"
   | "voice"
   | "skills"

@@ -43,6 +43,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   taskProposals: many(taskProposals),
   agentRuntimeDefaults: many(agentRuntimeDefaults),
   coordinationEngineDefaults: many(coordinationEngineDefaults),
+  agentProfiles: many(agentProfiles),
   vault: one(projectVaults),
   planSourceRegistrations: many(planSourceRegistrations),
 }))
@@ -674,6 +675,275 @@ export const agentRuntimeDefaultsRelations = relations(agentRuntimeDefaults, ({ 
   project: one(projects, {
     fields: [agentRuntimeDefaults.scopeId],
     references: [projects.id],
+  }),
+}))
+
+// ============ AGENT PROFILES ============
+// Profiles are local typed data. Capability, presentation, workflow binding,
+// and immutable launch snapshots stay separate so style cannot widen authority.
+export const agentProfiles = sqliteTable(
+  "agent_profiles",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    category: text("category").notNull(),
+    scopeType: text("scope_type").notNull(),
+    // Keep project provenance after project deletion. New writes are validated
+    // by AgentProfileService; a cascading FK would conflict with append-only
+    // versions and immutable launch snapshots.
+    projectId: text("project_id"),
+    source: text("source").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("agent_profiles_scope_name_idx").on(table.scopeType, table.projectId, table.name),
+    index("agent_profiles_source_idx").on(table.source, table.archivedAt),
+    check(
+      "agent_profiles_scope_check",
+      sql`(${table.scopeType} in ('built-in','user') and ${table.projectId} is null) or (${table.scopeType} = 'project' and ${table.projectId} is not null)`,
+    ),
+    check("agent_profiles_source_check", sql`${table.source} in ('built-in','user','imported')`),
+    check("agent_profiles_version_check", sql`${table.currentVersion} >= 1`),
+    check("agent_profiles_name_check", sql`length(trim(${table.name})) between 1 and 160`),
+  ],
+)
+
+export const agentProfileVersions = sqliteTable(
+  "agent_profile_versions",
+  {
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    baseProfileId: text("base_profile_id"),
+    baseProfileVersion: integer("base_profile_version"),
+    capabilityJson: text("capability_json").notNull(),
+    presentationJson: text("presentation_json").notNull(),
+    provenanceJson: text("provenance_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.profileId, table.version] }),
+    foreignKey({
+      columns: [table.baseProfileId, table.baseProfileVersion],
+      foreignColumns: [table.profileId, table.version],
+      name: "agent_profile_versions_base_fk",
+    }).onDelete("restrict"),
+    check("agent_profile_versions_version_check", sql`${table.version} >= 1`),
+    check(
+      "agent_profile_versions_base_check",
+      sql`(${table.baseProfileId} is null and ${table.baseProfileVersion} is null) or (${table.baseProfileId} is not null and ${table.baseProfileVersion} is not null)`,
+    ),
+    check(
+      "agent_profile_versions_capability_check",
+      sql`json_valid(${table.capabilityJson}) = 1 and json_extract(${table.capabilityJson}, '$.schemaVersion') = 1 and length(cast(${table.capabilityJson} as blob)) <= 524288`,
+    ),
+    check(
+      "agent_profile_versions_presentation_check",
+      sql`json_valid(${table.presentationJson}) = 1 and json_extract(${table.presentationJson}, '$.schemaVersion') = 1 and length(cast(${table.presentationJson} as blob)) <= 65536`,
+    ),
+    check(
+      "agent_profile_versions_provenance_check",
+      sql`json_valid(${table.provenanceJson}) = 1 and length(cast(${table.provenanceJson} as blob)) <= 65536`,
+    ),
+  ],
+)
+
+export const agentProfileSnapshots = sqliteTable(
+  "agent_profile_snapshots",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    resolvedJson: text("resolved_json").notNull(),
+    digest: text("digest").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.profileId, table.profileVersion],
+      foreignColumns: [agentProfileVersions.profileId, agentProfileVersions.version],
+      name: "agent_profile_snapshots_version_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("agent_profile_snapshots_digest_idx").on(table.digest),
+    index("agent_profile_snapshots_profile_idx").on(table.profileId, table.profileVersion),
+    check("agent_profile_snapshots_digest_check", sql`length(${table.digest}) = 64`),
+    check(
+      "agent_profile_snapshots_json_check",
+      sql`json_valid(${table.resolvedJson}) = 1 and json_extract(${table.resolvedJson}, '$.schemaVersion') = 1 and length(cast(${table.resolvedJson} as blob)) <= 1048576`,
+    ),
+  ],
+)
+
+export const agentProfileWorkflowBindings = sqliteTable(
+  "agent_profile_workflow_bindings",
+  {
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => orchestrationWorkflowRuns.id, { onDelete: "cascade" }),
+    stepId: text("step_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    bindingJson: text("binding_json").notNull(),
+    snapshotId: text("snapshot_id").references(() => agentProfileSnapshots.id, {
+      onDelete: "restrict",
+    }),
+    version: integer("version").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workflowRunId, table.stepId] }),
+    foreignKey({
+      columns: [table.profileId, table.profileVersion],
+      foreignColumns: [agentProfileVersions.profileId, agentProfileVersions.version],
+      name: "agent_profile_workflow_binding_version_fk",
+    }).onDelete("restrict"),
+    check("agent_profile_workflow_binding_version_check", sql`${table.version} >= 1`),
+    check(
+      "agent_profile_workflow_binding_json_check",
+      sql`json_valid(${table.bindingJson}) = 1 and json_extract(${table.bindingJson}, '$.schemaVersion') = 1 and length(cast(${table.bindingJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const agentProfileImportPreviews = sqliteTable(
+  "agent_profile_import_previews",
+  {
+    id: text("id").primaryKey(),
+    digest: text("digest").notNull(),
+    sourceLabel: text("source_label").notNull(),
+    bundleJson: text("bundle_json").notNull(),
+    previewJson: text("preview_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("agent_profile_import_previews_digest_idx").on(table.digest),
+    check("agent_profile_import_previews_digest_check", sql`length(${table.digest}) = 64`),
+    check(
+      "agent_profile_import_previews_bundle_check",
+      sql`json_valid(${table.bundleJson}) = 1 and length(cast(${table.bundleJson} as blob)) <= 4000000`,
+    ),
+    check(
+      "agent_profile_import_previews_preview_check",
+      sql`json_valid(${table.previewJson}) = 1 and length(cast(${table.previewJson} as blob)) <= 1048576`,
+    ),
+  ],
+)
+
+export const agentProfileEvaluations = sqliteTable(
+  "agent_profile_evaluations",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    runtime: text("runtime").notNull(),
+    model: text("model").notNull(),
+    state: text("state").notNull(),
+    fixtureSetJson: text("fixture_set_json").notNull(),
+    evidenceJson: text("evidence_json").notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.profileId, table.profileVersion],
+      foreignColumns: [agentProfileVersions.profileId, agentProfileVersions.version],
+      name: "agent_profile_evaluations_version_fk",
+    }).onDelete("restrict"),
+    index("agent_profile_evaluations_lookup_idx").on(
+      table.profileId,
+      table.profileVersion,
+      table.runtime,
+      table.model,
+      table.createdAt,
+    ),
+    check(
+      "agent_profile_evaluations_runtime_check",
+      sql`${table.runtime} in ('codex','claude-code','flapstack-native')`,
+    ),
+    check(
+      "agent_profile_evaluations_state_check",
+      sql`${table.state} in ('untested','tested-local','supported','failed')`,
+    ),
+  ],
+)
+
+export const agentProfileAuditEvents = sqliteTable(
+  "agent_profile_audit_events",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    summaryJson: text("summary_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("agent_profile_audit_profile_idx").on(table.profileId, table.createdAt),
+    check(
+      "agent_profile_audit_summary_check",
+      sql`json_valid(${table.summaryJson}) = 1 and length(cast(${table.summaryJson} as blob)) <= 65536`,
+    ),
+  ],
+)
+
+export const agentProfileStandaloneLaunches = sqliteTable(
+  "agent_profile_standalone_launches",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id").notNull(),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => agentProfileSnapshots.id, { onDelete: "restrict" }),
+    chatId: text("chat_id").notNull(),
+    subChatId: text("sub_chat_id").notNull(),
+    runId: text("run_id").notNull(),
+    orchestrationTaskId: text("orchestration_task_id"),
+    state: text("state").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("agent_profile_standalone_request_idx").on(table.requestId),
+    uniqueIndex("agent_profile_standalone_run_idx").on(table.runId),
+    check(
+      "agent_profile_standalone_source_check",
+      sql`${table.sourceKind} in ('task','chat','studio')`,
+    ),
+    check(
+      "agent_profile_standalone_state_check",
+      sql`${table.state} in ('pending','launching','running','completed','cancelled','failed','uncertain')`,
+    ),
+  ],
+)
+
+export const agentProfilesRelations = relations(agentProfiles, ({ one, many }) => ({
+  project: one(projects, { fields: [agentProfiles.projectId], references: [projects.id] }),
+  versions: many(agentProfileVersions),
+}))
+
+export const agentProfileVersionsRelations = relations(agentProfileVersions, ({ one, many }) => ({
+  profile: one(agentProfiles, {
+    fields: [agentProfileVersions.profileId],
+    references: [agentProfiles.id],
+  }),
+  snapshots: many(agentProfileSnapshots),
+  evaluations: many(agentProfileEvaluations),
+}))
+
+export const agentProfileSnapshotsRelations = relations(agentProfileSnapshots, ({ one }) => ({
+  version: one(agentProfileVersions, {
+    fields: [agentProfileSnapshots.profileId, agentProfileSnapshots.profileVersion],
+    references: [agentProfileVersions.profileId, agentProfileVersions.version],
   }),
 }))
 

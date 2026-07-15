@@ -37,6 +37,8 @@ const SETTINGS_TAB_ICONS: Partial<
   projects: FolderFilledIcon,
   models: BrainFilledIcon,
   runtimes: SlidersFilledIcon,
+  coordination: SlidersFilledIcon,
+  "agent-profiles": CustomAgentIconFilled,
   "local-models": HardDrive,
   "api-providers": BrainFilledIcon,
   voice: Mic,
