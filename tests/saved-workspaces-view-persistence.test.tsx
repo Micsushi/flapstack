@@ -18,6 +18,21 @@ const fixtureLayout: SavedWorkspaceLayout = {
 const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   create: vi.fn(),
+  duplicate: vi.fn(),
+  duplicateWorkspace: null as null | {
+    id: string
+    name: string
+    scope: { type: "project"; projectId: string }
+    owner: { kind: "manual" }
+    layoutVersion: 1
+    layout: SavedWorkspaceLayout
+    layoutIssue: null
+    sortOrder: string
+    version: number
+    createdAt: number
+    updatedAt: number
+    archivedAt: null
+  },
   invalidateList: vi.fn(async () => undefined),
   invalidateGet: vi.fn(async () => undefined),
   invalidateResolvePane: vi.fn(async () => undefined),
@@ -36,8 +51,8 @@ vi.mock("../src/renderer/lib/trpc", () => ({
     }),
     savedWorkspaces: {
       list: {
-        useQuery: ({ projectId }: { projectId?: string }) => ({
-          data:
+        useQuery: ({ projectId }: { projectId?: string }) => {
+          const data =
             projectId === "project-2"
               ? [
                   {
@@ -81,31 +96,41 @@ vi.mock("../src/renderer/lib/trpc", () => ({
                     archivedAt: null,
                     layoutState: "ready",
                   },
-                ],
-          isLoading: false,
-        }),
+                ]
+          if (mocks.duplicateWorkspace?.scope.projectId === projectId) {
+            data.push({
+              ...mocks.duplicateWorkspace,
+              layoutState: "ready" as const,
+            })
+          }
+          return { data, isLoading: false }
+        },
       },
       get: {
-        useQuery: ({ workspaceId }: { workspaceId: string }) => ({
-          data: workspaceId
-            ? {
-                id: workspaceId,
-                name: workspaceId === "workspace-2" ? "Second workspace" : "Fixture workspace",
-                scope: { type: "project", projectId: "project-1" },
-                owner: { kind: "manual" },
-                layoutVersion: 1,
-                layout: fixtureLayout,
-                layoutIssue: null,
-                sortOrder: "a0",
-                version: workspaceId === "workspace-2" ? 7 : 1,
-                createdAt: 1,
-                updatedAt: 1,
-                archivedAt: null,
-              }
-            : undefined,
-          isLoading: false,
-          error: null,
-        }),
+        useQuery: ({ workspaceId }: { workspaceId: string }) => {
+          const duplicate =
+            mocks.duplicateWorkspace?.id === workspaceId ? mocks.duplicateWorkspace : undefined
+          return {
+            data: workspaceId
+              ? (duplicate ?? {
+                  id: workspaceId,
+                  name: workspaceId === "workspace-2" ? "Second workspace" : "Fixture workspace",
+                  scope: { type: "project", projectId: "project-1" },
+                  owner: { kind: "manual" },
+                  layoutVersion: 1,
+                  layout: fixtureLayout,
+                  layoutIssue: null,
+                  sortOrder: "a0",
+                  version: workspaceId === "workspace-2" ? 7 : 1,
+                  createdAt: 1,
+                  updatedAt: 1,
+                  archivedAt: null,
+                })
+              : undefined,
+            isLoading: false,
+            error: null,
+          }
+        },
       },
       getOperation: {
         useQuery: () => ({ data: undefined, isLoading: false, error: null }),
@@ -116,6 +141,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       create: { useMutation: () => ({ mutateAsync: mocks.create, isPending: false }) },
       saveLayout: { useMutation: () => ({ mutateAsync: mocks.save, isPending: false }) },
       rename: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
+      duplicate: { useMutation: () => ({ mutateAsync: mocks.duplicate, isPending: false }) },
       archive: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
       restore: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
       delete: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
@@ -144,6 +170,18 @@ describe("saved workspace persistence view", () => {
     mocks.save.mockImplementation(async (input: { layout: SavedWorkspaceLayout }) =>
       savedResult(input, 2),
     )
+    mocks.duplicateWorkspace = null
+    mocks.duplicate.mockImplementation(async () => {
+      const workspace = {
+        ...savedResult({ layout: fixtureLayout }, 1, "workspace-copy").workspace,
+        name: "Fixture workspace copy",
+      }
+      mocks.duplicateWorkspace = workspace
+      return {
+        workspace,
+        invalidation: { queries: [], workspaceIds: [workspace.id], removeWorkspaceIds: [] },
+      }
+    })
     container = document.createElement("div")
     document.body.append(container)
     root = createRoot(container)
@@ -214,6 +252,99 @@ describe("saved workspace persistence view", () => {
     expect(mocks.save).not.toHaveBeenCalled()
   })
 
+  it("duplicates the complete selected workspace and selects the returned record", async () => {
+    const duplicate = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Duplicate workspace",
+    )!
+    expect(duplicate).not.toBeUndefined()
+    duplicate.focus()
+    expect(document.activeElement).toBe(duplicate)
+
+    const createName = container.querySelector<HTMLInputElement>("#saved-workspace-name")!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        createName,
+        "Unrelated create draft",
+      )
+      createName.dispatchEvent(new Event("input", { bubbles: true }))
+      duplicate.click()
+    })
+
+    expect(mocks.duplicate).toHaveBeenCalledTimes(1)
+    expect(mocks.duplicate).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      expectedVersion: 1,
+    })
+    expect(mocks.invalidateList).toHaveBeenCalledWith({
+      projectId: "project-1",
+      archive: "active",
+    })
+    expect(mocks.invalidateGet).toHaveBeenCalledWith({ workspaceId: "workspace-copy" })
+    expect(
+      container.querySelector<HTMLSelectElement>('[aria-label="Saved workspace"]')?.value,
+    ).toBe("workspace-copy")
+    expect(localStorage.getItem("flapstack:saved-workspace-selection:v1:project-1")).toBe(
+      "workspace-copy",
+    )
+    expect(container.querySelector<HTMLInputElement>("#saved-workspace-name")?.value).toBe(
+      "Unrelated create draft",
+    )
+    expect(container.querySelector("[data-pane-adapter='pane-1']")).not.toBeNull()
+    expect(container.textContent).toContain("Workspace duplicated as Fixture workspace copy.")
+  })
+
+  it("preserves the selected workspace when duplication fails", async () => {
+    mocks.duplicate.mockRejectedValueOnce(new Error("Workspace version conflict."))
+    const duplicate = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Duplicate workspace",
+    )!
+
+    await act(async () => duplicate.click())
+
+    expect(
+      container.querySelector<HTMLSelectElement>('[aria-label="Saved workspace"]')?.value,
+    ).toBe("workspace-1")
+    expect(localStorage.getItem("flapstack:saved-workspace-selection:v1:project-1")).toBe(
+      "workspace-1",
+    )
+    expect(container.querySelector("[data-pane-adapter='pane-1']")).not.toBeNull()
+    expect(container.textContent).toContain("Workspace version conflict.")
+  })
+
+  it("prevents double submission while workspace duplication is pending", async () => {
+    const pending = deferred<ReturnType<typeof duplicateResult>>()
+    mocks.duplicate.mockReset().mockReturnValueOnce(pending.promise)
+    const duplicate = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Duplicate workspace",
+    )!
+
+    await act(async () => duplicate.click())
+    expect(duplicate.disabled).toBe(true)
+    await act(async () => duplicate.click())
+    expect(mocks.duplicate).toHaveBeenCalledTimes(1)
+
+    const result = duplicateResult()
+    mocks.duplicateWorkspace = result.workspace
+    await act(async () => pending.resolve(result))
+    expect(container.textContent).toContain("Workspace duplicated as Fixture workspace copy.")
+  })
+
+  it("disables workspace duplication while a draft is dirty and preserves that draft", async () => {
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Split panes horizontally"]')!.click()
+    })
+    const duplicate = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "Duplicate workspace",
+    )!
+
+    expect(duplicate.disabled).toBe(true)
+    expect(sessionStorage.getItem("flapstack:saved-workspace-draft:v1:workspace-1")).toContain(
+      '"type":"split"',
+    )
+    await act(async () => duplicate.click())
+    expect(mocks.duplicate).not.toHaveBeenCalled()
+  })
+
   it("queues an edit made during an older save and persists it against the returned version", async () => {
     const firstSave = deferred<ReturnType<typeof savedResult>>()
     mocks.save.mockReset()
@@ -231,6 +362,11 @@ describe("saved workspace persistence view", () => {
     )!
     await act(async () => save.click())
     expect(mocks.save).toHaveBeenCalledTimes(1)
+    expect(
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === "Duplicate workspace",
+      )?.disabled,
+    ).toBe(true)
     const layoutA = mocks.save.mock.calls[0]?.[0].layout as SavedWorkspaceLayout
 
     await act(async () => {
@@ -331,6 +467,17 @@ function savedResult(
       archivedAt: null,
     },
     invalidation: { queries: [], workspaceIds: [workspaceId], removeWorkspaceIds: [] },
+  }
+}
+
+function duplicateResult() {
+  const workspace = {
+    ...savedResult({ layout: fixtureLayout }, 1, "workspace-copy").workspace,
+    name: "Fixture workspace copy",
+  }
+  return {
+    workspace,
+    invalidation: { queries: [], workspaceIds: [workspace.id], removeWorkspaceIds: [] },
   }
 }
 

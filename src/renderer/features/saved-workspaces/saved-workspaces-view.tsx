@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react"
-import { Archive, PanelsTopLeft, RotateCcw, Save, Trash2 } from "lucide-react"
+import { Archive, Copy, PanelsTopLeft, RotateCcw, Save, Trash2 } from "lucide-react"
 import type {
   SavedWorkspaceLayout,
   SavedWorkspaceLayoutNode,
@@ -66,6 +66,7 @@ export function SavedWorkspacesView({
   const loadedWorkspaceId = useRef<string | null>(null)
   const saveInFlight = useRef(false)
   const saveQueued = useRef(false)
+  const duplicateInFlight = useRef(false)
   const layoutRevision = useRef(0)
   const latestLayout = useRef<SavedWorkspaceLayout | null>(null)
   const latestVersion = useRef<number | null>(null)
@@ -101,6 +102,7 @@ export function SavedWorkspacesView({
   const createMutation = trpc.savedWorkspaces.create.useMutation()
   const saveMutation = trpc.savedWorkspaces.saveLayout.useMutation()
   const renameMutation = trpc.savedWorkspaces.rename.useMutation()
+  const duplicateMutation = trpc.savedWorkspaces.duplicate.useMutation()
   const archiveMutation = trpc.savedWorkspaces.archive.useMutation()
   const restoreMutation = trpc.savedWorkspaces.restore.useMutation()
   const deleteMutation = trpc.savedWorkspaces.delete.useMutation()
@@ -524,6 +526,97 @@ export function SavedWorkspacesView({
   const selectedWorkspaceArchived = selected.data?.archivedAt != null
   const workspaceReadOnly = derivedWindowLayout || selectedWorkspaceArchived
 
+  const duplicateWorkspace = async () => {
+    const workspace = selected.data
+    if (
+      duplicateInFlight.current ||
+      !projectId ||
+      Boolean(initialWorkspaceId) ||
+      !selectedWorkspaceIsMember ||
+      !workspace ||
+      workspace.owner.kind !== "manual" ||
+      workspace.archivedAt !== null ||
+      workspaceReadOnly ||
+      workspace.layoutIssue ||
+      !layout ||
+      dirty ||
+      saving ||
+      saveInFlight.current
+    ) {
+      return
+    }
+
+    const generationToDuplicate = workspaceGeneration.current
+    const sourceWorkspaceId = workspace.id
+    duplicateInFlight.current = true
+    setStatus("Duplicating workspace…")
+    try {
+      const result = await duplicateMutation.mutateAsync({
+        workspaceId: workspace.id,
+        expectedVersion: workspace.version,
+      })
+      const invalidations = await Promise.allSettled([
+        utils.savedWorkspaces.list.invalidate({
+          projectId,
+          archive: initialWorkspaceId ? "all" : "active",
+        }),
+        utils.savedWorkspaces.get.invalidate({ workspaceId: result.workspace.id }),
+      ])
+      if (
+        workspaceGeneration.current !== generationToDuplicate ||
+        currentWorkspaceId.current !== sourceWorkspaceId
+      ) {
+        return
+      }
+      writePendingWorkspaceLayout(result.workspace.id, null)
+      workspaceGeneration.current += 1
+      loadedWorkspaceId.current = result.workspace.id
+      currentWorkspaceId.current = result.workspace.id
+      latestLayout.current = result.workspace.layout
+      latestVersion.current = result.workspace.version
+      layoutRevision.current = 0
+      saveQueued.current = false
+      setSelectedWorkspaceId(result.workspace.id)
+      setLayout(result.workspace.layout)
+      setRenameValue(result.workspace.name)
+      setDirty(false)
+      writeSavedWorkspaceSelection(projectId, result.workspace.id)
+      setStatus(
+        invalidations.some((invalidation) => invalidation.status === "rejected")
+          ? `Workspace duplicated as ${result.workspace.name}. Refresh the workspace list to see the latest data.`
+          : `Workspace duplicated as ${result.workspace.name}.`,
+      )
+    } catch (error) {
+      if (
+        workspaceGeneration.current === generationToDuplicate &&
+        currentWorkspaceId.current === sourceWorkspaceId
+      ) {
+        setStatus(error instanceof Error ? error.message : "Workspace duplication failed.")
+      }
+    } finally {
+      duplicateInFlight.current = false
+    }
+  }
+
+  const duplicateDisabled =
+    !selectedWorkspaceIsMember ||
+    Boolean(initialWorkspaceId) ||
+    selected.data?.owner?.kind !== "manual" ||
+    selectedWorkspaceArchived ||
+    workspaceReadOnly ||
+    Boolean(selected.data?.layoutIssue) ||
+    !layout ||
+    dirty ||
+    saving ||
+    createMutation.isPending ||
+    saveMutation.isPending ||
+    renameMutation.isPending ||
+    duplicateInFlight.current ||
+    duplicateMutation.isPending ||
+    archiveMutation.isPending ||
+    restoreMutation.isPending ||
+    deleteMutation.isPending
+
   const popOutPane = async (pane: Parameters<typeof workspacePaneChatIds>[0]) => {
     if (!selectedWorkspaceId || !projectId) return
     const result = await window.desktopApi?.openWorkspacePane?.({
@@ -722,6 +815,21 @@ export function SavedWorkspacesView({
               <Archive className="mr-1 h-4 w-4" /> Archive
             </Button>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void duplicateWorkspace()}
+            disabled={duplicateDisabled}
+            title={
+              selected.data.owner?.kind === "orchestration"
+                ? "Operation workspaces cannot be duplicated."
+                : initialWorkspaceId
+                  ? "Duplicate workspaces from the main Saved Workspaces view."
+                  : undefined
+            }
+          >
+            <Copy className="mr-1 h-4 w-4" /> Duplicate workspace
+          </Button>
           <Button
             type="button"
             variant="destructive"
