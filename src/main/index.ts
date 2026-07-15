@@ -52,7 +52,10 @@ import {
   runAppShutdown,
 } from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
-import { stopRunningRunsOverUsageBudget } from "./lib/usage/budgets"
+import {
+  recordRunningRunUsageBudgetStop,
+  stopRunningRunsOverUsageBudget,
+} from "./lib/usage/budgets"
 import {
   getLaunchDirectory,
   isCliInstalled,
@@ -1045,8 +1048,13 @@ if (gotTheLock) {
                         orchestrationService.acknowledgeCancellationRequest(request.runId)
                       }
                     }
-                    for (const request of stopRunningRunsOverUsageBudget(initDatabase())) {
-                      await runtimeLaunchService.cancel(request.runId, "usage-budget-exceeded")
+                    const usageDatabase = initDatabase()
+                    for (const request of stopRunningRunsOverUsageBudget(usageDatabase)) {
+                      const handled = await runtimeLaunchService.cancel(
+                        request.runId,
+                        "usage-budget-exceeded",
+                      )
+                      if (handled) recordRunningRunUsageBudgetStop(usageDatabase, request)
                     }
                     await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
                   } catch (error) {

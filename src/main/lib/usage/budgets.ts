@@ -14,6 +14,7 @@ import {
 } from "../../../shared/advanced-usage"
 import type { AgentHarness } from "../../../shared/harness-types"
 import * as schema from "../db/schema"
+import { millisecondsToEpochSeconds } from "../db/timestamps"
 import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
 import { queryUsageInsights } from "./insights"
 import { queryUsageRollups, type UsageRollupValue } from "./rollups"
@@ -118,7 +119,7 @@ export function createUsageBudget(
         reset_type, reset_timezone, version, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     )
-    .run(id, ...values, epochSeconds(nowMs), epochSeconds(nowMs))
+    .run(id, ...values, millisecondsToEpochSeconds(nowMs), millisecondsToEpochSeconds(nowMs))
   const policy = requireUsageBudget(db, id)
   appendBudgetAudit(db, {
     status: "completed",
@@ -158,7 +159,12 @@ export function updateUsageBudget(
           reset_timezone = ?, version = version + 1, updated_at = ?
          WHERE id = ? AND version = ?`,
       )
-      .run(...values, epochSeconds(options.nowMs ?? Date.now()), input.id, input.expectedVersion)
+      .run(
+        ...values,
+        millisecondsToEpochSeconds(options.nowMs ?? Date.now()),
+        input.id,
+        input.expectedVersion,
+      )
     if (result.changes !== 1) throw new Error("Usage budget version conflict.")
     clearBudgetArmState(sqlite, input.id)
   })
@@ -293,7 +299,7 @@ export function claimPendingRunWithinUsageBudget(
     const context = resolveUsageBudgetContextForRun(sqlite, runId)
     const decision = resolveUsageBudgets(db, context, options)
     if (decision.blocked) {
-      const now = epochSeconds(options.nowMs ?? Date.now())
+      const now = millisecondsToEpochSeconds(options.nowMs ?? Date.now())
       sqlite
         .prepare(
           "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ? AND status = 'pending'",
@@ -402,45 +408,52 @@ export function evaluateUsageBudgetAlerts(
 export function stopRunningRunsOverUsageBudget(
   db: UsageDb,
   options: { nowMs?: number } = {},
-): Array<{ runId: string; subChatId: string; harness: AgentHarness }> {
+): Array<{
+  runId: string
+  subChatId: string
+  harness: AgentHarness
+  context: UsageBudgetContext
+  budgetIds: string[]
+}> {
   const sqlite = rawClient(db)
   const nowMs = options.nowMs ?? Date.now()
   const rows = sqlite
     .prepare("SELECT id, sub_chat_id, harness FROM agent_runs WHERE status = 'running'")
     .all() as Row[]
-  const stopped: Array<{ runId: string; subChatId: string; harness: AgentHarness }> = []
+  const stopped: Array<{
+    runId: string
+    subChatId: string
+    harness: AgentHarness
+    context: UsageBudgetContext
+    budgetIds: string[]
+  }> = []
   for (const row of rows) {
     const runId = String(row.id)
     const context = resolveUsageBudgetContextForRun(sqlite, runId)
     const decision = resolveUsageBudgets(db, context, { nowMs })
     if (!decision.blocked) continue
-    const transaction = sqlite.transaction(() => {
-      const changed = sqlite
-        .prepare(
-          "UPDATE agent_runs SET status = 'cancelled', completed_at = ? WHERE id = ? AND status = 'running'",
-        )
-        .run(epochSeconds(nowMs), runId).changes
-      if (changed !== 1) return false
-      sqlite
-        .prepare("UPDATE sub_chats SET run_status = 'cancelled', updated_at = ? WHERE id = ?")
-        .run(epochSeconds(nowMs), row.sub_chat_id)
-      return true
-    })
-    if (!transaction.immediate()) continue
-    appendBudgetAudit(db, {
-      status: "completed",
-      action: "running-stop",
-      callerChatId: runId,
-      context,
-      budgetIds: decision.hardStops.map((item) => item.policy.id),
-    })
     stopped.push({
       runId,
       subChatId: String(row.sub_chat_id),
       harness: row.harness as AgentHarness,
+      context,
+      budgetIds: decision.hardStops.map((item) => item.policy.id),
     })
   }
   return stopped
+}
+
+export function recordRunningRunUsageBudgetStop(
+  db: UsageDb,
+  request: ReturnType<typeof stopRunningRunsOverUsageBudget>[number],
+): void {
+  appendBudgetAudit(db, {
+    status: "completed",
+    action: "running-stop",
+    callerChatId: request.runId,
+    context: request.context,
+    budgetIds: request.budgetIds,
+  })
 }
 
 export function providerForHarness(harness: string): string | null {
@@ -688,8 +701,8 @@ function claimBudgetAlert(
           evaluation.policy.id,
           evaluation.policy.action,
           evaluation.thresholdValue,
-          epochSeconds(nowMs),
-          epochSeconds(nowMs),
+          millisecondsToEpochSeconds(nowMs),
+          millisecondsToEpochSeconds(nowMs),
         )
     } else {
       sqlite
@@ -698,8 +711,8 @@ function claimBudgetAlert(
            WHERE budget_id = ? AND action = ? AND threshold_value = ?`,
         )
         .run(
-          epochSeconds(nowMs),
-          epochSeconds(nowMs),
+          millisecondsToEpochSeconds(nowMs),
+          millisecondsToEpochSeconds(nowMs),
           evaluation.policy.id,
           evaluation.policy.action,
           evaluation.thresholdValue,
@@ -724,7 +737,7 @@ function rearmBudget(sqlite: Sqlite, evaluation: UsageBudgetEvaluation, nowMs: n
          AND armed = 0`,
     )
     .run(
-      epochSeconds(nowMs),
+      millisecondsToEpochSeconds(nowMs),
       evaluation.policy.id,
       evaluation.policy.action,
       evaluation.thresholdValue,
@@ -760,7 +773,7 @@ function recordBudgetAlert(
         : evaluation.policy.action === "hard-stop"
           ? `Controlled usage crossed a hard budget${anomaly === "spike" ? " with a confirmed spend spike" : ""}.`
           : `Usage crossed a soft budget${anomaly === "spike" ? " with a confirmed spend spike" : ""}.`,
-      epochSeconds(nowMs),
+      millisecondsToEpochSeconds(nowMs),
     )
 }
 
@@ -1021,10 +1034,6 @@ function pruneOverrides(nowMs: number): void {
 
 function rawClient(db: UsageDb): Sqlite {
   return (db as unknown as { $client: Sqlite }).$client
-}
-
-function epochSeconds(ms: number): number {
-  return Math.floor(ms / 1_000)
 }
 
 function epochMs(value: unknown): number | null {

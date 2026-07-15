@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AGENT_HARNESSES } from "./harness-types"
+import { AGENT_HARNESSES, type AgentHarness } from "./harness-types"
 import {
   customPermissionCapabilitiesSchema,
   refineCustomPermissionMode,
@@ -17,6 +17,18 @@ export const automationActionTypeSchema = z.enum(automationActionTypes)
 
 export const automationTriggerTypes = ["manual", "schedule", "run-complete", "file-change"] as const
 export const automationTriggerTypeSchema = z.enum(automationTriggerTypes)
+
+export const AUTOMATION_EXECUTION_HARNESSES = [
+  "codex",
+  "claude-code",
+  "cursor-agent",
+  "openrouter",
+  "nanogpt",
+] as const satisfies readonly AgentHarness[]
+
+export function supportsAutomationExecution(harness: AgentHarness): boolean {
+  return (AUTOMATION_EXECUTION_HARNESSES as readonly AgentHarness[]).includes(harness)
+}
 
 export const DEFAULT_AUTOMATION_FILE_TRIGGER_EXCLUDES = [
   ".git/**",

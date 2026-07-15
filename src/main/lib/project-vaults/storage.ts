@@ -1,5 +1,6 @@
 import { and, desc, eq } from "drizzle-orm"
 import { createHash, randomUUID } from "node:crypto"
+import { rmSync } from "node:fs"
 import { lstat, readdir, rm } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import type { getDatabase } from "../db"
@@ -58,6 +59,11 @@ export type ProjectVaultDeleteContract = {
   schemaVersion: number
   sectionVersions: Array<{ sectionId: string; version: number; contentHash: string }>
   requiredPhrase: string
+}
+
+export type ProjectVaultDeleteHooks = {
+  /** Test seam for proving metadata and pathname rollback when removal fails. */
+  removeStagedRoot?: (targetPath: string) => void
 }
 
 export type ProjectVaultWriteHooks = {
@@ -575,15 +581,17 @@ export function getProjectVaultDeleteContract(
 export async function deleteProjectVault(
   database: Database,
   input: { contract: ProjectVaultDeleteContract; confirmationPhrase: string },
+  hooks: ProjectVaultDeleteHooks = {},
 ): Promise<{ projectId: string; deleted: true }> {
   return withVaultMutationLock(input.contract.projectId, () =>
-    deleteProjectVaultUnlocked(database, input),
+    deleteProjectVaultUnlocked(database, input, hooks),
   )
 }
 
 async function deleteProjectVaultUnlocked(
   database: Database,
   input: { contract: ProjectVaultDeleteContract; confirmationPhrase: string },
+  hooks: ProjectVaultDeleteHooks,
 ): Promise<{ projectId: string; deleted: true }> {
   const current = getProjectVaultDeleteContract(database, input.contract.projectId)
   if (input.confirmationPhrase !== current.requiredPhrase) {
@@ -615,12 +623,21 @@ async function deleteProjectVaultUnlocked(
   )
 
   try {
-    database.transaction((tx) => {
-      tx.delete(projectVaults).where(eq(projectVaults.projectId, current.projectId)).run()
-      tx.delete(filesystemRootRegistrations)
-        .where(eq(filesystemRootRegistrations.path, current.rootPath))
-        .run()
-    })
+    await actOnPathInsideRoot(
+      plan.container.canonicalPath,
+      relative(plan.container.canonicalPath, staged.newPath),
+      async (targetPath) => {
+        database.transaction((tx) => {
+          tx.delete(projectVaults).where(eq(projectVaults.projectId, current.projectId)).run()
+          tx.delete(filesystemRootRegistrations)
+            .where(eq(filesystemRootRegistrations.path, current.rootPath))
+            .run()
+          ;(hooks.removeStagedRoot ?? ((path: string) => rmSync(path, { recursive: true })))(
+            targetPath,
+          )
+        })
+      },
+    )
   } catch (error) {
     await renamePathInsideRoot(
       plan.container.canonicalPath,
@@ -629,12 +646,6 @@ async function deleteProjectVaultUnlocked(
     )
     throw error
   }
-
-  await actOnPathInsideRoot(
-    plan.container.canonicalPath,
-    relative(plan.container.canonicalPath, staged.newPath),
-    (targetPath) => rm(targetPath, { recursive: true }),
-  )
   return { projectId: current.projectId, deleted: true }
 }
 

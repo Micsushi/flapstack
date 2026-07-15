@@ -82,6 +82,12 @@ interface PendingBatch {
   timer: unknown | null
 }
 
+interface RetryOccurrence {
+  occurrence: AutomationFileTriggerOccurrence
+  delayMs: number
+  timer: unknown | null
+}
+
 const systemTimers: AutomationFileTriggerTimers = {
   setTimeout(callback, delayMs) {
     const timer = setTimeout(callback, delayMs)
@@ -100,6 +106,7 @@ export class AutomationFileTriggerService {
   private readonly createDedupeId: () => string
   private roots = new Map<string, RootWatch>()
   private pending = new Map<string, PendingBatch>()
+  private retries = new Map<string, RetryOccurrence>()
   private flushes = new Set<Promise<void>>()
   private generation = 0
 
@@ -113,6 +120,7 @@ export class AutomationFileTriggerService {
   async replaceTriggers(configs: AutomationFileTriggerConfig[]): Promise<void> {
     const generation = ++this.generation
     await this.closeRootsAndBatches()
+    this.clearRetries()
 
     const grouped = new Map<
       string,
@@ -165,6 +173,7 @@ export class AutomationFileTriggerService {
   async stop(): Promise<void> {
     ++this.generation
     await this.closeRootsAndBatches()
+    this.clearRetries()
     await Promise.all([...this.flushes])
   }
 
@@ -273,11 +282,36 @@ export class AutomationFileTriggerService {
         truncated: batch.truncated,
       },
     }
+    const retry: RetryOccurrence = {
+      occurrence,
+      delayMs: batch.trigger.debounceMs,
+      timer: null,
+    }
+    this.retries.set(occurrence.dedupeKey, retry)
+    this.enqueueWithRetry(retry)
+  }
+
+  private enqueueWithRetry(retry: RetryOccurrence): void {
+    retry.timer = null
     const flush = Promise.resolve()
-      .then(() => this.options.enqueueOccurrence(occurrence))
-      .catch((error) => this.reportError(error))
+      .then(() => this.options.enqueueOccurrence(retry.occurrence))
+      .then(() => {
+        this.retries.delete(retry.occurrence.dedupeKey)
+      })
+      .catch((error) => {
+        this.reportError(error)
+        if (this.retries.get(retry.occurrence.dedupeKey) !== retry) return
+        retry.timer = this.timers.setTimeout(() => this.enqueueWithRetry(retry), retry.delayMs)
+      })
       .finally(() => this.flushes.delete(flush))
     this.flushes.add(flush)
+  }
+
+  private clearRetries(): void {
+    for (const retry of this.retries.values()) {
+      if (retry.timer !== null) this.timers.clearTimeout(retry.timer)
+    }
+    this.retries.clear()
   }
 
   private async disableRoot(rootWatch: RootWatch, error: unknown): Promise<void> {

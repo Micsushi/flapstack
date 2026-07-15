@@ -334,7 +334,11 @@ describe("bounded local-model shell, git, and network tools", () => {
     ).resolves.toMatchObject({ ok: false, errorCode: "approval-denied" })
     expect(fetchImpl).not.toHaveBeenCalled()
 
-    const allowedExecutor = createExecutor({ networkPolicy: "allow", fetchImpl })
+    const allowedExecutor = createExecutor({
+      networkPolicy: "allow",
+      fetchImpl,
+      resolveHost: async () => ["93.184.216.34"],
+    })
     await expect(
       execute(allowedExecutor, "network_fetch", { url: "https://example.test/data" }),
     ).resolves.toMatchObject({ ok: true, content: "ok" })
@@ -342,6 +346,51 @@ describe("bounded local-model shell, git, and network tools", () => {
       expect.objectContaining({ hostname: "example.test" }),
       expect.objectContaining({ method: "GET", redirect: "manual" }),
     )
+  })
+
+  it.each([
+    ["http://127.0.0.1:11434/api/tags", ["127.0.0.1"]],
+    ["http://169.254.169.254/latest/meta-data", ["169.254.169.254"]],
+    ["http://service.internal/data", ["10.0.0.8"]],
+    ["http://service.internal/data", ["fc00::8"]],
+    ["http://service.internal/data", ["93.184.216.34", "192.168.1.5"]],
+  ])("blocks private network target %s before dispatch", async (url, addresses) => {
+    const fetchImpl = vi.fn(async () => new Response("unexpected")) as unknown as typeof fetch
+    const executor = createExecutor({
+      networkPolicy: "allow",
+      fetchImpl,
+      resolveHost: async () => addresses,
+    })
+
+    await expect(execute(executor, "network_fetch", { url })).resolves.toMatchObject({
+      ok: false,
+      errorCode: "tool-failed",
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it("blocks localhost names without DNS resolution", async () => {
+    const fetchImpl = vi.fn(async () => new Response("unexpected")) as unknown as typeof fetch
+    const resolveHost = vi.fn(async () => ["93.184.216.34"])
+    const executor = createExecutor({ networkPolicy: "allow", fetchImpl, resolveHost })
+
+    await expect(
+      execute(executor, "network_fetch", { url: "http://api.localhost/data" }),
+    ).resolves.toMatchObject({ ok: false, errorCode: "tool-failed" })
+    expect(resolveHost).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it("normalizes bracketed IPv6 targets before checking resolved addresses", async () => {
+    const fetchImpl = vi.fn(async () => new Response("unexpected")) as unknown as typeof fetch
+    const resolveHost = vi.fn(async () => ["::1"])
+    const executor = createExecutor({ networkPolicy: "allow", fetchImpl, resolveHost })
+
+    await expect(
+      execute(executor, "network_fetch", { url: "http://[::1]/data" }),
+    ).resolves.toMatchObject({ ok: false, errorCode: "tool-failed" })
+    expect(resolveHost).toHaveBeenCalledWith("::1")
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it("keeps argument and environment secrets out of tool evidence and provider context", async () => {

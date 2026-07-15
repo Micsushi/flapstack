@@ -62,6 +62,18 @@ describe("Runtime activity ordering, pagination, replay, and state", () => {
     ).toEqual(["legacy:0:0", "legacy:1:0", "new-answer"])
   })
 
+  it("does not remove a user message that matches durable assistant text", () => {
+    const durable = activity("agent-text", { text: "Repeat this exactly" }, { eventId: "echo" })
+    const sources = selectRuntimeActivitySource(
+      [durable],
+      [{ role: "user", parts: [{ type: "text", text: "Repeat this exactly" }] }],
+    )
+
+    expect(
+      sources.map((source) => ("eventId" in source ? source.eventId : source.projectionId)),
+    ).toEqual(["legacy:0:0", "echo"])
+  })
+
   it("preserves selection while invalidation marks the replay stale", () => {
     let state = createRuntimeActivityTimelineState({
       events: [activity("status", { message: "live" }, { eventId: "stable" })],

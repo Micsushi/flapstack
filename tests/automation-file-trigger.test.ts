@@ -93,6 +93,65 @@ describe("automation file triggers", () => {
     await service.stop()
   })
 
+  it("retries a failed occurrence enqueue with the same dedupe key", async () => {
+    vi.useFakeTimers()
+    const root = fixtureRoot()
+    writeFileSync(join(root, "file.ts"), "file")
+    const harness = watcherHarness()
+    const occurrences: AutomationFileTriggerOccurrence[] = []
+    const errors: Error[] = []
+    let attempts = 0
+    const service = new AutomationFileTriggerService({
+      enqueueOccurrence: (occurrence) => {
+        attempts += 1
+        if (attempts === 1) throw new Error("database busy")
+        occurrences.push(occurrence)
+      },
+      watchFactory: harness.factory,
+      resolveRegisteredRoot: registration,
+      createDedupeId: () => "retry-batch",
+      onError: (error) => errors.push(error),
+    })
+    await service.replaceTriggers([trigger(root)])
+
+    harness.adapters[0]!.emit("change", join(root, "file.ts"))
+    await vi.advanceTimersByTimeAsync(200)
+    expect(occurrences).toEqual([])
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(attempts).toBe(2)
+    expect(errors).toHaveLength(1)
+    expect(occurrences).toHaveLength(1)
+    expect(occurrences[0]!.dedupeKey).toBe("file-change:trigger-1:retry-batch")
+    await service.stop()
+  })
+
+  it("cancels an enqueue retry when its trigger configuration is replaced", async () => {
+    vi.useFakeTimers()
+    const root = fixtureRoot()
+    writeFileSync(join(root, "file.ts"), "file")
+    const harness = watcherHarness()
+    let attempts = 0
+    const service = new AutomationFileTriggerService({
+      enqueueOccurrence: () => {
+        attempts += 1
+        throw new Error("database busy")
+      },
+      watchFactory: harness.factory,
+      resolveRegisteredRoot: registration,
+    })
+    await service.replaceTriggers([trigger(root)])
+
+    harness.adapters[0]!.emit("change", join(root, "file.ts"))
+    await vi.advanceTimersByTimeAsync(200)
+    expect(attempts).toBe(1)
+
+    await service.replaceTriggers([])
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(attempts).toBe(1)
+    await service.stop()
+  })
+
   it("fails closed for traversal, outside paths, and symlinks", async () => {
     vi.useFakeTimers()
     const container = fixtureContainer()

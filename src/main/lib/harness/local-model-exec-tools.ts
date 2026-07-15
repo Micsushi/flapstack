@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { lookup } from "node:dns/promises"
 import { lstatSync, realpathSync } from "node:fs"
+import { BlockList, isIP } from "node:net"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import type {
@@ -9,6 +11,7 @@ import type {
   LocalModelToolResult,
   LocalModelToolSchema,
 } from "./local-model-read-tools"
+import { boundedInteger, isAbortError } from "./local-model-tool-utils"
 
 export const LOCAL_MODEL_EXEC_TOOL_NAMES = ["shell_exec", "git_exec", "network_fetch"] as const
 export type LocalModelExecToolName = (typeof LOCAL_MODEL_EXEC_TOOL_NAMES)[number]
@@ -112,6 +115,7 @@ export type LocalModelExecToolOptions = {
   audit?: (record: LocalModelExecAuditRecord) => void | Promise<void>
   runCommand?: (request: LocalModelCommandRequest) => Promise<LocalModelCommandResult>
   fetchImpl?: typeof fetch
+  resolveHost?: (hostname: string) => Promise<readonly string[]>
   environment?: NodeJS.ProcessEnv
   shellCommands?: readonly string[]
   timeoutMs?: number
@@ -148,6 +152,7 @@ export function createBoundedLocalModelExecToolExecutor(
   const safeEnvironment = filterEnvironment(environment)
   const secretValues = secretEnvironmentValues(environment)
   const now = options.now ?? Date.now
+  const resolveHost = options.resolveHost ?? resolveHostAddresses
 
   return {
     redactInput(call) {
@@ -231,6 +236,7 @@ export function createBoundedLocalModelExecToolExecutor(
                 timeoutMs,
                 maxOutputBytes,
                 secretValues,
+                resolveHost,
               )
             : await executeCommand(
                 parsed,
@@ -526,7 +532,9 @@ async function executeNetworkFetch(
   timeoutMs: number,
   maxOutputBytes: number,
   secretValues: readonly string[],
+  resolveHost: (hostname: string) => Promise<readonly string[]>,
 ): Promise<ExecutionResult> {
+  await assertPublicNetworkTarget(parsed.url!, resolveHost)
   const controller = new AbortController()
   let timedOut = false
   const cancel = () => controller.abort()
@@ -991,19 +999,62 @@ function toolSchema(
   }
 }
 
-function boundedInteger(
-  value: number | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.min(max, Math.max(min, Math.floor(value!)))
+const blockedNetworkTargets = new BlockList()
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const) {
+  blockedNetworkTargets.addSubnet(network, prefix, "ipv4")
+}
+for (const [network, prefix] of [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+] as const) {
+  blockedNetworkTargets.addSubnet(network, prefix, "ipv6")
 }
 
-function isAbortError(error: unknown): boolean {
-  return (
-    (error instanceof DOMException && error.name === "AbortError") ||
-    (error instanceof Error && error.name === "AbortError")
-  )
+async function resolveHostAddresses(hostname: string): Promise<readonly string[]> {
+  if (isIP(hostname)) return [hostname]
+  const addresses = await lookup(hostname, { all: true, verbatim: true })
+  return addresses.map(({ address }) => address)
+}
+
+async function assertPublicNetworkTarget(
+  url: URL,
+  resolveHost: (hostname: string) => Promise<readonly string[]>,
+): Promise<void> {
+  const rawHostname = url.hostname.toLowerCase()
+  const hostname =
+    rawHostname.startsWith("[") && rawHostname.endsWith("]")
+      ? rawHostname.slice(1, -1)
+      : rawHostname
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    throw new ExecArgumentsError("Network URLs cannot target loopback or private services.")
+  }
+  const addresses = await resolveHost(hostname)
+  if (addresses.length === 0) throw new ExecArgumentsError("Network hostname did not resolve.")
+  for (const address of addresses) {
+    const family = isIP(address)
+    if (
+      family === 0 ||
+      (family === 4 && blockedNetworkTargets.check(address, "ipv4")) ||
+      (family === 6 &&
+        (address.toLowerCase().startsWith("::ffff:") ||
+          blockedNetworkTargets.check(address, "ipv6")))
+    ) {
+      throw new ExecArgumentsError("Network URLs cannot target loopback or private services.")
+    }
+  }
 }

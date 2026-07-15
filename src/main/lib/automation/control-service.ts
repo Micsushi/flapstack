@@ -8,6 +8,7 @@ import {
   type AutomationTrigger,
 } from "../../../shared/automation"
 import { customPermissionCapabilityKeys } from "../../../shared/permission-capabilities"
+import { parseJsonText } from "../json"
 
 const PAGE_MAX = 100
 
@@ -635,7 +636,7 @@ function readRecord(
     name: row.name,
     description: row.description,
     scope: rowScope(row),
-    action: parseJson(row.action_config, "automation action"),
+    action: parseStoredJson(row.action_config, "automation action"),
     trigger: rowTrigger(row),
     run: {
       prompt: row.prompt,
@@ -643,7 +644,7 @@ function readRecord(
       ...(row.model ? { model: row.model } : {}),
       permissionMode: row.permission_mode,
       ...(row.custom_permissions
-        ? { customPermissions: parseJson(row.custom_permissions, "custom permissions") }
+        ? { customPermissions: parseStoredJson(row.custom_permissions, "custom permissions") }
         : {}),
       worktreeStrategy: row.worktree_strategy,
       ...(row.worktree_path ? { worktreePath: row.worktree_path } : {}),
@@ -716,7 +717,7 @@ function rowTrigger(row: Row): AutomationTrigger {
         ...(row.run_project_id ? { projectId: String(row.run_project_id) } : {}),
         ...(row.run_task_id ? { taskId: String(row.run_task_id) } : {}),
         ...(row.run_chat_id ? { chatId: String(row.run_chat_id) } : {}),
-        statuses: parseJson(row.run_statuses, "run statuses") as Array<
+        statuses: parseStoredJson(row.run_statuses, "run statuses") as Array<
           "success" | "failure" | "cancelled"
         >,
       }
@@ -724,8 +725,8 @@ function rowTrigger(row: Row): AutomationTrigger {
       return {
         type: "file-change",
         rootPath: String(row.root_path),
-        includeGlobs: parseJson(row.include_globs, "include globs") as string[],
-        excludeGlobs: parseJson(row.exclude_globs, "exclude globs") as string[],
+        includeGlobs: parseStoredJson(row.include_globs, "include globs") as string[],
+        excludeGlobs: parseStoredJson(row.exclude_globs, "exclude globs") as string[],
         debounceMs: Number(row.debounce_ms),
       }
     default:
@@ -900,13 +901,11 @@ function decodeCursor(cursor?: string): number {
   return value
 }
 
-function parseJson(value: unknown, label: string): unknown {
-  if (typeof value !== "string") fail("invalid-input", `Stored ${label} is invalid.`)
-  try {
-    return JSON.parse(value)
-  } catch {
-    fail("invalid-input", `Stored ${label} is invalid.`)
-  }
+function parseStoredJson(value: unknown, label: string): unknown {
+  return parseJsonText(
+    value,
+    () => new AutomationControlError("invalid-input", `Stored ${label} is invalid.`),
+  )
 }
 
 function canonicalJson(value: unknown): string {

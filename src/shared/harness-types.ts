@@ -9,6 +9,10 @@ export const AGENT_HARNESSES = [
 
 export type AgentHarness = (typeof AGENT_HARNESSES)[number]
 
+export function isAgentHarness(value: string): value is AgentHarness {
+  return (AGENT_HARNESSES as readonly string[]).includes(value)
+}
+
 export const OPENCODE_HARNESSES = ["openrouter", "nanogpt"] as const
 export type OpencodeHarness = (typeof OPENCODE_HARNESSES)[number]
 

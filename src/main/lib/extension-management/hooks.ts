@@ -348,7 +348,7 @@ export class NodeHookDryRunRunner implements HookDryRunRunner {
         windowsHide: true,
         detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
-        env: dryRunEnvironment(),
+        env: hookEnvironment("FLAPSTACK_HOOK_DRY_RUN"),
       })
 
       const stop = (): void => {
@@ -439,7 +439,7 @@ export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecuto
         windowsHide: true,
         detached: process.platform !== "win32",
         stdio: ["pipe", "pipe", "pipe"],
-        env: runtimeEnvironment(),
+        env: hookEnvironment("FLAPSTACK_MANAGED_HOOK"),
       })
       const stop = (): void => {
         if (child.killed) return
@@ -1083,16 +1083,9 @@ function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex")
 }
 
-function dryRunEnvironment(): NodeJS.ProcessEnv {
+function hookEnvironment(marker: "FLAPSTACK_HOOK_DRY_RUN" | "FLAPSTACK_MANAGED_HOOK") {
   const allowed = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SystemRoot", "WINDIR"]
-  const env: NodeJS.ProcessEnv = { FLAPSTACK_HOOK_DRY_RUN: "1" }
-  for (const key of allowed) if (process.env[key]) env[key] = process.env[key]
-  return env
-}
-
-function runtimeEnvironment(): NodeJS.ProcessEnv {
-  const allowed = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SystemRoot", "WINDIR"]
-  const env: NodeJS.ProcessEnv = { FLAPSTACK_MANAGED_HOOK: "1" }
+  const env: NodeJS.ProcessEnv = { [marker]: "1" }
   for (const key of allowed) if (process.env[key]) env[key] = process.env[key]
   return env
 }

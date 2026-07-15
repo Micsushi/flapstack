@@ -12,6 +12,7 @@ import {
   rebuildUsageAttributionRollups,
 } from "../src/main/lib/usage/attribution"
 import { applyUsageStorePragmas, insertSamples, type UsageDb } from "../src/main/lib/usage/store"
+import { selectLatestUsageOverlapFacts } from "../src/main/lib/usage/fact-selection"
 import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const temporaryDirectories: string[] = []
@@ -21,6 +22,23 @@ describe("usage fact ordering", () => {
     expect(
       compareUsageFactRecency({ id: "10", captured_at: 100 }, { id: "9", captured_at: 100 }),
     ).toBeGreaterThan(0)
+  })
+
+  it("uses the numeric id tie-breaker for shared overlap selection", () => {
+    const facts = [
+      { id: "9", capturedAt: 100, group: "shared" },
+      { id: "10", capturedAt: 100, group: "shared" },
+    ]
+
+    expect(
+      selectLatestUsageOverlapFacts(facts, {
+        id: (fact) => fact.id,
+        capturedAt: (fact) => fact.capturedAt,
+        sourceClass: () => "provider",
+        dedupeStrategy: () => "overlap-group",
+        dedupeGroupKey: (fact) => fact.group,
+      }),
+    ).toEqual([facts[1]])
   })
 })
 

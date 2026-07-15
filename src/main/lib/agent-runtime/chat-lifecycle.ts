@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
 import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
 import { formatChatHandoff, type HandoffMessage } from "../chat-handoff"
+import { millisecondsToEpochSeconds } from "../db/timestamps"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
 
 type Sqlite = Database.Database
@@ -65,7 +66,7 @@ export class RuntimeChatLifecycleService {
         assertCompatible(String(chat.harness ?? "generic"), input.preference)
         this.sqlite
           .prepare("UPDATE chats SET runtime_preference = ?, updated_at = ? WHERE id = ?")
-          .run(input.preference, epochSeconds(Date.now()), input.chatId)
+          .run(input.preference, millisecondsToEpochSeconds(Date.now()), input.chatId)
         return { chatId: input.chatId, runtimePreference: input.preference }
       })
       .immediate()
@@ -131,7 +132,7 @@ export class RuntimeChatLifecycleService {
             "Source chat lineage is corrupt.",
           )
         }
-        const now = epochSeconds(Date.now())
+        const now = millisecondsToEpochSeconds(Date.now())
         const name =
           input.name?.trim() ||
           `${String(source.name ?? "Chat")} · ${runtimeLabel(input.preference)}`
@@ -224,7 +225,11 @@ export class RuntimeChatLifecycleService {
         }
         this.sqlite
           .prepare("UPDATE chats SET archived_at = ?, updated_at = ? WHERE id = ?")
-          .run(epochSeconds(Date.now()), epochSeconds(Date.now()), input.targetChatId)
+          .run(
+            millisecondsToEpochSeconds(Date.now()),
+            millisecondsToEpochSeconds(Date.now()),
+            input.targetChatId,
+          )
         return true
       })
       .immediate()
@@ -399,10 +404,6 @@ function runtimeLabel(preference: AgentRuntimePreference): string {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null
-}
-
-function epochSeconds(value: number): number {
-  return Math.floor(value / 1_000)
 }
 
 function rawClient(database: DatabaseLike): Sqlite {

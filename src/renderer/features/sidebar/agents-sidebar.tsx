@@ -6478,6 +6478,63 @@ export function AgentsSidebar({
     }
   }, [])
 
+  const sharedChatListSectionProps = {
+    selectedChatId,
+    selectedChatIsRemote,
+    focusedChatIndex,
+    loadingChatIds,
+    unseenChanges,
+    workspacePendingPlans,
+    workspacePendingQuestions,
+    isMultiSelectMode,
+    selectedChatIds,
+    isMobileFullscreen,
+    isDesktop,
+    pinnedChatIds,
+    projectsMap,
+    taskDefaultWorktrees,
+    workspaceFileStats,
+    filteredChats,
+    canShowPinOption,
+    areAllSelectedPinned,
+    showIcon: showWorkspaceIcon,
+    moveDestinations,
+    movePending: moveChatMutation.isPending,
+    onChatClick: handleChatClick,
+    onCheckboxClick: handleCheckboxClick,
+    onMouseEnter: handleAgentMouseEnter,
+    onMouseLeave: handleAgentMouseLeave,
+    onArchive: handleArchiveSingle,
+    onTogglePin: handleTogglePin,
+    onToggleStar: handleToggleStar,
+    onRenameClick: handleRenameClick,
+    onCopyBranch: handleCopyBranch,
+    onArchiveAllBelow: handleArchiveAllBelow,
+    onArchiveOthers: handleArchiveOthers,
+    onOpenLocally: handleOpenLocally,
+    onMoveChat: handleMoveChat,
+    onBulkPin: handleBulkPin,
+    onBulkUnpin: handleBulkUnpin,
+    onBulkArchive: handleBulkArchive,
+    onCreateTaskChat: openNewTaskChat,
+    onToggleSection: handleToggleSection,
+    onSelectScope: handleSelectScope,
+    onDragStartItem: handleDragStartItem,
+    onDragOverItem: handleDragOverItem,
+    onDropItem: handleDropItem,
+    onDragEndItem: handleDragEndItem,
+    onToggleLifecyclePin: handleToggleLifecyclePin,
+    onToggleLifecycleStar: handleToggleLifecycleStar,
+    onArchiveLifecycle: handleArchiveLifecycle,
+    archivePending: archiveChatMutation.isPending || archiveRemoteChatMutation.isPending,
+    archiveBatchPending:
+      archiveChatsBatchMutation.isPending || archiveRemoteChatsBatchMutation.isPending,
+    nameRefCallback,
+    formatTime,
+    justCreatedIds,
+    starredChatIds,
+  }
+
   // Mobile fullscreen mode - render without ResizableSidebar wrapper
   const sidebarContent = (
     <div
@@ -6824,6 +6881,7 @@ export function AgentsSidebar({
                   className={cn("mb-0", isMultiSelectMode ? "px-0" : "-mx-1")}
                 >
                   <ChatListSection
+                    {...sharedChatListSectionProps}
                     title={section.title}
                     sectionId={section.kind}
                     kind={section.kind}
@@ -6837,64 +6895,10 @@ export function AgentsSidebar({
                     dragOverId={dragOverItem?.id}
                     dragOverPosition={dragOverItem?.position}
                     chats={section.chats}
-                    selectedChatId={selectedChatId}
-                    selectedChatIsRemote={selectedChatIsRemote}
-                    focusedChatIndex={focusedChatIndex}
-                    loadingChatIds={loadingChatIds}
-                    unseenChanges={unseenChanges}
-                    workspacePendingPlans={workspacePendingPlans}
-                    workspacePendingQuestions={workspacePendingQuestions}
-                    isMultiSelectMode={isMultiSelectMode}
-                    selectedChatIds={selectedChatIds}
-                    isMobileFullscreen={isMobileFullscreen}
-                    isDesktop={isDesktop}
-                    pinnedChatIds={pinnedChatIds}
-                    projectsMap={projectsMap}
-                    taskDefaultWorktrees={taskDefaultWorktrees}
-                    workspaceFileStats={workspaceFileStats}
-                    filteredChats={filteredChats}
-                    canShowPinOption={canShowPinOption}
-                    areAllSelectedPinned={areAllSelectedPinned}
-                    showIcon={showWorkspaceIcon}
-                    moveDestinations={moveDestinations}
-                    movePending={moveChatMutation.isPending}
-                    onChatClick={handleChatClick}
-                    onCheckboxClick={handleCheckboxClick}
-                    onMouseEnter={handleAgentMouseEnter}
-                    onMouseLeave={handleAgentMouseLeave}
-                    onArchive={handleArchiveSingle}
-                    onTogglePin={handleTogglePin}
-                    onToggleStar={handleToggleStar}
-                    onRenameClick={handleRenameClick}
-                    onCopyBranch={handleCopyBranch}
-                    onArchiveAllBelow={handleArchiveAllBelow}
-                    onArchiveOthers={handleArchiveOthers}
-                    onOpenLocally={handleOpenLocally}
-                    onMoveChat={handleMoveChat}
-                    onBulkPin={handleBulkPin}
-                    onBulkUnpin={handleBulkUnpin}
-                    onBulkArchive={handleBulkArchive}
                     onCreateGlobalChat={openNewGlobalChat}
                     onCreateProjectChat={openNewProjectChat}
                     onCreateProjectTask={createProjectTask}
-                    onCreateTaskChat={openNewTaskChat}
                     onChangeProjectColor={handleChangeProjectColor}
-                    onToggleSection={handleToggleSection}
-                    onSelectScope={handleSelectScope}
-                    onDragStartItem={handleDragStartItem}
-                    onDragOverItem={handleDragOverItem}
-                    onDropItem={handleDropItem}
-                    onDragEndItem={handleDragEndItem}
-                    onToggleLifecyclePin={handleToggleLifecyclePin}
-                    onToggleLifecycleStar={handleToggleLifecycleStar}
-                    onArchiveLifecycle={handleArchiveLifecycle}
-                    archivePending={
-                      archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                    }
-                    archiveBatchPending={
-                      archiveChatsBatchMutation.isPending ||
-                      archiveRemoteChatsBatchMutation.isPending
-                    }
                     lifecyclePending={
                       pinProjectMutation.isPending ||
                       unpinProjectMutation.isPending ||
@@ -6903,14 +6907,11 @@ export function AgentsSidebar({
                       unpinTaskMutation.isPending ||
                       archiveTaskMutation.isPending
                     }
-                    nameRefCallback={nameRefCallback}
-                    formatTime={formatTime}
-                    justCreatedIds={justCreatedIds}
-                    starredChatIds={starredChatIds}
                   />
                   {!collapsedSectionIds.has(section.kind) &&
                     section.tasks.map((task) => (
                       <ChatListSection
+                        {...sharedChatListSectionProps}
                         key={`${section.kind}-task-${task.taskId}`}
                         title={task.title}
                         sectionId={`${section.kind}-task-${task.taskId}`}
@@ -6925,69 +6926,11 @@ export function AgentsSidebar({
                         }}
                         parentProjectId={task.projectId}
                         chats={task.chats}
-                        selectedChatId={selectedChatId}
-                        selectedChatIsRemote={selectedChatIsRemote}
-                        focusedChatIndex={focusedChatIndex}
-                        loadingChatIds={loadingChatIds}
-                        unseenChanges={unseenChanges}
-                        workspacePendingPlans={workspacePendingPlans}
-                        workspacePendingQuestions={workspacePendingQuestions}
-                        isMultiSelectMode={isMultiSelectMode}
-                        selectedChatIds={selectedChatIds}
-                        isMobileFullscreen={isMobileFullscreen}
-                        isDesktop={isDesktop}
-                        pinnedChatIds={pinnedChatIds}
-                        projectsMap={projectsMap}
-                        taskDefaultWorktrees={taskDefaultWorktrees}
-                        workspaceFileStats={workspaceFileStats}
-                        filteredChats={filteredChats}
-                        canShowPinOption={canShowPinOption}
-                        areAllSelectedPinned={areAllSelectedPinned}
-                        showIcon={showWorkspaceIcon}
-                        moveDestinations={moveDestinations}
-                        movePending={moveChatMutation.isPending}
-                        onChatClick={handleChatClick}
-                        onCheckboxClick={handleCheckboxClick}
-                        onMouseEnter={handleAgentMouseEnter}
-                        onMouseLeave={handleAgentMouseLeave}
-                        onArchive={handleArchiveSingle}
-                        onTogglePin={handleTogglePin}
-                        onToggleStar={handleToggleStar}
-                        onRenameClick={handleRenameClick}
-                        onCopyBranch={handleCopyBranch}
-                        onArchiveAllBelow={handleArchiveAllBelow}
-                        onArchiveOthers={handleArchiveOthers}
-                        onOpenLocally={handleOpenLocally}
-                        onMoveChat={handleMoveChat}
-                        onBulkPin={handleBulkPin}
-                        onBulkUnpin={handleBulkUnpin}
-                        onBulkArchive={handleBulkArchive}
-                        onCreateTaskChat={openNewTaskChat}
-                        onToggleSection={handleToggleSection}
-                        onSelectScope={handleSelectScope}
-                        onDragStartItem={handleDragStartItem}
-                        onDragOverItem={handleDragOverItem}
-                        onDropItem={handleDropItem}
-                        onDragEndItem={handleDragEndItem}
-                        onToggleLifecyclePin={handleToggleLifecyclePin}
-                        onToggleLifecycleStar={handleToggleLifecycleStar}
-                        onArchiveLifecycle={handleArchiveLifecycle}
-                        archivePending={
-                          archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                        }
-                        archiveBatchPending={
-                          archiveChatsBatchMutation.isPending ||
-                          archiveRemoteChatsBatchMutation.isPending
-                        }
                         lifecyclePending={
                           pinTaskMutation.isPending ||
                           unpinTaskMutation.isPending ||
                           archiveTaskMutation.isPending
                         }
-                        nameRefCallback={nameRefCallback}
-                        formatTime={formatTime}
-                        justCreatedIds={justCreatedIds}
-                        starredChatIds={starredChatIds}
                       />
                     ))}
                 </div>
@@ -7076,6 +7019,7 @@ export function AgentsSidebar({
                 return (
                   <React.Fragment key={section.id}>
                     <ChatListSection
+                      {...sharedChatListSectionProps}
                       title={section.title}
                       sectionId={section.id}
                       sectionDragId={section.sectionDragId}
@@ -7131,64 +7075,10 @@ export function AgentsSidebar({
                       dragOverPosition={dragOverItem?.position}
                       lifecycleTarget={section.lifecycleTarget}
                       chats={section.chats}
-                      selectedChatId={selectedChatId}
-                      selectedChatIsRemote={selectedChatIsRemote}
-                      focusedChatIndex={focusedChatIndex}
-                      loadingChatIds={loadingChatIds}
-                      unseenChanges={unseenChanges}
-                      workspacePendingPlans={workspacePendingPlans}
-                      workspacePendingQuestions={workspacePendingQuestions}
-                      isMultiSelectMode={isMultiSelectMode}
-                      selectedChatIds={selectedChatIds}
-                      isMobileFullscreen={isMobileFullscreen}
-                      isDesktop={isDesktop}
-                      pinnedChatIds={pinnedChatIds}
-                      projectsMap={projectsMap}
-                      taskDefaultWorktrees={taskDefaultWorktrees}
-                      workspaceFileStats={workspaceFileStats}
-                      filteredChats={filteredChats}
-                      canShowPinOption={canShowPinOption}
-                      areAllSelectedPinned={areAllSelectedPinned}
-                      showIcon={showWorkspaceIcon}
-                      moveDestinations={moveDestinations}
-                      movePending={moveChatMutation.isPending}
-                      onChatClick={handleChatClick}
-                      onCheckboxClick={handleCheckboxClick}
-                      onMouseEnter={handleAgentMouseEnter}
-                      onMouseLeave={handleAgentMouseLeave}
-                      onArchive={handleArchiveSingle}
-                      onTogglePin={handleTogglePin}
-                      onToggleStar={handleToggleStar}
-                      onRenameClick={handleRenameClick}
-                      onCopyBranch={handleCopyBranch}
-                      onArchiveAllBelow={handleArchiveAllBelow}
-                      onArchiveOthers={handleArchiveOthers}
-                      onOpenLocally={handleOpenLocally}
-                      onMoveChat={handleMoveChat}
-                      onBulkPin={handleBulkPin}
-                      onBulkUnpin={handleBulkUnpin}
-                      onBulkArchive={handleBulkArchive}
                       onCreateGlobalChat={openNewGlobalChat}
                       onCreateProjectChat={openNewProjectChat}
                       onCreateProjectTask={createProjectTask}
-                      onCreateTaskChat={openNewTaskChat}
                       onChangeProjectColor={handleChangeProjectColor}
-                      onToggleSection={handleToggleSection}
-                      onSelectScope={handleSelectScope}
-                      onDragStartItem={handleDragStartItem}
-                      onDragOverItem={handleDragOverItem}
-                      onDropItem={handleDropItem}
-                      onDragEndItem={handleDragEndItem}
-                      onToggleLifecyclePin={handleToggleLifecyclePin}
-                      onToggleLifecycleStar={handleToggleLifecycleStar}
-                      onArchiveLifecycle={handleArchiveLifecycle}
-                      archivePending={
-                        archiveChatMutation.isPending || archiveRemoteChatMutation.isPending
-                      }
-                      archiveBatchPending={
-                        archiveChatsBatchMutation.isPending ||
-                        archiveRemoteChatsBatchMutation.isPending
-                      }
                       lifecyclePending={
                         pinProjectMutation.isPending ||
                         unpinProjectMutation.isPending ||
@@ -7197,10 +7087,6 @@ export function AgentsSidebar({
                         unpinTaskMutation.isPending ||
                         archiveTaskMutation.isPending
                       }
-                      nameRefCallback={nameRefCallback}
-                      formatTime={formatTime}
-                      justCreatedIds={justCreatedIds}
-                      starredChatIds={starredChatIds}
                     />
                     {section.kind === "global" && sectionIndex < visibleChatSections.length - 1 && (
                       <div aria-hidden="true" className="h-2.5" />

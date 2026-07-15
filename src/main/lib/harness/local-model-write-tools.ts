@@ -14,6 +14,7 @@ import type {
   LocalModelToolResult,
   LocalModelToolSchema,
 } from "./local-model-read-tools"
+import { isAbortError } from "./local-model-tool-utils"
 
 export const LOCAL_MODEL_WRITE_TOOL_NAMES = ["edit_file", "write_file", "apply_patch"] as const
 export type LocalModelWriteToolName = (typeof LOCAL_MODEL_WRITE_TOOL_NAMES)[number]
@@ -491,8 +492,4 @@ function isPathDeniedError(error: unknown): boolean {
     error instanceof Error &&
     /escapes root|symbolic link|Unsafe|Write (root|parent)|Target parent/.test(error.message)
   )
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError"
 }

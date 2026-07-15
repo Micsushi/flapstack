@@ -161,7 +161,7 @@ describe("scoped usage budgets", () => {
     }
   })
 
-  it("marks a controlled running run cancelled before returning its stop signal", () => {
+  it("returns a controlled stop request without claiming cancellation succeeded", () => {
     const fixture = database("running-stop")
     try {
       seedGraph(fixture)
@@ -175,12 +175,21 @@ describe("scoped usage budgets", () => {
       })
 
       expect(stopRunningRunsOverUsageBudget(fixture.db, { nowMs: NOW })).toEqual([
-        { runId: "running-1", subChatId: "sub-chat-1", harness: "codex" },
+        expect.objectContaining({
+          runId: "running-1",
+          subChatId: "sub-chat-1",
+          harness: "codex",
+          budgetIds: ["running-cap"],
+        }),
       ])
       expect(
         fixture.sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'running-1'").get(),
-      ).toEqual({ status: "cancelled" })
-      expect(stopRunningRunsOverUsageBudget(fixture.db, { nowMs: NOW + 1 })).toEqual([])
+      ).toEqual({ status: "running" })
+      expect(stopRunningRunsOverUsageBudget(fixture.db, { nowMs: NOW + 1 })).toHaveLength(1)
+      fixture.sqlite
+        .prepare("UPDATE agent_runs SET status = 'cancelled' WHERE id = 'running-1'")
+        .run()
+      expect(stopRunningRunsOverUsageBudget(fixture.db, { nowMs: NOW + 2 })).toEqual([])
     } finally {
       fixture.close()
     }

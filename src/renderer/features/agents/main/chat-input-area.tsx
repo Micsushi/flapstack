@@ -49,7 +49,6 @@ import {
   codexOnboardingCompletedAtom,
   hiddenModelsAtom,
   selectedOllamaModelAtom,
-  showOfflineModeFeaturesAtom,
 } from "../../../lib/atoms"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
@@ -88,6 +87,8 @@ import {
 } from "../components/agent-model-selector"
 import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
+import { useAvailableModels } from "../hooks/use-available-models"
+import { useVoiceInputHotkey } from "../hooks/use-voice-input-hotkey"
 import {
   clearSubChatDraft,
   DRAFTS_CHANGE_EVENT,
@@ -96,7 +97,6 @@ import {
   updateSubChatDraftText,
 } from "../lib/drafts"
 import {
-  CLAUDE_MODELS,
   CODEX_MODELS,
   CURSOR_MODELS,
   DEFAULT_OPENCODE_MODELS,
@@ -120,8 +120,6 @@ import { VoiceWaveIndicator } from "../ui/voice-wave-indicator"
 import { McpStatusDot } from "../../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { handlePasteEvent } from "../utils/paste-text"
 import type { PastedTextFile } from "../hooks/use-pasted-text-files"
-import { getResolvedHotkey } from "../../../lib/hotkeys"
-import { customHotkeysAtom } from "../../../lib/atoms"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { useLocalModelPickerSurface } from "../../local-models/use-local-model-picker-surface"
 import { toast } from "sonner"
@@ -154,44 +152,6 @@ const CUSTOM_PERMISSION_LABELS: Record<(typeof customPermissionCapabilityKeys)[n
   productMcpRead: "Product MCP reads",
   productMcpWrite: "Product MCP writes",
   productMcpTier3: "Product MCP Tier 3",
-}
-
-// Hook to get available models (including offline models if Ollama is available and debug enabled)
-function useAvailableModels() {
-  const showOfflineFeatures = useAtomValue(showOfflineModeFeaturesAtom)
-  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
-    refetchInterval: showOfflineFeatures ? 30000 : false,
-    enabled: showOfflineFeatures, // Only query Ollama when offline mode is enabled
-  })
-
-  const baseModels = CLAUDE_MODELS
-
-  const isOffline = ollamaStatus ? !ollamaStatus.internet.online : false
-  const hasOllama = ollamaStatus?.ollama.available && (ollamaStatus.ollama.models?.length ?? 0) > 0
-  const ollamaModels = ollamaStatus?.ollama.models || []
-  const recommendedModel = ollamaStatus?.ollama.recommendedModel
-
-  // Only show offline models if:
-  // 1. Debug flag is enabled (showOfflineFeatures)
-  // 2. Ollama is available with models
-  // 3. User is actually offline
-  if (showOfflineFeatures && hasOllama && isOffline) {
-    return {
-      models: baseModels,
-      ollamaModels,
-      recommendedModel,
-      isOffline,
-      hasOllama: true,
-    }
-  }
-
-  return {
-    models: baseModels,
-    ollamaModels: [] as string[],
-    recommendedModel: undefined as string | undefined,
-    isOffline,
-    hasOllama: false,
-  }
 }
 
 export interface ChatInputAreaProps {
@@ -1272,8 +1232,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, [dictationTargetKey, editorRef, isActive, parentChatId, subChatId])
 
   // Get resolved voice input hotkey
-  const customHotkeys = useAtomValue(customHotkeysAtom)
-  const voiceInputHotkey = getResolvedHotkey("voice-input", customHotkeys)
 
   // Refs for draft saving
   const currentSubChatIdRef = useRef<string>(subChatId)
@@ -1350,113 +1308,15 @@ export const ChatInputArea = memo(function ChatInputArea({
     if (ownsDictation) await dictation.stop()
   }, [dictation, ownsDictation])
 
-  // Keyboard shortcut: Voice input hotkey (push-to-talk: hold to record, release to transcribe)
-  useEffect(() => {
-    if (!voiceInputHotkey) return
-    if (!isActive) return
-
-    // Parse hotkey once
-    const parts = voiceInputHotkey.split("+").map((p) => p.toLowerCase())
-    const modifiers = parts.filter((p) =>
-      ["cmd", "meta", "ctrl", "opt", "alt", "shift"].includes(p),
-    )
-    const mainKey = parts.find((p) => !["cmd", "meta", "ctrl", "opt", "alt", "shift"].includes(p))
-
-    const needsCmd = modifiers.includes("cmd") || modifiers.includes("meta")
-    const needsShift = modifiers.includes("shift")
-    const needsCtrl = modifiers.includes("ctrl")
-    const needsAlt = modifiers.includes("alt") || modifiers.includes("opt")
-
-    // For modifier-only hotkeys (like ctrl+opt), we track when all modifiers are pressed
-    const isModifierOnlyHotkey = !mainKey
-
-    const modifiersMatch = (e: KeyboardEvent) => {
-      return (
-        e.metaKey === needsCmd &&
-        e.shiftKey === needsShift &&
-        e.ctrlKey === needsCtrl &&
-        e.altKey === needsAlt
-      )
-    }
-
-    const matchesHotkey = (e: KeyboardEvent) => {
-      if (isModifierOnlyHotkey) {
-        // For modifier-only: just check if all required modifiers are pressed
-        return modifiersMatch(e)
-      }
-
-      // For regular hotkey with main key
-      const keyMatches =
-        e.key.toLowerCase() === mainKey ||
-        e.code.toLowerCase() === mainKey ||
-        e.code.toLowerCase() === `key${mainKey}` ||
-        (mainKey === "space" && e.code === "Space")
-
-      return keyMatches && modifiersMatch(e)
-    }
-
-    // Check if any modifier key is released
-    const isModifierRelease = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase()
-      return key === "control" || key === "alt" || key === "meta" || key === "shift"
-    }
-
-    // Check if the released key is the main key (not a modifier)
-    const isMainKeyRelease = (e: KeyboardEvent) => {
-      if (isModifierOnlyHotkey) {
-        return isModifierRelease(e)
-      }
-      const eventKey = e.key.toLowerCase()
-      return (
-        eventKey === mainKey ||
-        e.code.toLowerCase() === mainKey ||
-        e.code.toLowerCase() === `key${mainKey}` ||
-        (mainKey === "space" && e.code === "Space")
-      )
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!matchesHotkey(e)) return
-      if (e.repeat) return // Ignore key repeat
-
-      e.preventDefault()
-      e.stopPropagation()
-
-      // Start recording on keydown
-      if (!isVoiceStarting && !isVoiceRecording && !isTranscribing) {
-        handleVoiceMouseDown()
-      }
-    }
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      // Stop recording when the main key (or any modifier for modifier-only hotkeys) is released
-      if (!isMainKeyRelease(e)) return
-
-      // The release may arrive while getUserMedia is still pending. The stop
-      // handler waits for that start instead of trusting delayed React state.
-      if (ownsDictation && (isVoiceStarting || isVoiceRecording)) {
-        e.preventDefault()
-        e.stopPropagation()
-        handleVoiceMouseUp()
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown, true)
-    window.addEventListener("keyup", handleKeyUp, true)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true)
-      window.removeEventListener("keyup", handleKeyUp, true)
-    }
-  }, [
-    voiceInputHotkey,
-    isVoiceRecording,
-    isVoiceStarting,
+  useVoiceInputHotkey({
+    enabled: isActive,
+    isRecording: isVoiceRecording,
+    isStarting: isVoiceStarting,
     isTranscribing,
     ownsDictation,
-    handleVoiceMouseDown,
-    handleVoiceMouseUp,
-    isActive,
-  ])
+    onStart: handleVoiceMouseDown,
+    onStop: handleVoiceMouseUp,
+  })
 
   // Save draft on blur (with attachments and text contexts)
   const handleEditorBlur = useCallback(async () => {

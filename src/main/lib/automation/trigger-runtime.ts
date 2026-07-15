@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import {
   AutomationFileTriggerService,
   createDatabaseAutomationFileTriggerEnqueuer,
@@ -128,16 +129,17 @@ export class AutomationTriggerRuntime {
         if (completedAt === this.terminalCompletedAt && this.terminalRunIdsAtCursor.has(runId)) {
           continue
         }
+        try {
+          this.terminalTriggers.handleRunTerminal({ runId })
+        } catch (error) {
+          this.reportError(error)
+          return
+        }
         if (completedAt > this.terminalCompletedAt) {
           this.terminalCompletedAt = completedAt
           this.terminalRunIdsAtCursor.clear()
         }
         this.terminalRunIdsAtCursor.add(runId)
-        try {
-          this.terminalTriggers.handleRunTerminal({ runId })
-        } catch (error) {
-          this.reportError(error)
-        }
       }
       if (rows.length < 100) return
     }
@@ -152,7 +154,7 @@ export class AutomationTriggerRuntime {
   }
 
   private withDatabase<T>(operation: (database: Database.Database) => T): T {
-    const database = new Database(this.options.databasePath)
+    const database = openAppDatabase(this.options.databasePath)
     try {
       database.pragma("foreign_keys = ON")
       database.pragma("busy_timeout = 5000")

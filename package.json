@@ -303,6 +303,11 @@
       "uninstallerIcon": "build/icon.ico"
     }
   },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.12"
+    }
+  },
   "pnpm": {
     "overrides": {
       "source-map-support>source-map": "0.7.4"

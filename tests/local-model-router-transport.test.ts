@@ -325,6 +325,27 @@ describe("local model router bridge", () => {
 })
 
 describe("local model renderer transport", () => {
+  it("does not subscribe when the request is already aborted", async () => {
+    const transport = new LocalModelChatTransport({
+      chatId: "chat-aborted",
+      subChatId: "sub-aborted",
+      cwd: canonicalPath,
+      endpoint,
+      model,
+    })
+    const abortController = new AbortController()
+    abortController.abort()
+
+    const stream = await transport.sendMessages({
+      messages: [{ id: "user", role: "user", parts: [{ type: "text", text: "Do not run" }] }],
+      abortSignal: abortController.signal,
+    })
+
+    await expect(stream.getReader().read()).resolves.toEqual({ done: true, value: undefined })
+    expect(transportMocks.subscribe).not.toHaveBeenCalled()
+    expect(transportMocks.cancel).not.toHaveBeenCalled()
+  })
+
   it("streams through the local route and forwards abort to unsubscribe and cancel", async () => {
     let handlers: any
     const unsubscribe = vi.fn()

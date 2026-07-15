@@ -9,6 +9,7 @@ import {
   automationActionSchema,
   automationBudgetSchema,
   automationRetryPolicySchema,
+  supportsAutomationExecution,
   automationRunConfigSchema,
   type AutomationAction,
   type AutomationBudget,
@@ -21,6 +22,7 @@ import {
   createAgentOrchestrationService,
 } from "../agent-orchestration/service"
 import type { AgentRunLauncher, QueuedAgentRun } from "../run-launch-service"
+import { parseJsonText, parseNullableJsonText } from "../json"
 import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
@@ -44,13 +46,6 @@ import {
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
 
-const SUPPORTED_AUTOMATION_HARNESSES = new Set<AgentHarness>([
-  "codex",
-  "claude-code",
-  "cursor-agent",
-  "openrouter",
-  "nanogpt",
-])
 const TERMINAL_EXECUTION_STATES = new Set([
   "succeeded",
   "failed",
@@ -443,7 +438,7 @@ export class AutomationExecutionService {
       permissionMode: plan.run.permissionMode,
       customPermissions: plan.run.customPermissions ?? null,
       targetPermissionMode: target.targetPermissionMode,
-      targetCustomPermissions: parseJsonOrNull(target.targetCustomPermissions),
+      targetCustomPermissions: parseNullableJsonText(target.targetCustomPermissions),
       target: {
         scopeType: target.scopeType,
         projectId: target.projectId,
@@ -1074,14 +1069,21 @@ function loadPlan(database: Sqlite, automationId: string): ExecutionPlan {
     id: String(row.id),
     name: String(row.name),
     scope,
-    action: automationActionSchema.parse(parseJson(row.action_config, "automation action")),
+    action: automationActionSchema.parse(
+      parseJsonText(row.action_config, () => new Error("Stored automation action is invalid.")),
+    ),
     run: automationRunConfigSchema.parse({
       prompt: row.prompt,
       harness: row.harness,
       ...(row.model ? { model: row.model } : {}),
       permissionMode: row.permission_mode,
       ...(row.custom_permissions
-        ? { customPermissions: parseJson(row.custom_permissions, "custom permissions") }
+        ? {
+            customPermissions: parseJsonText(
+              row.custom_permissions,
+              () => new Error("Stored custom permissions is invalid."),
+            ),
+          }
         : {}),
       worktreeStrategy: row.worktree_strategy,
       ...(row.worktree_path ? { worktreePath: row.worktree_path } : {}),
@@ -1125,7 +1127,7 @@ function requireApproved(plan: ExecutionPlan): void {
 }
 
 function launchBlockerFor(plan: ExecutionPlan): string | null {
-  if (!SUPPORTED_AUTOMATION_HARNESSES.has(plan.run.harness)) {
+  if (!supportsAutomationExecution(plan.run.harness)) {
     return `Harness ${plan.run.harness} has no normal main-process automation launch contract.`
   }
   if ((plan.run.harness === "openrouter" || plan.run.harness === "nanogpt") && !plan.run.model) {
@@ -1488,24 +1490,6 @@ function insertInbox(
       input.body,
       input.now,
     )
-}
-
-function parseJson(value: unknown, label: string): unknown {
-  if (typeof value !== "string") throw new Error(`Stored ${label} is invalid.`)
-  try {
-    return JSON.parse(value)
-  } catch {
-    throw new Error(`Stored ${label} is invalid.`)
-  }
-}
-
-function parseJsonOrNull(value: string | null): unknown {
-  if (!value) return null
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
 }
 
 function parseObject(value: unknown): Record<string, unknown> {

@@ -8,6 +8,7 @@ import {
   type RuntimeBlockReasonCode,
   type RuntimeDefaultScope,
 } from "../../../shared/agent-runtime"
+import { millisecondsToEpochSeconds } from "../db/timestamps"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -92,8 +93,8 @@ export class RuntimeDefaultsService {
             input.scope.id,
             input.harness,
             input.preference,
-            epochSeconds(now),
-            epochSeconds(now),
+            millisecondsToEpochSeconds(now),
+            millisecondsToEpochSeconds(now),
           )
       } catch (error) {
         if (isConstraintError(error)) throw versionConflict()
@@ -107,7 +108,7 @@ export class RuntimeDefaultsService {
            SET preference = ?, version = version + 1, updated_at = ?
            WHERE id = ? AND version = ?`,
         )
-        .run(input.preference, epochSeconds(now), id, input.expectedVersion)
+        .run(input.preference, millisecondsToEpochSeconds(now), id, input.expectedVersion)
       if (result.changes !== 1) throw versionConflict()
     }
     return this.get(input.scope, input.harness)!
@@ -175,10 +176,6 @@ function versionConflict(): RuntimeDefaultsError {
 
 function isConstraintError(error: unknown): boolean {
   return error instanceof Error && /constraint|unique/i.test(error.message)
-}
-
-function epochSeconds(value: number): number {
-  return Math.floor(value / 1_000)
 }
 
 function epochMilliseconds(value: unknown): number {

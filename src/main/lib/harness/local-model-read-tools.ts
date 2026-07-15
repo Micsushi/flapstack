@@ -2,6 +2,7 @@ import { lstat, readdir, realpath } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { readFileInsideRoot, resolveInsideRoot, RootedReadTooLargeError } from "../path-safety"
+import { boundedInteger, isAbortError } from "./local-model-tool-utils"
 
 export const LOCAL_MODEL_READ_TOOL_NAMES = ["read_file", "list_directory", "glob", "grep"] as const
 export type LocalModelReadToolName = (typeof LOCAL_MODEL_READ_TOOL_NAMES)[number]
@@ -854,16 +855,6 @@ function normalizeLoopLimits(
   }
 }
 
-function boundedInteger(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  if (!Number.isFinite(value)) return fallback
-  return Math.min(maximum, Math.max(minimum, Math.floor(value!)))
-}
-
 function stableCallSignature(call: LocalModelNormalizedToolCall): string {
   return `${call.name}:${stableJson(call.arguments)}`
 }
@@ -903,10 +894,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMissingError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT"
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError"
 }
 
 function toolSchema(

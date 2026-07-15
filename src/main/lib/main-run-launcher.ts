@@ -23,6 +23,7 @@ import type {
   RuntimeAdapterSession,
   RuntimeAdapterTurn,
 } from "../../shared/agent-runtime"
+import { isAgentHarness } from "../../shared/harness-types"
 import { LEGACY_RUNTIME_CAPABILITIES } from "./agent-runtime/snapshot"
 import {
   RuntimeLaunchCancelledError,
@@ -852,11 +853,7 @@ function createLegacyDelegation(
   streams: Map<string, unknown>,
   states: Map<string, "running" | "completed" | "uncertain">,
 ): FlapstackNativeProviderDelegation<unknown> | null {
-  if (
-    !["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt", "local"].includes(harness)
-  ) {
-    return null
-  }
+  if (!isAgentHarness(harness)) return null
   return {
     probe: () => ({ available: true }),
     async startSession() {
@@ -899,16 +896,23 @@ function createLegacyDelegation(
     async cancel(context: RuntimeAdapterContext) {
       const run = runs.get(context.runId)
       if (!run) return
-      if (run.harness === "codex") {
-        await caller.codex.cancel({ subChatId: run.subChatId, runId: run.runId })
-      } else if (run.harness === "claude-code") {
-        await caller.claude.cancel({ subChatId: run.subChatId })
-      } else if (run.harness === "cursor-agent") {
-        await caller.cursor.cancel({ subChatId: run.subChatId, runId: run.runId })
-      } else if (run.harness === "openrouter" || run.harness === "nanogpt") {
-        await caller.opencode.cancel({ subChatId: run.subChatId, runId: run.runId })
-      } else if (run.harness === "local") {
-        await caller.localModels.cancel({ runId: run.runId })
+      switch (run.harness) {
+        case "codex":
+          await caller.codex.cancel({ subChatId: run.subChatId, runId: run.runId })
+          break
+        case "claude-code":
+          await caller.claude.cancel({ subChatId: run.subChatId })
+          break
+        case "cursor-agent":
+          await caller.cursor.cancel({ subChatId: run.subChatId, runId: run.runId })
+          break
+        case "openrouter":
+        case "nanogpt":
+          await caller.opencode.cancel({ subChatId: run.subChatId, runId: run.runId })
+          break
+        case "local":
+          await caller.localModels.cancel({ runId: run.runId })
+          break
       }
       states.set(context.runId, "completed")
     },
@@ -934,61 +938,63 @@ async function launchLegacyStream(
   if (run.harness === "local") {
     return launchLocalModelStream(caller, run, cwd)
   }
-  const stream =
-    run.harness === "codex"
-      ? await caller.codex.chat({
-          runId: run.runId,
-          chatId: run.chatId,
-          subChatId: run.subChatId,
-          prompt: run.prompt,
-          cwd,
-          ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-          ...(model ? { model } : {}),
-          mode: "agent",
-          reasoningEnabled: run.reasoningEffort !== "minimal",
-          ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
-        })
-      : run.harness === "claude-code"
-        ? await caller.claude.chat({
-            runId: run.runId,
-            chatId: run.chatId,
-            subChatId: run.subChatId,
-            prompt: run.prompt,
-            cwd,
-            ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(model ? { model } : {}),
-            mode: "agent",
-            reasoningEnabled: run.reasoningEffort !== "minimal",
-            ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
-              ? { effort: run.reasoningEffort }
-              : {}),
-          })
-        : run.harness === "cursor-agent"
-          ? await caller.cursor.chat({
-              runId: run.runId,
-              chatId: run.chatId,
-              subChatId: run.subChatId,
-              prompt: run.prompt,
-              cwd,
-              ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-              ...(model ? { model } : {}),
-              reasoningEnabled: run.reasoningEffort !== "minimal",
-            })
-          : run.harness === "openrouter" || run.harness === "nanogpt"
-            ? await caller.opencode.chat({
-                runId: run.runId,
-                chatId: run.chatId,
-                subChatId: run.subChatId,
-                provider: run.harness,
-                model: requireModel(run),
-                prompt: run.prompt,
-                cwd,
-                ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-                reasoningEnabled: run.reasoningEffort !== "minimal",
-                reasoningEffort: run.reasoningEffort ?? "high",
-              })
-            : unsupportedHarness(run)
-  return stream
+  switch (run.harness) {
+    case "codex":
+      return caller.codex.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(model ? { model } : {}),
+        mode: "agent",
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
+      })
+    case "claude-code":
+      return caller.claude.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(model ? { model } : {}),
+        mode: "agent",
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
+          ? { effort: run.reasoningEffort }
+          : {}),
+      })
+    case "cursor-agent":
+      return caller.cursor.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(model ? { model } : {}),
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+      })
+    case "openrouter":
+    case "nanogpt":
+      return caller.opencode.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        provider: run.harness,
+        model: requireModel(run),
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        reasoningEffort: run.reasoningEffort ?? "high",
+      })
+    default:
+      return unsupportedHarness(run)
+  }
 }
 
 async function launchLocalModelStream(

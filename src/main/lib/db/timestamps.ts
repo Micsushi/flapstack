@@ -1,6 +1,10 @@
 /** SQLite representation used by Drizzle's integer(..., { mode: "timestamp" }). */
 export function nowEpochSeconds(now: () => number = Date.now): number {
-  return Math.floor(now() / 1_000)
+  return millisecondsToEpochSeconds(now())
+}
+
+export function millisecondsToEpochSeconds(value: number): number {
+  return Math.floor(value / 1_000)
 }
 
 /** Public orchestration DTOs keep JavaScript's millisecond timestamp convention. */

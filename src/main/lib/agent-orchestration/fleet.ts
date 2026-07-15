@@ -10,6 +10,7 @@ import {
 } from "../../../shared/agent-orchestration"
 import { interpretCoordinationEngineSnapshot } from "./coordination-engine"
 import { epochSecondsToMilliseconds } from "../db/timestamps"
+import { tryParseJsonText } from "../json"
 import { providerForHarness } from "../usage/budgets"
 
 type Row = Record<string, unknown>
@@ -360,7 +361,7 @@ function toFleetItem(
 }
 
 function toFleetAgent(row: Row): OrchestrationFleetAgentDto {
-  const parsed = orchestrationAgentDefinitionSchema.safeParse(parseJson(row.definition))
+  const parsed = orchestrationAgentDefinitionSchema.safeParse(tryParseJsonText(row.definition))
   const definition = parsed.success ? parsed.data : null
   const harness = definition?.harness ?? stringValue(row.run_harness) ?? "unknown"
   const explicitProvider = definition?.provider?.trim()
@@ -511,15 +512,6 @@ function isCursorValueForSort(
     return typeof value === "string" && value.length > 0 && value.length <= MAX_CURSOR_NAME_LENGTH
   }
   return typeof value === "number" && Number.isFinite(value)
-}
-
-function parseJson(value: unknown): unknown {
-  if (typeof value !== "string") return value
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
 }
 
 function millis(value: unknown): number | null {

@@ -150,7 +150,13 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
 
     return new ReadableStream({
       start: (controller) => {
+        if (options.abortSignal?.aborted) {
+          controller.close()
+          return
+        }
         const runId = crypto.randomUUID()
+        let unbindAbort: () => void = () => undefined
+        let streamClosed = false
         const subscription = trpcClient.opencode.chat.subscribe(
           {
             chatId: this.config.chatId,
@@ -308,14 +314,19 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
               }
               return normalizedChunk
             },
+            () => {
+              streamClosed = true
+              unbindAbort()
+            },
           ),
         )
-        bindAgentChatAbort(
+        unbindAbort = bindAgentChatAbort(
           options.abortSignal,
           subscription,
           () => trpcClient.opencode.cancel.mutate({ subChatId: this.config.subChatId, runId }),
           controller,
         )
+        if (streamClosed) unbindAbort()
       },
     })
   }

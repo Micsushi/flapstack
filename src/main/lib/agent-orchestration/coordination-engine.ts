@@ -17,6 +17,7 @@ import {
   type CoordinationEngineSource,
   type ResolvedCoordinationEngineSnapshot,
 } from "../../../shared/coordination-engine"
+import { millisecondsToEpochSeconds } from "../db/timestamps"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -116,8 +117,8 @@ export class CoordinationEngineDefaultsService {
             input.scope.type,
             input.scope.id,
             input.engine,
-            epochSeconds(now),
-            epochSeconds(now),
+            millisecondsToEpochSeconds(now),
+            millisecondsToEpochSeconds(now),
           )
       } catch (error) {
         if (isConstraintError(error)) throw settingsVersionConflict(input.engine)
@@ -133,7 +134,7 @@ export class CoordinationEngineDefaultsService {
            SET engine = ?, version = version + 1, updated_at = ?
            WHERE id = ? AND version = ?`,
         )
-        .run(input.engine, epochSeconds(now), id, input.expectedVersion)
+        .run(input.engine, millisecondsToEpochSeconds(now), id, input.expectedVersion)
       if (result.changes !== 1) throw settingsVersionConflict(input.engine)
     }
     return this.get(input.scope)!
@@ -699,10 +700,6 @@ function rowToDefault(row: Row): CoordinationEngineDefaultDto {
 
 function isConstraintError(error: unknown): boolean {
   return error instanceof Error && /constraint|unique/i.test(error.message)
-}
-
-function epochSeconds(value: number): number {
-  return Math.floor(value / 1_000)
 }
 
 function epochMilliseconds(value: unknown): number {

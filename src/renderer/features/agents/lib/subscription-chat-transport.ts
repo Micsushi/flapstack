@@ -8,7 +8,15 @@ export function createAgentChatSubscriptionObserver(
   controller: ReadableStreamDefaultController<UIMessageChunk>,
   source: { chatId: string; subChatId: string },
   transform: (chunk: UIMessageChunk) => UIMessageChunk | null = (chunk) => chunk,
+  onClose: () => void = () => undefined,
 ) {
+  let closed = false
+  const finish = () => {
+    if (closed) return
+    closed = true
+    onClose()
+    closeStream(controller)
+  }
   return {
     onData(chunk: UIMessageChunk) {
       handleAgentInputChunk(chunk, source)
@@ -19,13 +27,16 @@ export function createAgentChatSubscriptionObserver(
       } catch {
         // Stream already closed.
       }
-      if (chunk.type === "finish") closeStream(controller)
+      if (chunk.type === "finish") finish()
     },
     onError(error: unknown) {
+      if (closed) return
+      closed = true
+      onClose()
       controller.error(error)
     },
     onComplete() {
-      closeStream(controller)
+      finish()
     },
   }
 }
@@ -35,16 +46,16 @@ export function bindAgentChatAbort(
   subscription: Subscription,
   cancel: () => unknown,
   controller: ReadableStreamDefaultController<UIMessageChunk>,
-): void {
-  signal?.addEventListener(
-    "abort",
-    () => {
-      subscription.unsubscribe()
-      void cancel()
-      closeStream(controller)
-    },
-    { once: true },
-  )
+): () => void {
+  if (!signal) return () => undefined
+  const abort = () => {
+    subscription.unsubscribe()
+    void cancel()
+    closeStream(controller)
+  }
+  signal.addEventListener("abort", abort, { once: true })
+  if (signal.aborted) abort()
+  return () => signal.removeEventListener("abort", abort)
 }
 
 export function extractChatMessageText(message: UIMessage | undefined): string {

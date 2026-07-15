@@ -79,6 +79,47 @@ describe("Runtime launch coordinator", () => {
     expect(fallback).not.toHaveBeenCalled()
   })
 
+  it("cancels a reserved launch after probe without starting provider intent", async () => {
+    let releaseProbe!: () => void
+    let probeStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      probeStarted = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      releaseProbe = resolve
+    })
+    const value = adapter("codex", [])
+    value.probe = async (harness) => {
+      probeStarted()
+      await gate
+      return availableProbe("codex", harness)
+    }
+    const persistIntent = vi.fn()
+    const lifecycle: string[] = []
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
+      {
+        persistIntent,
+        onLifecycle: (_request, state) => lifecycle.push(state),
+      },
+    )
+    const running = coordinator.launch({
+      runId: "cancel-reserved",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Never dispatch.",
+    })
+    await started
+    const cancelled = coordinator.cancel("cancel-reserved", "usage-budget-exceeded")
+    releaseProbe()
+
+    await expect(cancelled).resolves.toBe(true)
+    await expect(running).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
+    expect(persistIntent).not.toHaveBeenCalled()
+    expect(lifecycle).toEqual(["validated", "cancelled"])
+  })
+
   it("does not replay uncertain intent and rejects duplicate active launches", async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {

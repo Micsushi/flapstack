@@ -9,6 +9,7 @@ import type {
 import type { CostQuality, SampleSource, UsageSampleInput } from "./types"
 import type { UsageDb } from "./store"
 import { stringOrNull } from "./time"
+import { compareStableIds, selectLatestUsageOverlapFacts } from "./fact-selection"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -482,19 +483,13 @@ function dimensions(
 }
 
 function selectLatestOverlapFacts(rows: Row[]): Row[] {
-  const selected = new Map<string, Row>()
-  for (const row of rows) {
-    const groupKey = stringOrNull(row.dedupe_group_key)
-    const selectionKey =
-      row.dedupe_strategy === "overlap-group" && groupKey
-        ? `group:${String(row.source_class)}:${groupKey}`
-        : `fact:${String(row.id)}`
-    const current = selected.get(selectionKey)
-    if (!current || compareUsageFactRecency(row, current) > 0) selected.set(selectionKey, row)
-  }
-  return [...selected.values()].sort((left, right) =>
-    String(left.id).localeCompare(String(right.id)),
-  )
+  return selectLatestUsageOverlapFacts(rows, {
+    id: (row) => row.id,
+    capturedAt: (row) => numericOrZero(row.captured_at),
+    sourceClass: (row) => row.source_class,
+    dedupeStrategy: (row) => row.dedupe_strategy,
+    dedupeGroupKey: (row) => stringOrNull(row.dedupe_group_key),
+  })
 }
 
 export function compareUsageFactRecency(left: Row, right: Row): number {
@@ -525,17 +520,6 @@ function weakestQuality(qualities: string[]): UsageRollupQuality {
         : "unknown",
     )
     .reduce((weakest, quality) => (rank[quality] < rank[weakest] ? quality : weakest), "exact")
-}
-
-function compareStableIds(left: unknown, right: unknown): number {
-  const leftText = String(left)
-  const rightText = String(right)
-  if (/^\d+$/.test(leftText) && /^\d+$/.test(rightText)) {
-    const leftNumber = BigInt(leftText)
-    const rightNumber = BigInt(rightText)
-    return leftNumber < rightNumber ? -1 : leftNumber > rightNumber ? 1 : 0
-  }
-  return leftText.localeCompare(rightText)
 }
 
 function usageSourceClass(value: unknown): UsageSourceClass {

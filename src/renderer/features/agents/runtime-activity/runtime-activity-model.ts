@@ -157,7 +157,8 @@ export function selectRuntimeActivitySource(
 function activityContentSignature(source: RuntimeActivitySource): string | null {
   if (source.kind === "agent-text") {
     const text = (source.payload as AgentActivityPayloadByKind["agent-text"]).text.trim()
-    return text ? `agent-text:${text}` : null
+    const role = isPersisted(source) ? "assistant" : source.role
+    return text ? `agent-text:${role}:${text}` : null
   }
   if (source.kind === "reasoning-summary") {
     const text = (source.payload as AgentActivityPayloadByKind["reasoning-summary"]).text.trim()

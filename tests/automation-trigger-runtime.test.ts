@@ -70,4 +70,54 @@ describe("automation trigger runtime", () => {
     expect(handleRunTerminal.mock.calls).toEqual([[{ runId: "run-1" }], [{ runId: "run-0" }]])
     expect(stop).toHaveBeenCalledTimes(1)
   })
+
+  it("retries a terminal run after a transient projection failure", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-automation-trigger-retry-"))
+    const databasePath = join(directory, "app.db")
+    cleanups.push(() => rmSync(directory, { recursive: true, force: true }))
+    const database = new Database(databasePath)
+    database.exec(`
+      CREATE TABLE automations (
+        id text PRIMARY KEY, enabled integer NOT NULL, state text NOT NULL,
+        approval_state text NOT NULL
+      );
+      CREATE TABLE automation_triggers (
+        id text PRIMARY KEY, automation_id text NOT NULL, type text NOT NULL,
+        enabled integer NOT NULL, root_path text, include_globs text,
+        exclude_globs text, debounce_ms integer
+      );
+      CREATE TABLE agent_runs (
+        id text PRIMARY KEY, status text NOT NULL, completed_at integer
+      );
+      INSERT INTO agent_runs VALUES ('run-1', 'success', 1000);
+      INSERT INTO agent_runs VALUES ('run-2', 'success', 1001);
+    `)
+    database.close()
+
+    const failure = new Error("temporary projection failure")
+    const handleRunTerminal = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw failure
+      })
+      .mockImplementation(() => undefined)
+    const onError = vi.fn()
+    const runtime = new AutomationTriggerRuntime({
+      databasePath,
+      fileTriggers: { replaceTriggers: vi.fn(), stop: vi.fn() },
+      terminalTriggers: { handleRunTerminal },
+      onError,
+    })
+
+    await runtime.runOnce()
+    await runtime.runOnce()
+    await runtime.stop()
+
+    expect(handleRunTerminal.mock.calls).toEqual([
+      [{ runId: "run-1" }],
+      [{ runId: "run-1" }],
+      [{ runId: "run-2" }],
+    ])
+    expect(onError).toHaveBeenCalledWith(failure)
+  })
 })

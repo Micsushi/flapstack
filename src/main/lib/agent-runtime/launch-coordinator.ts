@@ -93,6 +93,10 @@ export class RuntimeLaunchCancelledError extends Error {
 export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
   private readonly active = new Map<string, ActiveLaunch<TActivity>>()
   private readonly reserved = new Set<string>()
+  private readonly pendingCancellations = new Map<
+    string,
+    { reason: string; promise: Promise<boolean>; resolve(value: boolean): void; settled: boolean }
+  >()
 
   constructor(
     private readonly registry: AgentRuntimeRegistry<TActivity>,
@@ -107,6 +111,12 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     try {
       return await this.launchReserved(request)
     } finally {
+      const pending = this.pendingCancellations.get(request.runId)
+      if (pending && !pending.settled) {
+        pending.settled = true
+        pending.resolve(false)
+      }
+      this.pendingCancellations.delete(request.runId)
       this.reserved.delete(request.runId)
     }
   }
@@ -131,6 +141,24 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     }
     assertProbeMatchesSnapshot(request, probe)
     await this.hooks.onLifecycle?.(request, "validated")
+
+    const pendingCancellation = this.pendingCancellations.get(request.runId)
+    if (pendingCancellation) {
+      try {
+        await this.hooks.onLifecycle?.(
+          request,
+          "cancelled",
+          sanitizeRuntimeText(pendingCancellation.reason, { maxLength: 500, mode: "diagnostic" }),
+        )
+        pendingCancellation.settled = true
+        pendingCancellation.resolve(true)
+      } catch (error) {
+        pendingCancellation.settled = true
+        pendingCancellation.resolve(false)
+        throw error
+      }
+      throw new RuntimeLaunchCancelledError(request.runId)
+    }
 
     const controller = new AbortController()
     const externalSignal = request.signal
@@ -227,7 +255,19 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
 
   async cancel(runId: string, reason: string): Promise<boolean> {
     const active = this.active.get(runId)
-    if (!active) return false
+    if (!active) {
+      if (!this.reserved.has(runId)) return false
+      let pending = this.pendingCancellations.get(runId)
+      if (!pending) {
+        let resolve!: (value: boolean) => void
+        const promise = new Promise<boolean>((resolvePromise) => {
+          resolve = resolvePromise
+        })
+        pending = { reason, promise, resolve, settled: false }
+        this.pendingCancellations.set(runId, pending)
+      }
+      return await pending.promise
+    }
     if (active.state === "completed" || active.state === "failed") return false
     if (active.cancellationPromise) return await active.cancellationPromise
     active.state = "cancelling"

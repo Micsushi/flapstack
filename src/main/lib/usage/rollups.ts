@@ -11,6 +11,7 @@ import type {
 import { usageRollupQuerySchema } from "../../../shared/advanced-usage"
 import { backfillUsageAttribution } from "./attribution"
 import type { UsageDb } from "./store"
+import { selectLatestUsageOverlapFacts } from "./fact-selection"
 import {
   epochMs,
   finiteNumber,
@@ -260,22 +261,13 @@ function readRawFacts(sqlite: Sqlite): RawFact[] {
 }
 
 function selectLatestOverlapFacts(facts: RawFact[]): RawFact[] {
-  const selected = new Map<string, RawFact>()
-  for (const fact of facts) {
-    const key =
-      fact.dedupeStrategy === "overlap-group" && fact.dedupeGroupKey
-        ? `group:${fact.sourceClass}:${fact.dedupeGroupKey}`
-        : `fact:${fact.id}`
-    const current = selected.get(key)
-    if (
-      !current ||
-      fact.capturedAtMs > current.capturedAtMs ||
-      (fact.capturedAtMs === current.capturedAtMs && fact.id.localeCompare(current.id) > 0)
-    ) {
-      selected.set(key, fact)
-    }
-  }
-  return [...selected.values()].sort((left, right) => left.id.localeCompare(right.id))
+  return selectLatestUsageOverlapFacts(facts, {
+    id: (fact) => fact.id,
+    capturedAt: (fact) => fact.capturedAtMs,
+    sourceClass: (fact) => fact.sourceClass,
+    dedupeStrategy: (fact) => fact.dedupeStrategy,
+    dedupeGroupKey: (fact) => fact.dedupeGroupKey,
+  })
 }
 
 function matchesQuery(fact: RawFact, query: UsageRollupQuery): boolean {

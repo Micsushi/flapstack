@@ -33,7 +33,13 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
 
     return new ReadableStream({
       start: (controller) => {
+        if (options.abortSignal?.aborted) {
+          controller.close()
+          return
+        }
         const runId = crypto.randomUUID()
+        let unbindAbort: () => void = () => undefined
+        let streamClosed = false
         const subscription = trpcClient.localModels.chat.subscribe(
           {
             chatId: this.config.chatId,
@@ -45,17 +51,26 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
             cwd: this.config.cwd,
             ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
           },
-          createAgentChatSubscriptionObserver(controller, {
-            chatId: this.config.chatId,
-            subChatId: this.config.subChatId,
-          }),
+          createAgentChatSubscriptionObserver(
+            controller,
+            {
+              chatId: this.config.chatId,
+              subChatId: this.config.subChatId,
+            },
+            undefined,
+            () => {
+              streamClosed = true
+              unbindAbort()
+            },
+          ),
         )
-        bindAgentChatAbort(
+        unbindAbort = bindAgentChatAbort(
           options.abortSignal,
           subscription,
           () => trpcClient.localModels.cancel.mutate({ runId }),
           controller,
         )
+        if (streamClosed) unbindAbort()
       },
     })
   }

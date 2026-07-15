@@ -426,6 +426,38 @@ describe("typed project vault storage", () => {
     expect(readFileSync(outside, "utf8")).toBe("keep")
     expect(database.select().from(projectVaults).all()).toHaveLength(1)
   })
+
+  it("restores the vault path and metadata when recursive removal fails", async () => {
+    const { vault } = await scaffoldProjectVault(database, {
+      projectId: "project-1",
+      appDataRoot,
+      sections: ["index"],
+    })
+    const contract = getProjectVaultDeleteContract(database, "project-1")
+
+    await expect(
+      deleteProjectVault(
+        database,
+        { contract, confirmationPhrase: contract.requiredPhrase },
+        {
+          removeStagedRoot: () => {
+            throw new Error("filesystem busy")
+          },
+        },
+      ),
+    ).rejects.toThrow("filesystem busy")
+
+    expect(existsSync(vault.rootPath)).toBe(true)
+    expect(database.select().from(projectVaults).all()).toHaveLength(1)
+    expect(database.select().from(projectVaultSections).all()).toHaveLength(1)
+    expect(
+      database
+        .select()
+        .from(filesystemRootRegistrations)
+        .all()
+        .some((registration) => registration.path === vault.rootPath),
+    ).toBe(true)
+  })
 })
 
 function openDatabase(path: string): { sqlite: Database.Database; database: AppDatabase } {
