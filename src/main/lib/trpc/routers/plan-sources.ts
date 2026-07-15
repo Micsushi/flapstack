@@ -1,13 +1,15 @@
 import { TRPCError } from "@trpc/server"
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
+import { app } from "electron"
 import { z } from "zod"
 import type { PlanSourceRefreshEvent } from "../../../../shared/plan-sources"
 import {
   planTaskPromotionConfirmInputSchema,
   planTaskPromotionPreviewInputSchema,
 } from "../../../../shared/plan-task-promotion"
-import { getDatabase, planSourceRegistrations, projects } from "../../db"
+import { getDatabase, getDatabasePath, planSourceRegistrations, projects } from "../../db"
+import { IS_DEV } from "../../../constants"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import {
   PlanSourceRefreshWatcher,
@@ -21,10 +23,39 @@ import {
   promotePlanCandidate,
 } from "../../plan-task-promotion"
 import { listPlanSourceLinks } from "../../plan-kanban-consistency"
+import {
+  advancePlanKanbanDevFixture,
+  createPlanKanbanDevFixture,
+  getPlanKanbanDevFixtureStatus,
+  resetPlanKanbanDevFixture,
+} from "../../plan-kanban-dev-fixtures"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
 const sourcePathSchema = z.string().trim().min(1).max(4096)
+const devFixtureInput = z.object({ projectId: z.string().trim().min(1).max(128) })
+
+function assertDevFixtureEnabled(): void {
+  if (!IS_DEV || app.isPackaged) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Dev Plan fixtures are unavailable." })
+  }
+}
+
+async function devFixtureOperation<T>(
+  projectId: string,
+  operation: (databasePath: string, config: ProjectPlanSourceConfig) => Promise<T>,
+): Promise<T> {
+  assertDevFixtureEnabled()
+  try {
+    return await operation(getDatabasePath(), getProjectPlanSourceConfig(projectId))
+  } catch (error) {
+    if (error instanceof TRPCError) throw error
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: error instanceof Error ? error.message : "Dev Plan fixture operation failed.",
+    })
+  }
+}
 
 export function getProjectPlanSourceConfig(projectId: string): ProjectPlanSourceConfig {
   const db = getDatabase()
@@ -67,6 +98,43 @@ async function readPromotionSnapshot(reference: {
 }
 
 export const planSourcesRouter = router({
+  devFixtureStatus: publicProcedure
+    .input(devFixtureInput)
+    .query(({ input }) => devFixtureOperation(input.projectId, getPlanKanbanDevFixtureStatus)),
+
+  devFixtureCreate: publicProcedure.input(devFixtureInput).mutation(async ({ input }) => {
+    const status = await devFixtureOperation(input.projectId, createPlanKanbanDevFixture)
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["plan-sources", "task-proposals", "chats"],
+      projectIds: [input.projectId],
+    })
+    return status
+  }),
+
+  devFixtureAdvance: publicProcedure.input(devFixtureInput).mutation(async ({ input }) => {
+    const status = await devFixtureOperation(input.projectId, advancePlanKanbanDevFixture)
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["plan-sources"],
+      projectIds: [input.projectId],
+    })
+    return status
+  }),
+
+  devFixtureReset: publicProcedure.input(devFixtureInput).mutation(async ({ input }) => {
+    const status = await devFixtureOperation(input.projectId, resetPlanKanbanDevFixture)
+    publishLocalProductInvalidation({
+      version: 1,
+      source: "product-mcp",
+      domains: ["plan-sources", "task-proposals", "tasks", "chats"],
+      projectIds: [input.projectId],
+    })
+    return status
+  }),
+
   listRegistrations: publicProcedure
     .input(z.object({ projectId: z.string().min(1) }))
     .query(({ input }) => {
