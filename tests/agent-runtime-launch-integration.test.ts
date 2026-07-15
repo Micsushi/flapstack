@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
-import { RuntimeLaunchCoordinator } from "../src/main/lib/agent-runtime/launch-coordinator"
+import {
+  MAX_PAUSED_RUNTIME_DELIVERIES,
+  RuntimeLaunchCoordinator,
+} from "../src/main/lib/agent-runtime/launch-coordinator"
 import { createAgentRuntimeRegistry } from "../src/main/lib/agent-runtime/registry"
 import type {
   HarnessAdapter,
@@ -173,6 +176,171 @@ describe("Runtime launch coordinator", () => {
     await expect(coordinator.cancel("completed-first", "late")).resolves.toBe(false)
     expect(lifecycle.filter((state) => state === "completed")).toHaveLength(1)
     expect(lifecycle).not.toContain("cancelled")
+  })
+
+  it("bounds paused delivery, serializes rapid controls, and reconciles as running", async () => {
+    let firstReferenced!: () => void
+    let releaseBurst!: () => void
+    let reachedBound!: () => void
+    const first = new Promise<void>((resolve) => {
+      firstReferenced = resolve
+    })
+    const burstGate = new Promise<void>((resolve) => {
+      releaseBurst = resolve
+    })
+    const bounded = new Promise<void>((resolve) => {
+      reachedBound = resolve
+    })
+    let produced = 0
+    const value = adapter("codex", [])
+    value.streamActivity = async function* () {
+      produced += 1
+      yield "first"
+      await burstGate
+      for (let index = 0; index < MAX_PAUSED_RUNTIME_DELIVERIES * 2; index += 1) {
+        produced += 1
+        if (index === MAX_PAUSED_RUNTIME_DELIVERIES - 1) reachedBound()
+        yield `buffered-${index}`
+      }
+    }
+    const references: string[] = []
+    const lifecycle: string[] = []
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
+      {
+        persistIntent: vi.fn(),
+        onLifecycle: (_request, state) => lifecycle.push(state),
+        onActivityReference: (_request, activity) => {
+          references.push(activity)
+          if (activity === "first") firstReferenced()
+        },
+      },
+    )
+    const request = {
+      runId: "bounded-pause",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Bound delivery.",
+    }
+    const running = coordinator.launch(request)
+    await first
+    await expect(
+      Promise.all([coordinator.pause(request.runId), coordinator.pause(request.runId)]),
+    ).resolves.toEqual([true, false])
+    await expect(coordinator.reconcile(request)).resolves.toBe("running")
+    releaseBurst()
+    await bounded
+    await Promise.resolve()
+    expect(produced).toBe(MAX_PAUSED_RUNTIME_DELIVERIES + 1)
+    expect(references).toEqual(["first"])
+    await expect(
+      Promise.all([coordinator.resume(request.runId), coordinator.resume(request.runId)]),
+    ).resolves.toEqual([true, false])
+    await running
+    expect(references).toHaveLength(MAX_PAUSED_RUNTIME_DELIVERIES * 2 + 1)
+    expect(lifecycle.filter((state) => state === "paused")).toHaveLength(1)
+    expect(lifecycle.filter((state) => state === "resumed")).toHaveLength(1)
+  })
+
+  it("cancels a paused delivery without releasing buffered activity", async () => {
+    let firstReferenced!: () => void
+    let releaseSecond!: () => void
+    let secondProduced!: () => void
+    const first = new Promise<void>((resolve) => {
+      firstReferenced = resolve
+    })
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve
+    })
+    const second = new Promise<void>((resolve) => {
+      secondProduced = resolve
+    })
+    const value = adapter("codex", [])
+    value.streamActivity = async function* () {
+      yield "first"
+      await secondGate
+      secondProduced()
+      yield "second"
+    }
+    value.cancel = vi.fn(async () => undefined)
+    const references: string[] = []
+    const lifecycle: string[] = []
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
+      {
+        persistIntent: vi.fn(),
+        onLifecycle: (_request, state) => lifecycle.push(state),
+        onActivityReference: (_request, activity) => {
+          references.push(activity)
+          if (activity === "first") firstReferenced()
+        },
+      },
+    )
+    const running = coordinator.launch({
+      runId: "cancel-paused",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Cancel pause.",
+    })
+    await first
+    await expect(coordinator.pause("cancel-paused")).resolves.toBe(true)
+    releaseSecond()
+    await second
+    await expect(coordinator.cancel("cancel-paused", "operator")).resolves.toBe(true)
+    await expect(running).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
+    await expect(coordinator.resume("cancel-paused")).resolves.toBe(false)
+    expect(references).toEqual(["first"])
+    expect(lifecycle).toContain("paused")
+    expect(lifecycle).toContain("cancelled")
+    expect(lifecycle).not.toContain("completed")
+  })
+
+  it("rolls back a failed pause lifecycle write without stalling delivery", async () => {
+    let firstReferenced!: () => void
+    let releaseSecond!: () => void
+    const first = new Promise<void>((resolve) => {
+      firstReferenced = resolve
+    })
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve
+    })
+    const value = adapter("codex", [])
+    value.streamActivity = async function* () {
+      yield "first"
+      await secondGate
+      yield "second"
+    }
+    const references: string[] = []
+    const coordinator = new RuntimeLaunchCoordinator(
+      createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }]),
+      {
+        persistIntent: vi.fn(),
+        onLifecycle: (_request, state) => {
+          if (state === "paused") throw new Error("pause persistence failed")
+        },
+        onActivityReference: (_request, activity) => {
+          references.push(activity)
+          if (activity === "first") firstReferenced()
+        },
+      },
+    )
+    const running = coordinator.launch({
+      runId: "pause-write-failure",
+      chatId: "chat",
+      subChatId: "sub",
+      launch: launch("codex", "codex"),
+      prompt: "Rollback pause.",
+    })
+    await first
+    await expect(coordinator.pause("pause-write-failure")).rejects.toThrow(
+      "pause persistence failed",
+    )
+    expect(coordinator.runState("pause-write-failure")).toBe("running")
+    releaseSecond()
+    await running
+    expect(references).toEqual(["first", "second"])
   })
 })
 
