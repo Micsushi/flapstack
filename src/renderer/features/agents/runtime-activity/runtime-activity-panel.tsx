@@ -2,20 +2,30 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import type { AgentActivityEvent } from "../../../../shared/agent-activity"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { mergeRuntimeActivityPages } from "./runtime-activity-model"
+import {
+  projectDevRuntimeActivityView,
+  type DevRuntimeActivityViewMode,
+} from "./runtime-activity-dev-fixture"
+import { RuntimeActivityFixtureControls } from "./runtime-activity-fixture-controls"
 import { RuntimeActivityTimeline } from "./runtime-activity-timeline"
 
 export function RuntimeActivityPanel({
   chatId,
+  projectId,
+  subChatId,
   legacyMessages,
   isStreaming,
 }: {
   chatId: string
+  projectId: string | null
+  subChatId: string
   legacyMessages: unknown
   isStreaming: boolean
 }) {
   const [events, setEvents] = useState<AgentActivityEvent[]>([])
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [devViewMode, setDevViewMode] = useState<DevRuntimeActivityViewMode>("activity")
   const page = trpc.agentActivity.list.useQuery(
     {
       chatId,
@@ -26,6 +36,25 @@ export function RuntimeActivityPanel({
     { refetchInterval: isStreaming ? 750 : false },
   )
   const diagnostics = trpc.agentRuntimeDefaults.diagnostics.useQuery({ chatId })
+  const actualStatus = page.isError
+    ? "error"
+    : page.isLoading && events.length === 0
+      ? "loading"
+      : isStreaming
+        ? "live"
+        : page.isFetching
+          ? "stale"
+          : "ready"
+  const view = useMemo(
+    () =>
+      projectDevRuntimeActivityView(
+        events,
+        import.meta.env.DEV ? devViewMode : "activity",
+        actualStatus,
+        page.error?.message ?? null,
+      ),
+    [actualStatus, devViewMode, events, page.error?.message],
+  )
 
   useEffect(() => {
     if (!page.data) return
@@ -38,6 +67,7 @@ export function RuntimeActivityPanel({
   useEffect(() => {
     setEvents([])
     setHasMore(false)
+    setDevViewMode("activity")
   }, [chatId])
 
   const oldestStorageId = useMemo(
@@ -66,6 +96,15 @@ export function RuntimeActivityPanel({
 
   return (
     <div className="space-y-3">
+      {import.meta.env.DEV ? (
+        <RuntimeActivityFixtureControls
+          projectId={projectId}
+          chatId={chatId}
+          subChatId={subChatId}
+          viewMode={devViewMode}
+          onViewModeChange={setDevViewMode}
+        />
+      ) : null}
       {diagnostics.data ? (
         <details id="runtime-diagnostics" className="rounded-md border border-border/60 px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium">Runtime diagnostics</summary>
@@ -93,23 +132,16 @@ export function RuntimeActivityPanel({
         </details>
       ) : null}
       <RuntimeActivityTimeline
-        events={events}
-        legacyMessages={legacyMessages}
-        status={
-          page.isError
-            ? "error"
-            : page.isLoading && events.length === 0
-              ? "loading"
-              : isStreaming
-                ? "live"
-                : page.isFetching
-                  ? "stale"
-                  : "ready"
-        }
-        error={page.error?.message ?? null}
-        hasMore={hasMore}
+        events={view.events}
+        legacyMessages={view.suppressLegacy ? [] : legacyMessages}
+        status={view.status}
+        error={view.error}
+        hasMore={view.events.length > 0 && hasMore}
         onLoadMore={loadingMore ? undefined : loadMore}
-        onRetry={() => void page.refetch()}
+        onRetry={() => {
+          if (import.meta.env.DEV && devViewMode === "error") setDevViewMode("activity")
+          void page.refetch()
+        }}
         diagnosticsHref="#runtime-diagnostics"
       />
     </div>

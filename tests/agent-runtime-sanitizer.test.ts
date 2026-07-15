@@ -28,6 +28,26 @@ describe("Runtime persisted/display diagnostic sanitizer", () => {
     }
   })
 
+  it("preserves schema-defined numeric token metrics without allowing token strings", () => {
+    expect(
+      sanitizeRuntimeValue({
+        inputTokens: 12,
+        outputTokens: 8,
+        cachedTokens: 4,
+        reasoningTokens: 2,
+        inputToken: "credential-like-value",
+        accessToken: "credential-like-value",
+      }),
+    ).toEqual({
+      inputTokens: 12,
+      outputTokens: 8,
+      cachedTokens: 4,
+      reasoningTokens: 2,
+      inputToken: "[redacted]",
+      accessToken: "[redacted]",
+    })
+  })
+
   it("sanitizes ordinary persisted payloads and export while preserving explicit agent paths", () => {
     const database = createActivityTestDatabase()
     const { runId } = seedRuntimeRun(database)

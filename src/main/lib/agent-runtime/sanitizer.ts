@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 
 const SECRET_KEY =
   /(?:secret|token|password|credential|api[_-]?key|private[_-]?key|authorization|cookie)/i
+const SAFE_NUMERIC_TOKEN_METRIC = /^(?:input|output|cached|reasoning)Tokens$/
 const PRIVATE_KEY = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi
 const CREDENTIAL = /\b(?:sk|sess|token|ghp|gho|github_pat|xox[baprs])-[-A-Za-z0-9_]{4,}\b/gi
@@ -65,7 +66,10 @@ export function sanitizeRuntimeValue(
         .slice(0, maxEntries)
         .map(([key, field]) => [
           key.slice(0, 256),
-          SECRET_KEY.test(key) ? "[redacted]" : sanitizeRuntimeValue(field, options, depth + 1),
+          SECRET_KEY.test(key) &&
+          !(typeof field === "number" && SAFE_NUMERIC_TOKEN_METRIC.test(key))
+            ? "[redacted]"
+            : sanitizeRuntimeValue(field, options, depth + 1),
         ]),
     )
   }

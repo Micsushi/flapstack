@@ -48,10 +48,12 @@ import { agentActivityRouter } from "./agent-activity"
 import { savedWorkspacesRouter } from "./saved-workspaces"
 import { coordinationEnginesRouter } from "./coordination-engines"
 import { orchestrationOperationsRouter } from "./orchestration-operations"
+import { devRuntimeActivityFixturesRouter } from "./dev-runtime-activity-fixtures"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 import { basename } from "node:path"
 import { isDevTestControlEnabled } from "../../mcp-test-control/lifecycle"
+import { IS_DEV } from "../../../constants"
 
 /**
  * Create the main app router
@@ -64,6 +66,7 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
       app.isPackaged &&
       basename(process.execPath) === "Flapstack Preview",
   )
+  const devRuntimeActivityFixturesEnabled = !app.isPackaged && IS_DEV
 
   return router({
     agentInput: agentInputRouter,
@@ -115,6 +118,9 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     coordinationEngines: coordinationEnginesRouter,
     orchestrationOperations: orchestrationOperationsRouter,
     ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
+    ...(devRuntimeActivityFixturesEnabled
+      ? { devRuntimeActivityFixtures: devRuntimeActivityFixturesRouter }
+      : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),
   })
