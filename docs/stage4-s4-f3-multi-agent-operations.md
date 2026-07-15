@@ -47,8 +47,13 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
 - Workflow run and checkpoint creation is atomic. Branch, loop, parallel,
   pipeline, barrier, and human-gate steps have explicit semantics. Parallel and
   total-agent caps, token/cost budgets, retry counts, timeouts, output schemas,
-  human gates, and stop intent fail closed. Missing structured F11 output
-  references leave the checkpoint blocked with the exact dependency.
+  human gates, and stop intent fail closed. The engine transactionally
+  materializes missing worker chats/subchats/runs from immutable agent and
+  Runtime snapshots, excludes those runs from generic pending drain, schedules
+  durable workflow runs automatically, and launches ready worker waves
+  concurrently inside policy caps. When optional F11 structured-output authority
+  is supplied, F3 schema-checks its immutable activity event reference; missing
+  authority or invalid output follows the persisted retry/failure policy.
 - Template agents have stable unique definition IDs; worker steps carry an
   exact definition reference and control steps cannot. Before checkpoint claim,
   the bridge matches task/run/chat/subchat, the durable orchestration-agent row,
@@ -57,8 +62,9 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
   All three bind the exact run and agent identity.
 - Cascade request re-queries descendants under one immediate transaction and
   rejects stale preview fingerprints. Stop delegates to the concrete
-  provider-neutral F11 cancel authority. Pause/resume fail closed without
-  changing task/workflow truth because the reviewed F11 seam exposes neither.
+  provider-neutral F11 cancel authority. Pause/resume consumers delegate only
+  when optional F11 authority exists and change task/workflow truth only after
+  every target acknowledges; absent authority fails closed.
   Per-target failures remain retryable and provider errors are bounded/redacted.
 - Codex action keys use canonical JSON. Unique-key insertion, dispatch, and
   reconciliation use single-owner claims. Intent ID plus idempotency key reaches
@@ -66,7 +72,13 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
   awaits hold no database connection. Claimed intent completion and message
   insertion commit together with exactly one updated row.
 - Fleet filtering, keyset pagination, count, facets, and provider scope execute
-  in SQL. Only agents belonging to the current page are loaded.
+  in SQL. Only agents belonging to the current page are loaded. Fleet rows carry
+  the authoritative orchestration-owned saved workspace and the renderer opens
+  it through the existing saved-workspace selection contract.
+- Lineage controls dispatch V2 send/follow-up/interrupt through the latest
+  durable intent identity; V1 exposes only its real supported controls. The task
+  card includes an inspectable workflow panel for template start, advance,
+  pause/resume/stop, human gates, retries, and checkpoint failures.
 - Durable transition events are the rebuild source. Orchestration/agent/workflow/
   cascade/coordination mutations project automatically; restart rebuild does not
   infer historical transitions from current snapshots. Activity summaries are
@@ -75,8 +87,10 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
 - Workflow, cascade, activity recovery, and Codex coordination are exposed
   through production service/router/startup paths. The F3/F11 bridge loads the
   exact durable worker identity and immutable Runtime snapshot, then delegates
-  launch/reconcile/cancel to the singleton F11 service. Five-state lifecycle and
-  authoritative activity-sequence references return without provider text.
+  launch/reconcile/cancel to the singleton F11 service. Optional pause/resume
+  and structured-output port methods are consumed when F11 supplies them and
+  fail closed when absent. Lifecycle and authoritative activity-sequence
+  references return without provider text.
   Adapter construction and selection remain outside F3.
 
 ## F11 prerequisites present but not claimed as F3
@@ -97,8 +111,11 @@ F3 consumes only durable run/chat/subchat identity, persisted
 sequence references. It does not select adapters, probe Runtime availability,
 parse provider streams, or copy Runtime activity text. Startup binds the bridge
 when the reviewed F11 singleton export is present and otherwise leaves F3
-Runtime operations unavailable with no fallback. Structured output references,
-pause/resume authority, and F11 feature acceptance remain external dependencies.
+Runtime operations unavailable with no fallback. Optional pause/resume and
+structured-output authority remain F11-owned and are not implemented by this
+packet; F3 only consumes resulting lifecycle/activity references and fails
+closed when they are absent. F11 feature acceptance remains an external
+dependency.
 
 ## Deferred F10/mobile prerequisite cleanup, not F3
 
@@ -200,17 +217,48 @@ startup/router/settings shutdown hunks are likewise F10 cleanup, not F3.
   proof were therefore not performed.
 - Dev app was shut down cleanly and the shared UI lock is free.
 
+### Whole-feature headless amendment — 2026-07-14
+
+- Ownership repair restores `agent-runtime/launch-coordinator.ts`,
+  `main-run-launcher.ts`, and their two Runtime test files byte-for-byte to
+  parent `aa84dc3`; they are absent from the combined F3 diff. Required Node
+  `v22.23.1` passes the amended 13-file F3 gate with 115 tests plus strict
+  TypeScript, touched formatting/lint, strict OpenSpec, and diff hygiene. The
+  amended production build remains unavailable because the shared heavy-job
+  lock is owned by another build (`pid 75613`); no lock bypass is claimed.
+- This isolated packet adds workflow-owned Runtime materialization, drain
+  exclusion, automatic workflow advancement, concurrent ready waves, dependent
+  phase advancement, optional structured JSON output validation with immutable
+  Runtime activity references, and fail-closed optional pause/resume consumers.
+- Fleet operation-workspace navigation, capability-gated lineage messaging,
+  provider-identity projection, and an inspectable workflow control/checkpoint
+  panel now have production wiring and focused component/service coverage.
+- Codex coordination clients can be registered without replacing the F11
+  Runtime port. Capability probes fail closed when a registered provider throws.
+  The reviewed Codex app-server transport does not expose the native V2/V1
+  multi-agent task tools as direct application RPC, so no prompt-mediated fake
+  production client or replay-prone fallback was added.
+- F11 remains the only Runtime adapter selector and the only source of provider
+  activity. F3 consumes immutable launch snapshots plus lifecycle/activity
+  references and never copies Runtime activity. This packet does not implement
+  F11 singleton lifecycle, dispatch, pause/resume, or structured-output reads.
+- Live UI evidence is frozen to the dedicated UI coordinator/tester and is not
+  claimed by this packet. No UI lease or production app was used.
+
 T1 and T6 remain complete. T2–T5 and T7–T10 remain open. S4-MA01 through
 S4-MA10 remain open.
 
 Unclaimed dependencies/evidence:
 
-- S4-F4-T6 operation-workspace roster/navigation.
-- Integrated F11 singleton registration, structured workflow output references,
-  provider-neutral pause/resume authority, and F11-T10 acceptance.
+- Saved-workspace roster/layout and multi-window live verification beyond the
+  F3 fleet navigation contract.
+- F11-T10 acceptance and provider-native process suspension semantics beyond
+  Flapstack-owned activity-delivery pause/resume.
+- A supported direct Codex V2/V1 coordination transport/client registration;
+  app-server worker turns do not expose the native model task tools as RPC.
 - Real Codex V2/V1, Codex plus Claude mixed workflow, cancellation, restart, and
   provider reconciliation walkthroughs.
-- Live multi-window and manual accessibility proof.
+- Dedicated-tester live UI, multi-window, and manual accessibility proof.
 - Signed and visually inspected package preview.
 
 No commit, merge, push, task finalization, or acceptance claim is authorized.

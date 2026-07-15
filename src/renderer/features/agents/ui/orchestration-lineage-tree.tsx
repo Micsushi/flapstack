@@ -9,10 +9,16 @@ export function OrchestrationLineageTree({
   lineage,
   onNavigate,
   currentChatId,
+  onAction,
 }: {
   lineage: OrchestrationLineageDto
   onNavigate: (chatId: string) => void
   currentChatId?: string
+  onAction?: (
+    agentId: string,
+    action: "send" | "follow-up" | "interrupt",
+    message: string | null,
+  ) => void
 }) {
   const nodes = useMemo(
     () =>
@@ -22,6 +28,11 @@ export function OrchestrationLineageTree({
     [lineage.nodes],
   )
   const [focusedId, setFocusedId] = useState(nodes[0]?.agentId ?? "")
+  const [composer, setComposer] = useState<{
+    agentId: string
+    action: "send" | "follow-up"
+    message: string
+  } | null>(null)
   const refs = useRef(new Map<string, HTMLLIElement>())
   const currentNode = nodes.find((node) => node.chatId === currentChatId)
   const focus = (id: string) => {
@@ -97,8 +108,17 @@ export function OrchestrationLineageTree({
                     size="sm"
                     variant="ghost"
                     className="h-5 px-1.5 text-[9px]"
-                    disabled={!node.controls?.[action]?.enabled}
+                    disabled={!node.controls?.[action]?.enabled || !onAction}
                     aria-describedby={reasonId}
+                    onClick={() => {
+                      if (action === "interrupt") onAction?.(node.agentId, "interrupt", null)
+                      else
+                        setComposer({
+                          agentId: node.agentId,
+                          action: action === "followUp" ? "follow-up" : "send",
+                          message: "",
+                        })
+                    }}
                   >
                     {action === "followUp"
                       ? "Follow up"
@@ -106,6 +126,46 @@ export function OrchestrationLineageTree({
                   </Button>
                 ))}
               </div>
+              {composer?.agentId === node.agentId && (
+                <form
+                  className="mt-1 grid gap-1"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    const message = composer.message.trim()
+                    if (!message) return
+                    onAction?.(node.agentId, composer.action, message)
+                    setComposer(null)
+                  }}
+                >
+                  <label className="text-[9px] text-muted-foreground">
+                    {composer.action === "follow-up" ? "Follow-up message" : "Message"}
+                    <textarea
+                      className="mt-1 min-h-14 w-full rounded border bg-background p-1 text-[10px]"
+                      value={composer.message}
+                      onChange={(event) =>
+                        setComposer((current) =>
+                          current ? { ...current, message: event.target.value } : current,
+                        )
+                      }
+                      autoFocus
+                    />
+                  </label>
+                  <div className="flex gap-1">
+                    <Button size="sm" className="h-5 px-1.5 text-[9px]" type="submit">
+                      Send
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 px-1.5 text-[9px]"
+                      type="button"
+                      onClick={() => setComposer(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
               <p id={reasonId} className="mt-1 text-[9px] text-muted-foreground">
                 {node.controls?.send?.reason ?? "Controls unavailable."}
               </p>

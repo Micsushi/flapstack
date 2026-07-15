@@ -20,6 +20,7 @@ import {
 import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import {
+  advancePendingWorkflows,
   recoverOrchestrationOperations,
   registerMainRuntimeOperations,
 } from "./lib/agent-orchestration/operations-runtime"
@@ -137,7 +138,7 @@ async function abortAndWaitForAgentSessions(): Promise<void> {
   pendingRunTimer = null
   const stopped = await abortAndWaitForShutdownIdle({
     abort: abortAllAgentSessions,
-    isIdle: () => !pendingRunDrainActive && !hasActiveAgentSessions(),
+    isIdle: () => !pendingRunDrainActive && !workflowAdvanceActive && !hasActiveAgentSessions(),
     timeoutMs: 10_000,
   })
   if (!stopped) {
@@ -206,6 +207,7 @@ export function getAppUrl(): string {
 let authManager: AuthManager
 let pendingRunTimer: NodeJS.Timeout | null = null
 let pendingRunDrainActive = false
+let workflowAdvanceActive = false
 
 export function getAuthManager(): AuthManager {
   // First try to get from module, fallback to local variable for backwards compat
@@ -1006,6 +1008,20 @@ if (gotTheLock) {
                   pendingRunDrainActive = true
                   try {
                     orchestrationService.tickAll()
+                    if (!workflowAdvanceActive) {
+                      workflowAdvanceActive = true
+                      void advancePendingWorkflows(databasePath)
+                        .then((result) => {
+                          if (result.failed > 0)
+                            console.error(
+                              `[App] ${result.failed}/${result.attempted} workflow advances failed.`,
+                            )
+                        })
+                        .catch((error) => console.error("[App] Workflow advance failed:", error))
+                        .finally(() => {
+                          workflowAdvanceActive = false
+                        })
+                    }
                     for (const request of orchestrationService.listCancellationRequests()) {
                       const handled = await runtimeLaunchService.cancel(
                         request.runId,

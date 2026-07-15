@@ -4,9 +4,11 @@ import {
   orchestrationTemplateDefinitionSchema,
   type OrchestrationTemplateDefinition,
 } from "../../../shared/orchestration-operations"
+import type { OrchestrationAgentDefinition } from "../../../shared/agent-orchestration"
 import { recordOrchestrationTransition } from "./activity-projection"
 import { verifyAndConsumeTemplateLaunchApproval } from "./operations-config"
 import type { RuntimeLaunchCoordinatorPort, RuntimeLaunchReference } from "./runtime-launch-port"
+import { createAgentOrchestrationService } from "./service"
 
 type Row = Record<string, unknown>
 type Step = OrchestrationTemplateDefinition["workflow"]["steps"][number]
@@ -72,7 +74,7 @@ export class WorkflowEngine {
           : []),
         ...(definition.workflow.steps.some((step) => step.outputSchema !== null)
           ? [
-              "Structured worker outputs require an F11 Runtime output reference; checkpoints stay blocked when unavailable.",
+              "Structured worker outputs are validated against referenced Runtime activity and fail closed when missing or invalid.",
             ]
           : []),
       ],
@@ -128,7 +130,7 @@ export class WorkflowEngine {
 
   async advance(
     runId: string,
-    launches: Record<string, Omit<WorkflowWorkerLaunch, "stepId">>,
+    launches: Record<string, Omit<WorkflowWorkerLaunch, "stepId">> = {},
   ): Promise<WorkflowRunDto> {
     let run = this.get(runId)
     if (["completed", "failed", "stopped"].includes(run.status) || run.status === "paused")
@@ -155,12 +157,14 @@ export class WorkflowEngine {
       const checkpoints = new Map(
         run.checkpoints.map((checkpoint) => [checkpoint.stepId, checkpoint]),
       )
+      const workerLaunches: Promise<void>[] = []
+      let scheduledWorkers = 0
       for (const step of run.definition.workflow.steps) {
         const checkpoint = checkpoints.get(step.id)!
         if (checkpoint.status !== "pending") continue
         if (!step.dependsOn.every((id) => terminalSuccess(checkpoints.get(id)?.status))) continue
         if (["agent", "synthesis"].includes(step.kind)) {
-          if (!this.withinLaunchLimits(db, run, checkpoints)) {
+          if (!this.withinLaunchLimits(db, run, checkpoints, scheduledWorkers)) {
             this.setCheckpoint(
               db,
               run,
@@ -172,32 +176,67 @@ export class WorkflowEngine {
             )
             continue
           }
-          const launch = launches[step.id]
+          let launch = launches[step.id]
+          let materializedDefinition: OrchestrationAgentDefinition | undefined
           if (!launch) {
-            this.setCheckpoint(
+            if (!step.agentDefinitionId)
+              throw new Error(`Workflow worker ${step.id} is missing its agent definition binding.`)
+            const definition = run.definition.agents.find(
+              (candidate) => candidate.definitionId === step.agentDefinitionId,
+            )
+            if (!definition)
+              throw new Error(`Workflow worker ${step.id} references an unknown agent definition.`)
+            const materialized = createAgentOrchestrationService(
+              this.databasePath,
+            ).materializeWorkflowAgent({
+              taskId: run.taskId,
+              workflowRunId: run.id,
+              stepId: step.id,
+              attemptCount: checkpoint.attemptCount + 1,
+              agent: definition,
+            })
+            launch = materialized
+            materializedDefinition = materialized.agentDefinition
+          }
+          workerLaunches.push(
+            this.launchWorker(
               db,
               run,
               step,
-              "blocked",
-              null,
-              "F11 durable Runtime launch identity is unavailable for this checkpoint.",
               checkpoint.attemptCount,
-            )
-            continue
-          }
-          await this.launchWorker(db, run, step, checkpoint.attemptCount, launch)
-          const updated = this.get(run.id).checkpoints.find((item) => item.stepId === step.id)
-          if (updated) checkpoints.set(step.id, updated)
+              launch,
+              materializedDefinition,
+            ),
+          )
+          scheduledWorkers += 1
           continue
         }
         this.evaluateControlStep(db, run, step, checkpoints)
         for (const updated of this.get(run.id).checkpoints) checkpoints.set(updated.stepId, updated)
       }
+      const launchResults = await Promise.allSettled(workerLaunches)
+      const rejectedLaunch = launchResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      )
+      if (rejectedLaunch) throw rejectedLaunch.reason
+      this.evaluateReadyControlSteps(db, run.id)
       run = this.get(runId)
       this.prepareCompletedLoopIterations(db, run)
       run = this.get(runId)
       this.refreshRunStatus(db, run)
-      return this.get(runId)
+      const result = this.get(runId)
+      const resultCheckpoints = new Map(
+        result.checkpoints.map((checkpoint) => [checkpoint.stepId, checkpoint]),
+      )
+      const readyWorker = result.definition.workflow.steps.some((step) => {
+        const checkpoint = resultCheckpoints.get(step.id)
+        return (
+          ["agent", "synthesis"].includes(step.kind) &&
+          checkpoint?.status === "pending" &&
+          step.dependsOn.every((id) => terminalSuccess(resultCheckpoints.get(id)?.status))
+        )
+      })
+      return readyWorker ? await this.advance(runId, launches) : result
     } finally {
       db.close()
     }
@@ -355,6 +394,23 @@ export class WorkflowEngine {
     }
   }
 
+  list(taskId: string): WorkflowRunDto[] {
+    const db = new Database(this.databasePath, { readonly: true })
+    let ids: string[]
+    try {
+      ids = (
+        db
+          .prepare(
+            "SELECT id FROM orchestration_workflow_runs WHERE task_id = ? ORDER BY created_at DESC, id DESC",
+          )
+          .all(taskId) as Array<{ id: string }>
+      ).map((row) => row.id)
+    } finally {
+      db.close()
+    }
+    return ids.map((id) => this.get(id))
+  }
+
   private async reconcileActive(db: Database.Database, run: WorkflowRunDto) {
     for (const checkpoint of run.checkpoints.filter((item) =>
       ["running", "uncertain"].includes(item.status),
@@ -384,7 +440,7 @@ export class WorkflowEngine {
         const reference = await this.coordinator.reconcile(runtimeRunId)
         if (reference.runId !== runtimeRunId)
           throw new Error("Runtime reconciliation identity mismatch.")
-        this.applyRuntimeReference(db, run, step, checkpoint, reference)
+        await this.applyRuntimeReference(db, run, step, checkpoint, reference)
       } catch (error) {
         this.setCheckpoint(
           db,
@@ -427,12 +483,13 @@ export class WorkflowEngine {
     step: Step,
     priorAttempts: number,
     launch: Omit<WorkflowWorkerLaunch, "stepId">,
+    materializedDefinition?: OrchestrationAgentDefinition,
   ) {
     if (!step.agentDefinitionId)
       throw new Error(`Workflow worker ${step.id} is missing its agent definition binding.`)
-    const agentDefinition = run.definition.agents.find(
-      (candidate) => candidate.definitionId === step.agentDefinitionId,
-    )
+    const agentDefinition =
+      materializedDefinition ??
+      run.definition.agents.find((candidate) => candidate.definitionId === step.agentDefinitionId)
     if (!agentDefinition)
       throw new Error(`Workflow worker ${step.id} references an unknown agent definition.`)
     const request = {
@@ -471,7 +528,7 @@ export class WorkflowEngine {
     try {
       const reference = await this.coordinator.launch(request, ownership)
       assertReferenceMatches(launch, reference)
-      this.applyRuntimeReference(
+      await this.applyRuntimeReference(
         db,
         run,
         step,
@@ -483,7 +540,7 @@ export class WorkflowEngine {
     }
   }
 
-  private applyRuntimeReference(
+  private async applyRuntimeReference(
     db: Database.Database,
     run: WorkflowRunDto,
     step: Step,
@@ -497,15 +554,36 @@ export class WorkflowEngine {
       activityReference: reference.activityReference,
     }
     if (reference.lifecycleState === "completed" && step.outputSchema !== null) {
-      this.setCheckpoint(
-        db,
-        run,
-        step,
-        "blocked",
-        output,
-        "F11 Runtime outputSchema result reference is unavailable; structured checkpoint remains open.",
-        checkpoint.attemptCount,
-      )
+      try {
+        const structured = await this.coordinator.readStructuredOutput?.(reference.runId)
+        if (!structured)
+          throw new Error("Completed Runtime produced no structured output activity reference.")
+        assertOutput(step, structured.value)
+        this.setCheckpoint(
+          db,
+          run,
+          step,
+          "completed",
+          {
+            ...output,
+            structuredOutput: structured.value,
+            structuredOutputReference: structured.activityReference,
+          },
+          null,
+          checkpoint.attemptCount,
+        )
+      } catch (error) {
+        const retryable = checkpoint.attemptCount <= step.maxRetries
+        this.setCheckpoint(
+          db,
+          run,
+          step,
+          retryable ? "waiting" : "failed",
+          output,
+          safeError(error),
+          checkpoint.attemptCount,
+        )
+      }
       return
     }
     const status = checkpointStatus(reference.lifecycleState)
@@ -588,15 +666,38 @@ export class WorkflowEngine {
     this.setCheckpoint(db, run, step, "completed", output, null, 0)
   }
 
+  private evaluateReadyControlSteps(db: Database.Database, runId: string) {
+    for (let pass = 0; pass < 512; pass += 1) {
+      const run = this.get(runId)
+      const checkpoints = new Map(
+        run.checkpoints.map((checkpoint) => [checkpoint.stepId, checkpoint]),
+      )
+      let changed = false
+      for (const step of run.definition.workflow.steps) {
+        if (["agent", "synthesis"].includes(step.kind)) continue
+        const checkpoint = checkpoints.get(step.id)!
+        if (checkpoint.status !== "pending") continue
+        if (!step.dependsOn.every((id) => terminalSuccess(checkpoints.get(id)?.status))) continue
+        this.evaluateControlStep(db, run, step, checkpoints)
+        const updated = this.get(runId).checkpoints.find((item) => item.stepId === step.id)
+        if (updated?.status !== "pending") changed = true
+        for (const item of this.get(runId).checkpoints) checkpoints.set(item.stepId, item)
+      }
+      if (!changed) return
+    }
+    throw new Error("Workflow control evaluation exceeded its deterministic pass bound.")
+  }
+
   private withinLaunchLimits(
     db: Database.Database,
     run: WorkflowRunDto,
     checkpoints: Map<string, WorkflowRunDto["checkpoints"][number]>,
+    scheduledWorkers = 0,
   ) {
     if (!run.definition.policy.allowSpawn) return false
     const active = [...checkpoints.values()].filter((item) => item.status === "running").length
     const started = [...checkpoints.values()].filter((item) => item.attemptCount > 0).length
-    if (active >= run.definition.policy.maxParallelAgents) return false
+    if (active + scheduledWorkers >= run.definition.policy.maxParallelAgents) return false
     const usage = db
       .prepare(
         `SELECT count(*) agents, coalesce(sum(total_tokens), 0) tokens,
@@ -604,7 +705,10 @@ export class WorkflowEngine {
          FROM orchestration_agents WHERE task_id = ?`,
       )
       .get(run.taskId) as { agents: number; tokens: number; cost: number }
-    if (Math.max(started, Number(usage.agents)) >= run.definition.policy.maxTotalAgents)
+    if (
+      Math.max(started + scheduledWorkers, Number(usage.agents)) >=
+      run.definition.policy.maxTotalAgents
+    )
       return false
     if (
       run.definition.policy.maxTotalTokens !== null &&

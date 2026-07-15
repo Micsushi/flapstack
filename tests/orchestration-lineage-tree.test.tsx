@@ -81,6 +81,62 @@ describe("rich orchestration lineage", () => {
     expect(container.textContent).toContain("follow-up · outbound · queued · Continue")
     expect(container.querySelectorAll("button:disabled")).toHaveLength(6)
   })
+
+  it("dispatches enabled send, follow-up, and interrupt controls", async () => {
+    container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    const onAction = vi.fn()
+    await act(async () =>
+      root.render(
+        <OrchestrationLineageTree
+          onNavigate={vi.fn()}
+          onAction={onAction}
+          lineage={{
+            taskId: "task-1",
+            nodes: [
+              {
+                agentId: "worker",
+                chatId: "chat-1",
+                parentAgentId: null,
+                replacedAgentId: null,
+                role: "Worker",
+                name: "Worker",
+                status: "active",
+                controls: {
+                  send: { enabled: true, reason: "Queued mailbox delivery." },
+                  followUp: { enabled: true, reason: "Starts a follow-up turn." },
+                  interrupt: { enabled: true, reason: "Interrupts the active turn." },
+                },
+              },
+            ],
+            edges: [],
+          }}
+        />,
+      ),
+    )
+    const button = (text: string) =>
+      [...container!.querySelectorAll<HTMLButtonElement>("button")].find(
+        (candidate) => candidate.textContent === text,
+      )!
+    await act(async () => button("Send").click())
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        textarea,
+        "Continue with tests",
+      )
+      textarea.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    await act(async () =>
+      container!
+        .querySelector<HTMLFormElement>("form")!
+        .dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true })),
+    )
+    expect(onAction).toHaveBeenCalledWith("worker", "send", "Continue with tests")
+    await act(async () => button("Interrupt").click())
+    expect(onAction).toHaveBeenCalledWith("worker", "interrupt", null)
+  })
 })
 function controls(reason: string) {
   return {

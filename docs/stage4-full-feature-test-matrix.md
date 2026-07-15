@@ -59,8 +59,12 @@ tests do not substitute for live UI or packaged evidence.
       and usage events without copying or relabeling provider reasoning.
 
 Code-ready evidence for S4-MA01 through S4-MA10 is recorded in
-`docs/stage4-s4-f3-multi-agent-operations.md`. Rows remain open until the F4/F11
-dependencies and consolidated live/package walkthrough pass.
+`docs/stage4-s4-f3-multi-agent-operations.md`. Fleet workspace navigation,
+lineage controls, workflow scheduling, optional structured-output consumption,
+and fail-closed optional F11 lifecycle consumers are headless-covered. Rows
+remain open until F11 authority/acceptance, a
+supported direct Codex coordination transport, the separately assigned UI and
+accessibility queue, and consolidated live/package walkthrough pass.
 
 ## Saved Workspaces
 
@@ -77,14 +81,14 @@ dependencies and consolidated live/package walkthrough pass.
 - [ ] **S4-WS06** Starting an orchestration creates one operation workspace; all
       descendant chats join its roster once, overflow stays bounded, restart
       repairs the link without replay, and workspace deletion preserves work.
-2026-07-14 partial S4-WS06 evidence: the reviewed F3 creation transaction now
-creates the operation-workspace metadata atomically, and startup reconciliation
-repairs missing metadata without replay. The bounded membership, archived
-read-only, and identity review brings Node 22 affected coverage to 42/42. The
-row stays open for the complete F3 Runtime path and live restart/roster proof.
-Explicit operation-workspace deletion now persists across startup reconciliation
-until the user regenerates the same opaque identity. The bounded delete,
-duplicate, and archived-file slice passes 16/16; no broad gate was repeated.
+      2026-07-14 partial S4-WS06 evidence: the reviewed F3 creation transaction now
+      creates the operation-workspace metadata atomically, and startup reconciliation
+      repairs missing metadata without replay. The bounded membership, archived
+      read-only, and identity review brings Node 22 affected coverage to 42/42. The
+      row stays open for the complete F3 Runtime path and live restart/roster proof.
+      Explicit operation-workspace deletion now persists across startup reconciliation
+      until the user regenerates the same opaque identity. The bounded delete,
+      duplicate, and archived-file slice passes 16/16; no broad gate was repeated.
 
 ## Automation and Scheduler
 

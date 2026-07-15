@@ -201,6 +201,11 @@ export async function drainPendingMcpRuns(
          LEFT JOIN orchestration_agents oa ON oa.run_id = r.id
          WHERE r.status = 'pending' AND r.prompt_message_id LIKE 'mcp-%'
            AND NOT EXISTS (
+             SELECT 1 FROM orchestration_transition_events workflow_owner
+             WHERE workflow_owner.run_id = r.id
+               AND workflow_owner.dedup_key LIKE 'workflow-materialized:%'
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM agent_runs active
              WHERE active.sub_chat_id = r.sub_chat_id
                AND active.status = 'running'

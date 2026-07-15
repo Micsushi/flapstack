@@ -31,9 +31,12 @@ import {
   type RuntimeReconciliationState,
 } from "../src/main/lib/agent-orchestration/runtime-launch-port"
 import {
+  advancePendingWorkflows,
   clearOrchestrationOperationsRuntime,
   getWorkflowEngine,
+  getRegisteredCoordinationEngineProbes,
   recoverOrchestrationOperations,
+  registerCodexCoordinationClients,
   registerMainRuntimeOperations,
   registerOrchestrationOperationsRuntime,
 } from "../src/main/lib/agent-orchestration/operations-runtime"
@@ -46,6 +49,7 @@ import type {
 import * as schema from "../src/main/lib/db/schema"
 import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
+import { drainPendingMcpRuns } from "../src/main/lib/run-launch-service"
 
 let directory = ""
 let databasePath = ""
@@ -149,6 +153,44 @@ describe("production wiring", () => {
       lifecycleState: "cancelled",
       activityReference: { runId: identity.runId, afterSequence: 7 },
     })
+  })
+
+  it("advances queued workflows through the registered production Runtime", async () => {
+    const coordinator = runtime()
+    registerOrchestrationOperationsRuntime({ runtime: coordinator })
+    const engine = getWorkflowEngine(databasePath)
+    const run = engine.start("task-1", baseDefinition([step("worker", "agent")]))
+    await expect(advancePendingWorkflows(databasePath)).resolves.toEqual({
+      attempted: 1,
+      failed: 0,
+      runtime: true,
+    })
+    expect(engine.get(run.id).status).toBe("completed")
+    expect(coordinator.launch).toHaveBeenCalledTimes(1)
+  })
+
+  it("registers capability-gated Codex clients without changing Runtime ownership", async () => {
+    const coordinator = runtime()
+    registerOrchestrationOperationsRuntime({ runtime: coordinator })
+    const client = {
+      probe: vi.fn(
+        async () =>
+          context().snapshot.capabilities && {
+            engine: "codex-v2" as const,
+            available: true,
+            engineVersion: "codex-v2-v1",
+            snapshot: context().snapshot.capabilities,
+            reason: null,
+          },
+      ),
+      dispatch: vi.fn(),
+      reconcile: vi.fn(),
+    }
+    registerCodexCoordinationClients(databasePath, { v2: client })
+    await expect(getRegisteredCoordinationEngineProbes()).resolves.toMatchObject({
+      "codex-v2": { available: true, engineVersion: "codex-v2-v1" },
+    })
+    expect(getWorkflowEngine(databasePath)).toBeInstanceOf(WorkflowEngine)
   })
 
   it("rejects missing, mismatched, or corrupt durable Runtime identities before launch", async () => {
@@ -437,7 +479,18 @@ describe("workflow review invariants", () => {
     expect(engine.decideHumanGate(run.id, "gate", "approve").status).toBe("completed")
   })
 
-  it("evaluates branches, skips the unselected path, bounds loops, and blocks missing F11 launches", async () => {
+  it("keeps auto-materialized workflow runs out of the generic pending-run drain", async () => {
+    const coordinator = runtime()
+    const engine = new WorkflowEngine(databasePath, coordinator)
+    const run = engine.start("task-1", baseDefinition([step("worker", "agent")]))
+    await engine.advance(run.id)
+    const genericLaunch = vi.fn(async () => undefined)
+    await expect(drainPendingMcpRuns(databasePath, genericLaunch)).resolves.toBe(0)
+    expect(genericLaunch).not.toHaveBeenCalled()
+    expect(coordinator.launch).toHaveBeenCalledTimes(1)
+  })
+
+  it("evaluates branches, skips the unselected path, bounds loops, and materializes workers", async () => {
     const engine = new WorkflowEngine(databasePath, runtime())
     const definition = branchLoopWorkflow()
     const run = engine.start("task-1", definition)
@@ -453,7 +506,7 @@ describe("workflow review invariants", () => {
       "skipped",
     )
     expect(branched.checkpoints.find((item) => item.stepId === "then-worker")?.status).toBe(
-      "blocked",
+      "completed",
     )
 
     const loopRun = engine.start("task-1", loopWorkflow())
@@ -686,8 +739,32 @@ describe("workflow review invariants", () => {
       structured: launchRequest("run-structured"),
     })
     expect(schemaResult.checkpoints[0]).toMatchObject({
-      status: "blocked",
-      error: expect.stringContaining("F11 Runtime outputSchema"),
+      status: "failed",
+      error: expect.stringContaining("no structured output activity reference"),
+    })
+
+    seedRun("run-structured-valid")
+    const structuredEngine = new WorkflowEngine(databasePath, {
+      ...runtime(),
+      readStructuredOutput: vi.fn(async (runId) => ({
+        value: { result: "ok" },
+        activityReference: { runId, eventId: "structured-event", sequence: 9 },
+      })),
+    })
+    const structuredRun = structuredEngine.start("task-1", schemaDefinition)
+    const structuredResult = await structuredEngine.advance(structuredRun.id, {
+      structured: launchRequest("run-structured-valid"),
+    })
+    expect(structuredResult.checkpoints[0]).toMatchObject({
+      status: "completed",
+      output: {
+        structuredOutput: { result: "ok" },
+        structuredOutputReference: {
+          runId: "run-structured-valid",
+          eventId: "structured-event",
+          sequence: 9,
+        },
+      },
     })
 
     seedAgent("usage-agent", "run-usage")
@@ -793,6 +870,29 @@ describe("cascade review invariants", () => {
       errors.every((row) => !row.error.includes("top-secret-token") && row.error.length <= 500),
     ).toBe(true)
   })
+
+  it("commits pause/resume truth only after every active Runtime target acknowledges", async () => {
+    seedAgent("pause-agent", "pause-run")
+    const pause = vi.fn(async (runId: string) => reference(runId, "running"))
+    const resume = vi.fn(async (runId: string) => reference(runId, "running"))
+    const control = new CascadeControlService(databasePath, {
+      ...runtime(),
+      pause,
+      resume,
+    })
+    const pausePreview = control.preview("task-1", "pause")
+    const pauseIntent = control.request("task-1", "pause", pausePreview.fingerprint)
+    expect(readTaskStatus()).not.toBe("paused")
+    expect(await control.reconcile(pauseIntent.intentId)).toMatchObject({ state: "completed" })
+    expect(readTaskStatus()).toBe("paused")
+    expect(pause).toHaveBeenCalledWith("pause-run")
+
+    const resumePreview = control.preview("task-1", "resume")
+    const resumeIntent = control.request("task-1", "resume", resumePreview.fingerprint)
+    expect(await control.reconcile(resumeIntent.intentId)).toMatchObject({ state: "completed" })
+    expect(readTaskStatus()).toBe("running")
+    expect(resume).toHaveBeenCalledWith("pause-run")
+  })
 })
 
 describe("Codex durability review invariants", () => {
@@ -827,6 +927,28 @@ describe("Codex durability review invariants", () => {
     expect(duplicate).toMatchObject({ ok: false, state: "uncertain" })
     release()
     await expect(first).resolves.toMatchObject({ ok: true, state: "completed" })
+    const identityDb = new Database(databasePath, { readonly: true })
+    expect(
+      JSON.parse(
+        String(
+          (
+            identityDb
+              .prepare(
+                "SELECT provider_identity_json identity FROM coordination_action_intents WHERE task_id = 'task-1'",
+              )
+              .get() as { identity: string }
+          ).identity,
+        ),
+      ),
+    ).toEqual(context().snapshot.providerIdentity)
+    expect(
+      identityDb
+        .prepare(
+          "SELECT coordination_engine_provider_identity identity FROM task_orchestrations WHERE task_id = 'task-1'",
+        )
+        .get(),
+    ).toEqual({ identity: "null" })
+    identityDb.close()
     expect(await adapter.execute(context(), reordered)).toMatchObject({
       ok: true,
       state: "completed",
@@ -1175,7 +1297,13 @@ function runtime(): RuntimeLaunchCoordinatorPort {
       orchestrationAgentId: `agent-${request.runId}`,
       agentDefinitionId: request.agentDefinitionId,
     })),
-    launch: vi.fn(async (request) => reference(request.runId, "completed")),
+    launch: vi.fn(async (request) => ({
+      runId: request.runId,
+      chatId: request.chatId,
+      subChatId: request.subChatId,
+      lifecycleState: "completed" as const,
+      activityReference: null,
+    })),
     reconcile: vi.fn(async (runId) => reference(runId, "completed")),
     cancel: vi.fn(async (runId) => reference(runId, "completed")),
   }
@@ -1204,7 +1332,7 @@ function seedRun(runId: string) {
       runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version,
       runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot)
      VALUES (?, 'chat-1', ?, 'codex', 'gpt', 'read-only', 'Work', 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(runId, subChatId, ...testRuntimeSnapshotSqlValues())
+  ).run(runId, subChatId, ...testRuntimeSnapshotSqlValues("codex", "codex"))
   db.close()
 }
 function seedPendingRuntimeRun(
@@ -1232,9 +1360,14 @@ function seedPendingRuntimeRun(
       status, started_at, runtime_snapshot_version, runtime_preference,
       runtime_preference_source, resolved_runtime, runtime_adapter_version,
       runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot)
-     VALUES (?, 'chat-1', ?, 'codex', 'gpt', 'read-only', 'Durable worker prompt',
+     VALUES (?, 'chat-1', ?, 'codex', ?, 'read-only', 'Durable worker prompt',
       'pending', 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(runId, subChatId, ...testRuntimeSnapshotSqlValues())
+  ).run(
+    runId,
+    subChatId,
+    agentDefinition.model ?? null,
+    ...testRuntimeSnapshotSqlValues("codex", "codex"),
+  )
   db.prepare(
     `INSERT INTO orchestration_agents
      (id, task_id, chat_id, run_id, depth, definition, dependency_agent_ids,

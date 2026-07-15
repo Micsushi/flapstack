@@ -222,10 +222,21 @@ export class CascadeControlService {
 
   private async coordinateRuntime(action: string, runId: string, intentId: string) {
     const reason = `orchestration-${action}:${intentId}`
-    if (action === "stop") return this.runtime.cancel(runId, reason)
-    throw new Error(
-      `F11 Runtime ${action} lifecycle authority is unavailable; durable agent state is unchanged.`,
-    )
+    if (action === "stop") {
+      const reference = await this.runtime.cancel(runId, reason)
+      if (reference.runId !== runId || ["running", "uncertain"].includes(reference.lifecycleState))
+        throw new Error("Runtime stop was not authoritatively acknowledged.")
+      return reference
+    }
+    const control = action === "pause" ? this.runtime.pause : this.runtime.resume
+    if (!control)
+      throw new Error(
+        `F11 Runtime ${action} lifecycle authority is unavailable; durable agent state is unchanged.`,
+      )
+    const reference = await control.call(this.runtime, runId)
+    if (reference.runId !== runId || reference.lifecycleState !== "running")
+      throw new Error(`Runtime ${action} acknowledgement identity/state mismatch.`)
+    return reference
   }
 }
 

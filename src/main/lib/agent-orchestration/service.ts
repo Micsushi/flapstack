@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -49,6 +49,8 @@ import {
 import type {
   CoordinationEngine,
   CoordinationEngineProbe,
+  CoordinationEngineProviderIdentity,
+  ResolvedCoordinationEngineSnapshot,
 } from "../../../shared/coordination-engine"
 
 type Row = Record<string, unknown>
@@ -179,6 +181,70 @@ export function createAgentOrchestrationService(databasePath: string) {
         add.immediate()
         safeTickTask(db, parsed.data.taskId)
         return result
+      } finally {
+        db.close()
+      }
+    },
+
+    materializeWorkflowAgent(input: {
+      taskId: string
+      workflowRunId: string
+      stepId: string
+      attemptCount: number
+      agent: OrchestrationAgentDefinition
+    }): {
+      runId: string
+      chatId: string
+      subChatId: string
+      agentDefinition: OrchestrationAgentDefinition
+    } {
+      const db = open()
+      try {
+        const dedupKey = `workflow-materialized:${input.workflowRunId}:${input.stepId}:${input.attemptCount}`
+        return db
+          .transaction(() => {
+            const existing = db
+              .prepare(
+                `SELECT oa.definition, oa.chat_id, oa.run_id, r.sub_chat_id
+                 FROM orchestration_transition_events e
+                 JOIN orchestration_agents oa ON oa.id = e.agent_id
+                 JOIN agent_runs r ON r.id = e.run_id
+                 WHERE e.dedup_key = ? AND e.task_id = ?`,
+              )
+              .get(dedupKey, input.taskId) as Row | undefined
+            if (existing) return workflowLaunchFromRow(existing)
+
+            const agentId = workflowAgentId(input.workflowRunId, input.stepId, input.attemptCount)
+            const definition = orchestrationAgentDefinitionSchema.parse({
+              ...input.agent,
+              agentId,
+              dependencyAgentIds: [],
+            })
+            addAgent(db, { taskId: input.taskId, agent: definition })
+            const orchestration = requireOrchestration(db, input.taskId)
+            const agent = requireAgent(db, input.taskId, agentId)
+            materializeAgent(db, orchestration, agent)
+            const materialized = requireAgent(db, input.taskId, agentId)
+            recordOrchestrationTransition(db, {
+              dedupKey,
+              taskId: input.taskId,
+              entityType: "checkpoint",
+              entityId: `${input.workflowRunId}:${input.stepId}`,
+              agentId,
+              runId: String(materialized.run_id),
+              kind: "spawn",
+              phase: "workflow-materialized",
+            })
+            const row = db
+              .prepare(
+                `SELECT oa.definition, oa.chat_id, oa.run_id, r.sub_chat_id
+                 FROM orchestration_agents oa JOIN agent_runs r ON r.id = oa.run_id
+                 WHERE oa.id = ?`,
+              )
+              .get(agentId) as Row
+            return workflowLaunchFromRow(row)
+          })
+          .immediate()
       } finally {
         db.close()
       }
@@ -368,7 +434,11 @@ export function createAgentOrchestrationService(databasePath: string) {
       const db = open()
       try {
         const orchestration = requireOrchestration(db, taskId)
-        const engine = interpretCoordinationEngineSnapshot(orchestration)
+        const engine = latestCoordinationIdentity(
+          db,
+          taskId,
+          interpretCoordinationEngineSnapshot(orchestration),
+        )
         const agents = listAgentRows(db, taskId).map(toAgentDto)
         assertAcyclicLineage(agents)
         const knownIds = new Set(agents.map((agent) => agent.id))
@@ -382,7 +452,11 @@ export function createAgentOrchestrationService(databasePath: string) {
         const unavailableReason =
           engine.engine === "workflow"
             ? "Workflow coordination uses durable steps; direct mailbox actions are unavailable."
-            : "Coordination adapter is not connected yet; no provider action will be synthesized."
+            : !engine.providerIdentity
+              ? "Coordination engine has no durable provider identity yet."
+              : engine.capabilities.status !== "available"
+                ? "Coordination capability snapshot is unavailable."
+                : null
         const messages = db
           .prepare(
             "SELECT id, agent_id, direction, kind, state, body, provider_message_id, created_at FROM orchestration_messages WHERE task_id = ? ORDER BY created_at, id",
@@ -423,9 +497,22 @@ export function createAgentOrchestrationService(databasePath: string) {
                   ? JSON.stringify(engine.providerIdentity)
                   : null,
                 controls: {
-                  send: { enabled: false, reason: unavailableReason },
-                  followUp: { enabled: false, reason: unavailableReason },
-                  interrupt: { enabled: false, reason: unavailableReason },
+                  send: {
+                    enabled: unavailableReason === null,
+                    reason: unavailableReason ?? "Queues a durable provider message.",
+                  },
+                  followUp: {
+                    enabled: unavailableReason === null && engine.engine === "codex-v2",
+                    reason:
+                      unavailableReason ??
+                      (engine.engine === "codex-v2"
+                        ? "Starts a follow-up turn for the resident task."
+                        : "Codex V1 does not support V2 follow-up semantics."),
+                  },
+                  interrupt: {
+                    enabled: unavailableReason === null,
+                    reason: unavailableReason ?? "Interrupts the active provider turn.",
+                  },
                 },
               }
             }),
@@ -806,6 +893,48 @@ function addAgent(
     now,
   })
   return toAgentDto(requireAgent(db, input.taskId, id))
+}
+
+function workflowAgentId(workflowRunId: string, stepId: string, attemptCount: number): string {
+  const digest = createHash("sha256")
+    .update(`${workflowRunId}\0${stepId}\0${attemptCount}`)
+    .digest("hex")
+    .slice(0, 32)
+  return `workflow-${digest}`
+}
+
+function workflowLaunchFromRow(row: Row) {
+  if (!row.run_id || !row.chat_id || !row.sub_chat_id)
+    throw new Error("Workflow worker durable run/chat/subchat identity is missing.")
+  return {
+    runId: String(row.run_id),
+    chatId: String(row.chat_id),
+    subChatId: String(row.sub_chat_id),
+    agentDefinition: parseDefinition(row.definition),
+  }
+}
+
+function latestCoordinationIdentity(
+  db: Sqlite,
+  taskId: string,
+  snapshot: ResolvedCoordinationEngineSnapshot,
+): ResolvedCoordinationEngineSnapshot {
+  if (snapshot.engine === "workflow") return snapshot
+  const row = db
+    .prepare(
+      `SELECT provider_identity_json
+       FROM coordination_action_intents
+       WHERE task_id = ? AND engine = ?
+         AND json_type(provider_identity_json, '$') = 'object'
+         AND json_extract(provider_identity_json, '$.engine') = ?
+       ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    )
+    .get(taskId, snapshot.engine, snapshot.engine) as { provider_identity_json: string } | undefined
+  if (!row) return snapshot
+  return {
+    ...snapshot,
+    providerIdentity: JSON.parse(row.provider_identity_json) as CoordinationEngineProviderIdentity,
+  }
 }
 
 function insertAgent(
@@ -1449,7 +1578,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     .get(parentChatId, taskId) as Row | undefined
   if (!parentChat)
     throw new AgentOrchestrationError("stale-caller", "Parent chat identity is stale.")
-  const parentAncestors = parseIds(parentChat.ancestor_chat_ids)
+  const parentAncestors = parentChat.ancestor_chat_ids ? parseIds(parentChat.ancestor_chat_ids) : []
   if (
     new Set(parentAncestors).size !== parentAncestors.length ||
     parentAncestors.includes(parentChatId)

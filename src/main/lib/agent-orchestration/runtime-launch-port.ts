@@ -22,6 +22,11 @@ export type RuntimeLaunchReference = {
   activityReference: { runId: string; afterSequence: number } | null
 }
 
+export type RuntimeStructuredOutput = {
+  value: unknown
+  activityReference: { runId: string; eventId: string; sequence: number }
+}
+
 export type RuntimeLaunchRequest = {
   taskId: string
   runId: string
@@ -63,6 +68,9 @@ export interface MainRuntimeLaunchServicePort {
   launch(run: MainRuntimeQueuedRun): Promise<void>
   reconcileRun(runId: string): Promise<RuntimeReconciliationState>
   cancel(runId: string, reason: string): Promise<boolean>
+  pause?(runId: string): Promise<boolean>
+  resume?(runId: string): Promise<boolean>
+  readStructuredOutput?(runId: string): Promise<RuntimeStructuredOutput | null>
 }
 
 /** F3 consumes this provider-neutral port only. */
@@ -77,6 +85,9 @@ export interface RuntimeLaunchCoordinatorPort {
   ): Promise<RuntimeLaunchReference>
   reconcile(runId: string): Promise<RuntimeLaunchReference>
   cancel(runId: string, reason: string): Promise<RuntimeLaunchReference>
+  pause?(runId: string): Promise<RuntimeLaunchReference>
+  resume?(runId: string): Promise<RuntimeLaunchReference>
+  readStructuredOutput?(runId: string): Promise<RuntimeStructuredOutput | null>
 }
 
 /**
@@ -117,6 +128,23 @@ export function createMainRuntimeLaunchPort(
       requireDurableIdentity(databasePath, runId)
       await service.cancel(runId, reason)
       return reference(databasePath, service, runId)
+    },
+    async pause(runId) {
+      requireDurableIdentity(databasePath, runId)
+      if (!service.pause || !(await service.pause(runId)))
+        throw new Error(`Runtime run ${runId} has no active pause authority.`)
+      return reference(databasePath, service, runId)
+    },
+    async resume(runId) {
+      requireDurableIdentity(databasePath, runId)
+      if (!service.resume || !(await service.resume(runId)))
+        throw new Error(`Runtime run ${runId} has no active resume authority.`)
+      return reference(databasePath, service, runId)
+    },
+    async readStructuredOutput(runId) {
+      requireDurableIdentity(databasePath, runId)
+      if (!service.readStructuredOutput) return null
+      return service.readStructuredOutput(runId)
     },
   }
 }
@@ -169,6 +197,25 @@ function loadDurableRun(
   if (!prompt) throw new Error("Runtime launch durable prompt is missing.")
   const harness = String(row.harness)
   if (!isAgentHarness(harness)) throw new Error("Runtime launch durable harness is invalid.")
+  const runtimeLaunch = resolvedLaunchFromSnapshotRow(row)
+  const durableCustomPermissions = row.custom_permissions
+    ? JSON.parse(String(row.custom_permissions))
+    : null
+  if (
+    harness !== durableDefinition.harness ||
+    stringOrNull(row.model) !== (durableDefinition.model ?? null) ||
+    String(row.permission_mode) !== durableDefinition.permissionMode ||
+    canonicalJson(durableCustomPermissions) !==
+      canonicalJson(durableDefinition.customPermissions ?? null) ||
+    runtimeLaunch.harness !== durableDefinition.harness ||
+    runtimeLaunch.model !== (durableDefinition.model ?? null) ||
+    runtimeLaunch.permission.mode !== durableDefinition.permissionMode ||
+    canonicalJson(runtimeLaunch.permission.customPermissions) !==
+      canonicalJson(durableDefinition.customPermissions ?? null) ||
+    (durableDefinition.runtimePreference !== undefined &&
+      runtimeLaunch.requestedPreference !== durableDefinition.runtimePreference)
+  )
+    throw new Error("Runtime launch durable fields do not match the agent definition snapshot.")
   return {
     status: String(row.status),
     value: {
@@ -183,7 +230,7 @@ function loadDurableRun(
       customPermissions: stringOrNull(row.custom_permissions),
       worktreePath: stringOrNull(row.worktree_path),
       projectPath: stringOrNull(row.project_path),
-      runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+      runtimeLaunch,
     },
     binding: {
       orchestrationAgentId: String(row.orchestration_agent_id),

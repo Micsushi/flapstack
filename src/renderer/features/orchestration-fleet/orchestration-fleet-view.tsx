@@ -14,6 +14,7 @@ import {
   showNewChatFormAtom,
 } from "../agents/atoms"
 import { OrchestrationActivityPanel } from "../agents/ui/orchestration-activity-panel"
+import { writeSavedWorkspaceSelection } from "../saved-workspaces/selection-storage"
 
 export type OrchestrationFleetFilters = {
   projectId: string
@@ -73,6 +74,11 @@ export function OrchestrationFleetView() {
     setShowNewChatForm(false)
     setDesktopView(null)
   }
+  const openWorkspace = (projectId: string, workspaceId: string) => {
+    writeSavedWorkspaceSelection(projectId, workspaceId)
+    setShowNewChatForm(false)
+    setDesktopView("saved-workspaces")
+  }
 
   return (
     <OrchestrationFleetPanel
@@ -98,6 +104,7 @@ export function OrchestrationFleetView() {
         })
       }}
       onOpenChat={openChat}
+      onOpenWorkspace={openWorkspace}
     />
   )
 }
@@ -115,6 +122,7 @@ export function OrchestrationFleetPanel({
   onNext,
   onPrevious,
   onOpenChat,
+  onOpenWorkspace,
 }: {
   data?: OrchestrationFleetPageDto
   filters: OrchestrationFleetFilters
@@ -128,6 +136,7 @@ export function OrchestrationFleetPanel({
   onNext: () => void
   onPrevious: () => void
   onOpenChat: (chatId: string) => void
+  onOpenWorkspace: (projectId: string, workspaceId: string) => void
 }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -334,7 +343,13 @@ export function OrchestrationFleetPanel({
               </button>
             </nav>
           </section>
-          {selected && <FleetDetail item={selected} onOpenChat={onOpenChat} />}
+          {selected && (
+            <FleetDetail
+              item={selected}
+              onOpenChat={onOpenChat}
+              onOpenWorkspace={onOpenWorkspace}
+            />
+          )}
         </div>
       )}
     </main>
@@ -344,11 +359,14 @@ export function OrchestrationFleetPanel({
 function FleetDetail({
   item,
   onOpenChat,
+  onOpenWorkspace,
 }: {
   item: OrchestrationFleetItemDto
   onOpenChat: (chatId: string) => void
+  onOpenWorkspace: (projectId: string, workspaceId: string) => void
 }) {
   const titleId = `fleet-detail-${item.taskId}`
+  const operationWorkspace = item.operationWorkspace ?? { id: null, state: "missing" as const }
   return (
     <aside className="rounded-lg border" aria-labelledby={titleId}>
       <div className="border-b p-4">
@@ -386,6 +404,18 @@ function FleetDetail({
         <dd>{formatTime(item.updatedAt)}</dd>
       </dl>
       <div className="px-4 pb-4">
+        <button
+          type="button"
+          className="mr-2 rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+          disabled={operationWorkspace.state !== "live"}
+          onClick={() =>
+            operationWorkspace.id && onOpenWorkspace(item.projectId, operationWorkspace.id)
+          }
+        >
+          {operationWorkspace.state === "live"
+            ? "Open operation workspace"
+            : "Operation workspace missing"}
+        </button>
         <button
           type="button"
           className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
