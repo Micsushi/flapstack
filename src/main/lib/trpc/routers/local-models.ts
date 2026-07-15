@@ -1,5 +1,6 @@
 import { observable } from "@trpc/server/observable"
 import { and, eq } from "drizzle-orm"
+import { app } from "electron"
 import {
   createLocalModelRunMetadata,
   resolveLocalModelSelection,
@@ -12,6 +13,11 @@ import {
   probeLocalModelCatalog,
   readLocalModelCatalogCache,
 } from "../../harness/local-model-catalog"
+import {
+  createLocalModelDevFixtureCatalog,
+  createLocalModelDevFixtureFetch,
+  isLocalModelDevFixtureEnabled,
+} from "../../harness/local-model-dev-fixture"
 import {
   createDatabaseLocalModelRunPersistence,
   LocalModelChatService,
@@ -26,6 +32,13 @@ import { publicProcedure, router } from "../index"
 
 const catalogCache = new Map<string, LocalModelCatalogSnapshot>()
 let chatService: LocalModelChatService | null = null
+
+function devFixtureEnabled(): boolean {
+  return isLocalModelDevFixtureEnabled({
+    isPackaged: app?.isPackaged ?? process.env.NODE_ENV === "production",
+    rendererUrl: process.env.ELECTRON_RENDERER_URL,
+  })
+}
 
 function getLocalModelChatService() {
   chatService ??= new LocalModelChatService({
@@ -52,6 +65,13 @@ export async function refreshLocalModelCatalog(input: {
   now?: () => number
 }): Promise<LocalModelCatalogSnapshot> {
   const config = getOllamaEndpointConfig({ baseUrl: input.endpoint })
+  const fixture = devFixtureEnabled() ? createLocalModelDevFixtureCatalog(config.baseUrl) : null
+  if (fixture) {
+    if (fixture.state === "ready" || fixture.state === "empty") {
+      catalogCache.set(config.baseUrl, fixture)
+    }
+    return fixture
+  }
   const nowMs = (input.now ?? Date.now)()
   const cached = readLocalModelCatalogCache(catalogCache.get(config.baseUrl), nowMs)
   const live = await probeLocalModelCatalog({
@@ -182,6 +202,9 @@ export const localModelsRouter = router({
               customPermissions,
             })
             const endpoint = getOllamaEndpointConfig({ baseUrl: input.endpoint })
+            const fixtureFetch = devFixtureEnabled()
+              ? createLocalModelDevFixtureFetch(endpoint.baseUrl)
+              : null
             for await (const chunk of getLocalModelChatService().stream({
               runId: input.runId,
               chatId: input.chatId,
@@ -195,6 +218,7 @@ export const localModelsRouter = router({
               worktreePath: worktree.canonicalPath,
               metadata,
               endpoint,
+              ...(fixtureFetch ? { fetchImpl: fixtureFetch } : {}),
             })) {
               safeNext(chunk)
             }

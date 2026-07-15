@@ -133,6 +133,7 @@ export type StreamLocalModelChatInput = {
   worktreePath?: string | null
   metadata: LocalModelRunMetadata
   endpoint?: OllamaEndpointConfig
+  fetchImpl?: typeof fetch
   timeoutMs?: number
   maxTranscriptChars?: number
   toolLoopLimits?: Partial<LocalModelToolLoopLimits>
@@ -357,7 +358,7 @@ export class LocalModelChatService {
       const provider = createOllamaToolProvider({
         endpoint,
         model: input.model,
-        fetchImpl: this.dependencies.fetchImpl ?? fetch,
+        fetchImpl: input.fetchImpl ?? this.dependencies.fetchImpl ?? fetch,
       })
       const executor = toolsEnabled
         ? (this.dependencies.createReadToolExecutor?.(worktreePath) ??

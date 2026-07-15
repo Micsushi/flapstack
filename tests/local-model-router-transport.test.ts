@@ -50,6 +50,11 @@ import {
   LOCAL_MODEL_CATALOG_CACHE_VERSION,
   type LocalModelCatalogSnapshot,
 } from "../src/shared/local-model-contract"
+import {
+  LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+  LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS,
+  LOCAL_MODEL_DEV_FIXTURE_TOOLS_MODEL,
+} from "../src/shared/local-model-dev-fixture"
 
 const caller = localModelsRouter.createCaller({ getWindow: () => null })
 const endpoint = "http://127.0.0.1:11434"
@@ -87,6 +92,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  delete process.env.ELECTRON_RENDERER_URL
 })
 
 afterAll(() => {
@@ -104,6 +110,84 @@ describe("local model router bridge", () => {
       activeRunCount: 0,
       reconnectable: false,
       cloudFallback: false,
+    })
+  })
+
+  it("routes the Dev fixture through normal catalog and persisted chat paths", async () => {
+    process.env.ELECTRON_RENDERER_URL = "http://127.0.0.1:5173"
+    const fixtureEndpoint = LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS.ready
+    const fixtureCatalog = await caller.catalog({ endpoint: fixtureEndpoint })
+    expect(fixtureCatalog).toMatchObject({
+      state: "ready",
+      provider: { endpoint: fixtureEndpoint },
+    })
+    expect(fixtureCatalog.models.map((entry) => entry.identity.modelId)).toContain(
+      LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+    )
+    expect(catalogMocks.probe).not.toHaveBeenCalled()
+
+    seedChat("dev-fixture", {
+      chatPermission: "read-only",
+      model: LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+    })
+    const chunks = await collect(
+      await caller.chat(
+        input("dev-fixture", {
+          endpoint: fixtureEndpoint,
+          model: LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+          prompt: "/fixture tool",
+          runId: "run-dev-fixture",
+        }),
+      ),
+    )
+
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "text-delta", delta: "Flapstack Dev fixture " }),
+        expect.objectContaining({
+          type: "text-delta",
+          delta: "stream completed. Chat-only fixture exposed no tools.",
+        }),
+        expect.objectContaining({ type: "finish" }),
+      ]),
+    )
+    expect(chunks.some((chunk) => chunk.type === "tool-input-start")).toBe(false)
+    expect(readRun("run-dev-fixture")).toMatchObject({
+      status: "success",
+      harness: "local",
+      model: LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+    })
+
+    seedChat("dev-tools-fixture", {
+      chatPermission: "read-only",
+      model: LOCAL_MODEL_DEV_FIXTURE_TOOLS_MODEL,
+    })
+    const toolChunks = await collect(
+      await caller.chat(
+        input("dev-tools-fixture", {
+          endpoint: fixtureEndpoint,
+          model: LOCAL_MODEL_DEV_FIXTURE_TOOLS_MODEL,
+          prompt: "/fixture tool",
+          runId: "run-dev-tools-fixture",
+        }),
+      ),
+    )
+    expect(toolChunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool-input-start",
+          toolName: "fixture_unknown_tool",
+        }),
+        expect.objectContaining({ type: "tool-output-error" }),
+        expect.objectContaining({
+          type: "text-delta",
+          delta: "stream completed. Tool-capable fixture call was denied safely.",
+        }),
+      ]),
+    )
+    expect(readRun("run-dev-tools-fixture")).toMatchObject({
+      status: "success",
+      model: LOCAL_MODEL_DEV_FIXTURE_TOOLS_MODEL,
     })
   })
 
@@ -284,6 +368,7 @@ function seedChat(
     chatPermission: string
     subChatPermission?: string
     customPermissions?: string | null
+    model?: string
   },
 ) {
   const db = getDatabase()
@@ -295,7 +380,7 @@ function seedChat(
       permissionMode: options.chatPermission,
       customPermissions: options.customPermissions ?? null,
       harness: "local",
-      model,
+      model: options.model ?? model,
       worktreePath: registeredPath,
     })
     .run()
@@ -305,7 +390,7 @@ function seedChat(
       chatId: `chat-${suffix}`,
       permissionMode: options.subChatPermission ?? null,
       harness: "local",
-      model,
+      model: options.model ?? model,
       worktreePath: registeredPath,
       messages: "[]",
     })
@@ -318,15 +403,17 @@ function input(
     runId: string
     model: string
     cwd: string
+    endpoint: string
+    prompt: string
   }> = {},
 ) {
   return {
     chatId: `chat-${suffix}`,
     subChatId: `sub-${suffix}`,
     runId: overrides.runId ?? `run-${suffix}`,
-    prompt: "Answer locally",
+    prompt: overrides.prompt ?? "Answer locally",
     model: overrides.model ?? model,
-    endpoint,
+    endpoint: overrides.endpoint ?? endpoint,
     cwd: overrides.cwd ?? registeredPath,
   }
 }

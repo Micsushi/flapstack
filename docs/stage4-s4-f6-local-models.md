@@ -52,12 +52,34 @@ policy, cached catalog state/model count, active run identities, reconnect
 support, and the fixed `cloudFallback: false` contract. Errors shown to users are
 sanitized; provider payloads and local secrets are not copied into diagnostics.
 
+## Flapstack Dev fixture
+
+The Local Models Settings page exposes a clearly labeled development fixture in
+the `Flapstack Dev` profile only. Its reserved loopback endpoints provide ready,
+empty, unavailable, endpoint-error, and stale catalog states plus two declared
+models: one chat-only and one tool-capable. Chat responses are fixed, bounded,
+credential-free, and provider-spend-free. `/fixture slow`, `/fixture error`, and
+`/fixture tool` exercise cancellation, sanitized failure, and tool gating through
+the normal local chat transport. Production and packaged profiles never resolve
+the fixture endpoints as test data.
+
+The fixture selection uses the same persisted endpoint and model settings as a
+normal local chat. Resetting selects the ready fixture and its chat-only model;
+testers then use the normal catalog refresh and chat UI without database or
+filesystem injection.
+
+## Stabilization backlog
+
+- P2: `assembleLocalModelMessages` currently inserts each selected transcript
+  message twice. This wastes context and repeats prior chat content in provider
+  requests. It predates this fixture packet and is deferred to stabilization.
+
 ## Headless verification
 
 Run with Node 22:
 
 ```sh
-npx vitest run tests/local-model-catalog.test.ts tests/local-model-stream.test.ts tests/local-model-read-tools.test.ts tests/local-model-write-tools.test.ts tests/local-model-exec-tools.test.ts tests/local-model-ui.test.ts tests/local-model-router-transport.test.ts tests/local-model-integration.test.ts
+npx vitest run tests/local-model-dev-fixture.test.ts tests/local-model-catalog.test.ts tests/local-model-stream.test.ts tests/local-model-read-tools.test.ts tests/local-model-write-tools.test.ts tests/local-model-exec-tools.test.ts tests/local-model-ui.test.ts tests/local-model-router-transport.test.ts tests/local-model-integration.test.ts
 npx vitest run tests/mcp-main-run-launcher.test.ts tests/usage-store.test.ts tests/saved-workspace-pane-adapters.test.ts
 npx --yes @fission-ai/openspec@latest validate add-local-model-harness --strict --no-interactive
 ```
