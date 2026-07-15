@@ -104,7 +104,7 @@ export function seedRuntimeRun(
 }
 
 export function testRuntimeSnapshotSqlValues(
-  harness: "codex" | "claude-code" = "codex",
+  harness: "codex" | "claude-code" | "local" = "codex",
   runtime: "codex" | "claude-code" | "flapstack-native" = "flapstack-native",
 ): readonly unknown[] {
   const versions =

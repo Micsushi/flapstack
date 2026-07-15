@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { and, eq, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type { UIMessageChunk } from "../claude/types"
-import { agentRuns, chats, subChats } from "../db/schema"
+import { agentRuns, chats, orchestrationAgents, subChats } from "../db/schema"
 import { getDatabase } from "../db"
 import { captureCheckpoint, captureRunManifest } from "../checkpoints"
 import { McpApprovalLifecycle } from "../mcp-control/approval-lifecycle"
@@ -148,7 +148,17 @@ export type LocalModelChatServiceDependencies = {
   createExecToolExecutor?: (options: LocalModelExecToolOptions) => LocalModelReadToolExecutor
   createExecApprovalSession?: () => LocalModelExecApprovalSession
   runChanges?: LocalModelRunChangeTracker
+  captureUsage?: (input: LocalModelRunUsageCapture) => Promise<void>
   now?: () => number
+}
+
+export type LocalModelRunUsageCapture = {
+  runId: string
+  model: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  capturedAt: Date
 }
 
 export type LocalModelWriteApprovalSession = {
@@ -170,6 +180,13 @@ export type LocalModelReconnectResult = {
   reconnectable: false
   reason: "ordinary-streams-are-not-resumable"
   message: string
+}
+
+export type LocalModelRuntimeDiagnostics = {
+  activeRunCount: number
+  activeRunIds: string[]
+  reconnectable: false
+  cloudFallback: false
 }
 
 export type LocalModelStreamErrorCode =
@@ -235,6 +252,15 @@ export class LocalModelChatService {
 
   recoverAbandoned(now = new Date()): number {
     return this.dependencies.persistence.recoverAbandoned(now)
+  }
+
+  diagnostics(): LocalModelRuntimeDiagnostics {
+    return {
+      activeRunCount: this.activeByRun.size,
+      activeRunIds: [...this.activeByRun.keys()].sort(),
+      reconnectable: false,
+      cloudFallback: false,
+    }
   }
 
   private async *run(input: StreamLocalModelChatInput): AsyncGenerator<UIMessageChunk> {
@@ -490,6 +516,7 @@ export class LocalModelChatService {
       if (!sawDone) throw new LocalModelStreamError("provider-disconnected")
 
       await finishChangeTracking()
+      const completedAt = new Date((this.dependencies.now ?? Date.now)())
       this.dependencies.persistence.finalize({
         runId,
         streamId,
@@ -497,9 +524,19 @@ export class LocalModelChatService {
         assistantMessageId,
         status: "success",
         usage,
-        completedAt: new Date((this.dependencies.now ?? Date.now)()),
+        completedAt,
       })
       terminal = true
+      try {
+        await this.dependencies.captureUsage?.({
+          runId,
+          model: input.model,
+          ...(usage ?? {}),
+          capturedAt: completedAt,
+        })
+      } catch {
+        // Usage telemetry must not convert completed provider work into a failed run.
+      }
       if (textStarted) yield { type: "text-end", id: LOCAL_TEXT_PART_ID }
       if (usage && Object.keys(usage).length > 0) {
         yield { type: "message-metadata", messageMetadata: usage }
@@ -1104,6 +1141,13 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
               ...(input.usage ? input.usage : {}),
             }
           }
+          const resultSummary = input.status === "success" ? assistantResultSummary(message) : null
+          if (resultSummary) {
+            tx.update(orchestrationAgents)
+              .set({ resultSummary })
+              .where(eq(orchestrationAgents.runId, input.runId))
+              .run()
+          }
           tx.update(subChats)
             .set({
               messages: JSON.stringify(messages),
@@ -1174,6 +1218,15 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
       return abandoned.length
     },
   }
+}
+
+function assistantResultSummary(message: LocalModelTranscriptMessage | undefined): string | null {
+  if (!message) return null
+  const text = message.parts
+    .flatMap((part) => (part.type === "text" && typeof part.text === "string" ? [part.text] : []))
+    .join("\n")
+    .trim()
+  return text ? text.slice(0, 20_000) : null
 }
 
 async function defaultContextBuilder(

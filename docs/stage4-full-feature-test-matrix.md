@@ -95,9 +95,23 @@ duplicate, and archived-file slice passes 16/16; no broad gate was repeated.
 ## Local Models
 
 - [ ] **S4-LM01** Local discovery and streaming work without hosted auth.
+  - Automated evidence: catalog/stream/router/Runtime tests cover loopback-only
+    discovery, normalized streaming, exact model identity, bounded cancellation,
+    restart no-replay, diagnostics, and explicit no-cloud-fallback preflight.
+    Real installed-model and packaged evidence remains open.
 - [ ] **S4-LM02** Read-only local runs produce normal run, checkpoint, manifest,
       usage, and model identity records.
+  - Automated evidence: local run tests cover durable messages/runs, checkpoints,
+    manifests, provider-reported or unknown token capture, exact zero provider
+    billing with unmeasured compute provenance, workspace model restore, and
+    orchestration result aggregation. Real provider/package evidence remains open.
 - [ ] **S4-LM03** Write and shell stay unavailable until their permission tiers pass.
+  - Automated evidence: read/write/exec and orchestration preflight tests cover
+    traversal, symlink races, approvals, independent shell/git/network policy,
+    capability mismatch, unknown-tool denial, and durable-definition corruption
+    before claim/launch with terminal audit projection and no cloud fallback.
+    Real chat-only/tool-capable model and packaged permission walkthroughs remain
+    open.
 
 ## Advanced Usage and Limits
 

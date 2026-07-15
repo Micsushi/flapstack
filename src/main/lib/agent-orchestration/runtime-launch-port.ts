@@ -56,6 +56,8 @@ export type MainRuntimeQueuedRun = {
   worktreePath: string | null
   projectPath: string | null
   runtimeLaunch: ResolvedRuntimeLaunch
+  localEndpoint?: string
+  requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
 }
 
 /** Structural view of the reviewed F11 singleton. F3 never constructs it. */
@@ -184,6 +186,10 @@ function loadDurableRun(
       worktreePath: stringOrNull(row.worktree_path),
       projectPath: stringOrNull(row.project_path),
       runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+      ...(durableDefinition.localEndpoint
+        ? { localEndpoint: durableDefinition.localEndpoint }
+        : {}),
+      requiredLocalToolTiers: durableDefinition.requiredLocalToolTiers ?? [],
     },
     binding: {
       orchestrationAgentId: String(row.orchestration_agent_id),

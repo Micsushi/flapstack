@@ -30,6 +30,7 @@ export type SavedWorkspacePaneResolution = {
   message: string
   requiresExplicitTerminalStart: boolean
   terminalCwd: string | null
+  chatIdentity: { harness: string; model: string | null } | null
   pinnedContext: SavedWorkspaceContextResolution[]
 }
 
@@ -48,6 +49,7 @@ export function resolveSavedWorkspacePane(
       message: workspace.layoutIssue ?? `Pane ${paneId} no longer exists in this workspace.`,
       requiresExplicitTerminalStart: false,
       terminalCwd: null,
+      chatIdentity: null,
       pinnedContext: [],
     }
   }
@@ -71,13 +73,34 @@ function resolveBinding(
     case "chat":
       return withDatabase(databasePath, (database) => {
         const chat = database
-          .prepare("SELECT name, archived_at FROM chats WHERE id = ?")
-          .get(binding.chatId) as { name: string | null; archived_at: number | null } | undefined
+          .prepare("SELECT name, archived_at, harness, model FROM chats WHERE id = ?")
+          .get(binding.chatId) as
+          | {
+              name: string | null
+              archived_at: number | null
+              harness: string | null
+              model: string | null
+            }
+          | undefined
         if (!chat) return target("missing", "Chat", "The bound chat was removed.")
         if (chat.archived_at !== null) {
           return target("stale", chat.name || "Archived chat", "The bound chat is archived.")
         }
-        return target("ready", chat.name || "Chat", "Using the current durable chat record.")
+        if (chat.harness === "local" && !chat.model) {
+          return target(
+            "stale",
+            chat.name || "Local chat",
+            "The saved local chat no longer has an exact model identity.",
+          )
+        }
+        return target(
+          "ready",
+          chat.name || "Chat",
+          "Using the current durable chat and model identity.",
+          false,
+          null,
+          chat.harness ? { harness: chat.harness, model: chat.model } : null,
+        )
       })
     case "terminal": {
       if (!binding.worktreePath) {
@@ -292,8 +315,9 @@ function target(
   message: string,
   requiresExplicitTerminalStart = false,
   terminalCwd: string | null = null,
+  chatIdentity: { harness: string; model: string | null } | null = null,
 ): Omit<SavedWorkspacePaneResolution, "paneId" | "pinnedContext"> {
-  return { state, label, message, requiresExplicitTerminalStart, terminalCwd }
+  return { state, label, message, requiresExplicitTerminalStart, terminalCwd, chatIdentity }
 }
 
 function worktreeTarget(
