@@ -1,21 +1,37 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { app } from "electron"
-import { join } from "path"
+import { dirname, join } from "path"
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs"
 import { migrateDatabase } from "./migrate"
 import { recoverPendingAllChatPermissionChange } from "../permissions"
 import { backfillUsageAttribution } from "../usage/attribution"
 import * as schema from "./schema"
 import { nowEpochSeconds } from "./timestamps"
+import { startInstalledUsageDaemon, stopInstalledUsageDaemon } from "../usage-daemon/platform"
+import {
+  acquireAppDatabaseOperation,
+  beginDatabaseAccessMaintenance,
+  configureAppDatabasePath,
+  type DatabaseMaintenanceAccessLease,
+} from "./access"
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqlite: Database.Database | null = null
+let maintenanceOwner: string | null = null
+let stoppedUsageDaemonConfigDir: string | null = null
+let maintenanceAccessLease: DatabaseMaintenanceAccessLease | null = null
+const maintenanceParticipants = new Map<
+  string,
+  { pause: () => void | Promise<void>; resume: () => void | Promise<void> }
+>()
 
 /**
  * Get the database path in the app's user data directory
  */
 export function getDatabasePath(): string {
+  if (maintenanceOwner)
+    throw new Error(`Database is paused for bounded maintenance: ${maintenanceOwner}.`)
   const explicitPath = process.env.FLAPSTACK_DB_PATH
   if (explicitPath) return explicitPath
 
@@ -47,11 +63,17 @@ function getMigrationsPath(): string {
  * Initialize the database with Drizzle ORM
  */
 export function initDatabase() {
+  return initializeDatabase()
+}
+
+function initializeDatabase(maintenanceLease?: string) {
+  if (maintenanceOwner && maintenanceOwner !== maintenanceLease)
+    throw new Error(`Database is paused for bounded maintenance: ${maintenanceOwner}.`)
   if (db) {
     return db
   }
 
-  const dbPath = getDatabasePath()
+  const dbPath = maintenanceLease ? getDatabasePathUnsafe() : getDatabasePath()
   console.log(`[DB] Initializing database at: ${dbPath}`)
 
   // Do not publish either singleton until migrations and recovery succeed.
@@ -140,6 +162,8 @@ function backfillFilesystemRootRegistrations(database: Database.Database): void 
  * Get the database instance
  */
 export function getDatabase() {
+  if (maintenanceOwner)
+    throw new Error(`Database is paused for bounded maintenance: ${maintenanceOwner}.`)
   if (!db) {
     return initDatabase()
   }
@@ -156,6 +180,114 @@ export function closeDatabase(): void {
     db = null
     console.log("[DB] Database connection closed")
   }
+}
+
+export function registerDatabaseMaintenanceParticipant(
+  name: string,
+  participant: { pause: () => void | Promise<void>; resume: () => void | Promise<void> },
+): () => void {
+  if (!name.trim() || maintenanceParticipants.has(name))
+    throw new Error("Database maintenance participant must have a unique name.")
+  maintenanceParticipants.set(name, participant)
+  return () => maintenanceParticipants.delete(name)
+}
+
+export function beginDatabaseOperation(): () => void {
+  if (maintenanceOwner)
+    throw new Error(`Database is paused for bounded maintenance: ${maintenanceOwner}.`)
+  return acquireAppDatabaseOperation(getDatabasePathUnsafe())
+}
+
+export async function withDatabaseOperation<T>(operation: () => T | Promise<T>): Promise<T> {
+  const release = beginDatabaseOperation()
+  try {
+    return await operation()
+  } finally {
+    release()
+  }
+}
+
+export async function beginDatabaseMaintenance(owner: string): Promise<void> {
+  if (!owner.trim()) throw new Error("Database maintenance owner is required.")
+  if (maintenanceOwner)
+    throw new Error(`Database maintenance is already active: ${maintenanceOwner}.`)
+  maintenanceOwner = owner
+  const databasePath = getDatabasePathUnsafe()
+  const paused: Array<{ resume: () => void | Promise<void> }> = []
+  try {
+    maintenanceAccessLease = beginDatabaseAccessMaintenance(databasePath, owner)
+    await stopAndDrainUsageDaemon()
+    for (const participant of maintenanceParticipants.values()) {
+      await participant.pause()
+      paused.push(participant)
+    }
+    await maintenanceAccessLease.waitForDrain()
+    closeDatabase()
+  } catch (error) {
+    for (const participant of paused.reverse()) {
+      try {
+        await participant.resume()
+      } catch (resumeError) {
+        console.error("[DB] Failed to resume a maintenance participant:", resumeError)
+      }
+    }
+    try {
+      maintenanceAccessLease?.release()
+      maintenanceAccessLease = null
+      restartUsageDaemon()
+    } finally {
+      maintenanceOwner = null
+    }
+    throw error
+  }
+}
+
+export async function endDatabaseMaintenance(owner: string): Promise<void> {
+  if (maintenanceOwner !== owner) throw new Error("Database maintenance owner does not match.")
+  let failure: unknown
+  try {
+    initializeDatabase(owner)
+  } catch (error) {
+    failure = error
+  }
+  for (const participant of [...maintenanceParticipants.values()].reverse()) {
+    try {
+      await participant.resume()
+    } catch (error) {
+      failure ??= error
+    }
+  }
+  maintenanceOwner = null
+  maintenanceAccessLease?.release()
+  maintenanceAccessLease = null
+  try {
+    restartUsageDaemon()
+  } catch (error) {
+    failure ??= error
+  }
+  if (failure) throw failure
+}
+
+export function isDatabaseMaintenanceActive(): boolean {
+  return maintenanceOwner !== null
+}
+
+async function stopAndDrainUsageDaemon(): Promise<void> {
+  const configDir = dirname(getDatabasePathUnsafe())
+  if (await stopInstalledUsageDaemon(configDir)) stoppedUsageDaemonConfigDir = configDir
+}
+
+function restartUsageDaemon(): void {
+  const configDir = stoppedUsageDaemonConfigDir
+  stoppedUsageDaemonConfigDir = null
+  if (configDir) startInstalledUsageDaemon(configDir)
+}
+
+function getDatabasePathUnsafe(): string {
+  const explicitPath = process.env.FLAPSTACK_DB_PATH
+  const databasePath = explicitPath ?? join(app.getPath("userData"), "data", "agents.db")
+  configureAppDatabasePath(databasePath)
+  return databasePath
 }
 
 // Re-export schema for convenience

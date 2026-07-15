@@ -99,7 +99,7 @@ export const PORTABLE_SCOPE_CONTRACTS = [
   contract({
     id: "settings",
     label: "Settings",
-    schema: { current: 1, minimumImport: 1 },
+    schema: { current: 2, minimumImport: 1 },
     dependencies: [],
     sensitivity: "secret-bearing",
     projectFilter: "none",
@@ -214,8 +214,8 @@ export const PORTABLE_SCOPE_CONTRACTS = [
     handler: {
       contractVersion: 1,
       id: "history-v1",
-      sourceContract: { id: "chat-run-history", schemaVersion: 1 },
-      storage: "hybrid",
+      sourceContract: { id: "chat-run-history-metadata", schemaVersion: 1 },
+      storage: "database",
       exportMode: "snapshot",
       importMode: "staged-preview",
       deletePolicy: "never-implicit",

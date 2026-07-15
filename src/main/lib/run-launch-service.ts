@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "./db/access"
 import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
@@ -39,7 +40,7 @@ export function loadAgentRunReconciliationState(
   databasePath: string,
   runId: string,
 ): AgentRunReconciliationState {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
@@ -58,7 +59,7 @@ export function loadAgentRunReconciliationState(
 
 /** Loads one still-running durable launch by identity without resolving or replaying it. */
 export function loadRunningAgentRun(databasePath: string, runId: string): QueuedAgentRun | null {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
@@ -88,7 +89,7 @@ export async function recoverInterruptedMcpRuns(
   databasePath: string,
   authority?: InterruptedRuntimeRecoveryAuthority,
 ): Promise<number> {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
@@ -179,7 +180,7 @@ export async function drainPendingMcpRuns(
   launch: AgentRunLauncher,
   options: { waitForCompletion?: boolean } = {},
 ): Promise<number> {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   let started = 0
@@ -283,7 +284,7 @@ function recordLaunchOutcome(
   status: "completed" | "failed",
   error?: string,
 ): void {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {

@@ -23,6 +23,12 @@ const FIXTURES = join(process.cwd(), "tests", "fixtures", "portability-contract"
 const SHA256_ZERO = "0".repeat(64)
 
 describe("portability contract", () => {
+  it("declares history as database metadata while local artifact files are excluded", () => {
+    expect(portableScopeRegistry.get("history").handler.storage).toBe("database")
+    expect(portableScopeRegistry.get("history").handler.sourceContract.id).toBe(
+      "chat-run-history-metadata",
+    )
+  })
   it("publishes the fixed layout and all seven active non-mobile scope handlers", () => {
     expect(PORTABLE_BUNDLE_LAYOUT).toEqual({
       manifest: "manifest.json",
@@ -211,11 +217,16 @@ describe("portability contract", () => {
       () => portableScopeRegistry.validateManifest(fixture("invalid-version.json")),
       "INVALID_VERSION",
     )
-    expectContractError(() => portableScopeRegistry.compatibility("settings", 2), "FUTURE_VERSION")
+    expectContractError(() => portableScopeRegistry.compatibility("settings", 3), "FUTURE_VERSION")
     expect(portableScopeRegistry.compatibility("settings", 1)).toEqual({
-      status: "current",
+      status: "migration-required",
       fromVersion: 1,
-      toVersion: 1,
+      toVersion: 2,
+    })
+    expect(portableScopeRegistry.compatibility("settings", 2)).toEqual({
+      status: "current",
+      fromVersion: 2,
+      toVersion: 2,
     })
   })
 

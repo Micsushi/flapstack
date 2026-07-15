@@ -22,6 +22,7 @@ import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/ag
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
 import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
+import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/agents-portability-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
 import { revealSettingsTarget } from "./settings-target"
 
@@ -105,6 +106,8 @@ export function SettingsContent() {
         return <AgentsProjectsTab />
       case "usage":
         return <AgentsUsageTab />
+      case "portability":
+        return <AgentsPortabilityTab />
       case "debug":
         return showDebugTab ? <AgentsDebugTab /> : null
       default:

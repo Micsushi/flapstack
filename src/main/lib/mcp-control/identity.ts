@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
@@ -72,7 +73,7 @@ export function createSqliteMcpCallerStore(
   if (!databasePath) throw new Error("FLAPSTACK_DB_PATH is required for MCP caller validation.")
 
   const query = (sql: string, params: unknown[]): Record<string, unknown> | undefined => {
-    const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+    const db = openAppDatabase(databasePath, { readonly: true, fileMustExist: true })
     try {
       db.pragma("query_only = ON")
       db.pragma("busy_timeout = 5000")

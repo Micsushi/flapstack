@@ -1,4 +1,5 @@
 import Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -102,7 +103,7 @@ function toSqliteTimestamp(value: string | null): number | null {
 
 function syncHistory(destinationPath: string, sourcePath: string): OnWatchHistorySyncResult {
   const source = new Database(sourcePath, { readonly: true, fileMustExist: true })
-  const destination = new Database(destinationPath, { fileMustExist: true })
+  const destination = openAppDatabase(destinationPath, { fileMustExist: true })
   destination.pragma("busy_timeout = 5000")
 
   try {

@@ -37,6 +37,13 @@ export const PORTABILITY_LIMITS = {
   checksumEntries: 4_096,
   exclusionEntries: 4_096,
   exclusionReasonBytes: 1_024,
+  fileBytes: 64 * 1024 * 1024,
+  totalBundleBytes: 512 * 1024 * 1024,
+  databaseBytes: 256 * 1024 * 1024,
+  databaseRecords: 20_000,
+  recordJsonBytes: 1 * 1024 * 1024,
+  totalRecordJsonBytes: 64 * 1024 * 1024,
+  importPlanBytes: 15 * 1024 * 1024,
 } as const
 
 export type PortableScopeId = (typeof PORTABLE_SCOPE_IDS)[number]

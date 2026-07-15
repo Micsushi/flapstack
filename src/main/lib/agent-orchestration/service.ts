@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
@@ -77,7 +78,7 @@ export type AgentOrchestrationService = ReturnType<typeof createAgentOrchestrati
 
 export function createAgentOrchestrationService(databasePath: string) {
   const open = () => {
-    const db = new Database(databasePath)
+    const db = openAppDatabase(databasePath)
     db.pragma("foreign_keys = ON")
     db.pragma("busy_timeout = 5000")
     return db

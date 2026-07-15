@@ -46,6 +46,7 @@ const SETTINGS_TAB_ICONS: Partial<
   mcp: OriginalMCPIcon,
   plugins: PluginFilledIcon,
   usage: SlidersFilledIcon,
+  portability: HardDrive,
   debug: BugFilledIcon,
 }
 

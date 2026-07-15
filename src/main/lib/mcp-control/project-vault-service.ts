@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { z } from "zod"
 import * as databaseSchema from "../db/schema"
@@ -92,7 +93,7 @@ export function createMcpProjectVaultService(
         return fail("invalid-input", parsed.error.issues[0]?.message ?? "Invalid input.")
       }
 
-      const sqlite = new Database(databasePath)
+      const sqlite = openAppDatabase(databasePath)
       try {
         sqlite.pragma("foreign_keys = ON")
         sqlite.pragma("busy_timeout = 5000")
