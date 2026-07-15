@@ -125,7 +125,7 @@ describe("provider and product MCP permission integration", () => {
     approvals.shutdown()
   })
 
-  it("keeps every Tier 3 product call behind a fresh Stage 3 approval", async () => {
+  it("auto-approves Tier 3 product calls in full-access mode", async () => {
     expect(
       resolveProviderMcpPermission({
         permissionMode: "full-access",
@@ -136,13 +136,13 @@ describe("provider and product MCP permission integration", () => {
     ).toMatchObject({
       decision: "allow",
       providerPromptRequired: false,
-      productApprovalRequired: true,
+      productApprovalRequired: false,
       tool: { tier: 3 },
     })
 
     const approvals = new McpApprovalLifecycle()
     const execute = vi.fn(() => ({ ok: true as const, data: { launched: true } }))
-    const invoke = (id: string) =>
+    await expect(
       invokeMcpControlTool(
         "launch_run",
         { chatId: "chat-1", runId: "run-1", permissionMode: "full-access" },
@@ -150,25 +150,15 @@ describe("provider and product MCP permission integration", () => {
         undefined,
         {
           approvals,
-          approvalId: () => id,
-          invocationId: () => id,
+          approvalId: () => "tier3",
+          invocationId: () => "tier3",
           audit: { append: vi.fn() },
           execute,
         },
-      )
-
-    const first = invoke("tier3-1")
-    expect(approvals.listPending()).toEqual([expect.objectContaining({ id: "tier3-1", tier: 3 })])
-    approvals.approve("tier3-1", { grantSession: true })
-    await expect(first).resolves.toMatchObject({ ok: true })
-
-    const second = invoke("tier3-2")
-    expect(approvals.listPending()).toEqual([expect.objectContaining({ id: "tier3-2", tier: 3 })])
-    approvals.deny("tier3-2")
-    await expect(second).resolves.toMatchObject({
-      ok: false,
-      error: { code: "approval-denied" },
-    })
+      ),
+    ).resolves.toMatchObject({ ok: true })
+    expect(approvals.listPending()).toEqual([])
+    expect(execute).toHaveBeenCalledOnce()
     approvals.shutdown()
   })
 

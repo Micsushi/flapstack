@@ -50,9 +50,10 @@ const auditQuerySchema = z
 export const appControlRouter = router({
   describe: publicProcedure.query(() => {
     return {
-      enabled: false,
+      enabled: true,
       transport: "stdio-available" as const,
-      reason: "Flapstack MCP exposure is disabled by default and enabled per supported chat.",
+      reason:
+        "Flapstack MCP exposure is enabled by default for supported chats and can be disabled per chat.",
       tools: mcpControlTools,
     }
   }),

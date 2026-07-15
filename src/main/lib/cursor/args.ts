@@ -7,6 +7,7 @@ export function buildCursorArgs(params: {
   permissionMode: PermissionMode
   sessionId?: string
   forceNewSession?: boolean
+  productMcpPluginDir?: string
 }): string[] {
   const args = [
     "-p",
@@ -28,6 +29,10 @@ export function buildCursorArgs(params: {
   if (flags.sandbox) args.push("--sandbox", flags.sandbox)
   if (flags.autoReview) args.push("--auto-review")
   if (flags.force) args.push("--force")
+
+  if (params.productMcpPluginDir) {
+    args.push("--plugin-dir", params.productMcpPluginDir, "--approve-mcps")
+  }
 
   if (params.sessionId && !params.forceNewSession) {
     args.push("--resume", params.sessionId)

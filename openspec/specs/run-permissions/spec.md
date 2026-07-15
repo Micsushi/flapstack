@@ -76,10 +76,11 @@ fail closed or degrade conservatively; it MUST NOT silently widen access.
 - **THEN** the provider and product gates produce one correlated user decision
   and never two prompts for the same invocation
 
-#### Scenario: Product Tier 3 remains mandatory
+#### Scenario: Product Tier 3 follows full-access auto-approval
 
-- **WHEN** a provider-native mode would allow a Tier 3 product MCP call
-- **THEN** the separate Stage 3 product approval is still required
+- **WHEN** a full-access provider-native mode allows a Tier 3 product MCP call
+- **THEN** the separate Stage 3 product approval is skipped
+- **AND** other writable modes still require a fresh product approval
 
 ### Requirement: Copy-On-Create Permission Inheritance
 

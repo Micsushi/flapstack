@@ -157,6 +157,34 @@ describe("MCP mutation service", () => {
     })
   })
 
+  it("queues launch_run for API-provider chats with their selected model", async () => {
+    sqlite
+      .prepare(
+        "UPDATE chats SET harness = 'openrouter', model = 'anthropic/claude-sonnet-4' WHERE id = 'chat-2'",
+      )
+      .run()
+    sqlite
+      .prepare(
+        "INSERT INTO sub_chats (id, chat_id, harness, model, permission_mode, messages) VALUES ('sub-openrouter', 'chat-2', 'openrouter', 'anthropic/claude-sonnet-4', 'full-access', '[]')",
+      )
+      .run()
+    const result = await createMcpMutationService(path).invoke(
+      "launch_run",
+      { chatId: "chat-1" },
+      {
+        chatId: "chat-2",
+        initialPrompt: "Review through OpenRouter.",
+        idempotencyKey: "launch-openrouter",
+      },
+    )
+    expect(result).toMatchObject({ ok: true, data: { created: true } })
+    expect(sqlite.prepare("SELECT harness, model, status FROM agent_runs").get()).toEqual({
+      harness: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+      status: "pending",
+    })
+  })
+
   it("keeps the queued custom-permission snapshot after the chat changes", async () => {
     const original = {
       schemaVersion: 1,

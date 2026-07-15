@@ -412,7 +412,12 @@ describe("Stage 1 E1 scope lifecycle", () => {
       name: "Global notes",
       useWorktree: false,
     })
-    expect(globalChat).toMatchObject({ scope: "global", projectId: null, taskId: null })
+    expect(globalChat).toMatchObject({
+      scope: "global",
+      projectId: null,
+      taskId: null,
+      mcpExposureEnabled: true,
+    })
 
     const projectChat = await chatCaller.create({
       scope: "project",

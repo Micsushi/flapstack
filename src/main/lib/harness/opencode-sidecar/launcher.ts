@@ -17,6 +17,7 @@ import { writeIsolatedConfig } from "./config"
 import { limitation, type SidecarLimitation } from "./contract"
 import type { OpencodeProviderId } from "./contract"
 import { startOpenRouterGenerationProxy, type GenerationProxyHandle } from "./generation-proxy"
+import type { McpStdioRegistration } from "../../mcp-control/registration"
 
 const MAX_LOG_LINES = 200
 const BASE_URL_REGEX = /https?:\/\/127\.0\.0\.1:\d+/
@@ -71,6 +72,7 @@ export async function startSidecar(params: {
   cwd: string
   startupTimeoutMs?: number
   signal?: AbortSignal
+  productMcp?: McpStdioRegistration
 }): Promise<SidecarStartResult> {
   const resolution = resolveOpencodeBinary()
   if (resolution.kind === "missing") {
@@ -92,6 +94,7 @@ export async function startSidecar(params: {
       params.reasoningEnabled,
       params.reasoningEffort,
       params.reasoningSupported,
+      params.productMcp,
     )
     configDir = generated.configDir
     configEnv = generated.env

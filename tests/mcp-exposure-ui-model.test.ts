@@ -54,7 +54,7 @@ describe("MCP exposure UI model", () => {
         supported: true,
         connection: "disabled",
         callerLabel: "Claude / chat-1",
-        error: "Flapstack MCP is supported only for Codex and Claude chats",
+        error: "Flapstack MCP registration failed",
       }),
     ).toMatchObject({ label: "Registration error", canToggle: true })
   })

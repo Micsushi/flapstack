@@ -38,6 +38,47 @@ afterEach(() => {
 })
 
 describe("Flapstack MCP per-chat exposure", () => {
+  it("enables existing supported chats during the default-on migration", () => {
+    const originalProviders = readFileSync(
+      resolve(process.cwd(), "drizzle/0024_mcp_exposure_default_on.sql"),
+      "utf8",
+    )
+    const additionalProviders = readFileSync(
+      resolve(process.cwd(), "drizzle/0025_all_provider_mcp_default_on.sql"),
+      "utf8",
+    )
+    expect(originalProviders).toContain("WHERE `harness` IN ('codex', 'claude', 'claude-code')")
+    expect(additionalProviders).toContain(
+      "WHERE `harness` IN ('cursor-agent', 'openrouter', 'nanogpt')",
+    )
+    expect(`${originalProviders}\n${additionalProviders}`).not.toContain("DROP TABLE")
+  })
+
+  it.each([
+    ["cursor-agent", "Cursor"],
+    ["openrouter", "OpenRouter"],
+    ["nanogpt", "NanoGPT"],
+  ] as const)("supports product MCP exposure for %s chats", (harness, label) => {
+    const directory = mkdtempSync(join(tmpdir(), "flapstack-mcp-provider-exposure-"))
+    directories.push(directory)
+    const databasePath = join(directory, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
+    sqlite
+      .prepare(
+        "INSERT INTO chats (id, harness, scope, permission_mode, mcp_exposure_enabled) VALUES ('chat-provider', ?, 'global', 'read-only', 1)",
+      )
+      .run(harness)
+    sqlite.close()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+    expect(getChatMcpExposureStatus("chat-provider")).toMatchObject({
+      enabled: true,
+      supported: true,
+      harness,
+      callerLabel: `${label} / chat-provider`,
+    })
+  })
+
   it("builds a launcher-owned stdio identity without caller-controlled arguments", () => {
     expect(
       buildMcpStdioRegistration(
@@ -63,14 +104,6 @@ describe("Flapstack MCP per-chat exposure", () => {
         FLAPSTACK_DB_PATH: "/user/data/agents.db",
       },
     })
-  })
-
-  it("migrates existing chats to exposure disabled", () => {
-    const migration = readFileSync(
-      resolve(process.cwd(), "drizzle/0017_third_molecule_man.sql"),
-      "utf8",
-    )
-    expect(migration).toContain("ADD `mcp_exposure_enabled` integer DEFAULT false NOT NULL")
   })
 
   it("preserves reserved-name third-party servers under explicit collision aliases", () => {

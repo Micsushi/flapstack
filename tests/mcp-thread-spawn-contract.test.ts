@@ -54,6 +54,36 @@ describe("MCP thread-spawn contract", () => {
     ).toMatchObject({ ok: true, plan: { targetHarness: "codex", launch: { requested: false } } })
   })
 
+  it("supports every provider harness and requires models for API-backed targets", () => {
+    expect(
+      prepareThreadSpawn(
+        {
+          targetHarness: "openrouter",
+          model: "anthropic/claude-sonnet-4",
+          scope: { kind: "project", projectId: "project-1" },
+          permission: { mode: "full-access" },
+          worktree: { strategy: "none" },
+          launch: { initialPrompt: "Review this." },
+        },
+        { ...rootCaller, harness: "cursor-agent" },
+      ),
+    ).toMatchObject({
+      ok: true,
+      plan: { targetHarness: "openrouter", model: "anthropic/claude-sonnet-4" },
+    })
+    expect(
+      prepareThreadSpawn(
+        {
+          targetHarness: "nanogpt",
+          scope: { kind: "global" },
+          permission: { mode: "read-only" },
+          worktree: { strategy: "none" },
+        },
+        rootCaller,
+      ),
+    ).toMatchObject({ ok: false, error: { code: "invalid-input" } })
+  })
+
   it("rejects untrusted lineage fields and malformed permission/worktree inputs", () => {
     expect(
       threadSpawnRequestSchema.safeParse({

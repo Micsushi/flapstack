@@ -8,10 +8,10 @@ TBD - created by archiving change add-stage3-mcp-control. Update Purpose after a
 
 ### Requirement: Local MCP exposure
 
-Flapstack SHALL expose one local MCP control surface only to explicitly enabled
-supported chats and SHALL stop it cleanly with the application.
+Flapstack SHALL expose one local MCP control surface by default to supported
+chats, allow per-chat disablement, and stop it cleanly with the application.
 
-#### Scenario: Disabled chat
+#### Scenario: User-disabled chat
 
 - **WHEN** Flapstack MCP exposure is disabled for a chat
 - **THEN** that chat cannot discover or call Flapstack app-control tools
@@ -20,10 +20,11 @@ supported chats and SHALL stop it cleanly with the application.
 - **AND** durable exposure state and live child identity agree before the
   disable operation reports success
 
-#### Scenario: Enabled supported chat
+#### Scenario: Supported chat defaults to enabled
 
-- **WHEN** the user enables exposure for a supported chat
+- **WHEN** a supported chat is created or upgraded to this release
 - **THEN** its harness can list and call tools through authenticated local transport
+- **AND** the user can disable exposure for that chat
 
 #### Scenario: Third-party server uses the reserved product name
 
@@ -78,12 +79,19 @@ controlling supported Flapstack objects without returning raw database rows.
 ### Requirement: Permission and approval gate
 
 Every MCP call MUST resolve trusted caller identity and pass the risk gate before
-execution. Tier 3 operations MUST receive explicit user approval.
+execution. Full-access callers SHALL auto-approve product MCP operations;
+Tier 3 operations in every other writable mode MUST receive explicit user approval.
 
 #### Scenario: Dangerous action
 
-- **WHEN** any caller requests a Tier 3 action
+- **WHEN** a caller outside full-access mode requests a Tier 3 action
 - **THEN** Flapstack waits for explicit approval and denies on rejection or timeout
+
+#### Scenario: Full-access auto-approval
+
+- **WHEN** a full-access caller requests any implemented product MCP action
+- **THEN** Flapstack dispatches it without a provider or product approval prompt
+- **AND** trusted identity, scope, capability, self-reference, and durable audit gates still apply
 
 #### Scenario: Custom caller capabilities
 
@@ -104,9 +112,9 @@ execution. Tier 3 operations MUST receive explicit user approval.
 - **THEN** Flapstack presents one correlated product approval decision rather
   than stacking a provider prompt and a second app-control prompt
 
-#### Scenario: Provider allows a Tier 3 call
+#### Scenario: Provider allows a guarded Tier 3 call
 
-- **WHEN** the provider-native gate would allow a Tier 3 product tool
+- **WHEN** the provider-native gate would allow a Tier 3 product tool outside full-access mode
 - **THEN** the Stage 3 app-control approval remains mandatory and cannot be
   skipped by the provider decision
 
@@ -152,10 +160,11 @@ approval-required, failed, and completed MCP call.
 Flapstack SHALL allow approved supported callers to create a thread for another
 harness while preserving parent and initiator lineage and exposing it in the UI.
 
-#### Scenario: Claude spawns Codex
+#### Scenario: Any supported provider spawns another provider
 
-- **WHEN** a Claude caller receives approval to create and launch a Codex thread
-- **THEN** Flapstack creates it with resolved scope, permissions, worktree, and lineage
+- **WHEN** a Codex, Claude, Cursor, OpenRouter, or NanoGPT caller receives approval
+  to create and launch a thread for a different supported provider
+- **THEN** Flapstack creates it with resolved model, scope, permissions, worktree, and lineage
 
 #### Scenario: Spawned chat is visible as a fork
 

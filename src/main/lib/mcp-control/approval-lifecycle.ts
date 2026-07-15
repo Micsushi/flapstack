@@ -84,8 +84,8 @@ export class McpApprovalLifecycle {
       return { pending: snapshot(existing), decision: existing.decision }
     }
 
-    // Tier 3 always needs a new human decision, even when a lower-tier grant
-    // exists for the same chat and tool.
+    // Tier 3 requests that reach this lifecycle always need a new human
+    // decision, even when a lower-tier grant exists for the same chat and tool.
     if (request.tier !== 3 && this.hasSessionGrant(request)) {
       return settled(request.id, "approved", "session-grant")
     }

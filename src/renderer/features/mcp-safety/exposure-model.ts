@@ -21,7 +21,7 @@ export function exposurePresentation(state: McpExposureState | undefined): {
   if (!state.supported) {
     return {
       label: "Unsupported",
-      detail: "Flapstack MCP currently supports Codex and Claude chats only.",
+      detail: "Choose a supported agent provider to use Flapstack MCP.",
       canToggle: false,
     }
   }
@@ -36,7 +36,7 @@ export function exposurePresentation(state: McpExposureState | undefined): {
   }
   return {
     label: "Enabled for next run",
-    detail: "The next Codex or Claude run will register the local Flapstack MCP server.",
+    detail: "The next agent run will register the local Flapstack MCP server.",
     canToggle: true,
   }
 }

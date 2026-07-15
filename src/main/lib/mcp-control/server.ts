@@ -19,10 +19,14 @@ import {
   invalidationForProductMcpMutation,
   type ProductMcpRendererInvalidation,
 } from "../../../shared/product-mcp-invalidation"
+import { FLAPSTACK_MCP_INSTRUCTIONS } from "./guidance"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   recoverMcpDispatchClaims(getDatabase())
-  const server = new McpServer({ name: "flapstack-app-control", version: "0.1.0" })
+  const server = new McpServer(
+    { name: "flapstack-app-control", version: "0.1.0" },
+    { instructions: FLAPSTACK_MCP_INSTRUCTIONS },
+  )
   const publish = (event: ProductMcpRendererInvalidation): void => {
     void publishProductMcpInvalidation(event)
   }

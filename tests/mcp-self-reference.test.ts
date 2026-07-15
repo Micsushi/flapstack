@@ -84,7 +84,7 @@ describe("MCP self-reference safety matrix", () => {
       }),
     ).toEqual(denied)
 
-    const approvalRequired = evaluateMcpGate({ tier: 3, permissionMode: "full-access" })
+    const approvalRequired = evaluateMcpGate({ tier: 3, permissionMode: "ask-before-edits" })
     expect(
       evaluateMcpGateWithSelfReference({
         gate: approvalRequired,

@@ -8,7 +8,7 @@ import {
   type CursorEffortLevel,
 } from "../../../../shared/model-catalog"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
-import { agentRuns, chats, getDatabase, subChats } from "../../db"
+import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
 import {
   buildCursorEnv,
   CursorAgentNotFoundError,
@@ -16,6 +16,10 @@ import {
   resolveCursorAgentBinary,
 } from "../../cursor/binary"
 import { buildCursorArgs } from "../../cursor/args"
+import {
+  writeCursorProductMcpPlugin,
+  type CursorProductMcpPlugin,
+} from "../../cursor/product-mcp-plugin"
 import {
   getCursorIntegration,
   listCursorModels,
@@ -33,6 +37,9 @@ import {
   prependStartupContext,
 } from "../../harness/launch-context"
 import { getUsageSecret } from "../../usage/secrets"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
+import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
+import { buildMcpStdioRegistration } from "../../mcp-control/registration"
 import {
   buildCursorPermissionApplication,
   getGlobalDefault,
@@ -403,6 +410,19 @@ export const cursorRouter = router({
         let child: ChildProcess | null = null
         let runStatus: CursorRunStatus = "failure"
         let activeStreamForRun: ActiveCursorStream | null = null
+        let productMcpPlugin: CursorProductMcpPlugin | null = null
+        let productMcpRevoked = false
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId: input.runId,
+              revoke: () => {
+                productMcpRevoked = true
+                if (activeStreamForRun) terminateCursorStream(activeStreamForRun)
+              },
+            })
+          : () => undefined
 
         ;(async () => {
           try {
@@ -459,7 +479,10 @@ export const cursorRouter = router({
               sessionMode: sessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
+            const promptForModel = prependFlapstackMcpGuidance(
+              prependStartupContext(input.prompt, contextBundle.context),
+              productMcpEnabledAtLaunch,
+            )
 
             // Persist the user message (dedupe a resent prompt like Codex).
             const reusablePromptMessage = findReusableCursorPromptMessage(
@@ -502,12 +525,27 @@ export const cursorRouter = router({
               promptMessageId,
             })
 
+            if (productMcpEnabledAtLaunch) {
+              productMcpPlugin = writeCursorProductMcpPlugin(
+                buildMcpStdioRegistration(
+                  { chatId: input.chatId, runId: input.runId, permissionMode },
+                  {
+                    executablePath: process.execPath,
+                    mainDirectory: __dirname,
+                    databasePath: getDatabasePath(),
+                  },
+                ),
+              )
+              if (productMcpRevoked) throw new Error("Flapstack MCP was disabled before launch.")
+            }
+
             const args = buildCursorArgs({
               model: modelArg,
               cwd: input.cwd,
               permissionMode,
               sessionId,
               forceNewSession: input.forceNewSession,
+              productMcpPluginDir: productMcpPlugin?.directory,
             })
 
             child = spawn(binary, args, {
@@ -684,6 +722,8 @@ export const cursorRouter = router({
               if (activeStream.runTimeout) clearTimeout(activeStream.runTimeout)
               activeStreams.delete(input.subChatId)
             }
+            releaseProductMcpSession()
+            productMcpPlugin?.cleanup()
           }
         })()
 

@@ -53,6 +53,7 @@ import {
   prependStartupContext,
 } from "../../harness/launch-context"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
+import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
 import {
   buildMcpStdioRegistration,
   FLAPSTACK_MCP_SERVER_NAME,
@@ -1932,7 +1933,10 @@ export const codexRouter = router({
               sessionMode: ownedSessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
+            const promptForModel = prependFlapstackMcpGuidance(
+              prependStartupContext(input.prompt, contextBundle.context),
+              productMcpEnabledAtLaunch,
+            )
             const fallbackModel = authConfig?.apiKey?.trim()
               ? DEFAULT_CODEX_MODEL
               : DEFAULT_CHATGPT_CODEX_MODEL_WITH_REASONING

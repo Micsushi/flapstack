@@ -17,6 +17,8 @@ import { updateSubChatRunStatusIfAuthoritative } from "../src/main/lib/run-statu
 const harnessMocks = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
+  cursor: vi.fn(),
+  opencode: vi.fn(),
 }))
 
 vi.mock("../src/main/lib/trpc/routers", () => ({
@@ -24,6 +26,8 @@ vi.mock("../src/main/lib/trpc/routers", () => ({
     createCaller: () => ({
       codex: { chat: harnessMocks.codex },
       claude: { chat: harnessMocks.claude },
+      cursor: { chat: harnessMocks.cursor },
+      opencode: { chat: harnessMocks.opencode },
     }),
   }),
 }))
@@ -41,6 +45,8 @@ beforeEach(() => {
   migrateDatabase(drizzle(sqlite, { schema }), sqlite, resolve(process.cwd(), "drizzle"))
   harnessMocks.codex.mockReset().mockResolvedValue(emptyStream())
   harnessMocks.claude.mockReset().mockResolvedValue(emptyStream())
+  harnessMocks.cursor.mockReset().mockResolvedValue(emptyStream())
+  harnessMocks.opencode.mockReset().mockResolvedValue(emptyStream())
 })
 
 afterEach(() => {
@@ -59,6 +65,36 @@ describe("MCP main run launcher", () => {
     )
     expect(harnessMocks.claude).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "queued-claude", chatId: "chat", subChatId: "sub-chat" }),
+    )
+  })
+
+  it("dispatches Cursor, OpenRouter, and NanoGPT queued runs through their normal routers", async () => {
+    const launch = createMainRunLauncher()
+    await launch(queuedRun("queued-cursor", "cursor-agent"))
+    await launch({
+      ...queuedRun("queued-openrouter", "openrouter"),
+      model: "anthropic/claude-sonnet-4",
+    })
+    await launch({ ...queuedRun("queued-nanogpt", "nanogpt"), model: "deepseek-chat" })
+
+    expect(harnessMocks.cursor).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "queued-cursor", chatId: "chat", subChatId: "sub-chat" }),
+    )
+    expect(harnessMocks.opencode).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        runId: "queued-openrouter",
+        provider: "openrouter",
+        model: "openrouter/anthropic/claude-sonnet-4",
+      }),
+    )
+    expect(harnessMocks.opencode).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        runId: "queued-nanogpt",
+        provider: "nanogpt",
+        model: "nanogpt/deepseek-chat",
+      }),
     )
   })
 
@@ -429,7 +465,7 @@ describe("MCP main run launcher", () => {
   })
 })
 
-function queuedRun(runId: string, harness: "codex" | "claude-code"): QueuedAgentRun {
+function queuedRun(runId: string, harness: QueuedAgentRun["harness"]): QueuedAgentRun {
   return {
     runId,
     chatId: "chat",

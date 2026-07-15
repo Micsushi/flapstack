@@ -45,7 +45,10 @@ import { captureOpenCodeRunUsageBatch } from "../../usage/run-usage"
 import { getUsageProvider } from "../../usage/registry"
 import { getUsageSecret } from "../../usage/secrets"
 import { getUsageSettings } from "../../usage/settings"
-import { agentRuns, chats, getDatabase, subChats } from "../../db"
+import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
+import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
+import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
+import { buildMcpStdioRegistration } from "../../mcp-control/registration"
 import {
   getGlobalDefault,
   parseCustomPermissionToggles,
@@ -302,6 +305,14 @@ export const opencodeRouter = router({
         const controller = new AbortController()
         const runId = input.runId || crypto.randomUUID()
         const startedAt = Date.now()
+        const productMcpEnabledAtLaunch = getChatMcpExposure(input.chatId)
+        const releaseProductMcpSession = productMcpEnabledAtLaunch
+          ? registerActiveProductMcpSession({
+              chatId: input.chatId,
+              runId,
+              revoke: () => controller.abort(),
+            })
+          : () => undefined
         activeStreams.set(input.subChatId, { runId, controller, startedAt })
         const isAuthoritativeRun = () => activeStreams.get(input.subChatId)?.runId === runId
         let active = true
@@ -510,7 +521,20 @@ export const opencodeRouter = router({
               type: "message-metadata",
               messageMetadata,
             })
-            const promptForModel = prependStartupContext(input.prompt, contextBundle.context)
+            const promptForModel = prependFlapstackMcpGuidance(
+              prependStartupContext(input.prompt, contextBundle.context),
+              productMcpEnabledAtLaunch,
+            )
+            const productMcp = productMcpEnabledAtLaunch
+              ? buildMcpStdioRegistration(
+                  { chatId: input.chatId, runId, permissionMode },
+                  {
+                    executablePath: process.execPath,
+                    mainDirectory: __dirname,
+                    databasePath: getDatabasePath(),
+                  },
+                )
+              : undefined
 
             for await (const event of runSidecarSession(
               {
@@ -529,6 +553,7 @@ export const opencodeRouter = router({
                 reasoningSupported,
                 resumeSessionId: ownedSessionId,
                 signal: controller.signal,
+                productMcp,
               },
               async (request) =>
                 new Promise((resolve) => {
@@ -754,6 +779,7 @@ export const opencodeRouter = router({
             if (activeStreams.get(input.subChatId)?.runId === runId) {
               activeStreams.delete(input.subChatId)
             }
+            releaseProductMcpSession()
             safeEmit({ type: "finish", messageMetadata: finalMessageMetadata })
             complete()
           }

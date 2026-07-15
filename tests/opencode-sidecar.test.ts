@@ -1457,6 +1457,32 @@ describe("credentials + config", () => {
     clearProviderKey("nanogpt")
   })
 
+  it("injects the run-scoped product MCP into isolated OpenCode config", () => {
+    setProviderKey("nanogpt", "nano-secret-key")
+    const { config } = buildOpencodeConfig(
+      "nanogpt",
+      "deepseek-chat",
+      undefined,
+      true,
+      "high",
+      true,
+      {
+        command: "/Flapstack",
+        args: ["/app/out/main/mcp-control-stdio.js"],
+        env: { FLAPSTACK_MCP_CHAT_ID: "chat-1", FLAPSTACK_MCP_RUN_ID: "run-1" },
+      },
+    )
+    expect(config.mcp).toEqual({
+      flapstack: {
+        type: "local",
+        command: ["/Flapstack", "/app/out/main/mcp-control-stdio.js"],
+        environment: { FLAPSTACK_MCP_CHAT_ID: "chat-1", FLAPSTACK_MCP_RUN_ID: "run-1" },
+        enabled: true,
+      },
+    })
+    clearProviderKey("nanogpt")
+  })
+
   it("maps the per-chat reasoning toggle and depth into provider options", () => {
     setProviderKey("openrouter", "openrouter-secret-key")
     const enabled = buildOpencodeConfig(

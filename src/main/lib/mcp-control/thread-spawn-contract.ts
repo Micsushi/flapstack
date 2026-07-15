@@ -1,8 +1,9 @@
 import { z } from "zod"
 import { CUSTOM_PERMISSION_SCHEMA_VERSION, permissionModes } from "../permissions"
+import { AGENT_HARNESSES } from "../../../shared/harness-types"
 
 const identifierSchema = z.string().trim().min(1).max(200)
-const supportedThreadSpawnHarnessSchema = z.enum(["codex", "claude-code"])
+const supportedThreadSpawnHarnessSchema = z.enum(AGENT_HARNESSES)
 const customPermissionsSchema = z
   .object({
     schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
@@ -68,6 +69,7 @@ export const threadSpawnLaunchSchema = z
 export const threadSpawnRequestSchema = z
   .object({
     targetHarness: supportedThreadSpawnHarnessSchema,
+    model: z.string().trim().min(1).max(200).optional(),
     scope: threadSpawnScopeSchema,
     permission: threadSpawnPermissionSchema,
     worktree: threadSpawnWorktreeSchema,
@@ -99,6 +101,7 @@ export type ThreadSpawnContractError = {
 
 export type ThreadSpawnPlan = {
   targetHarness: z.infer<typeof supportedThreadSpawnHarnessSchema>
+  model?: string
   scope: ThreadSpawnScope
   permission: ThreadSpawnPermission
   worktree: ThreadSpawnWorktree
@@ -130,6 +133,12 @@ export function prepareThreadSpawn(
 ): ThreadSpawnContractResult {
   const request = threadSpawnRequestSchema.safeParse(requestInput)
   if (!request.success) return invalid("invalid-input", request.error.issues[0]?.message)
+  if (
+    (request.data.targetHarness === "openrouter" || request.data.targetHarness === "nanogpt") &&
+    !request.data.model
+  ) {
+    return invalid("invalid-input", `${request.data.targetHarness} threads require a model.`)
+  }
 
   const caller = threadSpawnCallerSchema.safeParse(callerInput)
   if (!caller.success) return invalid("invalid-caller", caller.error.issues[0]?.message)
@@ -148,6 +157,7 @@ export function prepareThreadSpawn(
     ok: true,
     plan: {
       targetHarness: request.data.targetHarness,
+      ...(request.data.model ? { model: request.data.model } : {}),
       scope: request.data.scope,
       permission: request.data.permission,
       worktree: request.data.worktree,

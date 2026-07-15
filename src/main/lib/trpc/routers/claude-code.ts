@@ -1,10 +1,12 @@
 import { eq, sql } from "drizzle-orm"
 import { safeStorage, shell } from "electron"
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { randomUUID } from "node:crypto"
+import { promisify, stripVTControlCharacters } from "node:util"
 import { z } from "zod"
 import { getAuthManager } from "../../../index"
-import { getClaudeShellEnvironment } from "../../claude"
+import { getBundledClaudeBinaryPath, getClaudeShellEnvironment } from "../../claude"
+import { parseClaudeAuthOutput } from "../../claude/local-auth-output"
 import { getExistingClaudeToken } from "../../claude-token"
 import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
@@ -91,72 +93,6 @@ function storeOAuthToken(oauthToken: string, setAsActive = true): string {
   return newId
 }
 
-function escapeAppleScriptString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-async function openClaudeAuthTerminal(): Promise<string> {
-  const shellEnv = getClaudeShellEnvironment()
-  const pathPrefix = shellEnv.PATH || process.env.PATH || ""
-  const command = [
-    `export PATH=${shellSingleQuote(pathPrefix)}:$PATH`,
-    "clear",
-    "echo 'Flapstack: starting Claude Code authentication...'",
-    "echo",
-    "claude auth login",
-    "status=$?",
-    "echo",
-    "if [ $status -eq 0 ]; then echo 'Claude auth command finished. Return to Flapstack and click Check connection.'; else echo 'Claude auth command exited with code '$status'. Fix the message above, then try again.'; fi",
-    "echo",
-    "echo 'This terminal can stay open.'",
-  ].join("; ")
-
-  if (process.platform === "darwin") {
-    const script = [
-      `tell application "Terminal"`,
-      `activate`,
-      `do script "${escapeAppleScriptString(command)}"`,
-      `end tell`,
-    ].join("\n")
-    await execFileAsync("osascript", ["-e", script])
-    return "Terminal"
-  }
-
-  if (process.platform === "win32") {
-    await execFileAsync("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      `Start-Process powershell -ArgumentList '-NoExit','-Command',${JSON.stringify(command)}`,
-    ])
-    return "PowerShell"
-  }
-
-  const linuxLaunchers = ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]
-  for (const launcher of linuxLaunchers) {
-    try {
-      if (launcher === "gnome-terminal") {
-        await execFileAsync(launcher, ["--", "bash", "-lc", `${command}; exec bash -l`])
-      } else if (launcher === "konsole") {
-        await execFileAsync(launcher, ["-e", "bash", "-lc", `${command}; exec bash -l`])
-      } else {
-        await execFileAsync(launcher, [
-          "-e",
-          `bash -lc ${shellSingleQuote(`${command}; exec bash -l`)}`,
-        ])
-      }
-      return launcher
-    } catch {
-      // Try the next common terminal launcher.
-    }
-  }
-
-  throw new Error("Could not open a terminal. Run `claude auth login` in your terminal.")
-}
-
 const CLAUDE_AUTH_STATUS_TTL_MS = 10_000
 let claudeAuthStatusCache: { checkedAt: number; loggedIn: boolean } | null = null
 
@@ -171,7 +107,7 @@ async function hasLoggedInClaudeCli(): Promise<boolean> {
   let loggedIn = false
   try {
     const shellEnv = getClaudeShellEnvironment()
-    const { stdout } = await execFileAsync("claude", ["auth", "status"], {
+    const { stdout } = await execFileAsync(getBundledClaudeBinaryPath(), ["auth", "status"], {
       env: { ...process.env, ...shellEnv },
     })
     const status = JSON.parse(stdout) as { loggedIn?: boolean }
@@ -181,6 +117,175 @@ async function hasLoggedInClaudeCli(): Promise<boolean> {
   }
   claudeAuthStatusCache = { checkedAt: Date.now(), loggedIn }
   return loggedIn
+}
+
+type LocalClaudeAuthState =
+  "starting" | "browser_open" | "waiting_for_code" | "verifying" | "success" | "error"
+
+type LocalClaudeAuthStatus = {
+  flowId: string
+  state: LocalClaudeAuthState
+  message: string
+  oauthUrl: string | null
+  needsCode: boolean
+}
+
+type LocalClaudeAuthSession = {
+  status: LocalClaudeAuthStatus
+  child: ChildProcessWithoutNullStreams
+  timeout: ReturnType<typeof setTimeout> | null
+  browserFallback: ReturnType<typeof setTimeout> | null
+  cancelled: boolean
+  output: string
+}
+
+let localClaudeAuthSession: LocalClaudeAuthSession | null = null
+
+function setLocalClaudeAuthStatus(
+  session: LocalClaudeAuthSession,
+  update: Partial<Omit<LocalClaudeAuthStatus, "flowId">>,
+): void {
+  session.status = { ...session.status, ...update }
+}
+
+function stopLocalClaudeAuthSession(session: LocalClaudeAuthSession): void {
+  session.cancelled = true
+  if (session.timeout) clearTimeout(session.timeout)
+  if (session.browserFallback) clearTimeout(session.browserFallback)
+  if (session.child.exitCode == null && session.child.signalCode == null) {
+    session.child.kill("SIGTERM")
+  }
+}
+
+function consumeLocalClaudeAuthOutput(session: LocalClaudeAuthSession, chunk: Buffer): void {
+  const rawText = chunk.toString()
+  const text = stripVTControlCharacters(rawText)
+  session.output = `${session.output}${rawText}\n${text}`.slice(-40_000)
+  const parsed = parseClaudeAuthOutput(session.output)
+
+  if (parsed.verifying) {
+    setLocalClaudeAuthStatus(session, {
+      state: "verifying",
+      message: "Verifying your Claude connection…",
+    })
+    return
+  }
+
+  if (parsed.waitingForCode) {
+    setLocalClaudeAuthStatus(session, {
+      state: "waiting_for_code",
+      message:
+        "Finish sign-in in your browser. Paste the authorization code only if Claude shows one.",
+      oauthUrl: parsed.oauthUrl ?? session.status.oauthUrl,
+      needsCode: true,
+    })
+    return
+  }
+
+  if (parsed.oauthUrl) {
+    setLocalClaudeAuthStatus(session, {
+      state: "browser_open",
+      message: "Finish signing in to Claude in your browser.",
+      oauthUrl: parsed.oauthUrl,
+    })
+  }
+}
+
+async function finishLocalClaudeAuthSession(
+  session: LocalClaudeAuthSession,
+  exitCode: number | null,
+): Promise<void> {
+  if (session.cancelled) return
+  if (session.timeout) clearTimeout(session.timeout)
+  if (session.browserFallback) clearTimeout(session.browserFallback)
+  await new Promise((resolve) => setTimeout(resolve, 400))
+
+  claudeAuthStatusCache = null
+  const token = getExistingClaudeToken()?.trim()
+  const loggedIn = await hasLoggedInClaudeCli()
+  if (loggedIn) {
+    if (token) storeOAuthToken(token)
+    setLocalClaudeAuthStatus(session, {
+      state: "success",
+      message: "Claude Code connected.",
+      needsCode: false,
+    })
+    return
+  }
+
+  setLocalClaudeAuthStatus(session, {
+    state: "error",
+    message:
+      exitCode === 0
+        ? "Claude login finished, but no usable credentials were found. Try again."
+        : "Claude login did not complete. Try again.",
+    needsCode: false,
+  })
+}
+
+function startLocalClaudeAuthSession(): LocalClaudeAuthStatus {
+  if (localClaudeAuthSession) stopLocalClaudeAuthSession(localClaudeAuthSession)
+
+  claudeAuthStatusCache = null
+  const flowId = randomUUID()
+  const shellEnv = getClaudeShellEnvironment()
+  const child = spawn(getBundledClaudeBinaryPath(), ["auth", "login"], {
+    env: { ...process.env, ...shellEnv },
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+  const status: LocalClaudeAuthStatus = {
+    flowId,
+    state: "starting",
+    message: "Opening Claude sign-in…",
+    oauthUrl: null,
+    needsCode: false,
+  }
+  const session: LocalClaudeAuthSession = {
+    status,
+    child,
+    cancelled: false,
+    output: "",
+    timeout: null,
+    browserFallback: null,
+  }
+  localClaudeAuthSession = session
+
+  session.timeout = setTimeout(
+    () => {
+      if (session.cancelled || session.status.state === "success") return
+      setLocalClaudeAuthStatus(session, {
+        state: "error",
+        message: "Claude login timed out. Try again.",
+        needsCode: false,
+      })
+      stopLocalClaudeAuthSession(session)
+    },
+    10 * 60 * 1000,
+  )
+  session.browserFallback = setTimeout(() => {
+    if (session.status.state !== "starting") return
+    setLocalClaudeAuthStatus(session, {
+      state: "browser_open",
+      message: "Finish signing in to Claude in your browser.",
+    })
+  }, 2_000)
+
+  child.stdout.on("data", (chunk: Buffer) => consumeLocalClaudeAuthOutput(session, chunk))
+  child.stderr.on("data", (chunk: Buffer) => consumeLocalClaudeAuthOutput(session, chunk))
+  child.on("error", () => {
+    if (session.cancelled) return
+    if (session.timeout) clearTimeout(session.timeout)
+    if (session.browserFallback) clearTimeout(session.browserFallback)
+    setLocalClaudeAuthStatus(session, {
+      state: "error",
+      message:
+        "Flapstack could not start Claude login. Check that the bundled Claude CLI is available.",
+      needsCode: false,
+    })
+  })
+  child.on("close", (code) => void finishLocalClaudeAuthSession(session, code))
+
+  return status
 }
 
 /**
@@ -375,13 +480,64 @@ export const claudeCodeRouter = router({
     throw new Error("Claude CLI is not logged in. Complete `claude auth login`, then retry.")
   }),
 
-  /**
-   * Open a local terminal to run Claude Code's interactive auth flow.
-   */
-  startLocalCliAuth: publicProcedure.mutation(async () => {
-    const terminal = await openClaudeAuthTerminal()
-    return { success: true, terminal }
-  }),
+  /** Start Claude Code OAuth in the background. The renderer owns the visible flow. */
+  startLocalCliAuth: publicProcedure.mutation(() => startLocalClaudeAuthSession()),
+
+  getLocalCliAuthStatus: publicProcedure
+    .input(z.object({ flowId: z.string().uuid() }))
+    .query(({ input }) => {
+      if (!localClaudeAuthSession || localClaudeAuthSession.status.flowId !== input.flowId) {
+        return {
+          flowId: input.flowId,
+          state: "error" as const,
+          message: "This Claude login session expired. Start again.",
+          oauthUrl: null,
+          needsCode: false,
+        }
+      }
+      return localClaudeAuthSession.status
+    }),
+
+  submitLocalCliAuthCode: publicProcedure
+    .input(z.object({ flowId: z.string().uuid(), code: z.string().trim().min(1).max(10_000) }))
+    .mutation(({ input }) => {
+      const session = localClaudeAuthSession
+      if (!session || session.status.flowId !== input.flowId || session.cancelled) {
+        throw new Error("This Claude login session expired. Start again.")
+      }
+      if (session.child.exitCode != null || session.child.signalCode != null) {
+        throw new Error("Claude login already finished. Start again.")
+      }
+      session.child.stdin.write(`${input.code.trim()}\n`)
+      setLocalClaudeAuthStatus(session, {
+        state: "verifying",
+        message: "Verifying your Claude connection…",
+        needsCode: false,
+      })
+      return session.status
+    }),
+
+  openLocalCliAuthBrowser: publicProcedure
+    .input(z.object({ flowId: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const session = localClaudeAuthSession
+      if (!session || session.status.flowId !== input.flowId || !session.status.oauthUrl) {
+        throw new Error("Claude sign-in URL is not ready yet.")
+      }
+      await shell.openExternal(session.status.oauthUrl)
+      return { success: true }
+    }),
+
+  cancelLocalCliAuth: publicProcedure
+    .input(z.object({ flowId: z.string().uuid() }))
+    .mutation(({ input }) => {
+      const session = localClaudeAuthSession
+      if (session?.status.flowId === input.flowId) {
+        stopLocalClaudeAuthSession(session)
+        localClaudeAuthSession = null
+      }
+      return { success: true }
+    }),
 
   /**
    * Get decrypted OAuth token (local)

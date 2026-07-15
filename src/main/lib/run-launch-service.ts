@@ -3,12 +3,13 @@ import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
+import { AGENT_HARNESSES, type AgentHarness } from "../../shared/harness-types"
 
 export type QueuedAgentRun = {
   runId: string
   chatId: string
   subChatId: string
-  harness: "codex" | "claude-code"
+  harness: AgentHarness
   prompt: string
   model: string | null
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
@@ -254,7 +255,7 @@ function findLaunchAuditSource(db: Database.Database, runId: string): Row | unde
 }
 
 function queuedRun(row: Row): QueuedAgentRun | null {
-  if (row.harness !== "codex" && row.harness !== "claude-code") return null
+  if (!AGENT_HARNESSES.includes(row.harness as AgentHarness)) return null
   const prompt =
     (typeof row.initial_prompt === "string" ? row.initial_prompt.trim() : "") ||
     findPrompt(row.messages, row.prompt_message_id)
@@ -263,7 +264,7 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     runId: String(row.id),
     chatId: String(row.chat_id),
     subChatId: String(row.sub_chat_id),
-    harness: row.harness,
+    harness: row.harness as AgentHarness,
     prompt,
     model: typeof row.model === "string" ? row.model : null,
     reasoningEffort: isReasoningEffort(row.reasoning_effort) ? row.reasoning_effort : null,

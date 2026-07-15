@@ -51,6 +51,7 @@ describe("Flapstack MCP stdio transport", () => {
       command: process.execPath,
       args: ["--import", "tsx", entry],
       env: {
+        ELECTRON_RUN_AS_NODE: "1",
         PATH: process.env.PATH ?? "",
         FLAPSTACK_MCP_CHAT_ID: "chat-transport-test",
         FLAPSTACK_MCP_RUN_ID: "run-transport-test",
@@ -62,6 +63,11 @@ describe("Flapstack MCP stdio transport", () => {
     transports.push(transport)
     const client = new Client({ name: "flapstack-test-client", version: "1.0.0" })
     await client.connect(transport)
+
+    expect(client.getInstructions()).toContain(
+      "create and launch child agent chats across supported providers",
+    )
+    expect(client.getInstructions()).toContain("Use spawn_thread")
 
     const listed = await client.listTools()
     expect(listed.tools.map((tool) => tool.name)).toEqual([

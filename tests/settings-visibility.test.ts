@@ -55,8 +55,16 @@ describe("Settings release visibility", () => {
     expect(manager).toContain("trpc.voice.setOpenAIKey")
 
     const claudeLogin = readSource("src/renderer/components/dialogs/claude-login-modal.tsx")
+    const claudeAuthPanel = readSource("src/renderer/components/claude-local-auth-panel.tsx")
+    const claudeCodeRouter = readSource("src/main/lib/trpc/routers/claude-code.ts")
     expect(claudeLogin).not.toContain("Set a custom model in Settings")
     expect(claudeLogin).toContain("Manage Claude accounts in Settings")
+    expect(claudeLogin).not.toContain("terminal_open")
+    expect(claudeAuthPanel).toContain("no Terminal window opens")
+    expect(claudeAuthPanel).toContain("Authorization code")
+    expect(claudeCodeRouter).not.toContain("openClaudeAuthTerminal")
+    expect(claudeCodeRouter).not.toContain("osascript")
+    expect(claudeCodeRouter).toContain('stdio: ["pipe", "pipe", "pipe"]')
   })
 
   it("keeps the retired quick-switch preference inert", () => {

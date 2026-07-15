@@ -21,6 +21,7 @@ import {
 } from "../../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
+import { AGENT_HARNESSES, type AgentHarness } from "../../../shared/harness-types"
 
 type Row = Record<string, unknown>
 type Sqlite = Database.Database
@@ -359,7 +360,7 @@ export function createAgentOrchestrationService(databasePath: string) {
     },
 
     listCancellationRequests(): Array<{
-      harness: "codex" | "claude-code"
+      harness: AgentHarness
       subChatId: string
       runId: string
     }> {
@@ -373,14 +374,16 @@ export function createAgentOrchestrationService(databasePath: string) {
                JOIN agent_runs r ON r.id = a.run_id
                WHERE a.status = 'stopped' AND r.status = 'cancelled'
                  AND a.lease_owner IS NULL
-                 AND r.harness IN ('codex','claude-code')`,
+                 AND r.harness IN ('codex','claude-code','cursor-agent','openrouter','nanogpt')`,
             )
             .all() as Row[]
-        ).map((row) => ({
-          harness: row.harness as "codex" | "claude-code",
-          subChatId: String(row.sub_chat_id),
-          runId: String(row.run_id),
-        }))
+        )
+          .map((row) => ({
+            harness: row.harness as AgentHarness,
+            subChatId: String(row.sub_chat_id),
+            runId: String(row.run_id),
+          }))
+          .filter((request) => AGENT_HARNESSES.includes(request.harness))
       } finally {
         db.close()
       }
@@ -1204,9 +1207,10 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   db.prepare(
     `INSERT INTO chats (
       id, name, project_id, task_id, scope, permission_mode, custom_permissions, harness, model,
+      mcp_exposure_enabled,
       parent_chat_id, initiator_chat_id, parent_run_id, ancestor_chat_ids,
       worktree_path, branch, base_branch, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     chatId,
     definition.name ?? definition.role,

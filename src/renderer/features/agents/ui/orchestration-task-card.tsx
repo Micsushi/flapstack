@@ -582,6 +582,9 @@ function AgentEditorDialog({
             >
               <option value="codex">Codex</option>
               <option value="claude-code">Claude Code</option>
+              <option value="cursor-agent">Cursor</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="nanogpt">NanoGPT</option>
             </select>
           </label>
           <label className="text-xs">
@@ -604,11 +607,27 @@ function AgentEditorDialog({
               }
             >
               <option value="">Harness default</option>
-              {definition.harness === "codex" ? (
-                <option value="openai">OpenAI</option>
-              ) : (
-                <option value="anthropic">Anthropic</option>
-              )}
+              <option
+                value={
+                  {
+                    codex: "openai",
+                    "claude-code": "anthropic",
+                    "cursor-agent": "cursor",
+                    openrouter: "openrouter",
+                    nanogpt: "nanogpt",
+                  }[definition.harness]
+                }
+              >
+                {
+                  {
+                    codex: "OpenAI",
+                    "claude-code": "Anthropic",
+                    "cursor-agent": "Cursor",
+                    openrouter: "OpenRouter",
+                    nanogpt: "NanoGPT",
+                  }[definition.harness]
+                }
+              </option>
             </select>
           </label>
           <label className="text-xs">

@@ -23,6 +23,10 @@ import {
   resolveReasoningControls,
   type ReasoningControlResolution,
 } from "../../../../shared/reasoning-output"
+import {
+  FLAPSTACK_MCP_SERVER_NAME,
+  type McpStdioRegistration,
+} from "../../mcp-control/registration"
 
 /** App attribution headers so provider dashboards can identify Flapstack runs. */
 export const FLAPSTACK_ATTRIBUTION_HEADERS: Record<string, string> = {
@@ -68,6 +72,7 @@ export function buildOpencodeConfig(
   reasoningEnabled = true,
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
   reasoningSupported: boolean | null = true,
+  productMcp?: McpStdioRegistration,
 ): GeneratedOpencodeConfig {
   const def = getProviderDefinition(provider)
   const key = getProviderKey(provider)
@@ -121,6 +126,18 @@ export function buildOpencodeConfig(
           : {}),
       },
     },
+    ...(productMcp
+      ? {
+          mcp: {
+            [FLAPSTACK_MCP_SERVER_NAME]: {
+              type: "local",
+              command: [productMcp.command, ...productMcp.args],
+              environment: productMcp.env,
+              enabled: true,
+            },
+          },
+        }
+      : {}),
   }
 
   return {
@@ -141,6 +158,7 @@ export function writeIsolatedConfig(
   reasoningEnabled = true,
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" = "high",
   reasoningSupported: boolean | null = true,
+  productMcp?: McpStdioRegistration,
 ): {
   configDir: string
   env: Record<string, string>
@@ -152,6 +170,7 @@ export function writeIsolatedConfig(
     reasoningEnabled,
     reasoningEffort,
     reasoningSupported,
+    productMcp,
   )
   const configDir = mkdtempSync(join(tmpdir(), "flapstack-opencode-"))
   const toolGuardPath = join(configDir, TOOL_ENV_GUARD_FILE)

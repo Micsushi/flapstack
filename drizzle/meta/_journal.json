@@ -169,6 +169,20 @@
       "when": 1783970000000,
       "tag": "0023_stage3_timestamp_seconds",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1784134199062,
+      "tag": "0024_mcp_exposure_default_on",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784135036918,
+      "tag": "0025_all_provider_mcp_default_on",
+      "breakpoints": true
     }
   ]
 }

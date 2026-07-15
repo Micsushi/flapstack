@@ -24,14 +24,14 @@ notarization, and provider Admin usage APIs are future considerations.
 
 ## 1. Production MCP control (S3-F2 through S3-F6)
 
-- [x] **S3-M01** per-chat exposure is off by default and only the selected chat
-      receives the production stdio server.
+- [ ] **S3-M01** per-chat exposure is on by default for supported providers,
+      remains user-disableable, and only enabled chats receive the production stdio server.
 - [x] **S3-M02** Tier 0 reads are paginated, scoped, redacted, and reachable in
       read-only Claude and Codex without allowing arbitrary third-party MCP tools.
 - [x] **S3-M03** mutations enforce caller identity, permission mode, worktree
       boundary, self-reference rules, and exactly one user approval where required.
-- [x] **S3-M04** Tier 3 launch/spawn always requires fresh approval; denial,
-      timeout, success, and failure each create one complete audit record.
+- [ ] **S3-M04** full-access Tier 3 launch/spawn auto-approves; guarded modes
+      require fresh approval; denial, timeout, success, and failure remain fully audited.
 - [x] **S3-M05** queued Claude/Codex launches reuse one run ID, survive restart
       according to policy, and cannot drain unrelated pending runs.
 - [x] **S3-M06** product MCP mutations refresh affected renderer queries without
@@ -148,7 +148,7 @@ and the release ledger still covers 347 scenarios and 17 feature exits.
 verification passed after restart. Authenticated product stdio drove real
 Codex-to-Claude and Claude-to-Codex children, default-off and reconnect, active
 and background approval without selection theft, approve/deny/60-second timeout,
-session grant and fresh Tier 3 approval, restart persistence, audit paging and
+session grant and the former mandatory Tier 3 approval policy, restart persistence, audit paging and
 redaction, safety denials, and cleanup. A real read-only Codex orchestration
 child returned exactly `ORCHESTRATION_FORK_OK`; 17,272 authoritative tokens
 triggered the durable token-budget stop, unknown cost remained unfabricated, and

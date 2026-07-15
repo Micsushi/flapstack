@@ -69,7 +69,10 @@ describe("authenticated dev control for live product MCP", () => {
   })
 
   it("cancels only a pending spawned child owned by the isolated caller", async () => {
-    const caller = prepareProductMcpCaller({ harness: "codex" })
+    const caller = prepareProductMcpCaller({
+      harness: "codex",
+      permissionMode: "ask-before-edits",
+    })
     setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
     const started = startProductMcpTestCall(
       {
@@ -78,7 +81,7 @@ describe("authenticated dev control for live product MCP", () => {
         toolName: "spawn_thread",
         arguments: spawnArguments("claude-code"),
       },
-      { registration: sourceRegistration(caller.chatId, caller.runId) },
+      { registration: sourceRegistration(caller.chatId, caller.runId, "ask-before-edits") },
     )
     const approval = await waitForApproval(caller.chatId)
     replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })
@@ -222,13 +225,47 @@ describe("authenticated dev control for live product MCP", () => {
     expect(getProductMcpState({ chatId: caller.chatId }).pendingApprovals).toEqual([])
   })
 
+  it("auto-approves a full-access Tier 3 spawn through the real stdio child", async () => {
+    const caller = prepareProductMcpCaller({ harness: "codex", permissionMode: "full-access" })
+    setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
+    const started = startProductMcpTestCall(
+      {
+        chatId: caller.chatId,
+        runId: caller.runId,
+        toolName: "spawn_thread",
+        arguments: {
+          targetHarness: "claude-code",
+          scope: { kind: "global" },
+          permission: { mode: "full-access" },
+          worktree: { strategy: "none" },
+        },
+      },
+      { registration: sourceRegistration(caller.chatId, caller.runId) },
+    )
+
+    expect(await waitForCall(started.id)).toMatchObject({ status: "completed" })
+    const state = getProductMcpState({ chatId: caller.chatId, toolName: "spawn_thread" })
+    expect(state.pendingApprovals).toEqual([])
+    expect(state.audit.entries.map((entry) => entry.decision)).toEqual(
+      expect.arrayContaining(["allowed", "dispatch-started", "completed"]),
+    )
+    expect(state.audit.entries.map((entry) => entry.decision)).not.toContain("approval-required")
+    expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({
+      archived: true,
+      archivedChildren: [expect.any(String)],
+    })
+  })
+
   it.each([
     ["codex", "claude-code"],
     ["claude", "codex"],
   ] as const)(
-    "approves a real %s product-MCP child creating a %s thread with durable lineage",
+    "approves a guarded real %s product-MCP child creating a %s thread with durable lineage",
     async (sourceHarness, targetHarness) => {
-      const caller = prepareProductMcpCaller({ harness: sourceHarness })
+      const caller = prepareProductMcpCaller({
+        harness: sourceHarness,
+        permissionMode: "ask-before-edits",
+      })
       setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
       const started = startProductMcpTestCall(
         {
@@ -237,7 +274,7 @@ describe("authenticated dev control for live product MCP", () => {
           toolName: "spawn_thread",
           arguments: spawnArguments(targetHarness),
         },
-        { registration: sourceRegistration(caller.chatId, caller.runId) },
+        { registration: sourceRegistration(caller.chatId, caller.runId, "ask-before-edits") },
       )
       const approval = await waitForApproval(caller.chatId)
       expect(replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })).toEqual({
@@ -264,7 +301,10 @@ describe("authenticated dev control for live product MCP", () => {
   )
 
   it("stops an approval-waiting child, cancels its caller, and clears the pending decision", async () => {
-    const caller = prepareProductMcpCaller({ harness: "codex" })
+    const caller = prepareProductMcpCaller({
+      harness: "codex",
+      permissionMode: "ask-before-edits",
+    })
     setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
     const started = startProductMcpTestCall(
       {
@@ -273,7 +313,7 @@ describe("authenticated dev control for live product MCP", () => {
         toolName: "spawn_thread",
         arguments: spawnArguments("claude-code"),
       },
-      { registration: sourceRegistration(caller.chatId, caller.runId) },
+      { registration: sourceRegistration(caller.chatId, caller.runId, "ask-before-edits") },
     )
     await waitForApproval(caller.chatId)
     expect(getProductMcpState({ chatId: caller.chatId }).exposure.connection).toBe("connected")
@@ -299,6 +339,7 @@ function sourceRegistration(chatId: string, runId: string, permissionMode = "ful
     command: process.execPath,
     args: ["--import", "tsx", entry],
     env: {
+      ELECTRON_RUN_AS_NODE: "1",
       FLAPSTACK_MCP_CHAT_ID: chatId,
       FLAPSTACK_MCP_RUN_ID: runId,
       FLAPSTACK_MCP_PERMISSION_MODE: permissionMode,

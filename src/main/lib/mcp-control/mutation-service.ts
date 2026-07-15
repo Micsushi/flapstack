@@ -23,6 +23,7 @@ import type {
   McpControlResponse,
   McpMutationService,
 } from "./types"
+import { AGENT_HARNESSES, type AgentHarness } from "../../../shared/harness-types"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
@@ -196,7 +197,7 @@ function launchRun(
   const chat = target(db, scope, "chat", input.chatId)
   if (chat.archived_at) return fail("stale-target", "Chat is archived.")
   const harness = chat.harness
-  if (harness !== "codex" && harness !== "claude-code")
+  if (!AGENT_HARNESSES.includes(harness as AgentHarness))
     return fail("invalid-input", "Chat does not use a launchable harness.")
   const subChat = db
     .prepare(
@@ -204,6 +205,10 @@ function launchRun(
     )
     .get(input.chatId) as Row | undefined
   if (!subChat) return fail("stale-target", "Chat conversation is missing.")
+  const model = subChat.model ?? chat.model ?? null
+  if ((harness === "openrouter" || harness === "nanogpt") && !model) {
+    return fail("invalid-input", `${harness} chats require a model before launch.`)
+  }
   const promptMessageId = `mcp-${input.idempotencyKey}`
   const existing = db
     .prepare("SELECT id, status FROM agent_runs WHERE chat_id = ? AND prompt_message_id = ?")
@@ -238,7 +243,7 @@ function launchRun(
       input.chatId,
       subChat.id,
       harness,
-      subChat.model ?? chat.model ?? null,
+      model,
       permissionMode,
       customPermissions,
       subChat.worktree_path ?? chat.worktree_path ?? null,
@@ -414,7 +419,7 @@ function createChat(
   const chatId = randomUUID()
   const now = nowEpochSeconds()
   db.prepare(
-    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO chats (id, name, scope, project_id, task_id, permission_mode, custom_permissions, mcp_exposure_enabled, harness, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
   ).run(
     chatId,
     input.name,
@@ -453,14 +458,14 @@ async function spawnThread(
     )
     .get(caller.chatId) as Row | undefined
   const harness = callerRow && typeof callerRow.harness === "string" ? callerRow.harness : null
-  if (harness !== "codex" && harness !== "claude-code") {
+  if (!AGENT_HARNESSES.includes(harness as AgentHarness)) {
     return fail("invalid-caller", "Caller is not a supported spawned-thread harness.")
   }
 
   const ancestors = parseAncestorChatIds(callerRow?.ancestor_chat_ids)
   if (!ancestors) return fail("forbidden-loop", "Caller has invalid durable lineage.")
   const contract = prepareThreadSpawn(request, {
-    harness,
+    harness: harness as AgentHarness,
     chatId: caller.chatId,
     ...(caller.runId ? { runId: caller.runId } : {}),
     initiatorChatId:
@@ -494,10 +499,11 @@ async function spawnThread(
   const transaction = db.transaction(() => {
     db.prepare(
       `INSERT INTO chats (
-        id, name, scope, project_id, task_id, permission_mode, custom_permissions, harness,
+        id, name, scope, project_id, task_id, permission_mode, custom_permissions,
+        mcp_exposure_enabled, harness, model,
         worktree_path, branch, base_branch, parent_chat_id, initiator_chat_id,
         parent_run_id, ancestor_chat_ids, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       chatId,
       `${contract.plan.targetHarness} thread`,
@@ -509,6 +515,7 @@ async function spawnThread(
         ? JSON.stringify(contract.plan.permission.customPermissions)
         : null,
       contract.plan.targetHarness,
+      contract.plan.model ?? null,
       resolved.worktreePath,
       resolved.branch,
       resolved.baseBranch,
@@ -521,13 +528,14 @@ async function spawnThread(
     )
     db.prepare(
       `INSERT INTO sub_chats (
-        id, chat_id, harness, permission_mode, worktree_path, run_status, messages,
+        id, chat_id, harness, model, permission_mode, worktree_path, run_status, messages,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       subChatId,
       chatId,
       contract.plan.targetHarness,
+      contract.plan.model ?? null,
       contract.plan.permission.mode,
       resolved.worktreePath,
       runId ? "pending" : null,
@@ -538,14 +546,15 @@ async function spawnThread(
     if (runId) {
       db.prepare(
         `INSERT INTO agent_runs (
-          id, chat_id, sub_chat_id, harness, permission_mode, custom_permissions, worktree_path,
+          id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions, worktree_path,
           prompt_message_id, initial_prompt, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
         subChatId,
         contract.plan.targetHarness,
+        contract.plan.model ?? null,
         contract.plan.permission.mode,
         contract.plan.permission.customPermissions
           ? JSON.stringify(contract.plan.permission.customPermissions)

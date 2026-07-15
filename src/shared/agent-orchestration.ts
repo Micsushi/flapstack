@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
+import { AGENT_HARNESSES } from "./harness-types"
 
 const idSchema = z.string().trim().min(1).max(200)
 
@@ -25,7 +26,7 @@ export const orchestrationAgentStatusSchema = z.enum(orchestrationAgentStatuses)
 export const orchestrationControlActions = ["pause", "resume", "stop"] as const
 export const orchestrationControlActionSchema = z.enum(orchestrationControlActions)
 
-export const orchestrationHarnessSchema = z.enum(["codex", "claude-code"])
+export const orchestrationHarnessSchema = z.enum(AGENT_HARNESSES)
 export const orchestrationPermissionModeSchema = z.enum([
   "read-only",
   "ask-before-edits",
@@ -140,15 +141,25 @@ export const orchestrationAgentDefinitionSchema = z
       })
     }
     const provider = value.provider?.toLowerCase()
-    if (
-      provider &&
-      ((value.harness === "codex" && !["codex", "openai"].includes(provider)) ||
-        (value.harness === "claude-code" && !["claude", "anthropic"].includes(provider)))
-    ) {
+    const supportedProviders = {
+      codex: ["codex", "openai"],
+      "claude-code": ["claude", "anthropic"],
+      "cursor-agent": ["cursor"],
+      openrouter: ["openrouter"],
+      nanogpt: ["nanogpt"],
+    }[value.harness]
+    if (provider && !supportedProviders.includes(provider)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["provider"],
         message: `Provider ${value.provider} is not supported by ${value.harness}.`,
+      })
+    }
+    if ((value.harness === "openrouter" || value.harness === "nanogpt") && !value.model) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["model"],
+        message: `${value.harness} agents require an explicit model.`,
       })
     }
   })

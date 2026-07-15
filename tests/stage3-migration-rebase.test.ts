@@ -90,6 +90,36 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
+  it("enables existing supported chats without rebuilding chat lineage", () => {
+    const { sqlite, directory } = database("mcp-default-on")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 23),
+      })
+      sqlite
+        .prepare(
+          "INSERT INTO chats (id, name, scope, permission_mode, harness, mcp_exposure_enabled) VALUES ('supported-chat', 'Supported', 'global', 'read-only', 'codex', 0)",
+        )
+        .run()
+      sqlite
+        .prepare(
+          "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages) VALUES ('supported-sub', 'supported-chat', 'codex', 'read-only', '[]')",
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(
+        sqlite.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = 'supported-chat'").get(),
+      ).toEqual({ mcp_exposure_enabled: 1 })
+      expect(
+        sqlite.prepare("SELECT chat_id FROM sub_chats WHERE id = 'supported-sub'").get(),
+      ).toEqual({ chat_id: "supported-chat" })
+    } finally {
+      sqlite.close()
+    }
+  })
+
   it.each([
     { name: "pre-0020", lastMigration: 19 },
     { name: "current-0020", lastMigration: 20 },

@@ -53,8 +53,16 @@ import {
   abortAllCodexStreams,
   cancelActiveCodexRun,
 } from "./lib/trpc/routers/codex"
-import { abortAllCursorStreams, hasActiveCursorStreams } from "./lib/trpc/routers/cursor"
-import { abortAllOpencodeStreams, hasActiveOpencodeStreams } from "./lib/trpc/routers/opencode"
+import {
+  abortAllCursorStreams,
+  cancelActiveCursorRun,
+  hasActiveCursorStreams,
+} from "./lib/trpc/routers/cursor"
+import {
+  abortAllOpencodeStreams,
+  cancelActiveOpencodeRun,
+  hasActiveOpencodeStreams,
+} from "./lib/trpc/routers/opencode"
 import {
   createMainWindow,
   createWindow,
@@ -913,7 +921,9 @@ if (gotTheLock) {
                     orchestrationService.tickAll()
                     for (const request of orchestrationService.listCancellationRequests()) {
                       if (request.harness === "codex") cancelActiveCodexRun(request)
-                      else cancelActiveClaudeSession(request)
+                      else if (request.harness === "claude-code") cancelActiveClaudeSession(request)
+                      else if (request.harness === "cursor-agent") cancelActiveCursorRun(request)
+                      else cancelActiveOpencodeRun(request)
                       orchestrationService.acknowledgeCancellationRequest(request.runId)
                     }
                     await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)

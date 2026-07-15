@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull } from "drizzle-orm"
 import { agentRuns, chats, getDatabase, mcpApprovalRequests, subChats } from "../db"
+import type { AgentHarness } from "../../../shared/harness-types"
 
 type ActiveProductMcpSession = {
   chatId: string
@@ -14,7 +15,7 @@ export type McpExposureConnection = "disabled" | "next-run" | "connected" | "uns
 export type McpExposureStatus = {
   enabled: boolean
   supported: boolean
-  harness: "codex" | "claude" | null
+  harness: AgentHarness | null
   connection: McpExposureConnection
   callerLabel: string | null
   activeRunIds: string[]
@@ -30,16 +31,26 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
   const chat = getDatabase().select().from(chats).where(eq(chats.id, chatId)).get()
   if (!chat) throw new Error("Chat not found")
 
-  const harness =
-    chat.harness === "codex"
-      ? "codex"
-      : chat.harness === "claude" || chat.harness === "claude-code"
-        ? "claude"
+  const harness: AgentHarness | null =
+    chat.harness === "claude"
+      ? "claude-code"
+      : ["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt"].includes(
+            chat.harness ?? "",
+          )
+        ? (chat.harness as AgentHarness)
         : null
   const supported = harness !== null
   const enabled = chat.mcpExposureEnabled && supported
   const activeRunIds = activeSessionsForChat(chatId).map(([, session]) => session.runId)
-  const harnessLabel = harness === "codex" ? "Codex" : harness === "claude" ? "Claude" : null
+  const harnessLabel = harness
+    ? {
+        codex: "Codex",
+        "claude-code": "Claude",
+        "cursor-agent": "Cursor",
+        openrouter: "OpenRouter",
+        nanogpt: "NanoGPT",
+      }[harness]
+    : null
 
   return {
     enabled,
@@ -62,14 +73,14 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
     activeRunIds,
     error:
       chat.mcpExposureEnabled && !supported
-        ? "Choose Codex or Claude before enabling Flapstack MCP."
+        ? "Choose a supported agent provider before enabling Flapstack MCP."
         : null,
   }
 }
 
 export function setChatMcpExposure(chatId: string, enabled: boolean): boolean {
   if (enabled && !getChatMcpExposureStatus(chatId).supported) {
-    throw new Error("Flapstack MCP is supported only for Codex and Claude chats")
+    throw new Error("Flapstack MCP requires a supported agent provider")
   }
   const productSessions = enabled ? [] : activeSessionsForChat(chatId)
   const productRunIds = [...new Set(productSessions.map(([, session]) => session.runId))]

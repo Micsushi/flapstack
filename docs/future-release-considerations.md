@@ -18,6 +18,14 @@ Stage 3 still validates personal Codex and Claude quota sources plus
 credentialed Cursor, OpenRouter, and NanoGPT behavior where their separate
 matrices require it.
 
+## Performance testing
+
+- Future task: run a dedicated performance-testing pass before public release.
+- Measure startup time, UI responsiveness, CPU and memory use, and agent/terminal
+  streaming under large projects, long-running sessions, and concurrent agents.
+- Record repeatable baselines, target thresholds, tested hardware and platforms,
+  and any regressions or follow-up work.
+
 ## Public macOS distribution
 
 Stage 3 accepts an unsigned macOS Preview package for local functional,

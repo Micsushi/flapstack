@@ -59,6 +59,7 @@ import {
 } from "../../mcp-control/registration"
 import { resolveProviderMcpPermission } from "../../mcp-control/provider-permissions"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
+import { FLAPSTACK_MCP_INSTRUCTIONS } from "../../mcp-control/guidance"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { createRollbackStash } from "../../git/stash"
 import {
@@ -1970,6 +1971,7 @@ ${prompt}
             const systemPromptConfig = {
               type: "preset" as const,
               preset: "claude_code" as const,
+              ...(productMcpEnabledAtLaunch && { append: FLAPSTACK_MCP_INSTRUCTIONS }),
             }
 
             const queryOptions = {

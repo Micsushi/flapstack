@@ -117,6 +117,7 @@ export async function* runSidecarSession(
     reasoningSupported: input.reasoningSupported,
     cwd: input.cwd,
     ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.productMcp ? { productMcp: input.productMcp } : {}),
   })
   if (!started.ok) {
     yield {

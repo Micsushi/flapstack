@@ -35,6 +35,7 @@ beforeEach(() => {
   for (const [id, harness] of [
     ["codex-root", "codex"],
     ["claude-root", "claude-code"],
+    ["cursor-root", "cursor-agent"],
   ]) {
     sqlite
       .prepare(
@@ -53,7 +54,7 @@ afterEach(() => {
 })
 
 describe("MCP cross-harness thread spawn service", () => {
-  it("uses the Tier 3 approval and audit invoker before dispatching", async () => {
+  it("auto-approves full-access Tier 3 dispatch with durable audit", async () => {
     const approvals = new McpApprovalLifecycle()
     const statuses: string[] = []
     const result = invokeMcpControlTool(
@@ -73,13 +74,12 @@ describe("MCP cross-harness thread spawn service", () => {
         audit: { append: (record) => statuses.push(record.status) },
       },
     )
-    approvals.approve("spawn-approval")
-
     await expect(result).resolves.toMatchObject({
       ok: true,
       data: { launch: { status: "not-requested" } },
     })
-    expect(statuses).toEqual(["approval-required", "allowed", "dispatch-started", "completed"])
+    expect(approvals.listPending()).toEqual([])
+    expect(statuses).toEqual(["allowed", "dispatch-started", "completed"])
     approvals.shutdown()
   })
 
@@ -154,6 +154,38 @@ describe("MCP cross-harness thread spawn service", () => {
         ancestor_chat_ids: '["claude-root"]',
       }),
     ])
+  })
+
+  it("creates and queues an API-provider child from Cursor with its selected model", async () => {
+    const result = await createMcpMutationService(path).invoke(
+      "spawn_thread",
+      { chatId: "cursor-root" },
+      {
+        targetHarness: "openrouter",
+        model: "anthropic/claude-sonnet-4",
+        scope: { kind: "task", projectId: "project-1", taskId: "task-1" },
+        permission: { mode: "full-access" },
+        worktree: { strategy: "inherit" },
+        launch: { initialPrompt: "Review through OpenRouter." },
+      },
+    )
+    expect(result).toMatchObject({ ok: true, data: { launch: { status: "pending" } } })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT c.harness, c.model, s.model sub_model, r.model run_model
+           FROM chats c
+           JOIN sub_chats s ON s.chat_id = c.id
+           JOIN agent_runs r ON r.chat_id = c.id
+           WHERE c.parent_chat_id = 'cursor-root'`,
+        )
+        .get(),
+    ).toEqual({
+      harness: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+      sub_model: "anthropic/claude-sonnet-4",
+      run_model: "anthropic/claude-sonnet-4",
+    })
   })
 
   it("keeps the created thread and failed first run durable when a harness launch fails", async () => {

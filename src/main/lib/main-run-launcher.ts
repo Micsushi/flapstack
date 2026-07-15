@@ -7,36 +7,65 @@ export function createMainRunLauncher(): AgentRunLauncher {
   return async (run) => {
     const cwd = run.worktreePath ?? run.projectPath
     if (!cwd) throw new Error("Run has no project or worktree path.")
-    const model =
-      run.harness === "codex" ? resolveCodexLaunchModel(run.model, run.reasoningEffort) : run.model
-    const stream =
-      run.harness === "codex"
-        ? await caller.codex.chat({
-            runId: run.runId,
-            chatId: run.chatId,
-            subChatId: run.subChatId,
-            prompt: run.prompt,
-            cwd,
-            ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(model ? { model } : {}),
-            mode: "agent",
-            reasoningEnabled: run.reasoningEffort !== "minimal",
-            ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
-          })
-        : await caller.claude.chat({
-            runId: run.runId,
-            chatId: run.chatId,
-            subChatId: run.subChatId,
-            prompt: run.prompt,
-            cwd,
-            ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-            ...(model ? { model } : {}),
-            mode: "agent",
-            reasoningEnabled: run.reasoningEffort !== "minimal",
-            ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
-              ? { effort: run.reasoningEffort }
-              : {}),
-          })
+    let stream: unknown
+    if (run.harness === "codex") {
+      const model = resolveCodexLaunchModel(run.model, run.reasoningEffort)
+      stream = await caller.codex.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(model ? { model } : {}),
+        mode: "agent",
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
+      })
+    } else if (run.harness === "claude-code") {
+      stream = await caller.claude.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(run.model ? { model: run.model } : {}),
+        mode: "agent",
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
+          ? { effort: run.reasoningEffort }
+          : {}),
+      })
+    } else if (run.harness === "cursor-agent") {
+      stream = await caller.cursor.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        ...(run.model ? { model: run.model } : {}),
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+      })
+    } else {
+      if (!run.model) throw new Error(`${run.harness} queued runs require an explicit model.`)
+      const model = run.model.startsWith(`${run.harness}/`)
+        ? run.model
+        : `${run.harness}/${run.model}`
+      stream = await caller.opencode.chat({
+        runId: run.runId,
+        chatId: run.chatId,
+        subChatId: run.subChatId,
+        provider: run.harness,
+        model,
+        prompt: run.prompt,
+        cwd,
+        ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+        reasoningEnabled: run.reasoningEffort !== "minimal",
+        reasoningEffort: run.reasoningEffort ?? "high",
+      })
+    }
     await drainStream(stream, run)
   }
 }

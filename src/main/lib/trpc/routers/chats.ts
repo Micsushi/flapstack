@@ -465,6 +465,7 @@ export const chatsRouter = router({
           scope: input.scope,
           permissionMode: inheritedMode,
           customPermissions: inheritedMode === "custom" ? inheritedCustomPermissions : null,
+          mcpExposureEnabled: true,
           harness: input.harness,
           model: input.model,
         })
@@ -1108,6 +1109,7 @@ export const chatsRouter = router({
             scope: sourceChat.scope,
             permissionMode: sourceChat.permissionMode,
             customPermissions: sourceChat.customPermissions,
+            mcpExposureEnabled: sourceChat.mcpExposureEnabled,
             harness: sourceChat.harness,
             model: sourceChat.model,
             worktreePath: sourceChat.worktreePath,

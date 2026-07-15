@@ -19,6 +19,7 @@ import {
   runCursorCli,
 } from "../src/main/lib/cursor/binary"
 import { buildCursorArgs } from "../src/main/lib/cursor/args"
+import { writeCursorProductMcpPlugin } from "../src/main/lib/cursor/product-mcp-plugin"
 import { findReusableCursorPromptMessage } from "../src/main/lib/cursor/turn"
 import {
   CURSOR_MODELS,
@@ -69,6 +70,34 @@ describe("cursor harness contract (D1)", () => {
     expect(
       buildCursorArgs({ model: "auto", cwd: "/tmp/project", permissionMode: "read-only" }),
     ).toContain("--trust")
+  })
+
+  it("loads and approves an isolated run-scoped product MCP plugin", () => {
+    const plugin = writeCursorProductMcpPlugin({
+      command: "/Flapstack",
+      args: ["/app/out/main/mcp-control-stdio.js"],
+      env: { FLAPSTACK_MCP_CHAT_ID: "chat-1", FLAPSTACK_MCP_RUN_ID: "run-1" },
+    })
+    try {
+      const manifest = JSON.parse(
+        readFileSync(join(plugin.directory, ".cursor-plugin", "plugin.json"), "utf8"),
+      )
+      expect(manifest.mcpServers.flapstack).toMatchObject({
+        type: "stdio",
+        command: "/Flapstack",
+        args: ["/app/out/main/mcp-control-stdio.js"],
+      })
+      expect(
+        buildCursorArgs({
+          model: "auto",
+          cwd: "/tmp/project",
+          permissionMode: "read-only",
+          productMcpPluginDir: plugin.directory,
+        }),
+      ).toEqual(expect.arrayContaining(["--plugin-dir", plugin.directory, "--approve-mcps"]))
+    } finally {
+      plugin.cleanup()
+    }
   })
 })
 
