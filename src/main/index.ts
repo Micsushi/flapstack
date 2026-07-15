@@ -23,7 +23,9 @@ import {
   advancePendingWorkflows,
   recoverOrchestrationOperations,
   registerMainRuntimeOperations,
+  registerWorkflowAgentMaterializer,
 } from "./lib/agent-orchestration/operations-runtime"
+import { createLazyAgentProfileWorkflowMaterializerPort } from "./lib/agent-profiles/workflow-binding"
 import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
 import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
 import { AutomationScheduler } from "./lib/automation/scheduler"
@@ -970,6 +972,9 @@ if (gotTheLock) {
                 registerMainRuntimeOperations(
                   databasePath,
                   getMainRuntimeLaunchService(databasePath),
+                )
+                registerWorkflowAgentMaterializer(
+                  createLazyAgentProfileWorkflowMaterializerPort(initDatabase),
                 )
                 return recoverOrchestrationOperations(databasePath)
               },

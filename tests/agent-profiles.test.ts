@@ -33,6 +33,7 @@ import { StandaloneAgentLaunchService } from "../src/main/lib/agent-profiles/sta
 import {
   AgentProfileWorkflowBindingService,
   createAgentProfileWorkflowMaterializerPort,
+  createLazyAgentProfileWorkflowMaterializerPort,
 } from "../src/main/lib/agent-profiles/workflow-binding"
 import {
   DEFAULT_AGENT_CAPABILITY,
@@ -114,6 +115,47 @@ describe("0036 Agent Profile migration", () => {
     } finally {
       upgrade.close()
     }
+  })
+})
+
+describe("Agent Profile workflow production binding", () => {
+  it("resolves the current database for every materialization", async () => {
+    seedWorkflow(sqlite)
+    const database = vi.fn(() => sqlite)
+    const lazy = createLazyAgentProfileWorkflowMaterializerPort(database)
+    const agentDefinition = workflowAgentDefinition(sqlite, "workflow-1", "implement")
+
+    await expect(
+      lazy.materialize({
+        workflowRunId: "workflow-1",
+        taskId: "task-1",
+        stepId: "implement",
+        attemptCount: 1,
+        agentDefinition,
+      }),
+    ).resolves.toEqual({ agentDefinition })
+    await expect(
+      lazy.materialize({
+        workflowRunId: "workflow-1",
+        taskId: "task-1",
+        stepId: "implement",
+        attemptCount: 2,
+        agentDefinition,
+      }),
+    ).resolves.toEqual({ agentDefinition })
+    expect(database).toHaveBeenCalledTimes(2)
+  })
+
+  it("registers the F12 materializer before production workflow recovery", () => {
+    const main = readFileSync(resolve(repositoryPath, "src/main/index.ts"), "utf8")
+    const startup = main.slice(main.indexOf('name: "Multi-agent operations projection'))
+    expect(startup.indexOf("registerMainRuntimeOperations(")).toBeGreaterThanOrEqual(0)
+    expect(startup.indexOf("registerWorkflowAgentMaterializer(")).toBeGreaterThan(
+      startup.indexOf("registerMainRuntimeOperations("),
+    )
+    expect(startup.indexOf("recoverOrchestrationOperations(")).toBeGreaterThan(
+      startup.indexOf("registerWorkflowAgentMaterializer("),
+    )
   })
 })
 

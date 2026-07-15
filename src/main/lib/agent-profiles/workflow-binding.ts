@@ -16,6 +16,7 @@ import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestra
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { AgentProfileResolver, agentProfileSnapshotPolicyViolations } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
+import type { WorkflowAgentMaterializerPort } from "../agent-orchestration/worker-materializer-port"
 
 type DatabaseLike = Database.Database | object
 type Row = Record<string, unknown>
@@ -541,6 +542,22 @@ export function createAgentProfileWorkflowMaterializerPort(
   return {
     async materialize(request) {
       return service.materializeForF3(request)
+    },
+  }
+}
+
+export function createLazyAgentProfileWorkflowMaterializerPort(
+  database: () => DatabaseLike,
+): WorkflowAgentMaterializerPort {
+  return {
+    async materialize(request) {
+      const result =
+        await createAgentProfileWorkflowMaterializerPort(database()).materialize(request)
+      return {
+        agentDefinition: result.agentDefinition,
+        ...(result.profileSnapshotId ? { profileSnapshotId: result.profileSnapshotId } : {}),
+        ...(result.bindingVersion !== null ? { bindingVersion: result.bindingVersion } : {}),
+      }
     },
   }
 }
