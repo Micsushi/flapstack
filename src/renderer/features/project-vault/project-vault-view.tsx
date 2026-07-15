@@ -4,6 +4,7 @@ import { diffLines } from "diff"
 import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   AlertTriangle,
+  ArchiveRestore,
   ArrowLeft,
   BookOpen,
   ChevronRight,
@@ -44,6 +45,7 @@ import { Checkbox } from "../../components/ui/checkbox"
 import { Input } from "../../components/ui/input"
 import { Textarea } from "../../components/ui/textarea"
 import { trpc } from "../../lib/trpc"
+import { agentsSettingsDialogActiveTabAtom } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
 import { desktopViewAtom, selectedProjectAtom } from "../agents/atoms"
 import {
@@ -63,6 +65,7 @@ import {
   SearchResults,
   SECTION_GROUPS,
   SectionTree,
+  VaultContextPicker,
   type SectionId,
 } from "./project-vault-navigation"
 
@@ -87,6 +90,7 @@ function toSnapshot(data: {
 export function ProjectVaultView() {
   const project = useAtomValue(selectedProjectAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
+  const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const projectId = project?.id ?? ""
   const utils = trpc.useUtils()
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -108,10 +112,18 @@ export function ProjectVaultView() {
   const [selectedBackupId, setSelectedBackupId] = useState<string | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [setupSections, setSetupSections] = useState<SectionId[]>(["index", "handoff"])
+  const [setupLocationMode, setSetupLocationMode] = useState<"app-managed" | "project-owned">(
+    "app-managed",
+  )
+  const [setupGitTracking, setSetupGitTracking] = useState(false)
   const [operationStatus, setOperationStatus] = useState<{
     kind: "success" | "error" | "info"
     message: string
   } | null>(null)
+  const openPortability = () => {
+    setSettingsActiveTab("portability")
+    setDesktopView("settings")
+  }
 
   useEffect(() => {
     setSelectedSectionId(null)
@@ -122,6 +134,7 @@ export function ProjectVaultView() {
   }, [projectId])
 
   const registryQuery = trpc.projectVaults.getSectionRegistry.useQuery()
+  const policyQuery = trpc.projectVaults.getPolicy.useQuery({ projectId }, { enabled: !!projectId })
   const sectionsQuery = trpc.projectVaults.listSections.useQuery(
     { projectId },
     { enabled: !!projectId },
@@ -138,6 +151,16 @@ export function ProjectVaultView() {
     () => sections.map((section) => section.sectionId as SectionId),
     [sections],
   )
+  const contextSelectionQuery = trpc.projectVaults.getContextSelection.useQuery(
+    { projectId },
+    { enabled: !!projectId && sections.length > 0 },
+  )
+
+  useEffect(() => {
+    if (!policyQuery.data || sections.length > 0) return
+    setSetupLocationMode(policyQuery.data.locationMode)
+    setSetupGitTracking(policyQuery.data.gitTrackingEnabled)
+  }, [policyQuery.data, sections.length])
 
   useEffect(() => {
     if (!selectedSectionId || !sectionIds.includes(selectedSectionId)) {
@@ -217,6 +240,46 @@ export function ProjectVaultView() {
   const adoptMutation = trpc.projectVaults.adoptExternalChange.useMutation()
   const restoreMutation = trpc.projectVaults.restoreBackup.useMutation()
   const scaffoldMutation = trpc.projectVaults.scaffold.useMutation()
+  const updatePolicyMutation = trpc.projectVaults.updatePolicy.useMutation()
+  const updateContextSelectionMutation = trpc.projectVaults.updateContextSelection.useMutation()
+
+  const handleScaffold = async () => {
+    setOperationStatus({ kind: "info", message: "Creating project knowledge vault…" })
+    try {
+      await updatePolicyMutation.mutateAsync({
+        projectId,
+        locationMode: setupLocationMode,
+        gitTrackingEnabled: setupLocationMode === "project-owned" && setupGitTracking,
+        ...(setupLocationMode === "project-owned" ? { projectOwnedOptIn: true as const } : {}),
+        ...(setupLocationMode === "project-owned" && setupGitTracking
+          ? { gitTrackingOptIn: true as const }
+          : {}),
+      })
+      await scaffoldMutation.mutateAsync({ projectId, sections: setupSections })
+      await Promise.all([sectionsQuery.refetch(), policyQuery.refetch()])
+      setOperationStatus({ kind: "success", message: "Project knowledge vault created." })
+      toast.success("Project knowledge vault created")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Project vault could not be created"
+      setOperationStatus({ kind: "error", message })
+      toast.error(message)
+    }
+  }
+
+  const handleContextToggle = async (sectionId: SectionId, enabled: boolean) => {
+    const current = (contextSelectionQuery.data?.projectSectionIds ?? []).filter(isSectionId)
+    const next = enabled
+      ? [...new Set([...current, sectionId])]
+      : current.filter((id) => id !== sectionId)
+    try {
+      await updateContextSelectionMutation.mutateAsync({ projectId, sectionIds: next })
+      await contextSelectionQuery.refetch()
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Run context selection could not be saved"
+      setOperationStatus({ kind: "error", message })
+    }
+  }
 
   const handleSave = async (resolution?: VaultDocumentSnapshot) => {
     if (!selectedSectionId || !editor) return
@@ -342,23 +405,28 @@ export function ProjectVaultView() {
     )
   }
 
-  if (sectionsQuery.isLoading || registryQuery.isLoading) {
+  if (sectionsQuery.isLoading || registryQuery.isLoading || policyQuery.isLoading) {
     return <LoadingState label="Loading project knowledge…" />
   }
 
-  if (sectionsQuery.error || registryQuery.error) {
+  if (sectionsQuery.error || registryQuery.error || policyQuery.error) {
     return (
       <div className="flex h-full flex-col bg-background select-text">
-        <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+        <VaultHeader
+          projectName={project.name}
+          onClose={() => setDesktopView(null)}
+          onOpenPortability={openPortability}
+        />
         <ErrorState
           title="Project knowledge is unavailable"
           message={
-            (sectionsQuery.error ?? registryQuery.error)?.message ??
+            (sectionsQuery.error ?? registryQuery.error ?? policyQuery.error)?.message ??
             "Vault metadata failed to load."
           }
           onRetry={() => {
             void sectionsQuery.refetch()
             void registryQuery.refetch()
+            void policyQuery.refetch()
           }}
         />
       </div>
@@ -368,7 +436,11 @@ export function ProjectVaultView() {
   if (sections.length === 0 && unsupportedSections.length > 0) {
     return (
       <div className="flex h-full flex-col bg-background select-text">
-        <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+        <VaultHeader
+          projectName={project.name}
+          onClose={() => setDesktopView(null)}
+          onOpenPortability={openPortability}
+        />
         <ErrorState
           title="Vault metadata needs recovery"
           message="The vault contains unsupported or malformed section metadata. Flapstack will not recreate or overwrite it automatically."
@@ -381,7 +453,11 @@ export function ProjectVaultView() {
   if (sections.length === 0) {
     return (
       <div className="flex h-full flex-col overflow-auto bg-background select-text">
-        <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+        <VaultHeader
+          projectName={project.name}
+          onClose={() => setDesktopView(null)}
+          onOpenPortability={openPortability}
+        />
         <main className="mx-auto w-full max-w-2xl p-8">
           <BookOpen className="mb-4 h-9 w-9 text-muted-foreground" />
           <h1 className="text-xl font-semibold">Create project knowledge vault</h1>
@@ -410,22 +486,74 @@ export function ProjectVaultView() {
               </label>
             ))}
           </fieldset>
+          <fieldset className="mt-6 space-y-3">
+            <legend className="mb-2 text-sm font-medium">Storage location</legend>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="radio"
+                name="vault-location"
+                checked={setupLocationMode === "app-managed"}
+                onChange={() => {
+                  setSetupLocationMode("app-managed")
+                  setSetupGitTracking(false)
+                }}
+              />
+              <span>
+                <span className="block text-sm font-medium">App-managed central storage</span>
+                <span className="block break-all text-xs text-muted-foreground">
+                  {policyQuery.data?.centralPath}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="radio"
+                name="vault-location"
+                checked={setupLocationMode === "project-owned"}
+                onChange={() => setSetupLocationMode("project-owned")}
+              />
+              <span>
+                <span className="block text-sm font-medium">Project-owned storage</span>
+                <span className="block text-xs text-muted-foreground">
+                  Creates .flapstack/knowledge in the registered project root.
+                </span>
+              </span>
+            </label>
+            {setupLocationMode === "project-owned" && (
+              <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                <Checkbox
+                  checked={setupGitTracking}
+                  onCheckedChange={(checked) => setSetupGitTracking(checked === true)}
+                />
+                Allow these project-owned Markdown files to be git tracked
+              </label>
+            )}
+          </fieldset>
           <Button
             className="mt-6"
-            disabled={setupSections.length === 0 || scaffoldMutation.isPending}
-            onClick={() =>
-              scaffoldMutation.mutate(
-                { projectId, sections: setupSections },
-                {
-                  onSuccess: () => void sectionsQuery.refetch(),
-                  onError: (error) => toast.error(error.message),
-                },
-              )
+            disabled={
+              setupSections.length === 0 ||
+              scaffoldMutation.isPending ||
+              updatePolicyMutation.isPending
             }
+            onClick={() => void handleScaffold()}
           >
-            {scaffoldMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {(scaffoldMutation.isPending || updatePolicyMutation.isPending) && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
             Create vault
           </Button>
+          {operationStatus && (
+            <p
+              className={cn(
+                "mt-3 text-xs",
+                operationStatus.kind === "error" ? "text-red-600" : "text-muted-foreground",
+              )}
+              role={operationStatus.kind === "error" ? "alert" : "status"}
+            >
+              {operationStatus.message}
+            </p>
+          )}
         </main>
       </div>
     )
@@ -435,7 +563,11 @@ export function ProjectVaultView() {
 
   return (
     <div className="flex h-full flex-col bg-background select-text" data-project-vault-view>
-      <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+      <VaultHeader
+        projectName={project.name}
+        onClose={() => setDesktopView(null)}
+        onOpenPortability={openPortability}
+      />
       {unsupportedSections.length > 0 && (
         <div
           className="border-b border-amber-500/40 bg-amber-500/5 px-4 py-2 text-xs text-amber-700 dark:text-amber-300"
@@ -490,6 +622,26 @@ export function ProjectVaultView() {
               onSelect={setSelectedSectionId}
             />
           )}
+          <div className="border-t px-3 py-2 text-[10px] text-muted-foreground">
+            <span className="block font-medium text-foreground">
+              {policyQuery.data?.locationMode === "project-owned"
+                ? "Project-owned storage"
+                : "App-managed storage"}
+            </span>
+            <span className="block truncate" title={policyQuery.data?.vaultPath}>
+              {policyQuery.data?.vaultPath}
+            </span>
+            <span className="block">
+              Git tracking {policyQuery.data?.gitTrackingEnabled ? "enabled" : "disabled"}
+            </span>
+          </div>
+          <VaultContextPicker
+            sections={sections}
+            selected={(contextSelectionQuery.data?.projectSectionIds ?? []).filter(isSectionId)}
+            saving={updateContextSelectionMutation.isPending}
+            error={contextSelectionQuery.error?.message}
+            onToggle={(sectionId, enabled) => void handleContextToggle(sectionId, enabled)}
+          />
           <div className="mt-auto border-t p-2">
             <Button
               variant={showHistory ? "secondary" : "ghost"}
@@ -746,7 +898,15 @@ export function ProjectVaultView() {
   )
 }
 
-function VaultHeader({ projectName, onClose }: { projectName: string; onClose: () => void }) {
+function VaultHeader({
+  projectName,
+  onClose,
+  onOpenPortability,
+}: {
+  projectName: string
+  onClose: () => void
+  onOpenPortability: () => void
+}) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
       <Button variant="ghost" size="sm" onClick={onClose} aria-label="Back to project chats">
@@ -757,9 +917,10 @@ function VaultHeader({ projectName, onClose }: { projectName: string; onClose: (
         <div className="truncate text-sm font-semibold">Project knowledge</div>
         <div className="truncate text-[11px] text-muted-foreground">{projectName}</div>
       </div>
-      <div className="ml-auto text-[11px] text-muted-foreground">
-        ⌘/Ctrl+F search · ⌘/Ctrl+S save
-      </div>
+      <Button variant="ghost" size="sm" className="ml-auto" onClick={onOpenPortability}>
+        <ArchiveRestore className="mr-2 h-4 w-4" /> Export or restore
+      </Button>
+      <div className="text-[11px] text-muted-foreground">⌘/Ctrl+F search · ⌘/Ctrl+S save</div>
     </header>
   )
 }

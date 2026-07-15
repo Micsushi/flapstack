@@ -18,7 +18,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import * as schema from "../src/main/lib/db/schema"
 import { projects } from "../src/main/lib/db/schema"
-import { searchProjectVault } from "../src/main/lib/project-vaults/browser"
+import {
+  readProjectVaultSectionForPreview,
+  searchProjectVault,
+} from "../src/main/lib/project-vaults/browser"
 import {
   adoptExternalProjectVaultSectionChange,
   listProjectVaultSectionBackups,
@@ -102,6 +105,41 @@ describe("project vault browser services", () => {
     await expect(
       searchProjectVault(database, { projectId: "project-1", query: secret }),
     ).resolves.toEqual([])
+  })
+
+  it("fails malformed secret redaction closed instead of returning a snippet", async () => {
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    writeFileSync(
+      join(vault.rootPath, "current-handoff.md"),
+      "-----BEGIN PRIVATE KEY-----\nunclosed secret material\nneedle",
+    )
+
+    await expect(
+      searchProjectVault(database, { projectId: "project-1", query: "needle" }),
+    ).resolves.toEqual([])
+  })
+
+  it("refuses to expose externally introduced secrets in renderer previews", async () => {
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    writeFileSync(
+      join(vault.rootPath, "index.md"),
+      "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456",
+    )
+
+    await expect(
+      readProjectVaultSectionForPreview(database, {
+        projectId: "project-1",
+        sectionId: "index",
+      }),
+    ).rejects.toThrow("detected secret")
   })
 
   it("previews and restores a backup as a new optimistic version", async () => {

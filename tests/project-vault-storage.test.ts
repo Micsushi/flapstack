@@ -29,6 +29,7 @@ import {
   getProjectVaultDeleteContract,
   ProjectVaultConflictError,
   readProjectVaultSection,
+  readProjectVaultSectionBackup,
   scaffoldProjectVault,
   writeProjectVaultSection,
 } from "../src/main/lib/project-vaults/storage"
@@ -173,6 +174,36 @@ describe("typed project vault storage", () => {
     expect(readFileSync(join(vault.rootPath, "index.md"), "utf8")).toBe("outside edit")
   })
 
+  it("quarantines a secret-bearing outside version from backup previews", async () => {
+    const { vault } = await scaffoldProjectVault(database, {
+      projectId: "project-1",
+      appDataRoot,
+      sections: ["index"],
+    })
+    const target = join(vault.rootPath, "index.md")
+    writeFileSync(target, "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456")
+    const outside = await readProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+    })
+    await writeProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+      expectedVersion: 1,
+      expectedCurrentContentHash: outside.currentContentHash,
+      content: "secret removed",
+    })
+    const [backup] = database.select().from(projectVaultBackups).all()
+
+    await expect(
+      readProjectVaultSectionBackup(database, {
+        projectId: "project-1",
+        sectionId: "index",
+        backupId: backup!.id,
+      }),
+    ).rejects.toThrow("detected secret")
+  })
+
   it("serializes same-version writers so exactly one update wins", async () => {
     await scaffoldProjectVault(database, {
       projectId: "project-1",
@@ -227,6 +258,66 @@ describe("typed project vault storage", () => {
     expect(database.select().from(projectVaultSections).all()[0].version).toBe(1)
     expect(database.select().from(projectVaultBackups).all()).toEqual([])
     expect(readdirSync(join(vault.rootPath, ".backups", "index"))).toEqual([])
+  })
+
+  it("refuses an external edit that lands immediately before atomic replace", async () => {
+    const { vault } = await scaffoldProjectVault(database, {
+      projectId: "project-1",
+      appDataRoot,
+      sections: ["index"],
+    })
+    const target = join(vault.rootPath, "index.md")
+
+    await expect(
+      writeProjectVaultSection(
+        database,
+        {
+          projectId: "project-1",
+          sectionId: "index",
+          expectedVersion: 1,
+          content: "local draft",
+        },
+        { beforeContentCommit: () => writeFileSync(target, "external edit") },
+      ),
+    ).rejects.toMatchObject({
+      name: "ProjectVaultConflictError",
+      message: "Project vault section changed outside Flapstack.",
+    })
+
+    expect(readFileSync(target, "utf8")).toBe("external edit")
+    expect(database.select().from(projectVaultSections).all()[0].version).toBe(1)
+    expect(database.select().from(projectVaultBackups).all()).toEqual([])
+  })
+
+  it("preserves an external edit when metadata failure rollback loses ownership", async () => {
+    const { vault } = await scaffoldProjectVault(database, {
+      projectId: "project-1",
+      appDataRoot,
+      sections: ["index"],
+    })
+    const target = join(vault.rootPath, "index.md")
+
+    await expect(
+      writeProjectVaultSection(
+        database,
+        {
+          projectId: "project-1",
+          sectionId: "index",
+          expectedVersion: 1,
+          content: "temporary replacement",
+        },
+        {
+          afterContentWrite: () => {
+            writeFileSync(target, "external replacement")
+            throw new Error("forced metadata failure")
+          },
+        },
+      ),
+    ).rejects.toThrow("content rollback also failed")
+
+    expect(readFileSync(target, "utf8")).toBe("external replacement")
+    expect(database.select().from(projectVaultSections).all()[0].version).toBe(1)
+    expect(database.select().from(projectVaultBackups).all()).toEqual([])
   })
 
   it("rolls a partially created scaffold back when metadata persistence fails", async () => {

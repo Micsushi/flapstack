@@ -9,6 +9,7 @@ import {
   SearchResults,
   SECTION_GROUPS,
   SectionTree,
+  VaultContextPicker,
 } from "../src/renderer/features/project-vault/project-vault-navigation"
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -141,5 +142,46 @@ describe("project vault navigation accessibility", () => {
     const alert = container.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain("Registered vault root was replaced")
     expect(container.textContent).toContain("Search unavailable")
+  })
+
+  it("exposes explicit accessible run-context selection", () => {
+    const onToggle = vi.fn()
+    act(() => {
+      root.render(
+        <VaultContextPicker
+          sections={[
+            { sectionId: "index", title: "Project index" },
+            { sectionId: "handoff", title: "Current handoff" },
+          ]}
+          selected={["index"]}
+          saving={false}
+          onToggle={onToggle}
+        />,
+      )
+    })
+
+    expect(container.querySelector("legend")?.textContent).toContain("Default run context")
+    const handoff = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Include Current handoff in default run context"]',
+    )
+    expect(handoff).not.toBeNull()
+    act(() => handoff!.click())
+    expect(onToggle).toHaveBeenCalledWith("handoff", true)
+    expect(container.textContent).toContain("1 selected")
+
+    act(() => {
+      root.render(
+        <VaultContextPicker
+          sections={[]}
+          selected={[]}
+          saving={false}
+          error="Selection could not be saved"
+          onToggle={onToggle}
+        />,
+      )
+    })
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Selection could not be saved",
+    )
   })
 })
