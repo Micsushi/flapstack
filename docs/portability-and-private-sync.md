@@ -49,8 +49,11 @@ under the Flapstack data profile and show create, update, conflict, and skip
 decisions. There are no implicit deletes.
 
 Source-machine project and vault paths are placeholders, never live target
-paths. Dry-run requires reviewed project, extension, and project-vault target
-mappings when the destination has no matching local identity. Project roots
+paths. Dry-run uses explicit reviewed mappings plus existing current registered
+project or vault destinations. A stale or missing registered vault root is never
+reused; it produces a non-destructive mapping requirement with a nullable target
+preview. Unrelated mappings are rejected. Duplicate mappings and multiple files
+converging on one destination fail before apply. Project roots
 must already be verified directories. Missing extension and vault roots may be
 created under a verified non-symlink parent only during confirmed apply.
 

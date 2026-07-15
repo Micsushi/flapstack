@@ -448,14 +448,34 @@ describe("portability-import-apply", () => {
     const targetVault = join(root, "empty-profile", "vaults", "p1")
     await mkdir(targetProject, { recursive: true })
     const stateRoot = join(root, "state")
+    const unresolved = await createPortableImportPlan({
+      bundlePath,
+      databasePath: targetPath,
+      stateRoot,
+      targetRoots: { extensions: targetExtensions },
+    })
+    expect(unresolved.mappingRequirements).toEqual([
+      {
+        kind: "project-vault",
+        projectId: "p1",
+        targetRootField: "projectVaults",
+        reason: "missing-current-target",
+      },
+      {
+        kind: "project",
+        projectId: "p1",
+        targetRootField: "projects",
+        reason: "missing-current-target",
+      },
+    ])
+    expect(
+      unresolved.files
+        .filter((file) => file.scopeId === "project-vaults")
+        .every((file) => file.targetPath === null && file.targetBinding === null),
+    ).toBe(true)
     await expect(
-      createPortableImportPlan({
-        bundlePath,
-        databasePath: targetPath,
-        stateRoot,
-        targetRoots: {},
-      }),
-    ).rejects.toThrow(/target mapping|required/i)
+      createPortableImportConfirmation({ stateRoot, planId: unresolved.id }),
+    ).rejects.toThrow(/mappings are incomplete/i)
     const plan = await createPortableImportPlan({
       bundlePath,
       databasePath: targetPath,
@@ -466,7 +486,7 @@ describe("portability-import-apply", () => {
         projectVaults: { p1: targetVault },
       },
     })
-    await applyPortableImport({
+    const applied = await applyPortableImport({
       planId: plan.id,
       expectedFingerprint: plan.bundleFingerprint,
       databasePath: targetPath,
@@ -489,6 +509,67 @@ describe("portability-import-apply", () => {
     expect(database.prepare("SELECT COUNT(*) FROM tasks").pluck().get()).toBe(1)
     expect(database.prepare("SELECT COUNT(*) FROM attachments").pluck().get()).toBe(1)
     database.close()
+    await restorePortableBackup({
+      stateRoot,
+      operationId: applied.operationId,
+      databasePath: targetPath,
+    })
+    await expect(readFile(join(targetVault, "knowledge.md"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    })
+    const restored = new Database(targetPath, { readonly: true })
+    expect(restored.prepare("SELECT COUNT(*) FROM projects").pluck().get()).toBe(0)
+    restored.close()
+  })
+
+  it("keeps stale project metadata but requires vault remapping without lstat", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createRelationalTestDatabase(sourcePath)
+    const bundlePath = join(root, "explicit-mapping.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "project-vaults", projectIds: ["p1"] }],
+    })
+    const targetPath = join(root, "target.db")
+    createRelationalTestDatabase(targetPath)
+    const target = new Database(targetPath)
+    target
+      .prepare("UPDATE projects SET path = ? WHERE id = 'p1'")
+      .run(join(root, "removed-worktree"))
+    target
+      .prepare("UPDATE project_vaults SET root_path = ? WHERE project_id = 'p1'")
+      .run(join(root, "removed-source-vault"))
+    target.close()
+    const stateRoot = join(root, "state")
+    const plan = await createPortableImportPlan({
+      bundlePath,
+      databasePath: targetPath,
+      stateRoot,
+      targetRoots: {},
+    })
+    expect(
+      plan.database.find((entry) => entry.tableName === "projects" && entry.identity.id === "p1")
+        ?.incoming.path,
+    ).toBe(join(root, "removed-worktree"))
+    expect(
+      plan.database.find(
+        (entry) => entry.tableName === "project_vaults" && entry.identity.project_id === "p1",
+      )?.incoming.root_path,
+    ).toBe("__FLAPSTACK_LOCAL_PATH__/project-vaults/p1")
+    expect(plan.mappingRequirements).toEqual([
+      {
+        kind: "project-vault",
+        projectId: "p1",
+        targetRootField: "projectVaults",
+        reason: "missing-current-target",
+      },
+    ])
+    await expect(createPortableImportConfirmation({ stateRoot, planId: plan.id })).rejects.toThrow(
+      /mappings are incomplete/i,
+    )
   })
 
   it("rolls back an invalid imported foreign-key reference", async () => {

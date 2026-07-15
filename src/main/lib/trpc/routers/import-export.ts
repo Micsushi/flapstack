@@ -11,6 +11,7 @@ import {
   applyPortableImport,
   createPortableImportConfirmation,
   createPortableImportPlan,
+  mergePortableImportTargetRoots,
   readPortableImportPlan,
   recoverInterruptedImports,
   restorePortableBackup,
@@ -348,29 +349,24 @@ function discoverFileSources(projectIds: readonly string[]): PortableFileSource[
 }
 
 function discoverTargetRoots(): PortabilityTargetRoots {
-  const projects: Record<string, string> = {}
   const projectVaults: Record<string, string> = {}
   const database = openAppDatabase(getDatabasePath(), { readonly: true, fileMustExist: true })
   try {
-    const projectRows = database.prepare("SELECT id, path FROM projects").all() as Array<{
-      id: string
-      path: string
-    }>
-    for (const row of projectRows) projects[row.id] = row.path
     const rows = database
       .prepare("SELECT project_id, root_path FROM project_vaults")
       .all() as Array<{
       project_id: string
       root_path: string
     }>
-    for (const row of rows) projectVaults[row.project_id] = row.root_path
+    for (const row of rows) {
+      if (pathExistsSync(row.root_path)) projectVaults[row.project_id] = row.root_path
+    }
   } finally {
     database.close()
   }
   return {
     config: join(app.getPath("userData"), "data"),
     extensions: join(homedir(), ".agents"),
-    projects,
     projectVaults,
   }
 }
@@ -378,13 +374,7 @@ function discoverTargetRoots(): PortabilityTargetRoots {
 function mergeTargetRoots(
   reviewed?: Pick<PortabilityTargetRoots, "extensions" | "projects" | "projectVaults">,
 ): PortabilityTargetRoots {
-  const discovered = discoverTargetRoots()
-  return {
-    config: discovered.config,
-    ...(reviewed?.extensions ? { extensions: reviewed.extensions } : {}),
-    projects: { ...discovered.projects, ...reviewed?.projects },
-    projectVaults: { ...discovered.projectVaults, ...reviewed?.projectVaults },
-  }
+  return mergePortableImportTargetRoots(discoverTargetRoots(), reviewed)
 }
 
 function pathExistsSync(path: string): boolean {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import Database from "better-sqlite3"
@@ -184,6 +184,36 @@ describe("portability-export", () => {
     ).rejects.toMatchObject({ code: "ENOENT" })
     await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" })
   })
+
+  it.each(["moved", "removed"] as const)(
+    "fails cleanly when a selected export source is %s after discovery",
+    async (mode) => {
+      const root = await tempRoot()
+      const databasePath = join(root, "source.db")
+      createTestDatabase(databasePath)
+      const sourceRoot = join(root, "settings")
+      await mkdir(sourceRoot)
+      const sourcePath = join(sourceRoot, "settings.json")
+      await writeFile(sourcePath, "safe")
+      const outputPath = join(root, `${mode}.flapstack-export`)
+      await expect(
+        createPortableExport({
+          outputPath,
+          databasePath,
+          appVersion: "1",
+          selection: [{ id: "settings" }],
+          fileSources: [{ scopeId: "settings", root: sourceRoot, target: { kind: "config" } }],
+          testHooks: {
+            beforeSourceSnapshot: async (path) => {
+              if (mode === "moved") await rename(path, `${path}.moved`)
+              else await rm(path)
+            },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" })
+      await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" })
+    },
+  )
 
   it("filters parent and dependent rows relationally and removes machine-local paths", async () => {
     const root = await tempRoot()

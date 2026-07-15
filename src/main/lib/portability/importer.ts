@@ -53,6 +53,18 @@ export type PortabilityTargetRoots = {
   projectVaults?: Readonly<Record<string, string>>
 }
 
+export function mergePortableImportTargetRoots(
+  discovered: PortabilityTargetRoots,
+  reviewed?: Pick<PortabilityTargetRoots, "extensions" | "projects" | "projectVaults">,
+): PortabilityTargetRoots {
+  return {
+    config: discovered.config,
+    ...(reviewed?.extensions ? { extensions: reviewed.extensions } : {}),
+    ...(reviewed?.projects ? { projects: reviewed.projects } : {}),
+    projectVaults: { ...discovered.projectVaults, ...reviewed?.projectVaults },
+  }
+}
+
 export type PortabilityDiffKind = "create" | "update" | "conflict" | "skip"
 
 export type PortableDatabaseDiff = {
@@ -78,7 +90,14 @@ export type PortableFileDiff = {
   localSha256: string | null
   localPreview: string | null
   incomingPreview: string
-  targetBinding: PortableTargetBinding
+  targetBinding: PortableTargetBinding | null
+}
+
+export type PortableMappingRequirement = {
+  kind: "project" | "project-vault"
+  projectId: string
+  targetRootField: "projects" | "projectVaults"
+  reason: "missing-current-target"
 }
 
 export type PortableTargetBinding = {
@@ -104,6 +123,7 @@ export type PortableImportPlan = {
   migrations: Array<{ scopeId: PortableScopeId; fromVersion: number; toVersion: number }>
   exclusions: PortableExclusionDocument["entries"]
   targetRoots: PortabilityTargetRoots
+  mappingRequirements: PortableMappingRequirement[]
   database: PortableDatabaseDiff[]
   files: PortableFileDiff[]
   summary: Record<PortabilityDiffKind, number>
@@ -215,7 +235,16 @@ const fileDiffSchema = z
           .strict()
           .nullable(),
       })
-      .strict(),
+      .strict()
+      .nullable(),
+  })
+  .strict()
+const mappingRequirementSchema = z
+  .object({
+    kind: z.enum(["project", "project-vault"]),
+    projectId: z.string().min(1),
+    targetRootField: z.enum(["projects", "projectVaults"]),
+    reason: z.literal("missing-current-target"),
   })
   .strict()
 const importPlanSchema = z
@@ -237,6 +266,7 @@ const importPlanSchema = z
     ),
     exclusions: z.array(portableExclusionEntrySchema),
     targetRoots: targetRootsSchema,
+    mappingRequirements: z.array(mappingRequirementSchema),
     database: z.array(databaseDiffSchema),
     files: z.array(fileDiffSchema),
     summary: z
@@ -371,7 +401,6 @@ export async function createPortableImportPlan(input: {
   stage?: boolean
   persist?: boolean
 }): Promise<PortableImportPlan> {
-  await validateReviewedProjectRoots(input.targetRoots.projects)
   const sourceRoot = await assertSafeDirectory(input.bundlePath)
   await verifyPortableBundle(sourceRoot)
   const id = randomUUID()
@@ -385,8 +414,19 @@ export async function createPortableImportPlan(input: {
   )
   const database = new Database(input.databasePath, { fileMustExist: true })
   let databaseDiffs: PortableDatabaseDiff[]
+  const mappingRequirements: PortableMappingRequirement[] = []
   try {
-    const mappedRecords = mapPortableLocalPaths(migratedRecords, database, input.targetRoots)
+    await validateReviewedTargetRoots(
+      input.targetRoots,
+      collectPortableProjectIds(migratedRecords, verified.manifest),
+      database,
+    )
+    const mappedRecords = mapPortableLocalPaths(
+      migratedRecords,
+      database,
+      input.targetRoots,
+      mappingRequirements,
+    )
     databaseDiffs = planDatabaseDiffs(
       database,
       orderPortableDatabaseRecords(mappedRecords, verified.manifest),
@@ -394,12 +434,15 @@ export async function createPortableImportPlan(input: {
   } finally {
     database.close()
   }
-  const fileDiffs = await planFileDiffs({
+  const filePlan = await planFileDiffs({
     bundleRoot,
     manifest: verified.manifest,
     targetRoots: input.targetRoots,
     stateRoot: input.stateRoot,
   })
+  mappingRequirements.push(...filePlan.mappingRequirements)
+  const reviewedMappingRequirements = deduplicateMappingRequirements(mappingRequirements)
+  const fileDiffs = filePlan.diffs
   const allKinds = [...databaseDiffs, ...fileDiffs].map((entry) => entry.kind)
   const plan: PortableImportPlan = {
     id,
@@ -422,6 +465,7 @@ export async function createPortableImportPlan(input: {
     }),
     exclusions: verified.exclusions.entries,
     targetRoots: input.targetRoots,
+    mappingRequirements: reviewedMappingRequirements,
     database: databaseDiffs,
     files: fileDiffs,
     summary: {
@@ -453,6 +497,7 @@ export async function createPortableImportConfirmation(input: {
   resolutions?: Readonly<Record<string, PortableConflictResolution>>
 }): Promise<{ confirmationHash: string; targetRoots: PortabilityTargetRoots }> {
   const plan = await readPortableImportPlan(input.stateRoot, input.planId)
+  assertMappingsResolved(plan)
   return {
     confirmationHash: importConfirmationHash(plan, input.resolutions),
     targetRoots: plan.targetRoots,
@@ -504,6 +549,7 @@ async function applyPortableImportInsideLifecycle(input: {
   conflictArtifactPath: string | null
 }> {
   const plan = await readPortableImportPlan(input.stateRoot, input.planId)
+  assertMappingsResolved(plan)
   if (stableJson(input.targetRoots) !== stableJson(plan.targetRoots))
     throw new Error("Import target mappings changed after review; run dry-run again.")
   if (importConfirmationHash(plan, input.resolutions) !== input.expectedConfirmationHash)
@@ -576,6 +622,7 @@ async function applyPortableImportInsideLifecycle(input: {
         const artifactRoot = join(operationRoot, "conflicts", "files", file.id)
         const localArtifact = join(artifactRoot, "local")
         const incomingArtifact = join(artifactRoot, "incoming")
+        if (!file.targetBinding) throw new Error("Reviewed import target binding is missing.")
         await assertBoundTarget(file.targetBinding, file.targetPath)
         if (!file.targetBinding.leaf)
           throw new Error("Reviewed local conflict file disappeared before preservation.")
@@ -600,6 +647,7 @@ async function applyPortableImportInsideLifecycle(input: {
         continue
       }
       const targetPath = file.targetPath
+      if (!file.targetBinding) throw new Error("Reviewed import target binding is missing.")
       await assertBoundTarget(file.targetBinding, targetPath)
       const existed = file.targetBinding.leaf !== null
       const backupPath = existed
@@ -910,25 +958,32 @@ function mapPortableLocalPaths(
   records: readonly PortableDatabaseRecord[],
   database: Database.Database,
   roots: PortabilityTargetRoots,
+  mappingRequirements: PortableMappingRequirement[],
 ): PortableDatabaseRecord[] {
   return records.map((record) => {
     const row = { ...record.row }
     for (const [column, value] of Object.entries(row)) {
       if (typeof value !== "string" || !value.startsWith(PORTABLE_LOCAL_PATH_PREFIX)) continue
-      const projectId = String(record.identity.project_id ?? record.identity.id ?? "")
-      let mapped: string | undefined
-      if (value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}projects/`)) {
-        mapped =
-          roots.projects?.[projectId] ?? readExistingMappedPath(database, "projects", projectId)
-      } else if (value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}project-vaults/`)) {
-        mapped =
-          roots.projectVaults?.[projectId] ??
-          readExistingMappedPath(database, "project_vaults", projectId)
-      }
-      if (!mapped || !isAbsolute(mapped)) {
+      const recordProjectId = String(record.identity.project_id ?? record.identity.id ?? "")
+      const marker = parsePortableLocalPathMarker(value)
+      if (marker.projectId !== recordProjectId) {
         throw new Error(
-          `Reviewed target mapping required for ${record.tableName}.${column} project ${projectId}.`,
+          `Portable target mapping identity is ambiguous for ${record.tableName}.${column}.`,
         )
+      }
+      const mapped =
+        marker.kind === "projects"
+          ? (roots.projects?.[marker.projectId] ??
+            readExistingMappedPath(database, "projects", marker.projectId))
+          : roots.projectVaults?.[marker.projectId]
+      if (!mapped || !isAbsolute(mapped)) {
+        mappingRequirements.push({
+          kind: marker.kind === "project-vaults" ? "project-vault" : "project",
+          projectId: marker.projectId,
+          targetRootField: marker.kind === "project-vaults" ? "projectVaults" : "projects",
+          reason: "missing-current-target",
+        })
+        continue
       }
       row[column] = mapped
     }
@@ -950,6 +1005,32 @@ function readExistingMappedPath(
     )
     .pluck()
     .get(projectId) as string | undefined
+}
+
+function parsePortableLocalPathMarker(value: string): {
+  kind: "projects" | "project-vaults"
+  projectId: string
+} {
+  const suffix = value.slice(PORTABLE_LOCAL_PATH_PREFIX.length)
+  const separator = suffix.indexOf("/")
+  if (separator <= 0 || suffix.indexOf("/", separator + 1) !== -1) {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  const kind = suffix.slice(0, separator)
+  if (kind !== "projects" && kind !== "project-vaults") {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  const encodedProjectId = suffix.slice(separator + 1)
+  let projectId: string
+  try {
+    projectId = decodeURIComponent(encodedProjectId)
+  } catch {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  if (!projectId || encodeURIComponent(projectId) !== encodedProjectId) {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  return { kind, projectId }
 }
 
 function orderPortableDatabaseRecords(
@@ -996,11 +1077,16 @@ async function planFileDiffs(input: {
   manifest: PortableManifest
   targetRoots: PortabilityTargetRoots
   stateRoot: string
-}): Promise<PortableFileDiff[]> {
+}): Promise<{
+  diffs: PortableFileDiff[]
+  mappingRequirements: PortableMappingRequirement[]
+}> {
   const bases = await readFileBases(input.stateRoot)
   const output: PortableFileDiff[] = []
+  const mappingRequirements: PortableMappingRequirement[] = []
   let plannedBytes = 0
   const collisionKeys = new Set<string>()
+  const targetCollisionKeys = new Set<string>()
   for (const scope of input.manifest.scopes) {
     const indexPath = join(input.bundleRoot, scope.contentPath, "files.json")
     const index = fileIndexSchema.parse(await readJsonFile(indexPath)) as PortableFileIndexEntry[]
@@ -1019,12 +1105,42 @@ async function planFileDiffs(input: {
       if (bundled.sha256 !== entry.sha256 || bundled.bytes !== entry.bytes)
         throw new Error("Portable file index checksum mismatch.")
       const targetRoot = targetRootFor(entry, input.targetRoots)
-      if (!targetRoot)
-        throw new Error(`Reviewed target root mapping required for ${entry.bundlePath}.`)
+      if (!targetRoot) {
+        if (entry.target.kind !== "project-vault")
+          throw new Error(`Reviewed target root mapping required for ${entry.bundlePath}.`)
+        mappingRequirements.push({
+          kind: "project-vault",
+          projectId: entry.target.projectId,
+          targetRootField: "projectVaults",
+          reason: "missing-current-target",
+        })
+        const diff: PortableFileDiff = {
+          id: sha256(stableJson(["file", entry.bundlePath, entry.target])),
+          kind: "conflict",
+          scopeId: scope.id as PortableScopeId,
+          bundlePath: entry.bundlePath,
+          targetPath: null,
+          incomingSha256: entry.sha256,
+          localSha256: null,
+          localPreview: null,
+          incomingPreview: safeFilePreview(bundled.preview, scope.id as PortableScopeId),
+          targetBinding: null,
+        }
+        plannedBytes += Buffer.byteLength(stableJson(diff))
+        if (plannedBytes > PORTABILITY_LIMITS.importPlanBytes)
+          throw new Error("Import plan exceeds the supported size limit; split the export.")
+        output.push(diff)
+        continue
+      }
       const { targetPath, targetBinding, targetSnapshot } = await resolveTarget(
         targetRoot,
         entry.relativePath,
       )
+      const targetCollisionKey = portableCollisionKey(targetPath)
+      if (targetCollisionKeys.has(targetCollisionKey)) {
+        throw new Error("Portable target mappings resolve multiple files to the same destination.")
+      }
+      targetCollisionKeys.add(targetCollisionKey)
       const localSha256 = targetSnapshot?.sha256 ?? null
       const base = bases[entry.bundlePath]
       const kind: PortabilityDiffKind = !localSha256
@@ -1054,7 +1170,7 @@ async function planFileDiffs(input: {
       output.push(diff)
     }
   }
-  return output
+  return { diffs: output, mappingRequirements }
 }
 
 function upsertRecord(database: Database.Database, diff: PortableDatabaseDiff): void {
@@ -1380,15 +1496,109 @@ function safeFilePreview(contents: Buffer, scopeId: PortableScopeId): string {
   }
 }
 
-async function validateReviewedProjectRoots(
-  roots: Readonly<Record<string, string>> | undefined,
-): Promise<void> {
-  for (const [projectId, root] of Object.entries(roots ?? {})) {
-    if (!isAbsolute(root)) throw new Error(`Project target for ${projectId} must be absolute.`)
-    const info = await lstat(root)
-    if (!info.isDirectory() || info.isSymbolicLink())
-      throw new Error(`Project target for ${projectId} must be an existing non-symlink directory.`)
+function collectPortableProjectIds(
+  records: readonly PortableDatabaseRecord[],
+  manifest: PortableManifest,
+): Set<string> {
+  const projectIds = new Set(manifest.scopes.flatMap((scope) => scope.projectIds ?? []))
+  for (const record of records) {
+    const candidates = [
+      record.identity.project_id,
+      record.row.project_id,
+      record.tableName === "projects" ? record.identity.id : undefined,
+      record.tableName === "projects" ? record.row.id : undefined,
+    ]
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.length > 0) projectIds.add(candidate)
+    }
   }
+  return projectIds
+}
+
+async function validateReviewedTargetRoots(
+  roots: PortabilityTargetRoots,
+  importedProjectIds: ReadonlySet<string>,
+  database: Database.Database,
+): Promise<void> {
+  const destinations = new Map<string, string>()
+  for (const [field, mappings, mustExist, kind] of [
+    ["projects", roots.projects, true, "Project"],
+    ["projectVaults", roots.projectVaults, false, "Project vault"],
+  ] as const) {
+    for (const [projectId, root] of Object.entries(mappings ?? {})) {
+      if (!importedProjectIds.has(projectId))
+        throw new Error(`Target mapping for unrelated project ${projectId} is not allowed.`)
+      if (root.split(/[\\/]/).includes(".."))
+        throw new Error(`Target mapping for ${projectId} contains path traversal.`)
+      const canonical = await canonicalReviewedTargetRoot(root, mustExist, kind, projectId)
+      const destinationKey = portableCollisionKey(canonical)
+      const owner = destinations.get(destinationKey)
+      if (owner && owner !== `${field}:${projectId}`)
+        throw new Error(`Target mappings are ambiguous for ${projectId} and ${owner}.`)
+      destinations.set(destinationKey, `${field}:${projectId}`)
+      assertDestinationNotOwnedByAnotherProject(database, field, projectId, root)
+    }
+  }
+}
+
+async function canonicalReviewedTargetRoot(
+  root: string,
+  mustExist: boolean,
+  kind: string,
+  projectId: string,
+): Promise<string> {
+  if (!isAbsolute(root)) throw new Error(`${kind} target for ${projectId} must be absolute.`)
+  const absolute = resolve(root)
+  let ancestor = absolute
+  while (!(await pathExists(ancestor))) {
+    if (mustExist) {
+      throw new Error(`${kind} target for ${projectId} must be an existing non-symlink directory.`)
+    }
+    const parent = dirname(ancestor)
+    if (parent === ancestor) throw new Error(`${kind} target for ${projectId} has no safe parent.`)
+    ancestor = parent
+  }
+  const info = await lstat(ancestor)
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`${kind} target for ${projectId} is unsafe; use a non-symlink directory.`)
+  }
+  const canonicalAncestor = await realpath(ancestor)
+  return resolve(canonicalAncestor, relative(ancestor, absolute))
+}
+
+function assertDestinationNotOwnedByAnotherProject(
+  database: Database.Database,
+  field: "projects" | "projectVaults",
+  projectId: string,
+  root: string,
+): void {
+  const tableName = field === "projects" ? "projects" : "project_vaults"
+  if (!tableExists(database, tableName)) return
+  const idColumn = field === "projects" ? "id" : "project_id"
+  const pathColumn = field === "projects" ? "path" : "root_path"
+  const owner = database
+    .prepare(
+      `SELECT ${quoteIdentifier(idColumn)} FROM ${quoteIdentifier(tableName)} WHERE ${quoteIdentifier(pathColumn)} = ? AND ${quoteIdentifier(idColumn)} <> ? LIMIT 1`,
+    )
+    .pluck()
+    .get(root, projectId) as string | undefined
+  if (owner)
+    throw new Error(`Target mapping for ${projectId} belongs to unrelated project ${owner}.`)
+}
+
+function deduplicateMappingRequirements(
+  requirements: readonly PortableMappingRequirement[],
+): PortableMappingRequirement[] {
+  return [
+    ...new Map(requirements.map((entry) => [`${entry.kind}\0${entry.projectId}`, entry])).values(),
+  ].sort((left, right) =>
+    `${left.kind}\0${left.projectId}`.localeCompare(`${right.kind}\0${right.projectId}`),
+  )
+}
+
+function assertMappingsResolved(plan: PortableImportPlan): void {
+  if (plan.mappingRequirements.length > 0)
+    throw new Error("Import target mappings are incomplete; review mappings and run dry-run again.")
 }
 
 function readLocalRow(
@@ -1434,7 +1644,14 @@ async function readFileBases(stateRoot: string): Promise<Record<string, string>>
 }
 
 function diffFingerprint(plan: PortableImportPlan): string {
-  return sha256(stableJson({ database: plan.database, files: plan.files }))
+  return sha256(
+    stableJson({
+      targetRoots: plan.targetRoots,
+      mappingRequirements: plan.mappingRequirements,
+      database: plan.database,
+      files: plan.files,
+    }),
+  )
 }
 
 function importConfirmationHash(
@@ -1457,6 +1674,7 @@ function importConfirmationHash(
     stableJson({
       bundleFingerprint: plan.bundleFingerprint,
       targetRoots: plan.targetRoots,
+      mappingRequirements: plan.mappingRequirements,
       database: plan.database.map((entry) => ({
         id: entry.id,
         kind: entry.kind,

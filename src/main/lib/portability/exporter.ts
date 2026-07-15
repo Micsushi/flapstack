@@ -57,6 +57,9 @@ export type CreatePortableExportInput = {
   approvedFalsePositiveHashes?: ReadonlySet<string>
   now?: () => Date
   signal?: AbortSignal
+  testHooks?: {
+    beforeSourceSnapshot?: (sourcePath: string) => void | Promise<void>
+  }
 }
 
 export type CreatePortableExportResult = {
@@ -154,6 +157,7 @@ export async function createPortableExport(
             continue
           }
           const sourcePath = join(source.root, relativePath)
+          await input.testHooks?.beforeSourceSnapshot?.(sourcePath)
           const sourceSnapshot = await snapshotRegularFileNoFollow(sourcePath, {
             maxBytes: PORTABILITY_LIMITS.fileBytes,
             previewBytes: PORTABILITY_LIMITS.fileBytes,
