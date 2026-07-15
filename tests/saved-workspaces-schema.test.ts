@@ -417,13 +417,14 @@ describe("saved workspace schema migration", () => {
     }
   })
 
-  it("keeps saved workspaces in the next actual migration slot", () => {
+  it("keeps saved workspaces in the authoritative migration slot", () => {
     const journal = JSON.parse(readFileSync(join(migrations, "meta", "_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.at(-1)).toEqual(
+    expect(journal.entries.find((entry) => entry.tag === "0031_saved_workspaces")).toEqual(
       expect.objectContaining({ idx: 31, tag: "0031_saved_workspaces" }),
     )
+    expect(journal.entries.find((entry) => entry.idx === 32)?.tag).toBe("0032_agent_runtime")
   })
 })
 

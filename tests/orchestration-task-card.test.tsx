@@ -175,6 +175,7 @@ describe("orchestration task card", () => {
           onRetry={() => undefined}
           onReplace={() => undefined}
           onAdd={() => undefined}
+          onOpenWorkspace={() => undefined}
         />,
       )
     })
@@ -222,6 +223,7 @@ describe("orchestration task card", () => {
   it("renders aggregate state and exposes accessible controls", () => {
     const onNavigate = vi.fn()
     const onControl = vi.fn()
+    const onOpenWorkspace = vi.fn()
     act(() => {
       root.render(
         <OrchestrationOverviewCard
@@ -233,6 +235,7 @@ describe("orchestration task card", () => {
           onRetry={vi.fn()}
           onReplace={vi.fn()}
           onAdd={vi.fn()}
+          onOpenWorkspace={onOpenWorkspace}
         />,
       )
     })
@@ -248,6 +251,13 @@ describe("orchestration task card", () => {
     expect(pause).not.toBeNull()
     act(() => pause!.click())
     expect(onControl).toHaveBeenCalledWith("pause")
+
+    const workspace = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open operation workspace"]',
+    )
+    expect(workspace).not.toBeNull()
+    act(() => workspace!.click())
+    expect(onOpenWorkspace).toHaveBeenCalledOnce()
 
     const child = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open child agent chat UI worker"]',

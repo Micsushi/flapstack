@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   invalidateList: vi.fn(async () => undefined),
   invalidateGet: vi.fn(async () => undefined),
   invalidateResolvePane: vi.fn(async () => undefined),
+  invalidateGetOperation: vi.fn(async () => undefined),
 }))
 
 vi.mock("../src/renderer/lib/trpc", () => ({
@@ -30,6 +31,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
         list: { invalidate: mocks.invalidateList },
         get: { invalidate: mocks.invalidateGet },
         resolvePane: { invalidate: mocks.invalidateResolvePane },
+        getOperation: { invalidate: mocks.invalidateGetOperation },
       },
     }),
     savedWorkspaces: {
@@ -105,8 +107,18 @@ vi.mock("../src/renderer/lib/trpc", () => ({
           error: null,
         }),
       },
+      getOperation: {
+        useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+      },
+      previewDelete: {
+        useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+      },
       create: { useMutation: () => ({ mutateAsync: mocks.create, isPending: false }) },
       saveLayout: { useMutation: () => ({ mutateAsync: mocks.save, isPending: false }) },
+      rename: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
+      archive: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
+      restore: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
+      delete: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
     },
   },
 }))

@@ -41,49 +41,6 @@ beforeEach(() => {
   ])
   sqlite = new Database(path)
   migrate(drizzle(sqlite, { schema }), { migrationsFolder: resolve(process.cwd(), "drizzle") })
-  // This isolated worktree intentionally omits the uncommitted migration file.
-  // Mirror authoritative 0031 table constraints and indexes in the harness only.
-  sqlite.exec(`
-    CREATE TABLE saved_workspaces (
-      id text PRIMARY KEY NOT NULL,
-      name text NOT NULL,
-      scope_type text NOT NULL,
-      project_id text REFERENCES projects(id) ON DELETE CASCADE,
-      task_id text REFERENCES tasks(id) ON DELETE CASCADE,
-      owner_kind text NOT NULL DEFAULT 'manual',
-      orchestration_id text,
-      layout_version integer NOT NULL DEFAULT 1,
-      layout_json text NOT NULL,
-      sort_order text NOT NULL DEFAULT 'a0',
-      version integer NOT NULL DEFAULT 1,
-      created_at integer NOT NULL,
-      updated_at integer NOT NULL,
-      archived_at integer,
-      CHECK (length(trim(name)) BETWEEN 1 AND 256),
-      CHECK (
-        (scope_type = 'project' AND project_id IS NOT NULL AND task_id IS NULL) OR
-        (scope_type = 'task' AND project_id IS NULL AND task_id IS NOT NULL)
-      ),
-      CHECK (
-        (owner_kind = 'manual' AND orchestration_id IS NULL) OR
-        (owner_kind = 'orchestration' AND scope_type = 'task' AND task_id IS NOT NULL AND orchestration_id IS NOT NULL)
-      ),
-      CHECK (layout_version = 1),
-      CHECK (version >= 1),
-      CHECK (length(trim(sort_order)) BETWEEN 1 AND 512),
-      CHECK (
-        json_valid(layout_json) = 1 AND
-        json_extract(layout_json, '$.version') = layout_version AND
-        length(cast(layout_json AS blob)) <= 262144
-      )
-    );
-    CREATE INDEX saved_workspaces_project_order_idx
-      ON saved_workspaces(project_id, archived_at, sort_order);
-    CREATE INDEX saved_workspaces_task_order_idx
-      ON saved_workspaces(task_id, archived_at, sort_order);
-    CREATE UNIQUE INDEX saved_workspaces_orchestration_idx
-      ON saved_workspaces(orchestration_id);
-  `)
   sqlite
     .prepare("INSERT INTO projects (id, name, path) VALUES ('project-1', 'Project', ?)")
     .run(projectPath)
@@ -104,14 +61,17 @@ afterEach(() => {
 })
 
 describe("durable agent task orchestration", () => {
-  it("keeps the isolated schema harness compatible with authoritative 0031", () => {
+  it("uses the authoritative 0031 saved-workspace constraints and indexes", () => {
     const table = sqlite
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'saved_workspaces'")
       .get() as { sql: string }
-    expect(table.sql).toContain("length(trim(name)) BETWEEN 1 AND 256")
-    expect(table.sql).toContain("length(trim(sort_order)) BETWEEN 1 AND 512")
-    expect(table.sql).toContain("json_extract(layout_json, '$.version') = layout_version")
-    expect(table.sql).toContain("length(cast(layout_json AS blob)) <= 262144")
+    const tableSql = table.sql.replaceAll(/[`\"]/g, "").toLowerCase()
+    expect(tableSql).toContain("length(trim(saved_workspaces.name)) between 1 and 256")
+    expect(tableSql).toContain("length(trim(saved_workspaces.sort_order)) between 1 and 512")
+    expect(tableSql).toContain(
+      "json_extract(saved_workspaces.layout_json, '$.version') = saved_workspaces.layout_version",
+    )
+    expect(tableSql).toContain("length(cast(saved_workspaces.layout_json as blob)) <= 262144")
     expect(
       sqlite
         .prepare(

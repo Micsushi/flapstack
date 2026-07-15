@@ -11,6 +11,7 @@ import {
   SavedWorkspaceLifecycleError,
   SavedWorkspaceLifecycleService,
 } from "../src/main/lib/saved-workspaces/service"
+import { stableOperationWorkspaceId } from "../src/main/lib/saved-workspaces/operations"
 import type {
   SavedWorkspaceLayout,
   SavedWorkspacePaneBinding,
@@ -191,6 +192,7 @@ describe("saved workspace lifecycle", () => {
 
   it("previews metadata-only deletion and preserves every referenced work class", () => {
     const filePath = join(directory, "referenced.txt")
+    const workspaceId = stableOperationWorkspaceId("task-1")
     writeFileSync(filePath, "keep me")
     const operationLayout = layoutMany([
       { type: "chat", chatId: "chat-1" },
@@ -204,7 +206,7 @@ describe("saved workspace lifecycle", () => {
       { type: "activity", orchestrationId: "orchestration-1" },
     ])
     insertWorkspace(sqlite, {
-      id: "operation-workspace",
+      id: workspaceId,
       name: "Operation",
       scopeType: "task",
       taskId: "task-1",
@@ -213,7 +215,7 @@ describe("saved workspace lifecycle", () => {
       layoutJson: JSON.stringify(operationLayout),
     })
 
-    const preview = service.previewDelete("operation-workspace")
+    const preview = service.previewDelete(workspaceId)
     expect(preview).toEqual(
       expect.objectContaining({
         metadataOnly: true,
@@ -241,13 +243,23 @@ describe("saved workspace lifecycle", () => {
 
     expect(
       service.delete({
-        workspaceId: "operation-workspace",
+        workspaceId,
         expectedVersion: preview.workspaceVersion,
+        confirmActiveOperationImpact: true,
       }),
     ).toMatchObject({ deleted: true, impact: { metadataOnly: true } })
-    expect(sqlite.prepare("SELECT count(*) count FROM saved_workspaces").get()).toEqual({
-      count: 0,
-    })
+    expect(service.list({ taskId: "task-1", archive: "all" })).toEqual([])
+    expect(() => service.get(workspaceId)).toThrowError(
+      expect.objectContaining({ code: "not-found" }),
+    )
+    expect(
+      sqlite
+        .prepare(
+          `SELECT owner_kind, orchestration_id, archived_at IS NOT NULL archived
+           FROM saved_workspaces WHERE id = ?`,
+        )
+        .get(workspaceId),
+    ).toEqual({ owner_kind: "manual", orchestration_id: null, archived: 1 })
     expect(sqlite.prepare("SELECT count(*) count FROM projects").get()).toEqual({ count: 1 })
     expect(sqlite.prepare("SELECT count(*) count FROM tasks").get()).toEqual({ count: 1 })
     expect(sqlite.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 2 })
