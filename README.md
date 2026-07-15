@@ -19,6 +19,8 @@ current gate truth; the [release lane handoff](docs/stage3-release-handoff.md)
 records remaining release authority and cleanup.
 [Stage 2 matrix](docs/stage2-full-feature-test-matrix.md) is retained as a
 historical criteria record and crosswalk.
+Stage 4 portability behavior and operating limits are documented in
+[Portability and Private Sync](docs/portability-and-private-sync.md).
 The research-only dynamic-vocabulary architecture is explicitly deferred: it is
 not an approved Stage 2 requirement and is not claimed as implemented.
 

@@ -1,0 +1,21 @@
+{
+  "format": "flapstack-portable-bundle",
+  "bundleVersion": 1,
+  "directoryName": "missing.flapstack-export",
+  "createdAt": "2026-07-14T12:00:00.000Z",
+  "appVersion": "0.0.72",
+  "layout": {
+    "database": "database/flapstack.sqlite3",
+    "checksums": "checksums.json",
+    "exclusions": "exclusions.json",
+    "scopesRoot": "scopes"
+  },
+  "scopes": [
+    {
+      "id": "saved-workspaces",
+      "schemaVersion": 1,
+      "contentPath": "scopes/saved-workspaces",
+      "projectIds": ["project-1"]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "contracts": [
+    { "id": "settings", "dependencies": ["history"] },
+    { "id": "history", "dependencies": ["settings"] }
+  ]
+}

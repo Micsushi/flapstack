@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { createHash, randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
@@ -104,7 +105,7 @@ export function createMcpMutationService(
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
-      const db = new Database(databasePath)
+      const db = openAppDatabase(databasePath)
       try {
         db.pragma("foreign_keys = ON")
         db.pragma("busy_timeout = 5000")

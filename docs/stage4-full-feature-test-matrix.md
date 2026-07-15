@@ -80,8 +80,11 @@ tests do not substitute for live UI or packaged evidence.
 ## Import, Export, and Private Sync
 
 - [ ] **S4-IE01** Export carries schema version, selected scopes, and no secrets.
+  - Automated evidence: Node 22 contract/secret/export tests pass relational one-project parent/dependent filtering, deterministic bundles, source-path exclusion, checksums, concurrent writes, cancellation cleanup, shared AWS/Google/provider-family detection, structured AWS exclusion, and no secret/WAL/SHM output. Live packaged proof remains open.
 - [ ] **S4-IE02** Import previews changes and conflicts before writing or migrating.
+  - Automated evidence: Node 22 plan/apply tests pass strict plan/journal parsing, canonical target/resolution confirmation, mapping-edit invalidation, mapped empty-profile extension/vault restore, redacted conflict values, actual preserve-both artifacts, app-wide maintenance gating, apply/rollback symlink-swap refusal, stale refusal, five fault windows, locked retry, FK order/check/rollback, and manual restore. Real clean-profile/package and unlocked UI walkthrough remain open.
 - [ ] **S4-IE03** Optional private sync uses only a user-owned remote and handles conflicts honestly.
+  - Automated evidence: Node 22 local-bare-remote tests pass isolated-index commit-tree/CAS enforcement under concurrent HEAD movement, exact reviewed OID/path/blob enforcement, unapproved incoming/outgoing rejection, bare AWS/Google and committed-secret refusal, exact-OID pull, stale-remote push refusal, config/origin/branch hardening, dirty stop, and unlink preservation. Real private-remote, consolidated live UI, and package proof remain open.
 
 ## Plan and Kanban
 

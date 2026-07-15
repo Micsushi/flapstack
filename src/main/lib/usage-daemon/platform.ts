@@ -30,6 +30,10 @@ export interface DaemonInstallParams {
   secretNamespace?: string | null
 }
 
+export type DaemonCommandRunner = (command: string, args: string[]) => string
+const runDaemonCommand: DaemonCommandRunner = (command, args) =>
+  execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+
 function sanitizeServiceId(value: string): string {
   return value
     .trim()
@@ -295,6 +299,105 @@ export function uninstallUsageDaemon(configDir: string): void {
     default:
       throw new Error("Background usage daemon is unsupported on this platform")
   }
+}
+
+export function startInstalledUsageDaemon(
+  configDir: string,
+  run: DaemonCommandRunner = runDaemonCommand,
+): void {
+  const serviceId = daemonServiceIdForConfig(configDir)
+  switch (currentDaemonPlatform()) {
+    case "darwin":
+      run("launchctl", ["bootstrap", launchctlDomain(), launchAgentPlistPath(serviceId)])
+      return
+    case "win32":
+      run("schtasks.exe", ["/Run", "/TN", windowsTaskName(serviceId)])
+      return
+    case "linux":
+      run("systemctl", ["--user", "start", systemdUnitName(serviceId)])
+      return
+    default:
+      throw new Error("Background usage daemon is unsupported on this platform")
+  }
+}
+
+export async function stopInstalledUsageDaemon(
+  configDir: string,
+  run: DaemonCommandRunner = runDaemonCommand,
+): Promise<boolean> {
+  const serviceId = daemonServiceIdForConfig(configDir)
+  switch (currentDaemonPlatform()) {
+    case "darwin": {
+      const target = `${launchctlDomain()}/${serviceLabel(LAUNCH_AGENT_LABEL, serviceId)}`
+      let description: string
+      try {
+        description = run("launchctl", ["print", target])
+      } catch {
+        return false
+      }
+      if (!/(?:state\s*=\s*running|pid\s*=\s*\d+)/.test(description)) return false
+      run("launchctl", ["bootout", launchctlDomain(), launchAgentPlistPath(serviceId)])
+      await waitUntilStopped(() => {
+        try {
+          run("launchctl", ["print", target])
+          return false
+        } catch {
+          return true
+        }
+      })
+      return true
+    }
+    case "win32": {
+      const taskName = windowsTaskName(serviceId)
+      let description: string
+      try {
+        description = run("schtasks.exe", ["/Query", "/TN", taskName, "/FO", "LIST", "/V"])
+      } catch {
+        return false
+      }
+      if (!/^Status:\s+Running\s*$/im.test(description)) return false
+      run("schtasks.exe", ["/End", "/TN", taskName])
+      await waitUntilStopped(() => {
+        try {
+          return !/^Status:\s+Running\s*$/im.test(
+            run("schtasks.exe", ["/Query", "/TN", taskName, "/FO", "LIST", "/V"]),
+          )
+        } catch {
+          return true
+        }
+      })
+      return true
+    }
+    case "linux": {
+      const unitName = systemdUnitName(serviceId)
+      try {
+        run("systemctl", ["--user", "is-active", "--quiet", unitName])
+      } catch {
+        return false
+      }
+      run("systemctl", ["--user", "stop", unitName])
+      await waitUntilStopped(() => {
+        try {
+          run("systemctl", ["--user", "is-active", "--quiet", unitName])
+          return false
+        } catch {
+          return true
+        }
+      })
+      return true
+    }
+    default:
+      return false
+  }
+}
+
+async function waitUntilStopped(probe: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (probe()) return
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error("Timed out stopping the installed usage daemon service.")
 }
 
 export function uninstallMacLaunchAgent(serviceId?: string | null): void {

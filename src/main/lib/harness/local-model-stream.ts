@@ -813,7 +813,7 @@ function createLocalModelWriteApprovalSession(): LocalModelWriteApprovalSession 
     })
   }
   const lifecycle = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
     publishApprovalChange,
   )
   return {
@@ -859,7 +859,7 @@ function createLocalModelExecApprovalSession(): LocalModelExecApprovalSession {
     })
   }
   const lifecycle = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
     publishApprovalChange,
   )
   return {

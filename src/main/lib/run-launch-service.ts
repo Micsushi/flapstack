@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "./db/access"
 import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
@@ -26,7 +27,7 @@ type Row = Record<string, unknown>
 
 /** App restart ends provider streams; requeue MCP work and cancel everything else. */
 export function recoverInterruptedMcpRuns(databasePath: string): number {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {
@@ -87,7 +88,7 @@ export async function drainPendingMcpRuns(
   launch: AgentRunLauncher,
   options: { waitForCompletion?: boolean } = {},
 ): Promise<number> {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   let started = 0
@@ -161,7 +162,7 @@ function recordLaunchOutcome(
   status: "completed" | "failed",
   error?: string,
 ): void {
-  const db = new Database(databasePath)
+  const db = openAppDatabase(databasePath)
   db.pragma("foreign_keys = ON")
   db.pragma("busy_timeout = 5000")
   try {

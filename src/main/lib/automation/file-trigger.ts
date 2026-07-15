@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { randomUUID } from "node:crypto"
 import { lstatSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path"
@@ -317,7 +318,7 @@ export function createDatabaseAutomationFileTriggerEnqueuer(
   createId: () => string = randomUUID,
 ): (occurrence: AutomationFileTriggerOccurrence) => boolean {
   return (occurrence) => {
-    const database = new Database(databasePath)
+    const database = openAppDatabase(databasePath)
     try {
       database.pragma("foreign_keys = ON")
       database.pragma("busy_timeout = 5000")

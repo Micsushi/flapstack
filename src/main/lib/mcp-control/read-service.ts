@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import type { McpCallerIdentity } from "./types"
 
@@ -411,11 +412,19 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
 function openReadStore(): McpReadStore {
   const path = process.env.FLAPSTACK_DB_PATH
   if (!path) throw new Error("FLAPSTACK_DB_PATH is required for read operations.")
-  const db = new Database(path, { readonly: true, fileMustExist: true })
-  db.pragma("query_only = ON")
-  db.pragma("busy_timeout = 5000")
   return {
-    get: (sql, params) => db.prepare(sql).get(...params) as Row | undefined,
-    all: (sql, params) => db.prepare(sql).all(...params) as Row[],
+    get: (sql, params) => withReadDatabase(path, (db) => db.prepare(sql).get(...params) as Row),
+    all: (sql, params) => withReadDatabase(path, (db) => db.prepare(sql).all(...params) as Row[]),
+  }
+}
+
+function withReadDatabase<T>(path: string, operation: (database: Database.Database) => T): T {
+  const database = openAppDatabase(path, { readonly: true, fileMustExist: true })
+  try {
+    database.pragma("query_only = ON")
+    database.pragma("busy_timeout = 5000")
+    return operation(database)
+  } finally {
+    database.close()
   }
 }

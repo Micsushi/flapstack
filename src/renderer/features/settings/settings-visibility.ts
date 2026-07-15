@@ -137,6 +137,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "portability",
+    label: "Portability & Sync",
+    description: "Export, dry-run import, restore backups, and private git sync",
+    keywords: ["backup", "restore", "import", "export", "sync", "git", "migration"],
+    section: "advanced",
+    released: true,
+  },
+  {
     id: "debug",
     label: "Debug",
     description: "Developer diagnostics and internal controls",
@@ -179,6 +187,20 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "portability-export-import",
+    "portability",
+    "Import and export",
+    "Select portable scopes and review a dry-run before import",
+    ["backup", "restore", "bundle", "conflict", "migration"],
+  ),
+  control(
+    "portability-private-sync",
+    "portability",
+    "Private git sync",
+    "Link a user-owned repository and preview every pull, commit, and push",
+    ["git", "remote", "branch", "secret scan"],
+  ),
   control(
     "local-model-endpoint",
     "local-models",

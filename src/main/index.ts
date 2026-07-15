@@ -8,7 +8,15 @@ import {
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
-import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
+import {
+  beginDatabaseMaintenance,
+  closeDatabase,
+  endDatabaseMaintenance,
+  getDatabasePath,
+  initDatabase,
+  registerDatabaseMaintenanceParticipant,
+  withDatabaseOperation,
+} from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
@@ -46,6 +54,8 @@ import {
   parseLaunchDirectory,
 } from "./lib/cli"
 import { cleanupGitWatchers } from "./lib/git/watcher"
+import { recoverInterruptedImports } from "./lib/portability/importer"
+import { beginExclusivePortabilityOperation } from "./lib/portability/operations"
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from "./lib/mcp-auth"
 import {
   getAllMcpConfigHandler,
@@ -876,7 +886,27 @@ if (gotTheLock) {
     trackAppOpened()
 
     const startupReady = await runRequiredStartup({
-      initialize: () => {
+      initialize: async () => {
+        const releasePortability = await beginExclusivePortabilityOperation()
+        let portabilityRecovery: Awaited<ReturnType<typeof recoverInterruptedImports>>
+        try {
+          portabilityRecovery = await recoverInterruptedImports(
+            join(app.getPath("userData"), "data", "portability"),
+            getDatabasePath(),
+            {
+              beforeApply: () => beginDatabaseMaintenance("portability-startup-recovery"),
+              afterApply: () => endDatabaseMaintenance("portability-startup-recovery"),
+            },
+          )
+        } finally {
+          releasePortability()
+        }
+        const recovered = portabilityRecovery.filter((entry) => entry.action === "rolled-back")
+        if (recovered.length > 0) {
+          console.warn(
+            `[Portability] Recovered ${recovered.length} interrupted import operation(s).`,
+          )
+        }
         initDatabase()
         console.log("[App] Database initialized")
       },
@@ -904,11 +934,21 @@ if (gotTheLock) {
             {
               name: "Dev MCP server",
               run: async () => {
-                devMcpServer = await startDevMcpServer({
+                const devMcpInput = {
                   enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
                   userDataPath: app.getPath("userData"),
                   checkout: app.getAppPath(),
                   profile: basename(app.getPath("userData")),
+                }
+                devMcpServer = await startDevMcpServer(devMcpInput)
+                registerDatabaseMaintenanceParticipant("dev-mcp-server", {
+                  pause: async () => {
+                    await devMcpServer?.stop()
+                    devMcpServer = null
+                  },
+                  resume: async () => {
+                    devMcpServer = await startDevMcpServer(devMcpInput)
+                  },
                 })
               },
             },
@@ -946,7 +986,15 @@ if (gotTheLock) {
                     pendingRunDrainActive = false
                   }
                 }
-                pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                const resumePendingRunScheduler = () => {
+                  if (!pendingRunTimer)
+                    pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                }
+                registerDatabaseMaintenanceParticipant("pending-run-scheduler", {
+                  pause: abortAndWaitForAgentSessions,
+                  resume: resumePendingRunScheduler,
+                })
+                resumePendingRunScheduler()
                 void launchPendingRuns()
               },
             },
@@ -961,10 +1009,12 @@ if (gotTheLock) {
             {
               name: "Usage startup catch-up",
               run: () => {
-                void runStartupCatchUp({
-                  db: initDatabase(),
-                  getSecret: getAppUsageSecret,
-                }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
+                void withDatabaseOperation(() =>
+                  runStartupCatchUp({
+                    db: initDatabase(),
+                    getSecret: getAppUsageSecret,
+                  }),
+                ).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
               },
             },
           ],

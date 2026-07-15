@@ -185,6 +185,7 @@ export type SettingsTab =
   | "worktrees"
   | "projects"
   | "usage"
+  | "portability"
   | "debug"
   | "beta"
   | "future"

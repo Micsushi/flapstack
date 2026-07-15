@@ -8,12 +8,13 @@ import type { McpApprovalCoordinator, McpPendingApproval } from "./approval-life
 type Database = BetterSQLite3Database<typeof schema>
 
 export function createSqliteMcpApprovalCoordinator(
-  database: Database,
+  databaseSource: Database | (() => Database),
   onPublished?: () => void,
 ): McpApprovalCoordinator {
+  const database = () => (typeof databaseSource === "function" ? databaseSource() : databaseSource)
   return {
     publish(pending) {
-      const result = database
+      const result = database()
         .insert(mcpApprovalRequests)
         .values({
           id: pending.id,
@@ -34,7 +35,7 @@ export function createSqliteMcpApprovalCoordinator(
       if (result.changes === 1) onPublished?.()
     },
     readDecision(pending) {
-      const row = database
+      const row = database()
         .select({
           invocationId: mcpApprovalRequests.invocationId,
           callerChatId: mcpApprovalRequests.callerChatId,

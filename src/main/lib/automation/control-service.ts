@@ -1,4 +1,5 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { createHash, randomUUID } from "node:crypto"
 import {
   automationDraftSchema,
@@ -394,7 +395,7 @@ export class AutomationControlService {
   }
 
   private withDatabase<T>(operation: (database: Database.Database) => T): T {
-    const database = new Database(this.databasePath)
+    const database = openAppDatabase(this.databasePath)
     try {
       database.pragma("foreign_keys = ON")
       database.pragma("busy_timeout = 5000")
