@@ -1,6 +1,15 @@
 "use client"
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react"
 import type { AgentActivityEvent, AgentActivityKind } from "../../../../shared/agent-activity"
 import { AGENT_ACTIVITY_KINDS } from "../../../../shared/agent-activity"
 import type {
@@ -80,6 +89,7 @@ function RuntimeActivityRowView({
   selected,
   onToggle,
   onSelect,
+  onElement,
 }: {
   row: RuntimeActivityRow
   index: number
@@ -88,11 +98,13 @@ function RuntimeActivityRowView({
   selected: boolean
   onToggle: () => void
   onSelect: () => void
+  onElement: (element: HTMLElement | null) => void
 }) {
   const timestamp = formatTimestamp(row.timestamp)
   const duration = formatDuration(row.durationMs)
   return (
     <article
+      ref={onElement}
       id={`runtime-activity-${row.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
       role="article"
       aria-posinset={index + 1}
@@ -183,6 +195,10 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const manualExpansionRef = useRef(new Map<string, boolean>())
   const viewportRef = useRef<HTMLDivElement>(null)
+  const rowElementsRef = useRef(new Map<string, HTMLElement>())
+  const pendingFocusKeyRef = useRef<string | null>(null)
+  const focusedRowKeyRef = useRef<string | null>(null)
+  const selectedIndexRef = useRef(0)
 
   const allRows = useMemo(
     () => projectRuntimeActivityRows(selectRuntimeActivitySource(events, legacyMessages)),
@@ -223,8 +239,44 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
       setSelectedKey(null)
       return
     }
-    if (!filteredRows.some((row) => row.key === selectedKey)) setSelectedKey(filteredRows[0].key)
+    const selectedIndex = filteredRows.findIndex((row) => row.key === selectedKey)
+    if (selectedIndex >= 0) {
+      selectedIndexRef.current = selectedIndex
+      return
+    }
+    const nextIndex = Math.min(selectedIndexRef.current, filteredRows.length - 1)
+    const nextKey = filteredRows[nextIndex].key
+    if (selectedKey && focusedRowKeyRef.current === selectedKey) {
+      pendingFocusKeyRef.current = nextKey
+    }
+    setSelectedKey(nextKey)
   }, [filteredRows, selectedKey])
+
+  useEffect(() => {
+    const rememberFocusedRow = (event: FocusEvent) => {
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      const row = target.closest<HTMLElement>("[data-runtime-activity-key]")
+      focusedRowKeyRef.current =
+        row && viewportRef.current?.contains(row) ? row.dataset.runtimeActivityKey || null : null
+    }
+    document.addEventListener("focusin", rememberFocusedRow)
+    return () => document.removeEventListener("focusin", rememberFocusedRow)
+  }, [])
+
+  useLayoutEffect(() => {
+    const key = pendingFocusKeyRef.current
+    if (!key) return
+    const row = rowElementsRef.current.get(key)
+    if (!row) return
+    row.focus({ preventScroll: true })
+    if (document.activeElement === row) pendingFocusKeyRef.current = null
+  }, [expandedKeys, filteredRows, selectedKey, window.end, window.start])
+
+  const registerRowElement = useCallback((key: string, element: HTMLElement | null) => {
+    if (element) rowElementsRef.current.set(key, element)
+    else rowElementsRef.current.delete(key)
+  }, [])
 
   const updateFilter = useCallback(
     <K extends keyof RuntimeActivityFilters>(key: K, value: RuntimeActivityFilters[K]) => {
@@ -250,34 +302,54 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
 
   const onTimelineKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement
+      const targetRow = target.closest<HTMLElement>("[data-runtime-activity-key]")
+      const activeKey = targetRow?.dataset.runtimeActivityKey ?? selectedKey
       const current = Math.max(
         0,
-        filteredRows.findIndex((row) => row.key === selectedKey),
+        filteredRows.findIndex((row) => row.key === activeKey),
       )
       if (["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"].includes(event.key)) {
         event.preventDefault()
+        event.stopPropagation()
         const nextIndex = nextRuntimeActivityFocusIndex(current, event.key, filteredRows.length)
         const next = filteredRows[nextIndex]
         if (!next) return
+        selectedIndexRef.current = nextIndex
+        pendingFocusKeyRef.current = next.key
         setSelectedKey(next.key)
-        const nextTop = nextIndex * estimatedRowHeight
-        setScrollTop(nextTop)
-        viewportRef.current
-          ?.querySelector<HTMLElement>(`[data-runtime-activity-key="${CSS.escape(next.key)}"]`)
-          ?.focus()
-      } else if ((event.key === "Enter" || event.key === " ") && selectedKey) {
+        const rowTop = nextIndex * estimatedRowHeight
+        const rowBottom = rowTop + estimatedRowHeight
+        const maxScrollTop = Math.max(0, filteredRows.length * estimatedRowHeight - viewportHeight)
+        const nextTop =
+          rowTop < scrollTop
+            ? rowTop
+            : rowBottom > scrollTop + viewportHeight
+              ? Math.min(maxScrollTop, rowBottom - viewportHeight)
+              : scrollTop
+        if (nextTop !== scrollTop) {
+          if (viewportRef.current) viewportRef.current.scrollTop = nextTop
+          setScrollTop(nextTop)
+        }
+      } else if (
+        (event.key === "Enter" || event.key === " ") &&
+        activeKey &&
+        targetRow === target
+      ) {
         event.preventDefault()
+        event.stopPropagation()
+        pendingFocusKeyRef.current = activeKey
         setExpandedKeys((currentKeys) => {
           const next = new Set(currentKeys)
-          const expanded = !next.has(selectedKey)
-          manualExpansionRef.current.set(selectedKey, expanded)
-          if (expanded) next.add(selectedKey)
-          else next.delete(selectedKey)
+          const expanded = !next.has(activeKey)
+          manualExpansionRef.current.set(activeKey, expanded)
+          if (expanded) next.add(activeKey)
+          else next.delete(activeKey)
           return next
         })
       }
     },
-    [estimatedRowHeight, filteredRows, selectedKey],
+    [estimatedRowHeight, filteredRows, scrollTop, selectedKey, viewportHeight],
   )
 
   const stateMessage =
@@ -377,6 +449,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
                 expanded={expanded}
                 selected={selectedKey === row.key}
                 onSelect={() => setSelectedKey(row.key)}
+                onElement={(element) => registerRowElement(row.key, element)}
                 onToggle={() =>
                   setExpandedKeys((current) => {
                     const next = new Set(current)

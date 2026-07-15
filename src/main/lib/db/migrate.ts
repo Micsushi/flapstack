@@ -8,6 +8,7 @@ const STAGE3_MIGRATION_TAG = "0017_third_molecule_man"
 const VOICE_ARTIFACT_MIGRATION_TAG = "0010_voice_artifacts"
 const INITIAL_PROMPT_MIGRATION_TAG = "0020_silky_sphinx"
 const STAGE3_TIMESTAMP_MIGRATION_TAG = "0023_stage3_timestamp_seconds"
+const MULTI_AGENT_OPERATIONS_MIGRATION_TAG = "0035_multi_agent_operations"
 
 type Journal = {
   entries: Array<{ tag: string; when: number }>
@@ -33,6 +34,7 @@ export function migrateDatabase(
     normalizeLegacyStage3Migration(sqlite, migrationsFolder)
     normalizeInitialPromptMigration(sqlite, migrationsFolder)
     normalizeStage3TimestampMigration(sqlite, migrationsFolder)
+    normalizeMultiAgentOperationsTransitionMigration(sqlite, migrationsFolder)
     migrate(database, { migrationsFolder })
     recoverLegacyQueuedRunPrompts(sqlite)
   } finally {
@@ -43,6 +45,179 @@ export function migrateDatabase(
   if (violations.length > 0) {
     throw new Error(`Database migration left ${violations.length} foreign key violation(s).`)
   }
+}
+
+/**
+ * Repairs supported Dev profiles that recorded an earlier in-place 0035 but
+ * never received the transition table later required by the pending-run
+ * scheduler. Replaying only the missing canonical statements is idempotent and
+ * preserves every existing orchestration row.
+ */
+export function normalizeMultiAgentOperationsTransitionMigration(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): boolean {
+  if (!tableExists(sqlite, "__drizzle_migrations")) return false
+
+  const journal = readJournal(migrationsFolder)
+  const current = journal.entries.find(
+    (entry) => entry.tag === MULTI_AGENT_OPERATIONS_MIGRATION_TAG,
+  )
+  if (!current) {
+    throw new Error(`Missing ${MULTI_AGENT_OPERATIONS_MIGRATION_TAG} migration metadata.`)
+  }
+  if (!migrationRecorded(sqlite, current.when)) return false
+
+  const statements = multiAgentTransitionStatements(migrationsFolder)
+  const canonicalTableSql = statements[0]
+
+  if (tableExists(sqlite, "orchestration_transition_events")) {
+    if (!transitionAuthorityComplete(sqlite, canonicalTableSql)) {
+      throw new Error("Recorded multi-agent transition authority is malformed or partial.")
+    }
+    return false
+  }
+  if (!tableExists(sqlite, "task_orchestrations") || !taskOrchestrationAuthorityComplete(sqlite)) {
+    throw new Error(
+      "Recorded multi-agent operations migration is missing task_orchestrations authority.",
+    )
+  }
+
+  const repair = sqlite.transaction(() => {
+    for (const statement of statements) sqlite.exec(statement)
+  })
+  repair.immediate()
+  if (!transitionAuthorityComplete(sqlite, canonicalTableSql)) {
+    throw new Error("Multi-agent transition authority repair did not produce canonical storage.")
+  }
+  return true
+}
+
+function taskOrchestrationAuthorityComplete(sqlite: Database.Database): boolean {
+  const taskId = (
+    sqlite.pragma("table_info('task_orchestrations')") as Array<{
+      name: string
+      type: string
+      notnull: number
+      pk: number
+    }>
+  ).find((column) => column.name === "task_id")
+  return Boolean(
+    taskId && taskId.type.toUpperCase() === "TEXT" && taskId.notnull === 1 && taskId.pk === 1,
+  )
+}
+
+function multiAgentTransitionStatements(migrationsFolder: string): string[] {
+  const migrationSql = readFileSync(
+    join(migrationsFolder, `${MULTI_AGENT_OPERATIONS_MIGRATION_TAG}.sql`),
+    "utf8",
+  )
+  const statements = migrationSql
+    .split("--> statement-breakpoint")
+    .map((statement) => statement.trim())
+    .filter(
+      (statement) =>
+        statement.includes("CREATE TABLE `orchestration_transition_events`") ||
+        statement.includes("CREATE UNIQUE INDEX `orchestration_transition_dedup_idx`") ||
+        statement.includes("CREATE INDEX `orchestration_transition_task_order_idx`"),
+    )
+  if (statements.length !== 3) {
+    throw new Error("Canonical multi-agent transition migration statements are incomplete.")
+  }
+  return statements
+}
+
+function transitionAuthorityComplete(
+  sqlite: Database.Database,
+  canonicalTableSql: string,
+): boolean {
+  const expectedColumns = [
+    { name: "id", type: "TEXT", notnull: 1, dflt_value: null, pk: 1 },
+    { name: "dedup_key", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "task_id", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "entity_type", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "entity_id", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "agent_id", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+    { name: "run_id", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+    { name: "kind", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "phase", type: "TEXT", notnull: 1, dflt_value: null, pk: 0 },
+    { name: "summary", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+    { name: "created_at", type: "INTEGER", notnull: 1, dflt_value: null, pk: 0 },
+  ]
+  const actualColumns = (
+    sqlite.pragma("table_info('orchestration_transition_events')") as Array<{
+      cid: number
+      name: string
+      type: string
+      notnull: number
+      dflt_value: unknown
+      pk: number
+    }>
+  ).map(({ name, type, notnull, dflt_value, pk }) => ({
+    name,
+    type: type.toUpperCase(),
+    notnull,
+    dflt_value,
+    pk,
+  }))
+  if (JSON.stringify(actualColumns) !== JSON.stringify(expectedColumns)) {
+    return false
+  }
+
+  const foreignKeys = sqlite.pragma(
+    "foreign_key_list('orchestration_transition_events')",
+  ) as Array<{
+    table: string
+    from: string
+    to: string
+    on_update: string
+    on_delete: string
+  }>
+  if (
+    foreignKeys.length !== 1 ||
+    foreignKeys[0].table !== "task_orchestrations" ||
+    foreignKeys[0].from !== "task_id" ||
+    foreignKeys[0].to !== "task_id" ||
+    foreignKeys[0].on_update.toUpperCase() !== "NO ACTION" ||
+    foreignKeys[0].on_delete.toUpperCase() !== "CASCADE"
+  ) {
+    return false
+  }
+
+  const indexes = new Map(
+    (
+      sqlite.pragma("index_list('orchestration_transition_events')") as Array<{
+        name: string
+        unique: number
+      }>
+    ).map((row) => [row.name, row.unique]),
+  )
+  if (
+    indexes.get("orchestration_transition_dedup_idx") !== 1 ||
+    indexes.get("orchestration_transition_task_order_idx") !== 0 ||
+    indexColumns(sqlite, "orchestration_transition_dedup_idx").join(",") !== "dedup_key" ||
+    indexColumns(sqlite, "orchestration_transition_task_order_idx").join(",") !==
+      "task_id,created_at,id"
+  ) {
+    return false
+  }
+
+  const stored = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get("orchestration_transition_events") as { sql: string } | undefined
+  return Boolean(
+    stored?.sql && normalizeSchemaSql(stored.sql) === normalizeSchemaSql(canonicalTableSql),
+  )
+}
+
+function indexColumns(sqlite: Database.Database, name: string): string[] {
+  return (sqlite.pragma(`index_info('${name}')`) as Array<{ seqno: number; name: string }>)
+    .sort((left, right) => left.seqno - right.seqno)
+    .map((row) => row.name)
+}
+
+function normalizeSchemaSql(sql: string): string {
+  return sql.trim().replace(/;$/, "").replace(/\s+/g, " ")
 }
 
 /**
