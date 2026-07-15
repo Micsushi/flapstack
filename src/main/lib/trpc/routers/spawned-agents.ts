@@ -5,13 +5,25 @@ import {
   createOrchestrationInputSchema,
   orchestrationAgentDefinitionSchema,
   orchestrationControlActionSchema,
+  orchestrationFleetQuerySchema,
   orchestrationUsageUpdateSchema,
 } from "../../../../shared/agent-orchestration"
 import { chats, getDatabase, getDatabasePath } from "../../db"
 import { createAgentOrchestrationService } from "../../agent-orchestration/service"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
 const service = () => createAgentOrchestrationService(getDatabasePath())
+
+function publishOrchestrationChange(taskId: string, projectId?: string): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["orchestrations", "tasks", "chats", "runs"],
+    taskIds: [taskId],
+    ...(projectId ? { projectIds: [projectId] } : {}),
+  })
+}
 
 export const spawnedAgentsRouter = router({
   getPolicy: publicProcedure.query(() => ({
@@ -59,11 +71,21 @@ export const spawnedAgentsRouter = router({
 
   createOrchestration: publicProcedure
     .input(createOrchestrationInputSchema)
-    .mutation(({ input }) => service().create(input)),
+    .mutation(({ input }) => {
+      const result = service().create(input)
+      publishOrchestrationChange(result.orchestration.taskId, result.orchestration.projectId)
+      return result
+    }),
 
-  addAgent: publicProcedure
-    .input(addOrchestrationAgentInputSchema)
-    .mutation(({ input }) => service().addAgent(input)),
+  addAgent: publicProcedure.input(addOrchestrationAgentInputSchema).mutation(({ input }) => {
+    const result = service().addAgent(input)
+    publishOrchestrationChange(result.taskId)
+    return result
+  }),
+
+  getFleet: publicProcedure
+    .input(orchestrationFleetQuerySchema)
+    .query(({ input }) => service().listFleet(input)),
 
   getTaskOverview: publicProcedure
     .input(z.object({ taskId: z.string() }))
@@ -75,11 +97,19 @@ export const spawnedAgentsRouter = router({
 
   control: publicProcedure
     .input(z.object({ taskId: z.string(), action: orchestrationControlActionSchema }))
-    .mutation(({ input }) => service().control(input.taskId, input.action)),
+    .mutation(({ input }) => {
+      const result = service().control(input.taskId, input.action)
+      publishOrchestrationChange(result.orchestration.taskId, result.orchestration.projectId)
+      return result
+    }),
 
   retryAgent: publicProcedure
     .input(z.object({ taskId: z.string(), agentId: z.string() }))
-    .mutation(({ input }) => service().retryAgent(input.taskId, input.agentId)),
+    .mutation(({ input }) => {
+      const result = service().retryAgent(input.taskId, input.agentId)
+      publishOrchestrationChange(result.taskId)
+      return result
+    }),
 
   replaceAgent: publicProcedure
     .input(
@@ -89,11 +119,19 @@ export const spawnedAgentsRouter = router({
         agent: orchestrationAgentDefinitionSchema,
       }),
     )
-    .mutation(({ input }) => service().replaceAgent(input.taskId, input.agentId, input.agent)),
+    .mutation(({ input }) => {
+      const result = service().replaceAgent(input.taskId, input.agentId, input.agent)
+      publishOrchestrationChange(result.taskId)
+      return result
+    }),
 
   reportAgentProgress: publicProcedure
     .input(orchestrationUsageUpdateSchema)
-    .mutation(({ input }) => service().reportProgress(input)),
+    .mutation(({ input }) => {
+      const result = service().reportProgress(input)
+      publishOrchestrationChange(result.orchestration.taskId, result.orchestration.projectId)
+      return result
+    }),
 })
 
 function lineageChat(chat: typeof chats.$inferSelect) {

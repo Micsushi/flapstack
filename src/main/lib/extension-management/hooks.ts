@@ -367,6 +367,7 @@ export class HookLifecycleService {
     private readonly approval?: HookApprovalGate,
     private readonly audit?: HookAuditWriter,
     private readonly resolveProjectCwd: (cwd: string) => string = (cwd) => cwd,
+    private readonly onStateChange?: () => void,
   ) {}
 
   list(harness?: HookDraft["harness"]): HookRecord[] {
@@ -401,7 +402,7 @@ export class HookLifecycleService {
         importedAt: now,
         updatedAt: now,
       }
-      this.store.write([...records, record])
+      this.persist([...records, record])
       this.writeAudit("import", "completed", record)
       return record
     })
@@ -422,7 +423,7 @@ export class HookLifecycleService {
         updatedAt: new Date().toISOString(),
       }
       records[index] = record
-      this.store.write(records)
+      this.persist(records)
       this.writeAudit("validate", validation.valid ? "completed" : "failed", record)
       return record
     })
@@ -444,7 +445,7 @@ export class HookLifecycleService {
           updatedAt: new Date().toISOString(),
         }
         records[index] = invalid
-        this.store.write(records)
+        this.persist(records)
         this.writeAudit("dry-run", "failed", invalid)
         return { record: invalid, ready: false as const }
       }
@@ -457,7 +458,7 @@ export class HookLifecycleService {
         updatedAt: new Date().toISOString(),
       }
       records[index] = validated
-      this.store.write(records)
+      this.persist(records)
       this.writeAudit("dry-run", "approval-required", validated)
       return { record: validated, ready: true as const }
     })
@@ -529,7 +530,7 @@ export class HookLifecycleService {
         updatedAt: new Date().toISOString(),
       }
       records[index] = record
-      this.store.write(records)
+      this.persist(records)
       this.writeAudit(
         "dry-run",
         outcome.success ? "completed" : "failed",
@@ -555,7 +556,7 @@ export class HookLifecycleService {
           updatedAt: new Date().toISOString(),
         }
         records[index] = record
-        this.store.write(records)
+        this.persist(records)
         this.writeAudit("disable", "completed", record)
         return { record, approval: "not-required" as const }
       })
@@ -606,7 +607,7 @@ export class HookLifecycleService {
       }
       this.writeAudit("enable", "allowed", record)
       records[index] = record
-      this.store.write(records)
+      this.persist(records)
       this.writeAudit("enable", "completed", record)
       return { record, approval: decision }
     })
@@ -629,6 +630,11 @@ export class HookLifecycleService {
       state: record.state,
       ...(durationMs === undefined ? {} : { durationMs }),
     })
+  }
+
+  private persist(records: HookRecord[]): void {
+    this.store.write(records)
+    this.onStateChange?.()
   }
 }
 

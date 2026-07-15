@@ -26,6 +26,7 @@ import {
   subChats,
 } from "../db"
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
 import { DEFAULT_CLAUDE_MODEL_ID, normalizeOpencodeModelId } from "../../../shared/model-catalog"
 import {
   OPENCODE_HARNESSES,
@@ -824,6 +825,12 @@ export function prepareProductMcpCaller(input: {
     const run = tx
       .insert(agentRuns)
       .values({
+        ...constructRuntimeSnapshot(db, {
+          chatId,
+          harness,
+          model,
+          permission: runtimePermissionSnapshot(permissionMode, null),
+        }),
         id: runId,
         chatId,
         subChatId,

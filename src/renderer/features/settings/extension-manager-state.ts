@@ -43,7 +43,17 @@ export type ExtensionManagerFilters = {
   query: string
 }
 
-export type ExtensionManagerFlow = "create" | "edit" | "copy" | "delete" | "policy" | null
+export type ExtensionManagerFlow =
+  | "create"
+  | "edit"
+  | "copy"
+  | "delete"
+  | "policy"
+  | "hook-validate"
+  | "hook-dry-run"
+  | "hook-enable"
+  | "hook-disable"
+  | null
 
 export type ExtensionManagerState = {
   filters: ExtensionManagerFilters
@@ -60,6 +70,23 @@ export type ExtensionManagerAction =
   | { type: "confirm-preview"; confirmed: boolean }
   | { type: "cancel" }
   | { type: "reconcile"; visibleIds: string[] }
+
+export type ExtensionManagerInventoryStatus =
+  "loading" | "error" | "refreshing" | "stale-error" | "empty" | "ready"
+
+export function verifiedExtensionManagerProject<T>(
+  selectedProject: T | null,
+  scopedInventorySucceeded: boolean,
+): T | null {
+  return selectedProject && scopedInventorySucceeded ? selectedProject : null
+}
+
+export function extensionManagerPolicyMutationCwd(
+  _scope: "user" | "project" | "task",
+  verifiedProjectPath?: string,
+): string | undefined {
+  return verifiedProjectPath
+}
 
 export function createExtensionManagerState(
   initialKind: ExtensionManagerKind = "all",
@@ -175,4 +202,41 @@ export function exactPolicyDiff(input: {
     [`${input.scope}Override`]: input.enabled,
   })
   return `- ${before}\n+ ${after}`
+}
+
+export function extensionManagerInventoryStatus(input: {
+  count: number
+  loading: boolean
+  fetching: boolean
+  hasError: boolean
+}): ExtensionManagerInventoryStatus {
+  if (input.loading && input.count === 0) return "loading"
+  if (input.hasError && input.count === 0) return "error"
+  if (input.hasError) return "stale-error"
+  if (input.fetching && input.count > 0) return "refreshing"
+  return input.count === 0 ? "empty" : "ready"
+}
+
+export function reverseUnifiedDiff(diff: string): string {
+  const lines = diff.split("\n")
+  const reversed = [...lines]
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (lines[index]?.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ")) {
+      reversed[index] = `--- ${lines[index + 1]!.slice(4)}`
+      reversed[index + 1] = `+++ ${lines[index]!.slice(4)}`
+      index += 1
+    }
+  }
+  return reversed
+    .map((reversedLine, index) => {
+      if (lines[index]?.startsWith("--- ") || lines[index]?.startsWith("+++ ")) {
+        return reversedLine
+      }
+      const hunk = /^@@ -(\d+(?:,\d+)?) \+(\d+(?:,\d+)?) @@(.*)$/.exec(reversedLine)
+      if (hunk) return `@@ -${hunk[2]} +${hunk[1]} @@${hunk[3]}`
+      if (reversedLine.startsWith("+")) return `-${reversedLine.slice(1)}`
+      if (reversedLine.startsWith("-")) return `+${reversedLine.slice(1)}`
+      return reversedLine
+    })
+    .join("\n")
 }

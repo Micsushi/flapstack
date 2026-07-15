@@ -1,7 +1,7 @@
 "use client"
 
 import "./inbox-styles.css"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useSetAtom } from "jotai"
 import { ArrowLeft, CheckCheck, ExternalLink, Inbox, Mail, MailOpen } from "lucide-react"
 import { trpc } from "../../lib/trpc"
@@ -14,8 +14,8 @@ import {
   selectedChatScopeAtom,
 } from "../agents/atoms"
 import { detailsSidebarOpenAtom, detailsSidebarTabAtom } from "../details-sidebar/atoms"
-import { useDesktopNotifications } from "../agents/hooks/use-desktop-notifications"
 import { AUTOMATION_A11Y, formatAutomationError } from "./automation-ui-model"
+import { moveAutomationInboxFocus } from "./inbox-state"
 import { automationEvidenceRunIdAtom } from "./state"
 
 export function InboxView() {
@@ -23,8 +23,7 @@ export function InboxView() {
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [message, setMessage] = useState<string | null>(null)
-  const initializedIds = useRef<Set<string> | null>(null)
-  const { showNotification } = useDesktopNotifications()
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const utils = trpc.useUtils()
   const inbox = trpc.automations.inbox.useQuery(
     { unreadOnly, limit: 200 },
@@ -36,22 +35,6 @@ export function InboxView() {
   const markAll = trpc.automations.markAllInboxRead.useMutation()
   const navigate = useEvidenceNavigation(projects.data ?? [], tasks.data ?? [])
   const items = inbox.data?.items ?? []
-
-  useEffect(() => {
-    const current = new Set(items.map((item) => item.id))
-    if (initializedIds.current === null) {
-      initializedIds.current = current
-      return
-    }
-    for (const item of items) {
-      if (!item.unread || initializedIds.current.has(item.id)) continue
-      showNotification(item.title, item.body ?? item.automationName, {
-        priority: item.kind === "completed" ? "complete" : "error",
-        chatId: item.chatId ?? undefined,
-      })
-    }
-    initializedIds.current = current
-  }, [items, showNotification])
 
   useEffect(() => {
     if (selectedIndex >= items.length) setSelectedIndex(Math.max(0, items.length - 1))
@@ -73,10 +56,24 @@ export function InboxView() {
   const onListKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "ArrowDown") {
       event.preventDefault()
-      setSelectedIndex((index) => Math.min(items.length - 1, index + 1))
+      setSelectedIndex(
+        moveAutomationInboxFocus({
+          direction: "next",
+          currentIndex: selectedIndex,
+          itemIds: items.map((item) => item.id),
+          elements: itemRefs.current,
+        }),
+      )
     } else if (event.key === "ArrowUp") {
       event.preventDefault()
-      setSelectedIndex((index) => Math.max(0, index - 1))
+      setSelectedIndex(
+        moveAutomationInboxFocus({
+          direction: "previous",
+          currentIndex: selectedIndex,
+          itemIds: items.map((item) => item.id),
+          elements: itemRefs.current,
+        }),
+      )
     } else if (event.key === "Enter" && selected) {
       event.preventDefault()
       void openItem(selected)
@@ -178,6 +175,10 @@ export function InboxView() {
             {items.map((item, index) => (
               <li key={item.id}>
                 <button
+                  ref={(element) => {
+                    if (element) itemRefs.current.set(item.id, element)
+                    else itemRefs.current.delete(item.id)
+                  }}
                   type="button"
                   aria-current={index === selectedIndex ? "true" : undefined}
                   onFocus={() => setSelectedIndex(index)}

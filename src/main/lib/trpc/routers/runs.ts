@@ -20,6 +20,7 @@ import {
   providerForHarness,
 } from "../../usage/budgets"
 import { projectVaultSectionIds } from "../../project-vaults/registry"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 
 const permissionModeSchema = z.enum(permissionModes)
 
@@ -76,6 +77,15 @@ export const runsRouter = router({
       const run = db
         .insert(agentRuns)
         .values({
+          ...constructRuntimeSnapshot(db, {
+            chatId: input.chatId,
+            harness: input.harness,
+            model: input.model,
+            permission: runtimePermissionSnapshot(
+              input.permissionMode,
+              input.permissionMode === "custom" ? chat.customPermissions : null,
+            ),
+          }),
           chatId: input.chatId,
           subChatId: input.subChatId,
           harness: input.harness,

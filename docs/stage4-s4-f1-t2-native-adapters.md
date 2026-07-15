@@ -12,6 +12,12 @@ the mutable native Markdown rows in the merged extension capability registry:
 - Codex user/project skills and compatibility commands.
 - Cursor Agent project commands.
 
+Six byte-exact fixtures pin the distinct native formats behind all eleven rows:
+Claude Code skills, legacy commands, and custom agents; Agent Skills-compatible
+Codex skills; Codex compatibility commands; and plain Markdown Cursor commands.
+Claude skill and custom-agent schemas include the fields shipped by the pinned
+Claude Code contract while retaining truly unknown provider fields explicitly.
+
 MCP files remain owned by the dedicated MCP Settings services. Read-only plugin,
 OpenCode, and hook rows do not gain fake mutation support.
 
@@ -26,9 +32,12 @@ file.
 - Adapter metadata is parsed by provider/kind schemas. Unknown frontmatter keys
   are returned explicitly and retained unless removal is directly requested.
 - A no-op parse/serialize round trip returns the original bytes exactly.
-- Every apply rechecks the preview hash under a target mutex, writes a
-  same-root backup, then rechecks the hash inside the shared rooted atomic
-  writer before and after its commit hook.
+- Every apply rechecks the old-file hash under a target mutex and requires a
+  confirmation hash over the exact previewed path, operation, before/after
+  hashes, unknown fields, and diff. A changed apply payload cannot reuse an
+  earlier reviewed preview.
+- Applies write a same-root backup, then recheck the target inside the shared
+  rooted atomic writer before and after its commit hook.
 - Deletes rename before removal. Failed post-commit verification restores the
   prior bytes; stale previews and stale restores fail closed.
 - Backup JSON is strict, checksummed, target-bound, and read through the same
@@ -39,22 +48,21 @@ file.
 
 ## Headless verification
 
-`tests/native-extension-adapters.test.ts` covers pinned Claude, Codex, and
-Cursor fixtures; byte-exact round trips; schema failures; unknown-field
-retention; registry coverage; exact previews; atomic update/create/delete;
-backup restore; malformed backup; stale preview/restore; traversal; symlink
-escape; and committed-write rollback.
+`tests/native-extension-adapters.test.ts` covers every non-MCP mutable registry
+row against the six pinned Claude, Codex, and Cursor formats; byte-exact round
+trips; current known fields; schema failures; unknown-field retention; exact
+preview confirmation; atomic update/create/delete; target-bound backup restore;
+malformed backup; stale preview/restore; traversal; parent/final symlinks; and
+committed-write rollback.
 
-Focused Node 22 adapter, capability-registry, Stage 3 provider-extension, and
-rooted path-safety suites pass. Focused ESLint passes. Repository TypeScript
-currently reaches unrelated pre-existing errors in local-model catalog parsing
-and Codex ACP provider settings; no adapter or provider-extension-router error
-is reported. The combined `npm run check` could not start because another
-Flapstack worktree held the shared heavy-job lock.
+Node 22 focused adapter, capability-registry, provider-extension, rooted
+path-safety, cross-harness compatibility, and manager-contract suites pass 99
+tests. Repository TypeScript, focused ESLint, focused Prettier, strict OpenSpec,
+git diff check, and the production build pass.
 
-## Manual verification remaining
+## Verification boundary
 
-The task completion row stays unchecked. T1's declared Stage 3 exit dependency,
-live Settings use, restart/runtime consumption, packaged preview, and integrated
-Stage 4 acceptance remain unverified. Cross-harness conversion, policy, and UI
-belong to later S4-F1 tasks.
+T2's declared verification is headless, so its completion row is checked. No
+live Settings, provider execution, runtime/restart, packaged preview, or device
+evidence is claimed. Cross-harness conversion, policy, UI, and integrated live
+acceptance remain owned by later S4-F1 tasks.

@@ -177,11 +177,14 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - Advanced usage and limits across runs, chats, tasks, projects, accounts, and harnesses.
 - Versioned import/export plus optional user-owned private sync.
 - Linked Plan and Kanban views with approved task/chat creation.
-- Cross-agent mobile companion for bounded monitoring, steering, review, and approvals.
+- Agent Runtimes preserving native Codex/Claude behavior with Flapstack Native
+  compatibility and per-harness/project/chat selection.
+- Reusable Agent Profiles and Personalities for deterministic workflow roles
+  and standalone named specialists without expanding their authority.
 
 Stage 4 is the final planned stage for now. New ideas stay parked until the user
 explicitly adds them to Stage 4 or creates a later stage.
-Its ten OpenSpec feature boards contain 72 bounded tasks; see the
+Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
 [Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
 and [execution plan](docs/stage4-execution-plan.md).
 

@@ -218,9 +218,36 @@ describe("automation scheduler timing", () => {
     const stopping = service.stop()
     releaseDispatch()
     await Promise.all([starting, stopping])
+    await service.stop()
 
     expect(timers.activeCount()).toBe(0)
     expect(timers.clockListenerCount()).toBe(0)
+  })
+
+  it("reports and rejects a failed first pass without leaving a timer installed", async () => {
+    const fixture = database("startup-failure")
+    seedAutomation(fixture.sqlite)
+    seedScheduleTrigger(fixture.sqlite, "schedule-1", "one", 1_000)
+    const timers = new FakeTimers()
+    const onError = vi.fn()
+    const service = new AutomationScheduler({
+      databasePath: fixture.path,
+      owner: "scheduler-a",
+      clock: new FakeClock(1_000),
+      timers,
+      nextFireCalculator: {
+        nextFireAfter() {
+          throw new Error("invalid schedule")
+        },
+      },
+      onError,
+    })
+
+    await expect(service.start()).rejects.toThrow("invalid schedule")
+    expect(onError).toHaveBeenCalledOnce()
+    expect(timers.activeCount()).toBe(0)
+    expect(timers.clockListenerCount()).toBe(0)
+    await expect(service.stop()).resolves.toBeUndefined()
   })
 })
 

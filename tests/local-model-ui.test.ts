@@ -1,5 +1,24 @@
+// @vitest-environment jsdom
+
 import { readFileSync } from "node:fs"
-import { describe, expect, it } from "vitest"
+import { Provider } from "jotai"
+import { act, createElement } from "react"
+import { createRoot, type Root } from "react-dom/client"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+const componentMocks = vi.hoisted(() => ({
+  refetch: vi.fn(),
+}))
+
+vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: {
+    localModels: {
+      catalog: {
+        useQuery: () => ({ refetch: componentMocks.refetch }),
+      },
+    },
+  },
+}))
 import {
   LOCAL_MODEL_CATALOG_CACHE_VERSION,
   validateLocalModelEndpoint,
@@ -13,6 +32,41 @@ import {
   reduceLocalModelUiState,
 } from "../src/renderer/features/local-models/local-model-ui-state"
 import { searchSettings } from "../src/renderer/features/settings/settings-search"
+import { AgentsLocalModelsTab } from "../src/renderer/components/dialogs/settings-tabs/agents-local-models-tab"
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+let componentRoot: Root | null = null
+let componentContainer: HTMLDivElement | null = null
+
+beforeEach(() => {
+  componentMocks.refetch.mockReset()
+  localStorage.clear()
+})
+
+afterEach(async () => {
+  if (componentRoot) await act(async () => componentRoot?.unmount())
+  componentContainer?.remove()
+  componentRoot = null
+  componentContainer = null
+})
+
+async function renderSettingsComponent() {
+  componentContainer = document.createElement("div")
+  document.body.append(componentContainer)
+  componentRoot = createRoot(componentContainer)
+  await act(async () => {
+    componentRoot?.render(createElement(Provider, null, createElement(AgentsLocalModelsTab)))
+  })
+  return componentContainer
+}
+
+async function changeSelect(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, value)
+    select.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+}
 
 const supportedCapabilities: LocalModelCapabilities = {
   chat: { state: "supported", source: "provider-declared", evidence: "chat" },
@@ -129,6 +183,21 @@ describe("local model onboarding state", () => {
     expect(localModelCatalogStatus(state).label).toBe(label)
   })
 
+  it("presents loading and failed-refresh states", () => {
+    let state = createLocalModelUiState({ endpoint: "http://127.0.0.1:11434" })
+    state = reduceLocalModelUiState(state, { type: "refresh-started" })
+    expect(localModelCatalogStatus(state).label).toBe("Refreshing")
+    state = reduceLocalModelUiState(state, {
+      type: "refresh-failed",
+      message: "Fixture refresh failed.",
+    })
+    expect(localModelCatalogStatus(state)).toMatchObject({
+      label: "Refresh failed",
+      detail: "Fixture refresh failed.",
+      tone: "danger",
+    })
+  })
+
   it("combines model capability, permission, and delivered runtime truth", () => {
     let state = createLocalModelUiState({
       endpoint: "http://127.0.0.1:11434",
@@ -172,15 +241,13 @@ describe("local model onboarding state", () => {
     }
   })
 
-  it("keeps explicit no-cloud and accessibility copy in the production surface", () => {
+  it("keeps explicit no-cloud copy in the production surface", () => {
     const source = readFileSync(
       "src/renderer/components/dialogs/settings-tabs/agents-local-models-tab.tsx",
       "utf8",
     )
     expect(source).toContain("No cloud fallback")
     expect(source).toContain("sends the prompt to a cloud provider as a fallback")
-    expect(source).toContain('aria-live="polite"')
-    expect(source).toContain('aria-label="Local model tool availability"')
 
     const pickerSource = readFileSync(
       "src/renderer/features/agents/components/agent-model-selector.tsx",
@@ -189,5 +256,68 @@ describe("local model onboarding state", () => {
     expect(pickerSource).toContain('label: "Local · Ollama"')
     expect(pickerSource).toContain("Chat {item.model.chat} · Tools {item.model.tools}")
     expect(pickerSource).toContain("Local failures never fall back to a cloud provider.")
+  })
+
+  it("renders refresh, catalog, capability, permission, and tier availability semantics", async () => {
+    componentMocks.refetch.mockResolvedValue({ data: catalog(), error: null })
+    const container = await renderSettingsComponent()
+
+    const endpoint = container.querySelector<HTMLInputElement>("#local-model-endpoint-input")!
+    const refresh = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Refresh catalog"),
+    )!
+    const availability = container.querySelector<HTMLElement>(
+      '[data-settings-id="local-model-catalog"]',
+    )!
+
+    expect(endpoint.getAttribute("aria-describedby")).toBe("local-model-endpoint-help")
+    expect(availability.getAttribute("aria-live")).toBe("polite")
+    expect(availability.getAttribute("aria-busy")).toBe("false")
+    expect(availability.querySelector('[role="status"]')?.textContent).toContain("Refresh to check")
+
+    await act(async () => refresh.click())
+    expect(componentMocks.refetch).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain("1 installed model")
+
+    const modelSelect = container.querySelector<HTMLSelectElement>("#local-model-picker-select")!
+    await changeSelect(modelSelect, "fixture-tools:latest")
+    expect(container.textContent).toContain("Tool callssupported")
+
+    const tierList = container.querySelector<HTMLUListElement>(
+      '[aria-label="Local model tool availability"]',
+    )!
+    const tierRows = Array.from(tierList.querySelectorAll("li"))
+    expect(tierRows).toHaveLength(6)
+    expect(
+      tierRows
+        .filter((row) => row.dataset.available === "true")
+        .map((row) => row.querySelector("span")?.textContent),
+    ).toEqual(["chat", "read"])
+
+    const permission = container.querySelector<HTMLSelectElement>("#local-model-permission-select")!
+    await changeSelect(permission, "full-access")
+    expect(tierRows.every((row) => row.dataset.available === "true")).toBe(true)
+    expect(container.querySelector('[aria-label="Local model limitations"]')).not.toBeNull()
+    expect(container.textContent).toContain("No cloud credential is required")
+    expect(container.textContent).toContain("No cloud fallback")
+  })
+
+  it("announces a component-level refresh error without replacing the loopback endpoint", async () => {
+    componentMocks.refetch.mockResolvedValue({
+      data: undefined,
+      error: new Error("Fixture catalog error."),
+    })
+    const container = await renderSettingsComponent()
+    const refresh = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Refresh catalog"),
+    )!
+    await act(async () => refresh.click())
+
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "Fixture catalog error.",
+    )
+    expect(container.querySelector<HTMLInputElement>("#local-model-endpoint-input")?.value).toBe(
+      "http://127.0.0.1:11434",
+    )
   })
 })

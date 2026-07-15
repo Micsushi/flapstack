@@ -53,6 +53,41 @@ describe("advanced usage explorer state", () => {
     expect(qualityCopy("unknown")).toMatchObject({ label: "Unknown quality", approximate: true })
     expect(qualityCopy("unknown").description).toContain("cannot support an exact")
   })
+
+  it("clears a deleted saved view before the next save", () => {
+    const initial = initialAdvancedUsageExplorerState(1_000_000, "UTC")
+    const view = {
+      id: "view-1",
+      name: "Project spend",
+      query: initial.query,
+      metric: initial.metric,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const loaded = advancedUsageExplorerReducer(initial, { type: "load-view", view })
+    const deleted = advancedUsageExplorerReducer(loaded, { type: "deleted-view" })
+    expect(deleted.selectedViewId).toBeNull()
+    expect(deleted.statusMessage).toBe("Saved view deleted.")
+  })
+
+  it("starts a new view before reloading a saved view", () => {
+    const initial = initialAdvancedUsageExplorerState(1_000_000, "UTC")
+    const view = {
+      id: "view-1",
+      name: "Project spend",
+      query: initial.query,
+      metric: initial.metric,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const loaded = advancedUsageExplorerReducer(initial, { type: "load-view", view })
+    const fresh = advancedUsageExplorerReducer(loaded, { type: "new-view" })
+    expect(fresh.selectedViewId).toBeNull()
+    expect(fresh.statusMessage).toBe("Started a new view.")
+    expect(advancedUsageExplorerReducer(fresh, { type: "load-view", view }).query).toEqual(
+      view.query,
+    )
+  })
 })
 
 describe("durable advanced usage views", () => {

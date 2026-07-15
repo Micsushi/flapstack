@@ -13,6 +13,11 @@ import {
 } from "../../../shared/local-model-contract"
 import type { RunPermissionMode } from "../../../shared/harness-types"
 
+export const LOCAL_MODEL_UI_RUNTIME = {
+  chat: true,
+  toolTiers: ["read", "project-write", "shell", "git", "network"] as const,
+}
+
 export type LocalModelUiPhase = "idle" | "refreshing" | "settled"
 
 export type LocalModelUiState = {

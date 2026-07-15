@@ -75,12 +75,12 @@
 - Acceptance: Dry-run launches nothing; retries are bounded; kill prevents future retry; every run retains normal evidence and authority snapshots.
 - Verification: `npm test -- automation-execution` with success, deny, crash, retry, budget, kill, dry-run, and stale-target cases.
 - Blocked by: S4-F5-T2, S4-F5-T5
-- Blocks: S4-F5-T7, S4-F5-T8, S4-F10-T6
+- Blocks: S4-F5-T7, S4-F5-T8
 - Context: shared run launch, orchestration service, checkpoints, usage capture, permission resolver.
 
 ### S4-F5-T7 — Build local automation management, history, and inbox UI
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Users create, review, dry-run, enable, pause, kill, and inspect local automations.
 - Scope: Replace hosted API calls; list/detail/editor; trigger/target/authority/budget preview; approval state; execution history; unread inbox; notifications; closed-app limitation; keyboard/accessibility.

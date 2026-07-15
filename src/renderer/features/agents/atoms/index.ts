@@ -1251,6 +1251,7 @@ export const floatingUserMessagesAtom = atomWithStorage<boolean>(
 // Desktop view mode - takes priority over chat-based rendering
 // null = default behavior (chat/new-chat/kanban)
 export type DesktopView =
+  | "orchestration-fleet"
   | "automations"
   | "automations-detail"
   | "inbox"
@@ -1258,6 +1259,7 @@ export type DesktopView =
   | "usage"
   | "plan"
   | "project-vault"
+  | "saved-workspaces"
   | null
 export const desktopViewAtom = atom<DesktopView>(null)
 

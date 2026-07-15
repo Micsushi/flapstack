@@ -7,6 +7,7 @@ import {
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
   buildCursorPermissionApplication,
+  buildLocalModelPermissionApplication,
   CUSTOM_PERMISSION_SCHEMA_VERSION,
   mapClaudeSdkPermissionMode,
   parseCustomPermissionToggles,
@@ -160,7 +161,7 @@ export const permissionsRouter = router({
   previewHarness: publicProcedure
     .input(
       z.object({
-        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt"]),
+        harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
         mode: permissionModeSchema,
         chatMode: z.enum(["plan", "agent"]).default("agent"),
         cwd: z.string().nullable().optional(),
@@ -180,6 +181,13 @@ export const permissionsRouter = router({
       }
       if (input.harness === "openrouter" || input.harness === "nanogpt") {
         return buildOpencodePermissionApplication({
+          permissionMode: input.mode,
+          cwd: input.cwd,
+          customPermissions: input.customPermissions,
+        })
+      }
+      if (input.harness === "local") {
+        return buildLocalModelPermissionApplication({
           permissionMode: input.mode,
           cwd: input.cwd,
           customPermissions: input.customPermissions,

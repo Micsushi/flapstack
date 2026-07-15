@@ -11,6 +11,7 @@ import {
   rebuildUsageAttributionRollups,
 } from "../src/main/lib/usage/attribution"
 import { applyUsageStorePragmas, insertSamples, type UsageDb } from "../src/main/lib/usage/store"
+import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const temporaryDirectories: string[] = []
 
@@ -366,10 +367,13 @@ function seedRunGraph(sqlite: Database.Database): void {
 function seedAutomationAndOrchestration(sqlite: Database.Database): void {
   sqlite
     .prepare(
-      `INSERT INTO task_orchestrations (task_id, initiating_chat_id)
-       VALUES ('task-1', 'chat-1')`,
+      `INSERT INTO task_orchestrations (
+         task_id, initiating_chat_id, engine_snapshot_version, coordination_engine,
+         coordination_engine_version, coordination_engine_source,
+         coordination_engine_capability_snapshot, coordination_engine_provider_identity
+       ) VALUES ('task-1', 'chat-1', ?, ?, ?, ?, ?, ?)`,
     )
-    .run()
+    .run(...testCoordinationEngineSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO orchestration_agents (id, task_id, chat_id, run_id, definition)

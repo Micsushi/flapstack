@@ -5,7 +5,7 @@ tests do not substitute for live UI or packaged evidence.
 
 ## Automated Gate
 
-- [ ] **S4-A01** Every Stage 4 OpenSpec change passes strict validation.
+- [ ] **S4-A01** All eleven Stage 4 OpenSpec changes pass strict validation.
 - [ ] **S4-A02** Node 22 `npm run check` passes from the Stage 4 integration checkout.
 - [ ] **S4-A03** Migration fixtures pass from the last supported Stage 3 schema.
 - [ ] **S4-A04** Security tests cover path traversal, symlink escape, secrets,
@@ -44,6 +44,19 @@ tests do not substitute for live UI or packaged evidence.
       and show partial failures honestly.
 - [ ] **S4-MA05** Restart preserves queue, budgets, lineage, stop reason, and
       cancellation intent.
+- [ ] **S4-MA06** Engine selection resolves per-launch, project, global, then
+      `workflow` default; the stored engine snapshot cannot change mid-run and an
+      unsupported native mode never falls back silently.
+- [ ] **S4-MA07** A deterministic workflow runs parallel and dependent phases,
+      validates structured output, fails closed at required barriers, and resumes
+      from durable checkpoints without replaying completed workers.
+- [ ] **S4-MA08** Codex V2 preserves named task paths, selective context forks,
+      mailbox/follow-up/interrupt semantics, and reusable worker identity.
+- [ ] **S4-MA09** Codex V1 remains visibly legacy and preserves ID-based
+      spawn/send/wait/resume/close behavior without synthetic V2 features.
+- [ ] **S4-MA10** Mixed-runtime workflow activity preserves agent/run/runtime
+      provenance and adds ordered workflow, mailbox, dependency, spawn, warning,
+      and usage events without copying or relabeling provider reasoning.
 
 ## Saved Workspaces
 
@@ -57,6 +70,9 @@ tests do not substitute for live UI or packaged evidence.
       recovery is explicit.
 - [ ] **S4-WS05** Layout writes are crash-safe and invalid panes do not prevent
       the rest of a workspace from opening.
+- [ ] **S4-WS06** Starting an orchestration creates one operation workspace; all
+      descendant chats join its roster once, overflow stays bounded, restart
+      repairs the link without replay, and workspace deletion preserves work.
 
 ## Automation and Scheduler
 
@@ -90,20 +106,70 @@ tests do not substitute for live UI or packaged evidence.
       one seeded scoped chat without launching a run.
 - [ ] **S4-PK03** AI-proposed cards remain inert until approved in the board UI.
 
-## Cross-Agent Mobile Companion
+## Agent Runtimes
 
-- [ ] **S4-MC01** Pairing, revocation, reconnect, and device identity fail closed.
-- [ ] **S4-MC02** Mobile can monitor and steer only Flapstack-launched supported runs.
-- [ ] **S4-MC03** Approval cards show project, task, worktree, action, and risk;
-      remote mutation requires explicit revocable authority.
+- [ ] **S4-AR01** Runtime resolution follows chat, project-per-harness,
+      global-per-harness, then product mapping and snapshots one immutable
+      runtime/adapter version before every run.
+- [ ] **S4-AR02** Compatibility is harness-based: Codex and Claude Code may use
+      their native runtime or Flapstack Native; generic providers may use only
+      Flapstack Native; unavailable choices never silently fall back.
+- [ ] **S4-AR03** Codex runtime preserves thread, turn, item, summary/content
+      indices, section boundaries, plans, tools, permissions, usage, warnings,
+      cancellation, and recovery from direct App Server events.
+- [ ] **S4-AR04** Codex private/encrypted reasoning never renders; provider
+      summaries and explicitly displayable text keep honest labels and ordering.
+- [ ] **S4-AR05** Claude Code runtime preserves SDK content blocks, session and
+      message identity, thinking, tools, permissions, hooks, usage, and child
+      provenance without representing thinking as a tool.
+- [ ] **S4-AR06** Thinking effort, reasoning display, subagent activity, and hook
+      diagnostics work independently for every supported combination.
+- [ ] **S4-AR07** Flapstack Native passes the complete Stage 3 provider/reasoning
+      fixture suite and opens legacy history without rewriting messages.
+- [ ] **S4-AR08** An empty chat changes runtime in place; a started chat uses one
+      new Continue-with-runtime chat/session; an active run cannot switch.
+- [ ] **S4-AR09** Codex, Claude Code, and Flapstack Native agents coexist in one
+      workflow while Flapstack permissions, worktrees, audit, and run status
+      remain authoritative.
+- [ ] **S4-AR10** Activity persistence survives restart, deduplicates retries,
+      remains responsive at 10k events, passes accessibility, and rolls back to
+      Flapstack Native without deleting history.
+
+## Agent Profiles and Personalities
+
+- [ ] **S4-AP01** Capability, personality, workflow binding, and runtime snapshot
+      remain separate; changing tone cannot widen tools, permissions, memory,
+      descendants, model ceiling, runtime, or worktree authority.
+- [ ] **S4-AP02** A user creates, versions, duplicates, searches, archives, and
+      restores a named profile while active and historical agents retain their
+      immutable resolved snapshots.
+- [ ] **S4-AP03** Resolved preview shows the source of every field, compatibility,
+      requested authority, and exact conflicts; inheritance cycles and silent
+      runtime/model fallback fail closed.
+- [ ] **S4-AP04** One deterministic workflow binds exact profile versions to
+      parallel and dependent steps, resumes from checkpoints with the same
+      snapshots, and offers an explicit fork/retry for updated profiles.
+- [ ] **S4-AP05** Starting a standalone named agent from a task/chat/Profile
+      Studio creates exactly one durable chat/run, preserves selected context and
+      authority, joins the operation workspace when applicable, and survives restart.
+- [ ] **S4-AP06** Profile import/export is versioned and secret-free; missing or
+      untrusted skills, hooks, MCP, memory, tools, and runtimes remain disabled
+      until their normal approval/compatibility paths succeed.
+- [ ] **S4-AP07** Every built-in starter type has versioned capability, safety,
+      prompt-injection, and supported runtime/model evidence; user edits create
+      an independent copy and untested combinations are labeled honestly.
+- [ ] **S4-AP08** Profile Studio keeps capability and personality visually
+      separate and completes create, preview, workflow-bind, standalone-launch,
+      duplicate, import, export, and archive flows with keyboard/screen-reader use.
 
 ## Integrated Live and Package Gate
 
 - [ ] **S4-I01** `npm run dev:verify` identifies this checkout and the
       `Flapstack Dev` profile after the final restart.
-- [ ] **S4-I02** One project workflow exercises all ten Stage 4 features across
+- [ ] **S4-I02** One project workflow exercises all eleven Stage 4 features across
       knowledge, extensions, orchestration, workspaces, automation, local models,
-      usage, export, planning, and mobile control.
+      usage, export, planning, native agent runtimes, and reusable
+      workflow/standalone agent profiles.
 - [ ] **S4-I03** `npm run package:preview:mac` opens the preview profile and the
       same workflow passes without development-only paths.
 - [ ] **S4-I04** Windows and Linux package rows remain open until actually

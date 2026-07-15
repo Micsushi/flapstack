@@ -6,13 +6,18 @@ import { McpApprovalBridge } from "./features/mcp-safety/approval-bridge"
 import { McpExternalMutationRefreshBridge } from "./features/mcp-safety/external-mutation-refresh"
 import { TooltipProvider } from "./components/ui/tooltip"
 import { TRPCProvider } from "./contexts/TRPCProvider"
-import { WindowProvider, getInitialWindowParams } from "./contexts/WindowContext"
+import {
+  WindowProvider,
+  claimInitialWindowParamsApplication,
+  getInitialWindowParams,
+} from "./contexts/WindowContext"
 import {
   selectedProjectAtom,
   selectedAgentChatIdAtom,
   selectedChatIsRemoteAtom,
   selectedDraftIdAtom,
   showNewChatFormAtom,
+  desktopViewAtom,
 } from "./features/agents/atoms"
 import { useAgentSubChatStore } from "./features/agents/stores/sub-chat-store"
 import { AgentsLayout } from "./features/layout/agents-layout"
@@ -59,6 +64,7 @@ function ThemedToaster() {
  * Main content router - decides which page to show based on onboarding state
  */
 function AppContent() {
+  const initialWindowParams = useMemo(() => getInitialWindowParams(), [])
   const billingMethod = useAtomValue(billingMethodAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
@@ -72,6 +78,7 @@ function AppContent() {
   const setSelectedChatIsRemote = useSetAtom(selectedChatIsRemoteAtom)
   const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
+  const setDesktopView = useSetAtom(desktopViewAtom)
   const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
 
@@ -197,7 +204,27 @@ function AppContent() {
 
   // Apply initial window params (chatId/subChatId) when opening via "Open in new window"
   useEffect(() => {
-    const params = getInitialWindowParams()
+    const params = initialWindowParams
+    if (!claimInitialWindowParamsApplication(params)) return
+    if (params.workspaceId) {
+      setShowNewChatForm(false)
+      setDesktopView("saved-workspaces")
+      if (params.projectId) {
+        void trpcUtils.projects.list.fetch().then((projects) => {
+          const project = projects.find((item) => item.id === params.projectId)
+          if (!project) return
+          setSelectedProject({
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gitRemoteUrl: project.gitRemoteUrl,
+            gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+            gitOwner: project.gitOwner,
+            gitRepo: project.gitRepo,
+          })
+        })
+      }
+    }
     if (params.chatId) {
       console.log("[App] Opening chat from window params:", params.chatId, params.subChatId)
       setSelectedChatId(params.chatId)
@@ -207,7 +234,17 @@ function AppContent() {
         setActiveSubChat(params.subChatId)
       }
     }
-  }, [setSelectedChatId, setChatId, addToOpenSubChats, setActiveSubChat])
+  }, [
+    addToOpenSubChats,
+    initialWindowParams,
+    setActiveSubChat,
+    setChatId,
+    setDesktopView,
+    setSelectedChatId,
+    setSelectedProject,
+    setShowNewChatForm,
+    trpcUtils.projects.list,
+  ])
 
   // Claim the initially selected chat to prevent duplicate windows.
   // For new windows opened via "Open in new window", the chat is pre-claimed by main process.

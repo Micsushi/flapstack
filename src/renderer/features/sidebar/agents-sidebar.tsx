@@ -63,6 +63,8 @@ import {
   Copy,
   Inbox,
   Workflow,
+  Network,
+  LayoutGrid,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -6488,13 +6490,28 @@ export function AgentsSidebar({
 
       <div className="px-2 pb-3 flex-shrink-0">
         <ButtonCustom
+          variant={desktopView === "orchestration-fleet" ? "secondary" : "ghost"}
+          size="sm"
+          className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={desktopView === "orchestration-fleet" ? "page" : undefined}
+          onClick={() => {
+            setSelectedChatId(null)
+            setShowNewChatForm(false)
+            setDesktopView("orchestration-fleet")
+            setSearchQuery("")
+          }}
+        >
+          <Network className="h-4 w-4" />
+          <span>Orchestration fleet</span>
+        </ButtonCustom>
+        <ButtonCustom
           variant={
             desktopView === "automations" || desktopView === "automations-detail"
               ? "secondary"
               : "ghost"
           }
           size="sm"
-          className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
           aria-current={
             desktopView === "automations" || desktopView === "automations-detail"
               ? "page"
@@ -6571,6 +6588,20 @@ export function AgentsSidebar({
             >
               <BookOpen className="h-4 w-4" />
               <span>Project knowledge</span>
+            </ButtonCustom>
+            <ButtonCustom
+              variant={desktopView === "saved-workspaces" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "saved-workspaces" ? "page" : undefined}
+              onClick={() => {
+                setShowNewChatForm(false)
+                setDesktopView("saved-workspaces")
+                setSearchQuery("")
+              }}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span>Saved workspaces</span>
             </ButtonCustom>
           </>
         )}

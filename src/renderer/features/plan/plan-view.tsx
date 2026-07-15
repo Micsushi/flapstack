@@ -170,7 +170,8 @@ export function PlanView() {
               Plan
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Read-only OpenSpec and selected Markdown sources. No task is created from this view.
+              Plan sources stay read-only. Promotion creates a reviewed task and chat without
+              editing the source.
             </p>
           </div>
           <div
@@ -383,29 +384,20 @@ export function PlanView() {
 
               <div className="p-2">
                 {model.nodes.length > 0 ? (
-                  <ul
-                    role="tree"
-                    aria-label={`${source.path} plan hierarchy`}
-                    className="space-y-1"
-                  >
-                    {model.nodes.map((node) => (
-                      <PlanTreeNode
-                        key={node.candidate.id}
-                        node={node}
-                        level={1}
-                        collapsedIds={collapsedIds}
-                        onToggleCollapsed={toggleCollapsed}
-                        onOpenSource={openSource}
-                        onPromote={
-                          source.status === "current"
-                            ? (candidate) => setPromotionTarget({ source, candidate })
-                            : undefined
-                        }
-                        linksByCandidateId={linksByCandidateId}
-                        onCompare={setComparisonTarget}
-                      />
-                    ))}
-                  </ul>
+                  <PlanHierarchy
+                    nodes={model.nodes}
+                    sourcePath={source.path}
+                    collapsedIds={collapsedIds}
+                    onToggleCollapsed={toggleCollapsed}
+                    onOpenSource={openSource}
+                    onPromote={
+                      source.status === "current"
+                        ? (candidate) => setPromotionTarget({ source, candidate })
+                        : undefined
+                    }
+                    linksByCandidateId={linksByCandidateId}
+                    onCompare={setComparisonTarget}
+                  />
                 ) : (
                   <div className="px-3 py-10 text-center text-sm text-muted-foreground">
                     No plan items match the current search and status filter.
@@ -445,9 +437,63 @@ export function PlanView() {
   )
 }
 
+export function PlanHierarchy({
+  nodes,
+  sourcePath,
+  collapsedIds,
+  onToggleCollapsed,
+  onOpenSource,
+  onPromote,
+  linksByCandidateId,
+  onCompare,
+}: {
+  nodes: PlanViewNode[]
+  sourcePath: string
+  collapsedIds: ReadonlySet<string>
+  onToggleCollapsed: (candidateId: string) => void
+  onOpenSource: (relativePath: string, line?: number) => void
+  onPromote?: (candidate: PlanCandidate) => void
+  linksByCandidateId: ReadonlyMap<string, PlanSourceLink[]>
+  onCompare: (link: PlanSourceLink) => void
+}) {
+  const [focusedId, setFocusedId] = useState<string | null>(nodes[0]?.candidate.id ?? null)
+
+  useEffect(() => {
+    const containsFocusedNode = (items: PlanViewNode[]): boolean =>
+      items.some(
+        (item) =>
+          item.candidate.id === focusedId ||
+          (!collapsedIds.has(item.candidate.id) && containsFocusedNode(item.children)),
+      )
+    if (!focusedId || !containsFocusedNode(nodes)) setFocusedId(nodes[0]?.candidate.id ?? null)
+  }, [collapsedIds, focusedId, nodes])
+
+  return (
+    <ul role="tree" aria-label={`${sourcePath} plan hierarchy`} className="space-y-1">
+      {nodes.map((node) => (
+        <PlanTreeNode
+          key={node.candidate.id}
+          node={node}
+          level={1}
+          focusedId={focusedId}
+          onFocusedIdChange={setFocusedId}
+          collapsedIds={collapsedIds}
+          onToggleCollapsed={onToggleCollapsed}
+          onOpenSource={onOpenSource}
+          onPromote={onPromote}
+          linksByCandidateId={linksByCandidateId}
+          onCompare={onCompare}
+        />
+      ))}
+    </ul>
+  )
+}
+
 function PlanTreeNode({
   node,
   level,
+  focusedId,
+  onFocusedIdChange,
   collapsedIds,
   onToggleCollapsed,
   onOpenSource,
@@ -457,6 +503,8 @@ function PlanTreeNode({
 }: {
   node: PlanViewNode
   level: number
+  focusedId: string | null
+  onFocusedIdChange: (candidateId: string) => void
   collapsedIds: ReadonlySet<string>
   onToggleCollapsed: (candidateId: string) => void
   onOpenSource: (relativePath: string, line?: number) => void
@@ -472,28 +520,44 @@ function PlanTreeNode({
   const sourceLinks = linksByCandidateId.get(node.candidate.id) ?? []
   const linkedTask = sourceLinks.find((link) => link.kind === "task")
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return
     const treeItems = event.currentTarget
       .closest('[role="tree"]')
       ?.querySelectorAll<HTMLElement>('[role="treeitem"]')
     const currentIndex = treeItems ? Array.from(treeItems).indexOf(event.currentTarget) : -1
+    const focusItem = (item: HTMLElement | null | undefined) => {
+      if (!item) return
+      const candidateId = item.dataset.planCandidateId
+      if (candidateId) onFocusedIdChange(candidateId)
+      item.focus()
+    }
     if (event.key === "ArrowDown" && treeItems && currentIndex < treeItems.length - 1) {
       event.preventDefault()
-      treeItems[currentIndex + 1]?.focus()
+      focusItem(treeItems[currentIndex + 1])
     } else if (event.key === "ArrowUp" && treeItems && currentIndex > 0) {
       event.preventDefault()
-      treeItems[currentIndex - 1]?.focus()
+      focusItem(treeItems[currentIndex - 1])
     } else if (event.key === "Home" && treeItems?.length) {
       event.preventDefault()
-      treeItems[0]?.focus()
+      focusItem(treeItems[0])
     } else if (event.key === "End" && treeItems?.length) {
       event.preventDefault()
-      treeItems[treeItems.length - 1]?.focus()
-    } else if (event.key === "ArrowRight" && hasChildren && isCollapsed) {
+      focusItem(treeItems[treeItems.length - 1])
+    } else if (event.key === "ArrowRight" && hasChildren) {
       event.preventDefault()
-      onToggleCollapsed(node.candidate.id)
-    } else if (event.key === "ArrowLeft" && hasChildren && !isCollapsed) {
-      event.preventDefault()
-      onToggleCollapsed(node.candidate.id)
+      if (isCollapsed) onToggleCollapsed(node.candidate.id)
+      else focusItem(treeItems?.[currentIndex + 1])
+    } else if (event.key === "ArrowLeft") {
+      const parentItem = event.currentTarget
+        .closest('ul[role="group"]')
+        ?.parentElement?.querySelector<HTMLElement>(':scope > [role="treeitem"]')
+      if (hasChildren && !isCollapsed) {
+        event.preventDefault()
+        onToggleCollapsed(node.candidate.id)
+      } else if (parentItem) {
+        event.preventDefault()
+        focusItem(parentItem)
+      }
     } else if (hasChildren && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault()
       onToggleCollapsed(node.candidate.id)
@@ -507,7 +571,11 @@ function PlanTreeNode({
         aria-level={level}
         aria-expanded={hasChildren ? !isCollapsed : undefined}
         aria-label={`${node.candidate.title}, ${statusLabel(node.status)}, ${node.candidate.kind}`}
-        tabIndex={0}
+        data-plan-candidate-id={node.candidate.id}
+        tabIndex={node.candidate.id === focusedId ? 0 : -1}
+        onFocus={(event) => {
+          if (event.target === event.currentTarget) onFocusedIdChange(node.candidate.id)
+        }}
         onKeyDown={handleKeyDown}
         className="group rounded-md border border-transparent px-2 py-2 outline-none hover:border-border hover:bg-muted/35 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       >
@@ -614,6 +682,8 @@ function PlanTreeNode({
               key={child.candidate.id}
               node={child}
               level={level + 1}
+              focusedId={focusedId}
+              onFocusedIdChange={onFocusedIdChange}
               collapsedIds={collapsedIds}
               onToggleCollapsed={onToggleCollapsed}
               onOpenSource={onOpenSource}

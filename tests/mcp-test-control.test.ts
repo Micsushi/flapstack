@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { eq } from "drizzle-orm"
 import { describe, expect, it, vi } from "vitest"
 
 vi.mock("electron", () => ({
@@ -504,6 +505,16 @@ describe("dev MCP carryover controls", () => {
       const nonOverlap = await createCarryoverRunFixture({ laterEdit: "non-overlap" })
       fixtureIds.push(nonOverlap.projectId)
       expect(nonOverlap.backgroundSubChatId).toEqual(expect.any(String))
+      expect(
+        getDatabase()
+          .select({
+            runtimeSnapshotVersion: schema.agentRuns.runtimeSnapshotVersion,
+            resolvedRuntime: schema.agentRuns.resolvedRuntime,
+          })
+          .from(schema.agentRuns)
+          .where(eq(schema.agentRuns.id, nonOverlap.runId))
+          .get(),
+      ).toEqual({ runtimeSnapshotVersion: 1, resolvedRuntime: "codex" })
       const review = await getRunChangeState({ runId: nonOverlap.runId, includeReview: true })
       expect(review).toMatchObject({ fileCount: 2, recoverable: true })
       expect(review.diff).toContain("alpha from response")

@@ -206,6 +206,47 @@ describe("hook lifecycle", () => {
     expect(runner.run).not.toHaveBeenCalled()
   })
 
+  it("publishes a state change when denied dry-run persists current validation", async () => {
+    const onStateChange = vi.fn()
+    const service = new HookLifecycleService(
+      new MemoryHookStateStore(),
+      successfulRunner(),
+      { request: async () => "denied" },
+      undefined,
+      undefined,
+      onStateChange,
+    )
+    const imported = await service.import(draft())
+    expect(onStateChange).toHaveBeenCalledTimes(1)
+
+    await expect(service.dryRun(imported.id)).rejects.toThrow(/denied/i)
+    expect(service.list()[0]).toMatchObject({ state: "validated", enabled: false })
+    expect(onStateChange).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not publish a state change when denied enable leaves the record unchanged", async () => {
+    const onStateChange = vi.fn()
+    const approval = vi
+      .fn<() => Promise<HookApprovalDecision>>()
+      .mockResolvedValueOnce("approved")
+      .mockResolvedValueOnce("denied")
+    const service = new HookLifecycleService(
+      new MemoryHookStateStore(),
+      successfulRunner(),
+      { request: approval },
+      undefined,
+      undefined,
+      onStateChange,
+    )
+    const imported = await service.import(draft())
+    await service.validate(imported.id)
+    await service.dryRun(imported.id)
+    const changesBeforeEnable = onStateChange.mock.calls.length
+
+    expect(await service.setEnabled(imported.id, true)).toMatchObject({ approval: "denied" })
+    expect(onStateChange).toHaveBeenCalledTimes(changesBeforeEnable)
+  })
+
   it("revalidates a project root immediately before dry-run", async () => {
     const runner = successfulRunner()
     const resolveProjectCwd = vi.fn(() => "/canonical/project")

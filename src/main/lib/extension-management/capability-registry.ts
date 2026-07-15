@@ -196,28 +196,32 @@ export const extensionBaselineGaps: ExtensionBaselineGap[] = [
   {
     id: "native-adapter-safety",
     currentBehavior:
-      "Stage 3 mutations are provider-scoped and atomic but expose no preview or backup DTO.",
+      "Rooted native adapters expose lossless read, preview, apply, backup, and restore DTOs for supported mutable rows.",
     additiveNeed:
-      "Add lossless native adapters with preview, backup, restore, and unknown-field results.",
+      "Retain T2 ownership of live Settings, runtime reload, package, and integrated acceptance evidence.",
     owner: "S4-F1-T2",
   },
   {
     id: "scoped-enablement",
-    currentBehavior: "No user-to-project-to-task extension policy exists.",
-    additiveNeed: "Add persisted policy and run-context resolution without rewriting native files.",
+    currentBehavior:
+      "Persisted user, project, and task policy resolves into supported harness launch contracts without rewriting native files.",
+    additiveNeed:
+      "Retain T3 ownership of live provider behavior plus Dev-profile and packaged restart evidence.",
     owner: "S4-F1-T3",
   },
   {
     id: "cross-harness-copy",
-    currentBehavior: "Provider-native entries have no conversion preview or unsupported-field DTO.",
-    additiveNeed: "Add explicit exact, converted, or unsupported copy previews.",
+    currentBehavior:
+      "Cross-harness copy exposes exact, converted, or unsupported previews before any confirmed native write.",
+    additiveNeed: "Retain T4 ownership of dependency-gated sharing acceptance.",
     owner: "S4-F1-T4",
   },
   {
     id: "manager-ui",
     currentBehavior:
-      "Provider Extensions and MCP remain separate Settings surfaces; legacy routers are still callable.",
-    additiveNeed: "Build one manager from this registry after policy and copy contracts land.",
+      "The unified Settings manager consumes registry, adapter, policy, copy, and managed-hook DTOs while compatibility routers remain callable.",
+    additiveNeed:
+      "Retain T5 ownership of the live user/project/task walkthrough, screen-reader observation, restart, and package evidence.",
     owner: "S4-F1-T5",
   },
   {

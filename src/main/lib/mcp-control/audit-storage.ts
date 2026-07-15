@@ -400,6 +400,7 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return safe("kind", "id", "pinned")
     case "list_projects":
     case "list_tasks":
+    case "list_orchestrations":
     case "list_chats":
     case "list_runs":
     case "list_worktrees":

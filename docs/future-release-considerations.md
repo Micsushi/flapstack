@@ -4,6 +4,16 @@ These items are intentionally outside Stage 3 acceptance. Their absence must
 not block Stage 3 completion or turn a passing Preview validation into a
 release failure.
 
+## Cross-agent mobile companion
+
+All phone connection, pairing, remote-control, PWA, and mobile notification work
+is intentionally outside Stage 4 and must not block its completion.
+
+Existing mobile contracts, default-off LAN HTTPS bridge, device pairing, and
+sequenced snapshot/event recovery are preserved on local branch
+`codex/future-mobile-companion` at `65169c6`. Resume that branch only when the
+future mobile feature is explicitly promoted again.
+
 ## Organization usage APIs
 
 - OpenAI Admin organization usage/cost validation (`U6-01`) is deferred.

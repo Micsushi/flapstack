@@ -14,12 +14,15 @@ import {
   type OrchestrationAgentDefinition,
   type OrchestrationAgentDto,
   type OrchestrationAggregateDto,
+  type OrchestrationFleetPageDto,
+  type OrchestrationFleetQuery,
   type OrchestrationLineageDto,
   type OrchestrationStopConditions,
   type OrchestrationTaskDto,
   type OrchestrationTaskOverviewDto,
   type OrchestrationUsageUpdate,
 } from "../../../shared/agent-orchestration"
+import { queryOrchestrationFleet, type OrchestrationFleetQueryOptions } from "./fleet"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
@@ -30,6 +33,20 @@ import {
   providerForHarness,
   resolveUsageBudgets,
 } from "../usage/budgets"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "../agent-runtime/snapshot"
+import {
+  constructCoordinationEngineSnapshot,
+  coordinationEngineSnapshotSqlValues,
+  interpretCoordinationEngineSnapshot,
+} from "./coordination-engine"
+import type {
+  CoordinationEngine,
+  CoordinationEngineProbe,
+} from "../../../shared/coordination-engine"
 
 type Row = Record<string, unknown>
 type Sqlite = Database.Database
@@ -68,7 +85,10 @@ export function createAgentOrchestrationService(databasePath: string) {
     create(
       inputValue: unknown,
       trustedCallerChatId?: string,
-      options: { deferScheduling?: boolean } = {},
+      options: {
+        deferScheduling?: boolean
+        coordinationEngineProbes?: Partial<Record<CoordinationEngine, CoordinationEngineProbe>>
+      } = {},
     ): OrchestrationTaskOverviewDto {
       const parsed = createOrchestrationInputSchema.safeParse(inputValue)
       if (!parsed.success) invalid(parsed.error.issues[0]?.message)
@@ -82,6 +102,11 @@ export function createAgentOrchestrationService(databasePath: string) {
       validateDefinitions(input.agents)
       const db = open()
       try {
+        const engineSnapshot = constructCoordinationEngineSnapshot(db, {
+          projectId: input.projectId,
+          perLaunchEngine: input.coordinationEngine,
+          probes: options.coordinationEngineProbes,
+        })
         let taskId = ""
         const create = db.transaction(() => {
           taskId = createOrAttachTask(db, input)
@@ -100,8 +125,11 @@ export function createAgentOrchestrationService(databasePath: string) {
           db.prepare(
             `INSERT INTO task_orchestrations (
               task_id, initiating_chat_id, status, max_parallel_agents, max_depth,
-              stop_conditions, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              stop_conditions, engine_snapshot_version, coordination_engine,
+              coordination_engine_version, coordination_engine_source,
+              coordination_engine_capability_snapshot, coordination_engine_provider_identity,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             taskId,
             input.initiatingChatId,
@@ -109,6 +137,7 @@ export function createAgentOrchestrationService(databasePath: string) {
             input.maxParallelAgents,
             input.maxDepth,
             JSON.stringify(input.stopConditions),
+            ...coordinationEngineSnapshotSqlValues(engineSnapshot),
             now,
             now,
           )
@@ -155,6 +184,7 @@ export function createAgentOrchestrationService(databasePath: string) {
       try {
         let result!: OrchestrationAgentDto
         const retry = db.transaction(() => {
+          assertVersionedOrchestration(requireOrchestration(db, taskId))
           const source = requireAgent(db, taskId, agentId)
           if (source.status === "completed") {
             throw new AgentOrchestrationError(
@@ -198,6 +228,7 @@ export function createAgentOrchestrationService(databasePath: string) {
       try {
         let result!: OrchestrationAgentDto
         const replace = db.transaction(() => {
+          assertVersionedOrchestration(requireOrchestration(db, taskId))
           const source = requireAgent(db, taskId, agentId)
           if (source.status === "completed") {
             throw new AgentOrchestrationError(
@@ -242,6 +273,7 @@ export function createAgentOrchestrationService(databasePath: string) {
         let shouldTick = false
         const control = db.transaction(() => {
           const orchestration = requireOrchestration(db, taskId)
+          if (action !== "stop") assertVersionedOrchestration(orchestration)
           const current = String(orchestration.status)
           if (action === "pause") {
             if (current !== "running" && current !== "queued") {
@@ -282,6 +314,32 @@ export function createAgentOrchestrationService(databasePath: string) {
         report.immediate()
         safeTickTask(db, parsed.data.taskId)
         return requireOverview(db, parsed.data.taskId)
+      } finally {
+        db.close()
+      }
+    },
+
+    listFleet(
+      input: OrchestrationFleetQuery,
+      options: OrchestrationFleetQueryOptions = {},
+    ): OrchestrationFleetPageDto {
+      const db = open()
+      try {
+        // Deliberately read-only: fleet inspection never ticks, schedules, or
+        // reconciles an orchestration.
+        db.pragma("query_only = ON")
+        return queryOrchestrationFleet(
+          {
+            prepare(sql: string) {
+              const statement = db.prepare(sql)
+              return {
+                all: (...params: unknown[]) => statement.all(...params) as Row[],
+              }
+            },
+          },
+          input,
+          options,
+        )
       } finally {
         db.close()
       }
@@ -419,7 +477,8 @@ export function createAgentOrchestrationService(databasePath: string) {
       try {
         const rows = db
           .prepare(
-            "SELECT task_id FROM task_orchestrations WHERE status IN ('queued', 'running', 'paused')",
+            `SELECT task_id FROM task_orchestrations
+             WHERE status IN ('queued', 'running', 'paused') AND engine_snapshot_version = 1`,
           )
           .all() as Row[]
         for (const row of rows) safeTickTask(db, String(row.task_id))
@@ -605,6 +664,7 @@ function addAgent(
 ): OrchestrationAgentDto {
   validateDefinitionPermissions(input.agent)
   const orchestration = requireOrchestration(db, input.taskId)
+  assertVersionedOrchestration(orchestration)
   if (
     !allowTerminalRecovery &&
     ["completed", "failed", "stopped"].includes(String(orchestration.status))
@@ -724,6 +784,7 @@ function reportProgress(db: Sqlite, input: OrchestrationUsageUpdate): void {
 function tickTask(db: Sqlite, taskId: string): void {
   const tick = db.transaction(() => {
     let orchestration = requireOrchestration(db, taskId)
+    if (Number(orchestration.engine_snapshot_version) !== 1) return
     reconcileRunOutcomes(db, taskId)
     failUnrecoverableDependencies(db, taskId)
     orchestration = requireOrchestration(db, taskId)
@@ -1199,6 +1260,7 @@ function recoverDependents(
 }
 
 function reopenTaskForRecovery(db: Sqlite, taskId: string): void {
+  assertVersionedOrchestration(requireOrchestration(db, taskId))
   db.prepare(
     `UPDATE task_orchestrations
      SET status = CASE WHEN status IN ('completed','failed','stopped') THEN 'running' ELSE status END,
@@ -1295,6 +1357,12 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     now,
     now,
   )
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId,
+    harness: definition.harness,
+    model: definition.model ?? null,
+    permission: runtimePermissionSnapshot(definition.permissionMode, definition.customPermissions),
+  })
   db.prepare(
     `INSERT INTO sub_chats (
       id, chat_id, harness, model, permission_mode, worktree_path, run_status, messages, created_at, updated_at
@@ -1312,8 +1380,11 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
   db.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-      worktree_path, prompt_message_id, initial_prompt, status, started_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      worktree_path, prompt_message_id, initial_prompt, runtime_snapshot_version,
+      runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version,
+      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
+      status, started_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
   ).run(
     runId,
     chatId,
@@ -1325,6 +1396,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     worktree.path,
     promptMessageId,
     prompt,
+    ...runtimeSnapshotSqlValues(runtimeSnapshot),
     now,
   )
   db.prepare(
@@ -1503,6 +1575,7 @@ function toTaskDto(row: Row, task: Row): OrchestrationTaskDto {
     name: String(task.name),
     initiatingChatId: String(row.initiating_chat_id),
     status: row.status as OrchestrationTaskDto["status"],
+    engine: interpretCoordinationEngineSnapshot(row),
     maxParallelAgents: Number(row.max_parallel_agents),
     maxDepth: Number(row.max_depth),
     stopConditions: parseStopConditions(row.stop_conditions),
@@ -1549,6 +1622,14 @@ function requireOrchestration(db: Sqlite, taskId: string): Row {
   const row = findOrchestration(db, taskId)
   if (!row) throw new AgentOrchestrationError("stale-target", "Orchestration is missing.")
   return row
+}
+
+function assertVersionedOrchestration(orchestration: Row): void {
+  if (Number(orchestration.engine_snapshot_version) === 1) return
+  throw new AgentOrchestrationError(
+    "conflict",
+    "Legacy orchestration history cannot be resumed or changed; start a new orchestration.",
+  )
 }
 
 function requireAgent(db: Sqlite, taskId: string, agentId: string): Row {

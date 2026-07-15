@@ -544,10 +544,27 @@ function setup() {
   const sqlite = new Database(":memory:")
   databases.push(sqlite)
   sqlite.exec(`
+    CREATE TABLE projects (
+      id text PRIMARY KEY,
+      archived_at integer
+    );
     CREATE TABLE chats (
       id text PRIMARY KEY,
+      project_id text,
+      archived_at integer,
+      runtime_preference text,
       harness text,
       model text
+    );
+    CREATE TABLE agent_runtime_defaults (
+      id text PRIMARY KEY,
+      scope_type text NOT NULL,
+      scope_id text,
+      harness text NOT NULL,
+      preference text NOT NULL,
+      version integer NOT NULL DEFAULT 1,
+      created_at integer,
+      updated_at integer
     );
     CREATE TABLE sub_chats (
       id text PRIMARY KEY,
@@ -575,6 +592,14 @@ function setup() {
       initial_prompt text,
       vault_context_sections text,
       vault_context_manifest text,
+      runtime_snapshot_version integer NOT NULL DEFAULT 0,
+      runtime_preference text NOT NULL DEFAULT 'flapstack-native',
+      runtime_preference_source text NOT NULL DEFAULT 'legacy',
+      resolved_runtime text NOT NULL DEFAULT 'flapstack-native',
+      runtime_adapter_version text NOT NULL DEFAULT 'legacy-stage3',
+      runtime_protocol_version text NOT NULL DEFAULT 'legacy-stage3',
+      runtime_capability_snapshot text NOT NULL DEFAULT '{"schemaVersion":1,"status":"legacy"}',
+      runtime_control_snapshot text NOT NULL DEFAULT '{"schemaVersion":1}',
       status text NOT NULL DEFAULT 'running',
       started_at integer,
       completed_at integer,
@@ -582,7 +607,8 @@ function setup() {
       after_checkpoint_id text
     );
   `)
-  sqlite.prepare("INSERT INTO chats (id) VALUES ('chat-1')").run()
+  sqlite.prepare("INSERT INTO projects (id) VALUES ('project-1')").run()
+  sqlite.prepare("INSERT INTO chats (id, project_id) VALUES ('chat-1', 'project-1')").run()
   sqlite.prepare("INSERT INTO sub_chats (id, chat_id, messages) VALUES (?, ?, ?)").run(
     "sub-1",
     "chat-1",

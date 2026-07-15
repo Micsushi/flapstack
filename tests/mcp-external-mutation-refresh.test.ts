@@ -13,6 +13,12 @@ import {
 } from "../src/main/lib/mcp-control/invalidation-bridge"
 import { buildMcpStdioRegistration } from "../src/main/lib/mcp-control/registration"
 import {
+  HookLifecycleService,
+  MemoryHookStateStore,
+  type HookApprovalDecision,
+} from "../src/main/lib/extension-management"
+import { publishHookExtensionChange } from "../src/main/lib/trpc/routers/hooks-management"
+import {
   createProductMcpInvalidationCoalescer,
   createProductMcpRendererInvalidator,
 } from "../src/renderer/features/mcp-safety/external-mutation-refresh-model"
@@ -172,6 +178,58 @@ describe("product MCP external mutation refresh", () => {
     }
   })
 
+  it("bridges persisted hook lifecycle changes but not an unchanged denied enable", async () => {
+    const received: ProductMcpRendererInvalidation[] = []
+    const bridge = await startProductMcpInvalidationBridge({
+      onInvalidation: (event) => received.push(event),
+    })
+    try {
+      const approval = vi
+        .fn<() => Promise<HookApprovalDecision>>()
+        .mockResolvedValueOnce("approved")
+        .mockResolvedValueOnce("denied")
+      const service = new HookLifecycleService(
+        new MemoryHookStateStore(),
+        {
+          run: async () => ({
+            success: true,
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            outputLimitExceeded: false,
+            durationMs: 1,
+            stdout: { byteLength: 0, sha256: "a".repeat(64), truncated: false },
+            stderr: { byteLength: 0, sha256: "b".repeat(64), truncated: false },
+            error: null,
+          }),
+        },
+        { request: approval },
+        undefined,
+        undefined,
+        publishHookExtensionChange,
+      )
+      const imported = await service.import({
+        name: "refresh windows",
+        harness: "codex",
+        scope: "user",
+        event: "agent-turn-complete",
+        command: "node hook.mjs",
+        timeoutMs: 500,
+      })
+      await service.validate(imported.id)
+      await service.dryRun(imported.id)
+      await vi.waitFor(() => expect(received).toHaveLength(4))
+
+      const beforeDeniedEnable = received.length
+      expect(await service.setEnabled(imported.id, true)).toMatchObject({ approval: "denied" })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(received).toHaveLength(beforeDeniedEnable)
+      expect(received.every((event) => event.domains.includes("provider-extensions"))).toBe(true)
+    } finally {
+      await bridge.stop()
+    }
+  })
+
   it("coalesces bursts and invalidates only affected tRPC query families", async () => {
     vi.useFakeTimers()
     const calls: string[] = []
@@ -195,6 +253,7 @@ describe("product MCP external mutation refresh", () => {
       automations: () => calls.push("automations"),
       taskProposals: () => calls.push("task-proposals"),
       planSources: (id) => calls.push(`plan-sources:${id ?? "all"}`),
+      providerExtensions: () => calls.push("provider-extensions"),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate, 25)
     coalescer.push({
@@ -236,6 +295,13 @@ describe("product MCP external mutation refresh", () => {
       projectIds: ["project-1"],
       proposalIds: ["proposal-1"],
     })
+    coalescer.push({
+      version: 1,
+      source: "product-mcp",
+      domains: ["provider-extensions"],
+      projectIds: ["project-1"],
+      taskIds: ["task-1"],
+    })
 
     expect(calls).toEqual([])
     await vi.advanceTimersByTimeAsync(25)
@@ -253,6 +319,7 @@ describe("product MCP external mutation refresh", () => {
       "automations",
       "task-proposals",
       "plan-sources:project-1",
+      "provider-extensions",
     ])
     coalescer.dispose()
   })

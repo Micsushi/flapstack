@@ -84,7 +84,15 @@ import { reconcileLiveAgentInputs } from "../lib/agent-input-transport"
 import { appStore } from "../../../lib/jotai-store"
 import { useDesktopNotifications } from "../hooks/use-desktop-notifications"
 import { ProjectVaultView } from "../../project-vault/project-vault-view"
-import { AutomationsDetailView, AutomationsView, InboxView } from "../../automations"
+import { SavedWorkspacesView } from "../../saved-workspaces"
+import { OrchestrationFleetView } from "../../orchestration-fleet/orchestration-fleet-view"
+import { getInitialWindowParams } from "../../../contexts/WindowContext"
+import {
+  AutomationsDetailView,
+  AutomationsView,
+  InboxView,
+  useAutomationInboxNotifications,
+} from "../../automations"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -103,6 +111,7 @@ function readStoredProjectColors(): Record<string, string> {
 
 // Main Component
 function AgentsContentInner() {
+  const workspaceWindowParams = useMemo(() => getInitialWindowParams(), [])
   const openChatTabsRef = useRef<HTMLDivElement>(null)
   const suppressOpenChatTabClickRef = useRef(false)
   const [openChatDropTarget, setOpenChatDropTarget] = useState<{
@@ -163,6 +172,7 @@ function AgentsContentInner() {
   const { signOut } = useClerk()
   const isAdmin = useIsAdmin()
   const { notifyAgentNeedsInput } = useDesktopNotifications()
+  useAutomationInboxNotifications()
   const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
 
   // Quick-switch dialog state - Agents (Opt+Ctrl+Tab)
@@ -1150,7 +1160,9 @@ function AgentsContentInner() {
     return (
       <div className="flex h-full bg-background" data-agents-page data-mobile-view>
         {/* Mobile: Settings fullscreen view */}
-        {desktopView === "automations" ? (
+        {desktopView === "orchestration-fleet" ? (
+          <OrchestrationFleetView />
+        ) : desktopView === "automations" ? (
           <AutomationsView />
         ) : desktopView === "automations-detail" ? (
           <AutomationsDetailView />
@@ -1166,6 +1178,14 @@ function AgentsContentInner() {
           <PlanView />
         ) : desktopView === "project-vault" ? (
           <ProjectVaultView key={selectedProject?.id} />
+        ) : desktopView === "saved-workspaces" ? (
+          <SavedWorkspacesView
+            projectId={selectedProject?.id ?? null}
+            initialChatId={selectedChatId}
+            initialWorkspaceId={workspaceWindowParams.workspaceId}
+            popoutPaneId={workspaceWindowParams.paneId}
+            initialSkipPaneId={workspaceWindowParams.skipPaneId}
+          />
         ) : mobileViewMode === "chats" ? (
           // Chats List Mode (default) - uses AgentsSidebar in fullscreen
           <AgentsSidebar
@@ -1288,7 +1308,9 @@ function AgentsContentInner() {
 
         {/* Main content */}
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
-          {desktopView === "automations" ? (
+          {desktopView === "orchestration-fleet" ? (
+            <OrchestrationFleetView />
+          ) : desktopView === "automations" ? (
             <AutomationsView />
           ) : desktopView === "automations-detail" ? (
             <AutomationsDetailView />
@@ -1304,6 +1326,14 @@ function AgentsContentInner() {
             <PlanView />
           ) : desktopView === "project-vault" ? (
             <ProjectVaultView key={selectedProject?.id} />
+          ) : desktopView === "saved-workspaces" ? (
+            <SavedWorkspacesView
+              projectId={selectedProject?.id ?? null}
+              initialChatId={selectedChatId}
+              initialWorkspaceId={workspaceWindowParams.workspaceId}
+              popoutPaneId={workspaceWindowParams.paneId}
+              initialSkipPaneId={workspaceWindowParams.skipPaneId}
+            />
           ) : selectedChatId ? (
             <div className="h-full flex flex-col relative overflow-hidden">
               {!selectedChatIsRemote && openChatTabs.length > 0 && (

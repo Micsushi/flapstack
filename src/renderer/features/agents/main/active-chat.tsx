@@ -48,6 +48,8 @@ import {
   defaultAgentModeAtom,
   isDesktopAtom,
   isFullscreenAtom,
+  localModelEndpointAtom,
+  selectedLocalModelIdAtom,
   sessionInfoAtom,
   selectedOllamaModelAtom,
   soundNotificationsEnabledAtom,
@@ -143,6 +145,7 @@ import {
 } from "../atoms"
 import { BUILTIN_SLASH_COMMANDS } from "../commands"
 import { AgentSendButton } from "../components/agent-send-button"
+import type { AgentProviderId } from "../components/agent-model-selector"
 import { OpenLocallyDialog } from "../components/open-locally-dialog"
 import { PreviewSetupHoverCard } from "../components/preview-setup-hover-card"
 import type { TextSelectionSource } from "../context/text-selection-context"
@@ -162,6 +165,7 @@ import { CursorChatTransport } from "../lib/cursor-chat-transport"
 import { copyChat, formatHistoryForContext } from "../lib/export-chat"
 import { clearSubChatDraft, getSubChatDraftFull } from "../lib/drafts"
 import { IPCChatTransport } from "../lib/ipc-chat-transport"
+import { LocalModelChatTransport } from "../lib/local-model-chat-transport"
 import { OpencodeChatTransport } from "../lib/opencode-chat-transport"
 import { resolveProjectAccentColor } from "../lib/open-chat-tabs"
 import { resolveCanonicalConversationId } from "../lib/canonical-conversation"
@@ -1697,13 +1701,10 @@ const ChatViewInner = memo(function ChatViewInner({
   chat: Chat<any>
   subChatId: string
   parentChatId: string
-  provider?: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
+  provider?: AgentProviderId
   isFirstSubChat: boolean
   onAutoRename: (userMessage: string, subChatId: string) => void
-  onProviderChange?: (
-    subChatId: string,
-    provider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt",
-  ) => void
+  onProviderChange?: (subChatId: string, provider: AgentProviderId) => void
   refreshDiff?: () => void
   teamId?: string
   repository?: string
@@ -4518,7 +4519,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const shouldShowStatusCard = isStreaming || isCompacting || changedFilesForSubChat.length > 0
   const shouldShowStackedCards = !displayQuestions && (queue.length > 0 || shouldShowStatusCard)
   const handleInputProviderChange = useCallback(
-    (nextProvider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt") => {
+    (nextProvider: AgentProviderId) => {
       onProviderChange?.(subChatId, nextProvider)
     },
     [onProviderChange, subChatId],
@@ -4527,7 +4528,7 @@ const ChatViewInner = memo(function ChatViewInner({
   // Continue conversation with a different provider - creates new sub-chat with history attachment
   const isContinuingRef = useRef(false)
   const handleContinueWithProvider = useCallback(
-    async (targetProvider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt") => {
+    async (targetProvider: AgentProviderId) => {
       if (isStreaming || isContinuingRef.current) return
       if (!messages || messages.length === 0) return
       isContinuingRef.current = true
@@ -5352,7 +5353,7 @@ export function ChatView({
       })),
     )
   const [subChatProviderOverrides, setSubChatProviderOverrides] = useState<
-    Record<string, "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt">
+    Record<string, AgentProviderId>
   >({})
 
   useEffect(() => {
@@ -6392,14 +6393,15 @@ Make sure to preserve all functionality from both branches when resolving confli
   }, [agentSubChats, activeSubChatIdForPlan, setCurrentPlanPath])
 
   const inferProviderFromMessages = useCallback(
-    (subChatId?: string): "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" => {
+    (subChatId?: string): AgentProviderId => {
       const selectedDefault = appStore.get(lastSelectedAgentIdAtom)
       const defaultProvider =
         selectedDefault === "claude-code" ||
         selectedDefault === "codex" ||
         selectedDefault === "cursor-agent" ||
         selectedDefault === "openrouter" ||
-        selectedDefault === "nanogpt"
+        selectedDefault === "nanogpt" ||
+        selectedDefault === "local"
           ? selectedDefault
           : "codex"
       if (!subChatId) return defaultProvider
@@ -6419,7 +6421,8 @@ Make sure to preserve all functionality from both branches when resolving confli
         persistedHarness === "claude-code" ||
         persistedHarness === "cursor-agent" ||
         persistedHarness === "openrouter" ||
-        persistedHarness === "nanogpt"
+        persistedHarness === "nanogpt" ||
+        persistedHarness === "local"
       ) {
         return persistedHarness
       }
@@ -6636,15 +6639,16 @@ Make sure to preserve all functionality from both branches when resolving confli
         const overrideProvider = subChatProviderOverrides[subChatId]
         if (!overrideProvider) return existing
 
-        const existingProvider:
-          "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" =
+        const existingProvider: AgentProviderId =
           (existing as any)?.transport instanceof CursorChatTransport
             ? "cursor-agent"
-            : (existing as any)?.transport instanceof OpencodeChatTransport
-              ? (existing as any).transport.getConfig().provider
-              : (existing as any)?.transport instanceof ACPChatTransport
-                ? "codex"
-                : "claude-code"
+            : (existing as any)?.transport instanceof LocalModelChatTransport
+              ? "local"
+              : (existing as any)?.transport instanceof OpencodeChatTransport
+                ? (existing as any).transport.getConfig().provider
+                : (existing as any)?.transport instanceof ACPChatTransport
+                  ? "codex"
+                  : "claude-code"
         if (existingProvider === overrideProvider) return existing
 
         const subChatForOverride = agentSubChats.find((sc) => sc.id === subChatId)
@@ -6704,6 +6708,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         | ACPChatTransport
         | CursorChatTransport
         | OpencodeChatTransport
+        | LocalModelChatTransport
         | null = null
 
       if (isRemoteChat && chatSandboxUrl) {
@@ -6724,7 +6729,22 @@ Make sure to preserve all functionality from both branches when resolving confli
           model: modelString,
         })
       } else if (runWorktreePath) {
-        if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
+        if (chatProvider === "local") {
+          const model =
+            (subChat as any)?.model ||
+            (agentChat as any)?.model ||
+            appStore.get(selectedLocalModelIdAtom)
+          if (model) {
+            transport = new LocalModelChatTransport({
+              chatId,
+              subChatId,
+              cwd: runWorktreePath,
+              projectPath,
+              endpoint: appStore.get(localModelEndpointAtom),
+              model,
+            })
+          }
+        } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
           const fallbackModel =
             chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"
           const selectedModel = appStore.get(subChatOpencodeModelsAtomFamily(subChatId))[
@@ -6894,10 +6914,7 @@ Make sure to preserve all functionality from both branches when resolving confli
   )
 
   const handleProviderChange = useCallback(
-    (
-      subChatId: string,
-      nextProvider: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt",
-    ) => {
+    (subChatId: string, nextProvider: AgentProviderId) => {
       // Provider switch is only allowed for brand new sub-chats.
       const activeChat = agentChatStore.get(subChatId) as any
       let messageCount = Array.isArray(activeChat?.messages) ? activeChat.messages.length : 0
@@ -7047,6 +7064,7 @@ Make sure to preserve all functionality from both branches when resolving confli
       | ACPChatTransport
       | CursorChatTransport
       | OpencodeChatTransport
+      | LocalModelChatTransport
       | null = null
 
     if (isNewSubChatRemote && newSubChatSandboxUrl) {
@@ -7063,7 +7081,19 @@ Make sure to preserve all functionality from both branches when resolving confli
         model: modelString,
       })
     } else if (worktreePath) {
-      if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
+      if (chatProvider === "local") {
+        const model = appStore.get(selectedLocalModelIdAtom)
+        if (model) {
+          newSubChatTransport = new LocalModelChatTransport({
+            chatId,
+            subChatId: newId,
+            cwd: worktreePath,
+            projectPath,
+            endpoint: appStore.get(localModelEndpointAtom),
+            model,
+          })
+        }
+      } else if (chatProvider === "openrouter" || chatProvider === "nanogpt") {
         const fallbackModel =
           chatProvider === "openrouter" ? "openrouter/tencent/hy3:free" : "nanogpt/deepseek-chat"
         const selectedModel = appStore.get(subChatOpencodeModelsAtomFamily(newId))[chatProvider]

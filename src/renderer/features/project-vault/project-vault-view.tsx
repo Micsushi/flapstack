@@ -1,14 +1,12 @@
 "use client"
 
 import { diffLines } from "diff"
-import { useAtomValue, useSetAtom } from "jotai"
+import { atom, useAtom, useAtomValue, useSetAtom } from "jotai"
 import {
   AlertTriangle,
   ArrowLeft,
   BookOpen,
-  Check,
   ChevronRight,
-  Circle,
   Clock3,
   Edit3,
   FileText,
@@ -24,7 +22,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
+  type Dispatch,
+  type SetStateAction,
 } from "react"
 import { toast } from "sonner"
 
@@ -50,24 +49,24 @@ import { desktopViewAtom, selectedProjectAtom } from "../agents/atoms"
 import {
   createVaultEditorState,
   hasVaultEditorChanges,
+  hasUnsavedVaultDrafts,
   markVaultEditorConflict,
+  protectUnsavedVaultDraftsBeforeUnload,
+  rebaseVaultEditorAfterSave,
   updateVaultEditorDraft,
   type VaultDocumentSnapshot,
+  type VaultEditorCache,
   type VaultEditorState,
 } from "./editor-state"
+import {
+  isSectionId,
+  SearchResults,
+  SECTION_GROUPS,
+  SectionTree,
+  type SectionId,
+} from "./project-vault-navigation"
 
-const SECTION_IDS = ["index", "handoff", "decisions", "context", "tasks", "logs"] as const
-type SectionId = (typeof SECTION_IDS)[number]
-
-const SECTION_GROUPS: Array<{ label: string; ids: SectionId[] }> = [
-  { label: "Foundation", ids: ["index", "handoff"] },
-  { label: "Project memory", ids: ["decisions", "context", "tasks"] },
-  { label: "Activity", ids: ["logs"] },
-]
-
-function isSectionId(value: string): value is SectionId {
-  return SECTION_IDS.includes(value as SectionId)
-}
+const projectVaultEditorCacheAtom = atom<VaultEditorCache>({})
 
 function toSnapshot(data: {
   version: number
@@ -91,23 +90,35 @@ export function ProjectVaultView() {
   const projectId = project?.id ?? ""
   const utils = trpc.useUtils()
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const treeItemsRef = useRef(new Map<SectionId, HTMLButtonElement>())
   const [selectedSectionId, setSelectedSectionId] = useState<SectionId | null>(null)
   const [editMode, setEditMode] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const deferredQuery = useDeferredValue(searchQuery.trim())
-  const [editors, setEditors] = useState<Partial<Record<SectionId, VaultEditorState>>>({})
+  const [editorCache, setEditorCache] = useAtom(projectVaultEditorCacheAtom)
+  const editors = editorCache[projectId] ?? {}
+  const setEditors: Dispatch<SetStateAction<Partial<Record<SectionId, VaultEditorState>>>> = (
+    update,
+  ) =>
+    setEditorCache((current) => {
+      const existing = current[projectId] ?? {}
+      const next = typeof update === "function" ? update(existing) : update
+      return { ...current, [projectId]: next }
+    })
   const [showHistory, setShowHistory] = useState(false)
   const [selectedBackupId, setSelectedBackupId] = useState<string | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [setupSections, setSetupSections] = useState<SectionId[]>(["index", "handoff"])
+  const [operationStatus, setOperationStatus] = useState<{
+    kind: "success" | "error" | "info"
+    message: string
+  } | null>(null)
 
   useEffect(() => {
     setSelectedSectionId(null)
-    setEditors({})
     setSearchQuery("")
     setSelectedBackupId(null)
     setShowHistory(false)
+    setOperationStatus(null)
   }, [projectId])
 
   const registryQuery = trpc.projectVaults.getSectionRegistry.useQuery()
@@ -117,6 +128,10 @@ export function ProjectVaultView() {
   )
   const sections = useMemo(
     () => (sectionsQuery.data ?? []).filter((section) => isSectionId(section.sectionId)),
+    [sectionsQuery.data],
+  )
+  const unsupportedSections = useMemo(
+    () => (sectionsQuery.data ?? []).filter((section) => !isSectionId(section.sectionId)),
     [sectionsQuery.data],
   )
   const sectionIds = useMemo(
@@ -129,6 +144,12 @@ export function ProjectVaultView() {
       setSelectedSectionId(sectionIds[0] ?? null)
     }
   }, [sectionIds, selectedSectionId])
+
+  useEffect(() => {
+    setSelectedBackupId(null)
+    setRestoreOpen(false)
+    setOperationStatus(null)
+  }, [selectedSectionId])
 
   const readQuery = trpc.projectVaults.readSection.useQuery(
     { projectId, sectionId: selectedSectionId ?? "index" },
@@ -146,6 +167,16 @@ export function ProjectVaultView() {
 
   const editor = selectedSectionId ? editors[selectedSectionId] : undefined
   const selectedSection = sections.find((section) => section.sectionId === selectedSectionId)
+  const hasUnsavedDrafts = hasUnsavedVaultDrafts(editorCache)
+
+  useEffect(() => {
+    if (!hasUnsavedDrafts) return
+    const protectUnsavedDrafts = (event: BeforeUnloadEvent) => {
+      protectUnsavedVaultDraftsBeforeUnload(event, editorCache)
+    }
+    window.addEventListener("beforeunload", protectUnsavedDrafts)
+    return () => window.removeEventListener("beforeunload", protectUnsavedDrafts)
+  }, [editorCache, hasUnsavedDrafts])
   const backupsQuery = trpc.projectVaults.listBackups.useQuery(
     { projectId, sectionId: selectedSectionId ?? "index" },
     { enabled: !!projectId && !!selectedSectionId && showHistory },
@@ -159,12 +190,22 @@ export function ProjectVaultView() {
     { enabled: !!projectId && !!deferredQuery },
   )
 
-  const refreshSection = async (sectionId: SectionId) => {
+  const refreshSection = async (
+    sectionId: SectionId,
+    options: { submittedRevision?: number } = {},
+  ) => {
     const result = await utils.projectVaults.readSection.fetch({ projectId, sectionId })
-    setEditors((current) => ({
-      ...current,
-      [sectionId]: createVaultEditorState(toSnapshot(result)),
-    }))
+    const snapshot = toSnapshot(result)
+    setEditors((current) => {
+      const existing = current[sectionId]
+      return {
+        ...current,
+        [sectionId]:
+          existing && options.submittedRevision !== undefined
+            ? rebaseVaultEditorAfterSave(existing, snapshot, options.submittedRevision)
+            : createVaultEditorState(snapshot),
+      }
+    })
     await Promise.all([
       utils.projectVaults.listSections.invalidate({ projectId }),
       utils.projectVaults.listBackups.invalidate({ projectId, sectionId }),
@@ -180,6 +221,8 @@ export function ProjectVaultView() {
   const handleSave = async (resolution?: VaultDocumentSnapshot) => {
     if (!selectedSectionId || !editor) return
     if ((!hasVaultEditorChanges(editor) || editor.conflict) && !resolution) return
+    const submittedRevision = editor.revision
+    setOperationStatus({ kind: "info", message: "Saving vault section…" })
     try {
       await writeMutation.mutateAsync({
         projectId,
@@ -190,33 +233,44 @@ export function ProjectVaultView() {
           : {}),
         content: editor.draft,
       })
-      await refreshSection(selectedSectionId)
+      await refreshSection(selectedSectionId, { submittedRevision })
+      setOperationStatus({
+        kind: "success",
+        message: "Submitted draft saved. Edits made during save remain unsaved.",
+      })
       toast.success("Vault section saved")
     } catch (error) {
-      const current = await utils.projectVaults.readSection.fetch({
-        projectId,
-        sectionId: selectedSectionId,
-      })
-      const snapshot = toSnapshot(current)
-      const changedSinceLoad =
-        snapshot.version !== editor.base.version ||
-        snapshot.currentContentHash !== editor.base.currentContentHash ||
-        snapshot.externallyModified
-      if (changedSinceLoad) {
-        setEditors((states) => {
-          const state = states[selectedSectionId]
-          return state
-            ? { ...states, [selectedSectionId]: markVaultEditorConflict(state, snapshot) }
-            : states
+      let changedSinceLoad = false
+      try {
+        const current = await utils.projectVaults.readSection.fetch({
+          projectId,
+          sectionId: selectedSectionId,
         })
+        const snapshot = toSnapshot(current)
+        changedSinceLoad =
+          snapshot.version !== editor.base.version ||
+          snapshot.currentContentHash !== editor.base.currentContentHash ||
+          snapshot.externallyModified
+        if (changedSinceLoad) {
+          setEditors((states) => {
+            const state = states[selectedSectionId]
+            return state
+              ? { ...states, [selectedSectionId]: markVaultEditorConflict(state, snapshot) }
+              : states
+          })
+        }
+      } catch {
+        // Keep the draft intact. The persistent error below exposes missing,
+        // unreadable, or unsafe storage without replacing it with a spinner.
       }
-      toast.error(
+      const message =
         error instanceof Error
           ? error.message
           : changedSinceLoad
             ? "Vault section changed before save"
-            : "Vault section could not be saved",
-      )
+            : "Vault section could not be saved"
+      setOperationStatus({ kind: "error", message })
+      toast.error(message)
     }
   }
 
@@ -233,27 +287,35 @@ export function ProjectVaultView() {
         })
       }
       await refreshSection(selectedSectionId)
+      setOperationStatus({ kind: "success", message: "Current version loaded." })
       toast.success("Current version kept")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Current version changed again")
+      const message = error instanceof Error ? error.message : "Current version changed again"
+      setOperationStatus({ kind: "error", message })
+      toast.error(message)
     }
   }
 
   const handleRestore = async () => {
-    if (!selectedSectionId || !selectedBackupId || !editor) return
+    const expectedVersion = editor?.base.version ?? selectedSection?.version
+    if (!selectedSectionId || !selectedBackupId || !expectedVersion) return
+    setOperationStatus({ kind: "info", message: "Restoring vault backup…" })
     try {
       await restoreMutation.mutateAsync({
         projectId,
         sectionId: selectedSectionId,
         backupId: selectedBackupId,
-        expectedVersion: editor.base.version,
+        expectedVersion,
       })
       setRestoreOpen(false)
       setSelectedBackupId(null)
       await refreshSection(selectedSectionId)
+      setOperationStatus({ kind: "success", message: "Backup restored as a new version." })
       toast.success("Backup restored as a new version")
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Backup could not be restored")
+      const message = error instanceof Error ? error.message : "Backup could not be restored"
+      setOperationStatus({ kind: "error", message })
+      toast.error(message)
     }
   }
 
@@ -282,6 +344,38 @@ export function ProjectVaultView() {
 
   if (sectionsQuery.isLoading || registryQuery.isLoading) {
     return <LoadingState label="Loading project knowledge…" />
+  }
+
+  if (sectionsQuery.error || registryQuery.error) {
+    return (
+      <div className="flex h-full flex-col bg-background select-text">
+        <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+        <ErrorState
+          title="Project knowledge is unavailable"
+          message={
+            (sectionsQuery.error ?? registryQuery.error)?.message ??
+            "Vault metadata failed to load."
+          }
+          onRetry={() => {
+            void sectionsQuery.refetch()
+            void registryQuery.refetch()
+          }}
+        />
+      </div>
+    )
+  }
+
+  if (sections.length === 0 && unsupportedSections.length > 0) {
+    return (
+      <div className="flex h-full flex-col bg-background select-text">
+        <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+        <ErrorState
+          title="Vault metadata needs recovery"
+          message="The vault contains unsupported or malformed section metadata. Flapstack will not recreate or overwrite it automatically."
+          onRetry={() => void sectionsQuery.refetch()}
+        />
+      </div>
+    )
   }
 
   if (sections.length === 0) {
@@ -342,6 +436,16 @@ export function ProjectVaultView() {
   return (
     <div className="flex h-full flex-col bg-background select-text" data-project-vault-view>
       <VaultHeader projectName={project.name} onClose={() => setDesktopView(null)} />
+      {unsupportedSections.length > 0 && (
+        <div
+          className="border-b border-amber-500/40 bg-amber-500/5 px-4 py-2 text-xs text-amber-700 dark:text-amber-300"
+          role="alert"
+        >
+          {unsupportedSections.length} unsupported vault section
+          {unsupportedSections.length === 1 ? " was" : "s were"} hidden. Existing files were not
+          changed.
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <aside
           className="flex w-64 shrink-0 flex-col border-r bg-muted/15"
@@ -371,9 +475,11 @@ export function ProjectVaultView() {
             <SearchResults
               results={searchQueryResult.data ?? []}
               loading={searchQueryResult.isFetching}
+              error={searchQueryResult.error?.message}
               onSelect={(sectionId) => {
                 if (isSectionId(sectionId)) setSelectedSectionId(sectionId)
               }}
+              onExit={() => searchInputRef.current?.focus()}
             />
           ) : (
             <SectionTree
@@ -381,7 +487,6 @@ export function ProjectVaultView() {
               sections={sections}
               selected={selectedSectionId}
               editors={editors}
-              itemRefs={treeItemsRef}
               onSelect={setSelectedSectionId}
             />
           )}
@@ -398,7 +503,17 @@ export function ProjectVaultView() {
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {!selectedSection || !editor ? (
+          {selectedSectionId && readQuery.error ? (
+            <ErrorState
+              title="Section cannot be opened"
+              message={readQuery.error.message}
+              onRetry={() => void readQuery.refetch()}
+              secondaryAction={{
+                label: "Open version history",
+                onClick: () => setShowHistory(true),
+              }}
+            />
+          ) : !selectedSection || !editor ? (
             <LoadingState label="Loading section…" />
           ) : (
             <>
@@ -442,6 +557,24 @@ export function ProjectVaultView() {
                 </div>
               </div>
 
+              {(operationStatus || hasVaultEditorChanges(editor)) && (
+                <div
+                  className={cn(
+                    "border-b px-4 py-1.5 text-xs",
+                    operationStatus?.kind === "error"
+                      ? "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300"
+                      : operationStatus?.kind === "success"
+                        ? "border-green-500/30 bg-green-500/5 text-green-700 dark:text-green-300"
+                        : "text-muted-foreground",
+                  )}
+                  role={operationStatus?.kind === "error" ? "alert" : "status"}
+                  aria-live={operationStatus?.kind === "error" ? "assertive" : "polite"}
+                >
+                  {operationStatus?.message ??
+                    "Unsaved draft preserved while Flapstack remains open. Save before quitting."}
+                </div>
+              )}
+
               {editor.conflict && (
                 <section
                   className="border-b border-red-500/40 bg-red-500/5 p-4"
@@ -455,7 +588,11 @@ export function ProjectVaultView() {
                         Current version {editor.conflict.version} and your draft are both preserved.
                         Review the diff, then choose one explicitly.
                       </p>
-                      <div className="mt-3 max-h-52 overflow-auto rounded-md border bg-background font-mono text-xs">
+                      <div
+                        className="mt-3 max-h-52 overflow-auto rounded-md border bg-background font-mono text-xs"
+                        role="region"
+                        aria-label="Conflict diff between current version and local draft"
+                      >
                         {conflictDiff.map((part, index) => (
                           <pre
                             key={index}
@@ -494,12 +631,13 @@ export function ProjectVaultView() {
                 {editMode ? (
                   <Textarea
                     value={editor.draft}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      setOperationStatus(null)
                       setEditors((states) => ({
                         ...states,
                         [selectedSectionId!]: updateVaultEditorDraft(editor, event.target.value),
                       }))
-                    }
+                    }}
                     className="h-full min-h-full resize-none rounded-none border-0 p-6 font-mono text-sm shadow-none focus-visible:ring-0"
                     aria-label={`Edit ${selectedSection.title} Markdown`}
                     spellCheck={false}
@@ -528,7 +666,11 @@ export function ProjectVaultView() {
               </Button>
             </div>
             <div className="border-b p-2">
-              {(backupsQuery.data ?? []).length === 0 ? (
+              {backupsQuery.error ? (
+                <p className="p-2 text-xs text-red-600" role="alert">
+                  Version history unavailable: {backupsQuery.error.message}
+                </p>
+              ) : (backupsQuery.data ?? []).length === 0 ? (
                 <p className="p-2 text-xs text-muted-foreground">No earlier versions yet.</p>
               ) : (
                 (backupsQuery.data ?? []).map((backup) => (
@@ -554,6 +696,10 @@ export function ProjectVaultView() {
             <div className="min-h-0 flex-1 overflow-auto p-4">
               {backupQuery.isFetching ? (
                 <LoadingState label="Loading backup…" />
+              ) : backupQuery.error ? (
+                <p className="text-xs text-red-600" role="alert">
+                  Backup preview unavailable: {backupQuery.error.message}
+                </p>
               ) : backupQuery.data ? (
                 <ChatMarkdownRenderer content={backupQuery.data.content} size="sm" />
               ) : (
@@ -580,6 +726,9 @@ export function ProjectVaultView() {
             <AlertDialogTitle>Restore this backup?</AlertDialogTitle>
             <AlertDialogDescription>
               The current content remains recoverable. The selected backup becomes a new version.
+              {editor && hasVaultEditorChanges(editor)
+                ? " Your unsaved draft will be discarded only after you confirm."
+                : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogBody className="text-sm">
@@ -615,143 +764,60 @@ function VaultHeader({ projectName, onClose }: { projectName: string; onClose: (
   )
 }
 
-function SectionTree({
-  groups,
-  sections,
-  selected,
-  editors,
-  itemRefs,
-  onSelect,
+function ErrorState({
+  title,
+  message,
+  onRetry,
+  secondaryAction,
 }: {
-  groups: typeof SECTION_GROUPS
-  sections: Array<{ sectionId: string; title: string; sectionType: string }>
-  selected: SectionId | null
-  editors: Partial<Record<SectionId, VaultEditorState>>
-  itemRefs: React.MutableRefObject<Map<SectionId, HTMLButtonElement>>
-  onSelect: (id: SectionId) => void
-}) {
-  const visibleIds = groups.flatMap((group) =>
-    group.ids.filter((id) => sections.some((section) => section.sectionId === id)),
-  )
-  const onTreeKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, id: SectionId) => {
-    const index = visibleIds.indexOf(id)
-    const targetIndex =
-      event.key === "ArrowDown"
-        ? index + 1
-        : event.key === "ArrowUp"
-          ? index - 1
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? visibleIds.length - 1
-              : -1
-    if (targetIndex < 0 || targetIndex >= visibleIds.length) return
-    event.preventDefault()
-    itemRefs.current.get(visibleIds[targetIndex]!)?.focus()
-  }
-  return (
-    <div className="min-h-0 flex-1 overflow-auto p-2" role="tree" aria-label="Typed vault sections">
-      {groups.map((group) => {
-        const groupSections = group.ids
-          .map((id) => sections.find((section) => section.sectionId === id))
-          .filter(Boolean)
-        if (groupSections.length === 0) return null
-        return (
-          <div key={group.label} role="group" aria-label={group.label} className="mb-3">
-            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {group.label}
-            </div>
-            {groupSections.map((section) => {
-              const id = section!.sectionId as SectionId
-              const editor = editors[id]
-              const changed = editor ? hasVaultEditorChanges(editor) : false
-              return (
-                <button
-                  key={id}
-                  ref={(node) => {
-                    if (node) itemRefs.current.set(id, node)
-                    else itemRefs.current.delete(id)
-                  }}
-                  type="button"
-                  role="treeitem"
-                  aria-selected={selected === id}
-                  tabIndex={selected === id ? 0 : -1}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted",
-                    selected === id && "bg-muted",
-                  )}
-                  onClick={() => onSelect(id)}
-                  onKeyDown={(event) => onTreeKeyDown(event, id)}
-                >
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{section!.title}</span>
-                  {editor?.conflict ? (
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-600" aria-label="Conflict" />
-                  ) : changed ? (
-                    <Circle
-                      className="h-2.5 w-2.5 fill-amber-500 text-amber-500"
-                      aria-label="Unsaved changes"
-                    />
-                  ) : (
-                    <Check className="h-3.5 w-3.5 text-muted-foreground/50" aria-label="Saved" />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function SearchResults({
-  results,
-  loading,
-  onSelect,
-}: {
-  results: Array<{ sectionId: string; title: string; snippet: string; externallyModified: boolean }>
-  loading: boolean
-  onSelect: (id: string) => void
+  title: string
+  message: string
+  onRetry: () => void
+  secondaryAction?: { label: string; onClick: () => void }
 }) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-2" aria-live="polite">
-      {loading && results.length === 0 ? (
-        <p className="p-2 text-xs text-muted-foreground">Searching…</p>
-      ) : results.length === 0 ? (
-        <p className="p-2 text-xs text-muted-foreground">No results in this vault.</p>
-      ) : (
-        results.map((result) => (
-          <button
-            key={result.sectionId}
-            type="button"
-            data-vault-search-result
-            className="mb-1 w-full rounded-md border border-transparent p-2 text-left hover:border-border hover:bg-muted"
-            onClick={() => onSelect(result.sectionId)}
-          >
-            <span className="flex items-center gap-1 text-xs font-medium">
-              {result.title}
-              {result.externallyModified && (
-                <AlertTriangle
-                  className="h-3 w-3 text-red-600"
-                  aria-label="Changed outside Flapstack"
-                />
-              )}
-            </span>
-            <span className="mt-1 line-clamp-3 block text-[11px] text-muted-foreground">
-              {result.snippet}
-            </span>
-          </button>
-        ))
-      )}
+    <div className="flex h-full flex-1 items-center justify-center p-6">
+      <section
+        className="max-w-lg rounded-lg border border-red-500/30 bg-red-500/5 p-5"
+        aria-label={title}
+      >
+        <AlertTriangle className="mb-3 h-6 w-6 text-red-600" aria-hidden="true" />
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <p
+          className="mt-2 break-words text-xs text-muted-foreground"
+          role="alert"
+          aria-live="assertive"
+        >
+          {message}
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Existing vault files were not changed. Check the registered root, file permissions, or
+          version history before retrying.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <Button size="sm" variant="outline" onClick={onRetry}>
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" /> Retry
+          </Button>
+          {secondaryAction && (
+            <Button size="sm" variant="outline" onClick={secondaryAction.onClick}>
+              <Clock3 className="mr-2 h-4 w-4" aria-hidden="true" />
+              {secondaryAction.label}
+            </Button>
+          )}
+        </div>
+      </section>
     </div>
   )
 }
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex h-full flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-      <Loader2 className="h-4 w-4 animate-spin" />
+    <div
+      className="flex h-full flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
       {label}
     </div>
   )

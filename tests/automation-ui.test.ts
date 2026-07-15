@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AutomationControlRecord } from "../src/main/lib/automation/control-service"
 import { AutomationUiService } from "../src/main/lib/automation/ui-service"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
@@ -17,6 +17,10 @@ import {
   previewLifecycle,
   previewUpdate,
 } from "../src/renderer/features/automations/automation-ui-model"
+import {
+  collectNewAutomationInboxNotifications,
+  moveAutomationInboxFocus,
+} from "../src/renderer/features/automations/inbox-state"
 
 const directories: string[] = []
 
@@ -110,6 +114,49 @@ describe("automation accessibility contract", () => {
       "Show unread automation inbox items only",
     ])
     expect(new Set(Object.values(AUTOMATION_A11Y)).size).toBe(Object.keys(AUTOMATION_A11Y).length)
+  })
+
+  it("moves DOM focus with arrow-key inbox selection", () => {
+    const firstFocus = vi.fn()
+    const secondFocus = vi.fn()
+    const elements = new Map([
+      ["first", { focus: firstFocus }],
+      ["second", { focus: secondFocus }],
+    ])
+
+    expect(
+      moveAutomationInboxFocus({
+        direction: "next",
+        currentIndex: 0,
+        itemIds: ["first", "second"],
+        elements,
+      }),
+    ).toBe(1)
+    expect(secondFocus).toHaveBeenCalledOnce()
+    expect(firstFocus).not.toHaveBeenCalled()
+  })
+})
+
+describe("automation inbox notifications", () => {
+  const item = (id: string, unread = true) => ({
+    id,
+    unread,
+    title: id,
+    body: null,
+    automationName: "Review",
+    kind: "completed",
+    chatId: "chat-1",
+  })
+
+  it("seeds existing inbox items, then emits only new unread results", () => {
+    const initial = collectNewAutomationInboxNotifications([item("existing")], null)
+    expect(initial.notifications).toEqual([])
+
+    const update = collectNewAutomationInboxNotifications(
+      [item("new"), item("read", false), item("existing")],
+      initial.currentIds,
+    )
+    expect(update.notifications.map((entry) => entry.id)).toEqual(["new"])
   })
 })
 

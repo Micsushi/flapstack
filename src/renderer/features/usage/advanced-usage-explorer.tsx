@@ -86,7 +86,7 @@ export function AdvancedUsageExplorer() {
   })
   const deleteView = trpc.usage.deleteExplorerView.useMutation({
     onSuccess: () => {
-      dispatch({ type: "message", message: "Saved view deleted." })
+      dispatch({ type: "deleted-view" })
       setSavedViewName("")
       void utils.usage.listExplorerViews.invalidate()
     },
@@ -162,6 +162,11 @@ export function AdvancedUsageExplorer() {
   }
 
   function loadView(id: string) {
+    if (!id) {
+      dispatch({ type: "new-view" })
+      setSavedViewName("")
+      return
+    }
     const view = views.data?.find((item) => item.id === id)
     if (!view) return
     dispatch({ type: "load-view", view })

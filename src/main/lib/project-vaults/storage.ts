@@ -65,6 +65,13 @@ export type ProjectVaultWriteHooks = {
   afterContentWrite?: () => void | Promise<void>
 }
 
+export type ProjectVaultRestoreHooks = {
+  /** Test seam for proving missing-file recovery cleanup ownership. */
+  afterMissingContentWrite?: () => void | Promise<void>
+}
+
+class ProjectVaultCleanupRefusedError extends Error {}
+
 export async function scaffoldProjectVault(
   database: Database,
   input: {
@@ -437,13 +444,89 @@ export async function restoreProjectVaultSectionBackup(
     backupId: string
     expectedVersion: number
   },
+  hooks: ProjectVaultRestoreHooks = {},
 ): Promise<SectionRow> {
   const backup = await readProjectVaultSectionBackup(database, input)
-  return writeProjectVaultSection(database, {
-    projectId: input.projectId,
-    sectionId: input.sectionId,
-    expectedVersion: input.expectedVersion,
-    content: backup.content,
+  try {
+    return await writeProjectVaultSection(database, {
+      projectId: input.projectId,
+      sectionId: input.sectionId,
+      expectedVersion: input.expectedVersion,
+      content: backup.content,
+    })
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
+  }
+
+  return withVaultMutationLock(input.projectId, async () => {
+    assertProjectVaultContentSafe(backup.content)
+    const { vault, section, root } = getVerifiedSection(database, input)
+    if (section.version !== input.expectedVersion) {
+      throw new ProjectVaultConflictError(
+        "Project vault section version is stale.",
+        section.version,
+        section.contentHash,
+      )
+    }
+    try {
+      const current = await readFileInsideRoot(root.canonicalPath, section.relativePath, {
+        maxBytes: MAX_VAULT_SECTION_BYTES,
+      })
+      throw new ProjectVaultConflictError(
+        "Project vault section reappeared before missing-file recovery.",
+        section.version,
+        sha256(current),
+      )
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error
+    }
+
+    const restored = Buffer.from(backup.content, "utf8")
+    const restoredHash = sha256(restored)
+    await writeFileInsideRoot(
+      root.canonicalPath,
+      section.relativePath,
+      { data: restored },
+      { createParents: false, expectedSha256: null },
+    )
+    try {
+      await hooks.afterMissingContentWrite?.()
+      return database.transaction((tx) => {
+        const updated = tx
+          .update(projectVaultSections)
+          .set({
+            version: section.version + 1,
+            contentHash: restoredHash,
+            byteLength: restored.byteLength,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(projectVaultSections.projectId, input.projectId),
+              eq(projectVaultSections.sectionId, input.sectionId),
+              eq(projectVaultSections.version, section.version),
+              eq(projectVaultSections.contentHash, section.contentHash),
+            ),
+          )
+          .returning()
+          .get()
+        if (!updated) {
+          throw new ProjectVaultConflictError(
+            "Project vault section version is stale.",
+            section.version,
+            section.contentHash,
+          )
+        }
+        tx.update(projectVaults)
+          .set({ updatedAt: new Date() })
+          .where(eq(projectVaults.projectId, vault.projectId))
+          .run()
+        return updated
+      })
+    } catch (error) {
+      await removeVaultFileIfContentMatches(root.canonicalPath, section.relativePath, restoredHash)
+      throw error
+    }
   })
 }
 
@@ -688,6 +771,28 @@ async function removeVaultFile(rootPath: string, relativePath: string): Promise<
   }
 }
 
+async function removeVaultFileIfContentMatches(
+  rootPath: string,
+  relativePath: string,
+  expectedHash: string,
+): Promise<void> {
+  try {
+    await actOnPathInsideRoot(rootPath, relativePath, (targetPath) => rm(targetPath), {
+      beforeCommit: async () => {
+        const current = await readFileInsideRoot(rootPath, relativePath, {
+          maxBytes: MAX_VAULT_SECTION_BYTES,
+        })
+        if (sha256(current) !== expectedHash) {
+          throw new ProjectVaultCleanupRefusedError()
+        }
+      },
+    })
+  } catch {
+    // Cleanup is ownership-conditional and best effort. If another process
+    // replaced or changed the recovered file, preserve its content.
+  }
+}
+
 async function assertTreeContainsNoSymlinks(rootPath: string): Promise<void> {
   for (const entry of await readdir(rootPath, { withFileTypes: true })) {
     const path = resolve(rootPath, entry.name)
@@ -706,6 +811,10 @@ async function pathExists(path: string): Promise<boolean> {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return false
     throw error
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT"
 }
 
 function sha256(content: Uint8Array): string {

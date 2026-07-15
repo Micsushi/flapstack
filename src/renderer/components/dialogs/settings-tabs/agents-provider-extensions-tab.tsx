@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai"
-import { Copy, Pencil, Plus, RefreshCw, Search, ShieldOff, Trash2 } from "lucide-react"
+import { Copy, Pencil, Plus, RefreshCw, RotateCcw, Search, ShieldOff, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { toast } from "sonner"
 import type {
@@ -10,6 +10,7 @@ import type {
   HookDraft,
   HookRecord,
   HookValidationResult,
+  NativeExtensionBackupReference,
   NativeExtensionMutationPreview,
   NativeExtensionTarget,
   ResolvedExtensionEnablement,
@@ -21,11 +22,15 @@ import {
   exactPolicyDiff,
   extensionManagerHarnesses,
   extensionManagerKinds,
+  extensionManagerInventoryStatus,
+  extensionManagerPolicyMutationCwd,
   extensionManagerReducer,
   extensionManagerScopes,
   extensionManagerSources,
   filterExtensionManagerRows,
   nextExtensionSelection,
+  reverseUnifiedDiff,
+  verifiedExtensionManagerProject,
   type ExtensionManagerKind,
   type ExtensionManagerRow,
 } from "../../../features/settings/extension-manager-state"
@@ -137,14 +142,32 @@ type ActionPreview =
       draft: HookDraft
     }
   | {
-      type: "hook-disable"
+      type: "hook-lifecycle"
       title: string
       path: string
       support: string
       diff: string
       warnings: string[]
       hookId: string
+      action: "validate" | "dry-run" | "enable" | "disable"
     }
+  | {
+      type: "restore"
+      title: string
+      path: string
+      support: string
+      diff: string
+      warnings: string[]
+      target: NativeExtensionTarget
+      backupId: string
+    }
+
+type RecentBackup = {
+  target: NativeExtensionTarget
+  path: string
+  backup: NativeExtensionBackupReference
+  restoreDiff: string
+}
 
 type Draft = {
   harness: ExtensionHarness
@@ -184,8 +207,9 @@ export function AgentsProviderExtensionsTab({
     initialKind,
     createExtensionManagerState,
   )
-  const [draft, setDraft] = useState<Draft>({ ...emptyDraft, kind: nativeKind(initialKind) })
+  const [draft, setDraft] = useState<Draft>({ ...emptyDraft, kind: draftKind(initialKind) })
   const [preview, setPreview] = useState<ActionPreview | null>(null)
+  const [recentBackup, setRecentBackup] = useState<RecentBackup | null>(null)
   const [policyScope, setPolicyScope] = useState<"user" | "project" | "task">(
     selectedProject ? "project" : "user",
   )
@@ -194,31 +218,57 @@ export function AgentsProviderExtensionsTab({
   )
   const listRefs = useRef(new Map<string, HTMLButtonElement>())
   const searchRef = useRef<HTMLInputElement>(null)
+  const restoreInventoryFocus = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (state.selectedId) listRefs.current.get(state.selectedId)?.focus()
+      else searchRef.current?.focus()
+    })
+  }, [state.selectedId])
 
   const tasks = trpc.tasks.list.useQuery(
     { projectId: selectedProject?.id, includeArchived: false },
     { enabled: Boolean(selectedProject) },
   )
-  const resolvedState = trpc.providerExtensions.getResolvedState.useQuery({
-    cwd: selectedProject?.path,
-    projectId: selectedProject?.id,
-    taskId: selectedProject?.id && taskId ? taskId : undefined,
-  })
+  const userResolvedState = trpc.providerExtensions.getResolvedState.useQuery({})
+  const scopedResolvedState = trpc.providerExtensions.getResolvedState.useQuery(
+    {
+      cwd: selectedProject?.path,
+      projectId: policyScope === "user" ? undefined : selectedProject?.id,
+      taskId: policyScope === "task" && selectedProject?.id && taskId ? taskId : undefined,
+    },
+    { enabled: Boolean(selectedProject) },
+  )
+  const resolvedState = selectedProject ? scopedResolvedState : userResolvedState
+  const verifiedProject = verifiedExtensionManagerProject(
+    selectedProject,
+    scopedResolvedState.isSuccess,
+  )
+  const resolvedInventory = verifiedProject
+    ? (scopedResolvedState.data ?? [])
+    : (userResolvedState.data ?? [])
   const capabilities = trpc.providerExtensions.getCapabilities.useQuery()
   const hooks = trpc.hooksManagement.listInventory.useQuery(undefined)
   const applyNative = trpc.providerExtensions.applyNativeMutation.useMutation()
   const applyCopy = trpc.providerExtensions.applyCrossHarnessCopy.useMutation()
+  const restoreNative = trpc.providerExtensions.restoreNativeBackup.useMutation()
   const setPolicy = trpc.providerExtensions.setEnablementPolicy.useMutation()
   const importHook = trpc.hooksManagement.importHook.useMutation()
+  const validateHook = trpc.hooksManagement.validateHook.useMutation()
+  const dryRunHook = trpc.hooksManagement.dryRunHook.useMutation()
   const setHookEnabled = trpc.hooksManagement.setEnabled.useMutation()
 
   const refresh = useCallback(async () => {
-    await Promise.all([resolvedState.refetch(), capabilities.refetch(), hooks.refetch()])
-  }, [capabilities, hooks, resolvedState])
+    await Promise.all([
+      userResolvedState.refetch(),
+      ...(selectedProject ? [scopedResolvedState.refetch()] : []),
+      capabilities.refetch(),
+      hooks.refetch(),
+    ])
+  }, [capabilities, hooks, scopedResolvedState, selectedProject, userResolvedState])
 
   useEffect(() => {
     dispatch({ type: "filter", key: "kind", value: initialKind })
-    setDraft((current) => ({ ...current, kind: nativeKind(initialKind) }))
+    setDraft((current) => ({ ...current, kind: draftKind(initialKind) }))
   }, [initialKind])
 
   useEffect(() => {
@@ -236,7 +286,7 @@ export function AgentsProviderExtensionsTab({
   const items = useMemo<ManagerItem[]>(() => {
     const registry = capabilities.data?.capabilities ?? []
     const byId = new Map(registry.map((capability) => [capability.id, capability]))
-    const nativeRows = (resolvedState.data ?? []).flatMap((entry) => {
+    const nativeRows = resolvedInventory.flatMap((entry) => {
       const capability = byId.get(
         `${entry.resolved.target.harness}:${entry.resolved.target.kind}:${entry.resolved.target.nativeScope}`,
       )
@@ -283,13 +333,20 @@ export function AgentsProviderExtensionsTab({
       ]
     })
     return [...nativeRows, ...hookRows]
-  }, [capabilities.data, hooks.data, resolvedState.data])
+  }, [capabilities.data, hooks.data, resolvedInventory])
 
   const visibleItems = useMemo(
     () => filterExtensionManagerRows(items, state.filters) as ManagerItem[],
     [items, state.filters],
   )
   const visibleIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems])
+  const inventoryError = resolvedState.error ?? capabilities.error ?? hooks.error
+  const inventoryStatus = extensionManagerInventoryStatus({
+    count: visibleItems.length,
+    loading: resolvedState.isLoading || capabilities.isLoading || hooks.isLoading,
+    fetching: resolvedState.isFetching || capabilities.isFetching || hooks.isFetching,
+    hasError: Boolean(inventoryError),
+  })
   useEffect(() => {
     dispatch({ type: "reconcile", visibleIds })
   }, [visibleIds])
@@ -300,25 +357,32 @@ export function AgentsProviderExtensionsTab({
     (selected.native.extension.capabilities.create ||
       selected.native.extension.capabilities.update ||
       selected.native.extension.capabilities.delete)
-      ? targetFor(selected.native, selectedProject?.path)
+      ? targetFor(selected.native, verifiedProject?.path)
       : null
-  const policyLocation = buildPolicyLocation(policyScope, selectedProject?.id, taskId)
+  const policyLocation = buildPolicyLocation(policyScope, verifiedProject?.id, taskId)
+  const scopedPolicyAvailable =
+    policyScope === "user" || !selectedProject || Boolean(verifiedProject)
   const policySupported = Boolean(
     selected?.native &&
     policyLocation &&
+    scopedPolicyAvailable &&
+    !(policyScope === "task" && tasks.error) &&
     selected.native.resolved.support === "supported" &&
     selected.native.resolved.supportedScopes.includes(policyScope),
   )
   const pending =
     applyNative.isPending ||
     applyCopy.isPending ||
+    restoreNative.isPending ||
     setPolicy.isPending ||
     importHook.isPending ||
+    validateHook.isPending ||
+    dryRunHook.isPending ||
     setHookEnabled.isPending
 
   const beginCreate = () => {
     setPreview(null)
-    setDraft({ ...emptyDraft, kind: nativeKind(state.filters.kind) })
+    setDraft({ ...emptyDraft, kind: draftKind(state.filters.kind) })
     dispatch({ type: "begin", flow: "create" })
   }
 
@@ -359,6 +423,24 @@ export function AgentsProviderExtensionsTab({
     dispatch({ type: "begin", flow: "delete" })
   }
 
+  const beginRestore = () => {
+    if (!recentBackup) return
+    setPreview({
+      type: "restore",
+      title: "Restore native extension backup",
+      path: recentBackup.path,
+      support: "supported · stale-safe",
+      diff: recentBackup.restoreDiff,
+      warnings: [
+        `Backup ${recentBackup.backup.backupId} restores the exact previous native content.`,
+        "Restore is refused if provider-native content changed after this backup.",
+      ],
+      target: recentBackup.target,
+      backupId: recentBackup.backup.backupId,
+    })
+    dispatch({ type: "preview-ready" })
+  }
+
   const preparePreview = useCallback(async () => {
     try {
       let next: ActionPreview
@@ -367,7 +449,7 @@ export function AgentsProviderExtensionsTab({
           name: draft.name,
           harness: hookHarness(draft.harness),
           scope: draft.scope,
-          ...(draft.scope === "project" ? { cwd: selectedProject?.path } : {}),
+          ...(draft.scope === "project" ? { cwd: verifiedProject?.path } : {}),
           event: draft.event,
           command: draft.command,
           timeoutMs: draft.timeoutMs,
@@ -378,7 +460,7 @@ export function AgentsProviderExtensionsTab({
           title: "Import hook disabled",
           path:
             draft.scope === "project"
-              ? `${selectedProject?.path} · managed hook registry`
+              ? `${verifiedProject?.path} · managed hook registry`
               : "Flapstack managed user hook registry",
           support: validation.valid ? "validated preview" : "unsupported until fixed",
           diff: `+ ${JSON.stringify({ ...hookDraft, enabled: false }, null, 2)}`,
@@ -387,7 +469,7 @@ export function AgentsProviderExtensionsTab({
           draft: hookDraft,
         }
       } else if (state.flow === "create") {
-        const target = draftTarget(draft, selectedProject?.path)
+        const target = draftTarget(draft, verifiedProject?.path)
         const changes = nativeChanges(draft)
         const result = await trpcClient.providerExtensions.previewNativeMutation.query({
           operation: "create",
@@ -404,7 +486,7 @@ export function AgentsProviderExtensionsTab({
         })
         next = nativePreview("Edit native extension", "update", selectedTarget, changes, result)
       } else if (state.flow === "copy" && selectedTarget) {
-        const target = draftTarget({ ...draft, kind: selectedTarget.kind }, selectedProject?.path)
+        const target = draftTarget({ ...draft, kind: selectedTarget.kind }, verifiedProject?.path)
         const result = await trpcClient.providerExtensions.previewCrossHarnessCopy.query({
           source: selectedTarget,
           target,
@@ -457,15 +539,73 @@ export function AgentsProviderExtensionsTab({
           location: policyLocation,
           enabled,
         }
-      } else if (state.flow === "policy" && selected?.hook?.enabled) {
+      } else if (state.flow?.startsWith("hook-") && selected?.hook) {
+        const action = state.flow.slice("hook-".length) as
+          "validate" | "dry-run" | "enable" | "disable"
+        const validation =
+          action === "disable"
+            ? null
+            : await trpcClient.hooksManagement.previewCommand.query({
+                id: selected.hook.id,
+                ...selected.hook.definition,
+              })
+        const validationCurrent =
+          Boolean(validation?.valid) &&
+          selected.hook.validation?.revision === selected.hook.revision
+        const dryRunCurrent =
+          selected.hook.dryRun?.success && selected.hook.dryRun.revision === selected.hook.revision
+        const supported =
+          (action === "validate" && Boolean(validation?.valid)) ||
+          (action === "dry-run" && validationCurrent) ||
+          (action === "enable" && validationCurrent && dryRunCurrent && !selected.hook.enabled) ||
+          (action === "disable" && selected.hook.enabled)
+        const after =
+          action === "validate"
+            ? {
+                state: validation?.valid ? "validated" : "discovered",
+                enabled: false,
+                validation: validation?.valid ? "passed-current-revision" : "failed",
+                dryRun: null,
+              }
+            : action === "dry-run"
+              ? {
+                  state: "dry-run-passed-on-success",
+                  enabled: false,
+                  approval: "tier-3-required",
+                  command: validation?.preview?.exactCommand,
+                }
+              : action === "enable"
+                ? { state: "enabled", enabled: true, approval: "tier-3-required" }
+                : { state: "disabled", enabled: false, approval: "not-required" }
         next = {
-          type: "hook-disable",
-          title: "Disable managed hook",
+          type: "hook-lifecycle",
+          title:
+            action === "validate"
+              ? "Validate managed hook"
+              : action === "dry-run"
+                ? "Run bounded hook dry-run"
+                : action === "enable"
+                  ? "Enable managed hook"
+                  : "Disable managed hook",
           path: selected.path,
-          support: "supported",
-          diff: `- ${JSON.stringify({ enabled: true, state: selected.hook.state })}\n+ ${JSON.stringify({ enabled: false, state: "disabled" })}`,
-          warnings: [],
+          support: supported ? "supported" : "unsupported",
+          diff: `- ${JSON.stringify({ id: selected.hook.id, path: selected.path, enabled: selected.hook.enabled, state: selected.hook.state })}\n+ ${JSON.stringify(after)}`,
+          warnings: [
+            ...(validation?.issues ?? []).map((issue) => `${issue.path}: ${issue.message}`),
+            ...(action === "dry-run"
+              ? [
+                  `Exact shell-free command: ${validation?.preview?.exactCommand ?? "unavailable"}`,
+                  `Tier 3 approval is required before a bounded ${selected.hook.definition.timeoutMs} ms dry-run.`,
+                ]
+              : action === "enable"
+                ? ["Tier 3 approval is required before enablement."]
+                : []),
+            ...(!supported && validation?.valid
+              ? [`The ${action} lifecycle preconditions are not complete for this revision.`]
+              : []),
+          ],
           hookId: selected.hook.id,
+          action,
         }
       } else {
         throw new Error("This action has no supported preview contract")
@@ -481,25 +621,39 @@ export function AgentsProviderExtensionsTab({
     policyScope,
     policySupported,
     selected,
-    selectedProject?.path,
     selectedTarget,
     state.flow,
+    verifiedProject?.path,
   ])
 
   useEffect(() => {
-    if ((state.flow === "policy" || state.flow === "delete") && !preview) void preparePreview()
+    if (
+      (state.flow === "policy" || state.flow === "delete" || state.flow?.startsWith("hook-")) &&
+      !preview
+    ) {
+      void preparePreview()
+    }
   }, [preparePreview, preview, state.flow])
 
   const confirmPreview = useCallback(async () => {
     if (!preview || !state.previewConfirmed) return
     try {
       if (preview.type === "native") {
-        await applyNative.mutateAsync({
+        const result = await applyNative.mutateAsync({
           operation: preview.operation,
           target: preview.target,
           ...(preview.changes ? { changes: preview.changes } : {}),
           expectedHash: preview.preview.beforeHash,
+          confirmationHash: preview.preview.confirmationHash,
         })
+        if (result.backup) {
+          setRecentBackup({
+            target: preview.target,
+            path: preview.path,
+            backup: result.backup,
+            restoreDiff: reverseUnifiedDiff(preview.diff),
+          })
+        }
       } else if (preview.type === "copy") {
         if (
           !preview.preview.canApply ||
@@ -508,7 +662,7 @@ export function AgentsProviderExtensionsTab({
         ) {
           throw new Error("Unsupported copy previews cannot be applied")
         }
-        await applyCopy.mutateAsync({
+        const result = await applyCopy.mutateAsync({
           source: preview.source,
           target: preview.target,
           collisionPolicy: preview.collisionPolicy,
@@ -516,37 +670,75 @@ export function AgentsProviderExtensionsTab({
           expectedTargetHash: preview.preview.targetBeforeHash,
           confirmationHash: preview.preview.confirmationHash,
         })
+        if (result.mutation.backup) {
+          setRecentBackup({
+            target: preview.target,
+            path: preview.path,
+            backup: result.mutation.backup,
+            restoreDiff: reverseUnifiedDiff(preview.diff),
+          })
+        }
       } else if (preview.type === "policy") {
         if (preview.support !== "supported") throw new Error("Unsupported policy cannot be applied")
         await setPolicy.mutateAsync({
           extensionId: preview.extensionId,
-          cwd: selectedProject?.path,
+          cwd: extensionManagerPolicyMutationCwd(preview.location.type, verifiedProject?.path),
           location: preview.location,
           enabled: preview.enabled,
         })
       } else if (preview.type === "hook-import") {
         if (!preview.validation.valid) throw new Error("Invalid hooks cannot be imported")
         await importHook.mutateAsync(preview.draft)
+      } else if (preview.type === "hook-lifecycle") {
+        if (preview.support !== "supported") {
+          throw new Error("Unsupported hook lifecycle action cannot be applied")
+        }
+        if (preview.action === "validate") {
+          const result = await validateHook.mutateAsync({ id: preview.hookId })
+          if (!result.validation?.valid) throw new Error("Hook validation failed")
+        } else if (preview.action === "dry-run") {
+          const result = await dryRunHook.mutateAsync({ id: preview.hookId })
+          if (!result.dryRun?.success) throw new Error("Hook dry-run did not pass")
+        } else {
+          await setHookEnabled.mutateAsync({
+            id: preview.hookId,
+            enabled: preview.action === "enable",
+          })
+        }
       } else {
-        await setHookEnabled.mutateAsync({ id: preview.hookId, enabled: false })
+        await restoreNative.mutateAsync({
+          target: preview.target,
+          backupId: preview.backupId,
+        })
+        setRecentBackup(null)
       }
       toast.success("Extension change applied", { description: preview.path })
       setPreview(null)
       dispatch({ type: "cancel" })
-      await refresh()
+      try {
+        await refresh()
+      } catch (error) {
+        toast.error("Extension inventory refresh failed", { description: errorMessage(error) })
+      } finally {
+        restoreInventoryFocus()
+      }
     } catch (error) {
       toast.error("Extension change failed", { description: errorMessage(error) })
     }
   }, [
     applyCopy,
     applyNative,
+    dryRunHook,
     importHook,
     preview,
     refresh,
-    selectedProject?.path,
+    restoreInventoryFocus,
+    restoreNative,
     setHookEnabled,
     setPolicy,
     state.previewConfirmed,
+    validateHook,
+    verifiedProject?.path,
   ])
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -576,9 +768,16 @@ export function AgentsProviderExtensionsTab({
               variant="ghost"
               size="icon"
               onClick={refresh}
+              disabled={inventoryStatus === "loading" || inventoryStatus === "refreshing"}
               aria-label="Refresh provider extensions"
             >
-              <RefreshCw className={cn("h-4 w-4", resolvedState.isFetching && "animate-spin")} />
+              <RefreshCw
+                className={cn(
+                  "h-4 w-4",
+                  (inventoryStatus === "loading" || inventoryStatus === "refreshing") &&
+                    "animate-spin",
+                )}
+              />
             </Button>
           </div>
           <div className="relative">
@@ -635,39 +834,74 @@ export function AgentsProviderExtensionsTab({
           className="flex-1 overflow-y-auto p-2 outline-none"
           role="listbox"
           aria-label="Extension inventory"
+          aria-busy={inventoryStatus === "loading" || inventoryStatus === "refreshing"}
           onKeyDown={onListKeyDown}
         >
-          {resolvedState.isLoading || capabilities.isLoading || hooks.isLoading ? (
-            <p className="p-3 text-xs text-muted-foreground">Discovering extensions…</p>
-          ) : visibleItems.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No matching extensions.</p>
+          {inventoryStatus === "loading" ? (
+            <p role="status" aria-live="polite" className="p-3 text-xs text-muted-foreground">
+              Discovering extensions…
+            </p>
+          ) : inventoryStatus === "error" ? (
+            <div role="alert" className="space-y-2 p-3 text-xs text-red-700">
+              <p>Extension inventory could not be loaded: {errorMessage(inventoryError)}</p>
+              <Button variant="outline" size="sm" onClick={() => void refresh()}>
+                Retry inventory
+              </Button>
+            </div>
           ) : (
-            visibleItems.map((item) => (
-              <button
-                key={item.id}
-                ref={(element) => {
-                  if (element) listRefs.current.set(item.id, element)
-                  else listRefs.current.delete(item.id)
-                }}
-                type="button"
-                role="option"
-                aria-selected={state.selectedId === item.id}
-                tabIndex={state.selectedId === item.id ? 0 : -1}
-                onClick={() => dispatch({ type: "select", id: item.id })}
-                className={cn(
-                  "mb-1 w-full rounded-md px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                  state.selectedId === item.id ? "bg-foreground/8" : "hover:bg-foreground/5",
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium">{item.name}</span>
-                  <SupportBadge support={item.support} />
-                </span>
-                <span className="mt-1 block truncate text-[10px] text-muted-foreground">
-                  {harnessLabels[item.harness]} · {kindLabels[item.kind]} · {item.scope}
-                </span>
-              </button>
-            ))
+            <>
+              {inventoryStatus === "stale-error" && (
+                <p role="alert" className="mb-2 rounded bg-red-500/10 p-2 text-xs text-red-700">
+                  Refresh failed. Showing last known extension inventory:{" "}
+                  {errorMessage(inventoryError)}
+                </p>
+              )}
+              {inventoryStatus === "refreshing" && (
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mb-2 p-2 text-xs text-muted-foreground"
+                >
+                  Refreshing extension truth. Existing results may be stale until discovery
+                  finishes.
+                </p>
+              )}
+              {inventoryStatus === "empty" ? (
+                <p role="status" className="p-3 text-xs text-muted-foreground">
+                  No matching extensions.
+                </p>
+              ) : (
+                visibleItems.map((item) => (
+                  <button
+                    key={item.id}
+                    ref={(element) => {
+                      if (element) listRefs.current.set(item.id, element)
+                      else listRefs.current.delete(item.id)
+                    }}
+                    type="button"
+                    role="option"
+                    aria-selected={state.selectedId === item.id}
+                    tabIndex={state.selectedId === item.id ? 0 : -1}
+                    onClick={() => dispatch({ type: "select", id: item.id })}
+                    className={cn(
+                      "mb-1 w-full rounded-md px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                      state.selectedId === item.id ? "bg-foreground/8" : "hover:bg-foreground/5",
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <HarnessBadge harness={item.harness} />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        {item.name}
+                      </span>
+                      <SupportBadge support={item.support} />
+                    </span>
+                    <span className="mt-1 block truncate text-[10px] text-muted-foreground">
+                      {kindLabels[item.kind]} · {sourceLabels[item.source]} · {item.scope}
+                    </span>
+                  </button>
+                ))
+              )}
+            </>
           )}
         </div>
         <div className="border-t border-border/70 p-2">
@@ -678,6 +912,21 @@ export function AgentsProviderExtensionsTab({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
+        {recentBackup && !preview && !state.flow && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex items-center justify-between gap-3 border-b border-border/70 bg-emerald-500/10 px-4 py-2 text-xs"
+          >
+            <span className="min-w-0 truncate">
+              This manager session can restore the latest backup for{" "}
+              <code>{recentBackup.path}</code>. Backup discovery is not persisted in the UI.
+            </span>
+            <Button variant="outline" size="sm" onClick={beginRestore}>
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Preview restore
+            </Button>
+          </div>
+        )}
         {preview ? (
           <PreviewPanel
             preview={preview}
@@ -686,13 +935,21 @@ export function AgentsProviderExtensionsTab({
             onConfirmed={(confirmed) => dispatch({ type: "confirm-preview", confirmed })}
             onBack={() => {
               setPreview(null)
-              if (state.flow === "policy" || state.flow === "delete") {
+              if (
+                state.flow === "policy" ||
+                state.flow === "delete" ||
+                state.flow?.startsWith("hook-")
+              ) {
                 dispatch({ type: "cancel" })
+                restoreInventoryFocus()
+              } else if (state.flow === null) {
+                restoreInventoryFocus()
               }
             }}
             onCancel={() => {
               setPreview(null)
               dispatch({ type: "cancel" })
+              restoreInventoryFocus()
             }}
             onApply={confirmPreview}
           />
@@ -701,9 +958,12 @@ export function AgentsProviderExtensionsTab({
             mode={state.flow}
             draft={draft}
             capabilities={capabilities.data?.capabilities ?? []}
-            hasProject={Boolean(selectedProject)}
+            hasProject={Boolean(verifiedProject)}
             onDraft={setDraft}
-            onCancel={() => dispatch({ type: "cancel" })}
+            onCancel={() => {
+              dispatch({ type: "cancel" })
+              restoreInventoryFocus()
+            }}
             onPreview={preparePreview}
           />
         ) : selected ? (
@@ -712,7 +972,8 @@ export function AgentsProviderExtensionsTab({
             policyScope={policyScope}
             taskId={taskId}
             tasks={tasks.data ?? []}
-            hasProject={Boolean(selectedProject)}
+            tasksError={tasks.error}
+            hasProject={Boolean(verifiedProject)}
             policySupported={policySupported}
             onPolicyScope={setPolicyScope}
             onTask={setTaskId}
@@ -722,6 +983,10 @@ export function AgentsProviderExtensionsTab({
             onPolicy={() => {
               setPreview(null)
               dispatch({ type: "begin", flow: "policy" })
+            }}
+            onHookAction={(action) => {
+              setPreview(null)
+              dispatch({ type: "begin", flow: `hook-${action}` })
             }}
           />
         ) : (
@@ -739,6 +1004,7 @@ function DetailPanel({
   policyScope,
   taskId,
   tasks,
+  tasksError,
   hasProject,
   policySupported,
   onPolicyScope,
@@ -747,11 +1013,13 @@ function DetailPanel({
   onCopy,
   onDelete,
   onPolicy,
+  onHookAction,
 }: {
   item: ManagerItem
   policyScope: "user" | "project" | "task"
   taskId: string
   tasks: Array<{ id: string; name: string }>
+  tasksError: unknown
   hasProject: boolean
   policySupported: boolean
   onPolicyScope: (scope: "user" | "project" | "task") => void
@@ -760,16 +1028,23 @@ function DetailPanel({
   onCopy: () => void
   onDelete: () => void
   onPolicy: () => void
+  onHookAction: (action: "validate" | "dry-run" | "enable" | "disable") => void
 }) {
+  const nativeAdapter = hasNativeAdapter(item.kind)
   const editable = Boolean(
-    item.native?.extension.capabilities.update && item.capability.mutations.includes("update"),
+    nativeAdapter &&
+    item.native?.extension.capabilities.update &&
+    item.capability.mutations.includes("update"),
   )
   const copyable = Boolean(
+    nativeAdapter &&
     item.native?.extension.capabilities.update &&
     ["skill", "command", "custom-agent"].includes(item.kind),
   )
   const deletable = Boolean(
-    item.native?.extension.capabilities.delete && item.capability.mutations.includes("delete"),
+    nativeAdapter &&
+    item.native?.extension.capabilities.delete &&
+    item.capability.mutations.includes("delete"),
   )
   const canDisable = item.hook ? item.hook.enabled : policySupported
   return (
@@ -778,6 +1053,7 @@ function DetailPanel({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold">{item.name}</h3>
+            <HarnessBadge harness={item.harness} />
             <SupportBadge support={item.support} />
             <span className="rounded bg-foreground/8 px-1.5 py-0.5 text-[10px]">
               {item.runtime}
@@ -792,6 +1068,7 @@ function DetailPanel({
             disabled={!editable}
             onClick={onEdit}
             title={editable ? undefined : "No native edit adapter"}
+            aria-describedby={!editable ? "extension-action-limitations" : undefined}
           >
             <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
           </Button>
@@ -801,6 +1078,7 @@ function DetailPanel({
             disabled={!copyable}
             onClick={onCopy}
             title={copyable ? undefined : "No cross-harness copy adapter"}
+            aria-describedby={!copyable ? "extension-action-limitations" : undefined}
           >
             <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy
           </Button>
@@ -811,6 +1089,7 @@ function DetailPanel({
             onClick={onDelete}
             title={deletable ? undefined : "No native delete adapter"}
             aria-label="Delete extension"
+            aria-describedby={!deletable ? "extension-action-limitations" : undefined}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -835,6 +1114,13 @@ function DetailPanel({
           </p>
         ))}
       </div>
+      {(!editable || !copyable || !deletable) && (
+        <p id="extension-action-limitations" role="note" className="text-xs text-muted-foreground">
+          {!nativeAdapter
+            ? `${kindLabels[item.kind]} entries have no approved native preview/apply/restore adapter; provider-native content stays unchanged.`
+            : "Unavailable actions are disabled by the native capability contract shown above."}
+        </p>
+      )}
       {item.native && (
         <div className="space-y-3 rounded-md border border-border p-4">
           <h4 className="text-xs font-semibold">Resolved enablement policy</h4>
@@ -848,22 +1134,33 @@ function DetailPanel({
               disabledValues={hasProject ? [] : ["project", "task"]}
             />
             {policyScope === "task" && (
-              <Filter
-                label="Task"
-                value={taskId || "none"}
-                values={["none", ...tasks.map((task) => task.id)]}
-                labels={Object.fromEntries([
-                  ["none", "Choose task"],
-                  ...tasks.map((task) => [task.id, task.name]),
-                ])}
-                onChange={(value) => onTask(value === "none" ? "" : value)}
-              />
+              <div className="space-y-1">
+                <Filter
+                  label="Task"
+                  value={taskId || "none"}
+                  values={["none", ...tasks.map((task) => task.id)]}
+                  labels={Object.fromEntries([
+                    ["none", "Choose task"],
+                    ...tasks.map((task) => [task.id, task.name]),
+                  ])}
+                  onChange={(value) => onTask(value === "none" ? "" : value)}
+                  disabled={Boolean(tasksError)}
+                />
+                {Boolean(tasksError) && (
+                  <p role="alert" className="text-xs text-red-700">
+                    Tasks could not be loaded: {errorMessage(tasksError)}
+                  </p>
+                )}
+              </div>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
             Resolved <strong>{item.native.resolved.enabled ? "enabled" : "disabled"}</strong> from{" "}
             {item.native.resolved.source}. Runtime enforcement:{" "}
             {item.native.resolved.runtimeEnforcement.support}.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Precedence: task override → project override → user default → fixed enabled default.
           </p>
           {!policySupported && (
             <p className="text-xs text-amber-700">
@@ -878,21 +1175,69 @@ function DetailPanel({
         </div>
       )}
       {item.hook && (
-        <div className="space-y-3 rounded-md border border-border p-4">
-          <h4 className="text-xs font-semibold">Managed hook lifecycle</h4>
+        <div
+          className="space-y-3 rounded-md border border-border p-4"
+          aria-labelledby="managed-hook-lifecycle-title"
+        >
+          <h4 id="managed-hook-lifecycle-title" className="text-xs font-semibold">
+            Managed hook lifecycle
+          </h4>
           <p className="text-xs text-muted-foreground">
             State: {item.hook.state}. Exact command: <code>{item.hook.definition.command}</code>.
           </p>
-          {item.hook.enabled ? (
-            <Button variant="outline" size="sm" onClick={onPolicy}>
-              <ShieldOff className="mr-1.5 h-3.5 w-3.5" /> Preview disable
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            <Fact
+              label="Validation"
+              value={
+                item.hook.validation?.valid && item.hook.validation.revision === item.hook.revision
+                  ? "Passed for current revision"
+                  : "Required"
+              }
+            />
+            <Fact
+              label="Dry-run"
+              value={
+                item.hook.dryRun?.success && item.hook.dryRun.revision === item.hook.revision
+                  ? "Passed for current revision"
+                  : "Required"
+              }
+            />
+          </dl>
+          <p className="text-xs text-amber-700">
+            Dry-run and enable require separate Tier 3 approvals. Native harness consumption remains{" "}
+            {item.capability.runtimeConsumption}.
+          </p>
+          <div className="flex flex-wrap gap-2" aria-label="Managed hook lifecycle actions">
+            <Button variant="outline" size="sm" onClick={() => onHookAction("validate")}>
+              Preview validation
             </Button>
-          ) : (
-            <p className="text-xs text-amber-700">
-              Enablement remains unavailable here until validation, dry-run, and Tier 3 approval are
-              complete.
-            </p>
-          )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !item.hook.validation?.valid || item.hook.validation.revision !== item.hook.revision
+              }
+              onClick={() => onHookAction("dry-run")}
+            >
+              Preview dry-run
+            </Button>
+            {item.hook.enabled ? (
+              <Button variant="outline" size="sm" onClick={() => onHookAction("disable")}>
+                <ShieldOff className="mr-1.5 h-3.5 w-3.5" /> Preview disable
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={
+                  !item.hook.dryRun?.success || item.hook.dryRun.revision !== item.hook.revision
+                }
+                onClick={() => onHookAction("enable")}
+              >
+                Preview enable
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -916,6 +1261,8 @@ function EditorPanel({
   onCancel: () => void
   onPreview: () => void
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => headingRef.current?.focus(), [])
   const isHook = draft.kind === "hook"
   const capability = capabilities.find(
     (entry) =>
@@ -923,13 +1270,23 @@ function EditorPanel({
   )
   const supported = isHook
     ? ["claude-code", "codex"].includes(draft.harness)
-    : mode === "copy"
-      ? capability?.mutations.includes("create")
-      : capability?.mutations.includes(mode === "edit" ? "update" : "create")
+    : hasNativeAdapter(draft.kind) &&
+      (mode === "copy"
+        ? capability?.mutations.includes("create")
+        : capability?.mutations.includes(mode === "edit" ? "update" : "create"))
   return (
-    <div className="mx-auto max-w-2xl space-y-5 p-6">
+    <div
+      className="mx-auto max-w-2xl space-y-5 p-6"
+      role="region"
+      aria-labelledby="extension-editor-title"
+    >
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">
+        <h3
+          ref={headingRef}
+          id="extension-editor-title"
+          tabIndex={-1}
+          className="text-sm font-semibold outline-none"
+        >
           {mode === "create"
             ? "New extension"
             : mode === "edit"
@@ -991,10 +1348,11 @@ function EditorPanel({
       >
         {supported
           ? `${capability?.inventory ?? "managed"} · target path and diff will be resolved before confirmation.`
-          : "This combination has no supported mutation adapter. No write will be offered."}
+          : `${kindLabels[draft.kind]} on ${harnessLabels[draft.harness]} has no approved native preview/apply/restore adapter. No provider-native write will be offered.`}
       </p>
       <Field label="Name">
         <Input
+          aria-label="Extension name"
           value={draft.name}
           onChange={(event) => onDraft({ ...draft, name: event.target.value })}
           disabled={mode === "edit"}
@@ -1004,12 +1362,14 @@ function EditorPanel({
         <>
           <Field label="Event">
             <Input
+              aria-label="Hook event"
               value={draft.event}
               onChange={(event) => onDraft({ ...draft, event: event.target.value })}
             />
           </Field>
           <Field label="Exact command">
             <Input
+              aria-label="Exact hook command"
               value={draft.command}
               onChange={(event) => onDraft({ ...draft, command: event.target.value })}
               className="font-mono"
@@ -1017,6 +1377,7 @@ function EditorPanel({
           </Field>
           <Field label="Dry-run timeout (ms)">
             <Input
+              aria-label="Hook dry-run timeout in milliseconds"
               type="number"
               min={100}
               max={10000}
@@ -1039,12 +1400,14 @@ function EditorPanel({
         <>
           <Field label="Description">
             <Input
+              aria-label="Extension description"
               value={draft.description}
               onChange={(event) => onDraft({ ...draft, description: event.target.value })}
             />
           </Field>
           <Field label="Instructions">
             <Textarea
+              aria-label="Extension instructions"
               value={draft.content}
               onChange={(event) => onDraft({ ...draft, content: event.target.value })}
               rows={18}
@@ -1074,6 +1437,8 @@ function PreviewPanel({
   onCancel: () => void
   onApply: () => void
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => headingRef.current?.focus(), [])
   const applicable =
     preview.support !== "unsupported" &&
     preview.support !== "unsupported until fixed" &&
@@ -1081,7 +1446,12 @@ function PreviewPanel({
   return (
     <div className="mx-auto max-w-3xl space-y-5 p-6" aria-labelledby="extension-preview-title">
       <div className="flex items-center justify-between">
-        <h3 id="extension-preview-title" className="text-sm font-semibold">
+        <h3
+          ref={headingRef}
+          id="extension-preview-title"
+          tabIndex={-1}
+          className="text-sm font-semibold outline-none"
+        >
           {preview.title}
         </h3>
         <SupportBadge support={applicable ? "supported" : "unsupported"} />
@@ -1204,8 +1574,31 @@ function SupportBadge({ support }: { support: string }) {
   )
 }
 
-function nativeKind(kind: ExtensionManagerKind): ExtensionKind {
-  return kind === "all" || kind === "plugin" || kind === "mcp" ? "skill" : kind
+function HarnessBadge({ harness }: { harness: ExtensionHarness }) {
+  const tone =
+    harness === "claude-code"
+      ? "bg-orange-500/10 text-orange-700"
+      : harness === "codex"
+        ? "bg-blue-500/10 text-blue-700"
+        : harness === "cursor-agent"
+          ? "bg-violet-500/10 text-violet-700"
+          : "bg-foreground/8 text-muted-foreground"
+  return (
+    <span
+      aria-label={`${harnessLabels[harness]} harness`}
+      className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold", tone)}
+    >
+      {harnessLabels[harness]}
+    </span>
+  )
+}
+
+function draftKind(kind: ExtensionManagerKind): ExtensionKind {
+  return kind === "all" ? "skill" : kind
+}
+
+function hasNativeAdapter(kind: ExtensionKind): boolean {
+  return kind === "skill" || kind === "command" || kind === "custom-agent"
 }
 
 function hookHarness(harness: ExtensionHarness): "claude-code" | "codex" {

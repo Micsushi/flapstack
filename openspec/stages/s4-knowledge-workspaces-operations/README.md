@@ -14,18 +14,20 @@ Delivery order:
 7. [S4-F7 Advanced usage and limits](features/s4-f7-advanced-usage-limits/README.md)
 8. [S4-F8 Import/export and private sync](features/s4-f8-import-export-private-sync/README.md)
 9. [S4-F9 Plan and Kanban views](features/s4-f9-plan-kanban/README.md)
-10. [S4-F10 Cross-agent mobile companion](features/s4-f10-mobile-companion/README.md)
+10. [S4-F11 Agent runtimes](features/s4-f11-agent-runtimes/README.md)
+11. [S4-F12 Agent profiles and personalities](features/s4-f12-agent-profiles-personalities/README.md)
 
-All ten features are promoted into authoritative OpenSpec changes containing
-72 bounded tasks. Dependency waves and pickup rules live in
+All eleven features are promoted into authoritative OpenSpec changes containing
+87 bounded tasks. Dependency waves and pickup rules live in
 `docs/stage4-execution-plan.md`.
 
-Entry gate: Stage 3 implementation is merged, but Stage 4 implementation must
-not claim an integrated start until the remaining Stage 3 live/provider/package
-evidence is closed or recorded as an explicit blocker.
+Entry gate: Agent Runtime planning targets clean Stage 3 `stage3-final` at
+`a674784`. Stage 4 must sync that baseline and must not claim an integrated
+start until remaining Stage 3 live/provider/package evidence is closed or
+recorded as an explicit blocker.
 
 Stage verification: `docs/stage4-full-feature-test-matrix.md` plus Node 22
-`npm run check`, strict validation of every Stage 4 OpenSpec change, verified
+`npm run check`, strict validation of all eleven Stage 4 OpenSpec changes, verified
 `Flapstack Dev` live walkthroughs, and packaged macOS preview smoke.
 
 Stage 4 is the final planned stage for now. There is no Stage 5 roadmap.

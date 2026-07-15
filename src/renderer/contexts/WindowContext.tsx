@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from "react"
+import type { WorkspaceWindowInitialParams } from "../../shared/workspace-window-ownership"
 
 const WindowContext = createContext<string>("default")
 
@@ -61,33 +62,73 @@ export function getWindowId(): string {
 }
 
 /**
- * Get initial window params (chatId, subChatId) passed when opening a new window.
- * These are one-time use - cleared from sessionStorage after first read.
+ * Get initial window params passed when opening a new window.
+ * Consumers share a cached snapshot; App claims one-time application separately.
  */
-export function getInitialWindowParams(): { chatId?: string; subChatId?: string } {
-  // Check if already consumed
-  const consumed = sessionStorage.getItem("windowParamsConsumed")
-  if (consumed) return {}
+let initialWindowParamsCache:
+  (WorkspaceWindowInitialParams & { chatId?: string; subChatId?: string }) | null = null
+const APPLICATION_LIFETIME_KEY = "__flapstackInitialWindowParamsApplicationV1"
+
+export type InitialWindowParamsApplicationLifetime = { appliedKey?: string }
+
+export function getInitialWindowParams(): WorkspaceWindowInitialParams & {
+  chatId?: string
+  subChatId?: string
+} {
+  if (initialWindowParamsCache) return initialWindowParamsCache
 
   // Try URL params first (dev mode)
   const urlParams = new URLSearchParams(window.location.search)
   let chatId = urlParams.get("chatId")
   let subChatId = urlParams.get("subChatId")
+  let projectId = urlParams.get("projectId")
+  let workspaceId = urlParams.get("workspaceId")
+  let paneId = urlParams.get("paneId")
+  let skipPaneId = urlParams.get("skipPaneId")
 
   // Try hash params (production file:// URLs)
   if (!chatId && window.location.hash) {
     const hashParams = new URLSearchParams(window.location.hash.slice(1))
     chatId = hashParams.get("chatId")
     subChatId = hashParams.get("subChatId")
+    projectId = hashParams.get("projectId")
+    workspaceId = hashParams.get("workspaceId")
+    paneId = hashParams.get("paneId")
+    skipPaneId = hashParams.get("skipPaneId")
   }
 
-  // Mark as consumed so we don't re-apply on hot reload
-  if (chatId || subChatId) {
-    sessionStorage.setItem("windowParamsConsumed", "true")
-  }
-
-  return {
+  initialWindowParamsCache = {
     chatId: chatId || undefined,
     subChatId: subChatId || undefined,
+    projectId: projectId || undefined,
+    workspaceId: workspaceId || undefined,
+    paneId: paneId || undefined,
+    skipPaneId: skipPaneId || undefined,
   }
+  return initialWindowParamsCache
+}
+
+export function claimInitialWindowParamsApplication(
+  params: WorkspaceWindowInitialParams & { chatId?: string; subChatId?: string },
+  lifetime = getInitialWindowParamsApplicationLifetime(),
+): boolean {
+  if (!params.chatId && !params.subChatId && !params.workspaceId) return false
+  const key = JSON.stringify([
+    params.projectId ?? "",
+    params.workspaceId ?? "",
+    params.paneId ?? "",
+    params.skipPaneId ?? "",
+    params.chatId ?? "",
+    params.subChatId ?? "",
+  ])
+  if (lifetime.appliedKey === key) return false
+  lifetime.appliedKey = key
+  return true
+}
+
+function getInitialWindowParamsApplicationLifetime(): InitialWindowParamsApplicationLifetime {
+  const host = globalThis as typeof globalThis & {
+    [APPLICATION_LIFETIME_KEY]?: InitialWindowParamsApplicationLifetime
+  }
+  return (host[APPLICATION_LIFETIME_KEY] ??= {})
 }

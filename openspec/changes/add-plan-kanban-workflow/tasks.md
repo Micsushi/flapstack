@@ -50,8 +50,10 @@
   service/schema/selector/keyboard/accessibility tests; focused ESLint/Prettier and strict
   OpenSpec validation pass. A full TypeScript pass succeeded before final polling/invalidation
   edits; its final rerun was stopped without errors after 12 minutes of ten-worktree TypeScript
-  contention. Live task navigation, drag/drop, keyboard, screen-reader, and stale/error
-  walkthroughs remain unverified.
+  contention. On 2026-07-14, `npm run dev:verify` proved the exact isolated checkout and
+  `Flapstack Dev`; authenticated app-control created and listed five real task fixtures and one
+  linked task chat. The Mac was locked, so real task navigation, drag/drop, keyboard,
+  screen-reader, stale/error, and UI-state walkthroughs remain unverified.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Project Kanban lists and moves durable tasks in fixed columns.
 - Scope: Task board query; backlog/planned/in-progress/review/done columns; ordering/rebalance; versioned move; filters; archive/done; card task/chat/run summaries; keyboard drag alternative; accessibility.

@@ -33,6 +33,34 @@ describe("required database startup", () => {
     expect(report).toHaveBeenCalledWith("bridge", expect.any(Error))
   })
 
+  it("awaits an optional service first pass before starting the next service", async () => {
+    const order: string[] = []
+    let finishScheduler!: () => void
+    const schedulerFirstPass = new Promise<void>((resolve) => {
+      finishScheduler = resolve
+    })
+    const startup = runIsolatedStartupTasks(
+      [
+        {
+          name: "automation scheduler",
+          run: async () => {
+            order.push("scheduler:start")
+            await schedulerFirstPass
+            order.push("scheduler:ready")
+          },
+        },
+        { name: "next service", run: () => order.push("next") },
+      ],
+      vi.fn(),
+    )
+
+    await Promise.resolve()
+    expect(order).toEqual(["scheduler:start"])
+    finishScheduler()
+    await startup
+    expect(order).toEqual(["scheduler:start", "scheduler:ready", "next"])
+  })
+
   it("closes and exits without continuing to a window after initialization fails", async () => {
     const cleanup = vi.fn()
     const continueStartup = vi.fn()

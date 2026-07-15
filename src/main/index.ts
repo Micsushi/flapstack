@@ -11,6 +11,9 @@ import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { createMainRunLauncher } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
+import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
+import { AutomationScheduler } from "./lib/automation/scheduler"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
@@ -31,11 +34,6 @@ import {
   installBeforeQuitShutdown,
   runAppShutdown,
 } from "./lib/app-shutdown"
-import {
-  createDefaultMobileBridgeService,
-  setAppMobileBridgeService,
-  type MobileBridgeService,
-} from "./lib/mobile-bridge"
 import { getUsageSecret } from "./lib/usage/secrets"
 import { stopRunningRunsOverUsageBudget } from "./lib/usage/budgets"
 import {
@@ -82,7 +80,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
-let mobileBridgeService: MobileBridgeService | null = null
+let automationScheduler: AutomationScheduler | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -917,6 +915,20 @@ if (gotTheLock) {
               run: () => recoverInterruptedMcpRuns(getDatabasePath()),
             },
             {
+              name: "Automation scheduler",
+              run: async () => {
+                automationScheduler = new AutomationScheduler({
+                  databasePath: getDatabasePath(),
+                  owner: `desktop-${process.pid}`,
+                  nextFireCalculator: new CronAutomationNextFireCalculator(),
+                  dispatch: createAutomationExecutionDispatcher(getDatabasePath()),
+                  maxSleepMs: 500,
+                  onError: (error) => console.error("[App] Automation scheduler failed:", error),
+                })
+                await automationScheduler.start()
+              },
+            },
+            {
               name: "Pending run scheduler",
               run: () => {
                 const pendingRunLauncher = createMainRunLauncher()
@@ -951,14 +963,6 @@ if (gotTheLock) {
               },
             },
             {
-              name: "Mobile bridge",
-              run: async () => {
-                mobileBridgeService = createDefaultMobileBridgeService()
-                setAppMobileBridgeService(mobileBridgeService)
-                await mobileBridgeService.startFromSettings()
-              },
-            },
-            {
               name: "Usage startup catch-up",
               run: () => {
                 void runStartupCatchUp({
@@ -975,13 +979,12 @@ if (gotTheLock) {
       cleanup: async () => {
         if (pendingRunTimer) clearInterval(pendingRunTimer)
         pendingRunTimer = null
+        await automationScheduler?.stop()
+        automationScheduler = null
         await devMcpServer?.stop()
         devMcpServer = null
         await productMcpInvalidationBridge?.stop()
         productMcpInvalidationBridge = null
-        await mobileBridgeService?.stop("startup-cleanup")
-        mobileBridgeService = null
-        setAppMobileBridgeService(null)
         closeDatabase()
       },
       exit: (code) => app.exit(code),
@@ -1044,6 +1047,10 @@ if (gotTheLock) {
       runAppShutdown({
         persistProviderSessions: abortAndWaitForAgentSessions,
         cancelPendingOAuth: () => cancelAllPendingOAuth(),
+        stopAutomationScheduler: async () => {
+          await automationScheduler?.stop()
+          automationScheduler = null
+        },
         stopDevMcpServer: async () => {
           await devMcpServer?.stop()
           devMcpServer = null
@@ -1051,11 +1058,6 @@ if (gotTheLock) {
         stopProductMcpBridge: async () => {
           await productMcpInvalidationBridge?.stop()
           productMcpInvalidationBridge = null
-        },
-        stopMobileBridge: async () => {
-          await mobileBridgeService?.stop("app-quit")
-          mobileBridgeService = null
-          setAppMobileBridgeService(null)
         },
         cleanupGitWatchers,
         shutdownAnalytics,

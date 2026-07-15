@@ -11,6 +11,7 @@ import type {
   OrchestrationStopConditions,
   OrchestrationTaskOverviewDto,
 } from "../../../../shared/agent-orchestration"
+import type { CoordinationEngine } from "../../../../shared/coordination-engine"
 import {
   customPermissionCapabilityKeys,
   disabledCustomPermissions,
@@ -28,6 +29,7 @@ import { Input } from "../../../components/ui/input"
 import { Textarea } from "../../../components/ui/textarea"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
 
 type AgentEditorMode =
   | { kind: "create-orchestration"; createTask: boolean }
@@ -493,12 +495,14 @@ function StopNumberField({
 
 function AgentEditorDialog({
   mode,
+  projectId,
   open,
   busy,
   onOpenChange,
   onSubmit,
 }: {
   mode: AgentEditorMode
+  projectId: string
   open: boolean
   busy: boolean
   onOpenChange: (open: boolean) => void
@@ -507,12 +511,18 @@ function AgentEditorDialog({
     maxParallelAgents: number,
     taskName: string,
     stopConditions: OrchestrationStopConditions,
+    coordinationEngine: CoordinationEngine | undefined,
   ) => void
 }) {
   const seed = mode.kind === "replace" ? mode.agent.definition : emptyDefinition
   const [definition, setDefinition] = useState<OrchestrationAgentDefinition>(seed)
   const [maxParallelAgents, setMaxParallelAgents] = useState(2)
   const [taskName, setTaskName] = useState("Agent orchestration")
+  const [coordinationEngine, setCoordinationEngine] = useState<CoordinationEngine | null>(null)
+  const enginePreview = trpc.coordinationEngines.preview.useQuery({
+    projectId,
+    perLaunchEngine: coordinationEngine,
+  })
   const [stopFields, setStopFields] = useState({
     targetCompletedAgents: "",
     targetProgressPercent: "",
@@ -697,6 +707,14 @@ function AgentEditorDialog({
             </select>
           </label>
           {mode.kind === "create-orchestration" && (
+            <CoordinationEngineLaunchPreviewPanel
+              preview={enginePreview.data ?? null}
+              selection={coordinationEngine}
+              onSelectionChange={setCoordinationEngine}
+              loading={enginePreview.isLoading}
+            />
+          )}
+          {mode.kind === "create-orchestration" && (
             <label className="text-xs">
               Maximum parallel agents
               <Input
@@ -838,32 +856,40 @@ function AgentEditorDialog({
               (Boolean(stopFields.maxCostUsd) &&
                 !stopFields.maxTotalTokens &&
                 !stopFields.maxWallClockMinutes) ||
+              (mode.kind === "create-orchestration" &&
+                (enginePreview.isLoading || enginePreview.data?.ok === false)) ||
               (mode.kind === "create-orchestration" && mode.createTask && !taskName.trim())
             }
             onClick={() =>
-              onSubmit(definition, maxParallelAgents, taskName, {
-                ...(stopFields.targetCompletedAgents && {
-                  targetCompletedAgents: Number(stopFields.targetCompletedAgents),
-                }),
-                ...(stopFields.targetProgressPercent && {
-                  targetProgressPercent: Number(stopFields.targetProgressPercent),
-                }),
-                ...(stopFields.maxWallClockMinutes && {
-                  maxWallClockMs: Number(stopFields.maxWallClockMinutes) * 60_000,
-                }),
-                ...(stopFields.maxTotalTokens && {
-                  maxTotalTokens: Number(stopFields.maxTotalTokens),
-                }),
-                ...(stopFields.maxCostUsd && {
-                  maxCostUsdMicros: Math.round(Number(stopFields.maxCostUsd) * 1_000_000),
-                }),
-                ...(stopFields.maxFailures && {
-                  maxFailures: Number(stopFields.maxFailures),
-                }),
-                ...(stopFields.maxBlockers && {
-                  maxBlockers: Number(stopFields.maxBlockers),
-                }),
-              })
+              onSubmit(
+                definition,
+                maxParallelAgents,
+                taskName,
+                {
+                  ...(stopFields.targetCompletedAgents && {
+                    targetCompletedAgents: Number(stopFields.targetCompletedAgents),
+                  }),
+                  ...(stopFields.targetProgressPercent && {
+                    targetProgressPercent: Number(stopFields.targetProgressPercent),
+                  }),
+                  ...(stopFields.maxWallClockMinutes && {
+                    maxWallClockMs: Number(stopFields.maxWallClockMinutes) * 60_000,
+                  }),
+                  ...(stopFields.maxTotalTokens && {
+                    maxTotalTokens: Number(stopFields.maxTotalTokens),
+                  }),
+                  ...(stopFields.maxCostUsd && {
+                    maxCostUsdMicros: Math.round(Number(stopFields.maxCostUsd) * 1_000_000),
+                  }),
+                  ...(stopFields.maxFailures && {
+                    maxFailures: Number(stopFields.maxFailures),
+                  }),
+                  ...(stopFields.maxBlockers && {
+                    maxBlockers: Number(stopFields.maxBlockers),
+                  }),
+                },
+                coordinationEngine ?? undefined,
+              )
             }
           >
             {busy ? "Saving…" : title}
@@ -931,6 +957,7 @@ export function OrchestrationTaskCard({
     maxParallelAgents: number,
     taskName: string,
     stopConditions: OrchestrationStopConditions,
+    coordinationEngine: CoordinationEngine | undefined,
   ) => {
     if (editorMode?.kind === "create-orchestration") {
       create.mutate(
@@ -940,6 +967,7 @@ export function OrchestrationTaskCard({
           initiatingChatId: currentChatId,
           maxParallelAgents,
           stopConditions,
+          coordinationEngine,
           agents: [agent],
         },
         {
@@ -992,6 +1020,7 @@ export function OrchestrationTaskCard({
           <AgentEditorDialog
             key={editorMode.kind}
             mode={editorMode}
+            projectId={projectId}
             open
             busy={busy}
             onOpenChange={(open) => !open && setEditorMode(null)}
@@ -1020,6 +1049,7 @@ export function OrchestrationTaskCard({
         <AgentEditorDialog
           key={`${editorMode.kind}-${selectedReplacement?.id ?? "new"}`}
           mode={editorMode}
+          projectId={projectId}
           open
           busy={busy}
           onOpenChange={(open) => !open && setEditorMode(null)}

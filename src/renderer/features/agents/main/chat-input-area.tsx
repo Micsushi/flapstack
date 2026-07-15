@@ -770,8 +770,12 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(
     subChatReasoningEnabledAtomFamily(subChatId),
   )
+  const localModelPicker = useLocalModelPickerSurface()
 
   const selectedModelLabel = useMemo(() => {
+    if (provider === "local") {
+      return localModelPicker.selectedModelId ?? "Choose local model"
+    }
     if (provider === "codex") {
       return selectedCodexModel.name
     }
@@ -803,6 +807,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     return `${selectedModel.name} ${selectedModel.version}`
   }, [
     provider,
+    localModelPicker.selectedModelId,
     selectedCodexModel.name,
     selectedCursorModel.name,
     selectedOpencodeModels,
@@ -1064,7 +1069,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
-  const localModelPicker = useLocalModelPickerSurface()
   const handleOpenVoiceSettings = useCallback(() => {
     setSettingsTab("voice")
     setSettingsOpen(true)

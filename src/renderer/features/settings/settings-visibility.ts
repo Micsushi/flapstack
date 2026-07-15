@@ -73,6 +73,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "coordination",
+    label: "Coordination",
+    description: "Choose multi-agent workflow and Codex coordination engines",
+    keywords: ["orchestration", "workflow", "codex v2", "codex v1", "multi agent"],
+    section: "advanced",
+    released: true,
+  },
+  {
     id: "api-providers",
     label: "API Providers",
     description: "Configure direct model API providers",
@@ -179,6 +187,20 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "coordination-engine-default",
+    "coordination",
+    "Coordination engine default",
+    "Set Workflow, Codex task tree V2, or advanced Codex V1 precedence",
+    ["orchestration", "multi agent", "fallback", "project override", "launch override"],
+  ),
+  control(
+    "coordination-engine-availability",
+    "coordination",
+    "Coordination engine availability",
+    "Inspect capability probes and exact unsupported reasons",
+    ["capability", "unsupported", "codex task tree", "legacy"],
+  ),
   control(
     "local-model-endpoint",
     "local-models",

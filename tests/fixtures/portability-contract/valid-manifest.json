@@ -1,0 +1,27 @@
+{
+  "format": "flapstack-portable-bundle",
+  "bundleVersion": 1,
+  "directoryName": "stage4-backup.flapstack-export",
+  "createdAt": "2026-07-14T12:00:00.000Z",
+  "appVersion": "0.0.72",
+  "layout": {
+    "database": "database/flapstack.sqlite3",
+    "checksums": "checksums.json",
+    "exclusions": "exclusions.json",
+    "scopesRoot": "scopes"
+  },
+  "scopes": [
+    {
+      "id": "projects",
+      "schemaVersion": 1,
+      "contentPath": "scopes/projects",
+      "projectIds": ["project-1"]
+    },
+    {
+      "id": "project-vaults",
+      "schemaVersion": 1,
+      "contentPath": "scopes/project-vaults",
+      "projectIds": ["project-1"]
+    }
+  ]
+}

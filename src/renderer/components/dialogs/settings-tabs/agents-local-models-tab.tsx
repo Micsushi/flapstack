@@ -5,7 +5,6 @@ import {
   DEFAULT_OLLAMA_BASE_URL,
   type LocalModelCapabilityName,
   type LocalModelCapabilityState,
-  type LocalModelToolTier,
 } from "../../../../shared/local-model-contract"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import { localModelEndpointAtom, selectedLocalModelIdAtom } from "../../../lib/atoms"
@@ -15,6 +14,7 @@ import { Button } from "../../ui/button"
 import {
   buildLocalModelControlPreview,
   createLocalModelUiState,
+  LOCAL_MODEL_UI_RUNTIME,
   localModelCatalogStatus,
   reduceLocalModelUiState,
 } from "../../../features/local-models/local-model-ui-state"
@@ -32,11 +32,6 @@ const permissionOptions: Array<{ value: RunPermissionMode; label: string }> = [
   { value: "auto-edit-project-only", label: "Auto-edit project only" },
   { value: "full-access", label: "Full access" },
 ]
-
-const unavailableRuntime = {
-  chat: false,
-  toolTiers: [] as readonly LocalModelToolTier[],
-}
 
 export function AgentsLocalModelsTab() {
   const [persistedEndpoint, setPersistedEndpoint] = useAtom(localModelEndpointAtom)
@@ -57,7 +52,7 @@ export function AgentsLocalModelsTab() {
 
   const status = localModelCatalogStatus(state)
   const preview = useMemo(
-    () => buildLocalModelControlPreview({ state, permissionMode, runtime: unavailableRuntime }),
+    () => buildLocalModelControlPreview({ state, permissionMode, runtime: LOCAL_MODEL_UI_RUNTIME }),
     [permissionMode, state],
   )
   const selectedModel = state.catalog?.models.find(
@@ -158,11 +153,14 @@ export function AgentsLocalModelsTab() {
         data-settings-id="local-model-catalog"
         tabIndex={-1}
         aria-live="polite"
+        aria-busy={state.phase === "refreshing"}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
             <h4 className="text-sm font-medium">Ollama availability</h4>
-            <p className="mt-0.5 text-xs text-muted-foreground">{status.detail}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground" role="status">
+              {status.detail}
+            </p>
           </div>
           <StatusBadge tone={status.tone} label={status.label} />
         </div>
@@ -255,42 +253,60 @@ export function AgentsLocalModelsTab() {
             </p>
           </div>
         </div>
-        <label className="block text-xs font-medium" htmlFor="local-model-permission-select">
-          Launch permission
-        </label>
-        <select
-          id="local-model-permission-select"
-          value={permissionMode}
-          onChange={(event) => setPermissionMode(event.target.value as RunPermissionMode)}
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
-          {permissionOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        {preview.toolTiers.length > 0 ? (
-          <ul className="space-y-2" aria-label="Local model tool availability">
-            {preview.toolTiers.map((tier) => (
-              <li
-                key={tier.tier}
-                className="flex items-start gap-2 rounded-md border p-2.5 text-xs"
-              >
-                {tier.displayAvailable ? (
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
-                ) : (
-                  <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <div>
-                  <span className="font-medium capitalize">{tier.tier.replace("-", " ")}</span>
-                  <p className="mt-0.5 text-muted-foreground">
-                    {tier.displayAvailable ? "Available for this launch." : tier.displayReason}
-                  </p>
-                </div>
-              </li>
+        <div>
+          <label className="block text-xs font-medium" htmlFor="local-model-permission-select">
+            Launch permission
+          </label>
+          <select
+            id="local-model-permission-select"
+            value={permissionMode}
+            onChange={(event) => setPermissionMode(event.target.value as RunPermissionMode)}
+            className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            {permissionOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
-          </ul>
+          </select>
+        </div>
+        {preview.toolTiers.length > 0 ? (
+          <div className="space-y-2">
+            <h5 className="text-xs font-medium">Local run tiers</h5>
+            <p id="local-model-tier-help" className="text-xs text-muted-foreground">
+              Availability reflects the model, current permission, and installed runtime.
+            </p>
+            <ul
+              className="space-y-2"
+              aria-label="Local model tool availability"
+              aria-describedby="local-model-tier-help"
+            >
+              {preview.toolTiers.map((tier) => (
+                <li
+                  key={tier.tier}
+                  data-available={tier.displayAvailable}
+                  className={cn(
+                    "flex items-start gap-2 rounded-md border p-2.5 text-xs",
+                    !tier.displayAvailable && "opacity-70",
+                  )}
+                >
+                  {tier.displayAvailable ? (
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+                  ) : (
+                    <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <div>
+                    <span className="font-medium capitalize">{tier.tier.replace("-", " ")}</span>
+                    <p className="mt-0.5 text-muted-foreground">
+                      {tier.displayAvailable
+                        ? "Available for this local launch."
+                        : tier.displayReason}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
           <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
             Choose a discovered model to preview chat and tool tiers.

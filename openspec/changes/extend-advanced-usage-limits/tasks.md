@@ -67,7 +67,7 @@
 
 ### S4-F7-T6 — Build advanced explorer and redacted export
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Users filter, compare, drill down, configure budgets, and export normalized usage.
 - Scope: Scope/account/harness/model/source/quality/time filters; saved view state; chart/table drill-down; insight/quality copy; budget editor; CSV/JSON export; raw redaction; accessibility.
@@ -75,7 +75,7 @@
 - Acceptance: Every aggregate links to facts/provenance; estimates remain labeled; export matches selected filters and contains no secrets.
 - Verification: `npm test -- advanced-usage-ui` plus export/redaction, accessibility, and live dashboard walkthrough.
 - Automated evidence: Node 22 focused explorer state/view, export, hostile redaction, and accessibility tests pass; TypeScript, lint, formatting, production build, strict OpenSpec, and full repo gate are recorded at commit handoff.
-- Manual verification remaining: live dashboard walkthrough. Completion stays unchecked until observed.
+- Live evidence: 2026-07-14 Node 22 `npm run dev:verify` proved this exact checkout and the `Flapstack Dev` profile; authenticated test-control MCP plus the S4-F7-T6 UI lease passed filters, saved-view state, chart/table drill-down, provenance/quality/estimate copy, budget create/update, CSV/JSON export, redacted-raw export, keyboard navigation, and accessibility semantics. No package or provider evidence is claimed.
 - Blocked by: S4-F7-T2, S4-F7-T3, S4-F7-T4, S4-F7-T5
 - Blocks: S4-F7-T7, S4-F8-T3
 - Context: usage dashboard, provider tabs, graph components, scoped search/filter patterns.

@@ -2,7 +2,7 @@
 
 ### S4-F1-T1 — Reconcile the Stage 3 extension baseline
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: One tested capability registry describes every currently supported extension surface.
 - Scope: Inventory skills, commands, plugins, custom agents, MCP entries, and hooks; record harness, scope, mutation, and runtime-consumption support.
@@ -15,17 +15,19 @@
 - Code-ready evidence: the production `providerExtensions.getCapabilities` query
   now returns a schema-versioned 72-cell registry across four harnesses, six
   extension kinds, and three scopes, including 36 explicit unsupported cells.
-  Focused fixture/provider-DTO/hook/router coverage passes 21 tests against
+  Focused fixture/provider-DTO/hook/router coverage passes 40 tests against
   Claude Agent SDK 0.3.207 / Claude Code 2.1.207, Codex ACP 1.1.2 / CLI 0.144.1,
   Cursor Agent 2026.07.09-a3815c0, and OpenCode 1.17.18. Exact additive gaps and
   their downstream owners are recorded in
-  `docs/stage4-s4-f1-t1-extension-baseline.md`. Completion stays unchecked
-  because the declared Stage 3 S3-F11/S3-F13 exit/archive and live/package proof
-  remain open; none of that evidence is inferred from headless tests.
+  `docs/stage4-s4-f1-t1-extension-baseline.md`. The immutable `stage3-final` tag
+  resolves to `a674784b0141c7a5293c5637c3bea65be6d44c4e`; its archived board checks
+  S3-F11-T5 and S3-F13-T4, and its release ledger records all required feature
+  exits complete. T1 therefore closes on its declared headless verification.
+  No live/package/provider/device or later-F1 acceptance proof is inferred.
 
 ### S4-F1-T2 — Add safe native extension adapters
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Native extension files can be read and changed without escaping allowed roots or losing data.
 - Scope: Provider adapters, schema parsing, unknown-field retention, atomic writes, backup/restore, symlink and traversal defense.
@@ -37,15 +39,16 @@
 - Context: registered worktree validation and current filesystem routers.
 - Code-ready evidence: a schema-versioned native Markdown adapter registry now
   covers every non-MCP mutable capability row for Claude Code, Codex, and Cursor
-  Agent. Production read/preview/apply/restore procedures retain unknown fields,
-  require preview hashes, use rooted atomic writes plus strict target-bound
-  backups, and reject malformed, stale, traversed, or symlinked targets. Node 22
-  focused adapter/capability/provider/path suites pass 40 tests and focused
-  ESLint passes. Full TypeScript reaches unrelated pre-existing local-model and
-  Codex ACP errors only; the combined repo gate is also blocked by the shared
-  heavy-job lock. Completion remains unchecked because the T1 Stage 3 exit
-  dependency plus live Settings, runtime/restart, package, and integrated
-  acceptance evidence remain unverified; see
+  Agent across six pinned native formats and all eleven mutable user/project
+  rows. Production read/preview/apply/restore procedures retain unknown fields,
+  bind applies to exact before/after/confirmation hashes, use rooted atomic
+  writes plus strict target-bound backups, and reject malformed, stale,
+  traversed, or symlinked targets. Node 22 focused adapter/capability/provider/
+  path/cross-harness/UI suites pass 99 tests; TypeScript, focused ESLint,
+  focused Prettier, strict OpenSpec, git diff check, and the production build
+  pass. The authoritative integration board closes T1; this lane does not mirror
+  that adjacent checkbox. T2 closes on its declared headless verification. No
+  live/package/provider/device or later-F1 acceptance proof is inferred; see
   `docs/stage4-s4-f1-t2-native-adapters.md`.
 
 ### S4-F1-T3 — Add project and task enablement policy
@@ -58,7 +61,7 @@
 - Acceptance: Task overrides project; project overrides user; unsupported scopes never write fake state.
 - Verification: Migration, resolver precedence, restart, and supported-harness run-context tests.
 - Blocked by: S4-F1-T2
-- Blocks: S4-F1-T5, S4-F1-T7, S4-F8-T1
+- Blocks: S4-F1-T5, S4-F1-T7, S4-F8-T1, S4-F12-T3
 - Context: permission inheritance and run-context assembly patterns.
 - Code-ready evidence: migration `0030_extension_enablement_policy` adds only
   additive SQLite policy state after `0029`; the resolver enforces task over
@@ -76,7 +79,7 @@
 
 ### S4-F1-T4 — Add explicit cross-harness copy and sharing
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Users copy supported extensions between harnesses with an exact preview.
 - Scope: Conversion adapters, exact/converted/unsupported result, target diff, collision handling, and source preservation.
@@ -94,10 +97,11 @@
   unsupported source fields; target-only unknown native fields survive
   overwrites. Node 22 focused copy/native/capability/provider/path suites pass 58
   tests; focused and repository ESLint, repository formatting, and strict
-  OpenSpec pass. Full TypeScript reaches only two unrelated pre-existing Codex
-  ACP provider-setting errors. Completion remains unchecked because declared T1
-  and T2 completion dependencies remain unchecked; see
+  OpenSpec pass. Full TypeScript reached only two unrelated pre-existing Codex
+  ACP provider-setting errors. At that checkpoint, completion remained unchecked
+  because declared T1 and T2 dependencies were still open; see
   `docs/stage4-s4-f1-t4-cross-harness-sharing.md`.
+- Integrated closeout: T1 and T2 are complete. Node 22 cross-harness copy, native adapter, capability registry, provider service, and provider UI suites pass 5 files/70 tests; integrated TypeScript, lint, formatting, strict OpenSpec, diff check, and production build pass. T4 closes on its declared headless verification without inferring live provider/package evidence.
 
 ### S4-F1-T5 — Build the unified manager UI
 
@@ -116,10 +120,16 @@
   policy, cross-harness copy previews, and managed-hook inventory/preview APIs.
   Harness, kind, source, scope, and normalized search selectors; exact
   preview/diff confirmations; honest unsupported states; and keyboard/screen-
-  reader contracts are covered headlessly. Completion remains unchecked because
-  the required live user/project/task walkthrough, Dev restart/runtime proof,
-  screen-reader observation, and packaged UI evidence remain manual verification
-  remaining; see `docs/stage4-s4-f1-t5-unified-manager.md`.
+  reader contracts are covered headlessly. Managed hooks now complete the same
+  preview-confirmed validation, bounded dry-run, enable, and disable lifecycle,
+  with current-revision and Tier 3 approval gates visible in the UI. A verified
+  Dev-profile walkthrough now proves that a stale selected-project root retains
+  user inventory while project mutation fails closed, and that a registered
+  project enables an exact, review-gated policy preview; the preview was
+  cancelled without mutation. Completion remains unchecked because applied
+  user/project/task mutation, Dev restart/runtime proof, screen-reader
+  observation, and packaged UI evidence remain manual verification remaining;
+  see `docs/stage4-s4-f1-t5-unified-manager.md`.
 
 ### S4-F1-T6 — Add hook validation, dry-run, and enablement
 
@@ -136,9 +146,9 @@
 - Code-ready evidence: the production hook router now exposes a schema-versioned
   managed inventory, exact shell-free command preview, import-default-off
   lifecycle, registered-root revalidation, bounded mockable dry-run, explicit
-  enable/disable state, Tier 3 Stage 3 approval, and append-only redacted audit.
-  Node 22 focused hook/registry/approval/audit coverage passes 32 tests;
-  TypeScript and focused ESLint pass. Completion remains unchecked because live
+  enable/disable state, Tier 3 Stage 3 approval, append-only redacted audit, and
+  one unified lifecycle UI. Node 22 consolidated F1 coverage passes 11 files / 144
+  tests; TypeScript and focused ESLint pass. Completion remains unchecked because live
   Settings/restart/package evidence and native harness runtime consumption are
   unverified; see `docs/stage4-s4-f1-t6-hook-safety.md`.
 

@@ -23,16 +23,29 @@
   a registered root and revalidate its canonical identity immediately before a
   dry-run.
 
+## Unified manager integration
+
+- The Extension Manager imports hooks disabled and exposes validation, bounded
+  dry-run, explicit enablement, and disablement as preview-confirmed lifecycle
+  actions.
+- Validation and dry-run evidence is revision-bound. Stale or missing evidence
+  disables later actions in the renderer and fails closed again in the service.
+- Dry-run previews show the exact shell-free command and timeout before the Tier
+  3 approval request. Enablement requires a separate Tier 3 approval.
+- Lifecycle state and the honest `not-consumed` native-runtime limitation are
+  visible together; managed enablement is never presented as native trigger
+  injection.
+
 ## Deliberate Limits
 
-- No renderer or unified manager UI was added.
-- No cross-harness conversion or copy path was added.
+- No cross-harness hook conversion or copy path was added.
 - No database migration or policy migration `0030` was changed.
 - Native provider trigger wiring remains unavailable and is reported as
   `not-consumed`; this task does not claim that a managed enabled record is
   already injected into an external harness.
-- No real command, Electron, provider, package, or live UI execution was used
-  for code-ready evidence.
+- No real hook command, approval, provider, or package execution was used for
+  code-ready evidence. The consolidated Electron walkthrough exercised the
+  shared inventory and policy-preview surface, not the hook lifecycle.
 
 ## Headless Evidence
 
@@ -40,7 +53,8 @@
   mocked dry-run runner and approval gate.
 - Existing extension capability fixture, Stage 3 approval coordinator, and
   append-only audit/redaction tests remain green with the promoted hook rows.
-- Node 22 TypeScript and focused ESLint pass.
+- Node 22 consolidated F1 coverage passes 11 files / 144 tests. TypeScript and
+  focused ESLint pass.
 
 ## Remaining Proof
 

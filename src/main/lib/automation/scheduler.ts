@@ -117,7 +117,15 @@ export class AutomationScheduler {
     this.started = true
     this.unsubscribeClockChange =
       this.timers.onClockChange?.(() => void this.handleClockChange()) ?? null
-    await this.runPass("startup")
+    try {
+      await this.runPass("startup")
+    } catch (error) {
+      this.started = false
+      this.clearTimer()
+      this.unsubscribeClockChange?.()
+      this.unsubscribeClockChange = null
+      throw error
+    }
   }
 
   async stop(): Promise<void> {
@@ -448,7 +456,7 @@ export class AutomationScheduler {
         await this.drainDueOccurrences()
       } catch (error) {
         this.options.onError?.(error)
-        if (!this.options.onError) throw error
+        if (mode === "startup" || !this.options.onError) throw error
       } finally {
         if (this.started) this.scheduleNextWake()
       }

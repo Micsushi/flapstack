@@ -15,7 +15,10 @@ import {
 import { McpApprovalLifecycle } from "../../mcp-control/approval-lifecycle"
 import { createSqliteMcpApprovalCoordinator } from "../../mcp-control/approval-coordinator"
 import { appendMcpAuditRecord } from "../../mcp-control/audit-storage"
-import { publishProductMcpInvalidation } from "../../mcp-control/invalidation-bridge"
+import {
+  publishLocalProductInvalidation,
+  publishProductMcpInvalidation,
+} from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
 let service: HookLifecycleService | null = null
@@ -80,8 +83,17 @@ function getService(): HookLifecycleService {
     { request: requestHookApproval },
     { append: appendHookAudit },
     (cwd) => assertRegisteredWorktree(cwd).canonicalPath,
+    publishHookExtensionChange,
   )
   return service
+}
+
+export function publishHookExtensionChange(): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["provider-extensions"],
+  })
 }
 
 async function requestHookApproval(input: {

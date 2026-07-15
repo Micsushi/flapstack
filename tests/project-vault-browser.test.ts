@@ -1,8 +1,17 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { eq } from "drizzle-orm"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { and, eq } from "drizzle-orm"
+import { createHash } from "node:crypto"
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -131,6 +140,172 @@ describe("project vault browser services", () => {
       }).map((backup) => backup.version),
     ).toEqual([3, 2, 1])
   })
+
+  it("recovers a missing section file from a verified backup without recreating the vault", async () => {
+    await writeProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+      expectedVersion: 1,
+      content: "version two",
+    })
+    const [backup] = listProjectVaultSectionBackups(database, {
+      projectId: "project-1",
+      sectionId: "index",
+    })
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    rmSync(join(vault.rootPath, "index.md"))
+
+    const restored = await restoreProjectVaultSectionBackup(database, {
+      projectId: "project-1",
+      sectionId: "index",
+      backupId: backup!.id,
+      expectedVersion: 2,
+    })
+
+    expect(restored.version).toBe(3)
+    await expect(
+      readProjectVaultSection(database, { projectId: "project-1", sectionId: "index" }),
+    ).resolves.toMatchObject({
+      content: "# Project Knowledge\n\n",
+      version: 3,
+      externallyModified: false,
+    })
+  })
+
+  it("preserves an external replacement when missing-file recovery loses its metadata CAS", async () => {
+    await writeProjectVaultSection(database, {
+      projectId: "project-1",
+      sectionId: "index",
+      expectedVersion: 1,
+      content: "version two",
+    })
+    const [backup] = listProjectVaultSectionBackups(database, {
+      projectId: "project-1",
+      sectionId: "index",
+    })
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    const target = join(vault.rootPath, "index.md")
+    rmSync(target)
+    const externalContent = "external replacement during recovery"
+    const externalHash = createHash("sha256").update(externalContent).digest("hex")
+
+    await expect(
+      restoreProjectVaultSectionBackup(
+        database,
+        {
+          projectId: "project-1",
+          sectionId: "index",
+          backupId: backup!.id,
+          expectedVersion: 2,
+        },
+        {
+          afterMissingContentWrite: () => {
+            const replacement = join(vault.rootPath, "replacement.md")
+            writeFileSync(replacement, externalContent)
+            renameSync(replacement, target)
+            database
+              .update(schema.projectVaultSections)
+              .set({
+                version: 3,
+                contentHash: externalHash,
+                byteLength: Buffer.byteLength(externalContent),
+              })
+              .where(
+                and(
+                  eq(schema.projectVaultSections.projectId, "project-1"),
+                  eq(schema.projectVaultSections.sectionId, "index"),
+                ),
+              )
+              .run()
+          },
+        },
+      ),
+    ).rejects.toThrow("version is stale")
+
+    await expect(
+      readProjectVaultSection(database, { projectId: "project-1", sectionId: "index" }),
+    ).resolves.toMatchObject({
+      content: externalContent,
+      version: 3,
+      externallyModified: false,
+    })
+  })
+
+  it("fails search closed on escaped metadata and symlinked section files", async () => {
+    database
+      .update(schema.projectVaultSections)
+      .set({ relativePath: "../outside.md" })
+      .where(
+        and(
+          eq(schema.projectVaultSections.projectId, "project-1"),
+          eq(schema.projectVaultSections.sectionId, "index"),
+        ),
+      )
+      .run()
+    await expect(
+      searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
+    ).rejects.toThrow("escapes root")
+
+    database
+      .update(schema.projectVaultSections)
+      .set({ relativePath: "index.md" })
+      .where(
+        and(
+          eq(schema.projectVaultSections.projectId, "project-1"),
+          eq(schema.projectVaultSections.sectionId, "index"),
+        ),
+      )
+      .run()
+    const vault = database
+      .select()
+      .from(schema.projectVaults)
+      .where(eq(schema.projectVaults.projectId, "project-1"))
+      .get()!
+    const outside = join(directory, "outside.md")
+    writeFileSync(outside, "knowledge outside the registered root")
+    rmSync(join(vault.rootPath, "index.md"))
+    symlinkSync(outside, join(vault.rootPath, "index.md"))
+
+    await expect(
+      searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
+    ).rejects.toThrow(/real file|symbolic link/i)
+  })
+
+  it.skipIf(process.platform === "win32")(
+    "keeps content and metadata intact when the vault root becomes read-only",
+    async () => {
+      const vault = database
+        .select()
+        .from(schema.projectVaults)
+        .where(eq(schema.projectVaults.projectId, "project-1"))
+        .get()!
+      chmodSync(vault.rootPath, 0o500)
+      try {
+        await expect(
+          writeProjectVaultSection(database, {
+            projectId: "project-1",
+            sectionId: "index",
+            expectedVersion: 1,
+            content: "must not land",
+          }),
+        ).rejects.toThrow()
+      } finally {
+        chmodSync(vault.rootPath, 0o700)
+      }
+
+      await expect(
+        readProjectVaultSection(database, { projectId: "project-1", sectionId: "index" }),
+      ).resolves.toMatchObject({ content: "# Project Knowledge\n\n", version: 1 })
+    },
+  )
 
   it("adopts an exactly reviewed outside change and rejects stale reconciliation", async () => {
     const current = await readProjectVaultSection(database, {

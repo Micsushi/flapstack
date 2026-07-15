@@ -30,6 +30,8 @@ export type AdvancedUsageExplorerAction =
   | { type: "aggregate"; key: "totals" | string }
   | { type: "load-view"; view: UsageExplorerView }
   | { type: "saved"; view: UsageExplorerView }
+  | { type: "new-view" }
+  | { type: "deleted-view" }
   | { type: "message"; message: string | null }
 
 export function initialAdvancedUsageExplorerState(
@@ -78,6 +80,20 @@ export function advancedUsageExplorerReducer(
       ...state,
       selectedViewId: action.view.id,
       statusMessage: `Saved view ${action.view.name}.`,
+    }
+  }
+  if (action.type === "new-view") {
+    return {
+      ...state,
+      selectedViewId: null,
+      statusMessage: "Started a new view.",
+    }
+  }
+  if (action.type === "deleted-view") {
+    return {
+      ...state,
+      selectedViewId: null,
+      statusMessage: "Saved view deleted.",
     }
   }
   return { ...state, statusMessage: action.message }

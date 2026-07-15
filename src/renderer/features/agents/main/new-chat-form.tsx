@@ -191,6 +191,7 @@ const agents: Array<{
   { id: "codex", name: "OpenAI Codex" },
   { id: "openrouter", name: "OpenRouter", hasModels: true },
   { id: "nanogpt", name: "NanoGPT", hasModels: true },
+  { id: "local", name: "Local · Ollama", hasModels: true },
 ]
 
 interface NewChatFormProps {
@@ -539,6 +540,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [lastSelectedCodexFastMode, selectedCodexModel.supportsFastMode, setLastSelectedCodexFastMode])
 
   const selectedChatModel = useMemo(() => {
+    if (selectedAgent.id === "local") {
+      return localModelPicker.selectedModelId ?? ""
+    }
     if (selectedAgent.id === "codex") {
       return `${selectedCodexModel.id}/${selectedCodexReasoning}`
     }
@@ -551,6 +555,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
   }, [
     selectedAgent.id,
+    localModelPicker.selectedModelId,
     selectedCodexModel.id,
     selectedCodexReasoning,
     selectedCursorModel.id,
@@ -563,6 +568,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     selectedOllamaModel || availableModels.recommendedModel || availableModels.ollamaModels[0]
   const claudeAgent = enabledAgents.find((agent) => agent.id === "claude-code") || fallbackAgent
   const selectedModelLabel = useMemo(() => {
+    if (selectedAgent.id === "local") {
+      return localModelPicker.selectedModelId ?? "Choose local model"
+    }
     if (selectedAgent.id === "codex") {
       return selectedCodexModel.name
     }
@@ -594,6 +602,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return `${selectedModel.name} ${selectedModel.version}`
   }, [
     selectedAgent.id,
+    localModelPicker.selectedModelId,
     selectedCodexModel.name,
     selectedCursorModel.name,
     lastSelectedOpencodeModels,
@@ -1358,6 +1367,13 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   const handleSend = useCallback(async () => {
     await finishVoiceBeforeSend()
+
+    if (selectedAgent.id === "local" && !localModelPicker.canLaunch) {
+      toast.error("Choose a refreshed, chat-capable local model before launch.")
+      setSettingsActiveTab("local-models")
+      setSettingsDialogOpen(true)
+      return
+    }
     // Get value from uncontrolled editor
     let message = editorRef.current?.getValue() || ""
 
@@ -1511,6 +1527,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     reasoningOutputEnabled,
     trpcUtils,
     finishVoiceBeforeSend,
+    localModelPicker.canLaunch,
+    setSettingsActiveTab,
+    setSettingsDialogOpen,
   ])
 
   const handleMentionSelect = useCallback((mention: FileMentionOption) => {

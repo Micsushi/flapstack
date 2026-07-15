@@ -2,7 +2,7 @@
 
 ### S4-F8-T1 — Define the bundle and scope registry
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Every portable scope has a stable schema/version/dependency/sensitivity contract.
 - Scope: Directory layout; manifest/checksum/exclusion schemas; scope registry; settings/extensions/vault/workspace/usage/project/history handlers; import ordering; compatibility policy.
@@ -12,6 +12,7 @@
 - Blocked by: S4-F1-T3, S4-F2-T2, S4-F4-T2
 - Blocks: S4-F8-T2, S4-F8-T3, S4-F8-T4, S4-F8-T6
 - Context: disabled `import-export.ts`, extension policy, vault storage, saved workspace schema, OpenSpec project conventions.
+- Evidence: The versioned bundle layout, seven active non-mobile scope contracts, deterministic dependency closure/import ordering, tri-state project filtering, compatibility policy, UTF-8 bounds, cross-platform path/device-name rules, canonical collision rejection, and bounded manifest/checksum/exclusion validation are implemented without bundle I/O. Node 22 passed 19 portability-contract tests, TypeScript, focused ESLint/Prettier, production build, strict OpenSpec, and diff check.
 
 ### S4-F8-T2 — Add secret classification and exclusion reporting
 
@@ -23,7 +24,7 @@
 - Acceptance: Known secrets never enter bundle, preview, log, checksum metadata, git diff, or audit; reports contain categories/paths only.
 - Verification: `npm test -- portability-secrets` with provider keys, webhooks, sessions, PEM, env, vault text, and false-positive fixtures.
 - Blocked by: S4-F8-T1
-- Blocks: S4-F8-T3, S4-F8-T4, S4-F8-T6, S4-F8-T7
+- Blocks: S4-F8-T3, S4-F8-T4, S4-F8-T6, S4-F8-T7, S4-F12-T3
 - Context: credential storage, usage secrets, audit redaction, vault secret policy.
 
 ### S4-F8-T3 — Implement consistent selective export

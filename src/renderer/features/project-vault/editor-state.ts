@@ -10,14 +10,15 @@ export type VaultEditorState = {
   base: VaultDocumentSnapshot
   draft: string
   conflict: VaultDocumentSnapshot | null
+  revision: number
 }
 
 export function createVaultEditorState(snapshot: VaultDocumentSnapshot): VaultEditorState {
-  return { base: snapshot, draft: snapshot.content, conflict: null }
+  return { base: snapshot, draft: snapshot.content, conflict: null, revision: 0 }
 }
 
 export function updateVaultEditorDraft(state: VaultEditorState, draft: string): VaultEditorState {
-  return { ...state, draft }
+  return { ...state, draft, revision: state.revision + 1 }
 }
 
 export function markVaultEditorConflict(
@@ -29,4 +30,39 @@ export function markVaultEditorConflict(
 
 export function hasVaultEditorChanges(state: VaultEditorState): boolean {
   return state.draft !== state.base.content
+}
+
+export type VaultEditorCache = Record<
+  string,
+  Record<string, VaultEditorState | undefined> | undefined
+>
+
+export function hasUnsavedVaultDrafts(cache: VaultEditorCache): boolean {
+  return Object.values(cache).some((projectEditors) =>
+    Object.values(projectEditors ?? {}).some((state) => !!state && hasVaultEditorChanges(state)),
+  )
+}
+
+export function protectUnsavedVaultDraftsBeforeUnload(
+  event: Pick<BeforeUnloadEvent, "preventDefault" | "returnValue">,
+  cache: VaultEditorCache,
+): boolean {
+  if (!hasUnsavedVaultDrafts(cache)) return false
+  event.preventDefault()
+  event.returnValue = ""
+  return true
+}
+
+export function rebaseVaultEditorAfterSave(
+  state: VaultEditorState,
+  saved: VaultDocumentSnapshot,
+  submittedRevision: number,
+): VaultEditorState {
+  if (state.revision === submittedRevision) return createVaultEditorState(saved)
+  return {
+    base: saved,
+    draft: state.draft,
+    conflict: null,
+    revision: state.revision,
+  }
 }

@@ -334,24 +334,28 @@ function pricingVersion(value: unknown): string | null {
 }
 
 function isSecretKey(key: string): boolean {
-  return /(^|[_-])(authorization|auth|credential|password|passwd|secret|api[_-]?key|token|access[_-]?token|refresh[_-]?token|id[_-]?token|cookie|session|webhook|private[_-]?key)($|[_-])/i.test(
-    key,
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^a-z0-9]+/gi, "_")
+  return /(^|_)(authorization|auth|credential|password|passwd|secret|api_?key|token|access_?token|refresh_?token|id_?token|cookie|session|webhook|private_?key)($|_)/i.test(
+    normalized,
   )
 }
 
 function redactSecretText(value: string): string {
   if (/-----BEGIN [^-]*PRIVATE KEY-----/i.test(value)) return "[redacted-private-key]"
   return value
-    .replace(/(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(/\b(?:sk|ghp|gho|github_pat|xox[baprs])-[-A-Za-z0-9_]{8,}\b/g, "[redacted]")
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(/\b(?:sk|ghp|gho|github_pat|xox[baprs])[-_][-A-Za-z0-9_]{8,}\b/g, "[redacted]")
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[redacted-aws-access-key]")
+    .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, "[redacted-google-api-key]")
+    .replace(/\bnpm_[A-Za-z0-9]{36}\b/g, "[redacted-npm-token]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted-jwt]")
     .replace(
-      /([?&](?:api[_-]?key|access[_-]?token|token|secret|password)=)[^&#\s]+/gi,
+      /([?&](?:authorization|auth|credential|password|passwd|secret|client[_-]?secret|api[_-]?key|token|access[_-]?token|refresh[_-]?token|id[_-]?token|cookie|session|webhook|private[_-]?key)=)[^&#\s]+/gi,
       "$1[redacted]",
     )
     .replace(
-      /\b(authorization|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*[^,;\s]+/gi,
+      /\b(authorization|auth|credential|password|passwd|secret|client[_-]?secret|api[_-]?key|token|access[_-]?token|refresh[_-]?token|id[_-]?token|cookie|session|webhook|private[_-]?key)\s*[:=]\s*[^,;\s]+/gi,
       "$1=[redacted]",
     )
     .replace(

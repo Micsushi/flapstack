@@ -7,6 +7,7 @@ import { migrateDatabase } from "../src/main/lib/db/migrate"
 import { queryUsageRollups, rebuildUsageRollupCache } from "../src/main/lib/usage/rollups"
 import { applyUsageStorePragmas, insertSamples, type UsageDb } from "../src/main/lib/usage/store"
 import { usageRollupQuerySchema } from "../src/shared/advanced-usage"
+import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 describe("usage rollup queries", () => {
   it("reconciles a golden provider total with overlapping run facts by metric", async () => {
@@ -314,10 +315,13 @@ function seedRunGraph(sqlite: Database.Database): void {
 function seedAutomationAndOrchestration(sqlite: Database.Database): void {
   sqlite
     .prepare(
-      `INSERT INTO task_orchestrations (task_id, initiating_chat_id)
-       VALUES ('task-1', 'chat-1')`,
+      `INSERT INTO task_orchestrations (
+         task_id, initiating_chat_id, engine_snapshot_version, coordination_engine,
+         coordination_engine_version, coordination_engine_source,
+         coordination_engine_capability_snapshot, coordination_engine_provider_identity
+       ) VALUES ('task-1', 'chat-1', ?, ?, ?, ?, ?, ?)`,
     )
-    .run()
+    .run(...testCoordinationEngineSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO orchestration_agents (id, task_id, chat_id, run_id, definition)

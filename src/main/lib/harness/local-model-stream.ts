@@ -30,6 +30,7 @@ import {
   type LocalModelToolProvider,
 } from "./local-model-read-tools"
 import { LOCAL_MODEL_READ_TOOL_SCHEMAS } from "./local-model-read-tools"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
 import {
   createProjectLocalModelWriteToolExecutor,
   LOCAL_MODEL_WRITE_TOOL_NAMES,
@@ -980,8 +981,14 @@ export function createDatabaseLocalModelRunPersistence(db: AppDatabase): LocalMo
         if (existingRun) {
           tx.update(agentRuns).set(runValues).where(eq(agentRuns.id, input.runId)).run()
         } else {
+          const runtimeSnapshot = constructRuntimeSnapshot(db, {
+            chatId: input.chatId,
+            harness: "local",
+            model: input.model,
+            permission: runtimePermissionSnapshot(input.permissionMode, input.customPermissions),
+          })
           tx.insert(agentRuns)
-            .values({ id: input.runId, ...runValues })
+            .values({ id: input.runId, ...runValues, ...runtimeSnapshot })
             .run()
         }
         tx.update(subChats)

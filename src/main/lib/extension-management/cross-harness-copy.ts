@@ -312,8 +312,13 @@ export async function applyCrossHarnessCopy(
         : undefined,
     },
   }
+  const nativePreview = await previewNativeExtensionMutation(mutation, options)
   const result = await applyNativeExtensionMutation(
-    { ...mutation, expectedHash: preview.targetBeforeHash },
+    {
+      ...mutation,
+      expectedHash: preview.targetBeforeHash,
+      confirmationHash: nativePreview.confirmationHash,
+    },
     options,
   )
 

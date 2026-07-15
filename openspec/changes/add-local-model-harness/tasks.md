@@ -78,6 +78,7 @@
 - Out of scope: Bundled downloads, model installation, and remote Ollama by default.
 - Acceptance: UI never offers unsupported tiers; selected model and permissions are visible before launch; offline local flow needs no cloud credential.
 - Verification: `npm test -- local-model-ui` plus accessibility and live Ollama catalog/launch walkthrough.
+- Manual verification remaining: `Flapstack Dev` reached the configured loopback endpoint, but Ollama was unavailable at `http://127.0.0.1:11434`; installed-model catalog selection and one real local chat launch remain unverified. No live model, provider, package, or device evidence is claimed.
 - Blocked by: S4-F6-T1
 - Blocks: S4-F6-T7, S4-F6-T8
 - Context: Agents Models/API tabs, onboarding, harness/model selector, Settings search.

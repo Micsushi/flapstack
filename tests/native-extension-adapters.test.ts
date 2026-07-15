@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import {
   applyNativeExtensionMutation,
   extensionCapabilityRegistry,
+  getNativeExtensionAdapterDescriptor,
   nativeExtensionAdapterRegistry,
   parseNativeExtensionContent,
   previewNativeExtensionMutation,
@@ -26,6 +27,14 @@ import {
 
 const temporaryRoots: string[] = []
 const fixtureRoot = join(process.cwd(), "tests", "fixtures", "extension-management", "native")
+const pinnedFormatFixtures = {
+  "claude-code:skill": ["claude-skill.md", "review", ["future-field"]],
+  "claude-code:command": ["claude-command.md", "review", ["x-command"]],
+  "claude-code:custom-agent": ["claude-agent.md", "reviewer", ["x-provider"]],
+  "codex:skill": ["codex-skill.md", "release-check", ["future-field"]],
+  "codex:command": ["codex-command.md", "review", ["x-codex"]],
+  "cursor-agent:command": ["cursor-command.md", "review", []],
+} as const
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -49,17 +58,75 @@ describe("native extension adapter parsing", () => {
     )
   })
 
-  it.each([
-    ["claude-agent.md", target("claude-code", "custom-agent", "user", "reviewer"), ["x-provider"]],
-    ["codex-skill.md", target("codex", "skill", "user", "release-check"), ["future-field"]],
-    ["cursor-command.md", target("cursor-agent", "command", "project", "review"), []],
-  ] as const)("round-trips %s byte-for-byte", (fixture, extensionTarget, unknownFields) => {
-    const raw = readFileSync(join(fixtureRoot, fixture), "utf8")
-    const parsed = parseNativeExtensionContent(extensionTarget, raw)
+  it.each(nativeExtensionAdapterRegistry)(
+    "round-trips pinned $capabilityId format byte-for-byte",
+    (registration) => {
+      const fixtureKey =
+        `${registration.harness}:${registration.kind}` as keyof typeof pinnedFormatFixtures
+      const [fixture, name, unknownFields] = pinnedFormatFixtures[fixtureKey]
+      const extensionTarget = target(
+        registration.harness,
+        registration.kind,
+        registration.scope,
+        name,
+        registration.scope === "project" ? "/tmp/project" : undefined,
+      )
+      const raw = readFileSync(join(fixtureRoot, fixture), "utf8")
+      const parsed = parseNativeExtensionContent(extensionTarget, raw)
 
-    expect(parsed.unknownFields).toEqual(unknownFields)
-    expect(serializeNativeExtensionDocument(parsed)).toBe(raw)
+      expect(parsed.unknownFields).toEqual(unknownFields)
+      expect(serializeNativeExtensionDocument(parsed)).toBe(raw)
+    },
+  )
+
+  it("pins current Claude skill and custom-agent frontmatter fields", () => {
+    expect(
+      getNativeExtensionAdapterDescriptor(target("claude-code", "skill", "user", "review"))
+        .knownFields,
+    ).toEqual(
+      expect.arrayContaining([
+        "when_to_use",
+        "arguments",
+        "disallowed-tools",
+        "effort",
+        "context",
+        "hooks",
+        "paths",
+        "shell",
+      ]),
+    )
+    expect(
+      getNativeExtensionAdapterDescriptor(target("claude-code", "custom-agent", "user", "reviewer"))
+        .knownFields,
+    ).toEqual(
+      expect.arrayContaining([
+        "disallowedTools",
+        "permissionMode",
+        "maxTurns",
+        "skills",
+        "mcpServers",
+        "hooks",
+        "memory",
+        "background",
+        "effort",
+        "isolation",
+        "color",
+        "initialPrompt",
+      ]),
+    )
   })
+
+  it.each(["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions", "plan"])(
+    "accepts pinned Claude custom-agent permission mode %s",
+    (permissionMode) => {
+      expect(() =>
+        parseNativeExtensionContent(
+          target("claude-code", "custom-agent", "user", "reviewer"),
+          `---\nname: reviewer\ndescription: Review safely\npermissionMode: ${permissionMode}\n---\n\nbody\n`,
+        ),
+      ).not.toThrow()
+    },
+  )
 
   it("rejects malformed and schema-invalid provider files", () => {
     const skillTarget = target("codex", "skill", "user", "broken")
@@ -72,6 +139,18 @@ describe("native extension adapter parsing", () => {
     expect(() =>
       parseNativeExtensionContent(skillTarget, "---\nname: broken\n---\n\nbody\n"),
     ).toThrow()
+    expect(() =>
+      parseNativeExtensionContent(
+        target("claude-code", "custom-agent", "user", "broken"),
+        "---\ndescription: Missing native agent name\n---\n\nbody\n",
+      ),
+    ).toThrow("metadata schema is invalid")
+    expect(() =>
+      parseNativeExtensionContent(
+        target("claude-code", "custom-agent", "user", "reviewer"),
+        "---\nname: reviewer\ndescription: Review safely\npermissionMode: manual\n---\n\nbody\n",
+      ),
+    ).toThrow("metadata schema is invalid")
   })
 })
 
@@ -91,12 +170,19 @@ describe("native extension mutation safety", () => {
     const preview = await previewNativeExtensionMutation(mutation, { homeDir: home })
 
     expect(preview.changed).toBe(true)
+    expect(preview.beforeHash).toHaveLength(64)
+    expect(preview.afterHash).toHaveLength(64)
+    expect(preview.confirmationHash).toHaveLength(64)
     expect(preview.unknownFields).toEqual(["x-provider"])
     expect(preview.diff).toContain("Review code safely")
     expect(readFileSync(file, "utf8")).toBe(original)
 
     const result = await applyNativeExtensionMutation(
-      { ...mutation, expectedHash: preview.beforeHash },
+      {
+        ...mutation,
+        expectedHash: preview.beforeHash,
+        confirmationHash: preview.confirmationHash,
+      },
       { homeDir: home },
     )
     const updated = matter(readFileSync(file, "utf8"))
@@ -158,6 +244,23 @@ describe("native extension mutation safety", () => {
     expect(readFileSync(join(outside, "SKILL.md"), "utf8")).toBe(validSkill("outside"))
     expect(existsSync(join(home, ".agents", "skills", ".flapstack-backups"))).toBe(false)
 
+    const outsideCommand = join(outside, "review.md")
+    const linkedCommand = join(home, ".cursor", "commands", "review.md")
+    write(outsideCommand, "Review outside.\n")
+    mkdirSync(dirname(linkedCommand), { recursive: true })
+    symlinkSync(outsideCommand, linkedCommand)
+    await expect(
+      previewNativeExtensionMutation(
+        {
+          operation: "update",
+          target: target("cursor-agent", "command", "project", "review", home),
+          changes: { content: "escaped" },
+        },
+        { homeDir: home },
+      ),
+    ).rejects.toThrow("symbolic link")
+    expect(readFileSync(outsideCommand, "utf8")).toBe("Review outside.\n")
+
     await expect(
       previewNativeExtensionMutation(
         {
@@ -188,7 +291,11 @@ describe("native extension mutation safety", () => {
 
     await expect(
       applyNativeExtensionMutation(
-        { ...mutation, expectedHash: preview.beforeHash },
+        {
+          ...mutation,
+          expectedHash: preview.beforeHash,
+          confirmationHash: preview.confirmationHash,
+        },
         {
           homeDir: home,
           afterCommit: () => {
@@ -218,11 +325,43 @@ describe("native extension mutation safety", () => {
 
     await expect(
       applyNativeExtensionMutation(
-        { ...mutation, expectedHash: preview.beforeHash },
+        {
+          ...mutation,
+          expectedHash: preview.beforeHash,
+          confirmationHash: preview.confirmationHash,
+        },
         { homeDir: home },
       ),
     ).rejects.toThrow("changed after preview")
     expect(readFileSync(file, "utf8")).toBe(external)
+    expect(existsSync(join(home, ".agents", "skills", ".flapstack-backups"))).toBe(false)
+  })
+
+  it("binds apply to the exact reviewed preview payload", async () => {
+    const home = temporaryRoot()
+    const extensionTarget = target("codex", "skill", "user", "release-check")
+    const file = join(home, ".agents", "skills", "release-check", "SKILL.md")
+    const original = validSkill("release-check")
+    write(file, original)
+    const reviewed = {
+      operation: "update" as const,
+      target: extensionTarget,
+      changes: { content: "reviewed body\n" },
+    }
+    const preview = await previewNativeExtensionMutation(reviewed, { homeDir: home })
+
+    await expect(
+      applyNativeExtensionMutation(
+        {
+          ...reviewed,
+          changes: { content: "different unreviewed body\n" },
+          expectedHash: preview.beforeHash,
+          confirmationHash: preview.confirmationHash,
+        },
+        { homeDir: home },
+      ),
+    ).rejects.toThrow("preview confirmation is stale or invalid")
+    expect(readFileSync(file, "utf8")).toBe(original)
     expect(existsSync(join(home, ".agents", "skills", ".flapstack-backups"))).toBe(false)
   })
 
@@ -241,7 +380,11 @@ describe("native extension mutation safety", () => {
 
     await expect(
       applyNativeExtensionMutation(
-        { ...mutation, expectedHash: preview.beforeHash },
+        {
+          ...mutation,
+          expectedHash: preview.beforeHash,
+          confirmationHash: preview.confirmationHash,
+        },
         {
           homeDir: home,
           beforeCommit: () => writeFileSync(file, external),
@@ -265,7 +408,12 @@ describe("native extension mutation safety", () => {
       { homeDir: home },
     )
     const deleted = await applyNativeExtensionMutation(
-      { operation: "delete", target: extensionTarget, expectedHash: deletePreview.beforeHash },
+      {
+        operation: "delete",
+        target: extensionTarget,
+        expectedHash: deletePreview.beforeHash,
+        confirmationHash: deletePreview.confirmationHash,
+      },
       { homeDir: home },
     )
     expect(existsSync(file)).toBe(false)
@@ -284,7 +432,11 @@ describe("native extension mutation safety", () => {
     }
     const createPreview = await previewNativeExtensionMutation(createMutation, { homeDir: home })
     const created = await applyNativeExtensionMutation(
-      { ...createMutation, expectedHash: createPreview.beforeHash },
+      {
+        ...createMutation,
+        expectedHash: createPreview.beforeHash,
+        confirmationHash: createPreview.confirmationHash,
+      },
       { homeDir: home },
     )
     expect(await readNativeExtension(createdTarget, { homeDir: home })).toMatchObject({
@@ -309,7 +461,11 @@ describe("native extension mutation safety", () => {
     }
     const preview = await previewNativeExtensionMutation(mutation, { homeDir: home })
     const result = await applyNativeExtensionMutation(
-      { ...mutation, expectedHash: preview.beforeHash },
+      {
+        ...mutation,
+        expectedHash: preview.beforeHash,
+        confirmationHash: preview.confirmationHash,
+      },
       { homeDir: home },
     )
     const updated = readFileSync(file, "utf8")
@@ -359,6 +515,58 @@ describe("native extension mutation safety", () => {
         { homeDir: home },
       ),
     ).rejects.toThrow("No native file adapter")
+  })
+
+  it("rejects a valid backup record rebound to a different native target", async () => {
+    const home = temporaryRoot()
+    const firstTarget = target("codex", "skill", "user", "first-skill")
+    const secondTarget = target("codex", "skill", "user", "second-skill")
+    const firstFile = join(home, ".agents", "skills", "first-skill", "SKILL.md")
+    const secondFile = join(home, ".agents", "skills", "second-skill", "SKILL.md")
+    write(firstFile, validSkill("first-skill"))
+    write(secondFile, validSkill("second-skill"))
+
+    const firstMutation = {
+      operation: "update" as const,
+      target: firstTarget,
+      changes: { content: "first updated\n" },
+    }
+    const secondMutation = {
+      operation: "update" as const,
+      target: secondTarget,
+      changes: { content: "second updated\n" },
+    }
+    const firstPreview = await previewNativeExtensionMutation(firstMutation, { homeDir: home })
+    const secondPreview = await previewNativeExtensionMutation(secondMutation, { homeDir: home })
+    const firstResult = await applyNativeExtensionMutation(
+      {
+        ...firstMutation,
+        expectedHash: firstPreview.beforeHash,
+        confirmationHash: firstPreview.confirmationHash,
+      },
+      { homeDir: home },
+    )
+    const secondResult = await applyNativeExtensionMutation(
+      {
+        ...secondMutation,
+        expectedHash: secondPreview.beforeHash,
+        confirmationHash: secondPreview.confirmationHash,
+      },
+      { homeDir: home },
+    )
+    const rebound = JSON.parse(
+      readFileSync(join(home, firstResult.backup!.relativePath), "utf8"),
+    ) as { backupId: string }
+    rebound.backupId = secondResult.backup!.backupId
+    writeFileSync(join(home, secondResult.backup!.relativePath), `${JSON.stringify(rebound)}\n`)
+
+    await expect(
+      restoreNativeExtensionBackup(
+        { target: secondTarget, backupId: secondResult.backup!.backupId },
+        { homeDir: home },
+      ),
+    ).rejects.toThrow("does not match the requested target")
+    expect(readFileSync(secondFile, "utf8")).toContain("second updated")
   })
 })
 

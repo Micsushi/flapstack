@@ -142,12 +142,12 @@ describe("Flapstack MCP per-chat exposure", () => {
       .run()
     sqlite
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-old', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
+        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot, status) VALUES ('run-old', 'chat-1', 'sub-1', 'codex', 'read-only', 1, 'flapstack-native', 'product', 'flapstack-native', 'test', 'test', '{}', '{}', 'running')",
       )
       .run()
     sqlite
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-normal', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
+        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot, status) VALUES ('run-normal', 'chat-1', 'sub-1', 'codex', 'read-only', 1, 'flapstack-native', 'product', 'flapstack-native', 'test', 'test', '{}', '{}', 'running')",
       )
       .run()
     sqlite
@@ -203,7 +203,7 @@ describe("Flapstack MCP per-chat exposure", () => {
     const reloaded = new Database(databasePath)
     reloaded
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, status) VALUES ('run-new', 'chat-1', 'codex', 'read-only', 'running')",
+        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime, runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot, status) VALUES ('run-new', 'chat-1', 'codex', 'read-only', 1, 'flapstack-native', 'product', 'flapstack-native', 'test', 'test', '{}', '{}', 'running')",
       )
       .run()
     reloaded.close()

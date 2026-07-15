@@ -14,6 +14,7 @@ import {
   getExtensionCapabilityForManifest,
 } from "../src/main/lib/extension-management"
 import { discoverProviderExtensions } from "../src/main/lib/provider-extensions"
+import { PINNED_OPENCODE_VERSION } from "../src/main/lib/harness/opencode-sidecar/binary"
 import { hooksManagementRouter } from "../src/main/lib/trpc/routers/hooks-management"
 import { providerExtensionsRouter } from "../src/main/lib/trpc/routers/provider-extensions"
 
@@ -31,6 +32,14 @@ describe("Stage 3 extension capability baseline", () => {
     expect(new Set(extensionCapabilityRegistry.map((row) => row.id)).size).toBe(
       extensionCapabilityRegistry.length,
     )
+    expect(
+      Object.fromEntries(
+        ["supported", "compatibility", "disabled", "unsupported"].map((inventory) => [
+          inventory,
+          extensionCapabilityRegistry.filter((row) => row.inventory === inventory).length,
+        ]),
+      ),
+    ).toEqual({ supported: 31, compatibility: 5, disabled: 0, unsupported: 36 })
 
     for (const harness of extensionHarnesses) {
       for (const kind of extensionKinds) {
@@ -67,12 +76,47 @@ describe("Stage 3 extension capability baseline", () => {
           row.nativePaths.join(","),
         ].join("|"),
       )
+    const unsupportedCapabilities = extensionCapabilityRegistry
+      .filter((row) => row.inventory === "unsupported")
+      .map((row) => row.id)
+
+    for (const row of extensionCapabilityRegistry.filter(
+      (capability) => capability.inventory === "unsupported",
+    )) {
+      expect(row).toMatchObject({
+        schemaVersion: EXTENSION_CAPABILITY_SCHEMA_VERSION,
+        mutations: [],
+        runtimeConsumption: "unknown",
+        settingsSurface: "none",
+        nativePaths: [],
+      })
+      expect(row.limitations).not.toHaveLength(0)
+    }
 
     expect({
       schemaVersion: EXTENSION_CAPABILITY_SCHEMA_VERSION,
       harnesses,
       capabilities,
+      unsupportedCapabilities,
     }).toEqual(fixture)
+  })
+
+  it("matches the current shipped package pins", () => {
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8"))
+    const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8"))
+
+    expect(packageJson.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("^0.3.207")
+    expect(packageJson.dependencies["@agentclientprotocol/codex-acp"]).toBe("1.1.2")
+    expect(packageJson.scripts["claude:download"]).toContain("--version=2.1.207")
+    expect(packageJson.scripts["codex:download"]).toContain("--version=0.144.1")
+    expect(packageLock.packages["node_modules/@anthropic-ai/claude-agent-sdk"].version).toBe(
+      "0.3.207",
+    )
+    expect(packageLock.packages["node_modules/@agentclientprotocol/codex-acp"].version).toBe(
+      "1.1.2",
+    )
+    expect(packageLock.packages["node_modules/@openai/codex"].version).toBe("0.144.1")
+    expect(PINNED_OPENCODE_VERSION).toBe("1.17.18")
   })
 
   it("maps every discovered provider DTO to a non-unsupported registry row", async () => {

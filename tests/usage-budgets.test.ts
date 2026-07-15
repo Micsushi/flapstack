@@ -26,6 +26,8 @@ import {
 import { UsageEngine } from "../src/main/lib/usage/engine"
 import { defaultUsageSettings } from "../src/main/lib/usage/settings"
 import type { UsageDb } from "../src/main/lib/usage/store"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
+import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const migrations = resolve(process.cwd(), "drizzle")
 const NOW = Date.parse("2026-07-14T12:00:00.000Z")
@@ -490,10 +492,19 @@ function seedRun(
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, initial_prompt, prompt_message_id,
-        status, started_at
-      ) VALUES (?, 'chat-1', ?, 'codex', 'read-only', 'Run', ?, ?, ?)`,
+        status, started_at, runtime_snapshot_version, runtime_preference,
+        runtime_preference_source, resolved_runtime, runtime_adapter_version,
+        runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, 'chat-1', ?, 'codex', 'read-only', 'Run', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, subChatId, `mcp-${id}`, status, Math.floor(NOW / 1_000))
+    .run(
+      id,
+      subChatId,
+      `mcp-${id}`,
+      status,
+      Math.floor(NOW / 1_000),
+      ...testRuntimeSnapshotSqlValues(),
+    )
 }
 
 function seedAutomation(sqlite: Database.Database, directory: string): LeasedAutomationOccurrence {
@@ -564,10 +575,16 @@ function seedOrchestration(sqlite: Database.Database): void {
     .prepare(
       `INSERT INTO task_orchestrations (
         task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions,
-        created_at, updated_at
-      ) VALUES ('task-1', 'chat-1', 'paused', 1, 1, '{}', ?, ?)`,
+        created_at, updated_at, engine_snapshot_version, coordination_engine,
+        coordination_engine_version, coordination_engine_source,
+        coordination_engine_capability_snapshot, coordination_engine_provider_identity
+      ) VALUES ('task-1', 'chat-1', 'paused', 1, 1, '{}', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(Math.floor(NOW / 1_000), Math.floor(NOW / 1_000))
+    .run(
+      Math.floor(NOW / 1_000),
+      Math.floor(NOW / 1_000),
+      ...testCoordinationEngineSnapshotSqlValues(),
+    )
 }
 
 function seedGitGraph(fixture: { sqlite: Database.Database; directory: string }): void {

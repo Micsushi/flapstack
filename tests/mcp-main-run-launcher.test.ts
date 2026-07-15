@@ -13,6 +13,8 @@ import {
 } from "../src/main/lib/run-launch-service"
 import { appendMcpAuditRecord } from "../src/main/lib/mcp-control/audit-storage"
 import { updateSubChatRunStatusIfAuthoritative } from "../src/main/lib/run-status-authority"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
+import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const harnessMocks = vi.hoisted(() => ({
   codex: vi.fn(),
@@ -435,11 +437,14 @@ describe("MCP main run launcher", () => {
         .prepare(
           `INSERT INTO agent_runs (
             id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-            prompt_message_id, initial_prompt, status, started_at
+            prompt_message_id, initial_prompt, status, started_at,
+            runtime_snapshot_version, runtime_preference, runtime_preference_source,
+            resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+            runtime_capability_snapshot, runtime_control_snapshot
           ) VALUES ('raced-pending', 'shared-chat', 'shared-sub', 'codex', 'full-access',
-            '/tmp/worktree', 'mcp-raced', 'Raced', 'pending', 3)`,
+            '/tmp/worktree', 'mcp-raced', 'Raced', 'pending', 3, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run()
+        .run(...testRuntimeSnapshotSqlValues())
 
       expect(
         updateSubChatRunStatusIfAuthoritative(drizzle(sqlite, { schema }), {
@@ -493,11 +498,14 @@ function seedSharedConversationRuns(): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at
-    ) VALUES (?, 'shared-chat', 'shared-sub', 'codex', 'full-access', '/tmp/worktree', ?, 'pending', ?)`,
+      prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
+      runtime_preference_source, resolved_runtime, runtime_adapter_version,
+      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'shared-chat', 'shared-sub', 'codex', 'full-access', '/tmp/worktree',
+      ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("shared-first", "mcp-first", 1)
-  insert.run("shared-second", "mcp-second", 2)
+  insert.run("shared-first", "mcp-first", 1, ...testRuntimeSnapshotSqlValues())
+  insert.run("shared-second", "mcp-second", 2, ...testRuntimeSnapshotSqlValues())
 }
 
 function seedQueuedTurns(harness: "codex" | "claude-code"): void {
@@ -522,11 +530,26 @@ function seedQueuedTurns(harness: "codex" | "claude-code"): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at
-    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree', ?, 'pending', ?)`,
+      prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
+      runtime_preference_source, resolved_runtime, runtime_adapter_version,
+      runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'ordered-chat', 'ordered-sub', ?, 'full-access', '/tmp/worktree',
+      ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("ordered-first", harness, "mcp-ordered-first", 1)
-  insert.run("ordered-second", harness, "mcp-ordered-second", 2)
+  insert.run(
+    "ordered-first",
+    harness,
+    "mcp-ordered-first",
+    1,
+    ...testRuntimeSnapshotSqlValues(harness),
+  )
+  insert.run(
+    "ordered-second",
+    harness,
+    "mcp-ordered-second",
+    2,
+    ...testRuntimeSnapshotSqlValues(harness),
+  )
 }
 
 function seedRun(
@@ -565,10 +588,21 @@ function seedRun(
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, status, started_at
-      ) VALUES (?, ?, ?, ?, 'full-access', '/tmp/worktree', ?, ?, ?)`,
+        prompt_message_id, status, started_at, runtime_snapshot_version, runtime_preference,
+        runtime_preference_source, resolved_runtime, runtime_adapter_version,
+        runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, ?, ?, ?, 'full-access', '/tmp/worktree', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(runId, chatId, subChatId, harness, promptMessageId, status, Date.now())
+    .run(
+      runId,
+      chatId,
+      subChatId,
+      harness,
+      promptMessageId,
+      status,
+      Date.now(),
+      ...testRuntimeSnapshotSqlValues(harness),
+    )
 }
 
 function seedOrchestrationRun(runId: string, taskId: string): void {
@@ -582,10 +616,13 @@ function seedOrchestrationRun(runId: string, taskId: string): void {
   sqlite
     .prepare(
       `INSERT INTO task_orchestrations (
-        task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions
-      ) VALUES (?, ?, 'running', 1, 4, '{}')`,
+        task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions,
+        engine_snapshot_version, coordination_engine, coordination_engine_version,
+        coordination_engine_source, coordination_engine_capability_snapshot,
+        coordination_engine_provider_identity
+      ) VALUES (?, ?, 'running', 1, 4, '{}', ?, ?, ?, ?, ?, ?)`,
     )
-    .run(taskId, `chat-${runId}`)
+    .run(taskId, `chat-${runId}`, ...testCoordinationEngineSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO orchestration_agents (

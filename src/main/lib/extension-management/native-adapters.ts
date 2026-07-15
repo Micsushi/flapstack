@@ -56,6 +56,7 @@ export const nativeExtensionMutationSchema = z.object({
 
 export const nativeExtensionApplySchema = nativeExtensionMutationSchema.extend({
   expectedHash: z.string().length(64).nullable(),
+  confirmationHash: z.string().length(64),
 })
 
 export const nativeExtensionRestoreSchema = z.object({
@@ -87,6 +88,7 @@ export type NativeExtensionMutationPreview = {
   capabilityId: string
   beforeHash: string | null
   afterHash: string | null
+  confirmationHash: string
   unknownFields: string[]
   changed: boolean
   diff: string
@@ -148,7 +150,56 @@ const nonEmptyString = z.string().trim().min(1)
 const optionalString = z.string().optional()
 const stringOrStringArray = z.union([z.string(), z.array(z.string())]).optional()
 
-const skillMetadataSchema = z
+const claudeSkillKnownFields = [
+  "name",
+  "description",
+  "when_to_use",
+  "argument-hint",
+  "arguments",
+  "disable-model-invocation",
+  "user-invocable",
+  "allowed-tools",
+  "disallowed-tools",
+  "model",
+  "effort",
+  "context",
+  "agent",
+  "hooks",
+  "paths",
+  "shell",
+] as const
+
+const claudeSkillMetadataSchema = z
+  .object({
+    name: optionalString,
+    description: optionalString,
+    when_to_use: optionalString,
+    "argument-hint": optionalString,
+    arguments: stringOrStringArray,
+    "disable-model-invocation": z.boolean().optional(),
+    "user-invocable": z.boolean().optional(),
+    "allowed-tools": stringOrStringArray,
+    "disallowed-tools": stringOrStringArray,
+    model: optionalString,
+    effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+    context: z.literal("fork").optional(),
+    agent: optionalString,
+    hooks: z.unknown().optional(),
+    paths: stringOrStringArray,
+    shell: z.enum(["bash", "powershell"]).optional(),
+  })
+  .passthrough()
+
+const agentSkillKnownFields = [
+  "name",
+  "description",
+  "license",
+  "compatibility",
+  "metadata",
+  "allowed-tools",
+] as const
+
+const agentSkillMetadataSchema = z
   .object({
     name: nonEmptyString,
     description: nonEmptyString,
@@ -171,10 +222,26 @@ const commandMetadataSchema = z
 
 const agentMetadataSchema = z
   .object({
-    name: optionalString,
+    name: nonEmptyString,
     description: nonEmptyString,
     model: optionalString,
     tools: stringOrStringArray,
+    disallowedTools: stringOrStringArray,
+    permissionMode: z
+      .enum(["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions", "plan"])
+      .optional(),
+    maxTurns: z.number().int().positive().optional(),
+    skills: stringOrStringArray,
+    mcpServers: z.unknown().optional(),
+    hooks: z.unknown().optional(),
+    memory: z.enum(["user", "project", "local"]).optional(),
+    background: z.boolean().optional(),
+    effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+    isolation: z.literal("worktree").optional(),
+    color: z
+      .enum(["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"])
+      .optional(),
+    initialPrompt: optionalString,
   })
   .passthrough()
 
@@ -191,8 +258,8 @@ const nativeAdapters: NativeAdapterDefinition[] = [
     ["user", "project"],
     [".claude", "skills"],
     "skill-directory",
-    ["name", "description", "license", "compatibility", "metadata", "allowed-tools"],
-    skillMetadataSchema,
+    [...claudeSkillKnownFields],
+    claudeSkillMetadataSchema,
   ),
   adapter(
     "claude-code",
@@ -200,8 +267,8 @@ const nativeAdapters: NativeAdapterDefinition[] = [
     ["user", "project"],
     [".claude", "commands"],
     "markdown-file",
-    ["description", "argument-hint", "allowed-tools", "model", "disable-model-invocation"],
-    commandMetadataSchema,
+    [...claudeSkillKnownFields],
+    claudeSkillMetadataSchema,
   ),
   adapter(
     "claude-code",
@@ -209,7 +276,24 @@ const nativeAdapters: NativeAdapterDefinition[] = [
     ["user", "project"],
     [".claude", "agents"],
     "markdown-file",
-    ["name", "description", "model", "tools"],
+    [
+      "name",
+      "description",
+      "tools",
+      "disallowedTools",
+      "model",
+      "permissionMode",
+      "maxTurns",
+      "skills",
+      "mcpServers",
+      "hooks",
+      "memory",
+      "background",
+      "effort",
+      "isolation",
+      "color",
+      "initialPrompt",
+    ],
     agentMetadataSchema,
   ),
   adapter(
@@ -218,8 +302,8 @@ const nativeAdapters: NativeAdapterDefinition[] = [
     ["user", "project"],
     [".agents", "skills"],
     "skill-directory",
-    ["name", "description", "license", "compatibility", "metadata", "allowed-tools"],
-    skillMetadataSchema,
+    [...agentSkillKnownFields],
+    agentSkillMetadataSchema,
   ),
   adapter(
     "codex",
@@ -363,6 +447,9 @@ export async function applyNativeExtensionMutation(
     }
     const next = buildNextState(resolved, input, before)
     const preview = createPreview(resolved, input.operation, before, next)
+    if (preview.confirmationHash !== input.confirmationHash) {
+      throw new Error("Native extension preview confirmation is stale or invalid")
+    }
     if (!preview.changed) {
       return {
         ...preview,
@@ -573,7 +660,7 @@ function createPreview(
   next: RawState,
 ): NativeExtensionMutationPreview {
   const nextDocument = next ? parseNativeExtensionContent(resolved.target, next.raw) : null
-  return {
+  const preview = {
     schemaVersion: NATIVE_EXTENSION_ADAPTER_SCHEMA_VERSION,
     operation,
     target: resolved.target,
@@ -593,6 +680,7 @@ function createPreview(
       { context: 3 },
     ),
   }
+  return { ...preview, confirmationHash: sha256(JSON.stringify(preview)) }
 }
 
 async function readRawState(resolved: ResolvedNativeTarget): Promise<RawState> {

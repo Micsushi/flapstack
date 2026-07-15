@@ -28,7 +28,8 @@ import { ProviderChipIcon } from "./provider-chip-icon"
 
 const CROSS_PROVIDER_DIALOG_DISMISSED_KEY = "agent-model-selector:skip-cross-provider-dialog"
 
-export type AgentProviderId = "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
+export type AgentProviderId =
+  "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt" | "local"
 
 type ClaudeModelOption = {
   id: string
@@ -55,6 +56,7 @@ type LocalModelOption = {
   name: string
   chat: "supported" | "unsupported" | "unknown"
   tools: "supported" | "unsupported" | "unknown"
+  selectable: boolean
   limitations: string[]
 }
 
@@ -117,6 +119,8 @@ interface AgentModelSelectorProps {
       "not-checked" | "invalid-endpoint" | "ready" | "empty" | "stale" | "unavailable" | "error"
     models: LocalModelOption[]
     selectedModelId: string | null
+    canLaunch: boolean
+    onSelectModel: (modelId: string | null) => void
     onOpenSettings: () => void
   }
 }
@@ -136,7 +140,7 @@ type FlatModelItem =
   | { type: "custom" }
 
 type ModelGroup = {
-  id: AgentProviderId | "local"
+  id: AgentProviderId
   label: string
   items: FlatModelItem[]
 }
@@ -432,7 +436,7 @@ export function AgentModelSelector({
     "cursor-agent": selectedAgentId === "cursor-agent",
     openrouter: selectedAgentId === "openrouter",
     nanogpt: selectedAgentId === "nanogpt",
-    local: false,
+    local: selectedAgentId === "local",
   }))
 
   // On open: collapse everything except the current provider and scroll its
@@ -445,7 +449,7 @@ export function AgentModelSelector({
       "cursor-agent": selectedAgentId === "cursor-agent",
       openrouter: selectedAgentId === "openrouter",
       nanogpt: selectedAgentId === "nanogpt",
-      local: false,
+      local: selectedAgentId === "local",
     })
     const frame = requestAnimationFrame(() => {
       document.getElementById(`model-group-${selectedAgentId}`)?.scrollIntoView({ block: "start" })
@@ -585,11 +589,12 @@ export function AgentModelSelector({
     if (item.type === "codex") return "codex"
     if (item.type === "cursor") return "cursor-agent"
     if (item.type === "opencode") return item.provider
-    if (item.type === "local") return null
+    if (item.type === "local") return "local"
     return "claude-code"
   }
 
   const isItemDisabled = (item: FlatModelItem): boolean => {
+    if (item.type === "local" && !item.model.selectable) return true
     const provider = getItemProvider(item)
     if (!provider) return false
     if (canSelectProvider(provider)) return false
@@ -627,15 +632,11 @@ export function AgentModelSelector({
   const handleItemClick = (item: FlatModelItem) => {
     const provider = getItemProvider(item)
 
-    if (item.type === "local") {
-      local?.onOpenSettings()
-      handleOpenChange(false)
-      return
-    }
     if (!provider) return
 
     // Cross-provider click → show confirmation or continue directly
     if (!canSelectProvider(provider) && onContinueWithProvider) {
+      if (item.type === "local") local?.onSelectModel(item.model.id)
       handleOpenChange(false)
       const dismissed = (() => {
         try {
@@ -673,6 +674,11 @@ export function AgentModelSelector({
         if (!canSelectProvider(item.provider)) return
         onSelectedAgentIdChange(item.provider)
         opencode[item.provider].onSelectModel(item.model.id)
+        break
+      case "local":
+        if (!canSelectProvider("local") || !item.model.selectable) return
+        local?.onSelectModel(item.model.id)
+        onSelectedAgentIdChange("local")
         break
       case "ollama":
         if (!canSelectProvider("claude-code")) return

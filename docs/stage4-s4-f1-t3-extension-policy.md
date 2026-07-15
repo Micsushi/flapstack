@@ -26,7 +26,10 @@ runtime-enforcement contract, including unsupported per-extension filters.
 
 `providerExtensions` now exposes resolved inventory plus set, clear, and
 single-extension resolution procedures. Mutations resolve the extension from
-the current native inventory before storing policy.
+the current native inventory before storing policy. Successful set and clear
+operations publish a validated all-window invalidation event so every renderer
+re-reads authoritative resolved state; stale extension IDs fail before either a
+write or notification.
 
 Managed Claude Code, Codex, and Cursor runs resolve policy from the chat's
 project/task ownership before provider launch. The same resolved manifest is
@@ -50,7 +53,7 @@ also reject policy writes.
 
 ## Headless verification
 
-`tests/extension-enablement-policy.test.ts` covers 13 cases:
+`tests/extension-enablement-policy.test.ts` covers 13 core cases:
 
 - user/project/task/fixed-default precedence;
 - unsupported capability and mismatched task rejection before writes;
@@ -58,7 +61,26 @@ also reject policy writes.
 - Claude SDK skill/MCP launch filtering and Codex exact-path/MCP session config;
 - Cursor and unsupported Claude surface pre-launch blocking;
 - duplicate-name and native MCP adversarial exposure attempts;
-- router integration and the serialized `0029 -> 0030` journal with no `0031`.
+- router integration and the serialized `0029 -> 0030` journal ordering.
+
+Production-boundary coverage also exercises the real provider routers instead
+of only testing launch-policy helpers:
+
+- the production policy router rejects stale IDs, resolves set/clear state, and
+  publishes task-scoped all-window invalidation;
+- the Claude router passes the resolved skill allowlist, strict MCP mode, and
+  filtered servers to the mocked Agent SDK query boundary;
+- the Codex router passes exact disabled skill paths and MCP state through
+  `CODEX_CONFIG` and filters the ACP session server list;
+- the Cursor router proves unsupported command disablement fails before
+  `cursor-agent` spawn;
+- the shared renderer invalidation bridge refreshes all provider-extension tRPC
+  query families across windows.
+
+Node 22 focused T3 and provider-boundary coverage passes 6 files/25 tests.
+The broader Stage 3 extension regression set passes 14 files/118 tests. Full
+TypeScript, ESLint, Prettier, strict OpenSpec, diff checking, and the production
+build pass.
 
 ## Remaining proof
 
