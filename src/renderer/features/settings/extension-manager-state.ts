@@ -74,6 +74,43 @@ export type ExtensionManagerAction =
 export type ExtensionManagerInventoryStatus =
   "loading" | "error" | "refreshing" | "stale-error" | "empty" | "ready"
 
+export type ExtensionEditorValidationInput = {
+  mode: "create" | "edit" | "copy"
+  kind: Exclude<ExtensionManagerKind, "all">
+  name: string
+  description: string
+  scope: "user" | "project"
+  supported: boolean
+  hasProject: boolean
+  command: string
+}
+
+export function createExtensionCopyFields(source: { name: string; description: string }): {
+  name: string
+  description: string
+} {
+  return { name: source.name, description: source.description }
+}
+
+export function extensionEditorBlockingReason(
+  input: ExtensionEditorValidationInput,
+): string | null {
+  if (!input.supported) return "No supported native preview adapter is available."
+  if (!input.name.trim()) return "Extension name is required."
+  if (input.scope === "project" && !input.hasProject) {
+    return "A verified project is required for project scope."
+  }
+  if (input.kind === "hook" && !input.command.trim()) return "Hook command is required."
+  if (
+    input.mode !== "copy" &&
+    (input.kind === "skill" || input.kind === "custom-agent") &&
+    !input.description.trim()
+  ) {
+    return "Description is required by the provider format."
+  }
+  return null
+}
+
 export function verifiedExtensionManagerProject<T>(
   selectedProject: T | null,
   scopedInventorySucceeded: boolean,

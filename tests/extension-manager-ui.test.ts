@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   createExtensionManagerState,
+  createExtensionCopyFields,
   clearPolicyDiff,
   exactPolicyDiff,
   extensionManagerInventoryStatus,
   extensionManagerPolicyMutationCwd,
   extensionManagerReducer,
+  extensionEditorBlockingReason,
   filterExtensionManagerRows,
   nextExtensionSelection,
   reverseUnifiedDiff,
@@ -106,6 +108,64 @@ describe("unified extension manager selectors", () => {
 })
 
 describe("unified extension manager reducer", () => {
+  it("seeds copy metadata from supported Skill and Custom Agent sources", () => {
+    const skill = createExtensionCopyFields({
+      name: "ponytail",
+      description: "Apply the ponytail review contract",
+    })
+    expect(skill).toEqual({
+      name: "ponytail",
+      description: "Apply the ponytail review contract",
+    })
+    expect({ ...skill, name: "renamed-ponytail" }).toMatchObject({
+      name: "renamed-ponytail",
+      description: "Apply the ponytail review contract",
+    })
+
+    const customAgent = createExtensionCopyFields({
+      name: "reviewer",
+      description: "Review changes safely",
+    })
+    expect(
+      extensionEditorBlockingReason({
+        mode: "copy",
+        kind: "custom-agent",
+        ...customAgent,
+        scope: "user",
+        supported: true,
+        hasProject: false,
+        command: "",
+      }),
+    ).toBeNull()
+  })
+
+  it("keeps copy preview reachable when source metadata needs canonical adapter review", () => {
+    expect(
+      extensionEditorBlockingReason({
+        mode: "copy",
+        kind: "skill",
+        name: "missing-description",
+        description: "",
+        scope: "user",
+        supported: true,
+        hasProject: false,
+        command: "",
+      }),
+    ).toBeNull()
+    expect(
+      extensionEditorBlockingReason({
+        mode: "create",
+        kind: "skill",
+        name: "missing-description",
+        description: "",
+        scope: "user",
+        supported: true,
+        hasProject: false,
+        command: "",
+      }),
+    ).toMatch(/description/i)
+  })
+
   it("clears stale action confirmation when filters or selection change", () => {
     let state = createExtensionManagerState("skill")
     state = extensionManagerReducer(state, { type: "select", id: "claude-skill" })
@@ -228,6 +288,10 @@ describe("unified extension manager accessibility contract", () => {
     expect(source).toContain("headingRef.current?.focus()")
     expect(source).toContain("restoreInventoryFocus")
     expect(source).toContain('aria-label="Extension instructions"')
+    expect(source).toContain('aria-label="Source extension description"')
+    expect(source).toContain('role="status"')
+    expect(source).toContain("Source description is missing")
+    expect(source).toContain("extension-editor-blocking-reason")
   })
 
   it("restores inventory focus after successful apply refresh completion or failure", () => {
