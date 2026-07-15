@@ -61,7 +61,7 @@ afterEach(() => {
 })
 
 describe("durable agent task orchestration", () => {
-  it("keeps the isolated schema harness compatible with authoritative 0031", () => {
+  it("uses the authoritative 0031 saved-workspace constraints and indexes", () => {
     const table = sqlite
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'saved_workspaces'")
       .get() as { sql: string }

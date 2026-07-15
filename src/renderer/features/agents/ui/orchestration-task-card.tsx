@@ -1,7 +1,17 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { CirclePause, CirclePlay, GitFork, Plus, RefreshCw, Replace, Square } from "lucide-react"
+import { useSetAtom } from "jotai"
+import {
+  CirclePause,
+  CirclePlay,
+  GitFork,
+  PanelsTopLeft,
+  Plus,
+  RefreshCw,
+  Replace,
+  Square,
+} from "lucide-react"
 import { toast } from "sonner"
 import type {
   OrchestrationAgentDefinition,
@@ -29,6 +39,8 @@ import { Input } from "../../../components/ui/input"
 import { Textarea } from "../../../components/ui/textarea"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { desktopViewAtom } from "../atoms"
+import { openOperationWorkspace } from "../../saved-workspaces/operation-navigation"
 import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
 import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
 import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
@@ -219,6 +231,7 @@ export function OrchestrationOverviewCard({
   onAdd,
   onLineageAction,
   onStartCoordination,
+  onOpenWorkspace,
 }: {
   overview: OrchestrationTaskOverviewDto
   lineage: OrchestrationLineageDto
@@ -235,6 +248,7 @@ export function OrchestrationOverviewCard({
     message: string | null,
   ) => void
   onStartCoordination?: () => void
+  onOpenWorkspace: () => void
 }) {
   const { orchestration, aggregate, agents } = overview
   const cost = formatOrchestrationCost(
@@ -275,6 +289,15 @@ export function OrchestrationOverviewCard({
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            onClick={onOpenWorkspace}
+            aria-label="Open operation workspace"
+          >
+            <PanelsTopLeft className="h-3.5 w-3.5" />
+          </Button>
           {canPause && (
             <Button
               size="icon"
@@ -933,6 +956,7 @@ export function OrchestrationTaskCard({
   currentChatId: string
   onNavigate: (chatId: string) => void
 }) {
+  const setDesktopView = useSetAtom(desktopViewAtom)
   const utils = trpc.useUtils()
   const taskQueryId = taskId ?? ""
   const overviewQuery = trpc.spawnedAgents.getTaskOverview.useQuery(
@@ -981,6 +1005,19 @@ export function OrchestrationTaskCard({
     () => (editorMode?.kind === "replace" ? editorMode.agent : null),
     [editorMode],
   )
+  const openWorkspace = async (operationTaskId: string) => {
+    try {
+      const opened = await openOperationWorkspace({
+        projectId,
+        taskId: operationTaskId,
+        fetchWorkspace: (input) => utils.savedWorkspaces.getOperationForTask.fetch(input),
+        showSavedWorkspaces: () => setDesktopView("saved-workspaces"),
+      })
+      if (!opened) toast.error("Operation workspace metadata is not available yet.")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Operation workspace could not open.")
+    }
+  }
   const submit = (
     agent: OrchestrationAgentDefinition,
     maxParallelAgents: number,
@@ -1000,7 +1037,7 @@ export function OrchestrationTaskCard({
           agents: [agent],
         },
         {
-          onSuccess: async () => {
+          onSuccess: async (result) => {
             setEditorMode(null)
             await Promise.all([
               utils.tasks.list.invalidate(),
@@ -1009,6 +1046,7 @@ export function OrchestrationTaskCard({
               utils.spawnedAgents.previewLineage.invalidate(),
               utils.savedWorkspaces.list.invalidate(),
             ])
+            await openWorkspace(result.orchestration.taskId)
           },
         },
       )
@@ -1103,6 +1141,7 @@ export function OrchestrationTaskCard({
             },
           })
         }
+        onOpenWorkspace={() => void openWorkspace(overview.orchestration.taskId)}
       />
       <div className="px-3 pb-3">
         <OrchestrationWorkflowPanel taskId={taskQueryId} />
