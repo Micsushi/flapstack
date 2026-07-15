@@ -76,6 +76,26 @@ readable through its immutable snapshot or legacy projection.
 
 ## Fixture capture and redaction
 
+### Flapstack Dev activity fixtures
+
+Project chats in `Flapstack Dev` expose a **Flapstack Dev Runtime fixtures**
+fieldset above the normal transcript. **Seed terminal runs** creates three
+bounded, deterministic, provider-free runs for completed, cancelled, and failed
+terminal states. Their durable activity covers every Runtime event kind plus
+ordered identities, section boundaries, search/filter/copy/export content, and
+run replay. **Replay persisted run** exercises the normal run replay query, and
+**Reset fixture** deletes only the exact fixture runs for that project chat and
+conversation.
+
+After seeding, **View state** can show live, stale, loading, empty, error, and
+corruption handling without database or filesystem edits. The corruption row is
+an in-memory redacted placeholder; it never stores malformed or private data.
+Fixture runs use read-only authority, no worktree path, no prompt, no
+credentials, no provider process, and zero provider cost. The router and UI are
+available only when the verified development renderer is running in an
+unpackaged app. Preview and production packages do not register the fixture
+router or render its controls.
+
 Capture against the pinned provider/package version. Replace account, project,
 path, repository, prompt, secret, token, session, thread, message, tool, and
 user identifiers with stable fixture aliases. Remove encrypted/private

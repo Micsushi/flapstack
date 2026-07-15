@@ -230,6 +230,7 @@ import {
 } from "../utils/pr-message"
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection } from "./isolated-messages-section"
+import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
 import { RuntimeActivityPanel } from "../runtime-activity/runtime-activity-panel"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
@@ -4723,26 +4724,37 @@ const ChatViewInner = memo(function ChatViewInner({
               {hasRuntimeActivity ? (
                 <RuntimeActivityPanel
                   chatId={parentChatId}
+                  projectId={projectId ?? null}
+                  subChatId={subChatId}
                   legacyMessages={messages}
                   isStreaming={isStreaming}
                 />
               ) : (
-                <IsolatedMessagesSection
-                  key={subChatId}
-                  subChatId={subChatId}
-                  chatId={parentChatId}
-                  isMobile={isMobile}
-                  sandboxSetupStatus={sandboxSetupStatus}
-                  stickyTopClass={stickyTopClass}
-                  sandboxSetupError={sandboxSetupError}
-                  onRetrySetup={onRetrySetup}
-                  UserBubbleComponent={AgentUserMessageBubble}
-                  ToolCallComponent={AgentToolCall}
-                  MessageGroupWrapper={MessageGroup}
-                  toolRegistry={AgentToolRegistry}
-                  onRollback={handleRollback}
-                  onFork={handleForkFromMessage}
-                />
+                <>
+                  {import.meta.env.DEV ? (
+                    <RuntimeActivityFixtureControls
+                      projectId={projectId ?? null}
+                      chatId={parentChatId}
+                      subChatId={subChatId}
+                    />
+                  ) : null}
+                  <IsolatedMessagesSection
+                    key={subChatId}
+                    subChatId={subChatId}
+                    chatId={parentChatId}
+                    isMobile={isMobile}
+                    sandboxSetupStatus={sandboxSetupStatus}
+                    stickyTopClass={stickyTopClass}
+                    sandboxSetupError={sandboxSetupError}
+                    onRetrySetup={onRetrySetup}
+                    UserBubbleComponent={AgentUserMessageBubble}
+                    ToolCallComponent={AgentToolCall}
+                    MessageGroupWrapper={MessageGroup}
+                    toolRegistry={AgentToolRegistry}
+                    onRollback={handleRollback}
+                    onFork={handleForkFromMessage}
+                  />
+                </>
               )}
             </div>
           </div>
