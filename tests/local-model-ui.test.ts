@@ -26,6 +26,10 @@ import {
   type LocalModelCatalogSnapshot,
 } from "../src/shared/local-model-contract"
 import {
+  LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+  LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS,
+} from "../src/shared/local-model-dev-fixture"
+import {
   buildLocalModelControlPreview,
   createLocalModelUiState,
   localModelCatalogStatus,
@@ -300,6 +304,8 @@ describe("local model onboarding state", () => {
     expect(container.querySelector('[aria-label="Local model limitations"]')).not.toBeNull()
     expect(container.textContent).toContain("No cloud credential is required")
     expect(container.textContent).toContain("No cloud fallback")
+    expect(container.textContent).toContain("Flapstack Dev fixture — not Ollama")
+    expect(container.textContent).toContain("disabled in production and packaged profiles")
   })
 
   it("announces a component-level refresh error without replacing the loopback endpoint", async () => {
@@ -318,6 +324,35 @@ describe("local model onboarding state", () => {
     )
     expect(container.querySelector<HTMLInputElement>("#local-model-endpoint-input")?.value).toBe(
       "http://127.0.0.1:11434",
+    )
+  })
+
+  it("resets and persists the labeled Dev fixture through normal settings atoms", async () => {
+    const container = await renderSettingsComponent()
+    const fixtureState = container.querySelector<HTMLSelectElement>(
+      '[aria-label="Development local model fixture state"]',
+    )!
+    await changeSelect(fixtureState, "unavailable")
+    const load = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Load fixture state"),
+    )!
+    await act(async () => load.click())
+    expect(container.querySelector<HTMLInputElement>("#local-model-endpoint-input")?.value).toBe(
+      LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS.unavailable,
+    )
+
+    const reset = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Reset fixture"),
+    )!
+    await act(async () => reset.click())
+    expect(container.querySelector<HTMLInputElement>("#local-model-endpoint-input")?.value).toBe(
+      LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS.ready,
+    )
+    expect(JSON.parse(localStorage.getItem("agents:local-model-endpoint")!)).toBe(
+      LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS.ready,
+    )
+    expect(JSON.parse(localStorage.getItem("agents:selected-local-model")!)).toBe(
+      LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
     )
   })
 })

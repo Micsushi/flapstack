@@ -6,6 +6,13 @@ import {
   type LocalModelCapabilityName,
   type LocalModelCapabilityState,
 } from "../../../../shared/local-model-contract"
+import {
+  LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL,
+  LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS,
+  LOCAL_MODEL_DEV_FIXTURE_STATES,
+  localModelDevFixtureStateForEndpoint,
+  type LocalModelDevFixtureState,
+} from "../../../../shared/local-model-dev-fixture"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
 import { localModelEndpointAtom, selectedLocalModelIdAtom } from "../../../lib/atoms"
 import { cn } from "../../../lib/utils"
@@ -33,6 +40,8 @@ const permissionOptions: Array<{ value: RunPermissionMode; label: string }> = [
   { value: "full-access", label: "Full access" },
 ]
 
+const isDevelopment = import.meta.env.DEV
+
 export function AgentsLocalModelsTab() {
   const [persistedEndpoint, setPersistedEndpoint] = useAtom(localModelEndpointAtom)
   const [persistedModelId, setPersistedModelId] = useAtom(selectedLocalModelIdAtom)
@@ -42,6 +51,9 @@ export function AgentsLocalModelsTab() {
     createLocalModelUiState,
   )
   const [permissionMode, setPermissionMode] = useState<RunPermissionMode>("read-only")
+  const [fixtureState, setFixtureState] = useState<LocalModelDevFixtureState>(
+    localModelDevFixtureStateForEndpoint(persistedEndpoint) ?? "ready",
+  )
   const queryEndpoint = state.endpointValidation.valid
     ? state.endpointValidation.endpoint
     : DEFAULT_OLLAMA_BASE_URL
@@ -80,6 +92,17 @@ export function AgentsLocalModelsTab() {
     setPersistedModelId(value)
   }
 
+  const applyFixtureState = (nextState: LocalModelDevFixtureState) => {
+    const endpoint = LOCAL_MODEL_DEV_FIXTURE_ENDPOINTS[nextState]
+    const modelId =
+      nextState === "ready" || nextState === "stale" ? LOCAL_MODEL_DEV_FIXTURE_CHAT_MODEL : null
+    setFixtureState(nextState)
+    setPersistedEndpoint(endpoint)
+    setPersistedModelId(modelId)
+    dispatch({ type: "endpoint-edited", value: endpoint })
+    dispatch({ type: "model-selected", modelId })
+  }
+
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-1.5">
@@ -92,6 +115,54 @@ export function AgentsLocalModelsTab() {
           permissions. No cloud credential is required.
         </p>
       </div>
+
+      {isDevelopment && (
+        <section
+          className="space-y-3 rounded-lg border border-dashed border-violet-500/50 bg-violet-500/5 p-4"
+          data-settings-id="local-model-dev-fixture"
+          tabIndex={-1}
+        >
+          <div>
+            <h4 className="text-sm font-medium text-violet-800 dark:text-violet-200">
+              Flapstack Dev fixture — not Ollama
+            </h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Deterministic, credential-free, provider-spend-free test data. Fixture responses are
+              disabled in production and packaged profiles.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              aria-label="Development local model fixture state"
+              value={fixtureState}
+              onChange={(event) => setFixtureState(event.target.value as LocalModelDevFixtureState)}
+              className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {LOCAL_MODEL_DEV_FIXTURE_STATES.map(([value]) => (
+                <option key={value} value={value}>
+                  {value[0].toUpperCase() + value.slice(1)} catalog fixture
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => applyFixtureState(fixtureState)}
+            >
+              Load fixture state
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => applyFixtureState("ready")}>
+              Reset fixture
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Load a state, refresh the normal catalog, then select a labeled fixture model and open a
+            normal local chat. Send <code>/fixture slow</code> to test cancellation,
+            <code> /fixture error</code> for a sanitized provider error, or
+            <code> /fixture tool</code> to compare chat-only and tool-capable gating.
+          </p>
+        </section>
+      )}
 
       <section
         className="space-y-3 rounded-lg border border-border bg-background p-4"
