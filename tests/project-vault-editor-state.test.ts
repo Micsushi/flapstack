@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import {
+  applyVaultEditorExternalSnapshot,
   createVaultEditorState,
   hasVaultEditorChanges,
   markVaultEditorConflict,
@@ -40,6 +41,40 @@ describe("project vault editor state", () => {
     const clean = createVaultEditorState(base)
     expect(hasVaultEditorChanges(clean)).toBe(false)
     expect(hasVaultEditorChanges(updateVaultEditorDraft(clean, "changed"))).toBe(true)
+  })
+
+  it("updates a clean receiver to the newest cross-window snapshot", () => {
+    const current = {
+      ...base,
+      version: 2,
+      content: "main window saved",
+      contentHash: "b".repeat(64),
+      currentContentHash: "b".repeat(64),
+    }
+
+    const refreshed = applyVaultEditorExternalSnapshot(createVaultEditorState(base), current)
+
+    expect(refreshed.base).toEqual(current)
+    expect(refreshed.draft).toBe("main window saved")
+    expect(refreshed.conflict).toBeNull()
+  })
+
+  it("preserves a dirty receiver draft and exposes the external version as a conflict", () => {
+    const dirty = updateVaultEditorDraft(createVaultEditorState(base), "window two draft")
+    const current = {
+      ...base,
+      version: 2,
+      content: "main window saved",
+      contentHash: "b".repeat(64),
+      currentContentHash: "b".repeat(64),
+    }
+
+    const refreshed = applyVaultEditorExternalSnapshot(dirty, current)
+
+    expect(refreshed.draft).toBe("window two draft")
+    expect(refreshed.base).toEqual(base)
+    expect(refreshed.conflict).toEqual(current)
+    expect(hasVaultEditorChanges(refreshed)).toBe(true)
   })
 
   it("protects dirty drafts from another project after switching to a clean project", () => {

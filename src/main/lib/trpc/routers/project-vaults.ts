@@ -25,6 +25,7 @@ import {
   getProjectVaultContextSelection,
   updateProjectVaultContextSelection,
 } from "../../project-vaults/run-context"
+import { publishLocalProjectVaultInvalidation } from "../../mcp-control/invalidation-bridge"
 
 const sectionSchema = z.enum(projectVaultSectionIds)
 const deleteContractSchema = z.object({
@@ -137,11 +138,19 @@ export const projectVaultsRouter = router({
         expectedVersion: z.number().int().positive(),
         expectedCurrentContentHash: z.string().length(64).optional(),
         content: z.string(),
+        changeKind: z.enum(["section-saved", "conflict-resolved"]).default("section-saved"),
       }),
     )
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       assertProjectVaultContentSafe(input.content)
-      return writeProjectVaultSection(getDatabase(), input)
+      const updated = await writeProjectVaultSection(getDatabase(), input)
+      publishLocalProjectVaultInvalidation({
+        projectId: input.projectId,
+        sectionId: input.sectionId,
+        revision: updated.version,
+        kind: input.changeKind,
+      })
+      return updated
     }),
 
   search: publicProcedure
@@ -174,7 +183,14 @@ export const projectVaultsRouter = router({
     .mutation(async ({ input }) => {
       const backup = await readProjectVaultSectionBackup(getDatabase(), input)
       assertProjectVaultContentSafe(backup.content)
-      return restoreProjectVaultSectionBackup(getDatabase(), input)
+      const updated = await restoreProjectVaultSectionBackup(getDatabase(), input)
+      publishLocalProjectVaultInvalidation({
+        projectId: input.projectId,
+        sectionId: input.sectionId,
+        revision: updated.version,
+        kind: "backup-restored",
+      })
+      return updated
     }),
 
   adoptExternalChange: publicProcedure
@@ -186,7 +202,16 @@ export const projectVaultsRouter = router({
         expectedCurrentContentHash: z.string().length(64),
       }),
     )
-    .mutation(({ input }) => adoptExternalProjectVaultSectionChange(getDatabase(), input)),
+    .mutation(async ({ input }) => {
+      const updated = await adoptExternalProjectVaultSectionChange(getDatabase(), input)
+      publishLocalProjectVaultInvalidation({
+        projectId: input.projectId,
+        sectionId: input.sectionId,
+        revision: updated.version,
+        kind: "external-change-adopted",
+      })
+      return updated
+    }),
 
   getDeleteContract: publicProcedure
     .input(z.object({ projectId: z.string().min(1) }))

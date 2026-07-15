@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import {
+  createProjectVaultQueryInvalidator,
   createProductMcpInvalidationCoalescer,
   createProductMcpRendererInvalidator,
 } from "./external-mutation-refresh-model"
@@ -31,7 +32,21 @@ export function McpExternalMutationRefreshBridge() {
           utils.savedWorkspaces.getOperation.invalidate(),
         ]),
       chatLineage: (chatId) => utils.spawnedAgents.previewLineage.invalidate({ chatId }),
-      projectVault: () => utils.projectVaults.invalidate(),
+      projectVault: createProjectVaultQueryInvalidator({
+        project: ({ projectId }) =>
+          Promise.all([
+            utils.projectVaults.listSections.invalidate({ projectId }),
+            utils.projectVaults.readSection.invalidate({ projectId }),
+            utils.projectVaults.listBackups.invalidate({ projectId }),
+            utils.projectVaults.readBackup.invalidate({ projectId }),
+            utils.projectVaults.search.invalidate({ projectId }),
+          ]),
+        list: (input) => utils.projectVaults.listSections.invalidate(input),
+        get: (input) => utils.projectVaults.readSection.invalidate(input),
+        backups: (input) => utils.projectVaults.listBackups.invalidate(input),
+        backup: (input) => utils.projectVaults.readBackup.invalidate(input),
+        search: (input) => utils.projectVaults.search.invalidate(input),
+      }),
       automations: () => utils.automations.invalidate(),
       taskProposals: () => utils.taskProposals.invalidate(),
       planSources: (projectId) =>
