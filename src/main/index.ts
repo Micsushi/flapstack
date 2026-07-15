@@ -11,6 +11,10 @@ import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./
 import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
 import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import {
+  recoverOrchestrationOperations,
+  registerMainRuntimeOperations,
+} from "./lib/agent-orchestration/operations-runtime"
 import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
 import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
 import { AutomationScheduler } from "./lib/automation/scheduler"
@@ -918,6 +922,17 @@ if (gotTheLock) {
                   databasePath,
                   getMainRuntimeLaunchService(databasePath),
                 )
+              },
+            },
+            {
+              name: "Multi-agent operations projection and control recovery",
+              run: () => {
+                const databasePath = getDatabasePath()
+                registerMainRuntimeOperations(
+                  databasePath,
+                  getMainRuntimeLaunchService(databasePath),
+                )
+                return recoverOrchestrationOperations(databasePath)
               },
             },
             {

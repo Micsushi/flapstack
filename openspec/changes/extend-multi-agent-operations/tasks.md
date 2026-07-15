@@ -26,7 +26,7 @@
 - Blocked by: S4-F3-T1, S4-F3-T6
 - Blocks: S4-F3-T3, S4-F3-T10
 - Context: spawned-agents router, task card, project/task navigation, saved-workspace link.
-- Code-ready evidence: The read-only fleet base now provides SQL-scoped project/task/status/lifecycle/archive queries, stable keyset pagination with fail-closed cursors, 500-ID agent batches, explicit legacy-engine/provider/cost/freshness truth, scoped Tier-0 MCP reads, five-second polling plus all-window invalidation, and an accessible roving-focus fleet view. Node 22 focused coverage passed 38 tests across seven files, including a 1,005-row fleet with 25-row pages and 500/500/5 agent batches; TypeScript, focused ESLint/Prettier, production build, strict OpenSpec, and diff check passed. Completion remains open until S4-F3-T6 supplies the authoritative engine/workflow identity and S4-F4-T6 supplies operation-workspace navigation; no live/package/provider/device claim is inferred.
+- Code-ready evidence: The read-only fleet base now applies project/task/status/lifecycle/archive/provider/count/facet/sort/keyset scope in SQL before reading only the current page's agents, with stable fail-closed cursors and 500-ID agent batches. The 1,005-row fixture reads 25 agent rows for a 25-row page and preserves explicit legacy-engine/provider/cost/freshness truth, scoped Tier-0 MCP reads, five-second polling, all-window invalidation, and accessible roving focus. Node 22 focused coverage passed 38 tests across seven files; TypeScript, focused ESLint/Prettier, production build, strict OpenSpec, and diff check passed. Completion remains open for S4-F4-T6 operation-workspace navigation and live/package/provider evidence.
 
 ### S4-F3-T3 — Add rich lineage, messaging, and navigation
 
@@ -40,6 +40,7 @@
 - Blocked by: S4-F3-T1, S4-F3-T2, S4-F3-T6
 - Blocks: S4-F3-T10
 - Context: `getLineage`, chat ownership, operation workspace roster, engine adapter DTOs.
+- Code-ready evidence: Durable tree/edge/message projection, cycle defense, missing-parent placeholders, stale/orphan/chat truth, capability reasons, ordered messages, roving keyboard focus, and chat navigation are integrated and focused-tested. Operation-workspace focus remains dependent on S4-F4-T6; live multi-window proof remains open.
 
 ### S4-F3-T4 — Add versioned policy and workflow templates
 
@@ -53,6 +54,7 @@
 - Blocked by: S4-F3-T6 and Stage 3 gate/audit
 - Blocks: S4-F3-T5, S4-F3-T7, S4-F3-T8, S4-F3-T10, S4-F6-T7, S4-F12-T5
 - Context: orchestration schemas, approval coordinator, redacted audit, saved definitions.
+- Code-ready evidence: Mobile-free 0035 adds append-only policy history and safe versioned templates. Authority/budget relaxations now obtain a fresh Tier-3 Stage 3 approval, verify its exact caller/tool/context/audit record, and consume the audit once; fake or replayed IDs fail. Recursive key and string-value scanning rejects credential, token, private-key, live-identity, URL-authority, and secret-path payloads across prompt/spec/completion/model/path fields. Live approval UX remains unclaimed.
 
 ### S4-F3-T5 — Harden cascading control and recovery
 
@@ -66,6 +68,7 @@
 - Blocked by: S4-F3-T1, S4-F3-T4, S4-F3-T7, S4-F3-T8
 - Blocks: S4-F3-T10
 - Context: scheduler tick, cancellation requests, engine adapters, run adapters, lineage rows.
+- Code-ready evidence: Cascade request re-queries and materializes descendants under one immediate transaction, rejects stale fingerprints, and records durable stop intent before the concrete F11 provider-neutral cancel call. Pause/resume fail closed without mutating task/workflow truth because the accepted F11 seam exposes no such authority. Per-target claims, restart retry, orphan/stale-lease truth, partial failures, and bounded redacted provider errors are focused-tested. Real provider cancellation and any future pause/resume authority remain open with F11-T10.
 
 ### S4-F3-T6 — Define coordination engines, settings, and profile boundaries
 
@@ -93,6 +96,7 @@
 - Blocked by: S4-F3-T4, S4-F3-T6, S4-F11-T9
 - Blocks: S4-F3-T5, S4-F3-T9, S4-F3-T10, S4-F4-T6, S4-F12-T5
 - Context: Stage 3 scheduler/service, Anthropic dynamic-workflow behavior reference, ECC `orch-review.workflow.js` research pattern.
+- Code-ready evidence: Run plus initial checkpoints commit atomically. The restricted graph validates IDs/dependencies/cycles, stable unique agent-definition references, and truthful branch/loop/parallel/pipeline/barrier/human-gate definitions; enforces spawn, parallel/total-agent, token/cost, retry, timeout, output-schema, and stop limits; reuses completed checkpoints; and never replays uncertain launches. A thin production bridge matches the exact durable orchestration-agent definition snapshot plus task/run/chat/subchat identity and immutable Runtime snapshot, delegates launch/reconcile/cancel only to the reviewed F11 singleton seam, carries all five reconciliation states including cancellation, and references authoritative Runtime activity high-water without provider text. Initial attempts require a fresh pending Runtime row; unique append-only checkpoint-attempt, Runtime-run, and orchestration-agent reservations bind one exact identity and commit with the pending-run CAS, rejecting cross-step/attempt reuse and claim loss without adopting historical results or leaking a losing run. Structured worker output references, provider-neutral pause/resume, integrated F11 acceptance, and live mixed-worker proof remain open.
 
 ### S4-F3-T8 — Implement Codex V2 and V1 engine adapters
 
@@ -106,6 +110,7 @@
 - Blocked by: S4-F3-T4, S4-F3-T6, S4-F11-T9
 - Blocks: S4-F3-T5, S4-F3-T9, S4-F3-T10, S4-F4-T6
 - Context: Codex app-server transport, cloned Codex V1/V2 tool specs and residency behavior, run launch service.
+- Code-ready evidence: V2/V1 adapters use canonical idempotency payloads, atomic unique-key insert ownership, intent/key propagation to provider dispatch/reconcile, renewable reconciliation claims, and no database connection across provider awaits. Each invocation reconciles its stable initial candidate set once and preserves running/waiting/uncertain truth for later retries. Exactly-one claimed intent update and durable message insertion commit together. V2 accepts only canonical POSIX absolute paths or fully qualified Windows drive-root/UNC paths; traversal, ambiguous root-relative, and non-normal forms fail closed. Real supported Codex walkthroughs and Windows-live proof remain open.
 
 ### S4-F3-T9 — Aggregate multi-agent runtime activity
 
@@ -119,6 +124,7 @@
 - Blocked by: S4-F3-T6, S4-F3-T7, S4-F3-T8, S4-F11-T3, S4-F11-T7
 - Blocks: S4-F3-T10
 - Context: shared reasoning-output contract/normalizers, Claude transformer, Codex reasoning poller/app-server events, assistant message timeline.
+- Code-ready evidence: Durable append-only transition sources are written automatically with orchestration, agent, workflow, cascade, and coordination state changes, then projected immediately and rebuilt after restart without inferring history from current snapshots. Runtime activity remains reference-only; the concrete F11 bridge derives its cursor from authoritative `agent_activity_events` sequence high-water and copies no provider text. Summary text is bounded and secret-redacted before both source and projection storage. The public UI repair mutation was removed. Live heterogeneous activity proof remains open.
 
 ### S4-F3-T10 — Close multi-agent operations acceptance
 
@@ -132,3 +138,4 @@
 - Blocked by: S4-F3-T2, S4-F3-T3, S4-F3-T4, S4-F3-T5, S4-F3-T7, S4-F3-T8, S4-F3-T9, S4-F4-T6, S4-F11-T10
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.
+- Review evidence: `docs/stage4-s4-f3-multi-agent-operations.md`. S4-MA01 through S4-MA10 remain open pending S4-F4-T6, F11-T10, real supported harness walkthroughs, live UI/multi-window checks, restart/cancellation inspection, and packaged preview evidence.

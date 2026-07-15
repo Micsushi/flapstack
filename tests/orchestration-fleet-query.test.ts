@@ -139,7 +139,7 @@ describe("orchestration fleet query", () => {
           const statement = sqlite.prepare(sql)
           return {
             all: (...params: unknown[]) => {
-              if (sql.includes("FROM orchestration_agents a")) agentBatchSizes.push(params.length)
+              if (sql.includes("SELECT\n           a.*")) agentBatchSizes.push(params.length)
               return statement.all(...params) as Record<string, unknown>[]
             },
           }
@@ -155,7 +155,7 @@ describe("orchestration fleet query", () => {
       [...page.items.map((item) => item.taskId)].sort(),
     )
     expect(page.nextCursor).toEqual(expect.any(String))
-    expect(agentBatchSizes).toEqual([500, 500, 5])
+    expect(agentBatchSizes).toEqual([25])
     expect(Math.max(...agentBatchSizes)).toBeLessThanOrEqual(500)
   })
 

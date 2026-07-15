@@ -23,6 +23,7 @@ import {
   type OrchestrationUsageUpdate,
 } from "../../../shared/agent-orchestration"
 import { queryOrchestrationFleet, type OrchestrationFleetQueryOptions } from "./fleet"
+import { recordOrchestrationTransition } from "./activity-projection"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
@@ -141,6 +142,7 @@ export function createAgentOrchestrationService(databasePath: string) {
             now,
             now,
           )
+          recordTaskTransition(db, taskId, initialStatus, now)
           for (const definition of input.agents) {
             insertAgent(db, {
               id: definition.agentId ?? randomUUID(),
@@ -242,6 +244,7 @@ export function createAgentOrchestrationService(databasePath: string) {
               `UPDATE orchestration_agents SET status = 'stopped', stop_reason = 'replaced',
                completed_at = ?, updated_at = ? WHERE id = ? AND task_id = ?`,
             ).run(now, now, agentId, taskId)
+            recordAgentTransition(db, taskId, agentId, String(source.run_id ?? ""), "stopped", now)
             if (source.run_id) {
               cancelRunIfActive(db, String(source.run_id), now)
             }
@@ -282,6 +285,7 @@ export function createAgentOrchestrationService(databasePath: string) {
             db.prepare(
               "UPDATE task_orchestrations SET status = 'paused', updated_at = ? WHERE task_id = ?",
             ).run(nowEpochSeconds(), taskId)
+            recordTaskTransition(db, taskId, "paused")
           } else if (action === "resume") {
             if (current !== "paused") {
               throw new AgentOrchestrationError("conflict", "Only paused orchestration can resume.")
@@ -292,6 +296,7 @@ export function createAgentOrchestrationService(databasePath: string) {
                SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
                WHERE task_id = ?`,
             ).run(now, now, taskId)
+            recordTaskTransition(db, taskId, "running", now)
             shouldTick = true
           } else if (!["completed", "failed", "stopped"].includes(current)) {
             stopTask(db, taskId, "manual-stop", "stopped")
@@ -359,19 +364,89 @@ export function createAgentOrchestrationService(databasePath: string) {
     getLineage(taskId: string): OrchestrationLineageDto {
       const db = open()
       try {
-        requireOrchestration(db, taskId)
+        const orchestration = requireOrchestration(db, taskId)
+        const engine = interpretCoordinationEngineSnapshot(orchestration)
         const agents = listAgentRows(db, taskId).map(toAgentDto)
+        assertAcyclicLineage(agents)
+        const knownIds = new Set(agents.map((agent) => agent.id))
+        const missingIds = new Set<string>()
+        for (const agent of agents) {
+          if (agent.parentAgentId && !knownIds.has(agent.parentAgentId))
+            missingIds.add(agent.parentAgentId)
+          if (agent.replacedAgentId && !knownIds.has(agent.replacedAgentId))
+            missingIds.add(agent.replacedAgentId)
+        }
+        const unavailableReason =
+          engine.engine === "workflow"
+            ? "Workflow coordination uses durable steps; direct mailbox actions are unavailable."
+            : "Coordination adapter is not connected yet; no provider action will be synthesized."
+        const messages = db
+          .prepare(
+            "SELECT id, agent_id, direction, kind, state, body, provider_message_id, created_at FROM orchestration_messages WHERE task_id = ? ORDER BY created_at, id",
+          )
+          .all(taskId) as Row[]
         return {
           taskId,
-          nodes: agents.map((agent) => ({
-            agentId: agent.id,
-            chatId: agent.chatId,
-            parentAgentId: agent.parentAgentId,
-            replacedAgentId: agent.replacedAgentId,
-            role: agent.definition.role,
-            name: agent.definition.name ?? agent.definition.role,
-            status: agent.status,
-          })),
+          engine,
+          nodes: [
+            ...agents.map((agent) => {
+              const chat = agent.chatId
+                ? (db.prepare("SELECT archived_at FROM chats WHERE id = ?").get(agent.chatId) as
+                    Row | undefined)
+                : undefined
+              const chatState = (
+                !agent.chatId
+                  ? "missing"
+                  : !chat
+                    ? "missing"
+                    : chat.archived_at === null
+                      ? "live"
+                      : "archived"
+              ) as "live" | "archived" | "missing"
+              return {
+                agentId: agent.id,
+                chatId: agent.chatId,
+                parentAgentId: agent.parentAgentId,
+                replacedAgentId: agent.replacedAgentId,
+                role: agent.definition.role,
+                name: agent.definition.name ?? agent.definition.role,
+                status: agent.status,
+                depth: agent.depth,
+                harness: agent.definition.harness,
+                stale: chatState !== "live",
+                orphaned: Boolean(agent.parentAgentId && !knownIds.has(agent.parentAgentId)),
+                chatState,
+                coordinationIdentity: engine.providerIdentity
+                  ? JSON.stringify(engine.providerIdentity)
+                  : null,
+                controls: {
+                  send: { enabled: false, reason: unavailableReason },
+                  followUp: { enabled: false, reason: unavailableReason },
+                  interrupt: { enabled: false, reason: unavailableReason },
+                },
+              }
+            }),
+            ...[...missingIds].map((agentId) => ({
+              agentId,
+              chatId: null,
+              parentAgentId: null,
+              replacedAgentId: null,
+              role: "Missing ancestor",
+              name: `Missing agent ${agentId}`,
+              status: "failed" as const,
+              depth: 0,
+              harness: "unknown",
+              stale: true,
+              orphaned: true,
+              chatState: "missing" as const,
+              coordinationIdentity: null,
+              controls: {
+                send: { enabled: false, reason: "Missing durable target." },
+                followUp: { enabled: false, reason: "Missing durable target." },
+                interrupt: { enabled: false, reason: "Missing durable target." },
+              },
+            })),
+          ],
           edges: agents.flatMap((agent) => [
             ...(agent.parentAgentId
               ? [
@@ -392,6 +467,16 @@ export function createAgentOrchestrationService(databasePath: string) {
                 ]
               : []),
           ]),
+          messages: messages.map((row) => ({
+            id: String(row.id),
+            agentId: stringOrNull(row.agent_id),
+            direction: row.direction as "inbound" | "outbound",
+            kind: row.kind as "message" | "follow-up" | "interrupt" | "mailbox",
+            state: row.state as "recorded" | "queued" | "delivered" | "failed" | "uncertain",
+            body: stringOrNull(row.body),
+            providerMessageId: stringOrNull(row.provider_message_id),
+            createdAt: Number(row.created_at),
+          })),
         }
       } finally {
         db.close()
@@ -487,6 +572,21 @@ export function createAgentOrchestrationService(databasePath: string) {
         db.close()
       }
     },
+  }
+}
+
+function assertAcyclicLineage(agents: OrchestrationAgentDto[]): void {
+  const parent = new Map(agents.map((agent) => [agent.id, agent.parentAgentId]))
+  for (const agent of agents) {
+    const seen = new Set<string>()
+    let current: string | null = agent.id
+    while (current && parent.has(current)) {
+      if (seen.has(current)) {
+        throw new AgentOrchestrationError("forbidden-loop", "Durable lineage contains a cycle.")
+      }
+      seen.add(current)
+      current = parent.get(current) ?? null
+    }
   }
 }
 
@@ -735,6 +835,15 @@ function insertAgent(
     input.now,
     input.now,
   )
+  recordAgentTransition(
+    db,
+    input.taskId,
+    input.id,
+    "",
+    "queued",
+    input.now,
+    input.replacedAgentId ? "replacement" : "spawn",
+  )
 }
 
 function reportProgress(db: Sqlite, input: OrchestrationUsageUpdate): void {
@@ -774,6 +883,15 @@ function reportProgress(db: Sqlite, input: OrchestrationUsageUpdate): void {
     input.agentId,
     input.taskId,
   )
+  if (nextStatus !== String(current.status))
+    recordAgentTransition(
+      db,
+      input.taskId,
+      input.agentId,
+      String(current.run_id ?? ""),
+      nextStatus,
+      now,
+    )
   if (blockerIncrement) {
     db.prepare(
       "UPDATE task_orchestrations SET blocker_count = blocker_count + 1, updated_at = ? WHERE task_id = ?",
@@ -867,6 +985,7 @@ function reconcileRunOutcomes(db: Sqlite, taskId: string): void {
       `UPDATE orchestration_agents SET status = ?, progress_percent = CASE WHEN ? = 'completed' THEN 100 ELSE progress_percent END,
        completed_at = COALESCE(?, ?), updated_at = ? WHERE id = ? AND status = 'active'`,
     ).run(status, status, row.completed_at ?? null, now, now, row.id)
+    recordAgentTransition(db, taskId, String(row.id), String(row.run_id), status, now)
   }
   persistMessageUsageSamples(db, taskId)
   const usageRows = db
@@ -1131,10 +1250,25 @@ function stopTask(
     `UPDATE task_orchestrations SET status = ?, stop_reason = ?, completed_at = ?, updated_at = ?
      WHERE task_id = ? AND status NOT IN ('completed','failed','stopped')`,
   ).run(status, reason, now, now, taskId)
+  recordTaskTransition(db, taskId, status, now)
+  const activeAgents = db
+    .prepare(
+      "SELECT id, run_id FROM orchestration_agents WHERE task_id = ? AND status IN ('queued','active')",
+    )
+    .all(taskId) as Row[]
   db.prepare(
     `UPDATE orchestration_agents SET status = ?, stop_reason = ?, completed_at = ?, updated_at = ?
      WHERE task_id = ? AND status IN ('queued','active')`,
   ).run(terminalAgentStatus, reason, now, now, taskId)
+  for (const agent of activeAgents)
+    recordAgentTransition(
+      db,
+      taskId,
+      String(agent.id),
+      String(agent.run_id ?? ""),
+      terminalAgentStatus,
+      now,
+    )
   const runs = db
     .prepare("SELECT run_id FROM orchestration_agents WHERE task_id = ? AND run_id IS NOT NULL")
     .all(taskId) as Row[]
@@ -1405,6 +1539,50 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     `UPDATE orchestration_agents SET chat_id = ?, run_id = ?, status = 'active', started_at = ?, updated_at = ?
      WHERE id = ? AND status = 'queued'`,
   ).run(chatId, runId, now, now, agent.id)
+  recordAgentTransition(db, String(agent.task_id), String(agent.id), runId, "active", now)
+}
+
+function recordTaskTransition(db: Sqlite, taskId: string, status: string, at = nowEpochSeconds()) {
+  try {
+    recordOrchestrationTransition(db, {
+      dedupKey: `orchestration:${taskId}:${status}:${at}:${randomUUID()}`,
+      taskId,
+      entityType: "workflow",
+      entityId: taskId,
+      kind: ["failed", "uncertain"].includes(status) ? "warning" : "workflow-phase",
+      phase: status,
+      createdAt: at,
+    })
+  } catch (error) {
+    if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error
+  }
+}
+
+function recordAgentTransition(
+  db: Sqlite,
+  taskId: string,
+  agentId: string,
+  runId: string,
+  status: string,
+  at = nowEpochSeconds(),
+  eventKind?: "spawn" | "replacement",
+) {
+  try {
+    recordOrchestrationTransition(db, {
+      dedupKey: `agent:${agentId}:${status}:${at}:${randomUUID()}`,
+      taskId,
+      entityType: "agent",
+      entityId: agentId,
+      agentId,
+      runId: runId || null,
+      kind:
+        eventKind ?? (["failed", "uncertain"].includes(status) ? "warning" : "aggregate-status"),
+      phase: status,
+      createdAt: at,
+    })
+  } catch (error) {
+    if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error
+  }
 }
 
 function resolveWorktree(

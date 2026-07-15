@@ -10,6 +10,7 @@ import {
 } from "../../../../shared/agent-orchestration"
 import { chats, getDatabase, getDatabasePath } from "../../db"
 import { createAgentOrchestrationService } from "../../agent-orchestration/service"
+import { getCascadeControl } from "../../agent-orchestration/operations-runtime"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
@@ -97,8 +98,18 @@ export const spawnedAgentsRouter = router({
 
   control: publicProcedure
     .input(z.object({ taskId: z.string(), action: orchestrationControlActionSchema }))
-    .mutation(({ input }) => {
-      const result = service().control(input.taskId, input.action)
+    .mutation(async ({ input }) => {
+      const cascade = getCascadeControl(getDatabasePath())
+      const preview = cascade.preview(input.taskId, input.action)
+      const request = cascade.request(input.taskId, input.action, preview.fingerprint)
+      const reconciliation = await cascade.reconcile(request.intentId)
+      if (reconciliation.state !== "completed")
+        throw new Error(
+          `Orchestration ${input.action} is ${reconciliation.state}; failed Runtime targets remain visible and retryable.`,
+        )
+      const result = service().getOverview(input.taskId)
+      if (!result)
+        throw new Error("Orchestration disappeared after Runtime control reconciliation.")
       publishOrchestrationChange(result.orchestration.taskId, result.orchestration.projectId)
       return result
     }),

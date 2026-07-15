@@ -248,17 +248,10 @@
       "breakpoints": true
     },
     {
-      "idx": 32,
+      "idx": 35,
       "version": "6",
-      "when": 1784072034666,
-      "tag": "0032_agent_runtime",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "6",
-      "when": 1784074787318,
-      "tag": "0033_agent_activity",
+      "when": 1784081445748,
+      "tag": "0035_multi_agent_operations",
       "breakpoints": true
     }
   ]

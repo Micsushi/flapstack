@@ -13,6 +13,7 @@ import {
   selectedAgentChatIdAtom,
   showNewChatFormAtom,
 } from "../agents/atoms"
+import { OrchestrationActivityPanel } from "../agents/ui/orchestration-activity-panel"
 
 export type OrchestrationFleetFilters = {
   projectId: string
@@ -449,6 +450,17 @@ function FleetDetail({
             </tbody>
           </table>
         </div>
+      </div>
+      <div className="border-t p-4">
+        <OrchestrationActivityPanel
+          taskId={item.taskId}
+          showFilters={false}
+          agents={item.agents.map((agent) => ({
+            id: agent.id,
+            runId: agent.run.id,
+            definition: { name: agent.name, role: agent.role },
+          }))}
+        />
       </div>
     </aside>
   )

@@ -27,13 +27,13 @@ afterEach(() => {
 })
 
 describe("coordination engine migration", () => {
-  it("migrates a pre-0031 database directly through authoritative 0034 and reopens", () => {
+  it("migrates a pre-0031 database directly through authoritative 0035 and reopens", () => {
     const directory = mkdtempSync(join(tmpdir(), "flapstack-engine-migration-"))
     temporaryDirectories.push(directory)
     const path = join(directory, "agents.db")
     let database = createPre0031Database(path)
     seedLegacyOrchestration(database, "legacy-running", "running")
-    applyMigrations(database, [31, 32, 33, 34])
+    applyMigrations(database, [31, 32, 33, 34, 35])
 
     expect(
       database.prepare("SELECT * FROM task_orchestrations WHERE task_id = ?").get("legacy-running"),
@@ -46,6 +46,11 @@ describe("coordination engine migration", () => {
     })
     expect(database.pragma("foreign_key_check")).toEqual([])
     expect(database.pragma("integrity_check", { simple: true })).toBe("ok")
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get("orchestration_workflow_runs"),
+    ).toEqual({ name: "orchestration_workflow_runs" })
     database.close()
 
     database = new Database(path)
@@ -315,6 +320,18 @@ describe("coordination engine migration", () => {
     expect(snapshot).toContain("coordination_engine_defaults")
     expect(snapshot).toContain("agent_activity_events")
   })
+
+  it("chains mobile-free 0035 metadata directly to authoritative 0034", () => {
+    const previous = JSON.parse(
+      readFileSync(resolve(process.cwd(), "drizzle/meta/0034_snapshot.json"), "utf8"),
+    ) as { id: string }
+    const current = JSON.parse(
+      readFileSync(resolve(process.cwd(), "drizzle/meta/0035_snapshot.json"), "utf8"),
+    ) as { prevId: string; tables: Record<string, unknown> }
+    expect(current.prevId).toBe(previous.id)
+    expect(Object.keys(current.tables)).toHaveLength(56)
+    expect(Object.keys(current.tables).some((name) => name.includes("mobile"))).toBe(false)
+  })
 })
 
 function createPre0031Database(filename = ":memory:"): Database.Database {
@@ -394,7 +411,9 @@ function applyMigrations(database: Database.Database, migrations: number[]): voi
           ? "0032_agent_runtime"
           : number === 33
             ? "0033_agent_activity"
-            : "0034_coordination_engines"
+            : number === 34
+              ? "0034_coordination_engines"
+              : "0035_multi_agent_operations"
     const sql = readFileSync(resolve(process.cwd(), `drizzle/${name}.sql`), "utf8")
     for (const statement of sql.split("--> statement-breakpoint")) {
       if (statement.trim()) database.exec(statement)

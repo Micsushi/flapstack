@@ -111,6 +111,7 @@ export const orchestrationStopConditionsSchema = z
 export const orchestrationAgentDefinitionSchema = z
   .object({
     agentId: idSchema.optional(),
+    definitionId: idSchema.optional(),
     role: z.string().trim().min(1).max(120),
     name: z.string().trim().min(1).max(160).optional(),
     prompt: z.string().trim().min(1).max(100_000),
@@ -118,8 +119,8 @@ export const orchestrationAgentDefinitionSchema = z
     harness: orchestrationHarnessSchema,
     provider: z.string().trim().min(1).max(120).optional(),
     model: z.string().trim().min(1).max(200).optional(),
-    reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     runtimePreference: agentRuntimePreferenceSchema.optional(),
+    reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: z
       .object({
@@ -325,6 +326,7 @@ export type OrchestrationTaskOverviewDto = {
 
 export type OrchestrationLineageDto = {
   taskId: string
+  engine?: ResolvedCoordinationEngineSnapshot
   nodes: Array<{
     agentId: string
     chatId: string | null
@@ -333,11 +335,32 @@ export type OrchestrationLineageDto = {
     role: string
     name: string
     status: OrchestrationAgentStatus
+    depth?: number
+    harness?: string
+    stale?: boolean
+    orphaned?: boolean
+    chatState?: "live" | "archived" | "missing" | "unknown"
+    coordinationIdentity?: string | null
+    controls?: {
+      send: { enabled: boolean; reason: string }
+      followUp: { enabled: boolean; reason: string }
+      interrupt: { enabled: boolean; reason: string }
+    }
   }>
   edges: Array<{
     fromAgentId: string
     toAgentId: string
     kind: "spawned" | "replacement"
+  }>
+  messages?: Array<{
+    id: string
+    agentId: string | null
+    direction: "inbound" | "outbound"
+    kind: "message" | "follow-up" | "interrupt" | "mailbox"
+    state: "recorded" | "queued" | "delivered" | "failed" | "uncertain"
+    body: string | null
+    providerMessageId: string | null
+    createdAt: number
   }>
 }
 

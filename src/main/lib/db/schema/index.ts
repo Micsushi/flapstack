@@ -413,6 +413,7 @@ export const taskOrchestrations = sqliteTable(
     coordinationEngineProviderIdentity: text("coordination_engine_provider_identity")
       .notNull()
       .default("null"),
+    policyVersion: integer("policy_version").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     startedAt: integer("started_at", { mode: "timestamp" }),
@@ -720,6 +721,332 @@ export const coordinationEngineDefaultsRelations = relations(
       references: [projects.id],
     }),
   }),
+)
+
+// ============ MULTI-AGENT OPERATIONS ============
+export const orchestrationAuthorityApprovals = sqliteTable(
+  "orchestration_authority_approvals",
+  {
+    auditId: text("audit_id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    toolName: text("tool_name").notNull(),
+    consumedAt: integer("consumed_at").notNull(),
+  },
+  (table) => [
+    index("orchestration_authority_task_idx").on(table.taskId, table.consumedAt),
+    check(
+      "orchestration_authority_tool_check",
+      sql`${table.toolName} in ('orchestration.policy.relax','orchestration.template.launch')`,
+    ),
+  ],
+)
+
+export const orchestrationPolicyVersions = sqliteTable(
+  "orchestration_policy_versions",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    policyJson: text("policy_json").notNull(),
+    changeKind: text("change_kind").notNull(),
+    approvalAuditId: text("approval_audit_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.version] }),
+    index("orchestration_policy_task_idx").on(table.taskId, table.version),
+    uniqueIndex("orchestration_policy_approval_once_idx")
+      .on(table.approvalAuditId)
+      .where(sql`${table.approvalAuditId} is not null`),
+    check(
+      "orchestration_policy_json_check",
+      sql`json_valid(${table.policyJson}) = 1 and length(cast(${table.policyJson} as blob)) <= 65536`,
+    ),
+    check(
+      "orchestration_policy_change_check",
+      sql`${table.changeKind} in ('initial','tighten','relax','mixed','unchanged')`,
+    ),
+    check(
+      "orchestration_policy_approval_check",
+      sql`(${table.changeKind} in ('relax','mixed') and ${table.approvalAuditId} is not null) or ${table.changeKind} not in ('relax','mixed')`,
+    ),
+  ],
+)
+
+export const orchestrationTemplates = sqliteTable(
+  "orchestration_templates",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    definitionJson: text("definition_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    archivedAt: integer("archived_at"),
+  },
+  (table) => [
+    check("orchestration_templates_name_check", sql`length(trim(${table.name})) between 1 and 256`),
+    check("orchestration_templates_version_check", sql`${table.version} >= 1`),
+    check(
+      "orchestration_templates_json_check",
+      sql`json_valid(${table.definitionJson}) = 1 and json_extract(${table.definitionJson}, '$.schemaVersion') = 1 and length(cast(${table.definitionJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationMessages = sqliteTable(
+  "orchestration_messages",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => orchestrationAgents.id, { onDelete: "set null" }),
+    direction: text("direction").notNull(),
+    kind: text("kind").notNull(),
+    state: text("state").notNull(),
+    body: text("body"),
+    providerMessageId: text("provider_message_id"),
+    actionIntentId: text("action_intent_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("orchestration_messages_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    uniqueIndex("orchestration_messages_action_intent_idx")
+      .on(table.actionIntentId)
+      .where(sql`${table.actionIntentId} is not null`),
+    check(
+      "orchestration_messages_direction_check",
+      sql`${table.direction} in ('inbound','outbound')`,
+    ),
+    check(
+      "orchestration_messages_kind_check",
+      sql`${table.kind} in ('message','follow-up','interrupt','mailbox')`,
+    ),
+    check(
+      "orchestration_messages_state_check",
+      sql`${table.state} in ('recorded','queued','delivered','failed','uncertain')`,
+    ),
+    check(
+      "orchestration_messages_body_check",
+      sql`${table.body} is null or length(cast(${table.body} as blob)) <= 40000`,
+    ),
+  ],
+)
+
+export const orchestrationWorkflowRuns = sqliteTable(
+  "orchestration_workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    definitionJson: text("definition_json").notNull(),
+    approvalAuditId: text("approval_audit_id"),
+    stopIntent: integer("stop_intent", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_workflow_approval_once_idx")
+      .on(table.approvalAuditId)
+      .where(sql`${table.approvalAuditId} is not null`),
+    check(
+      "orchestration_workflow_status_check",
+      sql`${table.status} in ('queued','running','waiting','blocked','paused','completed','failed','stopped','uncertain')`,
+    ),
+    check(
+      "orchestration_workflow_definition_check",
+      sql`json_valid(${table.definitionJson}) = 1 and length(cast(${table.definitionJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationWorkflowCheckpoints = sqliteTable(
+  "orchestration_workflow_checkpoints",
+  {
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => orchestrationWorkflowRuns.id, { onDelete: "cascade" }),
+    stepId: text("step_id").notNull(),
+    status: text("status").notNull(),
+    outputJson: text("output_json"),
+    error: text("error"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workflowRunId, table.stepId] }),
+    check(
+      "orchestration_workflow_checkpoint_status_check",
+      sql`${table.status} in ('pending','running','waiting','blocked','completed','failed','uncertain','skipped')`,
+    ),
+    check(
+      "orchestration_workflow_checkpoint_output_check",
+      sql`${table.outputJson} is null or (json_valid(${table.outputJson}) = 1 and length(cast(${table.outputJson} as blob)) <= 65536)`,
+    ),
+  ],
+)
+
+export const coordinationActionIntents = sqliteTable(
+  "coordination_action_intents",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    engine: text("engine").notNull(),
+    action: text("action").notNull(),
+    targetAgentId: text("target_agent_id"),
+    payloadJson: text("payload_json").notNull(),
+    state: text("state").notNull(),
+    providerIdentityJson: text("provider_identity_json").notNull(),
+    resultJson: text("result_json"),
+    claimOwner: text("claim_owner"),
+    claimExpiresAt: integer("claim_expires_at"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("coordination_action_idempotency_idx").on(table.idempotencyKey),
+    index("coordination_action_task_state_idx").on(table.taskId, table.state, table.createdAt),
+    index("coordination_action_claim_idx").on(table.state, table.claimExpiresAt),
+    check("coordination_action_engine_check", sql`${table.engine} in ('codex-v2','codex-v1')`),
+    check(
+      "coordination_action_state_check",
+      sql`${table.state} in ('dispatching','running','waiting','completed','cancelled','uncertain','failed')`,
+    ),
+    check(
+      "coordination_action_payload_check",
+      sql`json_valid(${table.payloadJson}) = 1 and length(cast(${table.payloadJson} as blob)) <= 65536`,
+    ),
+    check("coordination_action_identity_check", sql`json_valid(${table.providerIdentityJson}) = 1`),
+    check(
+      "coordination_action_result_check",
+      sql`${table.resultJson} is null or (json_valid(${table.resultJson}) = 1 and length(cast(${table.resultJson} as blob)) <= 65536)`,
+    ),
+    check(
+      "coordination_action_claim_check",
+      sql`(${table.claimOwner} is null and ${table.claimExpiresAt} is null) or (length(${table.claimOwner}) between 1 and 200 and ${table.claimExpiresAt} is not null)`,
+    ),
+  ],
+)
+
+export const orchestrationTransitionEvents = sqliteTable(
+  "orchestration_transition_events",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    agentId: text("agent_id"),
+    runId: text("run_id"),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    summary: text("summary"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_transition_dedup_idx").on(table.dedupKey),
+    index("orchestration_transition_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    check(
+      "orchestration_transition_summary_check",
+      sql`${table.summary} is null or (substr(${table.summary},1,17) = 'Activity summary:' and length(cast(${table.summary} as blob)) <= 4096)`,
+    ),
+  ],
+)
+
+export const orchestrationControlIntents = sqliteTable(
+  "orchestration_control_intents",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    state: text("state").notNull(),
+    previewJson: text("preview_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    check("orchestration_control_action_check", sql`${table.action} in ('pause','resume','stop')`),
+    check(
+      "orchestration_control_state_check",
+      sql`${table.state} in ('pending','partial','completed')`,
+    ),
+    check(
+      "orchestration_control_preview_check",
+      sql`json_valid(${table.previewJson}) = 1 and length(cast(${table.previewJson} as blob)) <= 262144`,
+    ),
+  ],
+)
+
+export const orchestrationControlTargets = sqliteTable(
+  "orchestration_control_targets",
+  {
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => orchestrationControlIntents.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    runId: text("run_id"),
+    state: text("state").notNull(),
+    error: text("error"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.intentId, table.agentId] }),
+    check(
+      "orchestration_control_target_state_check",
+      sql`${table.state} in ('pending','processing','no-run','reconciled','failed')`,
+    ),
+    check(
+      "orchestration_control_target_error_check",
+      sql`${table.error} is null or length(cast(${table.error} as blob)) <= 1024`,
+    ),
+  ],
+)
+
+export const orchestrationActivityEvents = sqliteTable(
+  "orchestration_activity_events",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskOrchestrations.taskId, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => orchestrationAgents.id, { onDelete: "set null" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    sourceActivityEventId: text("source_activity_event_id").references(
+      () => agentActivityEvents.eventId,
+      { onDelete: "set null" },
+    ),
+    kind: text("kind").notNull(),
+    phase: text("phase").notNull(),
+    summary: text("summary"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("orchestration_activity_dedup_idx").on(table.dedupKey),
+    index("orchestration_activity_task_order_idx").on(table.taskId, table.createdAt, table.id),
+    check(
+      "orchestration_activity_kind_check",
+      sql`${table.kind} in ('workflow-phase','checkpoint','dependency','spawn','replacement','mailbox','coordination','warning','usage','aggregate-status')`,
+    ),
+    check(
+      "orchestration_activity_summary_check",
+      sql`${table.summary} is null or (substr(${table.summary},1,17) = 'Activity summary:' and length(cast(${table.summary} as blob)) <= 4096)`,
+    ),
+  ],
 )
 
 // ============ CHATS ============

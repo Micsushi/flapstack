@@ -58,6 +58,10 @@ tests do not substitute for live UI or packaged evidence.
       provenance and adds ordered workflow, mailbox, dependency, spawn, warning,
       and usage events without copying or relabeling provider reasoning.
 
+Code-ready evidence for S4-MA01 through S4-MA10 is recorded in
+`docs/stage4-s4-f3-multi-agent-operations.md`. Rows remain open until the F4/F11
+dependencies and consolidated live/package walkthrough pass.
+
 ## Saved Workspaces
 
 - [ ] **S4-WS01** Create, rename, archive, restore, and delete behave locally and

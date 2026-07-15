@@ -12,7 +12,21 @@ import {
   type OrchestrationFleetFilters,
 } from "../src/renderer/features/orchestration-fleet/orchestration-fleet-view"
 
-vi.mock("../src/renderer/lib/trpc", () => ({ trpc: {} }))
+vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => ({
+      orchestrationOperations: { listActivity: { invalidate: vi.fn() } },
+    }),
+    orchestrationOperations: {
+      listActivity: {
+        useQuery: () => ({ isLoading: false, error: null, data: [] }),
+      },
+      rebuildActivity: {
+        useMutation: () => ({ isPending: false, mutate: vi.fn() }),
+      },
+    },
+  },
+}))
 
 const filters: OrchestrationFleetFilters = {
   projectId: "",

@@ -47,6 +47,11 @@ export function queryOrchestrationFleet(
   const nowMs = options.nowMs ?? Date.now()
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS
   const sqlScope = fleetSqlScope(input, options)
+  const cursor = input.cursor ? decodeCursor(input.cursor, input.sort) : null
+  const sort = fleetSortSql(input.sort)
+  const cursorScope = cursor ? keysetSql(sort.expression, input.sort, cursor) : null
+  const pageConditions = [...sqlScope.conditions, ...(cursorScope ? [cursorScope.condition] : [])]
+  const pageParams = [...sqlScope.params, ...(cursorScope?.params ?? []), input.limit + 1]
   const baseRows = store
     .prepare(
       `SELECT
@@ -64,10 +69,14 @@ export function queryOrchestrationFleet(
        LEFT JOIN tasks t ON t.id = o.task_id
        LEFT JOIN projects p ON p.id = t.project_id
        LEFT JOIN chats initiating ON initiating.id = o.initiating_chat_id
-       WHERE ${sqlScope.conditions.join(" AND ")}`,
+       WHERE ${pageConditions.join(" AND ")}
+       ORDER BY ${sort.expression} ${sort.direction}, o.task_id ASC
+       LIMIT ?`,
     )
-    .all(...sqlScope.params)
-  const taskIds = baseRows.map((row) => String(row.task_id))
+    .all(...pageParams)
+  const hasMore = baseRows.length > input.limit
+  const pageRows = baseRows.slice(0, input.limit)
+  const taskIds = pageRows.map((row) => String(row.task_id))
   const agentRows = chunks(taskIds, 500).flatMap((ids) =>
     store
       .prepare(
@@ -96,31 +105,25 @@ export function queryOrchestrationFleet(
     agentsByTask.set(taskId, rows)
   }
 
-  const visible = baseRows
-    .filter((row) => withinCallerScope(row, options))
-    .map((row) =>
-      toFleetItem(row, agentsByTask.get(String(row.task_id)) ?? [], nowMs, staleAfterMs),
+  const items = pageRows.map((row) =>
+    toFleetItem(row, agentsByTask.get(String(row.task_id)) ?? [], nowMs, staleAfterMs),
+  )
+  const totalRow = store
+    .prepare(
+      `SELECT count(*) total
+       FROM task_orchestrations o
+       LEFT JOIN tasks t ON t.id = o.task_id
+       LEFT JOIN projects p ON p.id = t.project_id
+       WHERE ${sqlScope.conditions.join(" AND ")}`,
     )
-    .filter((item) => withinArchiveScope(item, input.archiveScope))
-
-  const facets = buildFacets(visible)
-  const filtered = visible.filter((item) => matchesFilters(item, input))
-  filtered.sort(comparator(input.sort))
-
-  const cursor = input.cursor ? decodeCursor(input.cursor, input.sort) : null
-  const afterCursor = cursor
-    ? filtered.filter((item) => compareItemToCursor(item, cursor, input.sort) > 0)
-    : filtered
-  const pageItems = afterCursor.slice(0, input.limit)
-  const hasMore = afterCursor.length > input.limit
+    .all(...sqlScope.params)[0]
+  const facets = queryFacets(store, sqlScope)
 
   return {
-    items: pageItems,
-    total: filtered.length,
+    items,
+    total: Number(totalRow?.total ?? 0),
     nextCursor:
-      hasMore && pageItems.length > 0
-        ? encodeCursor(pageItems[pageItems.length - 1]!, input.sort)
-        : null,
+      hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]!, input.sort) : null,
     observedAt: nowMs,
     facets,
   }
@@ -154,35 +157,121 @@ function fleetSqlScope(
   } else if (input.archiveScope === "archived") {
     conditions.push("(t.archived_at IS NOT NULL OR p.archived_at IS NOT NULL)")
   }
+  if (input.providers.length > 0) {
+    const providerExpression = fleetProviderSql("a", "r")
+    addIds(providerExpression, input.providers.map(normalizeProvider))
+    const providerCondition = conditions.pop()!
+    conditions.push(
+      `EXISTS (
+        SELECT 1 FROM orchestration_agents a
+        LEFT JOIN agent_runs r ON r.id = a.run_id
+        WHERE a.task_id = o.task_id AND ${providerCondition}
+      )`,
+    )
+  }
   return { conditions, params }
 }
 
-function withinCallerScope(row: Row, options: OrchestrationFleetQueryOptions): boolean {
-  if (options.visibleTaskId) return String(row.task_id) === options.visibleTaskId
-  if (options.visibleProjectId) return String(row.project_id) === options.visibleProjectId
-  return true
-}
-
-function withinArchiveScope(
-  item: OrchestrationFleetItemDto,
-  scope: OrchestrationFleetQuery["archiveScope"],
-): boolean {
-  const archived = item.projectArchived || item.taskArchived
-  if (scope === "visible") return !archived
-  if (scope === "archived") return archived
-  return true
-}
-
-function matchesFilters(item: OrchestrationFleetItemDto, input: OrchestrationFleetQuery): boolean {
-  if (input.projectIds.length > 0 && !input.projectIds.includes(item.projectId)) return false
-  if (input.taskIds.length > 0 && !input.taskIds.includes(item.taskId)) return false
-  if (input.statuses.length > 0 && !input.statuses.includes(item.status)) return false
-  if (input.state !== "all" && item.state !== input.state) return false
-  if (input.providers.length > 0) {
-    const wanted = new Set(input.providers.map(normalizeProvider))
-    if (!item.providers.some((provider) => wanted.has(normalizeProvider(provider)))) return false
+function fleetSortSql(sort: OrchestrationFleetSort) {
+  if (sort === "name-asc")
+    return {
+      expression: "lower(coalesce(t.name, 'Missing task ' || o.task_id))",
+      direction: "ASC" as const,
+    }
+  if (sort.startsWith("created"))
+    return {
+      expression: "coalesce(o.created_at, 0)",
+      direction: sort.endsWith("-asc") ? ("ASC" as const) : ("DESC" as const),
+    }
+  return {
+    expression: `max(
+      coalesce(o.updated_at, o.created_at, 0),
+      coalesce((
+        SELECT max(max(coalesce(a.updated_at, 0), coalesce(r.started_at, 0), coalesce(r.completed_at, 0)))
+        FROM orchestration_agents a LEFT JOIN agent_runs r ON r.id = a.run_id
+        WHERE a.task_id = o.task_id
+      ), 0)
+    )`,
+    direction: sort.endsWith("-asc") ? ("ASC" as const) : ("DESC" as const),
   }
-  return true
+}
+
+function keysetSql(expression: string, sort: OrchestrationFleetSort, cursor: Cursor) {
+  const value = typeof cursor.value === "number" ? cursor.value / 1_000 : cursor.value
+  const primaryOperator = sort.endsWith("-asc") ? ">" : "<"
+  return {
+    condition: `(${expression} ${primaryOperator} ? OR (${expression} = ? AND o.task_id > ?))`,
+    params: [value, value, cursor.taskId],
+  }
+}
+
+function fleetProviderSql(agentAlias: string, runAlias: string) {
+  return `lower(coalesce(
+    nullif(json_extract(${agentAlias}.definition, '$.provider'), ''),
+    CASE lower(coalesce(json_extract(${agentAlias}.definition, '$.harness'), ${runAlias}.harness, ''))
+      WHEN 'codex' THEN 'openai'
+      WHEN 'claude-code' THEN 'anthropic'
+      WHEN 'cursor-agent' THEN 'cursor'
+      WHEN 'openrouter' THEN 'openrouter'
+      WHEN 'nanogpt' THEN 'nanogpt'
+      WHEN 'local' THEN 'local'
+      ELSE 'unknown'
+    END
+  ))`
+}
+
+function queryFacets(
+  store: OrchestrationFleetStore,
+  scope: { conditions: string[]; params: unknown[] },
+): OrchestrationFleetPageDto["facets"] {
+  const where = scope.conditions.join(" AND ")
+  const base = `FROM task_orchestrations o
+    LEFT JOIN tasks t ON t.id = o.task_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    WHERE ${where}`
+  const projects = store
+    .prepare(
+      `SELECT coalesce(t.project_id, 'unknown-project') id,
+              coalesce(p.name, 'Missing project ' || coalesce(t.project_id, 'unknown-project')) label,
+              count(*) count ${base}
+       GROUP BY t.project_id, p.name ORDER BY lower(label), id`,
+    )
+    .all(...scope.params)
+  const tasks = store
+    .prepare(
+      `SELECT o.task_id id, coalesce(t.name, 'Missing task ' || o.task_id) label,
+              count(*) count ${base}
+       GROUP BY o.task_id, t.name ORDER BY lower(label), id`,
+    )
+    .all(...scope.params)
+  const statuses = store
+    .prepare(
+      `SELECT o.status id, o.status label, count(*) count ${base}
+       GROUP BY o.status ORDER BY lower(label), id`,
+    )
+    .all(...scope.params)
+  const providerExpression = fleetProviderSql("a", "r")
+  const providers = store
+    .prepare(
+      `SELECT ${providerExpression} id, ${providerExpression} label,
+              count(DISTINCT o.task_id) count
+       FROM task_orchestrations o
+       LEFT JOIN tasks t ON t.id = o.task_id
+       LEFT JOIN projects p ON p.id = t.project_id
+       JOIN orchestration_agents a ON a.task_id = o.task_id
+       LEFT JOIN agent_runs r ON r.id = a.run_id
+       WHERE ${where}
+       GROUP BY ${providerExpression} ORDER BY lower(label), id`,
+    )
+    .all(...scope.params)
+  const map = (rows: Row[]) =>
+    rows.map((row) => ({ id: String(row.id), label: String(row.label), count: Number(row.count) }))
+  return {
+    projects: map(projects),
+    tasks: map(tasks),
+    statuses: map(statuses),
+    providers: map(providers),
+  }
 }
 
 function toFleetItem(
@@ -372,59 +461,6 @@ function linkedState(
   if (!expectedId) return "unknown"
   if (!joinedId) return "missing"
   return archivedAt == null ? "live" : "archived"
-}
-
-function buildFacets(items: OrchestrationFleetItemDto[]): OrchestrationFleetPageDto["facets"] {
-  return {
-    projects: facet(items.map((item) => ({ id: item.projectId, label: item.projectName }))),
-    tasks: facet(items.map((item) => ({ id: item.taskId, label: item.taskName }))),
-    statuses: facet(items.map((item) => ({ id: item.status, label: item.status }))),
-    providers: facet(
-      items.flatMap((item) =>
-        item.providers.map((provider) => ({ id: provider, label: provider })),
-      ),
-    ),
-  }
-}
-
-function facet(values: Array<{ id: string; label: string }>) {
-  const counts = new Map<string, { label: string; count: number }>()
-  for (const value of values) {
-    const current = counts.get(value.id)
-    counts.set(value.id, { label: value.label, count: (current?.count ?? 0) + 1 })
-  }
-  return [...counts.entries()]
-    .map(([id, value]) => ({ id, ...value }))
-    .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
-}
-
-function comparator(sort: OrchestrationFleetSort) {
-  return (left: OrchestrationFleetItemDto, right: OrchestrationFleetItemDto) => {
-    const compared = compareValues(sortValue(left, sort), sortValue(right, sort), sort)
-    return compared || left.taskId.localeCompare(right.taskId)
-  }
-}
-
-function compareItemToCursor(
-  item: OrchestrationFleetItemDto,
-  cursor: Cursor,
-  sort: OrchestrationFleetSort,
-): number {
-  const compared = compareValues(sortValue(item, sort), cursor.value, sort)
-  return compared || item.taskId.localeCompare(cursor.taskId)
-}
-
-function compareValues(
-  left: number | string,
-  right: number | string,
-  sort: OrchestrationFleetSort,
-): number {
-  const ascending = sort.endsWith("-asc")
-  const compared =
-    typeof left === "string" && typeof right === "string"
-      ? left.localeCompare(right)
-      : Number(left) - Number(right)
-  return ascending ? compared : -compared
 }
 
 function sortValue(item: OrchestrationFleetItemDto, sort: OrchestrationFleetSort): number | string {

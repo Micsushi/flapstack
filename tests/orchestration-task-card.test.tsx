@@ -16,7 +16,21 @@ import {
 } from "../src/renderer/features/agents/ui/orchestration-task-card"
 import { readRendererOrchestrationCard } from "../src/renderer/features/agents/lib/orchestration-test-state"
 
-vi.mock("../src/renderer/lib/trpc", () => ({ trpc: {} }))
+vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => ({
+      orchestrationOperations: { listActivity: { invalidate: vi.fn() } },
+    }),
+    orchestrationOperations: {
+      listActivity: {
+        useQuery: () => ({ isLoading: false, error: null, data: [] }),
+      },
+      rebuildActivity: {
+        useMutation: () => ({ isPending: false, mutate: vi.fn() }),
+      },
+    },
+  },
+}))
 
 const definition = {
   role: "Implementer",
