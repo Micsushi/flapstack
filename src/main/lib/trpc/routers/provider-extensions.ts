@@ -26,6 +26,7 @@ import {
   nativeExtensionRestoreSchema,
   nativeExtensionTargetSchema,
   previewNativeExtensionMutation,
+  previewClearExtensionEnablementPolicy,
   previewCrossHarnessCopy,
   readNativeExtension,
   resolveExtensionEnablement,
@@ -157,6 +158,17 @@ export const providerExtensionsRouter = router({
     publishProviderExtensionsChange(input.location)
     return resolved
   }),
+
+  previewClearEnablementPolicy: publicProcedure
+    .input(policyMutationSchema)
+    .query(async ({ input }) => {
+      const cwd = resolvePolicyCwd(input)
+      const extension = await policyManifest(input.extensionId, cwd)
+      return previewClearExtensionEnablementPolicy(getDatabase(), {
+        target: extensionPolicyTargetFromManifest(extension),
+        location: input.location,
+      })
+    }),
 
   resolveEnablement: publicProcedure.input(policyMutationSchema).query(async ({ input }) => {
     const cwd = resolvePolicyCwd(input)

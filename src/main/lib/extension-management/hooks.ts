@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto"
 import {
   chmodSync,
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -25,6 +27,31 @@ export const MAX_HOOK_DRY_RUN_MS = 10_000
 export const MAX_HOOK_OUTPUT_BYTES = 64 * 1024
 const MAX_MANAGED_HOOKS = 1_000
 const MAX_HOOK_STATE_BYTES = 10 * 1024 * 1024
+
+const CLAUDE_HOOK_EVENTS = new Set([
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Notification",
+  "UserPromptSubmit",
+  "Stop",
+  "SubagentStop",
+  "PreCompact",
+  "SessionStart",
+  "SessionEnd",
+])
+const CODEX_HOOK_EVENTS = new Set([
+  "PreToolUse",
+  "PermissionRequest",
+  "PostToolUse",
+  "PreCompact",
+  "PostCompact",
+  "UserPromptSubmit",
+  "SessionStart",
+  "SubagentStart",
+  "SubagentStop",
+  "Stop",
+])
 
 export const hookHarnessSchema = z.enum(["claude-code", "codex"])
 export const hookScopeSchema = z.enum(["user", "project"])
@@ -158,6 +185,26 @@ export type HookValidationResult = z.infer<typeof hookValidationResultSchema>
 export type HookDryRunResult = z.infer<typeof hookDryRunResultSchema>
 export type HookCommandPreview = z.infer<typeof hookCommandPreviewSchema>
 
+export type ManagedHookCallback = (
+  input: unknown,
+  toolUseId: string | undefined,
+  options: { signal: AbortSignal },
+) => Promise<Record<string, unknown>>
+
+export type ManagedClaudeHookOptions = Record<
+  string,
+  Array<{ matcher?: string; hooks: ManagedHookCallback[]; timeout: number }>
+>
+
+export type ManagedHookRuntimeExecutor = {
+  execute(
+    record: HookRecord,
+    input: unknown,
+    signal: AbortSignal,
+    cwd?: string,
+  ): Promise<Record<string, unknown>>
+}
+
 export type HookStateStore = {
   read(): HookRecord[]
   write(records: HookRecord[]): void
@@ -215,17 +262,30 @@ export class FileHookStateStore implements HookStateStore {
 
   read(): HookRecord[] {
     if (!existsSync(this.path)) return []
+    let descriptor: number | null = null
     try {
-      const info = lstatSync(this.path)
-      if (info.isSymbolicLink() || !info.isFile()) {
+      const pathInfo = lstatSync(this.path, { bigint: true })
+      if (pathInfo.isSymbolicLink() || !pathInfo.isFile()) {
         throw new Error("Hook state must be a regular file")
       }
-      if (info.size > MAX_HOOK_STATE_BYTES) {
+      descriptor = openSync(this.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      const openedInfo = fstatSync(descriptor, { bigint: true })
+      if (
+        !openedInfo.isFile() ||
+        (pathInfo.dev !== 0n &&
+          pathInfo.ino !== 0n &&
+          (pathInfo.dev !== openedInfo.dev || pathInfo.ino !== openedInfo.ino))
+      ) {
+        throw new Error("Hook state identity changed while opening")
+      }
+      if (openedInfo.size > BigInt(MAX_HOOK_STATE_BYTES)) {
         throw new Error("Hook state exceeds the bounded file size")
       }
-      return hookStateFileSchema.parse(JSON.parse(readFileSync(this.path, "utf8"))).hooks
+      return hookStateFileSchema.parse(JSON.parse(readFileSync(descriptor, "utf8"))).hooks
     } catch (error) {
       throw new Error("Hook state is unreadable; enablement is fail-closed", { cause: error })
+    } finally {
+      if (descriptor !== null) closeSync(descriptor)
     }
   }
 
@@ -358,6 +418,111 @@ export class NodeHookDryRunRunner implements HookDryRunRunner {
   }
 }
 
+export class NodeManagedHookRuntimeExecutor implements ManagedHookRuntimeExecutor {
+  execute(
+    record: HookRecord,
+    input: unknown,
+    signal: AbortSignal,
+    cwd?: string,
+  ): Promise<Record<string, unknown>> {
+    assertHookRuntimeReady(record)
+    const preview = parseHookCommand(record.definition.command)
+    return new Promise((resolve, reject) => {
+      let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+      let capturedBytes = 0
+      let settled = false
+      let timedOut = false
+      let outputLimitExceeded = false
+      const child = spawn(preview.executable, preview.args, {
+        cwd: record.definition.cwd ?? cwd,
+        shell: false,
+        windowsHide: true,
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: runtimeEnvironment(),
+      })
+      const stop = (): void => {
+        if (child.killed) return
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, "SIGKILL")
+            return
+          } catch {
+            // Fall back to the direct child if the process group already exited.
+          }
+        }
+        child.kill("SIGKILL")
+      }
+      const fail = (message: string): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(new Error(message))
+      }
+      const abort = (): void => {
+        stop()
+        fail("Managed hook execution was cancelled")
+      }
+      const timer = setTimeout(
+        () => {
+          timedOut = true
+          stop()
+        },
+        Math.max(1, Math.min(record.definition.timeoutMs, MAX_HOOK_DRY_RUN_MS)),
+      )
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        signal.removeEventListener("abort", abort)
+      }
+      signal.addEventListener("abort", abort, { once: true })
+      child.stdout?.on("data", (chunk: Buffer) => {
+        const remaining = MAX_HOOK_OUTPUT_BYTES - capturedBytes
+        if (remaining <= 0 || chunk.byteLength > remaining) {
+          outputLimitExceeded = true
+          stop()
+          return
+        }
+        capturedBytes += chunk.byteLength
+        stdout = Buffer.concat([stdout, chunk])
+      })
+      child.stderr?.on("data", (chunk: Buffer) => {
+        capturedBytes += chunk.byteLength
+        if (capturedBytes > MAX_HOOK_OUTPUT_BYTES) {
+          outputLimitExceeded = true
+          stop()
+        }
+      })
+      child.once("error", () => fail("Managed hook could not be started"))
+      child.once("close", (exitCode) => {
+        if (settled) return
+        if (timedOut) return fail("Managed hook timed out")
+        if (outputLimitExceeded) return fail("Managed hook exceeded the output limit")
+        if (exitCode !== 0) return fail("Managed hook exited unsuccessfully")
+        settled = true
+        cleanup()
+        const output = stdout.toString("utf8").trim()
+        if (!output) return resolve({})
+        try {
+          const parsed: unknown = JSON.parse(output)
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("not an object")
+          }
+          resolve(parsed as Record<string, unknown>)
+        } catch {
+          reject(new Error("Managed hook returned invalid JSON"))
+        }
+      })
+      if (signal.aborted) return abort()
+      try {
+        child.stdin?.end(JSON.stringify(input))
+      } catch {
+        stop()
+        fail("Managed hook input could not be written")
+      }
+    })
+  }
+}
+
 export class HookLifecycleService {
   private readonly mutex = new Mutex()
 
@@ -415,6 +580,9 @@ export class HookLifecycleService {
       const current = records[index]!
       if (current.enabled) {
         throw new Error("Enabled hooks must be disabled before validation")
+      }
+      if (current.definition.scope === "project") {
+        this.resolveProjectCwd(current.definition.cwd!)
       }
       const validation = validateHookDraft({ id, ...current.definition })
       const record: HookRecord = {
@@ -667,21 +835,7 @@ export function validateHookDraft(inputValue: HookDraft): HookValidationResult {
   const input = parsed.data
   const revision = hookRevision(stripHookId(input))
   const issues: z.infer<typeof hookValidationIssueSchema>[] = []
-  const supportedEvents =
-    input.harness === "claude-code"
-      ? new Set([
-          "PreToolUse",
-          "PostToolUse",
-          "PostToolUseFailure",
-          "Notification",
-          "UserPromptSubmit",
-          "Stop",
-          "SubagentStop",
-          "PreCompact",
-          "SessionStart",
-          "SessionEnd",
-        ])
-      : new Set(["agent-turn-complete"])
+  const supportedEvents = input.harness === "claude-code" ? CLAUDE_HOOK_EVENTS : CODEX_HOOK_EVENTS
   if (!supportedEvents.has(input.event)) {
     issues.push({
       code: "event",
@@ -689,12 +843,16 @@ export function validateHookDraft(inputValue: HookDraft): HookValidationResult {
       message: "Hook event is not supported by this harness",
     })
   }
-  if (input.harness === "codex" && input.matcher) {
-    issues.push({
-      code: "event",
-      path: "matcher",
-      message: "Codex notify hooks do not support matchers",
-    })
+  if (input.matcher) {
+    try {
+      new RegExp(input.matcher)
+    } catch {
+      issues.push({
+        code: "event",
+        path: "matcher",
+        message: "Hook matcher must be a valid regular expression",
+      })
+    }
   }
   if (input.scope === "project" && !input.cwd) {
     issues.push({
@@ -784,13 +942,93 @@ function tokenizeCommand(command: string): string[] {
   return tokens
 }
 
-function assertEnableReady(record: HookRecord): void {
+export function assertHookRuntimeReady(record: HookRecord): void {
   if (!record.validation?.valid || record.validation.revision !== record.revision) {
     throw new Error("Hook must pass validation before enablement")
   }
   if (!record.dryRun?.success || record.dryRun.revision !== record.revision) {
     throw new Error("Hook must pass the latest bounded dry-run before enablement")
   }
+}
+
+function assertEnableReady(record: HookRecord): void {
+  assertHookRuntimeReady(record)
+}
+
+export function resolveEnabledManagedHooks(input: {
+  store: HookStateStore
+  harness: HookDraft["harness"]
+  cwd: string
+  resolveProjectCwd: (cwd: string) => string
+}): HookRecord[] {
+  const currentRoot = input.resolveProjectCwd(input.cwd)
+  return input.store
+    .read()
+    .filter((record) => record.enabled && record.definition.harness === input.harness)
+    .filter((record) => {
+      assertHookRuntimeReady(record)
+      const validation = validateHookDraft({ id: record.id, ...record.definition })
+      if (!validation.valid || validation.revision !== record.revision) {
+        throw new Error(`Enabled managed hook ${record.id} no longer validates`)
+      }
+      if (record.definition.scope === "user") return true
+      if (record.definition.cwd !== currentRoot) return false
+      const registeredRoot = input.resolveProjectCwd(record.definition.cwd)
+      if (registeredRoot !== currentRoot) {
+        throw new Error(`Managed hook ${record.id} project authority changed`)
+      }
+      return true
+    })
+}
+
+export function buildManagedCodexHookConfig(records: HookRecord[]): Record<string, unknown> {
+  const hooks: Record<string, Array<Record<string, unknown>>> = {}
+  for (const record of records) {
+    if (record.definition.harness !== "codex" || !CODEX_HOOK_EVENTS.has(record.definition.event)) {
+      throw new Error(`Managed hook ${record.id} has no supported Codex runtime event`)
+    }
+    const groups = hooks[record.definition.event] ?? []
+    groups.push({
+      ...(record.definition.matcher ? { matcher: record.definition.matcher } : {}),
+      hooks: [
+        {
+          type: "command",
+          command: record.definition.command,
+          timeout: Math.max(1, Math.ceil(record.definition.timeoutMs / 1_000)),
+          statusMessage: `Flapstack hook: ${record.definition.name}`,
+        },
+      ],
+    })
+    hooks[record.definition.event] = groups
+  }
+  return records.length === 0 ? {} : { features: { hooks: true }, hooks }
+}
+
+export function buildManagedClaudeHookOptions(
+  records: HookRecord[],
+  execute: (
+    record: HookRecord,
+    input: unknown,
+    signal: AbortSignal,
+  ) => Promise<Record<string, unknown>>,
+): ManagedClaudeHookOptions {
+  const hooks: ManagedClaudeHookOptions = {}
+  for (const record of records) {
+    if (
+      record.definition.harness !== "claude-code" ||
+      !CLAUDE_HOOK_EVENTS.has(record.definition.event)
+    ) {
+      throw new Error(`Managed hook ${record.id} has no supported Claude runtime event`)
+    }
+    const groups = hooks[record.definition.event] ?? []
+    groups.push({
+      ...(record.definition.matcher ? { matcher: record.definition.matcher } : {}),
+      timeout: Math.max(1, Math.ceil(record.definition.timeoutMs / 1_000)),
+      hooks: [async (hookInput, _toolUseId, options) => execute(record, hookInput, options.signal)],
+    })
+    hooks[record.definition.event] = groups
+  }
+  return hooks
 }
 
 function normalizeDraft(
@@ -848,6 +1086,13 @@ function sha256(value: string | Buffer): string {
 function dryRunEnvironment(): NodeJS.ProcessEnv {
   const allowed = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SystemRoot", "WINDIR"]
   const env: NodeJS.ProcessEnv = { FLAPSTACK_HOOK_DRY_RUN: "1" }
+  for (const key of allowed) if (process.env[key]) env[key] = process.env[key]
+  return env
+}
+
+function runtimeEnvironment(): NodeJS.ProcessEnv {
+  const allowed = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SystemRoot", "WINDIR"]
+  const env: NodeJS.ProcessEnv = { FLAPSTACK_MANAGED_HOOK: "1" }
   for (const key of allowed) if (process.env[key]) env[key] = process.env[key]
   return env
 }

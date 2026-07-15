@@ -34,6 +34,10 @@ write or notification.
 Managed Claude Code, Codex, and Cursor runs resolve policy from the chat's
 project/task ownership before provider launch. The same resolved manifest is
 attached to run message metadata, but prompt text is not treated as enforcement.
+The Stage 4 direct Codex and Claude Runtime adapters now resolve the same durable
+policy before thread/query creation. Their working directory must still match a
+registered filesystem identity; missing, stale, replaced, or deleted roots stop
+launch before provider access.
 
 - Claude skills use the pinned Agent SDK `options.skills` allowlist. Disabled
   MCP names are removed from app-provided servers and `strictMcpConfig` prevents
@@ -76,6 +80,8 @@ of only testing launch-policy helpers:
   `cursor-agent` spawn;
 - the shared renderer invalidation bridge refreshes all provider-extension tRPC
   query families across windows.
+- the Stage 4 main launcher applies Codex launch config and Claude SDK options
+  at its direct provider boundary rather than relying on prompt metadata.
 
 Node 22 focused T3 and provider-boundary coverage passes 6 files/25 tests.
 The broader Stage 3 extension regression set passes 14 files/118 tests. Full
@@ -93,6 +99,10 @@ build pass.
 - The unified Settings UI and accessibility walkthrough belong to S4-F1-T5.
 - Dev-profile restart and packaged-preview migration proof belong to S4-F1-T7.
 - Hook enablement remains owned by S4-F1-T6.
+
+Recovery is authority-reducing: clear the selected user/project/task override
+to inherit the next lower-precedence decision. A stale project cannot be used
+to set or clear scoped state; re-register the exact root first.
 
 The S4-F1-T3 completion checkbox stays open until the live provider behavior is
 observed rather than inferred from headless context assembly.

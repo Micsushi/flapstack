@@ -212,7 +212,7 @@ describe("product MCP external mutation refresh", () => {
         name: "refresh windows",
         harness: "codex",
         scope: "user",
-        event: "agent-turn-complete",
+        event: "Stop",
         command: "node hook.mjs",
         timeoutMs: 500,
       })
