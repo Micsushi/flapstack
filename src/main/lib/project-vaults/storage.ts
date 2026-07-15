@@ -61,6 +61,8 @@ export type ProjectVaultDeleteContract = {
 }
 
 export type ProjectVaultWriteHooks = {
+  /** Test seam for proving content CAS immediately before atomic replace. */
+  beforeContentCommit?: () => void | Promise<void>
   /** Test seam for proving filesystem rollback after a post-write failure. */
   afterContentWrite?: () => void | Promise<void>
 }
@@ -323,7 +325,11 @@ export async function writeProjectVaultSection(
         root.canonicalPath,
         section.relativePath,
         { data: next },
-        { overwrite: true },
+        {
+          overwrite: true,
+          expectedSha256: previousHash,
+          beforeCommit: hooks.beforeContentCommit,
+        },
       )
       contentWritten = true
       await hooks.afterContentWrite?.()
@@ -377,7 +383,7 @@ export async function writeProjectVaultSection(
             root.canonicalPath,
             section.relativePath,
             { data: previous },
-            { overwrite: true },
+            { overwrite: true, expectedSha256: nextHash },
           )
         } catch (rollbackError) {
           throw new AggregateError(
@@ -387,6 +393,23 @@ export async function writeProjectVaultSection(
         }
       }
       await removeVaultFile(root.canonicalPath, backupRelativePath)
+      if (!contentWritten && isStaleWriteTargetError(error)) {
+        let currentHash = section.contentHash
+        try {
+          currentHash = sha256(
+            await readFileInsideRoot(root.canonicalPath, section.relativePath, {
+              maxBytes: MAX_VAULT_SECTION_BYTES,
+            }),
+          )
+        } catch {
+          // The target is still a conflict even when the replacement cannot be read safely.
+        }
+        throw new ProjectVaultConflictError(
+          "Project vault section changed outside Flapstack.",
+          section.version,
+          currentHash,
+        )
+      }
       throw error
     }
   })
@@ -433,7 +456,9 @@ export async function readProjectVaultSectionBackup(
   if (bytes.byteLength !== backup.byteLength || sha256(bytes) !== backup.contentHash) {
     throw new Error("Project vault backup content does not match its recorded identity.")
   }
-  return { ...backup, content: bytes.toString("utf8") }
+  const content = bytes.toString("utf8")
+  assertProjectVaultContentSafe(content)
+  return { ...backup, content }
 }
 
 export async function restoreProjectVaultSectionBackup(
@@ -815,6 +840,10 @@ async function pathExists(path: string): Promise<boolean> {
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT"
+}
+
+function isStaleWriteTargetError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Write target content is stale"
 }
 
 function sha256(content: Uint8Array): string {

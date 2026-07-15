@@ -11,7 +11,7 @@ export function containsProjectVaultSecret(content: string): boolean {
 }
 
 export function redactProjectVaultSecrets(content: string): string {
-  return content
+  const redacted = content
     .replace(
       /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
       REDACTED,
@@ -22,6 +22,7 @@ export function redactProjectVaultSecrets(content: string): string {
       /(\b(?:[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)|api[-_ ]?key|access[-_ ]?token|password)\s*[:=]\s*)["']?[A-Za-z0-9._~+/=-]{12,}/gi,
       `$1${REDACTED}`,
     )
+  return containsProjectVaultSecret(redacted) ? REDACTED : redacted
 }
 
 export function assertProjectVaultContentSafe(content: string): void {

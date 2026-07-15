@@ -2,6 +2,7 @@ import { AlertTriangle, Check, Circle, FileText } from "lucide-react"
 import { useRef, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
 import { cn } from "../../lib/utils"
+import { Checkbox } from "../../components/ui/checkbox"
 import { hasVaultEditorChanges, type VaultEditorState } from "./editor-state"
 
 export const SECTION_IDS = ["index", "handoff", "decisions", "context", "tasks", "logs"] as const
@@ -191,6 +192,57 @@ export function SearchResults({
         </ul>
       )}
     </section>
+  )
+}
+
+export function VaultContextPicker({
+  sections,
+  selected,
+  saving,
+  error,
+  onToggle,
+}: {
+  sections: Array<{ sectionId: string; title: string }>
+  selected: readonly SectionId[]
+  saving: boolean
+  error?: string
+  onToggle: (id: SectionId, enabled: boolean) => void
+}) {
+  return (
+    <fieldset className="space-y-1 border-t p-2" aria-busy={saving}>
+      <legend className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Default run context
+      </legend>
+      <p className="px-1 text-[10px] text-muted-foreground">
+        Checked sections are the project default for new runs.
+      </p>
+      {sections.map((section) => {
+        if (!isSectionId(section.sectionId)) return null
+        const sectionId = section.sectionId
+        const checked = selected.includes(sectionId)
+        return (
+          <label
+            key={sectionId}
+            className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted"
+          >
+            <Checkbox
+              checked={checked}
+              disabled={saving}
+              onCheckedChange={(value) => onToggle(sectionId, value === true)}
+              aria-label={`Include ${section.title} in default run context`}
+            />
+            <span className="min-w-0 flex-1 truncate">{section.title}</span>
+          </label>
+        )
+      })}
+      <div
+        className={cn("px-1 text-[10px]", error ? "text-red-600" : "text-muted-foreground")}
+        role={error ? "alert" : "status"}
+        aria-live={error ? "assertive" : "polite"}
+      >
+        {error ?? (saving ? "Saving run context selection…" : `${selected.length} selected`)}
+      </div>
+    </fieldset>
   )
 }
 

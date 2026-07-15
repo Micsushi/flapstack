@@ -1,8 +1,11 @@
 import Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import { randomUUID } from "node:crypto"
 import { lstat, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
+import * as appDatabaseSchema from "../db/schema"
+import { bindFilesystemRootIdentity } from "../git/security/path-validation"
 import {
   PORTABLE_BUNDLE_LAYOUT,
   PORTABLE_SCOPE_IDS,
@@ -661,6 +664,7 @@ async function applyPortableImportInsideLifecycle(input: {
           recordDatabaseBase(database, diff)
           applied += 1
         }
+        bindImportedProjectVaultRoots(database, plan.database, input.resolutions)
         const foreignKeyFailures = database.pragma("foreign_key_check") as Array<unknown>
         if (foreignKeyFailures.length > 0)
           throw new Error("Imported database records violate foreign key integrity.")
@@ -691,6 +695,38 @@ async function applyPortableImportInsideLifecycle(input: {
     journal.phase = "rolled-back"
     await writeJournal(input.stateRoot, journal)
     throw error
+  }
+}
+
+function bindImportedProjectVaultRoots(
+  database: Database.Database,
+  diffs: readonly PortableDatabaseDiff[],
+  resolutions: Readonly<Record<string, PortableConflictResolution>> | undefined,
+): void {
+  if (!tableExists(database, "filesystem_root_registrations")) return
+  const projectIds = new Set(
+    diffs
+      .filter((diff) => {
+        const resolution = resolutions?.[diff.id]
+        return (
+          diff.scopeId === "project-vaults" &&
+          diff.tableName === "project_vaults" &&
+          diff.kind !== "skip" &&
+          resolution !== "keep-local" &&
+          resolution !== "keep-both"
+        )
+      })
+      .map((diff) => String(diff.identity.project_id ?? ""))
+      .filter(Boolean),
+  )
+  if (projectIds.size === 0) return
+
+  const typed = drizzle(database, { schema: appDatabaseSchema })
+  const selectRoot = database.prepare("SELECT root_path FROM project_vaults WHERE project_id = ?")
+  for (const projectId of projectIds) {
+    const row = selectRoot.get(projectId) as { root_path: string } | undefined
+    if (!row) throw new Error(`Imported project vault ${projectId} is missing its target root.`)
+    bindFilesystemRootIdentity(row.root_path, typed)
   }
 }
 

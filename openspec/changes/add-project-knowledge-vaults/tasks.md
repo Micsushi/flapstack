@@ -44,6 +44,15 @@
   strict OpenSpec, and `git diff --check` pass. Renderer component/accessibility
   and live edit proof remain unrun under the lane restriction, so completion
   stays unchecked.
+- Evidence (2026-07-15): Code/headless acceptance expanded. Added explicit,
+  accessible project-default run-context selection; exact-content CAS at the
+  atomic replace boundary; ownership-conditional rollback; secret-safe section
+  and backup previews; and malformed-secret search fail-closed behavior. The
+  feature-wide Node 22 slice passes 14 files/120 tests, including renderer
+  component/keyboard/accessibility coverage. Repository ESLint, scoped
+  Prettier, full TypeScript, strict OpenSpec, and diff hygiene pass. Live visual,
+  interactive editor, multi-window, and packaged-profile proof remains open, so
+  completion stays unchecked.
 - Blocked by: S4-F2-T2
 - Blocks: S4-F2-T6
 - Context: file viewer, scoped search, diff components, project details surfaces.
@@ -98,6 +107,23 @@
 - Out of scope: Private remote sync.
 - Acceptance: One vault survives restart/export/restore; selected context reaches a run; secret and conflict cases remain safe.
 - Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and packaged preview matrix evidence.
+- Evidence (2026-07-15): Code-ready/manual-verification-remaining. Vault setup
+  now exposes central versus explicit project-owned storage and the independent
+  git-tracking opt-in. The vault header routes to the existing reviewed
+  export/import surface. Portable import now binds the restored vault root
+  identity inside the database transaction; a real migrated-vault round trip
+  proves schema version, section versions/hashes, Markdown content, backup
+  metadata/content, target-path remapping, and an immediately readable restored
+  root. `docs/project-knowledge-vaults.md` documents setup, context, agent
+  operations, conflict/recovery, export/import, secrets, and limitations. The
+  feature-wide Node 22 slice passes 14 files/120 tests; repository ESLint,
+  scoped Prettier, full TypeScript, production build, strict OpenSpec, and diff
+  hygiene pass.
+  Monolithic `npm run check` passed repository ESLint but stopped on pre-existing
+  formatting drift in `docs/stage4-full-feature-test-matrix.md` and Drizzle
+  snapshots `0031` through `0034`. Dev, live restart/edit, package preview,
+  clean-profile UI import, and platform rows remain open, so completion stays
+  unchecked.
 - Blocked by: S4-F2-T1, S4-F2-T3, S4-F2-T4, S4-F2-T5
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

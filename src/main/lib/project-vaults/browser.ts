@@ -1,6 +1,6 @@
 import type { getDatabase } from "../db"
 import type { ProjectVaultSectionId } from "./registry"
-import { redactProjectVaultSecrets } from "./content-safety"
+import { assertProjectVaultContentSafe, redactProjectVaultSecrets } from "./content-safety"
 import { listProjectVaultSections, readProjectVaultSection } from "./storage"
 
 type Database = ReturnType<typeof getDatabase>
@@ -18,6 +18,15 @@ export type ProjectVaultSearchResult = {
 
 const SNIPPET_CONTEXT = 72
 const MAX_SNIPPET_LENGTH = 220
+
+export async function readProjectVaultSectionForPreview(
+  database: Database,
+  input: { projectId: string; sectionId: ProjectVaultSectionId },
+) {
+  const section = await readProjectVaultSection(database, input)
+  assertProjectVaultContentSafe(section.content)
+  return section
+}
 
 export async function searchProjectVault(
   database: Database,

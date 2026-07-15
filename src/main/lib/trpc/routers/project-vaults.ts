@@ -13,13 +13,12 @@ import {
   getProjectVaultDeleteContract,
   listProjectVaultSectionBackups,
   listProjectVaultSections,
-  readProjectVaultSection,
   readProjectVaultSectionBackup,
   restoreProjectVaultSectionBackup,
   scaffoldProjectVault,
   writeProjectVaultSection,
 } from "../../project-vaults/storage"
-import { searchProjectVault } from "../../project-vaults/browser"
+import { readProjectVaultSectionForPreview, searchProjectVault } from "../../project-vaults/browser"
 import { assertProjectVaultContentSafe } from "../../project-vaults/content-safety"
 import { projectVaultSectionIds, projectVaultSectionRegistry } from "../../project-vaults/registry"
 import {
@@ -128,7 +127,7 @@ export const projectVaultsRouter = router({
 
   readSection: publicProcedure
     .input(z.object({ projectId: z.string().min(1), sectionId: sectionSchema }))
-    .query(({ input }) => readProjectVaultSection(getDatabase(), input)),
+    .query(({ input }) => readProjectVaultSectionForPreview(getDatabase(), input)),
 
   writeSection: publicProcedure
     .input(
