@@ -16,6 +16,7 @@ export const productMcpInvalidationDomains = [
   "automations",
   "task-proposals",
   "plan-sources",
+  "provider-extensions",
 ] as const
 
 export type ProductMcpInvalidationDomain = (typeof productMcpInvalidationDomains)[number]

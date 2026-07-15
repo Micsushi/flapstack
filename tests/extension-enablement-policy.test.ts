@@ -401,14 +401,15 @@ describe("extension enablement policy", () => {
     },
   )
 
-  it("keeps 0030 serialized after 0029 and before mobile pairing 0031", () => {
+  it("keeps the migration serialized as 0030 immediately after 0029", () => {
     const journal = JSON.parse(readFileSync(join(migrations, "meta", "_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.slice(-3)).toEqual([
+    const advancedUsageIndex = journal.entries.findIndex((entry) => entry.idx === 29)
+    expect(advancedUsageIndex).toBeGreaterThanOrEqual(0)
+    expect(journal.entries.slice(advancedUsageIndex, advancedUsageIndex + 2)).toEqual([
       expect.objectContaining({ idx: 29, tag: "0029_advanced_usage_contracts" }),
       expect.objectContaining({ idx: 30, tag: "0030_extension_enablement_policy" }),
-      expect.objectContaining({ idx: 31, tag: "0031_mobile_pairing_identity" }),
     ])
   })
 

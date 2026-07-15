@@ -40,6 +40,7 @@ export function McpExternalMutationRefreshBridge() {
               utils.planSources.sourceLinks.invalidate({ projectId }),
             ])
           : utils.planSources.invalidate(),
+      providerExtensions: () => utils.providerExtensions.invalidate(),
     })
     const coalescer = createProductMcpInvalidationCoalescer(invalidate)
     const unsubscribe = window.desktopApi.onProductMcpInvalidation(coalescer.push)

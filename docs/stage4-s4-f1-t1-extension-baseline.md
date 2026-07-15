@@ -11,11 +11,12 @@ execution evidence is claimed.
 | Legacy skills/commands/agents | Routers remain callable, including compatibility Codex paths and enabled Claude plugin components, but `settings-content.tsx` mounts Provider Extensions instead. | Compatibility rows remain explicit and cannot be mistaken for promoted Settings/runtime parity.                                                                                                                            |
 | Plugins                       | Provider Extensions shows installed Claude plugins read-only; the older plugin router still owns enablement but is not the mounted Plugins tab.                   | Plugin inventory is supported, mutation is empty, and runtime consumption is unknown. Plugin components are separate compatibility rows.                                                                                   |
 | Third-party MCP               | Claude Code and Codex use the mounted MCP Settings service; Cursor and OpenCode are inventory-only in Provider Extensions.                                        | Claude Code user/project CRUD, plugin approval, Codex global add/remove, Codex project read-only, Cursor unknown consumption, and OpenCode non-consumption are distinct. Product/dev-control MCP identities stay excluded. |
-| Hooks                         | `hooksManagement.getCapabilities` advertises Claude Code and Codex but disables discovery, mutation, and execution.                                               | User/project hook rows are `disabled`; every other hook combination is `unsupported`.                                                                                                                                      |
+| Hooks                         | `hooksManagement.getCapabilities` advertises managed Claude Code and Codex import, validation, bounded dry-run, approval, audit, and explicit enablement.         | User/project rows support managed enable/disable but remain `not-consumed` by native harness runtimes; plugin and other-harness hook rows stay `unsupported`.                                                              |
 
 The schema produces 72 exhaustive cells: four harnesses by six kinds by three
-scopes. Current classification is 27 supported, 5 compatibility, 4 disabled,
-and 36 unsupported. Unsupported cells remain present instead of disappearing.
+scopes. Current classification is 31 supported, 5 compatibility, 0 disabled,
+and 36 unsupported. Unsupported cells remain present instead of disappearing,
+carry no mutations or paths, and fail closed with an explicit limitation.
 
 ## Shipped-harness fixture
 
@@ -26,28 +27,40 @@ The focused fixture pins the contracts exercised by Stage 3:
 - Cursor Agent 2026.07.09-a3815c0 fixture.
 - OpenCode sidecar 1.17.18.
 
-`tests/extension-capability-registry.test.ts` compares every non-unsupported
-row with `tests/fixtures/extension-management/stage3-capability-baseline.json`,
-maps real provider discovery DTOs back to registry rows, checks hook-disablement
-parity, and exercises the production registry query.
+`tests/extension-capability-registry.test.ts` compares every supported or
+compatibility row plus the exact 36 unsupported identities with
+`tests/fixtures/extension-management/stage3-capability-baseline.json`. It also
+checks current package pins, maps real provider discovery DTOs back to registry
+rows, checks managed-hook/runtime parity, and exercises the production registry
+query.
 
-## Exact additive gaps
+## Current additive ownership
 
-| Gap ID                  | Current boundary                                                                 | Additive owner                                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `native-adapter-safety` | Stage 3 has provider-scoped atomic writes, but no preview or backup DTO.         | S4-F1-T2 adds lossless preview, backup, restore, and unknown-field results.                               |
-| `scoped-enablement`     | No user -> project -> task extension policy exists.                              | S4-F1-T3 adds persisted policy and run-context resolution.                                                |
-| `cross-harness-copy`    | No conversion preview or unsupported-field result exists.                        | S4-F1-T4 adds exact, converted, or unsupported copy previews.                                             |
-| `manager-ui`            | Provider Extensions and MCP are separate; compatibility routers remain callable. | S4-F1-T5 builds one manager from the registry after T2-T4.                                                |
-| `hook-lifecycle`        | Hook discovery and execution are disabled.                                       | S4-F1-T6 adds validation, exact command review, bounded dry-run, redacted audit, and explicit enablement. |
+| Gap ID                  | Current boundary                                                                                        | Remaining owner evidence                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `native-adapter-safety` | Lossless rooted read/preview/apply/backup/restore DTOs exist for supported mutable rows.                | S4-F1-T2 owns live Settings, reload, package, and integrated acceptance.                                     |
+| `scoped-enablement`     | Persisted user/project/task policy reaches supported launch contracts without rewriting native content. | S4-F1-T3 owns live provider and Dev/package restart evidence.                                                |
+| `cross-harness-copy`    | Exact/converted/unsupported previews precede every confirmed native copy write.                         | S4-F1-T4 owns dependency-gated sharing acceptance.                                                           |
+| `manager-ui`            | One Settings manager consumes registry, adapter, policy, copy, and managed-hook DTOs.                   | S4-F1-T5 owns the live walkthrough, screen-reader observation, restart, and package evidence.                |
+| `hook-lifecycle`        | Managed hooks validate, dry-run, audit, and enable explicitly but are not natively consumed.            | S4-F1-T6 owns live enable/disable and native runtime-consumption evidence without weakening the safety gate. |
 
 These gaps are returned as structured DTOs by
 `providerExtensions.getCapabilities`; later tasks do not need to infer them from
 UI copy or filesystem contents.
 
-## Remaining proof
+## Stage 3 exit reconciliation
 
-S4-F1-T1 completion remains unchecked while the declared Stage 3 S3-F11/S3-F13
-exit and archive proof remains open. S4-F1 live UI, package, provider, hook, and
-device evidence also remains unclaimed. Those gates do not block this additive
-code baseline, but they do block a truthful completion claim.
+- The annotated `stage3-final` tag resolves to
+  `a674784b0141c7a5293c5637c3bea65be6d44c4e`.
+- Its archived `complete-settings-reliability` board checks every S3-F11 task,
+  including exit S3-F11-T5, and every S3-F13 task, including exit S3-F13-T4.
+- Its release-candidate ledger says Stage 3 is complete, maps S3-F11 to T5 and
+  S3-F13 to T4, and records all required feature exits as complete.
+- The Stage 3 tag and this checkout resolve the same Claude Agent SDK, Claude
+  Code, Codex ACP, and bundled Codex CLI pins. Current Cursor and OpenCode
+  fixture pins remain `2026.07.09-a3815c0` and `1.17.18`.
+
+That satisfies T1's declared dependency. T1 closes on headless registry/router,
+provider, hook, schema, version, and fixture proof. No new live UI, package,
+provider-spend, hook execution, device, or later-F1 acceptance evidence is
+claimed.

@@ -7,6 +7,7 @@ import {
 } from "../../provider-extensions"
 import { getDatabase, projects } from "../../db"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
+import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 import {
   applyNativeExtensionMutation,
@@ -71,6 +72,18 @@ function policyProjectId(
   return input.projectId
 }
 
+function publishProviderExtensionsChange(
+  location?: z.infer<typeof extensionPolicyLocationSchema>,
+): void {
+  publishLocalProductInvalidation({
+    version: 1,
+    source: "product-mcp",
+    domains: ["provider-extensions"],
+    ...(!location || location.type === "user" ? {} : { projectIds: [location.projectId] }),
+    ...(location?.type === "task" ? { taskIds: [location.taskId] } : {}),
+  })
+}
+
 function resolvePolicyCwd(
   input:
     | z.infer<typeof resolvedStateInputSchema>
@@ -125,20 +138,24 @@ export const providerExtensionsRouter = router({
     .mutation(async ({ input }) => {
       const cwd = resolvePolicyCwd(input)
       const extension = await policyManifest(input.extensionId, cwd)
-      return setExtensionEnablementPolicy(getDatabase(), {
+      const resolved = setExtensionEnablementPolicy(getDatabase(), {
         target: extensionPolicyTargetFromManifest(extension),
         location: input.location,
         enabled: input.enabled,
       })
+      publishProviderExtensionsChange(input.location)
+      return resolved
     }),
 
   clearEnablementPolicy: publicProcedure.input(policyMutationSchema).mutation(async ({ input }) => {
     const cwd = resolvePolicyCwd(input)
     const extension = await policyManifest(input.extensionId, cwd)
-    return clearExtensionEnablementPolicy(getDatabase(), {
+    const resolved = clearExtensionEnablementPolicy(getDatabase(), {
       target: extensionPolicyTargetFromManifest(extension),
       location: input.location,
     })
+    publishProviderExtensionsChange(input.location)
+    return resolved
   }),
 
   resolveEnablement: publicProcedure.input(policyMutationSchema).query(async ({ input }) => {
@@ -180,19 +197,27 @@ export const providerExtensionsRouter = router({
     })
   }),
 
-  applyNativeMutation: publicProcedure.input(nativeExtensionApplySchema).mutation(({ input }) => {
-    return applyNativeExtensionMutation({
-      ...input,
-      target: registeredNativeTarget(input.target),
-    })
-  }),
+  applyNativeMutation: publicProcedure
+    .input(nativeExtensionApplySchema)
+    .mutation(async ({ input }) => {
+      const result = await applyNativeExtensionMutation({
+        ...input,
+        target: registeredNativeTarget(input.target),
+      })
+      publishProviderExtensionsChange()
+      return result
+    }),
 
-  restoreNativeBackup: publicProcedure.input(nativeExtensionRestoreSchema).mutation(({ input }) => {
-    return restoreNativeExtensionBackup({
-      ...input,
-      target: registeredNativeTarget(input.target),
-    })
-  }),
+  restoreNativeBackup: publicProcedure
+    .input(nativeExtensionRestoreSchema)
+    .mutation(async ({ input }) => {
+      const result = await restoreNativeExtensionBackup({
+        ...input,
+        target: registeredNativeTarget(input.target),
+      })
+      publishProviderExtensionsChange()
+      return result
+    }),
 
   previewCrossHarnessCopy: publicProcedure
     .input(crossHarnessCopyPreviewSchema)
@@ -206,11 +231,13 @@ export const providerExtensionsRouter = router({
 
   applyCrossHarnessCopy: publicProcedure
     .input(crossHarnessCopyApplySchema)
-    .mutation(({ input }) => {
-      return applyCrossHarnessCopy({
+    .mutation(async ({ input }) => {
+      const result = await applyCrossHarnessCopy({
         ...input,
         source: registeredNativeTarget(input.source),
         target: registeredNativeTarget(input.target),
       })
+      publishProviderExtensionsChange()
+      return result
     }),
 })
