@@ -121,6 +121,9 @@ export type NativeExtensionAdapterDescriptor = NativeExtensionAdapterRegistratio
   knownFields: string[]
 }
 
+export type NativeExtensionMetadataValidation =
+  { valid: true; metadata: Record<string, unknown> } | { valid: false; reason: string }
+
 type AdapterShape = "skill-directory" | "markdown-file"
 
 type NativeAdapterDefinition = {
@@ -377,13 +380,9 @@ export function parseNativeExtensionContent(
   const target = nativeExtensionTargetSchema.parse(targetInput)
   const adapterDefinition = findAdapter(target)
   const parsed = parseMatter(raw)
-  let metadata: Record<string, unknown>
-  try {
-    metadata = adapterDefinition.metadataSchema.parse(parsed.data)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Native extension metadata schema is invalid: ${message}`)
-  }
+  const validation = validateMetadata(adapterDefinition, parsed.data)
+  if (!validation.valid) throw new Error(validation.reason)
+  const metadata = validation.metadata
   const unknownFields = Object.keys(metadata)
     .filter((key) => !adapterDefinition.knownFields.includes(key))
     .sort()
@@ -397,6 +396,13 @@ export function parseNativeExtensionContent(
     metadata,
     unknownFields,
   }
+}
+
+export function validateNativeExtensionMetadata(
+  targetInput: NativeExtensionTarget,
+  metadata: Record<string, unknown>,
+): NativeExtensionMetadataValidation {
+  return validateMetadata(findAdapter(nativeExtensionTargetSchema.parse(targetInput)), metadata)
 }
 
 export function serializeNativeExtensionDocument(document: NativeExtensionDocument): string {
@@ -553,6 +559,18 @@ function adapter(
     shape,
     knownFields,
     metadataSchema,
+  }
+}
+
+function validateMetadata(
+  adapterDefinition: NativeAdapterDefinition,
+  metadata: Record<string, unknown>,
+): NativeExtensionMetadataValidation {
+  try {
+    return { valid: true, metadata: adapterDefinition.metadataSchema.parse(metadata) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { valid: false, reason: `Native extension metadata schema is invalid: ${message}` }
   }
 }
 

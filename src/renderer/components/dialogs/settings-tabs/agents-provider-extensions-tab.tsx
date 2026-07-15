@@ -19,6 +19,7 @@ import type { ProviderExtensionManifest } from "../../../../main/lib/provider-ex
 import { selectedChatScopeAtom, selectedProjectAtom } from "../../../features/agents/atoms"
 import {
   createExtensionManagerState,
+  createExtensionCopyFields,
   clearPolicyDiff,
   exactPolicyDiff,
   extensionManagerHarnesses,
@@ -28,6 +29,7 @@ import {
   extensionManagerReducer,
   extensionManagerScopes,
   extensionManagerSources,
+  extensionEditorBlockingReason,
   filterExtensionManagerRows,
   nextExtensionSelection,
   reverseUnifiedDiff,
@@ -435,7 +437,7 @@ export function AgentsProviderExtensionsTab({
       harness: targetHarness,
       kind: selected.kind,
       scope: selected.scope === "project" ? "project" : "user",
-      name: selected.name,
+      ...createExtensionCopyFields(selected.native.extension),
     })
     dispatch({ type: "begin", flow: "copy" })
   }
@@ -1348,6 +1350,16 @@ function EditorPanel({
       (mode === "copy"
         ? capability?.mutations.includes("create")
         : capability?.mutations.includes(mode === "edit" ? "update" : "create"))
+  const blockingReason = extensionEditorBlockingReason({
+    mode,
+    kind: draft.kind,
+    name: draft.name,
+    description: draft.description,
+    scope: draft.scope,
+    supported: Boolean(supported),
+    hasProject,
+    command: draft.command,
+  })
   return (
     <div
       className="mx-auto max-w-2xl space-y-5 p-6"
@@ -1373,14 +1385,8 @@ function EditorPanel({
           </Button>
           <Button
             size="sm"
-            disabled={
-              !supported ||
-              !draft.name.trim() ||
-              ((draft.kind === "skill" || draft.kind === "custom-agent") &&
-                !draft.description.trim()) ||
-              (draft.scope === "project" && !hasProject) ||
-              (isHook && !draft.command.trim())
-            }
+            disabled={Boolean(blockingReason)}
+            aria-describedby={blockingReason ? "extension-editor-blocking-reason" : undefined}
             onClick={onPreview}
           >
             Preview exact change
@@ -1424,6 +1430,11 @@ function EditorPanel({
           ? `${capability?.inventory ?? "managed"} · target path and diff will be resolved before confirmation.`
           : `${kindLabels[draft.kind]} on ${harnessLabels[draft.harness]} has no approved native preview/apply/restore adapter. No provider-native write will be offered.`}
       </p>
+      {blockingReason && (
+        <p id="extension-editor-blocking-reason" role="alert" className="text-xs text-amber-700">
+          {blockingReason}
+        </p>
+      )}
       <Field label="Name">
         <Input
           aria-label="Extension name"
@@ -1461,15 +1472,34 @@ function EditorPanel({
           </Field>
         </>
       ) : mode === "copy" ? (
-        <Filter
-          label="Collision handling"
-          value={draft.collisionPolicy}
-          values={["reject", "overwrite"]}
-          labels={{ reject: "Reject existing target", overwrite: "Overwrite after preview" }}
-          onChange={(value) =>
-            onDraft({ ...draft, collisionPolicy: value as "reject" | "overwrite" })
-          }
-        />
+        <>
+          <Field label="Source description">
+            <Input
+              aria-label="Source extension description"
+              value={draft.description}
+              readOnly
+              placeholder="Missing from source"
+              aria-describedby={
+                !draft.description.trim() ? "copy-source-description-note" : undefined
+              }
+            />
+          </Field>
+          {!draft.description.trim() && (
+            <p id="copy-source-description-note" role="status" className="text-xs text-amber-700">
+              Source description is missing. Preview remains available; the target adapter will
+              report whether this metadata can be converted.
+            </p>
+          )}
+          <Filter
+            label="Collision handling"
+            value={draft.collisionPolicy}
+            values={["reject", "overwrite"]}
+            labels={{ reject: "Reject existing target", overwrite: "Overwrite after preview" }}
+            onChange={(value) =>
+              onDraft({ ...draft, collisionPolicy: value as "reject" | "overwrite" })
+            }
+          />
+        </>
       ) : (
         <>
           <Field label="Description">

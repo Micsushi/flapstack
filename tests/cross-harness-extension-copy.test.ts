@@ -225,6 +225,33 @@ describe("cross-harness extension copy", () => {
     expect(existsSync(targetFile)).toBe(false)
   })
 
+  it("returns an exact unsupported preview when required target metadata is missing", async () => {
+    const home = temporaryRoot()
+    const source = target("claude-code", "skill", "user", "missing-description")
+    const destination = target("codex", "skill", "user", "missing-description")
+    const sourceFile = join(home, ".claude", "skills", "missing-description", "SKILL.md")
+    const targetFile = join(home, ".agents", "skills", "missing-description", "SKILL.md")
+    const original = "---\nname: missing-description\n---\n\nbody\n"
+    write(sourceFile, original)
+
+    const preview = await previewCrossHarnessCopy(
+      { source, target: destination, collisionPolicy: "reject" },
+      { homeDir: home },
+    )
+
+    expect(preview).toMatchObject({
+      status: "unsupported",
+      canApply: false,
+      sourceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      confirmationHash: null,
+      portableManifest: null,
+    })
+    expect(preview.reasons.join(" ")).toContain("Target metadata is not convertible")
+    expect(preview.reasons.join(" ")).toContain("description")
+    expect(readFileSync(sourceFile, "utf8")).toBe(original)
+    expect(existsSync(targetFile)).toBe(false)
+  })
+
   it("reports unsupported target capability without inventing parity", async () => {
     const home = temporaryRoot()
     const source = target("claude-code", "skill", "user", "release-check")

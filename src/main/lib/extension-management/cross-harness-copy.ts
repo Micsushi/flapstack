@@ -7,6 +7,7 @@ import {
   previewNativeExtensionMutation,
   readNativeExtension,
   restoreNativeExtensionBackup,
+  validateNativeExtensionMetadata,
   type NativeExtensionDocument,
   type NativeExtensionMutation,
   type NativeExtensionMutationResult,
@@ -196,8 +197,13 @@ export async function previewCrossHarnessCopy(
     targetMetadata.name = input.target.name
   }
 
+  const targetMetadataValidation = validateNativeExtensionMetadata(input.target, targetMetadata)
+  if (!targetMetadataValidation.valid) {
+    reasons.push(`Target metadata is not convertible: ${targetMetadataValidation.reason}`)
+  }
+
   let portableManifest: PortableExtensionManifest | null = null
-  if (!unsupportedFields.length) {
+  if (!unsupportedFields.length && targetMetadataValidation.valid) {
     try {
       portableManifest = sanitizePortableExtensionManifest({
         schemaVersion: PORTABLE_EXTENSION_MANIFEST_SCHEMA_VERSION,
