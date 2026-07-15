@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3"
+import { drizzle } from "drizzle-orm/better-sqlite3"
 import { openAppDatabase } from "./db/access"
+import * as dbSchema from "./db/schema"
 import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import type { AgentHarness } from "../../shared/harness-types"
@@ -8,6 +10,13 @@ import { resolvedLaunchFromSnapshotRow } from "./agent-runtime/snapshot"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
 import { claimPendingRunWithinUsageBudget } from "./usage/budgets"
+import { createDatabaseLocalModelRunPersistence } from "./harness/local-model-stream"
+import {
+  orchestrationAgentDefinitionSchema,
+  orchestrationPermissionModeSchema,
+  type OrchestrationAgentDefinition,
+} from "../../shared/agent-orchestration"
+import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 
 export type QueuedAgentRun = {
   runId: string
@@ -21,6 +30,8 @@ export type QueuedAgentRun = {
   customPermissions: string | null
   worktreePath: string | null
   projectPath: string | null
+  localEndpoint?: string
+  requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch
 }
 
@@ -69,7 +80,7 @@ export function loadRunningAgentRun(databasePath: string, runId: string): Queued
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
           r.initial_prompt, s.messages, c.project_id, p.path project_path,
-          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
+          oa.definition orchestration_definition
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
@@ -94,12 +105,16 @@ export async function recoverInterruptedMcpRuns(
   db.pragma("busy_timeout = 5000")
   try {
     const runtimeProjection = runtimeSnapshotProjection(db)
+    const now = nowEpochSeconds()
+    createDatabaseLocalModelRunPersistence(drizzle(db, { schema: dbSchema })).recoverAbandoned(
+      new Date(now * 1_000),
+    )
     const runs = db
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
           r.initial_prompt, s.messages, c.project_id, p.path project_path,
-          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
+          oa.definition orchestration_definition
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
@@ -111,14 +126,18 @@ export async function recoverInterruptedMcpRuns(
     const direct: QueuedAgentRun[] = []
     const affectedSubChats = new Set<string>()
     let recovered = 0
-    const now = nowEpochSeconds()
     const recover = db.transaction(() => {
       for (const run of runs) {
         affectedSubChats.add(String(run.sub_chat_id))
         const isMcp =
           typeof run.prompt_message_id === "string" && run.prompt_message_id.startsWith("mcp-")
         const runtime = String(run.resolved_runtime ?? "flapstack-native")
-        if (runtime === "codex" || runtime === "claude-code") {
+        if (run.harness === "local") {
+          db.prepare("UPDATE agent_runs SET status = 'failure', completed_at = ? WHERE id = ?").run(
+            now,
+            run.id,
+          )
+        } else if (runtime === "codex" || runtime === "claude-code") {
           try {
             const queued = queuedRun(run)
             if (!queued) throw new Error("Interrupted direct Runtime has no durable prompt.")
@@ -193,7 +212,7 @@ export async function drainPendingMcpRuns(
           r.custom_permissions, ${runtimeProjection},
           r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages,
           c.project_id, p.path project_path,
-          json_extract(oa.definition, '$.reasoningEffort') reasoning_effort
+          oa.definition orchestration_definition
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
          JOIN sub_chats s ON s.id = r.sub_chat_id
@@ -218,9 +237,6 @@ export async function drainPendingMcpRuns(
       .all() as Row[]
 
     for (const row of pending) {
-      const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
-      if (!claimed.claimed) continue
-      db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
       let run: QueuedAgentRun | null = null
       try {
         run = queuedRun(row)
@@ -233,6 +249,9 @@ export async function drainPendingMcpRuns(
         markFailed(db, String(row.id), String(row.sub_chat_id))
         continue
       }
+      const claimed = claimPendingRunWithinUsageBudget(db, String(row.id))
+      if (!claimed.claimed) continue
+      db.prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?").run(row.sub_chat_id)
       started += 1
       const launched = launch(run)
         .then(() => recordLaunchOutcome(databasePath, run, "completed"))
@@ -378,6 +397,8 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     (typeof row.initial_prompt === "string" ? row.initial_prompt.trim() : "") ||
     findPrompt(row.messages, row.prompt_message_id)
   if (!prompt) return null
+  const durableDefinition = parseDurableOrchestrationDefinition(row.orchestration_definition)
+  const localInputs = validateDurableLocalLaunchInputs(row, durableDefinition)
   return {
     runId: String(row.id),
     chatId: String(row.chat_id),
@@ -385,12 +406,87 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     harness: row.harness as AgentHarness,
     prompt,
     model: typeof row.model === "string" ? row.model : null,
-    reasoningEffort: isReasoningEffort(row.reasoning_effort) ? row.reasoning_effort : null,
+    reasoningEffort: isReasoningEffort(durableDefinition?.reasoningEffort)
+      ? durableDefinition.reasoningEffort
+      : null,
     permissionMode: String(row.permission_mode),
     customPermissions: typeof row.custom_permissions === "string" ? row.custom_permissions : null,
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
+    ...localInputs,
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+  }
+}
+
+function parseDurableOrchestrationDefinition(value: unknown): OrchestrationAgentDefinition | null {
+  if (value === null || value === undefined) return null
+  try {
+    if (typeof value !== "string") throw new Error("definition is not text")
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("definition is not an object")
+    }
+    const normalized = { ...(parsed as Record<string, unknown>) }
+    if (normalized.requiredLocalToolTiers === null) {
+      delete normalized.requiredLocalToolTiers
+    }
+    return orchestrationAgentDefinitionSchema.parse(normalized)
+  } catch {
+    throw new Error("Durable orchestration agent definition is malformed.")
+  }
+}
+
+function validateDurableLocalLaunchInputs(
+  row: Row,
+  definition: OrchestrationAgentDefinition | null,
+): Pick<QueuedAgentRun, "localEndpoint" | "requiredLocalToolTiers"> {
+  if (String(row.harness) !== "local") return {}
+  const model = typeof row.model === "string" ? row.model : ""
+  if (!model || model !== model.trim() || model.length > 200) {
+    throw new Error("Durable local Runtime model identity is invalid.")
+  }
+  const permission = orchestrationPermissionModeSchema.safeParse(row.permission_mode)
+  if (!permission.success) {
+    throw new Error("Durable local Runtime permission mode is invalid.")
+  }
+  const customPermissions = parseDurableCustomPermissions(row.custom_permissions, permission.data)
+  if (definition) {
+    if (
+      definition.harness !== "local" ||
+      definition.model !== model ||
+      definition.permissionMode !== permission.data ||
+      JSON.stringify(definition.customPermissions ?? null) !== JSON.stringify(customPermissions)
+    ) {
+      throw new Error(
+        "Durable local Runtime launch snapshot does not match its orchestration input.",
+      )
+    }
+  }
+  return {
+    ...(definition?.localEndpoint ? { localEndpoint: definition.localEndpoint } : {}),
+    requiredLocalToolTiers: definition?.requiredLocalToolTiers ?? [],
+  }
+}
+
+function parseDurableCustomPermissions(
+  value: unknown,
+  permissionMode: OrchestrationAgentDefinition["permissionMode"],
+) {
+  if (permissionMode !== "custom") {
+    if (value !== null && value !== undefined) {
+      throw new Error("Durable local Runtime custom permissions are forbidden for this mode.")
+    }
+    return null
+  }
+  if (typeof value !== "string") {
+    throw new Error("Durable local Runtime custom permissions are missing.")
+  }
+  try {
+    const parsed = parseCustomPermissionCapabilities(JSON.parse(value))
+    if (!parsed) throw new Error("custom permissions are invalid")
+    return parsed
+  } catch {
+    throw new Error("Durable local Runtime custom permissions are malformed.")
   }
 }
 

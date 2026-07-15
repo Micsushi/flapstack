@@ -73,6 +73,12 @@ import {
 } from "./claude-config"
 import { discoverPluginMcpServers } from "./plugins"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./trpc/routers/claude-settings"
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  resolveLocalModelSelection,
+  resolveLocalModelToolTiers,
+} from "../../shared/local-model-contract"
+import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -805,7 +811,9 @@ function createLegacyDelegation(
   streams: Map<string, unknown>,
   states: Map<string, "running" | "completed" | "uncertain">,
 ): FlapstackNativeProviderDelegation<unknown> | null {
-  if (!["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt"].includes(harness)) {
+  if (
+    !["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt", "local"].includes(harness)
+  ) {
     return null
   }
   return {
@@ -858,6 +866,8 @@ function createLegacyDelegation(
         await caller.cursor.cancel({ subChatId: run.subChatId, runId: run.runId })
       } else if (run.harness === "openrouter" || run.harness === "nanogpt") {
         await caller.opencode.cancel({ subChatId: run.subChatId, runId: run.runId })
+      } else if (run.harness === "local") {
+        await caller.localModels.cancel({ runId: run.runId })
       }
       states.set(context.runId, "completed")
     },
@@ -880,6 +890,9 @@ async function launchLegacyStream(
   if (!cwd) throw new Error("Run has no project or worktree path.")
   const model =
     run.harness === "codex" ? resolveCodexLaunchModel(run.model, run.reasoningEffort) : run.model
+  if (run.harness === "local") {
+    return launchLocalModelStream(caller, run, cwd)
+  }
   const stream =
     run.harness === "codex"
       ? await caller.codex.chat({
@@ -935,6 +948,56 @@ async function launchLegacyStream(
               })
             : unsupportedHarness(run)
   return stream
+}
+
+async function launchLocalModelStream(
+  caller: ReturnType<ReturnType<typeof createAppRouter>["createCaller"]>,
+  run: QueuedAgentRun,
+  cwd: string,
+): Promise<unknown> {
+  const model = requireModel(run)
+  const endpoint = run.localEndpoint ?? DEFAULT_OLLAMA_BASE_URL
+  const catalog = await caller.localModels.catalog({ endpoint })
+  const selection = resolveLocalModelSelection(catalog, model)
+  if (!selection.runnable || !selection.model) {
+    throw new Error(
+      `Local model preflight failed: ${selection.limitations[0]?.message ?? "the selected model is unavailable"} No cloud fallback was attempted.`,
+    )
+  }
+  const customPermissions = parseRuntimeCustomPermissions(run.customPermissions)
+  const tiers = resolveLocalModelToolTiers(
+    selection.model.capabilities,
+    run.permissionMode as Parameters<typeof resolveLocalModelToolTiers>[1],
+    customPermissions,
+  )
+  const required = run.requiredLocalToolTiers ?? []
+  const mismatch = required
+    .map((tier) => tiers.find((candidate) => candidate.tier === tier))
+    .find((tier) => !tier?.available)
+  if (mismatch) {
+    throw new Error(
+      `Local model preflight failed for ${mismatch.tier}: ${mismatch.limitation?.message ?? "capability unavailable"} No cloud fallback was attempted.`,
+    )
+  }
+  return caller.localModels.chat({
+    runId: run.runId,
+    chatId: run.chatId,
+    subChatId: run.subChatId,
+    prompt: run.prompt,
+    model,
+    endpoint,
+    cwd,
+    ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+  })
+}
+
+function parseRuntimeCustomPermissions(value: string | null) {
+  if (!value) return null
+  try {
+    return parseCustomPermissionCapabilities(JSON.parse(value))
+  } catch {
+    return null
+  }
 }
 
 function requireModel(run: QueuedAgentRun): string {

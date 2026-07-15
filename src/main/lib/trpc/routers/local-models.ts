@@ -20,6 +20,7 @@ import { chats, getDatabase, subChats } from "../../db"
 import type { UIMessageChunk } from "../../claude/types"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
 import { parsePermissionMode } from "../../permissions"
+import { captureLocalModelRunUsage } from "../../usage/run-usage"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
 
@@ -29,6 +30,9 @@ let chatService: LocalModelChatService | null = null
 function getLocalModelChatService() {
   chatService ??= new LocalModelChatService({
     persistence: createDatabaseLocalModelRunPersistence(getDatabase()),
+    captureUsage: async (usage) => {
+      await captureLocalModelRunUsage(getDatabase(), usage)
+    },
   })
   return chatService
 }
@@ -65,6 +69,20 @@ export async function refreshLocalModelCatalog(input: {
 }
 
 export const localModelsRouter = router({
+  diagnostics: publicProcedure
+    .input(z.object({ endpoint: z.string().trim().min(1).max(512) }))
+    .query(({ input }) => {
+      const endpoint = getOllamaEndpointConfig({ baseUrl: input.endpoint })
+      const cached = catalogCache.get(endpoint.baseUrl)
+      return {
+        provider: "ollama" as const,
+        endpoint: endpoint.baseUrl,
+        endpointPolicy: "loopback-only" as const,
+        catalogState: cached?.state ?? ("not-checked" as const),
+        catalogModelCount: cached?.models.length ?? 0,
+        ...getLocalModelChatService().diagnostics(),
+      }
+    }),
   catalog: publicProcedure
     .input(z.object({ endpoint: z.string().trim().min(1).max(512) }))
     .query(({ input }) => refreshLocalModelCatalog(input)),

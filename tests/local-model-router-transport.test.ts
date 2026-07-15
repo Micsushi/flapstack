@@ -40,6 +40,7 @@ import {
   getDatabase,
   projects,
   subChats,
+  usageSamples,
 } from "../src/main/lib/db"
 import * as schema from "../src/main/lib/db/schema"
 import { bindRegisteredFilesystemRoot } from "../src/main/lib/git/security/path-validation"
@@ -95,6 +96,17 @@ afterAll(() => {
 })
 
 describe("local model router bridge", () => {
+  it("reports loopback-only diagnostics with no cloud fallback", async () => {
+    await expect(caller.diagnostics({ endpoint })).resolves.toMatchObject({
+      provider: "ollama",
+      endpoint,
+      endpointPolicy: "loopback-only",
+      activeRunCount: 0,
+      reconnectable: false,
+      cloudFallback: false,
+    })
+  })
+
   it("rejects a renderer model that diverges from persisted local state", async () => {
     seedChat("mismatch", { chatPermission: "read-only" })
 
@@ -152,6 +164,29 @@ describe("local model router bridge", () => {
       permissionMode: "read-only",
       worktreePath: realpathSync(canonicalPath),
       model,
+    })
+    expect(
+      getDatabase()
+        .select({
+          providerId: usageSamples.providerId,
+          runId: usageSamples.runId,
+          inputTokens: usageSamples.inputTokens,
+          outputTokens: usageSamples.outputTokens,
+          totalTokens: usageSamples.totalTokens,
+          costUsd: usageSamples.costUsd,
+          costQuality: usageSamples.costQuality,
+        })
+        .from(usageSamples)
+        .where(eq(usageSamples.runId, "run-override"))
+        .get(),
+    ).toEqual({
+      providerId: "local",
+      runId: "run-override",
+      inputTokens: 2,
+      outputTokens: 3,
+      totalTokens: 5,
+      costUsd: 0,
+      costQuality: "exact",
     })
   })
 

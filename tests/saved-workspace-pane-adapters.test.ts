@@ -134,6 +134,20 @@ describe("saved workspace pane adapters", () => {
     })
   })
 
+  it("restores the exact durable local harness and model identity", () => {
+    const sqlite = new Database(databasePath)
+    sqlite
+      .prepare("UPDATE chats SET harness = 'local', model = 'qwen-local' WHERE id = 'chat-1'")
+      .run()
+    sqlite.close()
+    insertWorkspace(layout([pane("chat-pane", { type: "chat", chatId: "chat-1" })]))
+
+    expect(resolveSavedWorkspacePane(databasePath, "workspace-1", "chat-pane")).toMatchObject({
+      state: "ready",
+      chatIdentity: { harness: "local", model: "qwen-local" },
+    })
+  })
+
   it("fails closed for replaced identity, traversal, unsafe URLs, and removed messages", () => {
     insertWorkspace(
       layout([

@@ -7,6 +7,7 @@ import {
   createDatabaseLocalModelRunPersistence,
   parseOllamaChatLine,
   type StreamLocalModelChatInput,
+  type LocalModelChatServiceDependencies,
   type LocalModelRunChangeTracker,
 } from "../src/main/lib/harness/local-model-stream"
 import * as schema from "../src/main/lib/db/schema"
@@ -24,14 +25,21 @@ describe("local model stream", () => {
   it("normalizes split Ollama NDJSON chunks and persists text and usage", async () => {
     const fixture = setup()
     const requests: Array<Record<string, unknown>> = []
-    const service = fixture.service(async (_url, init) => {
-      requests.push(JSON.parse(String(init?.body)))
-      return byteStreamResponse([
-        '{"message":{"role":"assistant","content":"hel',
-        'lo"},"done":false}\n{"message":{"role":"assistant","content":" world"},',
-        '"done":false}\n{"done":true,"prompt_eval_count":4,"eval_count":2}\n',
-      ])
-    })
+    const captureUsage = vi.fn(async () => undefined)
+    fixture.bindOrchestration("run-1")
+    const service = fixture.service(
+      async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)))
+        return byteStreamResponse([
+          '{"message":{"role":"assistant","content":"hel',
+          'lo"},"done":false}\n{"message":{"role":"assistant","content":" world"},',
+          '"done":false}\n{"done":true,"prompt_eval_count":4,"eval_count":2}\n',
+        ])
+      },
+      contextBundle,
+      undefined,
+      { captureUsage },
+    )
 
     const chunks = await collect(service.stream(input()))
 
@@ -93,6 +101,47 @@ describe("local model stream", () => {
       model: "fixture:latest",
       run_status: "success",
     })
+    expect(captureUsage).toHaveBeenCalledWith({
+      runId: "run-1",
+      model: "fixture:latest",
+      inputTokens: 4,
+      outputTokens: 2,
+      totalTokens: 6,
+      capturedAt: new Date(NOW),
+    })
+    expect(fixture.orchestrationResult("run-1")).toEqual({ result_summary: "hello world" })
+  })
+
+  it("keeps completed provider work successful when usage persistence fails", async () => {
+    const fixture = setup()
+    const service = fixture.service(
+      async () =>
+        byteStreamResponse([
+          '{"message":{"role":"assistant","content":"done"},"done":true,"prompt_eval_count":1,"eval_count":1}\n',
+        ]),
+      contextBundle,
+      undefined,
+      {
+        captureUsage: async () => {
+          expect(fixture.run("run-usage-failure")).toMatchObject({ status: "success" })
+          throw new Error("usage database unavailable")
+        },
+      },
+    )
+
+    const chunks = await collect(service.stream(input({ runId: "run-usage-failure" })))
+
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        { type: "text-delta", id: "local-response", delta: "done" },
+        {
+          type: "finish",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    )
+    expect(chunks).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "error" })]))
+    expect(fixture.run("run-usage-failure")).toMatchObject({ status: "success" })
   })
 
   it("runs declared read tools and keeps normalized tool evidence durable", async () => {
@@ -605,14 +654,13 @@ function setup() {
       completed_at integer,
       before_checkpoint_id text,
       after_checkpoint_id text,
-      runtime_snapshot_version integer NOT NULL DEFAULT 0,
-      runtime_preference text NOT NULL DEFAULT 'flapstack-native',
-      runtime_preference_source text NOT NULL DEFAULT 'legacy',
-      resolved_runtime text NOT NULL DEFAULT 'flapstack-native',
-      runtime_adapter_version text NOT NULL DEFAULT 'legacy-stage3',
-      runtime_protocol_version text NOT NULL DEFAULT 'legacy-stage3',
-      runtime_capability_snapshot text NOT NULL DEFAULT '{}',
-      runtime_control_snapshot text NOT NULL DEFAULT '{}'
+      error_code text,
+      error_message text
+    );
+    CREATE TABLE orchestration_agents (
+      id text PRIMARY KEY,
+      run_id text,
+      result_summary text
     );
   `)
   sqlite.prepare("INSERT INTO projects (id) VALUES ('project-1')").run()
@@ -637,6 +685,7 @@ function setup() {
       fetchImpl: typeof fetch,
       context = contextBundle,
       createReadToolExecutor?: (rootPath: string) => LocalModelReadToolExecutor,
+      overrides: Partial<LocalModelChatServiceDependencies> = {},
     ) {
       return new LocalModelChatService({
         persistence,
@@ -644,7 +693,18 @@ function setup() {
         buildContext: async () => context,
         createReadToolExecutor,
         now: () => NOW,
+        ...overrides,
       })
+    },
+    bindOrchestration(runId: string) {
+      sqlite
+        .prepare("INSERT INTO orchestration_agents (id, run_id) VALUES (?, ?)")
+        .run(`agent-${runId}`, runId)
+    },
+    orchestrationResult(runId: string) {
+      return sqlite
+        .prepare("SELECT result_summary FROM orchestration_agents WHERE run_id = ?")
+        .get(runId)
     },
     run(runId: string) {
       return sqlite.prepare("SELECT * FROM agent_runs WHERE id = ?").get(runId) as Record<

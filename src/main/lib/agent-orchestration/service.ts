@@ -515,7 +515,7 @@ export function createAgentOrchestrationService(databasePath: string) {
     },
 
     listCancellationRequests(): Array<{
-      harness: "codex" | "claude-code"
+      harness: "codex" | "claude-code" | "local"
       subChatId: string
       runId: string
     }> {
@@ -529,11 +529,11 @@ export function createAgentOrchestrationService(databasePath: string) {
                JOIN agent_runs r ON r.id = a.run_id
                WHERE a.status = 'stopped' AND r.status = 'cancelled'
                  AND a.lease_owner IS NULL
-                 AND r.harness IN ('codex','claude-code')`,
+                 AND r.harness IN ('codex','claude-code','local')`,
             )
             .all() as Row[]
         ).map((row) => ({
-          harness: row.harness as "codex" | "claude-code",
+          harness: row.harness as "codex" | "claude-code" | "local",
           subChatId: String(row.sub_chat_id),
           runId: String(row.run_id),
         }))
@@ -1051,9 +1051,17 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
     const runId = String(row.run_id)
     const usage = extractPersistedMessageUsage(row.messages, runId)
     if (!usage) continue
-    const providerId = row.harness === "claude-code" ? "anthropic" : "codex"
-    const dedupeKey = `flapstack-run:${runId}:persisted-message-usage`
-    const costQuality = usage.costUsdMicros === null ? "unknown" : "provider-reported"
+    const providerId = providerForHarness(String(row.harness))
+    if (!providerId) continue
+    const local = row.harness === "local"
+    const dedupeKey = local
+      ? `local|run|${runId}`
+      : `flapstack-run:${runId}:persisted-message-usage`
+    const costQuality = local
+      ? "exact"
+      : usage.costUsdMicros === null
+        ? "unknown"
+        : "provider-reported"
     const attribution = resolveUsageAttributionFromSqlite(db, runId).snapshot
     db.prepare(
       `INSERT INTO usage_samples (
@@ -1073,10 +1081,26 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       )
       ON CONFLICT(dedupe_key) DO UPDATE SET
         captured_at = excluded.captured_at,
-        input_tokens = MAX(COALESCE(usage_samples.input_tokens, 0), COALESCE(excluded.input_tokens, 0)),
-        output_tokens = MAX(COALESCE(usage_samples.output_tokens, 0), COALESCE(excluded.output_tokens, 0)),
-        reasoning_tokens = MAX(COALESCE(usage_samples.reasoning_tokens, 0), COALESCE(excluded.reasoning_tokens, 0)),
-        total_tokens = MAX(COALESCE(usage_samples.total_tokens, 0), COALESCE(excluded.total_tokens, 0)),
+        input_tokens = CASE
+          WHEN excluded.input_tokens IS NULL THEN usage_samples.input_tokens
+          WHEN usage_samples.input_tokens IS NULL THEN excluded.input_tokens
+          ELSE MAX(usage_samples.input_tokens, excluded.input_tokens)
+        END,
+        output_tokens = CASE
+          WHEN excluded.output_tokens IS NULL THEN usage_samples.output_tokens
+          WHEN usage_samples.output_tokens IS NULL THEN excluded.output_tokens
+          ELSE MAX(usage_samples.output_tokens, excluded.output_tokens)
+        END,
+        reasoning_tokens = CASE
+          WHEN excluded.reasoning_tokens IS NULL THEN usage_samples.reasoning_tokens
+          WHEN usage_samples.reasoning_tokens IS NULL THEN excluded.reasoning_tokens
+          ELSE MAX(usage_samples.reasoning_tokens, excluded.reasoning_tokens)
+        END,
+        total_tokens = CASE
+          WHEN excluded.total_tokens IS NULL THEN usage_samples.total_tokens
+          WHEN usage_samples.total_tokens IS NULL THEN excluded.total_tokens
+          ELSE MAX(usage_samples.total_tokens, excluded.total_tokens)
+        END,
         cost_usd_micros = CASE
           WHEN excluded.cost_usd_micros IS NULL THEN usage_samples.cost_usd_micros
           ELSE MAX(COALESCE(usage_samples.cost_usd_micros, 0), excluded.cost_usd_micros)
@@ -1095,7 +1119,7 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       usage.outputTokens,
       usage.reasoningTokens,
       usage.totalTokens,
-      usage.costUsdMicros,
+      local ? 0 : usage.costUsdMicros,
       stringOrNull(row.model),
       runId,
       attribution.state,
@@ -1111,7 +1135,16 @@ function persistMessageUsageSamples(db: Sqlite, taskId: string): void {
       attribution.orchestrationId,
       attribution.orchestrationName,
       attribution.runId,
-      JSON.stringify({ origin: "persisted-message-metadata" }),
+      JSON.stringify({
+        origin: "persisted-message-metadata",
+        ...(local
+          ? {
+              provider: "ollama",
+              billing: "local-compute-no-provider-charge",
+              resourceTelemetry: "unknown",
+            }
+          : {}),
+      }),
       dedupeKey,
       nowEpochSeconds(),
     )
@@ -1122,20 +1155,20 @@ function extractPersistedMessageUsage(
   messagesValue: unknown,
   runId: string,
 ): {
-  inputTokens: number
-  outputTokens: number
-  reasoningTokens: number
-  totalTokens: number
+  inputTokens: number | null
+  outputTokens: number | null
+  reasoningTokens: number | null
+  totalTokens: number | null
   costUsdMicros: number | null
 } | null {
   if (typeof messagesValue !== "string") return null
   try {
     const messages = JSON.parse(messagesValue) as unknown[]
     let found = false
-    let inputTokens = 0
-    let outputTokens = 0
-    let reasoningTokens = 0
-    let totalTokens = 0
+    let inputTokens: number | null = null
+    let outputTokens: number | null = null
+    let reasoningTokens: number | null = null
+    let totalTokens: number | null = null
     let costUsdMicros: number | null = null
     for (const value of messages) {
       if (!value || typeof value !== "object") continue
@@ -1164,10 +1197,14 @@ function extractPersistedMessageUsage(
         continue
       }
       found = true
-      inputTokens = Math.max(inputTokens, input ?? 0)
-      outputTokens = Math.max(outputTokens, output ?? 0)
-      reasoningTokens = Math.max(reasoningTokens, reasoning ?? 0)
-      totalTokens = Math.max(totalTokens, total ?? (input ?? 0) + (output ?? 0))
+      if (input !== null) inputTokens = Math.max(inputTokens ?? 0, input)
+      if (output !== null) outputTokens = Math.max(outputTokens ?? 0, output)
+      if (reasoning !== null) reasoningTokens = Math.max(reasoningTokens ?? 0, reasoning)
+      const reportedOrCompleteTotal =
+        total ?? (input !== null && output !== null ? input + output : null)
+      if (reportedOrCompleteTotal !== null) {
+        totalTokens = Math.max(totalTokens ?? 0, reportedOrCompleteTotal)
+      }
       if (cost !== null) costUsdMicros = Math.max(costUsdMicros ?? 0, Math.round(cost * 1_000_000))
     }
     return found ? { inputTokens, outputTokens, reasoningTokens, totalTokens, costUsdMicros } : null

@@ -78,4 +78,5 @@ export const PROVIDER_LABELS: Record<UsageProviderId, string> = {
   cursor: "Cursor",
   openrouter: "OpenRouter",
   nanogpt: "NanoGPT",
+  local: "Local / Ollama",
 }

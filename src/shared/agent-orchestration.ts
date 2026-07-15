@@ -5,6 +5,7 @@ import {
   coordinationEngineSchema,
   type ResolvedCoordinationEngineSnapshot,
 } from "./coordination-engine"
+import { validateLocalModelEndpoint } from "./local-model-contract"
 
 const idSchema = z.string().trim().min(1).max(200)
 
@@ -30,7 +31,14 @@ export const orchestrationAgentStatusSchema = z.enum(orchestrationAgentStatuses)
 export const orchestrationControlActions = ["pause", "resume", "stop"] as const
 export const orchestrationControlActionSchema = z.enum(orchestrationControlActions)
 
-export const orchestrationHarnessSchema = z.enum(["codex", "claude-code"])
+export const orchestrationHarnessSchema = z.enum(["codex", "claude-code", "local"])
+export const orchestrationLocalToolTierSchema = z.enum([
+  "read",
+  "project-write",
+  "shell",
+  "git",
+  "network",
+])
 export const orchestrationPermissionModeSchema = z.enum([
   "read-only",
   "ask-before-edits",
@@ -119,7 +127,9 @@ export const orchestrationAgentDefinitionSchema = z
     harness: orchestrationHarnessSchema,
     provider: z.string().trim().min(1).max(120).optional(),
     model: z.string().trim().min(1).max(200).optional(),
+    localEndpoint: z.string().trim().min(1).max(512).optional(),
     runtimePreference: agentRuntimePreferenceSchema.optional(),
+    requiredLocalToolTiers: z.array(orchestrationLocalToolTierSchema).max(5).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: z
@@ -179,12 +189,54 @@ export const orchestrationAgentDefinitionSchema = z
     if (
       provider &&
       ((value.harness === "codex" && !["codex", "openai"].includes(provider)) ||
-        (value.harness === "claude-code" && !["claude", "anthropic"].includes(provider)))
+        (value.harness === "claude-code" && !["claude", "anthropic"].includes(provider)) ||
+        (value.harness === "local" && !["local", "ollama"].includes(provider)))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["provider"],
         message: `Provider ${value.provider} is not supported by ${value.harness}.`,
+      })
+    }
+    if (value.harness === "local" && !value.model) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["model"],
+        message: "Local orchestration workers require an exact model identity.",
+      })
+    }
+    if (value.harness === "local" && value.localEndpoint) {
+      const endpoint = validateLocalModelEndpoint(value.localEndpoint)
+      if (!endpoint.valid) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["localEndpoint"],
+          message: endpoint.message,
+        })
+      }
+    }
+    if (value.harness !== "local" && value.localEndpoint) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["localEndpoint"],
+        message: "Local endpoints apply only to local workers.",
+      })
+    }
+    if (value.harness !== "local" && (value.requiredLocalToolTiers?.length ?? 0) > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredLocalToolTiers"],
+        message: "Local tool-tier requirements apply only to local workers.",
+      })
+    }
+    if (
+      value.requiredLocalToolTiers &&
+      new Set(value.requiredLocalToolTiers).size !== value.requiredLocalToolTiers.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredLocalToolTiers"],
+        message: "Local tool-tier requirements cannot contain duplicates.",
       })
     }
   })

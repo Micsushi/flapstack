@@ -85,13 +85,26 @@
 
 ### S4-F6-T7 — Integrate local runs with usage, workspaces, and orchestration
 
-- [ ] Completion: acceptance and verification passed
+- [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F6
 - Outcome: Local runs behave like first-class Flapstack runs across Stage 4 consumers.
 - Scope: Usage capture/provenance; checkpoints/manifests; saved workspace binding; orchestration preflight/worker launch; cancellation; capability mismatch; result aggregation.
 - Out of scope: Local compute telemetry beyond provider-reported fields.
 - Acceptance: Eligible local workers run and aggregate; mismatched tool requirements fail preflight; local cost/usage remains honest; workspace restore preserves model identity.
 - Verification: `npm test -- local-model-integration` with workspace, orchestration, usage, cancellation, and mismatch fixtures.
+- Automated evidence: Node 22 local-model integration plus affected usage,
+  workspace, Runtime-launch, router, cancellation, and restart suites pass 131/131.
+  Production build, TypeScript, touched ESLint/Prettier, and strict OpenSpec pass.
+  Local usage preserves reported/unknown tokens, exact zero provider billing,
+  and unknown compute/resource telemetry. Local worker launch requires exact
+  model/tier preflight, uses the F11 Runtime seam, never falls back to cloud,
+  cancels by durable run identity, aggregates bounded results, and fails
+  interrupted streams without replay. Durable custom loopback endpoints survive
+  orchestration launch. Malformed or type-invalid durable local orchestration
+  inputs, unknown or duplicate required tiers, and model/permission mismatches
+  fail before claim or launch with terminal run/subchat/audit projection and no
+  cloud fallback. Startup projects abandoned transcript evidence; omitted token
+  fields remain unknown; telemetry failure cannot overturn run success.
 - Blocked by: S4-F6-T2, S4-F6-T3, S4-F6-T4, S4-F6-T5, S4-F6-T6, S4-F4-T4, S4-F3-T4
 - Blocks: S4-F6-T8
 - Context: orchestration definitions, saved workspace pane bindings, usage run capture.
@@ -105,6 +118,16 @@
 - Out of scope: Guaranteeing capabilities for every Ollama model.
 - Acceptance: One chat-only and one tool-capable model show correct behavior/limitations; unsafe tiers fail closed; no cloud fallback occurs.
 - Verification: Node 22 `npm run check`, strict OpenSpec, `npm run dev:verify`, live Ollama matrix, and packaged preview.
+- Headless evidence: the complete F6 focused packet passes 131/131; full
+  repository tests reached 1,971 passed and 3 skipped, with 28 unrelated
+  integrated F3/F4/F11 fixture, migration-journal, and renderer-mock failures.
+  Full ESLint passed; touched Prettier and TypeScript passed; production build
+  and strict OpenSpec passed. Repository-wide Prettier remains blocked only by
+  existing generated `0031`-`0034` snapshot formatting drift.
+- Manual verification remaining: real installed Ollama catalog/chat, one
+  chat-only model, one tool-capable model, direct accessibility/interaction,
+  packaged preview, and unavailable provider/device/platform evidence remain
+  open. T8 and S4-LM01-S4-LM03 stay unchecked.
 - Blocked by: S4-F6-T6, S4-F6-T7
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md` and Stage 4 execution plan.
