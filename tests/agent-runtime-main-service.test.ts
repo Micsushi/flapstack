@@ -19,6 +19,7 @@ import type {
 } from "../src/shared/agent-runtime"
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { AgentActivityAppend } from "../src/shared/agent-activity"
+import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
@@ -179,6 +180,197 @@ describe("process-wide Runtime launch service", () => {
     ).toEqual({ count: 2 })
   })
 
+  it("reads frozen structured output from authoritative completed activity after restart", async () => {
+    seedDirectRun("structured-output")
+    let outputEvent!: ReturnType<ReturnType<typeof createAgentActivityStore>["append"]>
+    const value = directAdapter()
+    value.streamActivity = async function* (context) {
+      const event: AgentActivityAppend = {
+        provider: "openai",
+        kind: "agent-text",
+        phase: "completed",
+        displayClass: "provider-visible",
+        privacyClass: "public",
+        providerEventId: "provider-output-1",
+        providerThreadId: `thread-${context.runId}`,
+        providerTurnId: `turn-${context.runId}`,
+        providerMessageId: "message-output-1",
+        payload: { text: '```json\n{"result":"ok","items":[1,2]}\n```' },
+      }
+      outputEvent = createAgentActivityStore(sqlite).append(context.runId, event)
+      yield event
+    }
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+    await service.launch(queued("structured-output"))
+    resetMainRuntimeLaunchServicesForTests()
+    const factory = vi.fn(() => directAdapter())
+    const recreated = getMainRuntimeLaunchService(path, {
+      codexFactory: factory,
+      enableCodex: false,
+    })
+
+    const output = await recreated.readStructuredOutput("structured-output")
+    expect(output).toEqual({
+      value: { result: "ok", items: [1, 2] },
+      activityReference: {
+        runId: "structured-output",
+        eventId: outputEvent.eventId,
+        sequence: outputEvent.sequence,
+      },
+    })
+    expect(Object.isFrozen(output)).toBe(true)
+    expect(Object.isFrozen(output?.value)).toBe(true)
+    expect(Object.isFrozen((output?.value as { items: number[] }).items)).toBe(true)
+    expect(factory).not.toHaveBeenCalled()
+  })
+
+  it("fails closed for nonterminal, failed, hidden, private, and redacted output", async () => {
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => directAdapter(),
+      enableCodex: true,
+    })
+    const writeLifecycle = (
+      service as unknown as {
+        persistLifecycle(runId: string, lifecycle: string, detail?: string | null): Promise<void>
+      }
+    ).persistLifecycle.bind(service)
+
+    seedDirectRun("active-output")
+    appendOutput("active-output", '{"state":"active"}')
+    await expect(service.readStructuredOutput("active-output")).resolves.toBeNull()
+
+    seedDirectRun("failed-output")
+    appendOutput("failed-output", '{"state":"failed"}')
+    await writeLifecycle("failed-output", "failed", "provider failed")
+    await expect(service.readStructuredOutput("failed-output")).resolves.toBeNull()
+
+    seedDirectRun("hidden-output")
+    createAgentActivityStore(sqlite).append("hidden-output", {
+      provider: "openai",
+      kind: "provider-visible-reasoning",
+      phase: "completed",
+      displayClass: "provider-visible",
+      privacyClass: "public",
+      payload: { text: '{"secret":"reasoning"}', label: "Reasoning" },
+    })
+    await writeLifecycle("hidden-output", "completed")
+    await expect(service.readStructuredOutput("hidden-output")).resolves.toBeNull()
+
+    allowCorruptActivityFixture()
+    for (const [runId, column, value] of [
+      ["forged-terminal-provider", "provider", "openai"],
+      ["forged-terminal-dedup", "dedup_key", "runtime:forged-completion"],
+    ] as const) {
+      seedDirectRun(runId)
+      appendOutput(runId, '{"result":"forged"}')
+      await writeLifecycle(runId, "completed")
+      sqlite
+        .prepare(
+          `UPDATE agent_activity_events SET ${column} = ?
+           WHERE run_id = ? AND kind = 'lifecycle' AND phase = 'completed'`,
+        )
+        .run(value, runId)
+      await expect(service.readStructuredOutput(runId)).rejects.toThrow(
+        "completion activity is not authoritative",
+      )
+    }
+
+    seedDirectRun("forged-terminal-payload")
+    appendOutput("forged-terminal-payload", '{"result":"forged"}')
+    await writeLifecycle("forged-terminal-payload", "completed")
+    sqlite
+      .prepare(
+        `UPDATE agent_activity_events SET payload_json = ?
+         WHERE run_id = ? AND kind = 'lifecycle' AND phase = 'completed'`,
+      )
+      .run(
+        JSON.stringify({ state: "completed", detail: null, providerCompletion: true }),
+        "forged-terminal-payload",
+      )
+    await expect(service.readStructuredOutput("forged-terminal-payload")).rejects.toThrow(
+      "completion activity is corrupt",
+    )
+
+    for (const [runId, column, value] of [
+      ["private-output", "privacy_class", "sensitive"],
+      ["redacted-output", "redaction_state", "redacted"],
+    ] as const) {
+      seedDirectRun(runId)
+      const event = appendOutput(runId, '{"result":"blocked"}')
+      await writeLifecycle(runId, "completed")
+      sqlite
+        .prepare(`UPDATE agent_activity_events SET ${column} = ? WHERE event_id = ?`)
+        .run(value, event.eventId)
+      await expect(service.readStructuredOutput(runId)).rejects.toThrow(
+        "not public provider-visible",
+      )
+    }
+  })
+
+  it("rejects invalid, corrupt, deep, wide, and oversized structured JSON", async () => {
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => directAdapter(),
+      enableCodex: true,
+    })
+    const writeLifecycle = (
+      service as unknown as {
+        persistLifecycle(runId: string, lifecycle: string, detail?: string | null): Promise<void>
+      }
+    ).persistLifecycle.bind(service)
+
+    seedDirectRun("invalid-json")
+    appendOutput("invalid-json", "not-json")
+    await writeLifecycle("invalid-json", "completed")
+    await expect(service.readStructuredOutput("invalid-json")).rejects.toThrow("not valid JSON")
+
+    allowCorruptActivityFixture()
+    seedDirectRun("corrupt-json")
+    const corrupt = appendOutput("corrupt-json", '{"ok":true}')
+    await writeLifecycle("corrupt-json", "completed")
+    sqlite
+      .prepare("UPDATE agent_activity_events SET payload_json = ? WHERE event_id = ?")
+      .run('{"text":42}', corrupt.eventId)
+    await expect(service.readStructuredOutput("corrupt-json")).rejects.toThrow(
+      "activity is corrupt",
+    )
+
+    const tooDeep = { value: null as unknown }
+    let cursor = tooDeep
+    for (let index = 0; index < 8; index += 1) {
+      const next = { value: null as unknown }
+      cursor.value = next
+      cursor = next
+    }
+    seedDirectRun("deep-json")
+    appendOutput("deep-json", JSON.stringify(tooDeep))
+    await writeLifecycle("deep-json", "completed")
+    await expect(service.readStructuredOutput("deep-json")).rejects.toThrow("depth bound")
+
+    seedDirectRun("wide-json")
+    appendOutput(
+      "wide-json",
+      JSON.stringify(
+        Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`k${index}`, 1])),
+      ),
+    )
+    await writeLifecycle("wide-json", "completed")
+    await expect(service.readStructuredOutput("wide-json")).rejects.toThrow("entry bound")
+
+    seedDirectRun("oversized-json")
+    const oversized = appendOutput("oversized-json", '{"ok":true}')
+    await writeLifecycle("oversized-json", "completed")
+    sqlite
+      .prepare("UPDATE agent_activity_events SET payload_json = ? WHERE event_id = ?")
+      .run(
+        JSON.stringify({ text: JSON.stringify({ value: "x".repeat(4_097) }) }),
+        oversized.eventId,
+      )
+    await expect(service.readStructuredOutput("oversized-json")).rejects.toThrow("oversized string")
+  })
+
   it("does not call the provider when durable intent activity cannot commit", async () => {
     seedDirectRun("intent-failure")
     sqlite.exec("DROP TABLE agent_activity_events")
@@ -258,6 +450,53 @@ describe("process-wide Runtime launch service", () => {
     expect(value.reconcile).toHaveBeenCalledTimes(1)
     expect(value.startSession).not.toHaveBeenCalled()
     expect(value.startTurn).not.toHaveBeenCalled()
+  })
+
+  it("treats a delivery pause as running after restart and never replays provider work", async () => {
+    seedDirectRun("restart-paused")
+    createAgentActivityStore(sqlite).append("restart-paused", {
+      provider: "openai",
+      kind: "lifecycle",
+      phase: "started",
+      displayClass: "status",
+      privacyClass: "public",
+      providerSessionId: "session-restart-paused",
+      providerThreadId: "thread-restart-paused",
+      providerTurnId: "turn-restart-paused",
+      payload: { state: "turn-started", detail: null },
+      dedupKey: "restart-paused-identity",
+    })
+    createAgentActivityStore(sqlite).append("restart-paused", {
+      provider: "runtime",
+      kind: "lifecycle",
+      phase: "started",
+      displayClass: "status",
+      privacyClass: "public",
+      payload: { state: "paused", detail: null },
+    })
+    const value = directAdapter()
+    value.startSession = vi.fn(value.startSession)
+    value.startTurn = vi.fn(value.startTurn)
+    value.reconcile = vi.fn(async () => "running")
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: false,
+    })
+
+    await expect(service.resume("restart-paused")).resolves.toBe(false)
+    await expect(service.reconcileRun("restart-paused")).resolves.toBe("running")
+    expect(value.reconcile).toHaveBeenCalledTimes(1)
+    expect(value.startSession).not.toHaveBeenCalled()
+    expect(value.startTurn).not.toHaveBeenCalled()
+    expect(
+      sqlite
+        .prepare(
+          `SELECT COUNT(*) count FROM agent_activity_events
+           WHERE run_id = 'restart-paused' AND provider = 'runtime'
+             AND json_extract(payload_json, '$.state') = 'resumed'`,
+        )
+        .get(),
+    ).toEqual({ count: 0 })
   })
 
   it("exposes provider-neutral reconciliation by persisted run identity", async () => {
@@ -714,16 +953,36 @@ function seedOrchestrationAgent(runId: string): void {
     .run(`task-${runId}`, `Task ${runId}`)
   sqlite
     .prepare(
-      `INSERT INTO task_orchestrations (task_id, initiating_chat_id, status)
-       VALUES (?, ?, 'running')`,
+      `INSERT INTO task_orchestrations (
+         task_id, initiating_chat_id, status, engine_snapshot_version,
+         coordination_engine, coordination_engine_version, coordination_engine_source,
+         coordination_engine_capability_snapshot, coordination_engine_provider_identity
+       ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
     )
-    .run(`task-${runId}`, `chat-${runId}`)
+    .run(`task-${runId}`, `chat-${runId}`, ...testCoordinationEngineSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO orchestration_agents (id, task_id, chat_id, run_id, definition, status)
        VALUES (?, ?, ?, ?, '{}', 'active')`,
     )
     .run(`agent-${runId}`, `task-${runId}`, `chat-${runId}`, runId)
+}
+
+function appendOutput(runId: string, text: string) {
+  return createAgentActivityStore(sqlite).append(runId, {
+    provider: "openai",
+    kind: "agent-text",
+    phase: "completed",
+    displayClass: "provider-visible",
+    privacyClass: "public",
+    payload: { text },
+  })
+}
+
+function allowCorruptActivityFixture(): void {
+  sqlite.pragma("ignore_check_constraints = ON")
+  sqlite.pragma("recursive_triggers = OFF")
+  sqlite.prepare("DROP TRIGGER agent_activity_events_append_only").run()
 }
 
 function queued(runId: string): QueuedAgentRun {

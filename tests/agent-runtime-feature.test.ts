@@ -36,10 +36,12 @@ describe("Agent Runtime feature acceptance", () => {
     const journal = JSON.parse(read("drizzle/meta/_journal.json")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.slice(-2)).toEqual([
+    expect(journal.entries.find((entry) => entry.idx === 32)).toEqual(
       expect.objectContaining({ idx: 32, tag: "0032_agent_runtime" }),
+    )
+    expect(journal.entries.find((entry) => entry.idx === 33)).toEqual(
       expect.objectContaining({ idx: 33, tag: "0033_agent_activity" }),
-    ])
+    )
     const runtimeSnapshot = JSON.parse(read("drizzle/meta/0032_snapshot.json"))
     const activitySnapshot = JSON.parse(read("drizzle/meta/0033_snapshot.json"))
     expect(activitySnapshot.prevId).toBe(runtimeSnapshot.id)

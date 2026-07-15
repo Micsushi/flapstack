@@ -30,6 +30,8 @@ export type RuntimeLaunchLifecycle =
   | "session-started"
   | "turn-started"
   | "streaming"
+  | "paused"
+  | "resumed"
   | "completed"
   | "cancelled"
   | "uncertain"
@@ -67,12 +69,19 @@ type ActiveLaunch<TActivity> = {
   adapter: HarnessAdapter<TActivity>
   context: RuntimeAdapterContext
   controller: AbortController
-  state: "running" | "cancelling" | "cancelled" | "completed" | "failed"
+  state: "running" | "paused" | "cancelling" | "cancelled" | "completed" | "failed"
+  deliveryActive: boolean
+  pausedDeliveries: TActivity[]
+  resumeGate: Promise<void> | null
+  releaseResumeGate: (() => void) | null
+  controlTail: Promise<void>
   cancellationPromise: Promise<boolean> | null
   cancellationLifecycleWritten: boolean
 }
 
 export type RuntimeCoordinatorRunState = ActiveLaunch<unknown>["state"] | "starting"
+
+export const MAX_PAUSED_RUNTIME_DELIVERIES = 128
 
 export class RuntimeLaunchCancelledError extends Error {
   constructor(readonly runId: string) {
@@ -139,6 +148,11 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       context,
       controller,
       state: "running",
+      deliveryActive: false,
+      pausedDeliveries: [],
+      resumeGate: null,
+      releaseResumeGate: null,
+      controlTail: Promise.resolve(),
       cancellationPromise: null,
       cancellationLifecycleWritten: false,
     }
@@ -163,10 +177,17 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       await this.hooks.onLifecycle?.(request, "turn-started")
       let activityCount = 0
       await this.hooks.onLifecycle?.(request, "streaming")
-      for await (const activity of adapter.streamActivity(context, session, turn)) {
-        assertNotCancelled(active)
-        activityCount += 1
-        await this.hooks.onActivityReference?.(request, activity)
+      active.deliveryActive = true
+      try {
+        for await (const activity of adapter.streamActivity(context, session, turn)) {
+          assertNotCancelled(active)
+          activityCount += 1
+          await this.deliverOrBuffer(active, activity)
+        }
+        await waitWhilePaused(active)
+        await this.flushPausedDeliveries(active)
+      } finally {
+        active.deliveryActive = false
       }
       assertNotCancelled(active)
       await adapter.complete(context)
@@ -210,6 +231,9 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     if (active.state === "completed" || active.state === "failed") return false
     if (active.cancellationPromise) return await active.cancellationPromise
     active.state = "cancelling"
+    active.deliveryActive = false
+    active.pausedDeliveries.length = 0
+    releaseResumeGate(active)
     active.controller.abort(reason)
     active.cancellationPromise = (async () => {
       try {
@@ -231,6 +255,46 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       }
     })()
     return await active.cancellationPromise
+  }
+
+  /**
+   * Pauses only Flapstack delivery of already-authoritative Runtime activity.
+   * Provider execution is not claimed suspended. Delivery buffers at most
+   * MAX_PAUSED_RUNTIME_DELIVERIES before applying backpressure.
+   */
+  async pause(runId: string): Promise<boolean> {
+    const active = this.active.get(runId)
+    if (!active) return false
+    return serializeControl(active, async () => {
+      if (active.state !== "running" || !active.deliveryActive) return false
+      active.state = "paused"
+      active.resumeGate = new Promise<void>((resolve) => {
+        active.releaseResumeGate = resolve
+      })
+      try {
+        await this.hooks.onLifecycle?.(active.request, "paused")
+        return active.state === "paused"
+      } catch (error) {
+        if (active.state === "paused") {
+          active.state = "running"
+          releaseResumeGate(active)
+        }
+        throw error
+      }
+    })
+  }
+
+  async resume(runId: string): Promise<boolean> {
+    const active = this.active.get(runId)
+    if (!active) return false
+    return serializeControl(active, async () => {
+      if (active.state !== "paused" || !active.deliveryActive) return false
+      await this.hooks.onLifecycle?.(active.request, "resumed")
+      if (active.state !== "paused") return false
+      active.state = "running"
+      releaseResumeGate(active)
+      return true
+    })
   }
 
   /**
@@ -284,7 +348,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
 
   async requestPermission(runId: string, request: unknown): Promise<unknown> {
     const active = this.active.get(runId)
-    if (!active || active.state !== "running") {
+    if (!active || !["running", "paused"].includes(active.state)) {
       throw new Error(`Runtime run ${runId} has no active permission authority.`)
     }
     return await active.adapter.requestPermission(active.context, request)
@@ -292,7 +356,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
 
   async requestInput(runId: string, request: unknown): Promise<unknown> {
     const active = this.active.get(runId)
-    if (!active || active.state !== "running") {
+    if (!active || !["running", "paused"].includes(active.state)) {
       throw new Error(`Runtime run ${runId} has no active input authority.`)
     }
     return await active.adapter.requestInput(active.context, request)
@@ -321,12 +385,32 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
     }
     return safeReconcile(adapter, context)
   }
+
+  private async deliverOrBuffer(active: ActiveLaunch<TActivity>, activity: TActivity) {
+    if (active.state !== "paused") {
+      await this.hooks.onActivityReference?.(active.request, activity)
+      return
+    }
+    active.pausedDeliveries.push(activity)
+    if (active.pausedDeliveries.length < MAX_PAUSED_RUNTIME_DELIVERIES) return
+    await waitWhilePaused(active)
+    await this.flushPausedDeliveries(active)
+  }
+
+  private async flushPausedDeliveries(active: ActiveLaunch<TActivity>): Promise<void> {
+    while (active.pausedDeliveries.length > 0) {
+      await waitWhilePaused(active)
+      assertNotCancelled(active)
+      const activity = active.pausedDeliveries.shift()!
+      await this.hooks.onActivityReference?.(active.request, activity)
+    }
+  }
 }
 
 function reconciliationStateForOwned(
   state: RuntimeCoordinatorRunState,
 ): "running" | "completed" | "uncertain" {
-  if (state === "starting" || state === "running") return "running"
+  if (state === "starting" || state === "running" || state === "paused") return "running"
   if (state === "completed") return "completed"
   return "uncertain"
 }
@@ -389,5 +473,38 @@ function assertNotCancelled<TActivity>(active: ActiveLaunch<TActivity>): void {
     active.controller.signal.aborted
   ) {
     throw new RuntimeLaunchCancelledError(active.request.runId)
+  }
+}
+
+async function waitWhilePaused<TActivity>(active: ActiveLaunch<TActivity>): Promise<void> {
+  while (active.state === "paused") {
+    const gate = active.resumeGate
+    if (!gate) throw new Error("Runtime delivery pause gate is missing.")
+    await gate
+  }
+  assertNotCancelled(active)
+}
+
+function releaseResumeGate<TActivity>(active: ActiveLaunch<TActivity>): void {
+  active.releaseResumeGate?.()
+  active.resumeGate = null
+  active.releaseResumeGate = null
+}
+
+async function serializeControl<TActivity, TResult>(
+  active: ActiveLaunch<TActivity>,
+  operation: () => Promise<TResult>,
+): Promise<TResult> {
+  const previous = active.controlTail
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  active.controlTail = previous.catch(() => undefined).then(() => gate)
+  await previous.catch(() => undefined)
+  try {
+    return await operation()
+  } finally {
+    release()
   }
 }

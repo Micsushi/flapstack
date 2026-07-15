@@ -8,7 +8,13 @@ import {
   type AgentRunLauncher,
   type QueuedAgentRun,
 } from "./run-launch-service"
-import type { AgentActivityAppend } from "../../shared/agent-activity"
+import {
+  MAX_AGENT_ACTIVITY_METADATA_DEPTH,
+  MAX_AGENT_ACTIVITY_METADATA_ENTRIES,
+  MAX_AGENT_ACTIVITY_METADATA_STRING,
+  MAX_AGENT_ACTIVITY_PAYLOAD_BYTES,
+  type AgentActivityAppend,
+} from "../../shared/agent-activity"
 import type {
   HarnessAdapterFactory,
   ResolvedRuntimeLaunch,
@@ -50,6 +56,11 @@ export type MainRunLauncherOptions = {
   permissionHandler?: (runId: string, request: unknown) => Promise<unknown>
   inputHandler?: (runId: string, request: unknown) => Promise<unknown>
 }
+
+export type RuntimeStructuredOutput = Readonly<{
+  value: unknown
+  activityReference: Readonly<{ runId: string; eventId: string; sequence: number }>
+}>
 
 const services = new Map<string, MainRuntimeLaunchService>()
 
@@ -168,6 +179,24 @@ export class MainRuntimeLaunchService {
     }
   }
 
+  async pause(runId: string): Promise<boolean> {
+    return await this.coordinator.pause(runId)
+  }
+
+  async resume(runId: string): Promise<boolean> {
+    return await this.coordinator.resume(runId)
+  }
+
+  async readStructuredOutput(runId: string): Promise<RuntimeStructuredOutput | null> {
+    if (!runId.trim()) throw new Error("Runtime structured output requires a run ID.")
+    const db = this.open()
+    try {
+      return db.transaction(() => readStructuredOutput(db, runId)).deferred()
+    } finally {
+      db.close()
+    }
+  }
+
   async reconcileRun(runId: string): Promise<AgentRunReconciliationState> {
     const active = this.activeReconciliationState(runId)
     if (active) return active
@@ -272,7 +301,7 @@ export class MainRuntimeLaunchService {
   private activeReconciliationState(runId: string): AgentRunReconciliationState | null {
     const state = this.coordinator.runState(runId)
     if (!state) return null
-    if (state === "starting" || state === "running") return "running"
+    if (state === "starting" || state === "running" || state === "paused") return "running"
     if (state === "completed") return "completed"
     if (state === "cancelled") return "cancelled"
     if (state === "failed") return "failed"
@@ -442,8 +471,9 @@ export class MainRuntimeLaunchService {
             ).run(run.sub_chat_id, runId, terminal, now, run.sub_chat_id)
           }
         }
+        const dedupKey = ["paused", "resumed"].includes(lifecycle) ? null : `lifecycle:${lifecycle}`
         this.appendActivityWithDatabase(db, runId, [
-          lifecycleActivity(lifecycle, `lifecycle:${lifecycle}`, undefined, undefined, detail),
+          lifecycleActivity(lifecycle, dedupKey, undefined, undefined, detail),
         ])
       }).immediate()
     } finally {
@@ -894,7 +924,7 @@ function legacyLaunch(run: QueuedAgentRun): ResolvedRuntimeLaunch {
 
 function lifecycleActivity(
   state: string,
-  dedupKey: string,
+  dedupKey: string | null,
   session?: RuntimeAdapterSession,
   turn?: RuntimeAdapterTurn,
   detail?: string | null,
@@ -920,7 +950,7 @@ function lifecycleActivity(
       state,
       detail: detail ? sanitizeRuntimeText(detail, { maxLength: 2_048, mode: "diagnostic" }) : null,
     },
-    dedupKey: `runtime:${dedupKey}`,
+    dedupKey: dedupKey ? `runtime:${dedupKey}` : null,
   }
 }
 
@@ -929,6 +959,222 @@ function terminalStatus(lifecycle: string): "success" | "failure" | "cancelled" 
   if (lifecycle === "failed" || lifecycle === "uncertain") return "failure"
   if (lifecycle === "cancelled") return "cancelled"
   return null
+}
+
+type StructuredOutputRunRow = {
+  id: string
+  chat_id: string
+  sub_chat_id: string | null
+  harness: string
+  resolved_runtime: string
+  status: string
+  completed_at: number | null
+}
+
+type StructuredOutputEventRow = {
+  event_id: string
+  run_id: string
+  chat_id: string
+  sub_chat_id: string | null
+  runtime: string
+  harness: string
+  provider: string
+  sequence: number
+  display_class: string
+  privacy_class: string
+  redaction_state: string
+  dedup_key: string | null
+  payload_json: string
+}
+
+function readStructuredOutput(
+  db: Database.Database,
+  runId: string,
+): RuntimeStructuredOutput | null {
+  const run = db
+    .prepare(
+      `SELECT id, chat_id, sub_chat_id, harness, resolved_runtime, status, completed_at
+       FROM agent_runs WHERE id = ?`,
+    )
+    .get(runId) as StructuredOutputRunRow | undefined
+  if (!run || run.status !== "success" || run.completed_at === null) return null
+
+  const output = db
+    .prepare(
+      `SELECT event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+              display_class, privacy_class, redaction_state, dedup_key, payload_json
+       FROM agent_activity_events
+       WHERE run_id = ? AND kind = 'agent-text' AND phase = 'completed'
+       ORDER BY sequence DESC LIMIT 1`,
+    )
+    .get(runId) as StructuredOutputEventRow | undefined
+  if (!output) return null
+  assertStructuredOutputIdentity(run, output)
+  if (
+    output.display_class !== "provider-visible" ||
+    output.privacy_class !== "public" ||
+    output.redaction_state !== "none" ||
+    output.provider === "runtime"
+  ) {
+    throw new Error("Completed Runtime output is not public provider-visible activity.")
+  }
+
+  const terminal = db
+    .prepare(
+      `SELECT event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+              display_class, privacy_class, redaction_state, dedup_key, payload_json
+       FROM agent_activity_events
+       WHERE run_id = ? AND kind = 'lifecycle' AND phase = 'completed' AND sequence > ?
+       ORDER BY sequence ASC LIMIT 1`,
+    )
+    .get(runId, output.sequence) as StructuredOutputEventRow | undefined
+  if (!terminal) throw new Error("Completed Runtime output has no authoritative terminal event.")
+  assertStructuredOutputIdentity(run, terminal)
+  if (
+    terminal.display_class !== "status" ||
+    terminal.privacy_class !== "public" ||
+    terminal.redaction_state !== "none" ||
+    terminal.provider !== "runtime" ||
+    terminal.dedup_key !== "runtime:runtime:lifecycle:completed"
+  ) {
+    throw new Error("Runtime completion activity is not authoritative.")
+  }
+  const terminalPayload = parseActivityPayload(terminal.payload_json)
+  if (
+    terminalPayload.state !== "completed" ||
+    terminalPayload.detail !== null ||
+    Object.keys(terminalPayload).some((key) => key !== "state" && key !== "detail")
+  ) {
+    throw new Error("Runtime completion activity is corrupt.")
+  }
+
+  const payload = parseActivityPayload(output.payload_json)
+  if (typeof payload.text !== "string" || Object.keys(payload).some((key) => key !== "text")) {
+    throw new Error("Completed Runtime output activity is corrupt.")
+  }
+  const value = parseStructuredRuntimeText(payload.text)
+  assertStructuredRuntimeValue(value)
+  return Object.freeze({
+    value: freezeStructuredRuntimeValue(value),
+    activityReference: Object.freeze({
+      runId: run.id,
+      eventId: output.event_id,
+      sequence: output.sequence,
+    }),
+  })
+}
+
+function assertStructuredOutputIdentity(
+  run: StructuredOutputRunRow,
+  event: StructuredOutputEventRow,
+): void {
+  if (
+    event.run_id !== run.id ||
+    event.chat_id !== run.chat_id ||
+    event.sub_chat_id !== run.sub_chat_id ||
+    event.runtime !== run.resolved_runtime ||
+    event.harness !== run.harness ||
+    !event.event_id ||
+    !Number.isInteger(event.sequence) ||
+    event.sequence < 1
+  ) {
+    throw new Error("Runtime structured output identity is corrupt.")
+  }
+}
+
+function parseActivityPayload(payloadJson: string): Record<string, unknown> {
+  if (Buffer.byteLength(payloadJson, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
+    throw new Error("Runtime structured output activity exceeds its size bound.")
+  }
+  try {
+    const value = JSON.parse(payloadJson) as unknown
+    if (!isPlainRecord(value)) throw new Error("not an object")
+    return value
+  } catch {
+    throw new Error("Runtime structured output activity is corrupt.")
+  }
+}
+
+function parseStructuredRuntimeText(text: string): unknown {
+  const trimmed = text.trim()
+  const fenced = /^```json\s*([\s\S]*?)\s*```$/i.exec(trimmed)
+  const candidate = fenced?.[1]?.trim() ?? trimmed
+  if (!candidate || Buffer.byteLength(candidate, "utf8") > MAX_AGENT_ACTIVITY_PAYLOAD_BYTES) {
+    throw new Error("Completed Runtime output exceeds its size bound.")
+  }
+  try {
+    return JSON.parse(candidate) as unknown
+  } catch {
+    throw new Error("Completed Runtime output is not valid JSON.")
+  }
+}
+
+function assertStructuredRuntimeValue(value: unknown): void {
+  const budget = { entries: 0 }
+  visitStructuredRuntimeValue(value, 0, budget)
+}
+
+function visitStructuredRuntimeValue(
+  value: unknown,
+  depth: number,
+  budget: { entries: number },
+): void {
+  if (depth > MAX_AGENT_ACTIVITY_METADATA_DEPTH) {
+    throw new Error("Completed Runtime output exceeds its depth bound.")
+  }
+  if (value === null || typeof value === "boolean") return
+  if (typeof value === "number") {
+    if (!Number.isFinite(value))
+      throw new Error("Completed Runtime output contains an invalid number.")
+    return
+  }
+  if (typeof value === "string") {
+    if (Buffer.byteLength(value, "utf8") > MAX_AGENT_ACTIVITY_METADATA_STRING) {
+      throw new Error("Completed Runtime output contains an oversized string.")
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    budget.entries += value.length
+    assertStructuredRuntimeEntryBudget(budget)
+    for (const item of value) visitStructuredRuntimeValue(item, depth + 1, budget)
+    return
+  }
+  if (!isPlainRecord(value)) throw new Error("Completed Runtime output contains an invalid value.")
+  const entries = Object.entries(value)
+  budget.entries += entries.length
+  assertStructuredRuntimeEntryBudget(budget)
+  for (const [key, item] of entries) {
+    if (["__proto__", "prototype", "constructor"].includes(key)) {
+      throw new Error("Completed Runtime output contains an unsafe object key.")
+    }
+    if (Buffer.byteLength(key, "utf8") > 512) {
+      throw new Error("Completed Runtime output contains an oversized object key.")
+    }
+    visitStructuredRuntimeValue(item, depth + 1, budget)
+  }
+}
+
+function assertStructuredRuntimeEntryBudget(budget: { entries: number }): void {
+  if (budget.entries > MAX_AGENT_ACTIVITY_METADATA_ENTRIES) {
+    throw new Error("Completed Runtime output exceeds its entry bound.")
+  }
+}
+
+function freezeStructuredRuntimeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    for (const item of value) freezeStructuredRuntimeValue(item)
+    return Object.freeze(value)
+  }
+  if (isPlainRecord(value)) {
+    for (const item of Object.values(value)) freezeStructuredRuntimeValue(item)
+    return Object.freeze(value)
+  }
+  return value
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 async function* claudeQuery(input: ClaudeRuntimeQueryInput) {
