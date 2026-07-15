@@ -8,7 +8,6 @@ import {
   buildCodexPermissionApplication,
   buildCursorPermissionApplication,
   buildLocalModelPermissionApplication,
-  CUSTOM_PERMISSION_SCHEMA_VERSION,
   mapClaudeSdkPermissionMode,
   parseCustomPermissionToggles,
   parsePermissionMode,
@@ -22,28 +21,14 @@ import {
   type PermissionMode,
   type CustomPermissionToggles,
 } from "../../permissions"
+import { customPermissionCapabilitiesSchema } from "../../../../shared/permission-capabilities"
 import { buildOpencodePermissionApplication } from "../../harness/opencode-sidecar"
 import { publicProcedure, router } from "../index"
 
 const permissionModeSchema = z.enum(permissionModes)
 const permissionChangeBehaviorSchema = z.enum(permissionChangeBehaviors)
 const permissionChangeScopeSchema = z.enum(["all-chats", "current-chat"])
-const customPermissionsSchema = z
-  .object({
-    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
-    projectWrite: z.boolean(),
-    shell: z.boolean(),
-    network: z.boolean(),
-    git: z.boolean(),
-    browser: z.boolean(),
-    secrets: z.boolean(),
-    subagents: z.boolean(),
-    thirdPartyMcp: z.boolean(),
-    productMcpRead: z.boolean(),
-    productMcpWrite: z.boolean(),
-    productMcpTier3: z.boolean(),
-  })
-  .strict()
+const customPermissionsSchema = customPermissionCapabilitiesSchema
 
 type Row = Record<string, unknown>
 type RawSqlDatabase = {

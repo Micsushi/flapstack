@@ -162,7 +162,7 @@ export class SavedWorkspaceLifecycleService {
       }
       const search = input.search?.trim()
       if (search) {
-        conditions.push("name LIKE ? ESCAPE '\\' COLLATE NOCASE")
+        conditions.push("name COLLATE NOCASE LIKE ? ESCAPE '\\'")
         parameters.push(`%${escapeLike(search)}%`)
       }
       const rows = database

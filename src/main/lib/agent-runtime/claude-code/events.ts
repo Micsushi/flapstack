@@ -8,6 +8,12 @@ import type {
 import { MAX_AGENT_ACTIVITY_PAYLOAD_BYTES } from "../../../../shared/agent-activity"
 import type { RuntimeLaunchControls } from "../../../../shared/agent-runtime"
 import { sanitizeRuntimeText } from "../sanitizer"
+import {
+  eventArray as array,
+  eventNonEmptyString as string,
+  eventNonNegativeFiniteNumber as finite,
+  eventRecord as record,
+} from "../event-values"
 
 type JsonRecord = Record<string, unknown>
 type BlockState = { type: string; id: string | null; name: string | null }
@@ -573,7 +579,7 @@ export class ClaudeRuntimeEventMapper {
   ): AgentActivityAppend {
     const cacheRead = finite(value.cache_read_input_tokens)
     const cacheCreation = finite(value.cache_creation_input_tokens)
-    return activity(base, "usage", "snapshot", "metadata", "public", {
+    return activity(base, "usage", "snapshot", "metadata", "sensitive", {
       inputTokens: finite(value.input_tokens),
       outputTokens: finite(value.output_tokens),
       cachedTokens:
@@ -768,24 +774,8 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return prefix + suffix
 }
 
-function record(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {}
-}
-
-function array(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
-
-function string(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
-}
-
 function strings(value: unknown): string[] {
   return array(value).filter((item): item is string => typeof item === "string")
-}
-
-function finite(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
 function integer(value: unknown): number | null {

@@ -57,6 +57,7 @@ describe("Claude Runtime SDK event mapping", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: "usage",
+        privacyClass: "sensitive",
         providerMessageId: "result-uuid-1",
         payload: expect.objectContaining({ inputTokens: 11, outputTokens: 9, costUsd: 0.001 }),
       }),

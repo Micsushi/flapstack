@@ -16,10 +16,10 @@ describe("future stage scaffolds", () => {
     expect(capabilities.every((capability) => capability.gate.length > 0)).toBe(true)
   })
 
-  it("auto-approves MCP Tier 3 for full access", () => {
+  it("requires explicit MCP Tier 3 approval for full access", () => {
     expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" })).toMatchObject({
-      decision: "allowed",
-      requiresApproval: false,
+      decision: "approval-required",
+      requiresApproval: true,
     })
   })
 

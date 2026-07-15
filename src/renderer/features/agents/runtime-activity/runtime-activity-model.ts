@@ -114,7 +114,7 @@ export function compareRuntimeActivity(a: RuntimeActivitySource, b: RuntimeActiv
   if (!isPersisted(a) && !isPersisted(b)) {
     return a.sequence - b.sequence || a.projectionId.localeCompare(b.projectionId)
   }
-  return isPersisted(a) ? -1 : 1
+  return isPersisted(a) ? 1 : -1
 }
 
 /** Merge forward/backward pages and replay batches without reordering or duplicate rows. */
@@ -127,14 +127,43 @@ export function mergeRuntimeActivityPages(
   return [...byKey.values()].sort(compareRuntimeActivity)
 }
 
-/** Durable activity wins. Legacy messages are projected only when no durable rows exist. */
+/**
+ * Preserve pre-activity transcript rows while avoiding exact content duplicated
+ * by the durable Runtime stream. Legacy rows always precede durable events.
+ */
 export function selectRuntimeActivitySource(
   events: AgentActivityEvent[],
   legacyMessages: unknown,
 ): RuntimeActivitySource[] {
-  return events.length > 0
-    ? [...events].sort(compareRuntimeActivity)
-    : projectLegacyActivity(legacyMessages)
+  const legacy = projectLegacyActivity(legacyMessages)
+  if (events.length === 0) return legacy
+
+  const durableSignatures = new Map<string, number>()
+  for (const event of events) {
+    const signature = activityContentSignature(event)
+    if (signature) durableSignatures.set(signature, (durableSignatures.get(signature) ?? 0) + 1)
+  }
+  const retainedLegacy = [...legacy].reverse().filter((source) => {
+    const signature = activityContentSignature(source)
+    const matches = signature ? (durableSignatures.get(signature) ?? 0) : 0
+    if (!signature || matches === 0) return true
+    durableSignatures.set(signature, matches - 1)
+    return false
+  })
+  retainedLegacy.reverse()
+  return [...retainedLegacy, ...events].sort(compareRuntimeActivity)
+}
+
+function activityContentSignature(source: RuntimeActivitySource): string | null {
+  if (source.kind === "agent-text") {
+    const text = (source.payload as AgentActivityPayloadByKind["agent-text"]).text.trim()
+    return text ? `agent-text:${text}` : null
+  }
+  if (source.kind === "reasoning-summary") {
+    const text = (source.payload as AgentActivityPayloadByKind["reasoning-summary"]).text.trim()
+    return text ? `reasoning-summary:${text}` : null
+  }
+  return null
 }
 
 function sourceRuntime(source: RuntimeActivitySource): ResolvedAgentRuntime {

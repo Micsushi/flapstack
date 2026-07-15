@@ -225,7 +225,7 @@ describe("authenticated dev control for live product MCP", () => {
     expect(getProductMcpState({ chatId: caller.chatId }).pendingApprovals).toEqual([])
   })
 
-  it("auto-approves a full-access Tier 3 spawn through the real stdio child", async () => {
+  it("requires approval for a full-access Tier 3 spawn through the real stdio child", async () => {
     const caller = prepareProductMcpCaller({ harness: "codex", permissionMode: "full-access" })
     setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
     const started = startProductMcpTestCall(
@@ -243,13 +243,16 @@ describe("authenticated dev control for live product MCP", () => {
       { registration: sourceRegistration(caller.chatId, caller.runId) },
     )
 
+    const approval = await waitForApproval(caller.chatId)
+    expect(replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })).toEqual({
+      resolved: true,
+    })
     expect(await waitForCall(started.id)).toMatchObject({ status: "completed" })
     const state = getProductMcpState({ chatId: caller.chatId, toolName: "spawn_thread" })
     expect(state.pendingApprovals).toEqual([])
     expect(state.audit.entries.map((entry) => entry.decision)).toEqual(
-      expect.arrayContaining(["allowed", "dispatch-started", "completed"]),
+      expect.arrayContaining(["approval-required", "allowed", "dispatch-started", "completed"]),
     )
-    expect(state.audit.entries.map((entry) => entry.decision)).not.toContain("approval-required")
     expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({
       archived: true,
       archivedChildren: [expect.any(String)],

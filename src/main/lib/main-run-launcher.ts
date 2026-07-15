@@ -75,6 +75,7 @@ import { discoverPluginMcpServers } from "./plugins"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./trpc/routers/claude-settings"
 import {
   DEFAULT_OLLAMA_BASE_URL,
+  findUnavailableLocalModelTier,
   resolveLocalModelSelection,
   resolveLocalModelToolTiers,
 } from "../../shared/local-model-contract"
@@ -1011,12 +1012,10 @@ async function launchLocalModelStream(
     customPermissions,
   )
   const required = run.requiredLocalToolTiers ?? []
-  const mismatch = required
-    .map((tier) => tiers.find((candidate) => candidate.tier === tier))
-    .find((tier) => !tier?.available)
+  const mismatch = findUnavailableLocalModelTier(required, tiers)
   if (mismatch) {
     throw new Error(
-      `Local model preflight failed for ${mismatch.tier}: ${mismatch.limitation?.message ?? "capability unavailable"} No cloud fallback was attempted.`,
+      `Local model preflight failed for ${mismatch.requiredTier}: ${mismatch.state?.limitation?.message ?? "capability unavailable"} No cloud fallback was attempted.`,
     )
   }
   return caller.localModels.chat({

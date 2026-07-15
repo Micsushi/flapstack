@@ -8,6 +8,7 @@ import type { UsageRollupQuality, UsageRollupQueryInput } from "../../../shared/
 import { usageRollupQuerySchema } from "../../../shared/advanced-usage"
 import { queryUsageRollups, type UsageRollupMetrics } from "./rollups"
 import type { UsageDb } from "./store"
+import { epochMs, finiteNumber, stringOrNull } from "./time"
 
 type Sqlite = Database.Database
 
@@ -383,18 +384,4 @@ function quality(value: unknown): UsageRollupQuality {
   return value === "exact" || value === "provider-reported" || value === "estimated"
     ? value
     : "unknown"
-}
-
-function epochMs(value: unknown): number | null {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value !== "number" || !Number.isFinite(value)) return null
-  return value < 10_000_000_000 ? value * 1_000 : value
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
 }

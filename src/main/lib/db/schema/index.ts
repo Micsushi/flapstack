@@ -2564,6 +2564,31 @@ export const usageAlertArmStates = sqliteTable(
   ],
 )
 
+// Budget alerts have their own identity instead of overloading provider/account columns.
+export const usageBudgetArmStates = sqliteTable(
+  "usage_budget_arm_states",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    budgetId: text("budget_id")
+      .notNull()
+      .references(() => usageBudgets.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    thresholdValue: integer("threshold_value").notNull(),
+    armed: integer("armed", { mode: "boolean" }).notNull().default(true),
+    lastFiredAt: integer("last_fired_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("usage_budget_arm_states_key_idx").on(
+      table.budgetId,
+      table.action,
+      table.thresholdValue,
+    ),
+  ],
+)
+
 // Background daemon heartbeat/status. Singleton row keyed by host.
 export const usageDaemonStatus = sqliteTable("usage_daemon_status", {
   id: text("id").primaryKey().default("singleton"),
@@ -2632,5 +2657,7 @@ export type UsageAlertEvent = typeof usageAlertEvents.$inferSelect
 export type NewUsageAlertEvent = typeof usageAlertEvents.$inferInsert
 export type UsageAlertArmState = typeof usageAlertArmStates.$inferSelect
 export type NewUsageAlertArmState = typeof usageAlertArmStates.$inferInsert
+export type UsageBudgetArmState = typeof usageBudgetArmStates.$inferSelect
+export type NewUsageBudgetArmState = typeof usageBudgetArmStates.$inferInsert
 export type UsageDaemonStatus = typeof usageDaemonStatus.$inferSelect
 export type NewUsageDaemonStatus = typeof usageDaemonStatus.$inferInsert

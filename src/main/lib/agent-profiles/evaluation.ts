@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { checkRuntimeCompatibility } from "../agent-runtime/compatibility"
 import {
   agentCapabilityProfileSchema,
@@ -7,6 +7,7 @@ import {
   agentProfileEvaluationInputSchema,
 } from "../../../shared/agent-profiles"
 import { createAgentProfileService } from "./service"
+import { canonicalJson, epochSeconds as epoch, sha256Text as sha256 } from "./values"
 
 type DatabaseLike = Database.Database | object
 
@@ -132,28 +133,9 @@ function result(fixture: string, passed: boolean, detail: string) {
   return { fixture, passed, detail }
 }
 
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
-}
-
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
-}
-
 function rawClient(database: DatabaseLike): Database.Database {
   if ("prepare" in database && typeof database.prepare === "function") {
     return database as Database.Database
   }
   return (database as unknown as { $client: Database.Database }).$client
-}
-
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
 }

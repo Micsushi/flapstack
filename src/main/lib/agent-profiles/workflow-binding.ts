@@ -16,6 +16,7 @@ import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestra
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
 import { AgentProfileResolver, agentProfileSnapshotPolicyViolations } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
+import { canonicalJson, epochSeconds as epoch } from "./values"
 import type { WorkflowAgentMaterializerPort } from "../agent-orchestration/worker-materializer-port"
 
 type DatabaseLike = Database.Database | object
@@ -595,22 +596,7 @@ function rawClient(database: DatabaseLike): Database.Database {
   return (database as unknown as { $client: Database.Database }).$client
 }
 
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
-}
-
 function timestamp(value: unknown) {
   const numeric = Number(value)
   return numeric < 10_000_000_000 ? numeric * 1_000 : numeric
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
 }

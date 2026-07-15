@@ -125,7 +125,7 @@ describe("provider and product MCP permission integration", () => {
     approvals.shutdown()
   })
 
-  it("auto-approves Tier 3 product calls in full-access mode", async () => {
+  it("requires one product approval for Tier 3 calls in full-access mode", async () => {
     expect(
       resolveProviderMcpPermission({
         permissionMode: "full-access",
@@ -136,27 +136,28 @@ describe("provider and product MCP permission integration", () => {
     ).toMatchObject({
       decision: "allow",
       providerPromptRequired: false,
-      productApprovalRequired: false,
+      productApprovalRequired: true,
       tool: { tier: 3 },
     })
 
     const approvals = new McpApprovalLifecycle()
     const execute = vi.fn(() => ({ ok: true as const, data: { launched: true } }))
-    await expect(
-      invokeMcpControlTool(
-        "launch_run",
-        { chatId: "chat-1", runId: "run-1", permissionMode: "full-access" },
-        { chatId: "other-chat" },
-        undefined,
-        {
-          approvals,
-          approvalId: () => "tier3",
-          invocationId: () => "tier3",
-          audit: { append: vi.fn() },
-          execute,
-        },
-      ),
-    ).resolves.toMatchObject({ ok: true })
+    const result = invokeMcpControlTool(
+      "launch_run",
+      { chatId: "chat-1", runId: "run-1", permissionMode: "full-access" },
+      { chatId: "other-chat" },
+      undefined,
+      {
+        approvals,
+        approvalId: () => "tier3",
+        invocationId: () => "tier3",
+        audit: { append: vi.fn() },
+        execute,
+      },
+    )
+    expect(approvals.listPending()).toHaveLength(1)
+    approvals.approve("tier3")
+    await expect(result).resolves.toMatchObject({ ok: true })
     expect(approvals.listPending()).toEqual([])
     expect(execute).toHaveBeenCalledOnce()
     approvals.shutdown()

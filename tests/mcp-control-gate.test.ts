@@ -141,7 +141,7 @@ describe("MCP caller-by-tier gate matrix", () => {
     "read-only": ["allowed", "denied", "denied", "denied"],
     "ask-before-edits": ["allowed", "approval-required", "approval-required", "approval-required"],
     "auto-edit-project-only": ["allowed", "allowed", "allowed", "approval-required"],
-    "full-access": ["allowed", "allowed", "allowed", "allowed"],
+    "full-access": ["allowed", "allowed", "allowed", "approval-required"],
     custom: ["allowed", "allowed", "allowed", "approval-required"],
   }
 
@@ -168,8 +168,13 @@ describe("MCP caller-by-tier gate matrix", () => {
     )
   })
 
-  it("auto-approves Tier 3 in full-access and keeps other modes guarded", () => {
-    expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" }).decision).toBe("allowed")
+  it("requires explicit Tier 3 approval in every writable mode", () => {
+    expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" }).decision).toBe(
+      "approval-required",
+    )
+    expect(
+      evaluateMcpGate({ tier: 3, permissionMode: "full-access", approved: true }).decision,
+    ).toBe("allowed")
     expect(evaluateMcpGate({ tier: 3, permissionMode: "ask-before-edits" }).decision).toBe(
       "approval-required",
     )

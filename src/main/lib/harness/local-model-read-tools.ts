@@ -187,7 +187,7 @@ export const DEFAULT_LOCAL_MODEL_TOOL_LOOP_LIMITS: LocalModelToolLoopLimits = {
   maxRepeatedCall: 3,
   maxContextChars: 120_000,
   maxOutputChars: 64_000,
-  maxWallTimeMs: 120_000,
+  maxWallTimeMs: 600_000,
 }
 
 export type LocalModelReadToolExecutor = {

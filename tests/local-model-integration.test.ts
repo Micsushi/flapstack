@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest"
 import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
 import { getUsageProvider } from "../src/main/lib/usage/registry"
 import { orchestrationAgentDefinitionSchema } from "../src/shared/agent-orchestration"
+import { findUnavailableLocalModelTier } from "../src/shared/local-model-contract"
 
 const base = {
   role: "Local worker",
@@ -19,6 +20,13 @@ const base = {
 }
 
 describe("local model Stage 4 integration contract", () => {
+  it("fails closed when a required tool tier is absent from the capability snapshot", () => {
+    expect(findUnavailableLocalModelTier(["read"], [])).toEqual({
+      requiredTier: "read",
+      state: null,
+    })
+    expect(findUnavailableLocalModelTier(["read"], [{ tier: "read", available: true }])).toBeNull()
+  })
   it("accepts exact local workers with explicit capability requirements", () => {
     expect(
       orchestrationAgentDefinitionSchema.parse({

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import {
   agentProfileArchiveInputSchema,
   agentProfileBundleSchema,
@@ -25,6 +25,7 @@ import {
   type AgentProfileCapabilityChange,
 } from "./capability-change"
 import { STARTER_AGENT_PROFILES } from "./starter-catalog"
+import { canonicalJson, epochSeconds as epoch, sha256Text as sha256 } from "./values"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -838,30 +839,9 @@ export function assertAgentProfileSecretFree(value: unknown): void {
   }
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === undefined) return "null"
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
-}
-
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
-}
-
 function rawClient(database: DatabaseLike): Sqlite {
   if ("prepare" in database && typeof database.prepare === "function") return database as Sqlite
   return (database as unknown as { $client: Sqlite }).$client
-}
-
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
 }
 
 function timestamp(value: unknown): number | null {

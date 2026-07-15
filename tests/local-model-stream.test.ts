@@ -409,6 +409,26 @@ describe("local model stream", () => {
     })
     expect(timeoutFixture.run("run-timeout")).toMatchObject({ status: "failure" })
 
+    const activeFixture = setup()
+    const activeService = activeFixture.service(async () =>
+      delayedByteStreamResponse(
+        [
+          '{"message":{"role":"assistant","content":"still "},"done":false}\n',
+          '{"message":{"role":"assistant","content":"working"},"done":false}\n',
+          '{"message":{"role":"assistant","content":""},"done":true}\n',
+        ],
+        75,
+      ),
+    )
+    const activeChunks = await collect(
+      activeService.stream(input({ runId: "run-active", timeoutMs: 100 })),
+    )
+    expect(activeChunks).not.toContainEqual({
+      type: "error",
+      errorText: "The local model response timed out.",
+    })
+    expect(activeFixture.run("run-active")).toMatchObject({ status: "success" })
+
     const abortFixture = setup()
     const abortService = abortFixture.service(async () => openStreamResponse())
     const iterator = abortService.stream(input({ runId: "run-abort" }))
@@ -852,6 +872,22 @@ function byteStreamResponse(chunks: string[]): Response {
     new ReadableStream<Uint8Array>({
       start(controller) {
         for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/x-ndjson" } },
+  )
+}
+
+function delayedByteStreamResponse(chunks: string[], delayMs: number): Response {
+  const encoder = new TextEncoder()
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (const [index, chunk] of chunks.entries()) {
+          if (index > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
+          controller.enqueue(encoder.encode(chunk))
+        }
         controller.close()
       },
     }),

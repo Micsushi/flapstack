@@ -7,7 +7,8 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import * as z from "zod/v4"
 import { CREDENTIAL_IDS } from "../../../shared/credential-types"
-import { CUSTOM_PERMISSION_SCHEMA_VERSION, permissionModes } from "../permissions"
+import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "../../../shared/permission-capabilities"
+import { permissionModes } from "../permissions"
 import {
   archiveTestChat,
   archiveTestProject,

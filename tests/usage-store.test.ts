@@ -1011,6 +1011,7 @@ describe("usage SQLite integration", () => {
       expect(names.map((row) => row.name).sort()).toEqual([
         "usage_alert_arm_states",
         "usage_alert_events",
+        "usage_budget_arm_states",
         "usage_budgets",
         "usage_cycles",
         "usage_daemon_status",

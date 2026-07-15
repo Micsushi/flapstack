@@ -31,6 +31,8 @@ electron.vite.config.*.mjs
 # Claude binary (downloaded at build time)
 resources/bin/
 native/**/target/
+/artifacts/
+/build/generated/
 
 # AI/agent instruction docs stay local (vault holds the canonical copies).
 AGENTS.md

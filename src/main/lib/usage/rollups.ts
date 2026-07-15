@@ -11,6 +11,14 @@ import type {
 import { usageRollupQuerySchema } from "../../../shared/advanced-usage"
 import { backfillUsageAttribution } from "./attribution"
 import type { UsageDb } from "./store"
+import {
+  epochMs,
+  finiteNumber,
+  normalizeLocal,
+  stringOrNull,
+  zonedLocalToUtc,
+  zonedParts,
+} from "./time"
 
 type Sqlite = Database.Database
 
@@ -106,8 +114,6 @@ type FactCache = UsageRollupCacheStatus & {
 }
 
 const factCaches = new WeakMap<Sqlite, FactCache>()
-const formatterCache = new Map<string, Intl.DateTimeFormat>()
-
 export function queryUsageRollups(db: UsageDb, input: UsageRollupQueryInput): UsageRollupResult {
   const query = usageRollupQuerySchema.parse(input)
   const cache = readFactCache(db)
@@ -479,63 +485,6 @@ function timeBucket(
   }
 }
 
-function zonedParts(timestampMs: number, timezone: string) {
-  let formatter = formatterCache.get(timezone)
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat("en-CA-u-hc-h23", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    })
-    formatterCache.set(timezone, formatter)
-  }
-  const values = Object.fromEntries(
-    formatter
-      .formatToParts(timestampMs)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, Number(part.value)]),
-  )
-  return {
-    year: values.year,
-    month: values.month,
-    day: values.day,
-    hour: values.hour,
-    minute: values.minute,
-    second: values.second,
-  }
-}
-
-function zonedLocalToUtc(
-  local: { year: number; month: number; day: number; hour: number },
-  timezone: string,
-): number {
-  const target = Date.UTC(local.year, local.month - 1, local.day, local.hour)
-  let guess = target
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const actual = zonedParts(guess, timezone)
-    const actualLocal = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour)
-    const adjustment = target - actualLocal
-    if (adjustment === 0) return guess
-    guess += adjustment
-  }
-  return guess
-}
-
-function normalizeLocal(local: { year: number; month: number; day: number; hour: number }) {
-  const date = new Date(Date.UTC(local.year, local.month - 1, local.day, local.hour))
-  return {
-    year: date.getUTCFullYear(),
-    month: date.getUTCMonth() + 1,
-    day: date.getUTCDate(),
-    hour: date.getUTCHours(),
-  }
-}
-
 function cursorStart(cursor: string | null | undefined, items: UsageRollupValue[]): number {
   if (!cursor) return 0
   let key: string
@@ -601,18 +550,4 @@ function quality(value: unknown): UsageRollupQuality {
   return value === "exact" || value === "provider-reported" || value === "estimated"
     ? value
     : "unknown"
-}
-
-function epochMs(value: unknown): number | null {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value !== "number" || !Number.isFinite(value)) return null
-  return value < 10_000_000_000 ? value * 1_000 : value
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
 }

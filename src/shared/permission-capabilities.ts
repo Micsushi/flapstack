@@ -1,3 +1,4 @@
+import { z, type RefinementCtx } from "zod"
 import type { AgentHarness, RunPermissionMode } from "./harness-types"
 
 export const CUSTOM_PERMISSION_SCHEMA_VERSION = 1 as const
@@ -30,6 +31,43 @@ export const customPermissionCapabilityKeys = [
   "productMcpWrite",
   "productMcpTier3",
 ] as const satisfies readonly (keyof Omit<CustomPermissionCapabilities, "schemaVersion">)[]
+
+export const customPermissionCapabilitiesSchema = z
+  .object({
+    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
+    projectWrite: z.boolean(),
+    shell: z.boolean(),
+    network: z.boolean(),
+    git: z.boolean(),
+    browser: z.boolean(),
+    secrets: z.boolean(),
+    subagents: z.boolean(),
+    thirdPartyMcp: z.boolean(),
+    productMcpRead: z.boolean(),
+    productMcpWrite: z.boolean(),
+    productMcpTier3: z.boolean(),
+  })
+  .strict()
+
+export function refineCustomPermissionMode(
+  value: { permissionMode: string; customPermissions?: unknown | null },
+  context: RefinementCtx,
+): void {
+  if (value.permissionMode === "custom" && !value.customPermissions) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customPermissions"],
+      message: "Custom permission mode requires explicit capabilities.",
+    })
+  }
+  if (value.permissionMode !== "custom" && value.customPermissions) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customPermissions"],
+      message: "Custom capabilities require custom permission mode.",
+    })
+  }
+}
 
 export const disabledCustomPermissions: CustomPermissionCapabilities = {
   schemaVersion: CUSTOM_PERMISSION_SCHEMA_VERSION,

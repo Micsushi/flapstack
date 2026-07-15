@@ -8,12 +8,21 @@ import * as schema from "../src/main/lib/db/schema"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import {
   backfillUsageAttribution,
+  compareUsageFactRecency,
   rebuildUsageAttributionRollups,
 } from "../src/main/lib/usage/attribution"
 import { applyUsageStorePragmas, insertSamples, type UsageDb } from "../src/main/lib/usage/store"
 import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
 
 const temporaryDirectories: string[] = []
+
+describe("usage fact ordering", () => {
+  it("orders numeric ids numerically when capture timestamps tie", () => {
+    expect(
+      compareUsageFactRecency({ id: "10", captured_at: 100 }, { id: "9", captured_at: 100 }),
+    ).toBeGreaterThan(0)
+  })
+})
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {

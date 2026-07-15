@@ -123,8 +123,7 @@ export function resolveProviderMcpPermission(input: {
     providerPromptRequired: false,
     productGateRequired: true,
     productApprovalRequired:
-      permissionMode !== "full-access" &&
-      (tool.tier === 3 || (permissionMode === "ask-before-edits" && tool.tier > 0)),
+      tool.tier === 3 || (permissionMode === "ask-before-edits" && tool.tier > 0),
     tool,
     reason:
       tool.tier === 0

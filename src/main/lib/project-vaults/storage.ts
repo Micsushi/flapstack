@@ -334,48 +334,29 @@ export async function writeProjectVaultSection(
       contentWritten = true
       await hooks.afterContentWrite?.()
 
-      return database.transaction((tx) => {
-        const updated = tx
-          .update(projectVaultSections)
-          .set({
-            version: section.version + 1,
-            contentHash: nextHash,
-            byteLength: next.byteLength,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(projectVaultSections.projectId, input.projectId),
-              eq(projectVaultSections.sectionId, input.sectionId),
-              eq(projectVaultSections.version, section.version),
-              eq(projectVaultSections.contentHash, section.contentHash),
-            ),
-          )
-          .returning()
-          .get()
-        if (!updated) {
-          throw new ProjectVaultConflictError(
-            "Project vault section version is stale.",
-            section.version,
-            section.contentHash,
-          )
-        }
-        tx.insert(projectVaultBackups)
-          .values({
-            projectId: input.projectId,
-            sectionId: input.sectionId,
-            version: section.version,
-            relativePath: backupRelativePath,
-            contentHash: previousHash,
-            byteLength: previous.byteLength,
-          })
-          .run()
-        tx.update(projectVaults)
-          .set({ updatedAt: new Date() })
-          .where(eq(projectVaults.projectId, vault.projectId))
-          .run()
-        return updated
-      })
+      return commitProjectVaultSectionVersion(
+        database,
+        {
+          vault,
+          section,
+          projectId: input.projectId,
+          sectionId: input.sectionId,
+          contentHash: nextHash,
+          byteLength: next.byteLength,
+        },
+        (tx) =>
+          tx
+            .insert(projectVaultBackups)
+            .values({
+              projectId: input.projectId,
+              sectionId: input.sectionId,
+              version: section.version,
+              relativePath: backupRelativePath,
+              contentHash: previousHash,
+              byteLength: previous.byteLength,
+            })
+            .run(),
+      )
     } catch (error) {
       if (contentWritten) {
         try {
@@ -516,37 +497,13 @@ export async function restoreProjectVaultSectionBackup(
     )
     try {
       await hooks.afterMissingContentWrite?.()
-      return database.transaction((tx) => {
-        const updated = tx
-          .update(projectVaultSections)
-          .set({
-            version: section.version + 1,
-            contentHash: restoredHash,
-            byteLength: restored.byteLength,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(projectVaultSections.projectId, input.projectId),
-              eq(projectVaultSections.sectionId, input.sectionId),
-              eq(projectVaultSections.version, section.version),
-              eq(projectVaultSections.contentHash, section.contentHash),
-            ),
-          )
-          .returning()
-          .get()
-        if (!updated) {
-          throw new ProjectVaultConflictError(
-            "Project vault section version is stale.",
-            section.version,
-            section.contentHash,
-          )
-        }
-        tx.update(projectVaults)
-          .set({ updatedAt: new Date() })
-          .where(eq(projectVaults.projectId, vault.projectId))
-          .run()
-        return updated
+      return commitProjectVaultSectionVersion(database, {
+        vault,
+        section,
+        projectId: input.projectId,
+        sectionId: input.sectionId,
+        contentHash: restoredHash,
+        byteLength: restored.byteLength,
       })
     } catch (error) {
       await removeVaultFileIfContentMatches(root.canonicalPath, section.relativePath, restoredHash)
@@ -585,37 +542,13 @@ export async function adoptExternalProjectVaultSectionChange(
         currentHash,
       )
     }
-    return database.transaction((tx) => {
-      const updated = tx
-        .update(projectVaultSections)
-        .set({
-          version: section.version + 1,
-          contentHash: currentHash,
-          byteLength: bytes.byteLength,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(projectVaultSections.projectId, input.projectId),
-            eq(projectVaultSections.sectionId, input.sectionId),
-            eq(projectVaultSections.version, section.version),
-            eq(projectVaultSections.contentHash, section.contentHash),
-          ),
-        )
-        .returning()
-        .get()
-      if (!updated) {
-        throw new ProjectVaultConflictError(
-          "Project vault section version is stale.",
-          section.version,
-          section.contentHash,
-        )
-      }
-      tx.update(projectVaults)
-        .set({ updatedAt: new Date() })
-        .where(eq(projectVaults.projectId, vault.projectId))
-        .run()
-      return updated
+    return commitProjectVaultSectionVersion(database, {
+      vault,
+      section,
+      projectId: input.projectId,
+      sectionId: input.sectionId,
+      contentHash: currentHash,
+      byteLength: bytes.byteLength,
     })
   })
 }
@@ -703,6 +636,53 @@ async function deleteProjectVaultUnlocked(
     (targetPath) => rm(targetPath, { recursive: true }),
   )
   return { projectId: current.projectId, deleted: true }
+}
+
+function commitProjectVaultSectionVersion(
+  database: Database,
+  input: {
+    vault: VaultRow
+    section: SectionRow
+    projectId: string
+    sectionId: string
+    contentHash: string
+    byteLength: number
+  },
+  beforeVaultUpdate?: (tx: Pick<Database, "insert">) => unknown,
+): SectionRow {
+  return database.transaction((tx) => {
+    const updated = tx
+      .update(projectVaultSections)
+      .set({
+        version: input.section.version + 1,
+        contentHash: input.contentHash,
+        byteLength: input.byteLength,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(projectVaultSections.projectId, input.projectId),
+          eq(projectVaultSections.sectionId, input.sectionId),
+          eq(projectVaultSections.version, input.section.version),
+          eq(projectVaultSections.contentHash, input.section.contentHash),
+        ),
+      )
+      .returning()
+      .get()
+    if (!updated) {
+      throw new ProjectVaultConflictError(
+        "Project vault section version is stale.",
+        input.section.version,
+        input.section.contentHash,
+      )
+    }
+    beforeVaultUpdate?.(tx as unknown as Pick<Database, "insert">)
+    tx.update(projectVaults)
+      .set({ updatedAt: new Date() })
+      .where(eq(projectVaults.projectId, input.vault.projectId))
+      .run()
+    return updated
+  })
 }
 
 function getVerifiedSection(

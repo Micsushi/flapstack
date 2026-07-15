@@ -8,6 +8,7 @@ import type {
 } from "../../../shared/advanced-usage"
 import type { CostQuality, SampleSource, UsageSampleInput } from "./types"
 import type { UsageDb } from "./store"
+import { stringOrNull } from "./time"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -489,16 +490,17 @@ function selectLatestOverlapFacts(rows: Row[]): Row[] {
         ? `group:${String(row.source_class)}:${groupKey}`
         : `fact:${String(row.id)}`
     const current = selected.get(selectionKey)
-    if (!current || compareFactRecency(row, current) > 0) selected.set(selectionKey, row)
+    if (!current || compareUsageFactRecency(row, current) > 0) selected.set(selectionKey, row)
   }
   return [...selected.values()].sort((left, right) =>
     String(left.id).localeCompare(String(right.id)),
   )
 }
 
-function compareFactRecency(left: Row, right: Row): number {
+export function compareUsageFactRecency(left: Row, right: Row): number {
   const time = numericOrZero(left.captured_at) - numericOrZero(right.captured_at)
-  return time || String(left.id).localeCompare(String(right.id))
+  if (time) return time
+  return compareStableIds(left.id, right.id)
 }
 
 function sumNullable(rows: Row[], field: string): number | null {
@@ -509,6 +511,7 @@ function sumNullable(rows: Row[], field: string): number | null {
 }
 
 function weakestQuality(qualities: string[]): UsageRollupQuality {
+  if (qualities.length === 0) return "unknown"
   const rank: Record<UsageRollupQuality, number> = {
     exact: 3,
     "provider-reported": 2,
@@ -524,6 +527,17 @@ function weakestQuality(qualities: string[]): UsageRollupQuality {
     .reduce((weakest, quality) => (rank[quality] < rank[weakest] ? quality : weakest), "exact")
 }
 
+function compareStableIds(left: unknown, right: unknown): number {
+  const leftText = String(left)
+  const rightText = String(right)
+  if (/^\d+$/.test(leftText) && /^\d+$/.test(rightText)) {
+    const leftNumber = BigInt(leftText)
+    const rightNumber = BigInt(rightText)
+    return leftNumber < rightNumber ? -1 : leftNumber > rightNumber ? 1 : 0
+  }
+  return leftText.localeCompare(rightText)
+}
+
 function usageSourceClass(value: unknown): UsageSourceClass {
   return value === "provider-account-total" ||
     value === "flapstack-run" ||
@@ -535,10 +549,6 @@ function usageSourceClass(value: unknown): UsageSourceClass {
 function normalizedName(value: unknown): string | null {
   const string = stringOrNull(value)?.trim()
   return string ? string.slice(0, 256) : null
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 function numericOrZero(value: unknown): number {

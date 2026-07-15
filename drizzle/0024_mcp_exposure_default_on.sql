@@ -1,5 +1,4 @@
--- Product MCP is now available by default for every currently supported chat.
--- Users can still disable individual chats from the MCP widget.
-UPDATE `chats`
-SET `mcp_exposure_enabled` = true
-WHERE `harness` IN ('codex', 'claude', 'claude-code');
+-- Preserve every existing chat's MCP exposure choice. New supported chats are
+-- created with exposure enabled by their creation service; legacy false rows
+-- cannot be distinguished safely from explicit user opt-outs.
+SELECT 1;

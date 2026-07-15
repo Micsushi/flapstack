@@ -290,7 +290,7 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
-  it("enables existing supported chats without rebuilding chat lineage", () => {
+  it("preserves existing exposure choices without rebuilding chat lineage", () => {
     const { sqlite, directory } = database("mcp-default-on")
     try {
       migrate(drizzle(sqlite, { schema }), {
@@ -311,10 +311,54 @@ describe("Stage 3 migration rebase", () => {
 
       expect(
         sqlite.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = 'supported-chat'").get(),
-      ).toEqual({ mcp_exposure_enabled: 1 })
+      ).toEqual({ mcp_exposure_enabled: 0 })
       expect(
         sqlite.prepare("SELECT chat_id FROM sub_chats WHERE id = 'supported-sub'").get(),
       ).toEqual({ chat_id: "supported-chat" })
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("moves legacy budget arm state without deleting provider alert state", () => {
+    const { sqlite, directory } = database("budget-arm-state")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 38),
+      })
+      sqlite
+        .prepare(
+          `INSERT INTO usage_budgets (
+            id, name, scope_type, threshold_type, threshold_value, action, created_at, updated_at
+          ) VALUES ('budget-1', 'Budget', 'global', 'total-tokens', 1000, 'soft-alert', 100, 100)`,
+        )
+        .run()
+      sqlite
+        .prepare(
+          `INSERT INTO usage_alert_arm_states (
+            id, provider_id, account_tag, alert_type, threshold_value, armed, last_fired_at, updated_at
+          ) VALUES
+            ('budget-arm', 'flapstack-budget', 'budget-1', 'soft-alert', 1000, 0, 90, 100),
+            ('provider-arm', 'codex', 'account-1', 'quota', 80000000, 0, 90, 100)`,
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(sqlite.prepare("SELECT * FROM usage_budget_arm_states").all()).toEqual([
+        {
+          id: "budget-arm",
+          budget_id: "budget-1",
+          action: "soft-alert",
+          threshold_value: 1000,
+          armed: 0,
+          last_fired_at: 90,
+          updated_at: 100,
+        },
+      ])
+      expect(
+        sqlite.prepare("SELECT id, provider_id, account_tag FROM usage_alert_arm_states").all(),
+      ).toEqual([{ id: "provider-arm", provider_id: "codex", account_tag: "account-1" }])
     } finally {
       sqlite.close()
     }

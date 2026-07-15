@@ -240,6 +240,12 @@ export function ensureOperationWorkspaceInTransaction(
   const orchestrationId = stableOperationOrchestrationId(source.task_id)
   const existing = findOperationWorkspace(database, source.task_id, orchestrationId)
   if (existing) return toEnsureResult(existing, false)
+  if (findOperationWorkspaceDeletionIntent(database, source.task_id)) {
+    throw new SavedWorkspaceOperationError(
+      "conflict",
+      "Operation workspace was explicitly deleted; regenerate it before reuse.",
+    )
+  }
 
   const workspaceId = stableOperationWorkspaceId(source.task_id)
   const layout = createOperationWorkspaceLayout({

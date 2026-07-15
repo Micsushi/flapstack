@@ -40,12 +40,9 @@ export function evaluateMcpGate(input: {
   }
 
   if (input.tier === 3) {
-    if (mode === "full-access") {
-      return allowed("Full-access mode auto-approves Tier 3 app-control tools.")
-    }
     return input.approved
       ? allowed("Tier 3 operation was explicitly approved.")
-      : approvalRequired("Tier 3 app-control tools require approval outside full-access mode.")
+      : approvalRequired("Tier 3 app-control tools always require explicit approval.")
   }
 
   if (mode === "ask-before-edits") {

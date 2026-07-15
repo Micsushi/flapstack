@@ -279,6 +279,10 @@ describe("unified extension manager accessibility contract", () => {
 
   it("exposes labelled search, filters, inventory, live counts, and roving list selection", () => {
     expect(source).toContain('aria-label="Search extensions"')
+    expect(source).toContain('aria-label="Provider filter"')
+    expect(source).toContain('aria-label="Extension kind"')
+    expect(source).toContain('aria-label="Refresh provider extensions"')
+    expect(source).toContain('aria-label="Delete extension"')
     expect(source).toContain('role="listbox"')
     expect(source).toContain('role="option"')
     expect(source).toContain("aria-selected={state.selectedId === item.id}")

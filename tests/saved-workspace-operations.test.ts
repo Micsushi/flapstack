@@ -391,6 +391,9 @@ describe("orchestration-owned saved workspaces", () => {
       workspaceIds: [],
     })
     expect(() => service.get(ensured.workspaceId)).toThrow(/not found/i)
+    expect(() => ensureOperationWorkspace(databasePath, "task-1")).toThrow(
+      /explicitly deleted; regenerate/i,
+    )
 
     const database = new Database(databasePath)
     const deletionIntent = database

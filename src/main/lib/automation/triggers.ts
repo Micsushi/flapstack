@@ -136,12 +136,13 @@ export class AutomationTriggerService {
            JOIN automations a ON a.id = t.automation_id
            WHERE t.type = 'run-complete' AND t.enabled = 1
              AND a.enabled = 1 AND a.state = 'active' AND a.approval_state = 'approved'
+             AND t.created_at <= ?
              AND ((t.run_project_id IS NOT NULL AND t.run_project_id = ?)
                OR (t.run_task_id IS NOT NULL AND t.run_task_id = ?)
                OR (t.run_chat_id IS NOT NULL AND t.run_chat_id = ?))
            ORDER BY t.id`,
           )
-          .all(run.project_id, run.task_id, run.chat_id) as Row[]
+          .all(completedAt, run.project_id, run.task_id, run.chat_id) as Row[]
 
         const created: AutomationOccurrenceReference[] = []
         const duplicates: AutomationOccurrenceReference[] = []

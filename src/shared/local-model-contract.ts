@@ -329,6 +329,17 @@ export function resolveLocalModelToolTiers(
   })
 }
 
+export function findUnavailableLocalModelTier<T extends { tier: string; available: boolean }>(
+  required: readonly string[],
+  tiers: readonly T[],
+): { requiredTier: string; state: T | null } | null {
+  for (const requiredTier of required) {
+    const state = tiers.find((candidate) => candidate.tier === requiredTier) ?? null
+    if (!state?.available) return { requiredTier, state }
+  }
+  return null
+}
+
 function isTierAllowedByPermission(
   declaration: LocalModelToolTierDeclaration,
   mode: RunPermissionMode,

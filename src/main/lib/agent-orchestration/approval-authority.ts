@@ -1,13 +1,9 @@
-import { randomUUID } from "node:crypto"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import type * as schema from "../db/schema"
-import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
-import { createSqliteMcpApprovalCoordinator } from "../mcp-control/approval-coordinator"
 import {
-  buildMcpApprovalContextHash,
-  McpApprovalLifecycle,
-} from "../mcp-control/approval-lifecycle"
-import { publishProductMcpInvalidation } from "../mcp-control/invalidation-bridge"
+  authorityApprovalContextHash,
+  requestAuthorityApproval,
+} from "../mcp-control/authority-approval"
 
 export const POLICY_APPROVAL_TOOL = "orchestration.policy.relax"
 export const TEMPLATE_LAUNCH_APPROVAL_TOOL = "orchestration.template.launch"
@@ -26,69 +22,10 @@ export async function requestOrchestrationAuthorityApproval(
     authority: unknown
   },
 ): Promise<string> {
-  const publish = () => {
-    void publishProductMcpInvalidation({
-      version: 1,
-      source: "product-mcp",
-      domains: ["approvals", "audit"],
-    })
-  }
-  const lifecycle = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(database, publish),
-    publish,
-  )
-  const invocationId = randomUUID()
-  const caller = {
-    chatId: input.callerChatId,
-    runId: input.callerRunId ?? undefined,
-  }
-  appendMcpAuditRecord(database, {
-    invocationId,
-    status: "approval-required",
-    caller,
-    toolName: input.toolName,
-    tier: 3,
-    input: input.authority,
+  return requestAuthorityApproval(database, {
+    ...input,
+    errorLabel: "Orchestration authority",
   })
-  try {
-    const wait = lifecycle.request({
-      id: invocationId,
-      invocationId,
-      caller,
-      toolName: input.toolName,
-      tier: 3,
-      timeoutMs: 60_000,
-      input: input.authority,
-    })
-    const decision = await wait.decision
-    if (decision.state !== "approved") {
-      appendMcpAuditRecord(database, {
-        invocationId,
-        status: decision.state === "denied" ? "denied" : "failed",
-        caller,
-        toolName: input.toolName,
-        tier: 3,
-        input: input.authority,
-        result: { decision },
-      })
-      throw new Error(`Orchestration authority approval ${decision.state}.`)
-    }
-    const auditId = randomUUID()
-    appendMcpAuditRecord(database, {
-      id: auditId,
-      invocationId,
-      status: "completed",
-      caller,
-      toolName: input.toolName,
-      tier: 3,
-      input: input.authority,
-      result: { ok: true, decision },
-    })
-    publish()
-    return auditId
-  } finally {
-    lifecycle.shutdown()
-  }
 }
 
 export function approvalContextHash(input: {
@@ -97,10 +34,5 @@ export function approvalContextHash(input: {
   callerRunId?: string | null
   authority: unknown
 }): string {
-  return buildMcpApprovalContextHash({
-    caller: { chatId: input.callerChatId, runId: input.callerRunId ?? undefined },
-    toolName: input.toolName,
-    tier: 3,
-    input: input.authority,
-  })
+  return authorityApprovalContextHash(input)
 }

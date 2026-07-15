@@ -1,5 +1,8 @@
 import { z } from "zod"
-import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
+import {
+  customPermissionCapabilitiesSchema,
+  refineCustomPermissionMode,
+} from "./permission-capabilities"
 import { AGENT_HARNESSES } from "./harness-types"
 import { agentRuntimePreferenceSchema } from "./agent-runtime"
 import {
@@ -133,23 +136,7 @@ export const orchestrationAgentDefinitionSchema = z
     requiredLocalToolTiers: z.array(orchestrationLocalToolTierSchema).max(5).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     permissionMode: orchestrationPermissionModeSchema,
-    customPermissions: z
-      .object({
-        schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
-        projectWrite: z.boolean(),
-        shell: z.boolean(),
-        network: z.boolean(),
-        git: z.boolean(),
-        browser: z.boolean(),
-        secrets: z.boolean(),
-        subagents: z.boolean(),
-        thirdPartyMcp: z.boolean(),
-        productMcpRead: z.boolean(),
-        productMcpWrite: z.boolean(),
-        productMcpTier3: z.boolean(),
-      })
-      .strict()
-      .optional(),
+    customPermissions: customPermissionCapabilitiesSchema.optional(),
     worktreeStrategy: orchestrationWorktreeStrategySchema,
     worktreePath: z.string().trim().min(1).max(4_096).optional(),
     branch: z.string().trim().min(1).max(512).optional(),
@@ -158,20 +145,7 @@ export const orchestrationAgentDefinitionSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.permissionMode === "custom" && !value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom permission mode requires explicit capabilities.",
-      })
-    }
-    if (value.permissionMode !== "custom" && value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom capabilities require custom permission mode.",
-      })
-    }
+    refineCustomPermissionMode(value, context)
     if (value.worktreeStrategy === "existing" && !value.worktreePath) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

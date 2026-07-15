@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
 import { STARTER_AGENT_PROFILES } from "./starter-catalog"
+import { epochSeconds as epoch } from "./values"
 
 type DatabaseLike = Database.Database | object
 
@@ -66,8 +67,4 @@ function rawClient(database: DatabaseLike): Database.Database {
     return database as Database.Database
   }
   return (database as unknown as { $client: Database.Database }).$client
-}
-
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
 }

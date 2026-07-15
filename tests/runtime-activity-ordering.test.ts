@@ -46,6 +46,22 @@ describe("Runtime activity ordering, pagination, replay, and state", () => {
     ).toBe(true)
   })
 
+  it("preserves legacy history before durable activity and removes exact duplicate text", () => {
+    const durable = activity("agent-text", { text: "New answer" }, { eventId: "new-answer" })
+    const sources = selectRuntimeActivitySource(
+      [durable],
+      [
+        { role: "user", parts: [{ type: "text", text: "Old question" }] },
+        { role: "assistant", parts: [{ type: "text", text: "Old answer" }] },
+        { role: "assistant", parts: [{ type: "text", text: "New answer" }] },
+      ],
+    )
+
+    expect(
+      sources.map((source) => ("eventId" in source ? source.eventId : source.projectionId)),
+    ).toEqual(["legacy:0:0", "legacy:1:0", "new-answer"])
+  })
+
   it("preserves selection while invalidation marks the replay stale", () => {
     let state = createRuntimeActivityTimelineState({
       events: [activity("status", { message: "live" }, { eventId: "stable" })],

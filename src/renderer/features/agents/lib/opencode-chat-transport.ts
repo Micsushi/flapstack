@@ -9,7 +9,11 @@ import { trpcClient } from "../../../lib/trpc"
 import { pendingAuthRetryMessageAtom, subChatReasoningEnabledAtomFamily } from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
-import { handleAgentInputChunk } from "./agent-input-transport"
+import {
+  bindAgentChatAbort,
+  createAgentChatSubscriptionObserver,
+  extractChatMessageText,
+} from "./subscription-chat-transport"
 
 type Provider = "openrouter" | "nanogpt"
 type UIMessageChunk = any
@@ -136,7 +140,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
     abortSignal?: AbortSignal
   }): Promise<ReadableStream<UIMessageChunk>> {
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
-    const prompt = this.extractText(lastUser)
+    const prompt = extractChatMessageText(lastUser)
     const images = this.extractImages(lastUser)
     const lastAssistant = [...options.messages]
       .reverse()
@@ -162,12 +166,10 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
             ...(images.length ? { images } : {}),
             ...(sessionId ? { sessionId } : {}),
           },
-          {
-            onData: (chunk: UIMessageChunk) => {
-              handleAgentInputChunk(chunk, {
-                chatId: this.config.chatId,
-                subChatId: this.config.subChatId,
-              })
+          createAgentChatSubscriptionObserver(
+            controller,
+            { chatId: this.config.chatId, subChatId: this.config.subChatId },
+            (chunk: UIMessageChunk) => {
               if (chunk.type === "opencode-permission-request") {
                 const command = typeof chunk.command === "string" ? chunk.command : undefined
                 const patterns = Array.isArray(chunk.patterns)
@@ -278,7 +280,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
                     ),
                   { duration: Infinity },
                 )
-                return
+                return null
               }
               const normalizedChunk = normalizeOpencodeTransportChunk(chunk)
               if (normalizedChunk.type === "error") {
@@ -304,42 +306,15 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
                   )
                 }
               }
-              try {
-                controller.enqueue(normalizedChunk)
-              } catch {
-                // Stream already closed.
-              }
-              if (chunk.type === "finish") {
-                try {
-                  controller.close()
-                } catch {
-                  // Stream already closed.
-                }
-              }
+              return normalizedChunk
             },
-            onError: (error) => controller.error(error),
-            onComplete: () => {
-              try {
-                controller.close()
-              } catch {
-                // Stream already closed.
-              }
-            },
-          },
+          ),
         )
-
-        options.abortSignal?.addEventListener(
-          "abort",
-          () => {
-            subscription.unsubscribe()
-            void trpcClient.opencode.cancel.mutate({ subChatId: this.config.subChatId, runId })
-            try {
-              controller.close()
-            } catch {
-              // Stream already closed.
-            }
-          },
-          { once: true },
+        bindAgentChatAbort(
+          options.abortSignal,
+          subscription,
+          () => trpcClient.opencode.cancel.mutate({ subChatId: this.config.subChatId, runId }),
+          controller,
         )
       },
     })
@@ -349,20 +324,6 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
     // OpenCode subscriptions are tied to the renderer connection. A fresh
     // follow-up message resumes the persisted sidecar session instead.
     return null
-  }
-
-  private extractText(message: UIMessage | undefined): string {
-    if (!message) return ""
-    return message.parts
-      .flatMap((part: any) => {
-        if (part.type === "text") return [part.text || ""]
-        if (part.type === "file-content") {
-          const name = part.filePath?.split("/").pop() || part.filePath || "file"
-          return [`\n--- ${name} ---\n${part.content || ""}`]
-        }
-        return []
-      })
-      .join("\n")
   }
 
   private extractImages(message: UIMessage | undefined) {

@@ -29,6 +29,7 @@ import { createLazyAgentProfileWorkflowMaterializerPort } from "./lib/agent-prof
 import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
 import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
 import { AutomationScheduler } from "./lib/automation/scheduler"
+import { AutomationTriggerRuntime } from "./lib/automation/trigger-runtime"
 import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
@@ -99,6 +100,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 let automationScheduler: AutomationScheduler | null = null
+let automationTriggerRuntime: AutomationTriggerRuntime | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -980,6 +982,17 @@ if (gotTheLock) {
               },
             },
             {
+              name: "Automation event triggers",
+              run: async () => {
+                automationTriggerRuntime = new AutomationTriggerRuntime({
+                  databasePath: getDatabasePath(),
+                  onError: (error) =>
+                    console.error("[App] Automation trigger runtime failed:", error),
+                })
+                await automationTriggerRuntime.start()
+              },
+            },
+            {
               name: "Automation scheduler",
               run: async () => {
                 automationScheduler = new AutomationScheduler({
@@ -1142,6 +1155,8 @@ if (gotTheLock) {
         persistProviderSessions: abortAndWaitForAgentSessions,
         cancelPendingOAuth: () => cancelAllPendingOAuth(),
         stopAutomationScheduler: async () => {
+          await automationTriggerRuntime?.stop()
+          automationTriggerRuntime = null
           await automationScheduler?.stop()
           automationScheduler = null
         },

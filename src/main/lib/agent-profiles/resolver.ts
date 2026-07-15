@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "../agent-runtime/compatibility"
 import {
   agentProfileResolveInputSchema,
@@ -20,6 +20,12 @@ import {
   disabledCustomPermissions,
   type CustomPermissionCapabilities,
 } from "../../../shared/permission-capabilities"
+import {
+  canonicalJson,
+  epochSeconds as epoch,
+  optionalString as stringOrNull,
+  sha256Text as sha256,
+} from "./values"
 
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
@@ -600,30 +606,7 @@ function assign<T extends object, K extends keyof T>(target: T, key: K, value: T
   target[key] = structuredClone(value)
 }
 
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
-}
-
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
-}
-
 function rawClient(database: DatabaseLike): Sqlite {
   if ("prepare" in database && typeof database.prepare === "function") return database as Sqlite
   return (database as unknown as { $client: Sqlite }).$client
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" ? value : null
-}
-
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
 }

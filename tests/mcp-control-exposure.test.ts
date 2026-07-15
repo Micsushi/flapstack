@@ -39,7 +39,7 @@ afterEach(() => {
 })
 
 describe("Flapstack MCP per-chat exposure", () => {
-  it("enables existing supported chats during the default-on migration", () => {
+  it("preserves existing exposure choices during the default-on migration", () => {
     const originalProviders = readFileSync(
       resolve(process.cwd(), "drizzle/0024_mcp_exposure_default_on.sql"),
       "utf8",
@@ -48,10 +48,10 @@ describe("Flapstack MCP per-chat exposure", () => {
       resolve(process.cwd(), "drizzle/0025_all_provider_mcp_default_on.sql"),
       "utf8",
     )
-    expect(originalProviders).toContain("WHERE `harness` IN ('codex', 'claude', 'claude-code')")
-    expect(additionalProviders).toContain(
-      "WHERE `harness` IN ('cursor-agent', 'openrouter', 'nanogpt')",
-    )
+    expect(originalProviders).not.toContain("UPDATE `chats`")
+    expect(additionalProviders).not.toContain("UPDATE `chats`")
+    expect(originalProviders).toContain("SELECT 1")
+    expect(additionalProviders).toContain("SELECT 1")
     expect(`${originalProviders}\n${additionalProviders}`).not.toContain("DROP TABLE")
   })
 

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { formatVisiblePartForHandoff } from "../../../shared/chat-visible-content"
@@ -24,6 +24,12 @@ import {
   intersectAgentProfilePermissions,
 } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
+import {
+  canonicalJson,
+  epochSeconds as epoch,
+  optionalString as stringOrNull,
+  sha256Text,
+} from "./values"
 
 type Row = Record<string, unknown>
 
@@ -867,18 +873,7 @@ function standaloneRequestFingerprint(
 }
 
 function requestFingerprint(value: unknown) {
-  return createHash("sha256").update(canonicalJson(value)).digest("hex")
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
+  return sha256Text(canonicalJson(value))
 }
 
 function buildContext(
@@ -1029,10 +1024,6 @@ function isConstraintError(error: unknown) {
   return error instanceof Error && /constraint|unique/i.test(error.message)
 }
 
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" ? value : null
-}
-
 function parseIds(value: unknown): string[] {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value
@@ -1052,10 +1043,6 @@ function parseObject(value: unknown): unknown {
   } catch {
     return null
   }
-}
-
-function epoch() {
-  return Math.floor(Date.now() / 1_000)
 }
 
 function timestamp(value: unknown) {

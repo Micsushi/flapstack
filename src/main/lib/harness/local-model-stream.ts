@@ -277,10 +277,16 @@ export class LocalModelChatService {
 
     const timeoutMs = boundedPositive(input.timeoutMs, DEFAULT_STREAM_TIMEOUT_MS, 100, 600_000)
     let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const refreshInactivityTimeout = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, timeoutMs)
+      timer.unref?.()
+    }
+    refreshInactivityTimeout()
 
     let began = false
     let terminal = false
@@ -451,12 +457,10 @@ export class LocalModelChatService {
         provider,
         executor: toolExecutor,
         signal: controller.signal,
-        limits: {
-          ...input.toolLoopLimits,
-          maxWallTimeMs: Math.min(input.toolLoopLimits?.maxWallTimeMs ?? timeoutMs, timeoutMs),
-        },
+        limits: input.toolLoopLimits,
         now: this.dependencies.now,
       })) {
+        refreshInactivityTimeout()
         if (event.kind === "text-delta") {
           if (!textStarted) {
             yield { type: "text-start", id: LOCAL_TEXT_PART_ID }
@@ -567,7 +571,7 @@ export class LocalModelChatService {
       if (!cancelled) yield { type: "error", errorText: streamError.message }
       yield { type: "finish" }
     } finally {
-      clearTimeout(timer)
+      if (timer) clearTimeout(timer)
       approvalSession?.shutdown()
       execApprovalSession?.shutdown()
       if (!terminal && began) {

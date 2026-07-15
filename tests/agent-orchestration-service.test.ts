@@ -781,7 +781,7 @@ describe("durable agent task orchestration", () => {
     ).toEqual({ worktree_path: realpathSync(featurePath) })
   })
 
-  it("auto-approves full-access MCP orchestration with audit and trusted caller identity", async () => {
+  it("requires approval for full-access MCP orchestration with audit and trusted caller identity", async () => {
     const approvals = new McpApprovalLifecycle()
     const statuses: string[] = []
     const resultPromise = invokeMcpControlTool(
@@ -796,12 +796,14 @@ describe("durable agent task orchestration", () => {
         audit: { append: (record) => statuses.push(record.status) },
       },
     )
+    expect(approvals.listPending()).toHaveLength(1)
+    approvals.approve("orchestration-approval")
     await expect(resultPromise).resolves.toMatchObject({
       ok: true,
       data: { aggregate: { active: 2 } },
     })
     expect(approvals.listPending()).toEqual([])
-    expect(statuses).toEqual(["allowed", "dispatch-started", "completed"])
+    expect(statuses).toEqual(["approval-required", "allowed", "dispatch-started", "completed"])
 
     sqlite
       .prepare(

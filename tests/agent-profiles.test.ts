@@ -72,7 +72,7 @@ describe("0038 Agent Profile migration", () => {
     const journal = JSON.parse(readFileSync(resolve(migrations, "meta/_journal.json"), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    expect(journal.entries.at(-1)).toEqual(
+    expect(journal.entries.find((entry) => entry.idx === 38)).toEqual(
       expect.objectContaining({ idx: 38, tag: "0038_agent_profiles" }),
     )
     expect(readFileSync(resolve(migrations, "0038_agent_profiles.sql"), "utf8")).toContain(

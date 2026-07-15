@@ -18,6 +18,14 @@ import { appendMcpAuditRecord } from "../mcp-control/audit-storage"
 import { queryUsageInsights } from "./insights"
 import { queryUsageRollups, type UsageRollupValue } from "./rollups"
 import type { UsageDb } from "./store"
+import {
+  epochMs as parseEpochMs,
+  finiteNumber,
+  normalizeLocal,
+  stringOrNull,
+  zonedLocalToUtc,
+  zonedParts,
+} from "./time"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -658,15 +666,11 @@ function claimBudgetAlert(
   const transaction = sqlite.transaction(() => {
     const row = sqlite
       .prepare(
-        `SELECT armed, last_fired_at FROM usage_alert_arm_states
-         WHERE provider_id = ? AND account_tag = ? AND alert_type = ? AND threshold_value = ?`,
+        `SELECT armed, last_fired_at FROM usage_budget_arm_states
+         WHERE budget_id = ? AND action = ? AND threshold_value = ?`,
       )
-      .get(
-        ALERT_PROVIDER_ID,
-        evaluation.policy.id,
-        evaluation.policy.action,
-        evaluation.thresholdValue,
-      ) as Row | undefined
+      .get(evaluation.policy.id, evaluation.policy.action, evaluation.thresholdValue) as
+      Row | undefined
     const reset =
       row &&
       evaluation.window.fromMs > 0 &&
@@ -675,13 +679,12 @@ function claimBudgetAlert(
     if (!row) {
       sqlite
         .prepare(
-          `INSERT INTO usage_alert_arm_states
-           (id, provider_id, account_tag, alert_type, threshold_value, armed, last_fired_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          `INSERT INTO usage_budget_arm_states
+           (id, budget_id, action, threshold_value, armed, last_fired_at, updated_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)`,
         )
         .run(
           randomUUID(),
-          ALERT_PROVIDER_ID,
           evaluation.policy.id,
           evaluation.policy.action,
           evaluation.thresholdValue,
@@ -691,13 +694,12 @@ function claimBudgetAlert(
     } else {
       sqlite
         .prepare(
-          `UPDATE usage_alert_arm_states SET armed = 0, last_fired_at = ?, updated_at = ?
-           WHERE provider_id = ? AND account_tag = ? AND alert_type = ? AND threshold_value = ?`,
+          `UPDATE usage_budget_arm_states SET armed = 0, last_fired_at = ?, updated_at = ?
+           WHERE budget_id = ? AND action = ? AND threshold_value = ?`,
         )
         .run(
           epochSeconds(nowMs),
           epochSeconds(nowMs),
-          ALERT_PROVIDER_ID,
           evaluation.policy.id,
           evaluation.policy.action,
           evaluation.thresholdValue,
@@ -717,13 +719,12 @@ function rearmBudget(sqlite: Sqlite, evaluation: UsageBudgetEvaluation, nowMs: n
   }
   const result = sqlite
     .prepare(
-      `UPDATE usage_alert_arm_states SET armed = 1, last_fired_at = NULL, updated_at = ?
-       WHERE provider_id = ? AND account_tag = ? AND alert_type = ? AND threshold_value = ?
+      `UPDATE usage_budget_arm_states SET armed = 1, last_fired_at = NULL, updated_at = ?
+       WHERE budget_id = ? AND action = ? AND threshold_value = ?
          AND armed = 0`,
     )
     .run(
       epochSeconds(nowMs),
-      ALERT_PROVIDER_ID,
       evaluation.policy.id,
       evaluation.policy.action,
       evaluation.thresholdValue,
@@ -927,9 +928,7 @@ function requireUsageBudget(db: UsageDb, id: string): UsageBudgetPolicyDto {
 }
 
 function clearBudgetArmState(sqlite: Sqlite, id: string): void {
-  sqlite
-    .prepare("DELETE FROM usage_alert_arm_states WHERE provider_id = ? AND account_tag = ?")
-    .run(ALERT_PROVIDER_ID, id)
+  sqlite.prepare("DELETE FROM usage_budget_arm_states WHERE budget_id = ?").run(id)
 }
 
 function appendBudgetAudit(
@@ -1029,69 +1028,5 @@ function epochSeconds(ms: number): number {
 }
 
 function epochMs(value: unknown): number | null {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value === "string") {
-    const parsed = Date.parse(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return null
-  return value < 10_000_000_000 ? value * 1_000 : value
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
-}
-
-function zonedParts(timestampMs: number, timezone: string) {
-  const values = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA-u-hc-h23", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(timestampMs)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, Number(part.value)]),
-  )
-  return {
-    year: values.year,
-    month: values.month,
-    day: values.day,
-    hour: values.hour,
-  }
-}
-
-function zonedLocalToUtc(
-  local: { year: number; month: number; day: number; hour: number },
-  timezone: string,
-): number {
-  const target = Date.UTC(local.year, local.month - 1, local.day, local.hour)
-  let guess = target
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const actual = zonedParts(guess, timezone)
-    const actualLocal = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour)
-    const adjustment = target - actualLocal
-    if (adjustment === 0) return guess
-    guess += adjustment
-  }
-  return guess
-}
-
-function normalizeLocal(local: { year: number; month: number; day: number; hour: number }) {
-  const date = new Date(Date.UTC(local.year, local.month - 1, local.day, local.hour))
-  return {
-    year: date.getUTCFullYear(),
-    month: date.getUTCMonth() + 1,
-    day: date.getUTCDate(),
-    hour: date.getUTCHours(),
-  }
+  return parseEpochMs(value, true)
 }

@@ -1,26 +1,13 @@
 import { z } from "zod"
-import { CUSTOM_PERMISSION_SCHEMA_VERSION, permissionModes } from "../permissions"
+import { permissionModes } from "../permissions"
 import { AGENT_HARNESSES } from "../../../shared/harness-types"
+import {
+  customPermissionCapabilitiesSchema,
+  refineCustomPermissionMode,
+} from "../../../shared/permission-capabilities"
 
 const identifierSchema = z.string().trim().min(1).max(200)
 const supportedThreadSpawnHarnessSchema = z.enum(AGENT_HARNESSES)
-const customPermissionsSchema = z
-  .object({
-    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
-    projectWrite: z.boolean(),
-    shell: z.boolean(),
-    network: z.boolean(),
-    git: z.boolean(),
-    browser: z.boolean(),
-    secrets: z.boolean(),
-    subagents: z.boolean(),
-    thirdPartyMcp: z.boolean(),
-    productMcpRead: z.boolean(),
-    productMcpWrite: z.boolean(),
-    productMcpTier3: z.boolean(),
-  })
-  .strict()
-
 export const threadSpawnScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("global") }).strict(),
   z.object({ kind: z.literal("project"), projectId: identifierSchema }).strict(),
@@ -32,24 +19,14 @@ export const threadSpawnScopeSchema = z.discriminatedUnion("kind", [
 export const threadSpawnPermissionSchema = z
   .object({
     mode: z.enum(permissionModes),
-    customPermissions: customPermissionsSchema.optional(),
+    customPermissions: customPermissionCapabilitiesSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.mode === "custom" && !value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom permission mode requires explicit capability toggles.",
-      })
-    }
-    if (value.mode !== "custom" && value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Capability toggles are only valid with custom permission mode.",
-      })
-    }
+    refineCustomPermissionMode(
+      { permissionMode: value.mode, customPermissions: value.customPermissions },
+      context,
+    )
   })
 
 export const threadSpawnWorktreeSchema = z.discriminatedUnion("strategy", [

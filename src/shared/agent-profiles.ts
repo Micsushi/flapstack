@@ -1,6 +1,9 @@
 import { z } from "zod"
 import { agentRuntimePreferenceSchema } from "./agent-runtime"
-import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
+import {
+  customPermissionCapabilitiesSchema,
+  refineCustomPermissionMode,
+} from "./permission-capabilities"
 
 const idSchema = z.string().trim().min(1).max(200)
 const boundedText = (max: number) => z.string().trim().max(max)
@@ -44,23 +47,6 @@ export const agentProfileWorktreeStrategySchema = z.enum([
   "attached-branch",
   "none",
 ])
-const agentProfileCustomPermissionsSchema = z
-  .object({
-    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
-    projectWrite: z.boolean(),
-    shell: z.boolean(),
-    network: z.boolean(),
-    git: z.boolean(),
-    browser: z.boolean(),
-    secrets: z.boolean(),
-    subagents: z.boolean(),
-    thirdPartyMcp: z.boolean(),
-    productMcpRead: z.boolean(),
-    productMcpWrite: z.boolean(),
-    productMcpTier3: z.boolean(),
-  })
-  .strict()
-
 export const agentCapabilityProfileSchema = z
   .object({
     schemaVersion: z.literal(AGENT_PROFILE_SCHEMA_VERSION),
@@ -73,7 +59,7 @@ export const agentCapabilityProfileSchema = z
     tools: z.array(idSchema).max(128),
     skills: z.array(idSchema).max(128),
     permissionMode: agentProfilePermissionModeSchema,
-    customPermissions: agentProfileCustomPermissionsSchema.nullable(),
+    customPermissions: customPermissionCapabilitiesSchema.nullable(),
     memoryPolicy: z.object({ mode: z.literal("none") }).strict(),
     worktreeStrategy: agentProfileWorktreeStrategySchema,
     allowedDescendantProfileIds: z.array(idSchema).max(64),
@@ -81,20 +67,7 @@ export const agentCapabilityProfileSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.permissionMode === "custom" && !value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom permission mode requires explicit capabilities.",
-      })
-    }
-    if (value.permissionMode !== "custom" && value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom capabilities require custom permission mode.",
-      })
-    }
+    refineCustomPermissionMode(value, context)
     for (const field of ["tools", "skills", "allowedDescendantProfileIds"] as const) {
       if (new Set(value[field]).size !== value[field].length) {
         context.addIssue({
@@ -239,7 +212,7 @@ export const agentProfileBoundedOverrideSchema = z
 export const agentProfileLaunchPolicySchema = z
   .object({
     permissionMode: agentProfilePermissionModeSchema,
-    customPermissions: agentProfileCustomPermissionsSchema.nullable(),
+    customPermissions: customPermissionCapabilitiesSchema.nullable(),
     allowedTools: z.array(idSchema).max(128).nullable(),
     allowedSkills: z.array(idSchema).max(128).nullable(),
     allowedModels: z.array(z.string().trim().min(1).max(200)).max(128).nullable(),

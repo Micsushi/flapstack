@@ -74,35 +74,7 @@ export function createOrchestrationOperationsService(databasePath: string) {
     getPolicy(taskId: string) {
       const db = open()
       try {
-        const row = db
-          .prepare(
-            "SELECT version, policy_json, change_kind, approval_audit_id, created_at FROM orchestration_policy_versions WHERE task_id = ? ORDER BY version DESC LIMIT 1",
-          )
-          .get(taskId) as Row | undefined
-        if (row) return policyRow(taskId, row)
-        const task = db
-          .prepare(
-            "SELECT max_parallel_agents, max_depth, stop_conditions FROM task_orchestrations WHERE task_id = ?",
-          )
-          .get(taskId) as Row | undefined
-        if (!task)
-          throw new OrchestrationOperationsError("not-found", "Orchestration does not exist.")
-        const stop = parseObject(task.stop_conditions)
-        return {
-          taskId,
-          version: 1,
-          policy: {
-            maxParallelAgents: Number(task.max_parallel_agents),
-            maxDepth: Number(task.max_depth),
-            maxTotalAgents: 256,
-            maxTotalTokens: numberOrNull(stop.maxTotalTokens),
-            maxCostUsdMicros: numberOrNull(stop.maxCostUsdMicros),
-            allowSpawn: true,
-          } satisfies OrchestrationPolicy,
-          changeKind: "initial" as const,
-          approvalAuditId: null,
-          createdAt: 0,
-        }
+        return readPolicy(db, taskId)
       } finally {
         db.close()
       }

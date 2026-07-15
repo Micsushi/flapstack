@@ -23,6 +23,11 @@ vi.mock("../src/main/lib/harness/opencode-sidecar/models", async (importOriginal
   refreshProviderModels: mocks.refreshProviderModels,
 }))
 
+vi.mock("../src/main/lib/mcp-control/exposure", () => ({
+  getChatMcpExposure: () => false,
+  registerActiveProductMcpSession: () => () => undefined,
+}))
+
 import {
   hasActiveOpencodeStreams,
   startOpencodeDevRun,

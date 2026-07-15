@@ -11,6 +11,12 @@ import {
   type BoundedActivityMetadata,
 } from "../../../../shared/agent-activity"
 import type { CodexProtocolNotification } from "./protocol-client"
+import {
+  eventArray as array,
+  eventFiniteNumber as finite,
+  eventRecord as record,
+  eventString as string,
+} from "../event-values"
 
 const PROVIDER = "codex-app-server"
 const MAX_DISPLAY_TEXT = 24_000
@@ -795,27 +801,9 @@ function safeErrorDetail(value: unknown): string | null {
   )
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function array(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
-
-function string(value: unknown): string | null {
-  return typeof value === "string" ? value : null
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
-}
-
 function finiteOrNull(value: unknown): number | null {
   const result = finite(value)
-  return result !== undefined && result >= 0 ? result : null
+  return result !== null && result >= 0 ? result : null
 }
 
 function integerOrNull(value: unknown): number | null {

@@ -54,7 +54,7 @@ afterEach(() => {
 })
 
 describe("MCP cross-harness thread spawn service", () => {
-  it("auto-approves full-access Tier 3 dispatch with durable audit", async () => {
+  it("requires approval for full-access Tier 3 dispatch with durable audit", async () => {
     const approvals = new McpApprovalLifecycle()
     const statuses: string[] = []
     const result = invokeMcpControlTool(
@@ -74,12 +74,14 @@ describe("MCP cross-harness thread spawn service", () => {
         audit: { append: (record) => statuses.push(record.status) },
       },
     )
+    expect(approvals.listPending()).toHaveLength(1)
+    approvals.approve("spawn-approval")
     await expect(result).resolves.toMatchObject({
       ok: true,
       data: { launch: { status: "not-requested" } },
     })
     expect(approvals.listPending()).toEqual([])
-    expect(statuses).toEqual(["allowed", "dispatch-started", "completed"])
+    expect(statuses).toEqual(["approval-required", "allowed", "dispatch-started", "completed"])
     approvals.shutdown()
   })
 

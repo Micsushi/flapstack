@@ -1,6 +1,9 @@
 import { z } from "zod"
 import { AGENT_HARNESSES } from "./harness-types"
-import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
+import {
+  customPermissionCapabilitiesSchema,
+  refineCustomPermissionMode,
+} from "./permission-capabilities"
 
 const idSchema = z.string().trim().min(1).max(200)
 const pathSchema = z.string().trim().min(1).max(4_096)
@@ -153,23 +156,6 @@ export const automationTriggerSchema = z.union([
     .strict(),
 ])
 
-const customPermissionCapabilitiesSchema = z
-  .object({
-    schemaVersion: z.literal(CUSTOM_PERMISSION_SCHEMA_VERSION),
-    projectWrite: z.boolean(),
-    shell: z.boolean(),
-    network: z.boolean(),
-    git: z.boolean(),
-    browser: z.boolean(),
-    secrets: z.boolean(),
-    subagents: z.boolean(),
-    thirdPartyMcp: z.boolean(),
-    productMcpRead: z.boolean(),
-    productMcpWrite: z.boolean(),
-    productMcpTier3: z.boolean(),
-  })
-  .strict()
-
 export const automationRunConfigSchema = z
   .object({
     prompt: z.string().trim().min(1).max(100_000),
@@ -188,20 +174,7 @@ export const automationRunConfigSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.permissionMode === "custom" && !value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom permission mode requires explicit capabilities.",
-      })
-    }
-    if (value.permissionMode !== "custom" && value.customPermissions) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["customPermissions"],
-        message: "Custom capabilities require custom permission mode.",
-      })
-    }
+    refineCustomPermissionMode(value, context)
     if (value.worktreeStrategy === "existing" && !value.worktreePath) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

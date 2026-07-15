@@ -10,6 +10,7 @@ import type {
 import { usageInsightQuerySchema } from "../../../shared/advanced-usage"
 import { queryUsageRollups, type UsageRollupMetrics, type UsageRollupValue } from "./rollups"
 import type { UsageDb } from "./store"
+import { epochMs, finiteNumber, stringOrNull } from "./time"
 
 const DAY_MS = 24 * 60 * 60 * 1_000
 
@@ -600,20 +601,6 @@ function quality(value: unknown): InsightFact["quality"] {
   return value === "exact" || value === "provider-reported" || value === "estimated"
     ? value
     : "unknown"
-}
-
-function epochMs(value: unknown): number | null {
-  if (value instanceof Date) return value.getTime()
-  if (typeof value !== "number" || !Number.isFinite(value)) return null
-  return value < 10_000_000_000 ? value * 1_000 : value
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 function estimateRange(value: number, uncertainty: number): { lower: number; upper: number } {
