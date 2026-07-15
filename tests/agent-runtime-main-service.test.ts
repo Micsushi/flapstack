@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -20,6 +20,11 @@ import type {
 import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import type { AgentActivityAppend } from "../src/shared/agent-activity"
 import { testCoordinationEngineSnapshotSqlValues } from "./coordination-engine-test-db"
+import {
+  scaffoldProjectVault,
+  writeProjectVaultSection,
+} from "../src/main/lib/project-vaults/storage"
+import { updateProjectVaultContextSelection } from "../src/main/lib/project-vaults/run-context"
 
 vi.mock("../src/main/lib/trpc/routers", () => ({
   createAppRouter: () => ({ createCaller: () => ({}) }),
@@ -95,6 +100,75 @@ describe("process-wide Runtime launch service", () => {
     )
     await expect(service.reconcileRun("durable")).resolves.toBe("completed")
     expect(value.reconcile).not.toHaveBeenCalled()
+  })
+
+  it("loads only selected project vault context into a direct Runtime prompt", async () => {
+    seedDirectRun("vault-context")
+    const projectRoot = join(directory, "project")
+    const appDataRoot = join(directory, "app-data")
+    mkdirSync(projectRoot)
+    mkdirSync(appDataRoot)
+    sqlite.prepare("UPDATE projects SET path = ? WHERE id = 'project'").run(projectRoot)
+    sqlite
+      .prepare("UPDATE chats SET scope = 'project', worktree_path = ? WHERE id = ?")
+      .run(projectRoot, "chat-vault-context")
+    sqlite
+      .prepare("UPDATE sub_chats SET worktree_path = ? WHERE id = ?")
+      .run(projectRoot, "sub-vault-context")
+    sqlite
+      .prepare("UPDATE agent_runs SET worktree_path = ? WHERE id = ?")
+      .run(projectRoot, "vault-context")
+
+    const database = drizzle(sqlite, { schema })
+    await scaffoldProjectVault(database, {
+      projectId: "project",
+      appDataRoot,
+      sections: ["context", "decisions"],
+    })
+    await writeProjectVaultSection(database, {
+      projectId: "project",
+      sectionId: "context",
+      expectedVersion: 1,
+      content: "SELECTED DIRECT RUNTIME CONTEXT",
+    })
+    await writeProjectVaultSection(database, {
+      projectId: "project",
+      sectionId: "decisions",
+      expectedVersion: 1,
+      content: "UNSELECTED DIRECT RUNTIME CONTEXT",
+    })
+    updateProjectVaultContextSelection(database, {
+      projectId: "project",
+      sectionIds: ["context"],
+    })
+
+    let providerPrompt = ""
+    const value = directAdapter()
+    value.startTurn = vi.fn(async (_context, _session, prompt) => {
+      providerPrompt = prompt
+      return { providerTurnId: "turn-vault-context" }
+    })
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+    const run = queued("vault-context")
+    run.worktreePath = projectRoot
+    run.projectPath = projectRoot
+
+    await service.launch(run)
+
+    expect(providerPrompt).toContain("SELECTED DIRECT RUNTIME CONTEXT")
+    expect(providerPrompt).not.toContain("UNSELECTED DIRECT RUNTIME CONTEXT")
+    expect(providerPrompt).toContain("Prompt")
+    const manifest = sqlite
+      .prepare("SELECT vault_context_manifest manifest FROM agent_runs WHERE id = ?")
+      .get("vault-context") as { manifest: string }
+    expect(JSON.parse(manifest.manifest)).toMatchObject({
+      status: "included",
+      harness: "codex",
+      selectedSectionIds: ["context"],
+    })
   })
 
   it("reads durable success after process-style service recreation without provider access", async () => {

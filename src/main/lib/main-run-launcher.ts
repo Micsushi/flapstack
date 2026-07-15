@@ -79,6 +79,12 @@ import {
   resolveLocalModelToolTiers,
 } from "../../shared/local-model-contract"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
+import {
+  buildProjectVaultRunContext,
+  persistProjectVaultContextManifest,
+  ProjectVaultContextRejectedError,
+} from "./project-vaults/run-context"
+import { prependStartupContext } from "./harness/launch-context"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -186,12 +192,13 @@ export class MainRuntimeLaunchService {
   readonly launch: AgentRunLauncher = async (run) => {
     this.runs.set(run.runId, run)
     try {
+      const prompt = await this.resolveDirectRuntimePrompt(run)
       await this.coordinator.launch({
         runId: run.runId,
         chatId: run.chatId,
         subChatId: run.subChatId,
         launch: run.runtimeLaunch ?? legacyLaunch(run),
-        prompt: run.prompt,
+        prompt,
         persistedSession: await this.loadPersistedSession(run.runId),
       })
     } catch (error) {
@@ -731,6 +738,39 @@ export class MainRuntimeLaunchService {
         resolveProjectCwd: resolveRoot,
       })
       return { cwd, policy: extension.launchPolicy, hooks }
+    } finally {
+      sqlite.close()
+    }
+  }
+
+  private async resolveDirectRuntimePrompt(run: QueuedAgentRun): Promise<string> {
+    const runtime = run.runtimeLaunch?.resolvedRuntime
+    if (runtime !== "codex" && runtime !== "claude-code") return run.prompt
+
+    const sqlite = this.open()
+    try {
+      const database = drizzle(sqlite, { schema })
+      let vaultContext
+      try {
+        vaultContext = await buildProjectVaultRunContext(database, {
+          chatId: run.chatId,
+          runId: run.runId,
+          harness: runtime,
+        })
+      } catch (error) {
+        if (error instanceof ProjectVaultContextRejectedError) {
+          persistProjectVaultContextManifest(database, {
+            runId: run.runId,
+            manifest: error.manifest,
+          })
+        }
+        throw error
+      }
+      persistProjectVaultContextManifest(database, {
+        runId: run.runId,
+        manifest: vaultContext.manifest,
+      })
+      return prependStartupContext(run.prompt, vaultContext.context)
     } finally {
       sqlite.close()
     }
