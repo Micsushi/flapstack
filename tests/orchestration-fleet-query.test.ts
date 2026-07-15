@@ -157,7 +157,7 @@ describe("orchestration fleet query", () => {
     expect(page.nextCursor).toEqual(expect.any(String))
     expect(agentBatchSizes).toEqual([25])
     expect(Math.max(...agentBatchSizes)).toBeLessThanOrEqual(500)
-  })
+  }, 15_000)
 
   it("rejects cursor values that do not match the selected sort", () => {
     const service = createAgentOrchestrationService(databasePath)

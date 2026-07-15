@@ -466,6 +466,10 @@ export type OrchestrationFleetItemDto = {
     id: string
     state: "live" | "archived" | "missing" | "unknown"
   }
+  operationWorkspace: {
+    id: string | null
+    state: "live" | "missing"
+  }
   agents: OrchestrationFleetAgentDto[]
 }
 

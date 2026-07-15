@@ -10,6 +10,7 @@ import {
   previewCoordinationEngineForProject,
 } from "../../agent-orchestration/coordination-engine"
 import { getDatabase } from "../../db"
+import { getRegisteredCoordinationEngineProbes } from "../../agent-orchestration/operations-runtime"
 import { publicProcedure, router } from "../index"
 
 const defaults = () => new CoordinationEngineDefaultsService(getDatabase())
@@ -24,11 +25,15 @@ export const coordinationEnginesRouter = router({
   deleteDefault: publicProcedure
     .input(coordinationEngineDefaultDeleteSchema)
     .mutation(({ input }) => defaults().delete(input)),
-  capabilities: publicProcedure.query(() => createDefaultCoordinationEngineProbes()),
-  preview: publicProcedure.input(coordinationEnginePreviewSchema).query(({ input }) =>
+  capabilities: publicProcedure.query(async () => ({
+    ...createDefaultCoordinationEngineProbes(),
+    ...(await getRegisteredCoordinationEngineProbes()),
+  })),
+  preview: publicProcedure.input(coordinationEnginePreviewSchema).query(async ({ input }) =>
     previewCoordinationEngineForProject(getDatabase(), {
       projectId: input.projectId,
       perLaunchEngine: input.perLaunchEngine,
+      probes: await getRegisteredCoordinationEngineProbes(),
     }),
   ),
 })

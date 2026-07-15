@@ -32,6 +32,7 @@ import {
 import type {
   CoordinationEngineAction,
   CoordinationEngineContext,
+  CoordinationEngineProviderIdentity,
 } from "../../../../shared/coordination-engine"
 import { publicProcedure, router } from "../index"
 
@@ -74,9 +75,23 @@ const providerIdentitySchema = z.discriminatedUnion("engine", [
 const actionSchema = z.discriminatedUnion("kind", [
   z.object({
     schemaVersion: z.literal(1),
-    kind: z.enum(["prepare", "start", "resume", "reconcile", "cancel", "cleanup"]),
+    kind: z.enum(["prepare", "resume", "reconcile", "cancel", "cleanup"]),
     orchestrationId: taskIdSchema,
     providerIdentity: providerIdentitySchema.nullable(),
+  }),
+  z.object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("start"),
+    orchestrationId: taskIdSchema,
+    providerIdentity: providerIdentitySchema.nullable(),
+    contextFork: z
+      .object({
+        sourceProviderThreadId: z.string().trim().min(1).max(512),
+        lastTurnId: z.string().trim().min(1).max(512).nullable(),
+      })
+      .strict()
+      .nullable()
+      .default(null),
   }),
   z.object({
     schemaVersion: z.literal(1),
@@ -187,6 +202,9 @@ export const orchestrationOperationsRouter = router({
   getWorkflow: publicProcedure
     .input(z.object({ runId: z.string().trim().min(1).max(200) }))
     .query(({ input }) => getWorkflowEngine(getDatabasePath()).get(input.runId)),
+  listWorkflows: publicProcedure
+    .input(z.object({ taskId: taskIdSchema }))
+    .query(({ input }) => getWorkflowEngine(getDatabasePath()).list(input.taskId)),
   advanceWorkflow: publicProcedure
     .input(
       z.object({
@@ -202,7 +220,8 @@ export const orchestrationOperationsRouter = router({
           )
           .refine((value) => Object.keys(value).length <= 256, {
             message: "Workflow advance accepts at most 256 launch identities.",
-          }),
+          })
+          .default({}),
       }),
     )
     .mutation(({ input }) =>
@@ -329,9 +348,29 @@ function loadCoordinationContext(taskId: string): CoordinationEngineContext {
     const row = db.prepare("SELECT * FROM task_orchestrations WHERE task_id = ?").get(taskId) as
       Record<string, unknown> | undefined
     if (!row) throw new Error("Orchestration not found.")
+    let snapshot = interpretCoordinationEngineSnapshot(row)
+    if (snapshot.engine !== "workflow") {
+      const provider = db
+        .prepare(
+          `SELECT provider_identity_json
+           FROM coordination_action_intents
+           WHERE task_id = ? AND engine = ?
+             AND json_type(provider_identity_json, '$') = 'object'
+             AND json_extract(provider_identity_json, '$.engine') = ?
+           ORDER BY updated_at DESC, id DESC LIMIT 1`,
+        )
+        .get(taskId, snapshot.engine, snapshot.engine) as
+        { provider_identity_json: string } | undefined
+      if (provider) {
+        const providerIdentity = JSON.parse(
+          provider.provider_identity_json,
+        ) as CoordinationEngineProviderIdentity
+        snapshot = { ...snapshot, providerIdentity }
+      }
+    }
     return {
       orchestrationId: taskId,
-      snapshot: interpretCoordinationEngineSnapshot(row),
+      snapshot,
       signal: new AbortController().signal,
     }
   } finally {

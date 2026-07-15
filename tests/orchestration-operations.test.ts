@@ -19,6 +19,7 @@ import {
 import { WorkflowEngine } from "../src/main/lib/agent-orchestration/workflow-engine"
 import { createCodexCoordinationAdapter } from "../src/main/lib/agent-orchestration/codex-engines"
 import { CascadeControlService } from "../src/main/lib/agent-orchestration/cascade-control"
+import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
 import {
   OrchestrationActivityProjectionService,
   recordOrchestrationTransition,
@@ -312,6 +313,7 @@ describe("coordination engines", () => {
   })
 
   it("persists Codex intent before dispatch and refuses uncertain replay", async () => {
+    configureDurableEngine("codex-v2")
     seedActiveAgent("agent-1", "run-1")
     const sourceDb = new Database(databasePath)
     recordOrchestrationTransition(sourceDb, {
@@ -365,9 +367,23 @@ describe("coordination engines", () => {
       body: "Status?",
     })
     db.close()
+    expect(createAgentOrchestrationService(databasePath).getLineage("task-1")).toMatchObject({
+      engine: { providerIdentity: context.snapshot.providerIdentity },
+      nodes: [
+        {
+          agentId: "agent-1",
+          controls: {
+            send: { enabled: true },
+            followUp: { enabled: true },
+            interrupt: { enabled: true },
+          },
+        },
+      ],
+    })
   })
 
   it("keeps Codex V1 ID-based and permits final wait without V2 follow-up", async () => {
+    configureDurableEngine("codex-v1")
     const context = coordinationContext("codex-v1")
     const client = {
       probe: vi.fn(async () => coordinationProbe("codex-v1")),
@@ -583,6 +599,26 @@ function coordinationProbe(engine: "codex-v2" | "codex-v1") {
     snapshot: context.snapshot.capabilities,
     reason: null,
   }
+}
+function configureDurableEngine(engine: "codex-v2" | "codex-v1") {
+  const snapshot = coordinationContext(engine).snapshot
+  const db = new Database(databasePath)
+  db.prepare("DELETE FROM task_orchestrations WHERE task_id = 'task-1'").run()
+  db.prepare(
+    `INSERT INTO task_orchestrations
+     (task_id, initiating_chat_id, status, max_parallel_agents, max_depth, stop_conditions,
+      engine_snapshot_version, coordination_engine, coordination_engine_version,
+      coordination_engine_source, coordination_engine_capability_snapshot,
+      coordination_engine_provider_identity, created_at, updated_at)
+     VALUES ('task-1','chat-1','queued',2,4,'{}',1,?,?,?,?,?,1,1)`,
+  ).run(
+    snapshot.engine,
+    snapshot.engineVersion,
+    snapshot.source,
+    JSON.stringify(snapshot.capabilities),
+    JSON.stringify(null),
+  )
+  db.close()
 }
 function seedActiveAgent(agentId: string, runId: string) {
   const db = new Database(databasePath)

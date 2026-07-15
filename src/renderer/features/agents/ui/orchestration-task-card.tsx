@@ -31,6 +31,7 @@ import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
 import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
+import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
 import { OrchestrationActivityPanel } from "./orchestration-activity-panel"
 
 type AgentEditorMode =
@@ -216,6 +217,8 @@ export function OrchestrationOverviewCard({
   onRetry,
   onReplace,
   onAdd,
+  onLineageAction,
+  onStartCoordination,
 }: {
   overview: OrchestrationTaskOverviewDto
   lineage: OrchestrationLineageDto
@@ -226,6 +229,12 @@ export function OrchestrationOverviewCard({
   onRetry: (agent: OrchestrationAgentDto) => void
   onReplace: (agent: OrchestrationAgentDto) => void
   onAdd: () => void
+  onLineageAction?: (
+    agentId: string,
+    action: "send" | "follow-up" | "interrupt",
+    message: string | null,
+  ) => void
+  onStartCoordination?: () => void
 }) {
   const { orchestration, aggregate, agents } = overview
   const cost = formatOrchestrationCost(
@@ -350,10 +359,25 @@ export function OrchestrationOverviewCard({
         <p className="text-[10px] text-muted-foreground">Stop at {stopConditions.join(" · ")}</p>
       )}
 
+      {lineage.engine &&
+        lineage.engine.engine !== "workflow" &&
+        !lineage.engine.providerIdentity && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[10px]"
+            disabled={busy || !onStartCoordination}
+            onClick={onStartCoordination}
+          >
+            Start {lineage.engine.engine} coordination
+          </Button>
+        )}
+
       <OrchestrationLineageTree
         lineage={lineage}
         onNavigate={onNavigate}
         currentChatId={currentChatId}
+        onAction={onLineageAction}
       />
 
       <OrchestrationActivityPanel taskId={orchestration.taskId} agents={agents} />
@@ -941,8 +965,15 @@ export function OrchestrationTaskCard({
   const replace = trpc.spawnedAgents.replaceAgent.useMutation(mutationOptions)
   const add = trpc.spawnedAgents.addAgent.useMutation(mutationOptions)
   const create = trpc.spawnedAgents.createOrchestration.useMutation(mutationOptions)
+  const coordinate =
+    trpc.orchestrationOperations.executeCoordinationAction.useMutation(mutationOptions)
   const busy =
-    control.isPending || retry.isPending || replace.isPending || add.isPending || create.isPending
+    control.isPending ||
+    retry.isPending ||
+    replace.isPending ||
+    add.isPending ||
+    create.isPending ||
+    coordinate.isPending
   const overview = overviewQuery.data
   const lineage = lineageQuery.data
 
@@ -1043,7 +1074,39 @@ export function OrchestrationTaskCard({
         onRetry={(agent) => retry.mutate({ taskId: taskQueryId, agentId: agent.id })}
         onReplace={(agent) => setEditorMode({ kind: "replace", agent })}
         onAdd={() => setEditorMode({ kind: "add" })}
+        onLineageAction={(agentId, action, message) => {
+          const providerIdentity = lineage.engine?.providerIdentity
+          if (!providerIdentity) {
+            toast.error("Coordination provider identity is unavailable.")
+            return
+          }
+          coordinate.mutate({
+            taskId: taskQueryId,
+            action: {
+              schemaVersion: 1,
+              kind: action,
+              orchestrationId: taskQueryId,
+              providerIdentity,
+              targetAgentId: agentId,
+              message,
+            },
+          })
+        }}
+        onStartCoordination={() =>
+          coordinate.mutate({
+            taskId: taskQueryId,
+            action: {
+              schemaVersion: 1,
+              kind: "start",
+              orchestrationId: taskQueryId,
+              providerIdentity: null,
+            },
+          })
+        }
       />
+      <div className="px-3 pb-3">
+        <OrchestrationWorkflowPanel taskId={taskQueryId} />
+      </div>
       {editorMode && (
         <AgentEditorDialog
           key={`${editorMode.kind}-${selectedReplacement?.id ?? "new"}`}

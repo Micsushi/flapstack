@@ -59,8 +59,12 @@ tests do not substitute for live UI or packaged evidence.
       and usage events without copying or relabeling provider reasoning.
 
 Code-ready evidence for S4-MA01 through S4-MA10 is recorded in
-`docs/stage4-s4-f3-multi-agent-operations.md`. Rows remain open until the F4/F11
-dependencies and consolidated live/package walkthrough pass.
+`docs/stage4-s4-f3-multi-agent-operations.md`. Fleet workspace navigation,
+lineage controls, workflow scheduling, optional structured-output consumption,
+and fail-closed optional F11 lifecycle consumers are headless-covered. Rows
+remain open until F11 authority/acceptance, a
+supported direct Codex coordination transport, the separately assigned UI and
+accessibility queue, and consolidated live/package walkthrough pass.
 
 ## Saved Workspaces
 

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3"
 import { openAppDatabase } from "../db/access"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { execFileSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
 import { drizzle } from "drizzle-orm/better-sqlite3"
@@ -49,6 +49,8 @@ import {
 import type {
   CoordinationEngine,
   CoordinationEngineProbe,
+  CoordinationEngineProviderIdentity,
+  ResolvedCoordinationEngineSnapshot,
 } from "../../../shared/coordination-engine"
 
 type Row = Record<string, unknown>
@@ -179,6 +181,92 @@ export function createAgentOrchestrationService(databasePath: string) {
         add.immediate()
         safeTickTask(db, parsed.data.taskId)
         return result
+      } finally {
+        db.close()
+      }
+    },
+
+    assertWorkflowAgentEligible(input: {
+      taskId: string
+      workflowRunId: string
+      stepId: string
+      attemptCount: number
+      agentDefinition: OrchestrationAgentDefinition
+    }): void {
+      const db = open()
+      try {
+        assertWorkflowMaterializationEligibility(db, input)
+      } finally {
+        db.close()
+      }
+    },
+
+    materializeWorkflowAgent(input: {
+      taskId: string
+      workflowRunId: string
+      stepId: string
+      attemptCount: number
+      agentDefinition: OrchestrationAgentDefinition
+    }): {
+      runId: string
+      chatId: string
+      subChatId: string
+      agentDefinition: OrchestrationAgentDefinition
+    } {
+      const db = open()
+      try {
+        const dedupKey = `workflow-materialized:${input.workflowRunId}:${input.stepId}:${input.attemptCount}`
+        return db
+          .transaction(() => {
+            const existing = db
+              .prepare(
+                `SELECT oa.definition, oa.chat_id, oa.run_id, r.sub_chat_id
+                 FROM orchestration_transition_events e
+                 JOIN orchestration_agents oa ON oa.id = e.agent_id
+                 JOIN agent_runs r ON r.id = e.run_id
+                 WHERE e.dedup_key = ? AND e.task_id = ?`,
+              )
+              .get(dedupKey, input.taskId) as Row | undefined
+            if (existing) return workflowLaunchFromRow(existing)
+
+            assertWorkflowMaterializationEligibility(db, input)
+            const agentId = workflowAgentId(input.workflowRunId, input.stepId, input.attemptCount)
+            const definition = orchestrationAgentDefinitionSchema.parse(input.agentDefinition)
+            validateDefinitionPermissions(definition)
+            insertAgent(db, {
+              id: agentId,
+              taskId: input.taskId,
+              definition,
+              parentAgentId: null,
+              replacedAgentId: null,
+              ancestorAgentIds: [],
+              depth: 1,
+              now: nowEpochSeconds(),
+            })
+            const orchestration = requireOrchestration(db, input.taskId)
+            const agent = requireAgent(db, input.taskId, agentId)
+            materializeAgent(db, orchestration, agent)
+            const materialized = requireAgent(db, input.taskId, agentId)
+            recordOrchestrationTransition(db, {
+              dedupKey,
+              taskId: input.taskId,
+              entityType: "checkpoint",
+              entityId: `${input.workflowRunId}:${input.stepId}`,
+              agentId,
+              runId: String(materialized.run_id),
+              kind: "spawn",
+              phase: "workflow-materialized",
+            })
+            const row = db
+              .prepare(
+                `SELECT oa.definition, oa.chat_id, oa.run_id, r.sub_chat_id
+                 FROM orchestration_agents oa JOIN agent_runs r ON r.id = oa.run_id
+                 WHERE oa.id = ?`,
+              )
+              .get(agentId) as Row
+            return workflowLaunchFromRow(row)
+          })
+          .immediate()
       } finally {
         db.close()
       }
@@ -368,7 +456,11 @@ export function createAgentOrchestrationService(databasePath: string) {
       const db = open()
       try {
         const orchestration = requireOrchestration(db, taskId)
-        const engine = interpretCoordinationEngineSnapshot(orchestration)
+        const engine = latestCoordinationIdentity(
+          db,
+          taskId,
+          interpretCoordinationEngineSnapshot(orchestration),
+        )
         const agents = listAgentRows(db, taskId).map(toAgentDto)
         assertAcyclicLineage(agents)
         const knownIds = new Set(agents.map((agent) => agent.id))
@@ -382,7 +474,11 @@ export function createAgentOrchestrationService(databasePath: string) {
         const unavailableReason =
           engine.engine === "workflow"
             ? "Workflow coordination uses durable steps; direct mailbox actions are unavailable."
-            : "Coordination adapter is not connected yet; no provider action will be synthesized."
+            : !engine.providerIdentity
+              ? "Coordination engine has no durable provider identity yet."
+              : engine.capabilities.status !== "available"
+                ? "Coordination capability snapshot is unavailable."
+                : null
         const messages = db
           .prepare(
             "SELECT id, agent_id, direction, kind, state, body, provider_message_id, created_at FROM orchestration_messages WHERE task_id = ? ORDER BY created_at, id",
@@ -423,9 +519,22 @@ export function createAgentOrchestrationService(databasePath: string) {
                   ? JSON.stringify(engine.providerIdentity)
                   : null,
                 controls: {
-                  send: { enabled: false, reason: unavailableReason },
-                  followUp: { enabled: false, reason: unavailableReason },
-                  interrupt: { enabled: false, reason: unavailableReason },
+                  send: {
+                    enabled: unavailableReason === null,
+                    reason: unavailableReason ?? "Queues a durable provider message.",
+                  },
+                  followUp: {
+                    enabled: unavailableReason === null && engine.engine === "codex-v2",
+                    reason:
+                      unavailableReason ??
+                      (engine.engine === "codex-v2"
+                        ? "Starts a follow-up turn for the resident task."
+                        : "Codex V1 does not support V2 follow-up semantics."),
+                  },
+                  interrupt: {
+                    enabled: unavailableReason === null,
+                    reason: unavailableReason ?? "Interrupts the active provider turn.",
+                  },
                 },
               }
             }),
@@ -575,6 +684,75 @@ export function createAgentOrchestrationService(databasePath: string) {
         db.close()
       }
     },
+  }
+}
+
+function assertWorkflowMaterializationEligibility(
+  db: Sqlite,
+  input: {
+    taskId: string
+    workflowRunId: string
+    stepId: string
+    attemptCount: number
+    agentDefinition: OrchestrationAgentDefinition
+  },
+): void {
+  const definition = orchestrationAgentDefinitionSchema.parse(input.agentDefinition)
+  validateDefinitionPermissions(definition)
+  const orchestration = requireOrchestration(db, input.taskId)
+  assertVersionedOrchestration(orchestration)
+  if (["completed", "failed", "stopped"].includes(String(orchestration.status)))
+    throw new AgentOrchestrationError("conflict", "Terminal orchestration cannot launch workers.")
+  const checkpoint = db
+    .prepare(
+      `SELECT wr.task_id, wr.status run_status, wr.stop_intent, cp.status checkpoint_status,
+              cp.attempt_count
+       FROM orchestration_workflow_runs wr
+       JOIN orchestration_workflow_checkpoints cp ON cp.workflow_run_id = wr.id
+       WHERE wr.id = ? AND cp.step_id = ?`,
+    )
+    .get(input.workflowRunId, input.stepId) as Row | undefined
+  if (
+    !checkpoint ||
+    String(checkpoint.task_id) !== input.taskId ||
+    Number(checkpoint.stop_intent) !== 0 ||
+    ["completed", "failed", "stopped", "paused"].includes(String(checkpoint.run_status)) ||
+    !["pending", "waiting"].includes(String(checkpoint.checkpoint_status)) ||
+    Number(checkpoint.attempt_count) + 1 !== input.attemptCount
+  )
+    throw new AgentOrchestrationError(
+      "conflict",
+      "Workflow checkpoint attempt is not eligible for worker materialization.",
+    )
+  const task = db
+    .prepare(
+      "SELECT t.*, p.path project_path FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND t.archived_at IS NULL",
+    )
+    .get(input.taskId) as Row | undefined
+  const parentChat = db
+    .prepare("SELECT * FROM chats WHERE id = ? AND task_id = ? AND archived_at IS NULL")
+    .get(orchestration.initiating_chat_id, input.taskId) as Row | undefined
+  if (!task || !parentChat)
+    throw new AgentOrchestrationError("stale-target", "Workflow worker scope is stale.")
+  resolveWorktree(db, task, parentChat, definition)
+  try {
+    assertUsageBudgetAllowsLaunch(drizzle(db, { schema: dbSchema }), {
+      controlled: true,
+      providerId: providerForHarness(definition.harness),
+      accountTag: null,
+      projectId: String(task.project_id),
+      taskId: input.taskId,
+      automationId: null,
+      orchestrationId: input.taskId,
+      runId: null,
+    })
+  } catch (error) {
+    if (error instanceof UsageBudgetExceededError)
+      throw new AgentOrchestrationError(
+        "usage-budget-exhausted",
+        `Orchestration launch blocked by ${error.decision.hardStops.length} scoped usage budget(s).`,
+      )
+    throw error
   }
 }
 
@@ -806,6 +984,48 @@ function addAgent(
     now,
   })
   return toAgentDto(requireAgent(db, input.taskId, id))
+}
+
+function workflowAgentId(workflowRunId: string, stepId: string, attemptCount: number): string {
+  const digest = createHash("sha256")
+    .update(`${workflowRunId}\0${stepId}\0${attemptCount}`)
+    .digest("hex")
+    .slice(0, 32)
+  return `workflow-${digest}`
+}
+
+function workflowLaunchFromRow(row: Row) {
+  if (!row.run_id || !row.chat_id || !row.sub_chat_id)
+    throw new Error("Workflow worker durable run/chat/subchat identity is missing.")
+  return {
+    runId: String(row.run_id),
+    chatId: String(row.chat_id),
+    subChatId: String(row.sub_chat_id),
+    agentDefinition: parseDefinition(row.definition),
+  }
+}
+
+function latestCoordinationIdentity(
+  db: Sqlite,
+  taskId: string,
+  snapshot: ResolvedCoordinationEngineSnapshot,
+): ResolvedCoordinationEngineSnapshot {
+  if (snapshot.engine === "workflow") return snapshot
+  const row = db
+    .prepare(
+      `SELECT provider_identity_json
+       FROM coordination_action_intents
+       WHERE task_id = ? AND engine = ?
+         AND json_type(provider_identity_json, '$') = 'object'
+         AND json_extract(provider_identity_json, '$.engine') = ?
+       ORDER BY updated_at DESC, id DESC LIMIT 1`,
+    )
+    .get(taskId, snapshot.engine, snapshot.engine) as { provider_identity_json: string } | undefined
+  if (!row) return snapshot
+  return {
+    ...snapshot,
+    providerIdentity: JSON.parse(row.provider_identity_json) as CoordinationEngineProviderIdentity,
+  }
 }
 
 function insertAgent(
@@ -1486,7 +1706,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     .get(parentChatId, taskId) as Row | undefined
   if (!parentChat)
     throw new AgentOrchestrationError("stale-caller", "Parent chat identity is stale.")
-  const parentAncestors = parseIds(parentChat.ancestor_chat_ids)
+  const parentAncestors = parentChat.ancestor_chat_ids ? parseIds(parentChat.ancestor_chat_ids) : []
   if (
     new Set(parentAncestors).size !== parentAncestors.length ||
     parentAncestors.includes(parentChatId)

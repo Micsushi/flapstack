@@ -82,8 +82,13 @@ describe("orchestration fleet view", () => {
 
   it("renders visible provider/state detail and keyboard-focusable rows", async () => {
     const openChat = vi.fn()
+    const openWorkspace = vi.fn()
     await act(async () => {
-      root.render(<OrchestrationFleetPanel {...props({ data: page, onOpenChat: openChat })} />)
+      root.render(
+        <OrchestrationFleetPanel
+          {...props({ data: page, onOpenChat: openChat, onOpenWorkspace: openWorkspace })}
+        />,
+      )
     })
 
     expect(container.querySelector("h1")?.textContent).toBe("Orchestration fleet")
@@ -102,9 +107,17 @@ describe("orchestration fleet view", () => {
     expect(rows.map((row) => row.tabIndex)).toEqual([-1, 0])
     expect(container.querySelector("aside h2")?.textContent).toBe("Review fleet")
     expect(container.textContent).toContain("No durable state change within 30 seconds.")
-    expect(container.querySelector<HTMLButtonElement>("aside button")?.disabled).toBe(true)
+    const initiating = [...container.querySelectorAll<HTMLButtonElement>("aside button")].find(
+      (button) => button.textContent?.includes("Initiating chat"),
+    )
+    expect(initiating?.disabled).toBe(true)
 
     await act(async () => rows[0]!.click())
+    const workspace = [...container.querySelectorAll<HTMLButtonElement>("aside button")].find(
+      (button) => button.textContent?.includes("Open operation workspace"),
+    )
+    await act(async () => workspace!.click())
+    expect(openWorkspace).toHaveBeenCalledWith("project-1", "workspace-task-1")
     const agentChat = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open agent chat Worker"]',
     )
@@ -186,6 +199,7 @@ function props(overrides: Partial<React.ComponentProps<typeof OrchestrationFleet
     onNext: vi.fn(),
     onPrevious: vi.fn(),
     onOpenChat: vi.fn(),
+    onOpenWorkspace: vi.fn(),
     ...overrides,
   }
 }
@@ -245,6 +259,7 @@ function item(input: {
       id: `chat-${input.taskId}`,
       state: input.initiatingChatState ?? "live",
     },
+    operationWorkspace: { id: `workspace-${input.taskId}`, state: "live" },
     agents: [
       {
         id: `agent-${input.taskId}`,

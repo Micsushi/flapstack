@@ -122,6 +122,10 @@ export type CoordinationEngineAction =
       kind: "prepare" | "start" | "resume" | "reconcile" | "cancel" | "cleanup"
       orchestrationId: string
       providerIdentity: CoordinationEngineProviderIdentity | null
+      contextFork?: {
+        sourceProviderThreadId: string
+        lastTurnId: string | null
+      } | null
     }
   | {
       schemaVersion: 1

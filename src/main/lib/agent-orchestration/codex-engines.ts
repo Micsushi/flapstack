@@ -110,13 +110,17 @@ export function createCodexCoordinationAdapter(
       )
       if (!["running", "waiting", "completed", "cancelled"].includes(result.state))
         throw new Error("Unknown Codex coordination lifecycle state.")
+      const providerIdentity = result.providerIdentity ?? action.providerIdentity
+      if (action.kind === "start" && !providerIdentity)
+        throw new Error("Codex coordination start returned no provider identity.")
+      if (providerIdentity) validateProviderIdentity(engine, providerIdentity)
       finalizeIntent(databasePath, {
         intentId,
         owner,
         taskId: context.orchestrationId,
         action,
         state: result.state,
-        providerIdentity: result.providerIdentity,
+        providerIdentity,
         result: result.result,
       })
       return {
@@ -124,7 +128,7 @@ export function createCodexCoordinationAdapter(
         ok: true,
         action: action.kind,
         state: result.state,
-        providerIdentity: result.providerIdentity,
+        providerIdentity,
         result: { intentId, idempotencyKey, value: result.result },
       }
     } catch (error) {
@@ -147,6 +151,7 @@ export function createCodexCoordinationAdapter(
         kind,
         orchestrationId: context.orchestrationId,
         providerIdentity: context.snapshot.providerIdentity,
+        ...(kind === "start" ? { contextFork: null } : {}),
       })
 
   const reconcile = async (
@@ -460,16 +465,23 @@ function markUncertain(
 }
 
 function validateAction(engine: Engine, action: CoordinationEngineAction) {
-  if (action.providerIdentity && action.providerIdentity.engine !== engine)
-    throw new Error("Provider identity engine mismatch.")
-  if (
-    engine === "codex-v2" &&
-    action.providerIdentity?.engine === "codex-v2" &&
-    !isCanonicalAbsoluteTaskPath(action.providerIdentity.canonicalTaskPath)
-  )
-    throw new Error("Codex V2 canonical task path is invalid.")
+  if (action.providerIdentity) validateProviderIdentity(engine, action.providerIdentity)
+  if (engine === "codex-v1" && action.kind === "start" && action.contextFork)
+    throw new Error("Codex V1 does not support selective context forks.")
   if (engine === "codex-v1" && action.kind === "follow-up")
     throw new Error("Codex V1 does not support V2 follow-up semantics.")
+}
+
+function validateProviderIdentity(engine: Engine, identity: CoordinationEngineProviderIdentity) {
+  if (identity.engine !== engine) throw new Error("Provider identity engine mismatch.")
+  if (identity.engine === "codex-v2") {
+    if (!isCanonicalAbsoluteTaskPath(identity.canonicalTaskPath))
+      throw new Error("Codex V2 canonical task path is invalid.")
+    if (!identity.taskName.trim()) throw new Error("Codex V2 task name is missing.")
+    return
+  }
+  if (identity.engine === "codex-v1" && !identity.providerAgentId.trim())
+    throw new Error("Codex V1 provider agent ID is missing.")
 }
 
 function isCanonicalAbsoluteTaskPath(value: string) {

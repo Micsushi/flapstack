@@ -10,7 +10,10 @@ import {
 } from "../../../../shared/agent-orchestration"
 import { chats, getDatabase, getDatabasePath } from "../../db"
 import { createAgentOrchestrationService } from "../../agent-orchestration/service"
-import { getCascadeControl } from "../../agent-orchestration/operations-runtime"
+import {
+  getCascadeControl,
+  getRegisteredCoordinationEngineProbes,
+} from "../../agent-orchestration/operations-runtime"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
 import { publicProcedure, router } from "../index"
 
@@ -72,8 +75,10 @@ export const spawnedAgentsRouter = router({
 
   createOrchestration: publicProcedure
     .input(createOrchestrationInputSchema)
-    .mutation(({ input }) => {
-      const result = service().create(input)
+    .mutation(async ({ input }) => {
+      const result = service().create(input, undefined, {
+        coordinationEngineProbes: await getRegisteredCoordinationEngineProbes(),
+      })
       publishOrchestrationChange(result.orchestration.taskId, result.orchestration.projectId)
       return result
     }),
