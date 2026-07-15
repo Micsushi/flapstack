@@ -207,6 +207,16 @@ accessibility queue, and consolidated live/package walkthrough pass.
       separate and completes create, preview, workflow-bind, standalone-launch,
       duplicate, import, export, and archive flows with keyboard/screen-reader use.
 
+Headless implementation packet on Node 22: code-ready. Canonical migration
+`0036_agent_profiles.sql`, typed contracts, lifecycle/import trust, resolver and
+immutable snapshots, F3 workflow adapter, F11 standalone dispatch adapter,
+starter catalog/evaluation, Settings/Profile Studio, task/chat actions,
+diagnostics, and focused acceptance tests are present. Live UI, credentialed
+providers, forced live restart, packaged preview, accessibility walkthrough,
+and cross-device evidence remain open. F3's pre-durable-worker materializer hook
+is also an open code-path dependency, not manual evidence. No S4-AP checkbox is
+closed by headless evidence alone. See `docs/agent-profiles.md`.
+
 ## Agent Runtimes
 
 Automated closeout on Node 22: `npm run check` passed full lint, repository

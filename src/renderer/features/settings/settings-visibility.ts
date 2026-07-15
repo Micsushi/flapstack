@@ -89,6 +89,14 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     released: true,
   },
   {
+    id: "agent-profiles",
+    label: "Agent Profiles",
+    description: "Create named agents with separate capabilities and personalities",
+    keywords: ["profile studio", "personality", "named agent", "starter", "workflow"],
+    section: "advanced",
+    released: true,
+  },
+  {
     id: "api-providers",
     label: "API Providers",
     description: "Configure direct model API providers",
@@ -203,6 +211,13 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
 ] as const
 
 export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
+  control(
+    "agent-profile-studio",
+    "agent-profiles",
+    "Profile Studio",
+    "Create, version, duplicate, archive, preview, import, export, and test named agents",
+    ["capability", "personality", "inheritance", "runtime", "permission", "evaluation"],
+  ),
   control(
     "runtime-settings-table",
     "runtimes",

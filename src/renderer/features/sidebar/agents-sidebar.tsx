@@ -152,6 +152,7 @@ import { useHaptic } from "./hooks/use-haptic"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
+import { StartAgentDialog } from "../agent-profiles/start-agent-dialog"
 import { getModelChipMeta } from "../agents/constants"
 import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
@@ -2008,6 +2009,7 @@ const ChatListSection = React.memo(function ChatListSection({
   const isProjectSection = kind === "project"
   const isTaskSection = kind === "task"
   const isReferenceSection = kind === "pinned" || kind === "starred"
+  const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
   const isTopLevelScopedSection = isGlobalSection || isProjectSection
   const sectionDragKind =
     lifecycleTarget?.type === "project"
@@ -2260,6 +2262,10 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2" onSelect={() => setStartAgentDialogOpen(true)}>
+            <Network className="h-3.5 w-3.5 text-muted-foreground" />
+            Start named agent
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
         </>
       )}
@@ -2360,6 +2366,10 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </ContextMenuItem>
+          <ContextMenuItem className="gap-2" onClick={() => setStartAgentDialogOpen(true)}>
+            <Network className="h-3.5 w-3.5 text-muted-foreground" />
+            Start named agent
+          </ContextMenuItem>
           <ContextMenuSeparator />
         </>
       )}
@@ -2393,6 +2403,14 @@ const ChatListSection = React.memo(function ChatListSection({
 
   return (
     <>
+      {lifecycleTarget?.type === "task" && (
+        <StartAgentDialog
+          open={startAgentDialogOpen}
+          onOpenChange={setStartAgentDialogOpen}
+          source={{ kind: "task", taskId: lifecycleTarget.id }}
+          projectId={parentProjectId ?? null}
+        />
+      )}
       {showBeforeSectionDrop && effectiveSectionDragId && (
         <DropSeparator
           className={sectionDropSeparatorClass}

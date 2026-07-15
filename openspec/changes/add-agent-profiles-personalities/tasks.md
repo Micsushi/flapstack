@@ -1,5 +1,13 @@
 # S4-F12 — Agent Profiles and Personalities
 
+Implementation status: code-ready/headless-feature-verified. The 0/8
+completion board remains intentionally open until F3 integrates the required
+pre-durable-worker materializer hook and the serialized UI, credentialed
+provider, forced live-restart, accessibility, and packaged-preview evidence
+owned by the coordinator is observed. The F3 dependency is a remaining code
+path, not manual evidence. Headless code and accepted tests must not be
+discarded while those rows remain open.
+
 ### S4-F12-T1 — Resolve the agent-profile product contract
 
 - [ ] Completion: acceptance and verification passed
