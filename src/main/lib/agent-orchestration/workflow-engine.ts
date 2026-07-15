@@ -4,11 +4,19 @@ import {
   orchestrationTemplateDefinitionSchema,
   type OrchestrationTemplateDefinition,
 } from "../../../shared/orchestration-operations"
-import type { OrchestrationAgentDefinition } from "../../../shared/agent-orchestration"
+import {
+  orchestrationAgentDefinitionSchema,
+  type OrchestrationAgentDefinition,
+} from "../../../shared/agent-orchestration"
 import { recordOrchestrationTransition } from "./activity-projection"
 import { verifyAndConsumeTemplateLaunchApproval } from "./operations-config"
 import type { RuntimeLaunchCoordinatorPort, RuntimeLaunchReference } from "./runtime-launch-port"
 import { createAgentOrchestrationService } from "./service"
+import {
+  identityWorkflowAgentMaterializer,
+  type WorkflowAgentMaterializationResult,
+  type WorkflowAgentMaterializerPort,
+} from "./worker-materializer-port"
 
 type Row = Record<string, unknown>
 type Step = OrchestrationTemplateDefinition["workflow"]["steps"][number]
@@ -50,6 +58,7 @@ export class WorkflowEngine {
   constructor(
     private readonly databasePath: string,
     private readonly coordinator: RuntimeLaunchCoordinatorPort,
+    private readonly materializer: WorkflowAgentMaterializerPort = identityWorkflowAgentMaterializer,
   ) {}
 
   preview(definitionValue: unknown) {
@@ -145,6 +154,7 @@ export class WorkflowEngine {
         return this.get(runId)
       }
       this.setRunStatus(db, run, "running", ["queued", "waiting", "blocked", "uncertain"])
+      this.recoverMaterializationClaims(db, run)
       await this.reconcileActive(db, run)
       run = this.get(runId)
       this.prepareCompletedLoopIterations(db, run)
@@ -177,7 +187,7 @@ export class WorkflowEngine {
             continue
           }
           let launch = launches[step.id]
-          let materializedDefinition: OrchestrationAgentDefinition | undefined
+          let materializedSnapshot: WorkflowAgentMaterializationResult | undefined
           if (!launch) {
             if (!step.agentDefinitionId)
               throw new Error(`Workflow worker ${step.id} is missing its agent definition binding.`)
@@ -186,27 +196,50 @@ export class WorkflowEngine {
             )
             if (!definition)
               throw new Error(`Workflow worker ${step.id} references an unknown agent definition.`)
-            const materialized = createAgentOrchestrationService(
-              this.databasePath,
-            ).materializeWorkflowAgent({
+            const service = createAgentOrchestrationService(this.databasePath)
+            const attemptCount = checkpoint.attemptCount + 1
+            service.assertWorkflowAgentEligible({
               taskId: run.taskId,
               workflowRunId: run.id,
               stepId: step.id,
-              attemptCount: checkpoint.attemptCount + 1,
-              agent: definition,
+              attemptCount,
+              agentDefinition: definition,
             })
+            const snapshot = await this.materializeDefinition(db, run, step, checkpoint, definition)
+            if (!snapshot) continue
+            const control = db
+              .prepare("SELECT status, stop_intent FROM orchestration_workflow_runs WHERE id = ?")
+              .get(run.id) as { status: string; stop_intent: number }
+            if (control.stop_intent) {
+              this.setRunStatus(db, this.get(run.id), "stopped")
+              return this.get(run.id)
+            }
+            if (control.status === "paused") return this.get(run.id)
+            let materialized: ReturnType<typeof service.materializeWorkflowAgent>
+            try {
+              materialized = service.materializeWorkflowAgent({
+                taskId: run.taskId,
+                workflowRunId: run.id,
+                stepId: step.id,
+                attemptCount,
+                agentDefinition: snapshot.agentDefinition,
+              })
+            } catch (error) {
+              const racedControl = db
+                .prepare("SELECT status, stop_intent FROM orchestration_workflow_runs WHERE id = ?")
+                .get(run.id) as { status: string; stop_intent: number }
+              if (racedControl.stop_intent) {
+                this.setRunStatus(db, this.get(run.id), "stopped")
+                return this.get(run.id)
+              }
+              if (racedControl.status === "paused") return this.get(run.id)
+              throw error
+            }
             launch = materialized
-            materializedDefinition = materialized.agentDefinition
+            materializedSnapshot = snapshot
           }
           workerLaunches.push(
-            this.launchWorker(
-              db,
-              run,
-              step,
-              checkpoint.attemptCount,
-              launch,
-              materializedDefinition,
-            ),
+            this.launchWorker(db, run, step, checkpoint.attemptCount, launch, materializedSnapshot),
           )
           scheduledWorkers += 1
           continue
@@ -483,12 +516,12 @@ export class WorkflowEngine {
     step: Step,
     priorAttempts: number,
     launch: Omit<WorkflowWorkerLaunch, "stepId">,
-    materializedDefinition?: OrchestrationAgentDefinition,
+    materializedSnapshot?: WorkflowAgentMaterializationResult,
   ) {
     if (!step.agentDefinitionId)
       throw new Error(`Workflow worker ${step.id} is missing its agent definition binding.`)
     const agentDefinition =
-      materializedDefinition ??
+      materializedSnapshot?.agentDefinition ??
       run.definition.agents.find((candidate) => candidate.definitionId === step.agentDefinitionId)
     if (!agentDefinition)
       throw new Error(`Workflow worker ${step.id} references an unknown agent definition.`)
@@ -497,6 +530,7 @@ export class WorkflowEngine {
       taskId: run.taskId,
       agentDefinitionId: step.agentDefinitionId,
       agentDefinition,
+      outputSchema: step.outputSchema,
     }
     const attemptCount = priorAttempts + 1
     const ownership = { workflowRunId: run.id, stepId: step.id, attemptCount }
@@ -512,6 +546,15 @@ export class WorkflowEngine {
       lifecycle: "pending",
       activityReference: null,
       startedAt: epoch(),
+      ...(materializedSnapshot
+        ? {
+            materialization: {
+              state: "materialized",
+              attemptCount,
+              ...materializedSnapshot,
+            },
+          }
+        : {}),
     }
     const claim = db.transaction(() => {
       const claimed = db
@@ -538,6 +581,115 @@ export class WorkflowEngine {
     } catch (error) {
       this.setCheckpoint(db, run, step, "uncertain", durableLaunch, safeError(error), attemptCount)
     }
+  }
+
+  private async materializeDefinition(
+    db: Database.Database,
+    run: WorkflowRunDto,
+    step: Step,
+    checkpoint: WorkflowRunDto["checkpoints"][number],
+    definition: OrchestrationAgentDefinition,
+  ): Promise<WorkflowAgentMaterializationResult | null> {
+    const persisted = materializationSnapshot(checkpoint.output)
+    if (persisted) return persisted
+    const owner = randomUUID()
+    const attemptCount = checkpoint.attemptCount + 1
+    const claimed = db
+      .prepare(
+        `UPDATE orchestration_workflow_checkpoints
+         SET status = 'waiting', output_json = ?, error = NULL, updated_at = ?
+         WHERE workflow_run_id = ? AND step_id = ? AND status = 'pending'
+           AND attempt_count = ?`,
+      )
+      .run(
+        JSON.stringify({
+          materialization: {
+            state: "materializing",
+            attemptCount,
+            leaseOwner: owner,
+            leaseExpiresAt: epoch() + 60,
+          },
+        }),
+        epoch(),
+        run.id,
+        step.id,
+        checkpoint.attemptCount,
+      )
+    if (claimed.changes !== 1) return null
+    let renewalLost = false
+    const renewal = setInterval(() => {
+      try {
+        const renewed = db
+          .prepare(
+            `UPDATE orchestration_workflow_checkpoints
+             SET output_json = json_set(output_json, '$.materialization.leaseExpiresAt', ?),
+                 updated_at = ?
+             WHERE workflow_run_id = ? AND step_id = ? AND status = 'waiting'
+               AND json_extract(output_json, '$.materialization.leaseOwner') = ?`,
+          )
+          .run(epoch() + 60, epoch(), run.id, step.id, owner)
+        if (renewed.changes !== 1) renewalLost = true
+      } catch {
+        renewalLost = true
+      }
+    }, 20_000)
+    renewal.unref()
+    try {
+      const result = await this.materializer.materialize({
+        workflowRunId: run.id,
+        taskId: run.taskId,
+        stepId: step.id,
+        attemptCount,
+        agentDefinition: definition,
+      })
+      if (renewalLost)
+        throw new Error("Workflow materialization claim was lost before snapshot persistence.")
+      const parsed = orchestrationAgentDefinitionSchema.parse(result.agentDefinition)
+      assertMaterializerIdentity(definition, parsed)
+      assertMaterializerMetadata(result)
+      const snapshot: WorkflowAgentMaterializationResult = {
+        agentDefinition: parsed,
+        ...(result.profileSnapshotId ? { profileSnapshotId: result.profileSnapshotId } : {}),
+        ...(result.bindingVersion !== undefined ? { bindingVersion: result.bindingVersion } : {}),
+      }
+      const persisted = db
+        .prepare(
+          `UPDATE orchestration_workflow_checkpoints
+           SET status = 'pending', output_json = ?, error = NULL, updated_at = ?
+           WHERE workflow_run_id = ? AND step_id = ? AND status = 'waiting'
+             AND json_extract(output_json, '$.materialization.leaseOwner') = ?`,
+        )
+        .run(
+          JSON.stringify({ materialization: { state: "materialized", attemptCount, ...snapshot } }),
+          epoch(),
+          run.id,
+          step.id,
+          owner,
+        )
+      if (persisted.changes !== 1)
+        throw new Error("Workflow materialization claim was lost before snapshot persistence.")
+      return snapshot
+    } catch (error) {
+      db.prepare(
+        `UPDATE orchestration_workflow_checkpoints
+         SET status = 'blocked', output_json = NULL, error = ?, updated_at = ?
+         WHERE workflow_run_id = ? AND step_id = ? AND status = 'waiting'
+           AND json_extract(output_json, '$.materialization.leaseOwner') = ?`,
+      ).run(safeError(error), epoch(), run.id, step.id, owner)
+      return null
+    } finally {
+      clearInterval(renewal)
+    }
+  }
+
+  private recoverMaterializationClaims(db: Database.Database, run: WorkflowRunDto) {
+    db.prepare(
+      `UPDATE orchestration_workflow_checkpoints
+       SET status = 'pending', updated_at = ?
+       WHERE workflow_run_id = ? AND status = 'waiting'
+         AND json_extract(output_json, '$.materialization.state') = 'materializing'
+         AND json_extract(output_json, '$.materialization.leaseExpiresAt') <= ?`,
+    ).run(epoch(), run.id, epoch())
   }
 
   private async applyRuntimeReference(
@@ -768,6 +920,14 @@ export class WorkflowEngine {
   }
 
   private refreshRunStatus(db: Database.Database, run: WorkflowRunDto) {
+    const control = db
+      .prepare("SELECT status, stop_intent FROM orchestration_workflow_runs WHERE id = ?")
+      .get(run.id) as { status: string; stop_intent: number }
+    if (control.stop_intent) {
+      this.setRunStatus(db, this.get(run.id), "stopped")
+      return
+    }
+    if (control.status === "paused" || control.status === "stopped") return
     const statuses = run.checkpoints.map((item) => item.status)
     const status: WorkflowRunDto["status"] = statuses.some((value) => value === "uncertain")
       ? "uncertain"
@@ -939,6 +1099,43 @@ function readPath(value: unknown, path: string[]) {
 }
 function deepEqual(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+function materializationSnapshot(value: unknown): WorkflowAgentMaterializationResult | null {
+  const materialization = asRecord(asRecord(value)?.materialization)
+  if (materialization?.state !== "materialized") return null
+  const agentDefinition = orchestrationAgentDefinitionSchema.parse(materialization.agentDefinition)
+  return {
+    agentDefinition,
+    ...(typeof materialization.profileSnapshotId === "string"
+      ? { profileSnapshotId: materialization.profileSnapshotId }
+      : {}),
+    ...(typeof materialization.bindingVersion === "number"
+      ? { bindingVersion: materialization.bindingVersion }
+      : {}),
+  }
+}
+function assertMaterializerIdentity(
+  requested: OrchestrationAgentDefinition,
+  returned: OrchestrationAgentDefinition,
+) {
+  if (
+    requested.agentId !== returned.agentId ||
+    requested.definitionId !== returned.definitionId ||
+    !deepEqual(requested.dependencyAgentIds, returned.dependencyAgentIds)
+  )
+    throw new Error("Worker materializer changed immutable definition identity or topology.")
+}
+function assertMaterializerMetadata(result: WorkflowAgentMaterializationResult) {
+  if (
+    result.profileSnapshotId !== undefined &&
+    (!result.profileSnapshotId.trim() || result.profileSnapshotId.length > 512)
+  )
+    throw new Error("Worker materializer returned an invalid profile snapshot identity.")
+  if (
+    result.bindingVersion !== undefined &&
+    (!Number.isSafeInteger(result.bindingVersion) || result.bindingVersion < 0)
+  )
+    throw new Error("Worker materializer returned an invalid binding version.")
 }
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)

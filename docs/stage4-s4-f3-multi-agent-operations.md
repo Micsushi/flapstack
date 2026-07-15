@@ -7,7 +7,8 @@
   targets, durable transition sources, and rebuildable activity projections.
 - `src/main/lib/agent-orchestration/{operations-config,approval-authority,
 workflow-engine,cascade-control,codex-engines,fleet,activity-projection,
-operations-runtime,runtime-launch-port}.ts` plus the F3 service/router wiring.
+operations-runtime,runtime-launch-port,codex-app-server-coordination,
+worker-materializer-port}.ts` plus the F3 service/router wiring.
 - Fleet, lineage, launch preview, activity, and coordination-settings renderer
   surfaces and their focused tests.
 - This OpenSpec change, F3 evidence documents, and S4-MA01 through S4-MA10 rows.
@@ -22,7 +23,8 @@ Exact F3-owned file/hunk inventory:
   multi-agent-operations section of `src/main/lib/db/schema/index.ts`.
 - `src/main/lib/agent-orchestration/{activity-projection,approval-authority,
 cascade-control,codex-engines,coordination-engine,fleet,operations-config,
-operations-runtime,runtime-launch-port,workflow-engine}.ts` and F3 transition,
+operations-runtime,runtime-launch-port,workflow-engine,
+codex-app-server-coordination,worker-materializer-port}.ts` and F3 transition,
   fleet, lineage, messaging, and coordination hunks in `service.ts`.
 - `src/main/lib/trpc/routers/{coordination-engines,
 orchestration-operations}.ts`; F3 router registration, startup recovery, and
@@ -51,9 +53,10 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
   materializes missing worker chats/subchats/runs from immutable agent and
   Runtime snapshots, excludes those runs from generic pending drain, schedules
   durable workflow runs automatically, and launches ready worker waves
-  concurrently inside policy caps. When optional F11 structured-output authority
-  is supplied, F3 schema-checks its immutable activity event reference; missing
-  authority or invalid output follows the persisted retry/failure policy.
+  concurrently inside policy caps. F3 passes output schemas through its typed
+  F11 request seam, reads final JSON only from the authoritative Runtime activity
+  projection, and stores that immutable event reference. Missing or invalid
+  output follows the persisted retry/failure policy.
 - Template agents have stable unique definition IDs; worker steps carry an
   exact definition reference and control steps cannot. Before checkpoint claim,
   the bridge matches task/run/chat/subchat, the durable orchestration-agent row,
@@ -88,10 +91,21 @@ orchestration-operations}.ts`; F3 router registration, startup recovery, and
   through production service/router/startup paths. The F3/F11 bridge loads the
   exact durable worker identity and immutable Runtime snapshot, then delegates
   launch/reconcile/cancel to the singleton F11 service. Optional pause/resume
-  and structured-output port methods are consumed when F11 supplies them and
-  fail closed when absent. Lifecycle and authoritative activity-sequence
-  references return without provider text.
+  methods are consumed when F11 supplies them and fail closed when absent.
+  Structured output may use an F11 method or F3's durable activity reader.
+  Lifecycle and authoritative activity-sequence references return without
+  provider text.
   Adapter construction and selection remain outside F3.
+- The workflow launch path exposes one provider-neutral pre-durable materializer.
+  It runs after dependency/retry/concurrency/budget/permission/worktree checks and
+  before any worker chat/subchat/agent/run or F11 reserve/launch side effect.
+  A renewable claim persists the exact returned definition and optional profile
+  snapshot metadata. Failure is bounded/redacted and creates zero worker rows;
+  concurrent pause/resume reuses the same attempt and snapshot.
+- Codex V2/V1 coordination maps durable actions directly to App Server
+  thread/turn requests. F11 owns the process, permissions, notifications, and
+  stream parsing through a two-method request/version injection port; F3 owns
+  only action mapping, durable intent/idempotency, identity, and reconciliation.
 
 ## F11 prerequisites present but not claimed as F3
 
@@ -111,11 +125,12 @@ F3 consumes only durable run/chat/subchat identity, persisted
 sequence references. It does not select adapters, probe Runtime availability,
 parse provider streams, or copy Runtime activity text. Startup binds the bridge
 when the reviewed F11 singleton export is present and otherwise leaves F3
-Runtime operations unavailable with no fallback. Optional pause/resume and
-structured-output authority remain F11-owned and are not implemented by this
-packet; F3 only consumes resulting lifecycle/activity references and fails
-closed when they are absent. F11 feature acceptance remains an external
-dependency.
+Runtime operations unavailable with no fallback. Optional pause/resume authority
+remains F11-owned and is not implemented by this packet. F3 passes output schemas
+through its typed F11 queued-run consumer seam and can read/validate final JSON
+from the authoritative activity projection without parsing provider streams.
+F11 still owns provider-side schema forwarding. F11 feature acceptance remains
+an external dependency.
 
 ## Deferred F10/mobile prerequisite cleanup, not F3
 
@@ -234,14 +249,16 @@ startup/router/settings shutdown hunks are likewise F10 cleanup, not F3.
   provider-identity projection, and an inspectable workflow control/checkpoint
   panel now have production wiring and focused component/service coverage.
 - Codex coordination clients can be registered without replacing the F11
-  Runtime port. Capability probes fail closed when a registered provider throws.
-  The reviewed Codex app-server transport does not expose the native V2/V1
-  multi-agent task tools as direct application RPC, so no prompt-mediated fake
-  production client or replay-prone fallback was added.
+  Runtime port. Capability probes fail closed on version drift or request error.
+  The direct mapper uses supported App Server thread/turn requests and never
+  asks a model to invoke coordination tools. Registration occurs only when F11
+  supplies its owned request/version authority; no second process or activity
+  parser is created by F3.
 - F11 remains the only Runtime adapter selector and the only source of provider
   activity. F3 consumes immutable launch snapshots plus lifecycle/activity
   references and never copies Runtime activity. This packet does not implement
-  F11 singleton lifecycle, dispatch, pause/resume, or structured-output reads.
+  F11 singleton lifecycle, provider stream dispatch/parsing, or pause/resume.
+  F3 adds only typed consumer seams for Codex requests and output schemas.
 - Live UI evidence is frozen to the dedicated UI coordinator/tester and is not
   claimed by this packet. No UI lease or production app was used.
 
@@ -254,11 +271,35 @@ Unclaimed dependencies/evidence:
   F3 fleet navigation contract.
 - F11-T10 acceptance and provider-native process suspension semantics beyond
   Flapstack-owned activity-delivery pause/resume.
-- A supported direct Codex V2/V1 coordination transport/client registration;
-  app-server worker turns do not expose the native model task tools as RPC.
+- F11 composition of the new `codexCoordination` request/version authority and
+  queued-run `outputSchema` field, plus provider-neutral pause/resume methods.
 - Real Codex V2/V1, Codex plus Claude mixed workflow, cancellation, restart, and
   provider reconciliation walkthroughs.
 - Dedicated-tester live UI, multi-window, and manual accessibility proof.
 - Signed and visually inspected package preview.
 
 No commit, merge, push, task finalization, or acceptance claim is authorized.
+
+### Missing production-path amendment — 2026-07-15
+
+- The isolated packet remains based on accepted F3 commit
+  `5290e52c6818212f220e6d9ce6588b13f32bb1a9`; no integration ref moved.
+- A generic pre-durable worker materializer now persists one exact attempt and
+  optional profile metadata before any durable worker or F11 side effect.
+  Failure, identity/topology mutation, concurrent claims, pause/resume, and
+  zero-row guarantees have focused coverage.
+- Direct Codex V2/V1 coordination now maps supported App Server thread/turn
+  requests behind an F11-owned request/version port. F3 creates no provider
+  process and parses no provider stream. Unknown/version-drift states fail
+  closed, and supported fork/send/follow-up/wait/interrupt/complete/residency
+  plus V1 legacy mappings have request-contract coverage.
+- Structured output passes the schema through the typed F11 queued-run seam;
+  F3 reads and validates only the authoritative completed activity projection.
+  Pause/resume remains an optional F11 lifecycle authority and fails closed.
+- Node 22 focused proof: TypeScript passed; scoped ESLint and Prettier passed;
+  three F3/coordination suites passed 75 tests; strict OpenSpec passed; diff
+  hygiene passed. The standalone F11 main-service suite did not start because
+  this `--ignore-scripts` install has no Electron binary, so it produced zero
+  test evidence and is not claimed.
+- No broad gate, build, UI, provider, package, device, rebase, commit, merge, or
+  push was run for this amendment.

@@ -186,12 +186,27 @@ export function createAgentOrchestrationService(databasePath: string) {
       }
     },
 
+    assertWorkflowAgentEligible(input: {
+      taskId: string
+      workflowRunId: string
+      stepId: string
+      attemptCount: number
+      agentDefinition: OrchestrationAgentDefinition
+    }): void {
+      const db = open()
+      try {
+        assertWorkflowMaterializationEligibility(db, input)
+      } finally {
+        db.close()
+      }
+    },
+
     materializeWorkflowAgent(input: {
       taskId: string
       workflowRunId: string
       stepId: string
       attemptCount: number
-      agent: OrchestrationAgentDefinition
+      agentDefinition: OrchestrationAgentDefinition
     }): {
       runId: string
       chatId: string
@@ -214,13 +229,20 @@ export function createAgentOrchestrationService(databasePath: string) {
               .get(dedupKey, input.taskId) as Row | undefined
             if (existing) return workflowLaunchFromRow(existing)
 
+            assertWorkflowMaterializationEligibility(db, input)
             const agentId = workflowAgentId(input.workflowRunId, input.stepId, input.attemptCount)
-            const definition = orchestrationAgentDefinitionSchema.parse({
-              ...input.agent,
-              agentId,
-              dependencyAgentIds: [],
+            const definition = orchestrationAgentDefinitionSchema.parse(input.agentDefinition)
+            validateDefinitionPermissions(definition)
+            insertAgent(db, {
+              id: agentId,
+              taskId: input.taskId,
+              definition,
+              parentAgentId: null,
+              replacedAgentId: null,
+              ancestorAgentIds: [],
+              depth: 1,
+              now: nowEpochSeconds(),
             })
-            addAgent(db, { taskId: input.taskId, agent: definition })
             const orchestration = requireOrchestration(db, input.taskId)
             const agent = requireAgent(db, input.taskId, agentId)
             materializeAgent(db, orchestration, agent)
@@ -662,6 +684,75 @@ export function createAgentOrchestrationService(databasePath: string) {
         db.close()
       }
     },
+  }
+}
+
+function assertWorkflowMaterializationEligibility(
+  db: Sqlite,
+  input: {
+    taskId: string
+    workflowRunId: string
+    stepId: string
+    attemptCount: number
+    agentDefinition: OrchestrationAgentDefinition
+  },
+): void {
+  const definition = orchestrationAgentDefinitionSchema.parse(input.agentDefinition)
+  validateDefinitionPermissions(definition)
+  const orchestration = requireOrchestration(db, input.taskId)
+  assertVersionedOrchestration(orchestration)
+  if (["completed", "failed", "stopped"].includes(String(orchestration.status)))
+    throw new AgentOrchestrationError("conflict", "Terminal orchestration cannot launch workers.")
+  const checkpoint = db
+    .prepare(
+      `SELECT wr.task_id, wr.status run_status, wr.stop_intent, cp.status checkpoint_status,
+              cp.attempt_count
+       FROM orchestration_workflow_runs wr
+       JOIN orchestration_workflow_checkpoints cp ON cp.workflow_run_id = wr.id
+       WHERE wr.id = ? AND cp.step_id = ?`,
+    )
+    .get(input.workflowRunId, input.stepId) as Row | undefined
+  if (
+    !checkpoint ||
+    String(checkpoint.task_id) !== input.taskId ||
+    Number(checkpoint.stop_intent) !== 0 ||
+    ["completed", "failed", "stopped", "paused"].includes(String(checkpoint.run_status)) ||
+    !["pending", "waiting"].includes(String(checkpoint.checkpoint_status)) ||
+    Number(checkpoint.attempt_count) + 1 !== input.attemptCount
+  )
+    throw new AgentOrchestrationError(
+      "conflict",
+      "Workflow checkpoint attempt is not eligible for worker materialization.",
+    )
+  const task = db
+    .prepare(
+      "SELECT t.*, p.path project_path FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND t.archived_at IS NULL",
+    )
+    .get(input.taskId) as Row | undefined
+  const parentChat = db
+    .prepare("SELECT * FROM chats WHERE id = ? AND task_id = ? AND archived_at IS NULL")
+    .get(orchestration.initiating_chat_id, input.taskId) as Row | undefined
+  if (!task || !parentChat)
+    throw new AgentOrchestrationError("stale-target", "Workflow worker scope is stale.")
+  resolveWorktree(db, task, parentChat, definition)
+  try {
+    assertUsageBudgetAllowsLaunch(drizzle(db, { schema: dbSchema }), {
+      controlled: true,
+      providerId: providerForHarness(definition.harness),
+      accountTag: null,
+      projectId: String(task.project_id),
+      taskId: input.taskId,
+      automationId: null,
+      orchestrationId: input.taskId,
+      runId: null,
+    })
+  } catch (error) {
+    if (error instanceof UsageBudgetExceededError)
+      throw new AgentOrchestrationError(
+        "usage-budget-exhausted",
+        `Orchestration launch blocked by ${error.decision.hardStops.length} scoped usage budget(s).`,
+      )
+    throw error
   }
 }
 

@@ -8,6 +8,7 @@ import type { AgentHarness } from "../../../shared/harness-types"
 import { resolvedLaunchFromSnapshotRow } from "../agent-runtime/snapshot"
 import { claimPendingRunWithinUsageBudget } from "../usage/budgets"
 import { recordOrchestrationTransition } from "./activity-projection"
+import type { CodexAppServerCoordinationTransportPort } from "./codex-app-server-coordination"
 
 type Row = Record<string, unknown>
 
@@ -34,6 +35,7 @@ export type RuntimeLaunchRequest = {
   subChatId: string
   agentDefinitionId: string
   agentDefinition: OrchestrationAgentDefinition
+  outputSchema: Record<string, unknown> | null
 }
 
 export type RuntimeLaunchBinding = {
@@ -61,6 +63,8 @@ export type MainRuntimeQueuedRun = {
   worktreePath: string | null
   projectPath: string | null
   runtimeLaunch: ResolvedRuntimeLaunch
+  /** Consumer seam for F11. F3 never selects or parses a provider adapter. */
+  outputSchema: Record<string, unknown> | null
 }
 
 /** Structural view of the reviewed F11 singleton. F3 never constructs it. */
@@ -71,6 +75,8 @@ export interface MainRuntimeLaunchServicePort {
   pause?(runId: string): Promise<boolean>
   resume?(runId: string): Promise<boolean>
   readStructuredOutput?(runId: string): Promise<RuntimeStructuredOutput | null>
+  /** Optional F11-owned direct Codex request surface; no adapter/parser ownership crosses here. */
+  codexCoordination?: CodexAppServerCoordinationTransportPort
 }
 
 /** F3 consumes this provider-neutral port only. */
@@ -143,8 +149,8 @@ export function createMainRuntimeLaunchPort(
     },
     async readStructuredOutput(runId) {
       requireDurableIdentity(databasePath, runId)
-      if (!service.readStructuredOutput) return null
-      return service.readStructuredOutput(runId)
+      if (service.readStructuredOutput) return service.readStructuredOutput(runId)
+      return readProjectedStructuredOutput(databasePath, runId)
     },
   }
 }
@@ -231,11 +237,40 @@ function loadDurableRun(
       worktreePath: stringOrNull(row.worktree_path),
       projectPath: stringOrNull(row.project_path),
       runtimeLaunch,
+      outputSchema: request.outputSchema,
     },
     binding: {
       orchestrationAgentId: String(row.orchestration_agent_id),
       agentDefinitionId: request.agentDefinitionId,
     },
+  }
+}
+
+function readProjectedStructuredOutput(
+  databasePath: string,
+  runId: string,
+): RuntimeStructuredOutput | null {
+  const db = open(databasePath)
+  try {
+    const row = db
+      .prepare(
+        `SELECT e.event_id, e.sequence, e.payload_json
+         FROM agent_runs r JOIN agent_activity_events e ON e.run_id = r.id
+         WHERE r.id = ? AND r.status = 'success'
+           AND e.kind = 'agent-text' AND e.phase = 'completed'
+           AND json_type(e.payload_json, '$.text') = 'text'
+           AND length(trim(json_extract(e.payload_json, '$.text'))) > 0
+         ORDER BY e.sequence DESC LIMIT 1`,
+      )
+      .get(runId) as { event_id: string; sequence: number; payload_json: string } | undefined
+    if (!row) return null
+    const payload = JSON.parse(row.payload_json) as { text: string }
+    return {
+      value: JSON.parse(payload.text),
+      activityReference: { runId, eventId: row.event_id, sequence: row.sequence },
+    }
+  } finally {
+    db.close()
   }
 }
 

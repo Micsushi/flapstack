@@ -75,9 +75,23 @@ const providerIdentitySchema = z.discriminatedUnion("engine", [
 const actionSchema = z.discriminatedUnion("kind", [
   z.object({
     schemaVersion: z.literal(1),
-    kind: z.enum(["prepare", "start", "resume", "reconcile", "cancel", "cleanup"]),
+    kind: z.enum(["prepare", "resume", "reconcile", "cancel", "cleanup"]),
     orchestrationId: taskIdSchema,
     providerIdentity: providerIdentitySchema.nullable(),
+  }),
+  z.object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("start"),
+    orchestrationId: taskIdSchema,
+    providerIdentity: providerIdentitySchema.nullable(),
+    contextFork: z
+      .object({
+        sourceProviderThreadId: z.string().trim().min(1).max(512),
+        lastTurnId: z.string().trim().min(1).max(512).nullable(),
+      })
+      .strict()
+      .nullable()
+      .default(null),
   }),
   z.object({
     schemaVersion: z.literal(1),

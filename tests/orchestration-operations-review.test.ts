@@ -39,7 +39,12 @@ import {
   registerCodexCoordinationClients,
   registerMainRuntimeOperations,
   registerOrchestrationOperationsRuntime,
+  registerWorkflowAgentMaterializer,
 } from "../src/main/lib/agent-orchestration/operations-runtime"
+import {
+  createCodexAppServerCoordinationClient,
+  type CodexAppServerCoordinationTransportPort,
+} from "../src/main/lib/agent-orchestration/codex-app-server-coordination"
 import type { OrchestrationTemplateDefinition } from "../src/shared/orchestration-operations"
 import type { OrchestrationAgentDefinition } from "../src/shared/agent-orchestration"
 import type {
@@ -128,6 +133,7 @@ describe("production wiring", () => {
         prompt: "Durable worker prompt",
         permissionMode: "read-only",
         projectPath: "/tmp/project",
+        outputSchema: null,
         runtimeLaunch: expect.objectContaining({
           requestedPreference: "codex",
           resolvedRuntime: "codex",
@@ -167,6 +173,51 @@ describe("production wiring", () => {
     })
     expect(engine.get(run.id).status).toBe("completed")
     expect(coordinator.launch).toHaveBeenCalledTimes(1)
+  })
+
+  it("reads structured output only from the durable F11 activity projection", async () => {
+    const identity = {
+      ...seedPendingRuntimeRun("structured-bridge-run"),
+      outputSchema: { type: "object", required: ["result"] },
+    }
+    const service: MainRuntimeLaunchServicePort = {
+      launch: vi.fn(async () => undefined),
+      reconcileRun: vi.fn(async () => "completed"),
+      cancel: vi.fn(async () => true),
+    }
+    const port = createMainRuntimeLaunchPort(databasePath, service)
+    await port.reserve(identity, {
+      workflowRunId: "structured-workflow",
+      stepId: "structured",
+      attemptCount: 1,
+    })
+    const db = new Database(databasePath)
+    db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+      identity.runId,
+    )
+    db.prepare(
+      `INSERT INTO agent_activity_events
+       (event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+        kind, phase, display_class, privacy_class, redaction_state, payload_json,
+        received_at, created_at)
+       VALUES ('structured-bridge-event', ?, ?, ?, 'codex', 'codex', 'runtime', 8,
+        'agent-text', 'completed', 'summary', 'public', 'none', ?, 2, 2)`,
+    ).run(
+      identity.runId,
+      identity.chatId,
+      identity.subChatId,
+      JSON.stringify({ text: JSON.stringify({ result: "ok" }) }),
+    )
+    db.close()
+
+    await expect(port.readStructuredOutput?.(identity.runId)).resolves.toEqual({
+      value: { result: "ok" },
+      activityReference: {
+        runId: identity.runId,
+        eventId: "structured-bridge-event",
+        sequence: 8,
+      },
+    })
   })
 
   it("registers capability-gated Codex clients without changing Runtime ownership", async () => {
@@ -488,6 +539,227 @@ describe("workflow review invariants", () => {
     await expect(drainPendingMcpRuns(databasePath, genericLaunch)).resolves.toBe(0)
     expect(genericLaunch).not.toHaveBeenCalled()
     expect(coordinator.launch).toHaveBeenCalledTimes(1)
+  })
+
+  it("registers direct Codex coordination only when F11 supplies its request authority", async () => {
+    const transport = fakeCodexProtocol(async (method) => {
+      if (method === "thread/loaded/list") return { data: [] }
+      throw new Error(`Unexpected Codex request ${method}`)
+    })
+    const service: MainRuntimeLaunchServicePort = {
+      launch: vi.fn(async () => undefined),
+      reconcileRun: vi.fn(async () => "completed"),
+      cancel: vi.fn(async () => true),
+      codexCoordination: transport,
+    }
+    registerMainRuntimeOperations(databasePath, service)
+
+    await expect(getRegisteredCoordinationEngineProbes()).resolves.toMatchObject({
+      "codex-v2": { available: true, engineVersion: "codex-v2-v1" },
+      "codex-v1": { available: true, engineVersion: "codex-v1-v1" },
+    })
+    expect(transport.version).toHaveBeenCalledTimes(2)
+    expect(transport.request).toHaveBeenCalledTimes(2)
+  })
+
+  it("preserves the injected worker materializer when F11 registers afterward", async () => {
+    const materialize = vi.fn(
+      async ({ agentDefinition }: { agentDefinition: OrchestrationAgentDefinition }) => ({
+        agentDefinition: { ...agentDefinition, prompt: "Registered bound prompt" },
+        profileSnapshotId: "registered-snapshot",
+      }),
+    )
+    registerOrchestrationOperationsRuntime({ runtime: runtime() })
+    registerWorkflowAgentMaterializer({ materialize })
+    const service: MainRuntimeLaunchServicePort = {
+      launch: vi.fn(async (queued) => {
+        const db = new Database(databasePath)
+        db.prepare("UPDATE agent_runs SET status = 'success', completed_at = 2 WHERE id = ?").run(
+          queued.runId,
+        )
+        db.close()
+      }),
+      reconcileRun: vi.fn(async () => "completed"),
+      cancel: vi.fn(async () => true),
+    }
+    registerMainRuntimeOperations(databasePath, service)
+    const engine = getWorkflowEngine(databasePath)
+    const run = engine.start("task-1", baseDefinition([step("worker", "agent")]))
+
+    await expect(engine.advance(run.id)).resolves.toMatchObject({ status: "completed" })
+    expect(materialize).toHaveBeenCalledTimes(1)
+    expect(engine.get(run.id).checkpoints[0]?.output).toMatchObject({
+      materialization: {
+        profileSnapshotId: "registered-snapshot",
+        agentDefinition: { prompt: "Registered bound prompt" },
+      },
+    })
+  })
+
+  it("materializes the exact definition before durable worker rows and passes its schema to F11", async () => {
+    const definition = baseDefinition([
+      step("worker", "agent", {
+        outputSchema: { type: "object", required: ["result"] },
+      }),
+    ])
+    const returnedDefinition = {
+      ...definition.agents[0]!,
+      name: "Bound worker",
+      prompt: "Bound prompt",
+      model: "gpt-bound",
+    }
+    const materialize = vi.fn(async () => ({
+      agentDefinition: returnedDefinition,
+      profileSnapshotId: "profile-snapshot-1",
+      bindingVersion: 7,
+    }))
+    const coordinator = {
+      ...runtime(),
+      readStructuredOutput: vi.fn(async (runId: string) => ({
+        value: { result: "ok" },
+        activityReference: { runId, eventId: "structured-event", sequence: 1 },
+      })),
+    }
+    const reserve = vi.fn(coordinator.reserve)
+    const engine = new WorkflowEngine(databasePath, { ...coordinator, reserve }, { materialize })
+    const run = engine.start("task-1", definition)
+
+    await expect(engine.advance(run.id)).resolves.toMatchObject({ status: "completed" })
+    expect(materialize).toHaveBeenCalledWith({
+      workflowRunId: run.id,
+      taskId: "task-1",
+      stepId: "worker",
+      attemptCount: 1,
+      agentDefinition: definition.agents[0],
+    })
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDefinition: returnedDefinition,
+        outputSchema: { type: "object", required: ["result"] },
+      }),
+      { workflowRunId: run.id, stepId: "worker", attemptCount: 1 },
+    )
+    const db = new Database(databasePath, { readonly: true })
+    const rows = db
+      .prepare("SELECT definition FROM orchestration_agents WHERE task_id = 'task-1'")
+      .all() as Array<{ definition: string }>
+    db.close()
+    expect(rows).toHaveLength(1)
+    expect(JSON.parse(rows[0]!.definition)).toEqual(returnedDefinition)
+    expect(engine.get(run.id).checkpoints[0]?.output).toMatchObject({
+      materialization: {
+        state: "materialized",
+        attemptCount: 1,
+        agentDefinition: returnedDefinition,
+        profileSnapshotId: "profile-snapshot-1",
+        bindingVersion: 7,
+      },
+    })
+  })
+
+  it("blocks safely with zero worker rows when pre-durable materialization fails", async () => {
+    const materialize = vi.fn(async () => {
+      throw new Error(`Bearer ${"secret".repeat(30)}`)
+    })
+    const engine = new WorkflowEngine(databasePath, runtime(), { materialize })
+    const run = engine.start("task-1", baseDefinition([step("worker", "agent")]))
+    const result = await engine.advance(run.id)
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      checkpoints: [{ status: "blocked", error: "Bearer [REDACTED]" }],
+    })
+    const db = new Database(databasePath, { readonly: true })
+    expect(db.prepare("SELECT count(*) count FROM orchestration_agents").get()).toEqual({
+      count: 0,
+    })
+    expect(db.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+    expect(db.prepare("SELECT count(*) count FROM sub_chats").get()).toEqual({ count: 0 })
+    expect(db.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 1 })
+    db.close()
+  })
+
+  it("runs eligibility before materialization and rejects changed identity/topology", async () => {
+    const ineligible = baseDefinition([step("worker", "agent")])
+    ineligible.policy.allowSpawn = false
+    const skippedMaterializer = vi.fn(async () => ({ agentDefinition: ineligible.agents[0]! }))
+    const blockedEngine = new WorkflowEngine(databasePath, runtime(), {
+      materialize: skippedMaterializer,
+    })
+    const blockedRun = blockedEngine.start("task-1", ineligible)
+    await expect(blockedEngine.advance(blockedRun.id)).resolves.toMatchObject({
+      status: "blocked",
+    })
+    expect(skippedMaterializer).not.toHaveBeenCalled()
+
+    const definition = baseDefinition([step("worker", "agent")])
+    const changedTopology = vi.fn(async () => ({
+      agentDefinition: {
+        ...definition.agents[0]!,
+        dependencyAgentIds: ["different-dependency"],
+      },
+    }))
+    const engine = new WorkflowEngine(databasePath, runtime(), { materialize: changedTopology })
+    const run = engine.start("task-1", definition)
+    await expect(engine.advance(run.id)).resolves.toMatchObject({
+      status: "blocked",
+      checkpoints: [
+        {
+          error: expect.stringContaining("changed immutable definition identity or topology"),
+        },
+      ],
+    })
+    const db = new Database(databasePath, { readonly: true })
+    expect(db.prepare("SELECT count(*) count FROM orchestration_agents").get()).toEqual({
+      count: 0,
+    })
+    expect(db.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+    db.close()
+  })
+
+  it("claims materialization once and reuses its snapshot after a concurrent pause/resume", async () => {
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered!: () => void
+    const enteredPromise = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const definition = baseDefinition([step("worker", "agent")])
+    const returnedDefinition = { ...definition.agents[0]!, prompt: "Bound once" }
+    const materialize = vi.fn(async () => {
+      entered()
+      await waiting
+      return { agentDefinition: returnedDefinition, profileSnapshotId: "snapshot-once" }
+    })
+    const engine = new WorkflowEngine(databasePath, runtime(), { materialize })
+    const run = engine.start("task-1", definition)
+    const first = engine.advance(run.id)
+    await enteredPromise
+    const concurrent = engine.advance(run.id)
+    engine.control(run.id, "pause")
+    release()
+
+    await expect(first).resolves.toMatchObject({ status: "paused" })
+    await expect(concurrent).resolves.toMatchObject({ status: "paused" })
+    expect(materialize).toHaveBeenCalledTimes(1)
+    let db = new Database(databasePath, { readonly: true })
+    expect(db.prepare("SELECT count(*) count FROM orchestration_agents").get()).toEqual({
+      count: 0,
+    })
+    expect(db.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
+    db.close()
+
+    engine.control(run.id, "resume")
+    await expect(engine.advance(run.id)).resolves.toMatchObject({ status: "completed" })
+    expect(materialize).toHaveBeenCalledTimes(1)
+    db = new Database(databasePath, { readonly: true })
+    expect(db.prepare("SELECT count(*) count FROM orchestration_agents").get()).toEqual({
+      count: 1,
+    })
+    expect(db.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
+    db.close()
   })
 
   it("evaluates branches, skips the unselected path, bounds loops, and materializes workers", async () => {
@@ -1172,6 +1444,341 @@ describe("Codex durability review invariants", () => {
   })
 })
 
+describe("direct Codex App Server coordination", () => {
+  it("fails capability probing closed on Codex protocol version drift", async () => {
+    const transport = fakeCodexProtocol(async () => ({}))
+    vi.mocked(transport.version).mockResolvedValue("0.145.0")
+    const client = createCodexAppServerCoordinationClient({ databasePath, transport })
+
+    await expect(client.probe("codex-v2")).resolves.toMatchObject({
+      available: false,
+      reason: {
+        code: "engine-unavailable",
+        message: expect.stringContaining("pinned to 0.144.1"),
+      },
+    })
+    expect(transport.request).not.toHaveBeenCalled()
+  })
+
+  it("maps V2 context forks, active messages, and V1 interrupt-then-send to direct RPCs", async () => {
+    seedAgent("agent-v2", "run-v2")
+    seedAgent("agent-v1", "run-v1")
+    const db = new Database(databasePath)
+    db.prepare("UPDATE sub_chats SET session_id = 'thread-v2' WHERE id = 'sub-run-v2'").run()
+    db.prepare("UPDATE sub_chats SET session_id = 'thread-v1' WHERE id = 'sub-run-v1'").run()
+    db.close()
+    let v1Reads = 0
+    const protocol = fakeCodexProtocol(async (method, params) => {
+      if (method === "initialize" || method === "thread/loaded/list") return {}
+      if (method === "thread/fork") return { thread: { id: "forked-root" } }
+      if (method === "thread/read" && params?.threadId === "thread-v2")
+        return {
+          thread: {
+            id: "thread-v2",
+            status: { type: "active" },
+            turns: [{ id: "turn-v2", status: "inProgress" }],
+          },
+        }
+      if (method === "turn/steer") return { turnId: "turn-v2" }
+      if (method === "thread/read" && params?.threadId === "thread-v1") {
+        v1Reads += 1
+        return {
+          thread: {
+            id: "thread-v1",
+            status: { type: v1Reads === 1 ? "active" : "idle" },
+            turns:
+              v1Reads === 1
+                ? [{ id: "turn-v1-active", status: "inProgress" }]
+                : [{ id: "turn-v1-active", status: "interrupted" }],
+          },
+        }
+      }
+      if (method === "turn/interrupt") return {}
+      if (method === "turn/start") return { turn: { id: "turn-v1-followup" } }
+      throw new Error(`Unexpected Codex request ${method}`)
+    })
+    const client = createCodexAppServerCoordinationClient({
+      databasePath,
+      transport: protocol,
+    })
+
+    await expect(client.probe("codex-v2")).resolves.toMatchObject({
+      available: true,
+      snapshot: { capabilities: expect.arrayContaining(["selective-context-fork", "mailbox"]) },
+    })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "start",
+          orchestrationId: "task-1",
+          providerIdentity: null,
+          contextFork: {
+            sourceProviderThreadId: "source-thread",
+            lastTurnId: "source-turn-4",
+          },
+        },
+        { intentId: "start-intent", idempotencyKey: "start-key" },
+      ),
+    ).resolves.toMatchObject({
+      state: "running",
+      providerIdentity: { engine: "codex-v2", providerTaskId: "forked-root" },
+    })
+    await client.dispatch(
+      "codex-v2",
+      {
+        schemaVersion: 1,
+        kind: "send",
+        orchestrationId: "task-1",
+        providerIdentity: v2Identity("root-v2"),
+        targetAgentId: "agent-v2",
+        message: "steer now",
+      },
+      { intentId: "send-v2", idempotencyKey: "message-v2" },
+    )
+    await client.dispatch(
+      "codex-v1",
+      {
+        schemaVersion: 1,
+        kind: "send",
+        orchestrationId: "task-1",
+        providerIdentity: {
+          schemaVersion: 1,
+          engine: "codex-v1",
+          providerAgentId: "root-v1",
+          nickname: "legacy-root",
+        },
+        targetAgentId: "agent-v1",
+        message: "replace active turn",
+      },
+      { intentId: "send-v1", idempotencyKey: "message-v1" },
+    )
+
+    expect(protocol.request).toHaveBeenCalledWith("thread/fork", {
+      threadId: "source-thread",
+      lastTurnId: "source-turn-4",
+    })
+    expect(protocol.request).toHaveBeenCalledWith("turn/steer", {
+      threadId: "thread-v2",
+      clientUserMessageId: "message-v2",
+      input: [{ type: "text", text: "steer now", text_elements: [] }],
+      expectedTurnId: "turn-v2",
+    })
+    expect(protocol.request).toHaveBeenCalledWith("turn/interrupt", {
+      threadId: "thread-v1",
+      turnId: "turn-v1-active",
+    })
+    expect(protocol.request).toHaveBeenCalledWith("turn/start", {
+      threadId: "thread-v1",
+      clientUserMessageId: "message-v1",
+      input: [{ type: "text", text: "replace active turn", text_elements: [] }],
+    })
+  })
+
+  it("fails wait closed when any direct Codex target has uncertain provider state", async () => {
+    seedAgent("agent-uncertain", "run-uncertain")
+    const db = new Database(databasePath)
+    db.prepare(
+      "UPDATE sub_chats SET session_id = 'thread-uncertain' WHERE id = 'sub-run-uncertain'",
+    ).run()
+    db.close()
+    const protocol = fakeCodexProtocol(async (method) => {
+      if (method === "initialize") return {}
+      if (method === "thread/read")
+        return {
+          thread: {
+            id: "thread-uncertain",
+            status: { type: "systemError" },
+            turns: [{ id: "failed-turn", status: "failed" }],
+          },
+        }
+      throw new Error(`Unexpected Codex request ${method}`)
+    })
+    const client = createCodexAppServerCoordinationClient({
+      databasePath,
+      transport: protocol,
+    })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "wait",
+          orchestrationId: "task-1",
+          providerIdentity: v2Identity("root-v2"),
+          targetAgentIds: ["agent-uncertain"],
+          timeoutMs: 1,
+        },
+        { intentId: "wait-intent", idempotencyKey: "wait-key" },
+      ),
+    ).rejects.toThrow(/states are uncertain/)
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "complete",
+          orchestrationId: "task-1",
+          providerIdentity: v2Identity("thread-uncertain"),
+          resultSummary: null,
+        },
+        { intentId: "complete-intent", idempotencyKey: "complete-key" },
+      ),
+    ).rejects.toThrow(/state is uncertain/)
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "interrupt",
+          orchestrationId: "task-1",
+          providerIdentity: v2Identity("root-v2"),
+          targetAgentId: "agent-uncertain",
+          message: null,
+        },
+        { intentId: "interrupt-intent", idempotencyKey: "interrupt-key" },
+      ),
+    ).rejects.toThrow(/state is uncertain/)
+  })
+
+  it("treats unknown App Server thread or turn statuses as uncertain", async () => {
+    const transport = fakeCodexProtocol(async (method, params) => {
+      if (method === "thread/read")
+        return {
+          thread: {
+            id: params?.threadId,
+            status: { type: "futureStatus" },
+            turns: [{ id: "future-turn", status: "futureTurnStatus" }],
+          },
+        }
+      throw new Error(`Unexpected Codex request ${method}`)
+    })
+    const client = createCodexAppServerCoordinationClient({ databasePath, transport })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "complete",
+          orchestrationId: "task-1",
+          providerIdentity: v2Identity("future-thread"),
+          resultSummary: null,
+        },
+        { intentId: "future-intent", idempotencyKey: "future-key" },
+      ),
+    ).rejects.toThrow(/state is uncertain/)
+  })
+
+  it("maps reload, wait, completion, interrupt, and V2/V1 residency cleanup directly", async () => {
+    seedAgent("agent-idle", "run-idle")
+    const db = new Database(databasePath)
+    db.prepare("UPDATE sub_chats SET session_id = 'thread-idle' WHERE id = 'sub-run-idle'").run()
+    db.close()
+    const transport = fakeCodexProtocol(async (method, params) => {
+      if (["thread/resume", "thread/unsubscribe", "thread/archive"].includes(method)) return {}
+      if (method === "thread/read") {
+        const threadId = String(params?.threadId)
+        return {
+          thread: {
+            id: threadId,
+            status: { type: "idle" },
+            turns: [{ id: `${threadId}-turn`, status: "completed" }],
+          },
+        }
+      }
+      throw new Error(`Unexpected Codex request ${method}`)
+    })
+    const client = createCodexAppServerCoordinationClient({ databasePath, transport })
+    const identity = v2Identity("root-v2")
+    const dispatchIdentity = { intentId: "lifecycle-intent", idempotencyKey: "lifecycle-key" }
+
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "resume",
+          orchestrationId: "task-1",
+          providerIdentity: identity,
+        },
+        dispatchIdentity,
+      ),
+    ).resolves.toMatchObject({ state: "running" })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "wait",
+          orchestrationId: "task-1",
+          providerIdentity: identity,
+          targetAgentIds: ["agent-idle"],
+          timeoutMs: 1,
+        },
+        dispatchIdentity,
+      ),
+    ).resolves.toMatchObject({ state: "completed", result: { waiting: false } })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "complete",
+          orchestrationId: "task-1",
+          providerIdentity: identity,
+          resultSummary: "done",
+        },
+        dispatchIdentity,
+      ),
+    ).resolves.toMatchObject({ state: "completed", result: { resultSummary: "done" } })
+    await expect(
+      client.dispatch(
+        "codex-v2",
+        {
+          schemaVersion: 1,
+          kind: "interrupt",
+          orchestrationId: "task-1",
+          providerIdentity: identity,
+          targetAgentId: "agent-idle",
+          message: null,
+        },
+        dispatchIdentity,
+      ),
+    ).resolves.toMatchObject({ state: "cancelled", result: { interrupted: false } })
+    await client.dispatch(
+      "codex-v2",
+      {
+        schemaVersion: 1,
+        kind: "cleanup",
+        orchestrationId: "task-1",
+        providerIdentity: identity,
+      },
+      dispatchIdentity,
+    )
+    await client.dispatch(
+      "codex-v1",
+      {
+        schemaVersion: 1,
+        kind: "cleanup",
+        orchestrationId: "task-1",
+        providerIdentity: {
+          schemaVersion: 1,
+          engine: "codex-v1",
+          providerAgentId: "root-v1",
+          nickname: null,
+        },
+      },
+      dispatchIdentity,
+    )
+    expect(transport.request).toHaveBeenCalledWith("thread/resume", { threadId: "root-v2" })
+    expect(transport.request).toHaveBeenCalledWith("thread/unsubscribe", {
+      threadId: "root-v2",
+    })
+    expect(transport.request).toHaveBeenCalledWith("thread/archive", { threadId: "root-v1" })
+  })
+})
+
 describe("activity source review invariants", () => {
   it("redacts before storage and rebuilds the same history after restart", () => {
     seedAgent("activity-agent", "activity-run")
@@ -1382,6 +1989,7 @@ function seedPendingRuntimeRun(
     subChatId,
     agentDefinitionId: agentDefinition.definitionId,
     agentDefinition,
+    outputSchema: null,
   }
 }
 function seedAgent(agentId: string, runId: string) {
@@ -1489,5 +2097,25 @@ function action(message: string) {
     providerIdentity: context().snapshot.providerIdentity!,
     targetAgentId: "agent-1",
     message,
+  }
+}
+
+function v2Identity(providerTaskId: string) {
+  return {
+    schemaVersion: 1 as const,
+    engine: "codex-v2" as const,
+    canonicalTaskPath: "/root/worker",
+    taskName: "worker",
+    providerTaskId,
+  }
+}
+
+function fakeCodexProtocol(
+  handler: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+): CodexAppServerCoordinationTransportPort & { request: ReturnType<typeof vi.fn> } {
+  const request = vi.fn(handler)
+  return {
+    version: vi.fn(async () => "0.144.1"),
+    request,
   }
 }

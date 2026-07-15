@@ -151,6 +151,7 @@ export function createCodexCoordinationAdapter(
         kind,
         orchestrationId: context.orchestrationId,
         providerIdentity: context.snapshot.providerIdentity,
+        ...(kind === "start" ? { contextFork: null } : {}),
       })
 
   const reconcile = async (
@@ -465,6 +466,8 @@ function markUncertain(
 
 function validateAction(engine: Engine, action: CoordinationEngineAction) {
   if (action.providerIdentity) validateProviderIdentity(engine, action.providerIdentity)
+  if (engine === "codex-v1" && action.kind === "start" && action.contextFork)
+    throw new Error("Codex V1 does not support selective context forks.")
   if (engine === "codex-v1" && action.kind === "follow-up")
     throw new Error("Codex V1 does not support V2 follow-up semantics.")
 }

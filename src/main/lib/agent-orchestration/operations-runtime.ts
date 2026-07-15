@@ -13,9 +13,12 @@ import {
 } from "./runtime-launch-port"
 import { WorkflowEngine } from "./workflow-engine"
 import { createCodexCoordinationAdapter, type CodexCoordinationClient } from "./codex-engines"
+import type { WorkflowAgentMaterializerPort } from "./worker-materializer-port"
+import { createCodexAppServerCoordinationClient } from "./codex-app-server-coordination"
 
 export type OrchestrationOperationsRuntime = {
   runtime: RuntimeLaunchCoordinatorPort
+  workerMaterializer?: WorkflowAgentMaterializerPort
   codexV2?: CoordinationEngineAdapter
   codexV1?: CoordinationEngineAdapter
 }
@@ -32,11 +35,33 @@ export function registerMainRuntimeOperations(
   databasePath: string,
   service: MainRuntimeLaunchServicePort,
 ) {
+  const codexClient = service.codexCoordination
+    ? createCodexAppServerCoordinationClient({
+        databasePath,
+        transport: service.codexCoordination,
+      })
+    : null
   registerOrchestrationOperationsRuntime({
     runtime: createMainRuntimeLaunchPort(databasePath, service),
-    ...(configured?.codexV2 ? { codexV2: configured.codexV2 } : {}),
-    ...(configured?.codexV1 ? { codexV1: configured.codexV1 } : {}),
+    ...(configured?.workerMaterializer
+      ? { workerMaterializer: configured.workerMaterializer }
+      : {}),
+    ...(codexClient
+      ? { codexV2: createCodexCoordinationAdapter(databasePath, "codex-v2", codexClient) }
+      : configured?.codexV2
+        ? { codexV2: configured.codexV2 }
+        : {}),
+    ...(codexClient
+      ? { codexV1: createCodexCoordinationAdapter(databasePath, "codex-v1", codexClient) }
+      : configured?.codexV1
+        ? { codexV1: configured.codexV1 }
+        : {}),
   })
+}
+
+export function registerWorkflowAgentMaterializer(materializer: WorkflowAgentMaterializerPort) {
+  const runtime = requireRuntime()
+  configured = { ...runtime, workerMaterializer: materializer }
 }
 
 export function registerCodexCoordinationClients(
@@ -83,7 +108,8 @@ export function orchestrationRuntimeAvailable() {
 }
 
 export function getWorkflowEngine(databasePath: string) {
-  return new WorkflowEngine(databasePath, requireRuntime().runtime)
+  const runtime = requireRuntime()
+  return new WorkflowEngine(databasePath, runtime.runtime, runtime.workerMaterializer)
 }
 
 export function getCascadeControl(databasePath: string) {
