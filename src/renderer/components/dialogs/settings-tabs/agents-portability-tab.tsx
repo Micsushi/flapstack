@@ -292,7 +292,9 @@ export function AgentsPortabilityTab() {
               setResolutions({})
               setPage(0)
               setStatus(
-                `Dry-run ready: ${next.summary.create} create, ${next.summary.update} update, ${next.summary.conflict} conflict, ${next.summary.skip} skip.`,
+                next.mappingRequirements.length > 0
+                  ? `Dry-run ready without writes. ${next.mappingRequirements.length} portable target mapping${next.mappingRequirements.length === 1 ? " is" : "s are"} required before apply.`
+                  : `Dry-run ready: ${next.summary.create} create, ${next.summary.update} update, ${next.summary.conflict} conflict, ${next.summary.skip} skip.`,
               )
             })
           }
@@ -304,8 +306,9 @@ export function AgentsPortabilityTab() {
         <fieldset className="space-y-2 rounded border border-border p-3">
           <legend className="text-sm font-medium">Reviewed target mappings</legend>
           <p className="text-xs text-muted-foreground">
-            Source-machine paths are never reused. Missing extension and vault roots are created
-            only after confirmed apply under their verified parent.
+            Source-machine paths are metadata only and are never accessed or reused. Missing
+            extension and vault roots are created only after confirmed apply under their verified
+            parent.
           </p>
           <LabeledInput
             label="Extensions target root"
@@ -350,6 +353,28 @@ export function AgentsPortabilityTab() {
               <span className="font-medium">Reviewed live targets: </span>
               <span className="break-all font-mono">{JSON.stringify(plan.targetRoots)}</span>
             </div>
+            {plan.mappingRequirements.length > 0 && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="space-y-1 rounded border border-amber-500/50 bg-amber-500/10 p-3 text-xs"
+              >
+                <p className="font-medium">Portable target remapping required</p>
+                <p>
+                  No files or database values were changed. Enter each destination below, then run
+                  dry-run again to bind apply to the reviewed mapping.
+                </p>
+                <ul className="list-disc pl-5">
+                  {plan.mappingRequirements.map((requirement) => (
+                    <li key={`${requirement.kind}:${requirement.projectId}`}>
+                      {requirement.kind === "project-vault" ? "Project vault" : "Project"}{" "}
+                      <span className="font-mono">{requirement.projectId}</span>: add to{" "}
+                      <span className="font-mono">{requirement.targetRootField}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {plan.exclusions.length > 0 && (
               <p className="rounded bg-muted p-2 text-xs">
                 {plan.exclusions.length} secret or unsupported items excluded. Reports show
@@ -396,7 +421,9 @@ export function AgentsPortabilityTab() {
                         </div>
                       </td>
                       <td className="p-2">
-                        {entry.kind === "conflict" ? (
+                        {entry.source === "file" && !entry.targetPath ? (
+                          <span>Mapping required</span>
+                        ) : entry.kind === "conflict" ? (
                           <select
                             aria-label={`Resolve conflict ${entry.id}`}
                             value={resolutions[entry.id] ?? ""}
@@ -445,7 +472,7 @@ export function AgentsPortabilityTab() {
             </div>
             <Button
               variant="destructive"
-              disabled={busy || unresolved.length > 0}
+              disabled={busy || unresolved.length > 0 || plan.mappingRequirements.length > 0}
               onClick={() => {
                 void run("Binding reviewed import…", async () => {
                   const confirmation = await prepareImportConfirmation.mutateAsync({
