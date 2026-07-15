@@ -5,12 +5,41 @@ import { describe, expect, it } from "vitest"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import {
   createPortableImportPlan,
+  mergePortableImportTargetRoots,
   verifyPortableBundle,
 } from "../src/main/lib/portability/importer"
 import { sha256File, stableJson } from "../src/main/lib/portability/io"
-import { createConfigRoot, createTestDatabase, tempRoot } from "./portability-test-helpers"
+import {
+  createConfigRoot,
+  createRelationalTestDatabase,
+  createTestDatabase,
+  tempRoot,
+} from "./portability-test-helpers"
 
 describe("portability-import-plan", () => {
+  it("keeps source project roots metadata-only while merging registered vault targets", () => {
+    expect(
+      mergePortableImportTargetRoots(
+        {
+          config: "/current/config",
+          extensions: "/current/extensions",
+          projects: { stale: "/removed/source-project" },
+          projectVaults: { p1: "/current/vault-p1" },
+        },
+        {
+          extensions: "/reviewed/extensions",
+          projects: { p1: "/reviewed/project-p1" },
+          projectVaults: { p2: "/reviewed/vault-p2" },
+        },
+      ),
+    ).toEqual({
+      config: "/current/config",
+      extensions: "/reviewed/extensions",
+      projects: { p1: "/reviewed/project-p1" },
+      projectVaults: { p1: "/current/vault-p1", p2: "/reviewed/vault-p2" },
+    })
+  })
+
   it("rejects a symlinked bundle metadata JSON file", async () => {
     const root = await tempRoot()
     const sourcePath = join(root, "source.db")
@@ -164,6 +193,152 @@ describe("portability-import-plan", () => {
       "Keep",
     )
     verify.close()
+  })
+
+  it("rejects canonical cross-kind project and vault destination mappings", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createRelationalTestDatabase(sourcePath)
+    const bundlePath = join(root, "ambiguous.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "project-vaults" }],
+    })
+    const targetPath = join(root, "target.db")
+    createRelationalTestDatabase(targetPath, false)
+    const sharedProject = join(root, "projects", "shared")
+    await mkdir(sharedProject, { recursive: true })
+    await expect(
+      createPortableImportPlan({
+        bundlePath,
+        databasePath: targetPath,
+        stateRoot: join(root, "state"),
+        targetRoots: {
+          projects: { p1: sharedProject },
+          projectVaults: { p1: `${sharedProject}/` },
+        },
+      }),
+    ).rejects.toThrow(/target mappings are ambiguous/i)
+  })
+
+  it("rejects unrelated mappings and destinations owned by another project", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createRelationalTestDatabase(sourcePath)
+    const bundlePath = join(root, "owned.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "project-vaults" }],
+    })
+    const targetPath = join(root, "target.db")
+    createRelationalTestDatabase(targetPath, false)
+    const ownedRoot = join(root, "owned-project")
+    const ownedVault = join(root, "owned-vault")
+    await mkdir(ownedRoot)
+    await mkdir(ownedVault)
+    const target = new Database(targetPath)
+    target.prepare("INSERT INTO projects VALUES (?, ?, ?, ?)").run("owned", "Owned", ownedRoot, 1)
+    target.prepare("INSERT INTO project_vaults VALUES (?, ?, ?)").run("owned", ownedVault, 1)
+    target.close()
+
+    await expect(
+      createPortableImportPlan({
+        bundlePath,
+        databasePath: targetPath,
+        stateRoot: join(root, "unrelated-state"),
+        targetRoots: { projects: { unrelated: ownedRoot } },
+      }),
+    ).rejects.toThrow(/unrelated project/i)
+    await expect(
+      createPortableImportPlan({
+        bundlePath,
+        databasePath: targetPath,
+        stateRoot: join(root, "owned-state"),
+        targetRoots: { projectVaults: { p1: ownedVault } },
+      }),
+    ).rejects.toThrow(/belongs to unrelated project owned/i)
+  })
+
+  it("rejects a portable path marker bound to a different project identity", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createTestDatabase(sourcePath)
+    const bundlePath = join(root, "marker-mismatch.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "projects" }],
+    })
+    const portableDatabasePath = join(bundlePath, "database/flapstack.sqlite3")
+    const portable = new Database(portableDatabasePath)
+    const row = portable
+      .prepare("SELECT row_json FROM portable_records WHERE table_name = 'projects'")
+      .get() as { row_json: string }
+    const value = JSON.parse(row.row_json) as Record<string, unknown>
+    value.path = "__FLAPSTACK_LOCAL_PATH__/projects/p2"
+    portable
+      .prepare("UPDATE portable_records SET row_json = ? WHERE table_name = 'projects'")
+      .run(stableJson(value).trim())
+    portable.close()
+    const checksumsPath = join(bundlePath, "checksums.json")
+    const checksums = JSON.parse(await readFile(checksumsPath, "utf8")) as {
+      entries: Array<{ path: string; sha256: string; bytes: number }>
+    }
+    Object.assign(
+      checksums.entries.find((entry) => entry.path === "database/flapstack.sqlite3")!,
+      await sha256File(portableDatabasePath),
+    )
+    await writeFile(checksumsPath, stableJson(checksums))
+    const targetPath = join(root, "target.db")
+    createTestDatabase(targetPath)
+    await expect(
+      createPortableImportPlan({
+        bundlePath,
+        databasePath: targetPath,
+        stateRoot: join(root, "state"),
+        targetRoots: { projects: { p1: root } },
+      }),
+    ).rejects.toThrow(/mapping identity is ambiguous/i)
+  })
+
+  it("rejects two reviewed bundle files that resolve to one live destination", async () => {
+    const root = await tempRoot()
+    const sourcePath = join(root, "source.db")
+    createTestDatabase(sourcePath)
+    const left = join(root, "left")
+    const right = join(root, "right")
+    await mkdir(left)
+    await mkdir(right)
+    await writeFile(join(left, "same.json"), '{"source":"left"}')
+    await writeFile(join(right, "same.json"), '{"source":"right"}')
+    const bundlePath = join(root, "target-collision.flapstack-export")
+    await createPortableExport({
+      outputPath: bundlePath,
+      databasePath: sourcePath,
+      appVersion: "1",
+      selection: [{ id: "settings" }],
+      fileSources: [
+        { scopeId: "settings", root: left, target: { kind: "config" } },
+        { scopeId: "settings", root: right, target: { kind: "config" } },
+      ],
+    })
+    const targetPath = join(root, "target.db")
+    createTestDatabase(targetPath)
+    const targetConfig = join(root, "target-config")
+    await mkdir(targetConfig)
+    await expect(
+      createPortableImportPlan({
+        bundlePath,
+        databasePath: targetPath,
+        stateRoot: join(root, "state"),
+        targetRoots: { config: targetConfig },
+      }),
+    ).rejects.toThrow(/multiple files to the same destination/i)
   })
 
   it("migrates a supported prior settings scope before diff", async () => {

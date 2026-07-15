@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -112,13 +113,22 @@ describe("project vault portability", () => {
     const restoredSqlite = new Database(targetDatabasePath)
     restoredSqlite.pragma("foreign_keys = ON")
     const restored = drizzle(restoredSqlite, { schema })
-    await expect(
-      readProjectVaultSection(restored, { projectId: "project-1", sectionId: "index" }),
-    ).resolves.toMatchObject({
+    const restoredSection = await readProjectVaultSection(restored, {
+      projectId: "project-1",
+      sectionId: "index",
+    })
+    expect(restoredSection).toMatchObject({
       content: "# Portable knowledge\n\nCurrent content.\n",
+      sectionType: "index",
+      title: "Index",
+      relativePath: "index.md",
       version: 2,
       externallyModified: false,
     })
+    expect(restoredSection.contentHash).toBe(
+      createHash("sha256").update(restoredSection.content).digest("hex"),
+    )
+    expect(restoredSection.currentContentHash).toBe(restoredSection.contentHash)
     const [backup] = listProjectVaultSectionBackups(restored, {
       projectId: "project-1",
       sectionId: "index",

@@ -964,23 +964,23 @@ function mapPortableLocalPaths(
     const row = { ...record.row }
     for (const [column, value] of Object.entries(row)) {
       if (typeof value !== "string" || !value.startsWith(PORTABLE_LOCAL_PATH_PREFIX)) continue
-      const projectId = String(record.identity.project_id ?? record.identity.id ?? "")
-      let mapped: string | undefined
-      if (value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}projects/`)) {
-        mapped =
-          roots.projects?.[projectId] ?? readExistingMappedPath(database, "projects", projectId)
-      } else if (value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}project-vaults/`)) {
-        mapped = roots.projectVaults?.[projectId]
+      const recordProjectId = String(record.identity.project_id ?? record.identity.id ?? "")
+      const marker = parsePortableLocalPathMarker(value)
+      if (marker.projectId !== recordProjectId) {
+        throw new Error(
+          `Portable target mapping identity is ambiguous for ${record.tableName}.${column}.`,
+        )
       }
+      const mapped =
+        marker.kind === "projects"
+          ? (roots.projects?.[marker.projectId] ??
+            readExistingMappedPath(database, "projects", marker.projectId))
+          : roots.projectVaults?.[marker.projectId]
       if (!mapped || !isAbsolute(mapped)) {
         mappingRequirements.push({
-          kind: value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}project-vaults/`)
-            ? "project-vault"
-            : "project",
-          projectId,
-          targetRootField: value.startsWith(`${PORTABLE_LOCAL_PATH_PREFIX}project-vaults/`)
-            ? "projectVaults"
-            : "projects",
+          kind: marker.kind === "project-vaults" ? "project-vault" : "project",
+          projectId: marker.projectId,
+          targetRootField: marker.kind === "project-vaults" ? "projectVaults" : "projects",
           reason: "missing-current-target",
         })
         continue
@@ -1005,6 +1005,32 @@ function readExistingMappedPath(
     )
     .pluck()
     .get(projectId) as string | undefined
+}
+
+function parsePortableLocalPathMarker(value: string): {
+  kind: "projects" | "project-vaults"
+  projectId: string
+} {
+  const suffix = value.slice(PORTABLE_LOCAL_PATH_PREFIX.length)
+  const separator = suffix.indexOf("/")
+  if (separator <= 0 || suffix.indexOf("/", separator + 1) !== -1) {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  const kind = suffix.slice(0, separator)
+  if (kind !== "projects" && kind !== "project-vaults") {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  const encodedProjectId = suffix.slice(separator + 1)
+  let projectId: string
+  try {
+    projectId = decodeURIComponent(encodedProjectId)
+  } catch {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  if (!projectId || encodeURIComponent(projectId) !== encodedProjectId) {
+    throw new Error("Portable target mapping marker is malformed.")
+  }
+  return { kind, projectId }
 }
 
 function orderPortableDatabaseRecords(
@@ -1060,6 +1086,7 @@ async function planFileDiffs(input: {
   const mappingRequirements: PortableMappingRequirement[] = []
   let plannedBytes = 0
   const collisionKeys = new Set<string>()
+  const targetCollisionKeys = new Set<string>()
   for (const scope of input.manifest.scopes) {
     const indexPath = join(input.bundleRoot, scope.contentPath, "files.json")
     const index = fileIndexSchema.parse(await readJsonFile(indexPath)) as PortableFileIndexEntry[]
@@ -1109,6 +1136,11 @@ async function planFileDiffs(input: {
         targetRoot,
         entry.relativePath,
       )
+      const targetCollisionKey = portableCollisionKey(targetPath)
+      if (targetCollisionKeys.has(targetCollisionKey)) {
+        throw new Error("Portable target mappings resolve multiple files to the same destination.")
+      }
+      targetCollisionKeys.add(targetCollisionKey)
       const localSha256 = targetSnapshot?.sha256 ?? null
       const base = bases[entry.bundlePath]
       const kind: PortabilityDiffKind = !localSha256
@@ -1489,34 +1521,49 @@ async function validateReviewedTargetRoots(
   database: Database.Database,
 ): Promise<void> {
   const destinations = new Map<string, string>()
-  for (const [field, mappings] of [
-    ["projects", roots.projects],
-    ["projectVaults", roots.projectVaults],
+  for (const [field, mappings, mustExist, kind] of [
+    ["projects", roots.projects, true, "Project"],
+    ["projectVaults", roots.projectVaults, false, "Project vault"],
   ] as const) {
     for (const [projectId, root] of Object.entries(mappings ?? {})) {
       if (!importedProjectIds.has(projectId))
         throw new Error(`Target mapping for unrelated project ${projectId} is not allowed.`)
-      if (!isAbsolute(root)) throw new Error(`Target mapping for ${projectId} must be absolute.`)
       if (root.split(/[\\/]/).includes(".."))
         throw new Error(`Target mapping for ${projectId} contains path traversal.`)
-      const destinationKey = portableCollisionKey(resolve(root))
+      const canonical = await canonicalReviewedTargetRoot(root, mustExist, kind, projectId)
+      const destinationKey = portableCollisionKey(canonical)
       const owner = destinations.get(destinationKey)
       if (owner && owner !== `${field}:${projectId}`)
-        throw new Error(`Target mapping for ${projectId} is ambiguous with ${owner}.`)
+        throw new Error(`Target mappings are ambiguous for ${projectId} and ${owner}.`)
       destinations.set(destinationKey, `${field}:${projectId}`)
-
       assertDestinationNotOwnedByAnotherProject(database, field, projectId, root)
-      if (field === "projects") {
-        const info = await lstat(root)
-        if (!info.isDirectory() || info.isSymbolicLink())
-          throw new Error(
-            `Project target for ${projectId} must be an existing non-symlink directory.`,
-          )
-      } else {
-        await resolveTarget(root, ".flapstack-import-root-probe")
-      }
     }
   }
+}
+
+async function canonicalReviewedTargetRoot(
+  root: string,
+  mustExist: boolean,
+  kind: string,
+  projectId: string,
+): Promise<string> {
+  if (!isAbsolute(root)) throw new Error(`${kind} target for ${projectId} must be absolute.`)
+  const absolute = resolve(root)
+  let ancestor = absolute
+  while (!(await pathExists(ancestor))) {
+    if (mustExist) {
+      throw new Error(`${kind} target for ${projectId} must be an existing non-symlink directory.`)
+    }
+    const parent = dirname(ancestor)
+    if (parent === ancestor) throw new Error(`${kind} target for ${projectId} has no safe parent.`)
+    ancestor = parent
+  }
+  const info = await lstat(ancestor)
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`${kind} target for ${projectId} is unsafe; use a non-symlink directory.`)
+  }
+  const canonicalAncestor = await realpath(ancestor)
+  return resolve(canonicalAncestor, relative(ancestor, absolute))
 }
 
 function assertDestinationNotOwnedByAnotherProject(
