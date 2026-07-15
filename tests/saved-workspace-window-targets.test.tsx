@@ -65,6 +65,7 @@ vi.mock("../src/renderer/lib/trpc", () => ({
       create: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       saveLayout: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       rename: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
+      duplicate: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       archive: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       restore: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
       delete: { useMutation: () => ({ isPending: false, mutateAsync: mocks.mutateAsync }) },
@@ -160,6 +161,20 @@ describe("saved workspace initial window targets", () => {
     expect(container.textContent).not.toContain("prior-b")
   })
 
+  it("keeps duplication disabled in an exact-target full workspace window", async () => {
+    await renderTarget({ initialWorkspaceId: "workspace-a" })
+
+    expect(workspaceDuplicateButton().disabled).toBe(true)
+    expect(workspaceDuplicateButton().title).toBe(
+      "Duplicate workspaces from the main Saved Workspaces view.",
+    )
+    await act(async () => workspaceDuplicateButton().click())
+    expect(mocks.mutateAsync).not.toHaveBeenCalled()
+    expect(container.querySelector<HTMLSelectElement>("#saved-workspace-picker")?.value).toBe(
+      "workspace-a",
+    )
+  })
+
   it("never fetches, renders, or claims a target before project membership is confirmed", async () => {
     mocks.listLoading = true
     mocks.records["foreign-workspace"] = {
@@ -204,6 +219,7 @@ describe("saved workspace initial window targets", () => {
     expect(container.querySelector('[role="separator"]')).toBeNull()
     expect(container.querySelector('[aria-label="Remove active pane"]')).toBeNull()
     expect(container.querySelector<HTMLElement>('[role="tab"]')?.draggable).toBe(false)
+    expect(workspaceDuplicateButton().disabled).toBe(true)
     expect(mocks.mutateAsync).not.toHaveBeenCalled()
   })
 
@@ -223,6 +239,7 @@ describe("saved workspace initial window targets", () => {
   it("shows repair for stale workspace and pane targets without fallback", async () => {
     await renderTarget({ initialWorkspaceId: "missing-workspace" })
     expect(container.textContent).toContain("Workspace target needs repair")
+    expect(workspaceDuplicateButton()).toBeUndefined()
     expect(renderedPaneIds()).toEqual([])
     expect(container.textContent).not.toContain("prior-b")
 
@@ -257,6 +274,7 @@ describe("saved workspace initial window targets", () => {
     await renderTarget({ initialWorkspaceId: "workspace-a" })
 
     expect(container.textContent).toContain("Restore")
+    expect(workspaceDuplicateButton().disabled).toBe(true)
     expect(container.querySelector("[data-structural-read-only='true']")).not.toBeNull()
     expect(container.querySelector('[aria-label="Add pane to this group"]')).toBeNull()
   })
@@ -280,6 +298,22 @@ describe("saved workspace initial window targets", () => {
       container.querySelector<HTMLElement>('[data-rendered-pane="selected-pane"]')?.dataset
         .ownershipChatIds,
     ).toBe("agent-chat-1")
+    expect(workspaceDuplicateButton().disabled).toBe(true)
+    expect(workspaceDuplicateButton().title).toBe("Operation workspaces cannot be duplicated.")
+    await act(async () => workspaceDuplicateButton().click())
+    expect(mocks.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it("disables duplication when the selected workspace layout is invalid", async () => {
+    mocks.records["workspace-a"] = {
+      ...mocks.records["workspace-a"],
+      layoutIssue: "Invalid pane binding.",
+    }
+    await renderTarget({ initialWorkspaceId: "workspace-a" })
+
+    expect(workspaceDuplicateButton().disabled).toBe(true)
+    await act(async () => workspaceDuplicateButton().click())
+    expect(mocks.mutateAsync).not.toHaveBeenCalled()
   })
 
   it("dedupes one document lifetime but reapplies the same target after reload", () => {
@@ -316,6 +350,12 @@ describe("saved workspace initial window targets", () => {
     return [...container.querySelectorAll<HTMLElement>("[data-rendered-pane]")].map(
       (element) => element.dataset.renderedPane,
     )
+  }
+
+  function workspaceDuplicateButton() {
+    return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Duplicate workspace",
+    )!
   }
 })
 
