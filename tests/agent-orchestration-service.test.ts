@@ -7,6 +7,10 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { createAgentOrchestrationService } from "../src/main/lib/agent-orchestration/service"
+import {
+  stableOperationOrchestrationId,
+  stableOperationWorkspaceId,
+} from "../src/main/lib/saved-workspaces/operations"
 import { nowEpochSeconds } from "../src/main/lib/db/timestamps"
 import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifecycle"
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
@@ -57,6 +61,32 @@ afterEach(() => {
 })
 
 describe("durable agent task orchestration", () => {
+  it("uses the authoritative 0031 saved-workspace constraints and indexes", () => {
+    const table = sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'saved_workspaces'")
+      .get() as { sql: string }
+    const normalizedSql = table.sql.replace(/["`]/g, "").toLowerCase()
+    expect(normalizedSql).toContain("length(trim(saved_workspaces.name)) between 1 and 256")
+    expect(normalizedSql).toContain("length(trim(saved_workspaces.sort_order)) between 1 and 512")
+    expect(normalizedSql).toContain(
+      "json_extract(saved_workspaces.layout_json, '$.version') = saved_workspaces.layout_version",
+    )
+    expect(normalizedSql).toContain("length(cast(saved_workspaces.layout_json as blob)) <= 262144")
+    expect(
+      sqlite
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index' AND name LIKE 'saved_workspaces_%_idx'
+           ORDER BY name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "saved_workspaces_orchestration_idx" },
+      { name: "saved_workspaces_project_order_idx" },
+      { name: "saved_workspaces_task_order_idx" },
+    ])
+  })
+
   it("creates one task, attaches descendants, and atomically fills only configured slots", () => {
     sqlite
       .prepare(
@@ -76,6 +106,19 @@ describe("durable agent task orchestration", () => {
     )
     expect(sqlite.prepare("SELECT task_id FROM chats WHERE id = 'old-child'").get()).toEqual({
       task_id: overview.orchestration.taskId,
+    })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT id, task_id, owner_kind, orchestration_id
+           FROM saved_workspaces WHERE task_id = ?`,
+        )
+        .get(overview.orchestration.taskId),
+    ).toEqual({
+      id: stableOperationWorkspaceId(overview.orchestration.taskId),
+      task_id: overview.orchestration.taskId,
+      owner_kind: "orchestration",
+      orchestration_id: stableOperationOrchestrationId(overview.orchestration.taskId),
     })
     expect(
       sqlite
@@ -211,8 +254,14 @@ describe("durable agent task orchestration", () => {
     sqlite
       .prepare(
         `INSERT INTO agent_runs (
-          id, chat_id, sub_chat_id, harness, permission_mode, status, started_at
-        ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode, 'running', ?
+          id, chat_id, sub_chat_id, harness, permission_mode,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot, status, started_at
+        ) SELECT 'newer-run', chat_id, sub_chat_id, harness, permission_mode,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot, 'running', ?
           FROM agent_runs WHERE id = ?`,
       )
       .run(nowEpochSeconds() + 1, first.runId)
@@ -290,10 +339,26 @@ describe("durable agent task orchestration", () => {
     expect(
       sqlite
         .prepare(
-          "SELECT provider_id, total_tokens, cost_quality FROM usage_samples WHERE run_id = ?",
+          `SELECT provider_id, total_tokens, cost_quality, attribution_state,
+                  attribution_project_id, attribution_task_id, attribution_chat_id,
+                  attribution_orchestration_id, attribution_run_id,
+                  source_class, dedupe_strategy
+           FROM usage_samples WHERE run_id = ?`,
         )
         .get(agent.runId),
-    ).toEqual({ provider_id: "codex", total_tokens: 150, cost_quality: "unknown" })
+    ).toEqual({
+      provider_id: "codex",
+      total_tokens: 150,
+      cost_quality: "unknown",
+      attribution_state: "attributed",
+      attribution_project_id: "project-1",
+      attribution_task_id: created.orchestration.taskId,
+      attribution_chat_id: agent.chatId,
+      attribution_orchestration_id: created.orchestration.taskId,
+      attribution_run_id: agent.runId,
+      source_class: "flapstack-run",
+      dedupe_strategy: "exact-fact",
+    })
   })
 
   it("survives restart and supports pause, resume, manual stop, retry, and active replacement", () => {

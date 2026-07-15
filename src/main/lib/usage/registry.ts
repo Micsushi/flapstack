@@ -8,6 +8,7 @@ import { createCodexProvider } from "./providers/codex"
 import { createCursorProvider } from "./providers/cursor"
 import { createNanoGptProvider } from "./providers/nanogpt"
 import { createOpenRouterProvider } from "./providers/openrouter"
+import { createLocalUsageProvider } from "./providers/local"
 import { USAGE_PROVIDER_IDS, type UsageProvider, type UsageProviderId } from "./types"
 
 let registry: Map<UsageProviderId, UsageProvider> | null = null
@@ -19,6 +20,7 @@ function build(): Map<UsageProviderId, UsageProvider> {
     createCursorProvider(),
     createOpenRouterProvider(),
     createNanoGptProvider(),
+    createLocalUsageProvider(),
   ]
   const map = new Map<UsageProviderId, UsageProvider>()
   for (const provider of providers) map.set(provider.id, provider)

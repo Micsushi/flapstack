@@ -41,6 +41,8 @@ import { getNextChatForkName } from "../../chat-fork-name"
 import { formatChatHandoff } from "../../chat-handoff"
 import { getPermissionPreferences } from "../../permissions"
 import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visible-content"
+import { agentRuntimePreferenceSchema } from "../../../../shared/agent-runtime"
+import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-lifecycle"
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -386,6 +388,7 @@ export const chatsRouter = router({
         harness: z.string().optional(),
         name: z.string().optional(),
         model: z.string().optional(),
+        runtimePreference: agentRuntimePreferenceSchema.optional(),
         initialMessage: z.string().optional(),
         initialMessageParts: z
           .array(
@@ -468,6 +471,7 @@ export const chatsRouter = router({
           mcpExposureEnabled: true,
           harness: input.harness,
           model: input.model,
+          runtimePreference: input.runtimePreference,
         })
         .returning()
         .get()
@@ -962,6 +966,41 @@ export const chatsRouter = router({
   }),
 
   // ============ Sub-chat procedures ============
+
+  setRuntimePreference: publicProcedure
+    .input(
+      z.object({
+        chatId: z.string().trim().min(1).max(200),
+        preference: agentRuntimePreferenceSchema,
+      }),
+    )
+    .mutation(({ input }) =>
+      createRuntimeChatLifecycleService(getDatabase()).setEmptyChatPreference(input),
+    ),
+
+  continueWithRuntime: publicProcedure
+    .input(
+      z.object({
+        sourceChatId: z.string().trim().min(1).max(200),
+        preference: agentRuntimePreferenceSchema,
+        requestId: z.string().trim().min(8).max(200),
+        name: z.string().trim().min(1).max(200).optional(),
+      }),
+    )
+    .mutation(({ input }) =>
+      createRuntimeChatLifecycleService(getDatabase()).continueWithRuntime(input),
+    ),
+
+  undoRuntimeContinuation: publicProcedure
+    .input(
+      z.object({
+        sourceChatId: z.string().trim().min(1).max(200),
+        targetChatId: z.string().trim().min(1).max(200),
+      }),
+    )
+    .mutation(({ input }) =>
+      createRuntimeChatLifecycleService(getDatabase()).undoContinuation(input),
+    ),
 
   /**
    * Get a single sub-chat

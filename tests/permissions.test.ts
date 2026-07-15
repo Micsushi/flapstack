@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   buildClaudePermissionApplication,
   buildCodexPermissionApplication,
+  buildLocalModelPermissionApplication,
   copyOnCreate,
   getGlobalDefault,
   getPermissionChangeBehavior,
@@ -165,6 +166,47 @@ describe("permissions", () => {
         expect.objectContaining({ control: "process-cwd", applied: false }),
         expect.objectContaining({ control: "acp-session-cwd", applied: false }),
         expect.objectContaining({ control: "codex-sandbox", value: "read-only" }),
+      ]),
+    )
+  })
+
+  it.each([
+    ["read-only", "deny", "deny", "deny", "deny"],
+    ["ask-before-edits", "ask", "ask", "ask", "ask"],
+    ["auto-edit-project-only", "project-only", "deny", "deny", "deny"],
+    ["full-access", "allow", "allow", "allow", "allow"],
+  ] as const)(
+    "maps local %s to exact project-write, shell, git, and network policies",
+    (permissionMode, write, shell, git, network) => {
+      const application = buildLocalModelPermissionApplication({
+        permissionMode,
+        cwd: "/tmp/project",
+      })
+      expect(application).toMatchObject({ applied: true, degraded: false })
+      expect(application.enforced).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ control: "filesystem-write-scope", value: write }),
+          expect.objectContaining({ control: "shell", value: shell }),
+          expect.objectContaining({ control: "git", value: git }),
+          expect.objectContaining({ control: "network", value: network }),
+        ]),
+      )
+    },
+  )
+
+  it("fails local custom permissions closed when their stored snapshot is invalid", () => {
+    const application = buildLocalModelPermissionApplication({
+      permissionMode: "custom",
+      cwd: "/tmp/project",
+      customPermissions: null,
+    })
+    expect(application).toMatchObject({ applied: false, degraded: true })
+    expect(application.enforced).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ control: "filesystem-write-scope", value: "deny" }),
+        expect.objectContaining({ control: "shell", value: "deny" }),
+        expect.objectContaining({ control: "git", value: "deny" }),
+        expect.objectContaining({ control: "network", value: "deny" }),
       ]),
     )
   })

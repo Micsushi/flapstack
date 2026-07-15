@@ -61,6 +61,8 @@ import { resolveProviderMcpPermission } from "../../mcp-control/provider-permiss
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { FLAPSTACK_MCP_INSTRUCTIONS } from "../../mcp-control/guidance"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
 import { createRollbackStash } from "../../git/stash"
 import {
   buildHarnessContextBundle,
@@ -81,6 +83,11 @@ import { fetchOAuthMetadata, getMcpBaseUrl } from "../../oauth"
 import { discoverPluginMcpServers } from "../../plugins"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import {
+  buildExtensionRunContext,
+  filterClaudeExtensionMcpServers,
+  getClaudeExtensionSdkOptions,
+} from "../../extension-management"
 import { isWithinProjectBoundary } from "../../permission-boundary"
 import { buildAgentsOption } from "./agent-utils"
 import { getApprovedPluginMcpServers, getEnabledPlugins } from "./claude-settings"
@@ -105,6 +112,12 @@ import {
   getOwnedClaudeSessionId,
   resetClaudeSessionOptionsForFreshRun,
 } from "../../claude/session-options"
+import { projectVaultSectionIds } from "../../project-vaults/registry"
+import {
+  buildProjectVaultRunContext,
+  persistProjectVaultContextManifest,
+  ProjectVaultContextRejectedError,
+} from "../../project-vaults/run-context"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -259,9 +272,17 @@ async function createClaudeAgentRun(input: {
     const existing = db.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).get()
     if (existing) return existing
   }
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: input.chatId,
+    harness: HARNESS,
+    model: input.model,
+    permission: runtimePermissionSnapshot(input.permissionMode, input.customPermissions ?? null),
+  })
+  assertFlapstackNativeProviderRouter({ harness: HARNESS, snapshot: runtimeSnapshot })
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       ...(input.runId ? { id: input.runId } : {}),
       chatId: input.chatId,
       subChatId: input.subChatId,
@@ -978,6 +999,7 @@ export const claudeRouter = router({
         historyEnabled: z.boolean().optional(),
         offlineModeEnabled: z.boolean().optional(), // Whether offline mode (Ollama) is enabled in settings
         enableTasks: z.boolean().optional(), // Enable task management tools (TodoWrite, Task agents)
+        vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1317,8 +1339,42 @@ export const claudeRouter = router({
               providerNativeInstructions: !isUsingOllama,
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            let vaultContext
+            try {
+              vaultContext = await buildProjectVaultRunContext(db, {
+                chatId: input.chatId,
+                runId: launchRunId,
+                harness: HARNESS,
+                ...(input.vaultContextSectionIds
+                  ? { runSectionIds: input.vaultContextSectionIds }
+                  : {}),
+              })
+            } catch (error) {
+              if (error instanceof ProjectVaultContextRejectedError) {
+                persistProjectVaultContextManifest(db, {
+                  runId: launchRunId,
+                  manifest: error.manifest,
+                  ...(input.vaultContextSectionIds
+                    ? { runSectionIds: input.vaultContextSectionIds }
+                    : {}),
+                })
+              }
+              throw error
+            }
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: HARNESS,
+              cwd: input.cwd,
+            })
             metadata.context = contextBundle.metadata
-            const contextualPrompt = prependStartupContext(finalPrompt, contextBundle.context)
+            metadata.vaultContext = vaultContext.manifest
+            metadata.extensionPolicy = extensionContext.manifest
+            const contextualPrompt = prependStartupContext(
+              finalPrompt,
+              [contextBundle.context, vaultContext.context, extensionContext.context]
+                .filter(Boolean)
+                .join("\n\n"),
+            )
 
             // Build prompt: if there are images, create an AsyncIterable<SDKUserMessage>
             // Otherwise use simple string prompt
@@ -1686,7 +1742,12 @@ export const claudeRouter = router({
               })
               metadata.context = contextBundle.metadata
               const freshPrompt = buildPrompt(
-                prependStartupContext(finalPrompt, contextBundle.context),
+                prependStartupContext(
+                  finalPrompt,
+                  [contextBundle.context, vaultContext.context, extensionContext.context]
+                    .filter(Boolean)
+                    .join("\n\n"),
+                ),
               )
               if (
                 isUsingOllama &&
@@ -1783,6 +1844,13 @@ export const claudeRouter = router({
               customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
             })
             agentRunId = run.id
+            persistProjectVaultContextManifest(db, {
+              runId: run.id,
+              manifest: vaultContext.manifest,
+              ...(input.vaultContextSectionIds
+                ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
+            })
             metadata = {
               ...metadata,
               harness: HARNESS,
@@ -1839,6 +1907,10 @@ export const claudeRouter = router({
                 mcpServersFiltered = mcpServersForSdk
               }
             }
+            mcpServersFiltered = filterClaudeExtensionMcpServers(
+              mcpServersFiltered,
+              extensionContext.launchPolicy,
+            )
 
             // Log SDK configuration for debugging
             if (isUsingOllama) {
@@ -2000,6 +2072,7 @@ ${prompt}
                 ...(!isUsingOllama && {
                   settingSources: ["project" as const, "user" as const],
                 }),
+                ...getClaudeExtensionSdkOptions(extensionContext.launchPolicy),
                 canUseTool: async (
                   toolName: string,
                   toolInput: Record<string, unknown>,
@@ -2937,13 +3010,17 @@ ${prompt}
                 messageMetadata: {
                   ...pendingFinishChunk.messageMetadata,
                   context: metadata.context,
+                  vaultContext: metadata.vaultContext,
                 },
               })
             } else {
               // Keep protocol invariant for consumers that wait for finish.
               safeEmit({
                 type: "finish",
-                messageMetadata: { context: metadata.context },
+                messageMetadata: {
+                  context: metadata.context,
+                  vaultContext: metadata.vaultContext,
+                },
               } as UIMessageChunk)
             }
           } catch (error) {

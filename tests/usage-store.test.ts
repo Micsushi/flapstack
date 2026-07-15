@@ -10,6 +10,7 @@ import { runAlerts } from "../src/main/lib/usage/alert-runner"
 import { UsageEngine } from "../src/main/lib/usage/engine"
 import { getUsageProvider } from "../src/main/lib/usage/registry"
 import {
+  captureLocalModelRunUsage,
   captureOpenCodeRunUsage,
   captureOpenCodeRunUsageBatch,
 } from "../src/main/lib/usage/run-usage"
@@ -73,6 +74,12 @@ describe("usage SQLite integration", () => {
         "--> statement-breakpoint",
         "",
       ),
+    )
+    sqlite.exec(
+      readFileSync(
+        resolve(process.cwd(), "drizzle/0031_advanced_usage_contracts.sql"),
+        "utf8",
+      ).replaceAll("--> statement-breakpoint", ""),
     )
     db = drizzle(sqlite, { schema })
   })
@@ -446,6 +453,66 @@ describe("usage SQLite integration", () => {
       costUsd: 4_200,
     })
     expect(await listPendingGenerationIds(db, "openrouter")).toEqual([])
+  })
+
+  it("records local run tokens and zero provider billing without inventing resource telemetry", async () => {
+    sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?)").run("run-local")
+    await captureLocalModelRunUsage(db, {
+      runId: "run-local",
+      model: "qwen-local",
+      inputTokens: 12,
+      outputTokens: 5,
+      totalTokens: 17,
+    })
+
+    expect(await listRecentSamples(db, { providerId: "local" })).toEqual([
+      expect.objectContaining({
+        providerId: "local",
+        runId: "run-local",
+        model: "qwen-local",
+        inputTokens: 12,
+        outputTokens: 5,
+        totalTokens: 17,
+        costQuality: "exact",
+        costUsd: 0,
+        costUsdEstimated: null,
+        dedupeKey: "local|run|run-local",
+      }),
+    ])
+
+    sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?)").run("run-local-unknown")
+    await captureLocalModelRunUsage(db, {
+      runId: "run-local-unknown",
+      model: "chat-only-local",
+    })
+    expect(await listRecentSamples(db, { providerId: "local" })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: "run-local-unknown",
+          inputTokens: null,
+          outputTokens: null,
+          totalTokens: null,
+        }),
+      ]),
+    )
+
+    sqlite!.prepare("INSERT INTO agent_runs (id) VALUES (?)").run("run-local-partial")
+    await captureLocalModelRunUsage(db, {
+      runId: "run-local-partial",
+      model: "partial-usage-local",
+      outputTokens: 3,
+    })
+    expect(await listRecentSamples(db, { providerId: "local" })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: "run-local-partial",
+          inputTokens: null,
+          outputTokens: 3,
+          totalTokens: null,
+          costUsd: 0,
+        }),
+      ]),
+    )
   })
 
   it("persists every OpenRouter generation in a multi-step run", async () => {
@@ -944,6 +1011,7 @@ describe("usage SQLite integration", () => {
       expect(names.map((row) => row.name).sort()).toEqual([
         "usage_alert_arm_states",
         "usage_alert_events",
+        "usage_budgets",
         "usage_cycles",
         "usage_daemon_status",
         "usage_generation_reconciliation",

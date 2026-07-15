@@ -70,6 +70,7 @@ describe("application shutdown", () => {
     await runAppShutdown({
       persistProviderSessions: step("providers"),
       cancelPendingOAuth: step("oauth"),
+      stopAutomationScheduler: step("automations"),
       stopDevMcpServer: step("dev-mcp"),
       stopProductMcpBridge: step("product-mcp"),
       cleanupGitWatchers: step("watchers"),
@@ -82,6 +83,8 @@ describe("application shutdown", () => {
       "providers:done",
       "oauth:start",
       "oauth:done",
+      "automations:start",
+      "automations:done",
       "dev-mcp:start",
       "dev-mcp:done",
       "product-mcp:start",
@@ -136,6 +139,7 @@ describe("application shutdown", () => {
           throw new Error("provider cleanup failed")
         },
         cancelPendingOAuth: () => order.push("oauth"),
+        stopAutomationScheduler: () => order.push("automations"),
         stopDevMcpServer: () => order.push("dev-mcp"),
         stopProductMcpBridge: () => order.push("product-mcp"),
         cleanupGitWatchers: () => order.push("watchers"),

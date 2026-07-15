@@ -534,21 +534,6 @@ export function findRollbackTargetSdkUuidForUserIndex(
   return typeof sdkUuid === "string" && sdkUuid.length > 0 ? sdkUuid : null
 }
 
-export function canEditStoppedUserMessage(params: {
-  userMessageId: string
-  editableStoppedUserMessageId: string | null
-  rollbackTargetSdkUuid: string | null
-  isLastGroup: boolean
-  isStreaming: boolean
-}): boolean {
-  return (
-    !params.isStreaming &&
-    params.isLastGroup &&
-    params.userMessageId === params.editableStoppedUserMessageId &&
-    !!params.rollbackTargetSdkUuid
-  )
-}
-
 // Per-subchat rollback target for split panes.
 // Key format: "subChatId:userMsgId"
 export const rollbackTargetPerChatAtomFamily = atomFamily((key: string) => {

@@ -49,6 +49,7 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
         "cursor-agent": "Cursor",
         openrouter: "OpenRouter",
         nanogpt: "NanoGPT",
+        local: "Local",
       }[harness]
     : null
 

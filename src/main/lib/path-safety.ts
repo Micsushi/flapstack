@@ -1,6 +1,6 @@
 import { constants } from "node:fs"
-import { randomUUID } from "node:crypto"
-import { lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint }
@@ -9,8 +9,14 @@ export type RootedWriteSource = { data: string | Uint8Array } | { sourcePath: st
 
 export type RootedWriteOptions = {
   overwrite?: boolean
+  createParents?: boolean
+  mode?: number
+  /** Undefined skips content CAS, null requires a missing target, and a hash requires exact content. */
+  expectedSha256?: string | null
   /** Test seam for deterministic parent/final swap attacks. */
   beforeCommit?: (targetPath: string) => void | Promise<void>
+  /** Runs after the atomic rename; failure restores the exact prior file state. */
+  afterCommit?: (targetPath: string) => void | Promise<void>
 }
 
 export type RootedMutationOptions = {
@@ -64,6 +70,7 @@ export function resolveInsideRoot(rootPath: string, targetRelativePath: string):
 export async function prepareSafeWritePath(
   rootPath: string,
   targetRelativePath: string,
+  options: { createParents?: boolean } = {},
 ): Promise<string> {
   const lexicalRoot = resolve(rootPath)
   const lexicalTarget = resolveInsideRoot(lexicalRoot, targetRelativePath)
@@ -79,6 +86,7 @@ export async function prepareSafeWritePath(
       if (!info.isDirectory()) throw new Error("Attachment target parent is not a directory")
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error
+      if (options.createParents === false) throw error
       await mkdir(current, { mode: 0o700 })
     }
     const resolvedCurrent = await realpath(current)
@@ -121,7 +129,9 @@ export async function writeFileInsideRoot(
   }
   const realRoot = await realpath(lexicalRoot)
   const rootIdentity = identity(rootInfo)
-  const targetPath = await prepareSafeWritePath(realRoot, relative(lexicalRoot, lexicalTarget))
+  const targetPath = await prepareSafeWritePath(realRoot, relative(lexicalRoot, lexicalTarget), {
+    createParents: options.createParents,
+  })
   const parentPath = dirname(targetPath)
   const parentIdentity = identity(await lstat(parentPath))
   const initialTarget = await lstatOrNull(targetPath)
@@ -129,11 +139,17 @@ export async function writeFileInsideRoot(
     throw new Error("Attachment target cannot be a symbolic link")
   if (initialTarget && !initialTarget.isFile()) throw new Error("Attachment target must be a file")
   if (initialTarget && !options.overwrite) throw existsError()
+  const initialIdentity = initialTarget ? identity(initialTarget) : null
+  const initialMode = initialTarget?.mode ?? options.mode ?? 0o600
+  const initialContent = initialTarget
+    ? await readExpectedFile(targetPath, initialIdentity!, options.expectedSha256)
+    : null
+  validateMissingExpectation(initialTarget, options.expectedSha256)
 
   if (!options.overwrite) {
     await options.beforeCommit?.(targetPath)
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
-    const handle = await openNoFollowExclusive(targetPath)
+    const handle = await openNoFollowExclusive(targetPath, 0o600)
     const createdIdentity = identity(await handle.stat())
     try {
       await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
@@ -163,10 +179,11 @@ export async function writeFileInsideRoot(
   // without materializing the payload in either the old or replacement tree.
   await options.beforeCommit?.(targetPath)
   await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
-  await validateExpectedTarget(targetPath, initialTarget ? identity(initialTarget) : null)
+  await validateExpectedTarget(targetPath, initialIdentity)
+  await validateExpectedContent(targetPath, initialIdentity, options.expectedSha256)
 
   const temporaryPath = join(parentPath, `.flapstack-${randomUUID()}.tmp`)
-  const handle = await openNoFollowExclusive(temporaryPath)
+  const handle = await openNoFollowExclusive(temporaryPath, initialMode & 0o777)
   const temporaryIdentity = identity(await handle.stat())
   let committed = false
   try {
@@ -174,8 +191,10 @@ export async function writeFileInsideRoot(
     await handle.sync()
     const size = (await handle.stat()).size
     await handle.close()
+    await chmod(temporaryPath, initialMode & 0o777)
     await validateRootAndParent(lexicalRoot, realRoot, rootIdentity, parentPath, parentIdentity)
-    await validateExpectedTarget(targetPath, initialTarget ? identity(initialTarget) : null)
+    await validateExpectedTarget(targetPath, initialIdentity)
+    await validateExpectedContent(targetPath, initialIdentity, options.expectedSha256)
     await rename(temporaryPath, targetPath)
     committed = true
     await validateCommittedTarget(
@@ -187,11 +206,31 @@ export async function writeFileInsideRoot(
       targetPath,
       temporaryIdentity,
     )
+    await options.afterCommit?.(targetPath)
     return { targetPath, byteLength: size }
   } catch (error) {
     await handle.close().catch(() => undefined)
     if (!committed) {
       await removeIfStillOwned(temporaryPath, parentPath, parentIdentity, temporaryIdentity)
+    } else {
+      try {
+        await rollbackCommittedWrite({
+          lexicalRoot,
+          realRoot,
+          rootIdentity,
+          parentPath,
+          parentIdentity,
+          targetPath,
+          committedIdentity: temporaryIdentity,
+          initialContent,
+          initialMode,
+        })
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Atomic write failed and rollback was unsafe",
+        )
+      }
     }
     throw error
   }
@@ -279,9 +318,130 @@ export async function actOnPathInsideRoot<T>(
   return action(snapshot.targetPath)
 }
 
-async function openNoFollowExclusive(path: string) {
+async function openNoFollowExclusive(path: string, mode: number) {
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
-  return open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600)
+  return open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, mode)
+}
+
+async function readExpectedFile(
+  targetPath: string,
+  expectedIdentity: FileIdentity,
+  expectedSha256: string | null | undefined,
+): Promise<Buffer> {
+  const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0
+  const handle = await open(targetPath, constants.O_RDONLY | noFollow)
+  try {
+    const opened = await handle.stat()
+    if (!opened.isFile() || !sameIdentity(identity(opened), expectedIdentity)) {
+      throw new Error("Write target changed during content validation")
+    }
+    const content = await handle.readFile()
+    if (typeof expectedSha256 === "string" && sha256(content) !== expectedSha256) {
+      throw new Error("Write target content is stale")
+    }
+    return content
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
+}
+
+function validateMissingExpectation(
+  current: Awaited<ReturnType<typeof lstatOrNull>>,
+  expectedSha256: string | null | undefined,
+): void {
+  if (expectedSha256 === null && current) throw new Error("Write target content is stale")
+  if (typeof expectedSha256 === "string" && !current) {
+    throw new Error("Write target content is stale")
+  }
+}
+
+async function validateExpectedContent(
+  targetPath: string,
+  expectedIdentity: FileIdentity | null,
+  expectedSha256: string | null | undefined,
+): Promise<void> {
+  if (expectedSha256 === undefined) return
+  if (expectedSha256 === null) {
+    if (await lstatOrNull(targetPath)) throw new Error("Write target content is stale")
+    return
+  }
+  if (!expectedIdentity) throw new Error("Write target content is stale")
+  await readExpectedFile(targetPath, expectedIdentity, expectedSha256)
+}
+
+async function rollbackCommittedWrite(input: {
+  lexicalRoot: string
+  realRoot: string
+  rootIdentity: FileIdentity
+  parentPath: string
+  parentIdentity: FileIdentity
+  targetPath: string
+  committedIdentity: FileIdentity
+  initialContent: Buffer | null
+  initialMode: number
+}): Promise<void> {
+  await validateRootAndParent(
+    input.lexicalRoot,
+    input.realRoot,
+    input.rootIdentity,
+    input.parentPath,
+    input.parentIdentity,
+  )
+  await validateTargetIdentity(input.targetPath, input.committedIdentity)
+  if (input.initialContent === null) {
+    await removeIfStillOwned(
+      input.targetPath,
+      input.parentPath,
+      input.parentIdentity,
+      input.committedIdentity,
+    )
+    if (await lstatOrNull(input.targetPath)) throw new Error("Created target rollback failed")
+    return
+  }
+
+  const rollbackPath = join(input.parentPath, `.flapstack-rollback-${randomUUID()}.tmp`)
+  const handle = await openNoFollowExclusive(rollbackPath, input.initialMode & 0o777)
+  const rollbackIdentity = identity(await handle.stat())
+  let renamed = false
+  try {
+    await handle.writeFile(input.initialContent)
+    await handle.sync()
+    await handle.close()
+    await chmod(rollbackPath, input.initialMode & 0o777)
+    await validateRootAndParent(
+      input.lexicalRoot,
+      input.realRoot,
+      input.rootIdentity,
+      input.parentPath,
+      input.parentIdentity,
+    )
+    await validateTargetIdentity(input.targetPath, input.committedIdentity)
+    await rename(rollbackPath, input.targetPath)
+    renamed = true
+    await validateCommittedTarget(
+      input.lexicalRoot,
+      input.realRoot,
+      input.rootIdentity,
+      input.parentPath,
+      input.parentIdentity,
+      input.targetPath,
+      rollbackIdentity,
+    )
+  } finally {
+    await handle.close().catch(() => undefined)
+    if (!renamed) {
+      await removeIfStillOwned(
+        rollbackPath,
+        input.parentPath,
+        input.parentIdentity,
+        rollbackIdentity,
+      )
+    }
+  }
+}
+
+function sha256(value: Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex")
 }
 
 async function writeSource(
@@ -323,10 +483,10 @@ async function validateExpectedTarget(
 ): Promise<void> {
   const current = await lstatOrNull(targetPath)
   if (!expected && current) throw new Error("Write target appeared during commit")
-  if (
-    expected &&
-    (!current || current.isSymbolicLink() || !sameIdentity(identity(current), expected))
-  ) {
+  if (current?.isSymbolicLink()) {
+    throw new Error("Write target changed to a symbolic link during commit")
+  }
+  if (expected && (!current || !sameIdentity(identity(current), expected))) {
     throw new Error("Write target changed during commit")
   }
 }

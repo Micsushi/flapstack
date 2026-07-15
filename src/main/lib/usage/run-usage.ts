@@ -36,6 +36,51 @@ export type OpenCodeUsageCaptureOptions = {
   }
 }
 
+export type LocalModelUsageCapture = {
+  runId: string
+  model: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  capturedAt?: Date
+}
+
+/** Ollama has no cloud bill. Record exact zero provider billing while keeping
+ * absent token/resource telemetry explicitly unknown in provenance. */
+export async function captureLocalModelRunUsage(
+  db: UsageDb,
+  usage: LocalModelUsageCapture,
+): Promise<number> {
+  const tokenQuality =
+    usage.inputTokens === undefined &&
+    usage.outputTokens === undefined &&
+    usage.totalTokens === undefined
+      ? "unknown"
+      : "provider-reported"
+  return insertSamples(db, [
+    {
+      providerId: "local",
+      source: "flapstack-run",
+      sourceTag: "ollama-local-run",
+      costQuality: "exact",
+      costUsd: 0,
+      runId: usage.runId,
+      model: usage.model,
+      capturedAt: usage.capturedAt,
+      inputTokens: usage.inputTokens ?? null,
+      outputTokens: usage.outputTokens ?? null,
+      totalTokens: usage.totalTokens ?? null,
+      rawPayload: {
+        provider: "ollama",
+        billing: "local-compute-no-provider-charge",
+        tokenQuality,
+        resourceTelemetry: "unknown",
+      },
+      dedupeKey: `local|run|${usage.runId}`,
+    },
+  ])
+}
+
 /** Persist one completed OpenCode-backed run. Token usage remains useful when
  * cost is unknown, so missing pricing never causes the whole sample to vanish. */
 export async function captureOpenCodeRunUsage(

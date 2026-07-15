@@ -74,6 +74,20 @@ import {
 import { updateSubChatRunStatusIfAuthoritative } from "../../run-status-authority"
 import { publicProcedure, router } from "../index"
 import { getCredentialService } from "../../credential-service"
+import {
+  applyCodexExtensionPolicyConfig,
+  buildExtensionRunContext,
+  filterCodexExtensionMcpServers,
+  type ExtensionLaunchPolicy,
+} from "../../extension-management"
+import { projectVaultSectionIds } from "../../project-vaults/registry"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
+import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
+import {
+  buildProjectVaultRunContext,
+  persistProjectVaultContextManifest,
+  ProjectVaultContextRejectedError,
+} from "../../project-vaults/run-context"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -95,6 +109,7 @@ type CodexProviderSession = {
   cwd: string
   authFingerprint: string | null
   mcpFingerprint: string
+  extensionPolicyFingerprint: string
   reasoningEnabled: boolean
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
 }
@@ -1147,6 +1162,14 @@ async function createCodexRun(params: {
     return existingRun
   }
 
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: params.chatId,
+    harness: "codex",
+    model: params.model,
+    permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
+  })
+  assertFlapstackNativeProviderRouter({ harness: "codex", snapshot: runtimeSnapshot })
+
   db.update(agentRuns)
     .set({
       status: "cancelled",
@@ -1164,6 +1187,7 @@ async function createCodexRun(params: {
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       id: params.runId,
       chatId: params.chatId,
       subChatId: params.subChatId,
@@ -1317,6 +1341,7 @@ function buildCodexProviderEnv(
   authConfig?: { apiKey: string },
   reasoningEnabled = true,
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh",
+  extensionLaunchPolicy?: ExtensionLaunchPolicy,
 ): Record<string, string> {
   // Prefer shell-derived values (notably PATH) so stdio MCP dependencies
   // like pipx/npx resolve the same way as in MCP tool probing.
@@ -1341,14 +1366,19 @@ function buildCodexProviderEnv(
   } catch {
     existingConfig = {}
   }
-  env.CODEX_CONFIG = JSON.stringify({
+  const runConfig = {
     ...existingConfig,
     model_reasoning_summary: reasoningEnabled ? "detailed" : "none",
     model_supports_reasoning_summaries: reasoningEnabled,
     show_raw_agent_reasoning: reasoningEnabled,
     hide_agent_reasoning: !reasoningEnabled,
     ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}),
-  })
+  }
+  env.CODEX_CONFIG = JSON.stringify(
+    extensionLaunchPolicy
+      ? applyCodexExtensionPolicyConfig(runConfig, extensionLaunchPolicy)
+      : runConfig,
+  )
 
   const apiKey = authConfig?.apiKey?.trim()
   if (!apiKey) {
@@ -1436,6 +1466,7 @@ function getOrCreateProvider(params: {
   cwd: string
   mcpServers: CodexMcpServerForSession[]
   mcpFingerprint: string
+  extensionLaunchPolicy: ExtensionLaunchPolicy
   existingSessionId?: string
   authConfig?: {
     apiKey: string
@@ -1451,6 +1482,7 @@ function getOrCreateProvider(params: {
     existing.cwd === params.cwd &&
     existing.authFingerprint === authFingerprint &&
     existing.mcpFingerprint === params.mcpFingerprint &&
+    existing.extensionPolicyFingerprint === params.extensionLaunchPolicy.fingerprint &&
     existing.reasoningEnabled === params.reasoningEnabled &&
     existing.reasoningEffort === (params.reasoningEffort ?? null)
   ) {
@@ -1469,7 +1501,12 @@ function getOrCreateProvider(params: {
 
   const provider = createACPProvider({
     command: resolveCodexAcpBinaryPath(),
-    env: buildCodexProviderEnv(params.authConfig, params.reasoningEnabled, params.reasoningEffort),
+    env: buildCodexProviderEnv(
+      params.authConfig,
+      params.reasoningEnabled,
+      params.reasoningEffort,
+      params.extensionLaunchPolicy,
+    ),
     authMethodId: getCodexAuthMethodId(params.authConfig),
     permissionRequestHandler: async (request) => {
       const active = codexPermissionHandlers.get(params.subChatId)
@@ -1488,6 +1525,7 @@ function getOrCreateProvider(params: {
     cwd: params.cwd,
     authFingerprint,
     mcpFingerprint: params.mcpFingerprint,
+    extensionPolicyFingerprint: params.extensionLaunchPolicy.fingerprint,
     reasoningEnabled: params.reasoningEnabled,
     reasoningEffort: params.reasoningEffort ?? null,
   })
@@ -1809,6 +1847,7 @@ export const codexRouter = router({
         reasoningEnabled: z.boolean().default(true),
         reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
         images: z.array(imageAttachmentSchema).optional(),
+        vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
       }),
     )
     .subscription(({ input }) => {
@@ -1933,8 +1972,44 @@ export const codexRouter = router({
               sessionMode: ownedSessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            let vaultContext
+            try {
+              vaultContext = await buildProjectVaultRunContext(db, {
+                chatId: input.chatId,
+                runId: input.runId,
+                harness: "codex",
+                ...(input.vaultContextSectionIds
+                  ? { runSectionIds: input.vaultContextSectionIds }
+                  : {}),
+              })
+            } catch (error) {
+              if (error instanceof ProjectVaultContextRejectedError) {
+                persistProjectVaultContextManifest(db, {
+                  runId: input.runId,
+                  manifest: error.manifest,
+                  ...(input.vaultContextSectionIds
+                    ? { runSectionIds: input.vaultContextSectionIds }
+                    : {}),
+                })
+              }
+              throw error
+            }
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: "codex",
+              cwd: input.cwd,
+            })
+            const runContextMetadata = {
+              ...contextBundle.metadata,
+              extensionPolicy: extensionContext.manifest,
+            }
             const promptForModel = prependFlapstackMcpGuidance(
-              prependStartupContext(input.prompt, contextBundle.context),
+              prependStartupContext(
+                input.prompt,
+                [contextBundle.context, vaultContext.context, extensionContext.context]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              ),
               productMcpEnabledAtLaunch,
             )
             const fallbackModel = authConfig?.apiKey?.trim()
@@ -2072,6 +2147,13 @@ export const codexRouter = router({
               worktreePath: input.cwd || null,
               promptMessageId,
             })
+            persistProjectVaultContextManifest(db, {
+              runId: input.runId,
+              manifest: vaultContext.manifest,
+              ...(input.vaultContextSectionIds
+                ? { runSectionIds: input.vaultContextSectionIds }
+                : {}),
+            })
 
             if (input.forceNewSession) {
               cleanupProvider(input.subChatId)
@@ -2186,8 +2268,12 @@ export const codexRouter = router({
             const provider = getOrCreateProvider({
               subChatId: input.subChatId,
               cwd: input.cwd,
-              mcpServers: mcpSnapshot.mcpServersForSession,
+              mcpServers: filterCodexExtensionMcpServers(
+                mcpSnapshot.mcpServersForSession,
+                extensionContext.launchPolicy,
+              ),
               mcpFingerprint: mcpSnapshot.fingerprint,
+              extensionLaunchPolicy: extensionContext.launchPolicy,
               existingSessionId: ownedSessionId,
               authConfig,
               reasoningEnabled: input.reasoningEnabled,
@@ -2257,7 +2343,8 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
-                    context: contextBundle.metadata,
+                    context: runContextMetadata,
+                    vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                     durationMs: Date.now() - startedAt,
                     resultSubtype: part.finishReason === "error" ? "error" : "success",
@@ -2272,7 +2359,8 @@ export const codexRouter = router({
                     permissionApplication,
                     runId: input.runId,
                     sessionId,
-                    context: contextBundle.metadata,
+                    context: runContextMetadata,
+                    vaultContext: vaultContext.manifest,
                     transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   }
                 }
@@ -2283,7 +2371,8 @@ export const codexRouter = router({
                   permissionMode,
                   permissionApplication,
                   runId: input.runId,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
+                  vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                 }
               },
@@ -2307,7 +2396,8 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
-                          context: contextBundle.metadata,
+                          context: runContextMetadata,
+                          vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                           ...usageMetadata,
                         },
@@ -2321,7 +2411,8 @@ export const codexRouter = router({
                           permissionMode,
                           permissionApplication,
                           runId: input.runId,
-                          context: contextBundle.metadata,
+                          context: runContextMetadata,
+                          vaultContext: vaultContext.manifest,
                           transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         },
                       }
@@ -2346,7 +2437,8 @@ export const codexRouter = router({
                         permissionMode,
                         permissionApplication,
                         runId: input.runId,
-                        context: contextBundle.metadata,
+                        context: runContextMetadata,
+                        vaultContext: vaultContext.manifest,
                         transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                         resultSubtype: "empty-response",
                         ...usageMetadata,
@@ -2450,7 +2542,8 @@ export const codexRouter = router({
                 type: "message-metadata",
                 messageMetadata: {
                   runId: input.runId,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
+                  vaultContext: vaultContext.manifest,
                   transport: CODEX_TRANSPORT_DECISION.selectedAdapter,
                   ...(usageMetadata ?? {}),
                 },

@@ -38,6 +38,7 @@ const safeAuditKeys = new Set([
   "dependencyCount",
   "dryRun",
   "error",
+  "expectedVersion",
   "git",
   "harness",
   "id",
@@ -66,6 +67,9 @@ const safeAuditKeys = new Set([
   "productMcpTier3",
   "productMcpWrite",
   "projectId",
+  "proposalCount",
+  "proposalId",
+  "proposalIds",
   "projectWrite",
   "prompt",
   "provider",
@@ -75,6 +79,7 @@ const safeAuditKeys = new Set([
   "runId",
   "schemaVersion",
   "scope",
+  "sectionId",
   "secrets",
   "sha256",
   "shell",
@@ -259,6 +264,17 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
   const input = asRecord(value)
   if (!input) return null
   const textDigest = (key: string) => summarizeText(input[key])
+  const vaultTarget = () => ({
+    projectId: textDigest("projectId"),
+    sectionId:
+      typeof input.sectionId === "string" &&
+      ["index", "handoff", "decisions", "context", "tasks", "logs"].includes(input.sectionId)
+        ? safeLiteral(input.sectionId)
+        : null,
+    ...(typeof input.expectedVersion === "number"
+      ? { expectedVersion: input.expectedVersion }
+      : {}),
+  })
   const safe = (...keys: string[]) => {
     const entries: Array<[string, unknown]> = []
     for (const key of keys) {
@@ -296,8 +312,82 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       }
     case "orchestrate_task":
       return summarizeOrchestrationAuthority(value)
+    case "list_automations":
+      return safe("includeArchived", "limit", "cursor")
+    case "read_automation":
+      return safe("automationId")
     case "create_automation_draft":
-      return { ...safe("trigger", "dryRun"), name: textDigest("name") }
+      return {
+        ...safe("idempotencyKey"),
+        draft: summarizeAutomationDraft(input.draft),
+      }
+    case "update_automation":
+      return {
+        ...safe("automationId", "expectedVersion"),
+        draft: summarizeAutomationDraft(input.draft),
+      }
+    case "enable_automation":
+      return safe("automationId", "expectedVersion", "enabled")
+    case "propose_task": {
+      const proposal = asRecord(input.proposal)
+      return {
+        ...safe("idempotencyKey"),
+        proposal: proposal
+          ? {
+              projectId: summarizeText(proposal.projectId),
+              name: summarizeText(proposal.name),
+              description: summarizeText(proposal.description),
+              targetStatus:
+                typeof proposal.targetStatus === "string"
+                  ? safeLiteral(proposal.targetStatus)
+                  : null,
+            }
+          : null,
+      }
+    }
+    case "list_task_proposals":
+      return safe("projectId", "includeArchived", "limit", "cursor")
+    case "read_task_proposal":
+    case "cancel_task_proposal":
+      return safe("proposalId", "expectedVersion")
+    case "update_task_proposal": {
+      const proposal = asRecord(input.proposal)
+      return {
+        ...safe("proposalId", "expectedVersion"),
+        proposal: proposal
+          ? {
+              projectId: summarizeText(proposal.projectId),
+              name: summarizeText(proposal.name),
+              description: summarizeText(proposal.description),
+              targetStatus:
+                typeof proposal.targetStatus === "string"
+                  ? safeLiteral(proposal.targetStatus)
+                  : null,
+            }
+          : null,
+      }
+    }
+    case "approve_task_proposal":
+    case "approve_task_proposals":
+    case "deny_task_proposal":
+      return {
+        ...safe("decision", "proposalId", "expectedVersion", "proposalCount"),
+        proposalIds: Array.isArray(input.proposalIds) ? input.proposalIds.map(summarizeText) : [],
+      }
+    case "create_vault_section":
+    case "update_vault_section":
+    case "update_vault_handoff":
+      return {
+        ...vaultTarget(),
+        content: textDigest("content"),
+      }
+    case "record_vault_decision":
+      return {
+        ...vaultTarget(),
+        title: textDigest("title"),
+        decision: textDigest("decision"),
+        rationale: textDigest("rationale"),
+      }
     case "search":
       return { ...safe("scope", "scopeId", "cursor", "limit"), query: textDigest("query") }
     case "rename_item":
@@ -310,16 +400,92 @@ export function summarizeMcpAuditInput(toolName: string, value: unknown): unknow
       return safe("kind", "id", "pinned")
     case "list_projects":
     case "list_tasks":
+    case "list_orchestrations":
     case "list_chats":
     case "list_runs":
     case "list_worktrees":
     case "list_artifacts":
       return safe("projectId", "taskId", "chatId", "runId", "cursor", "limit")
+    case "list_vault_sections":
+    case "read_vault_section":
+      return vaultTarget()
     case "ping":
     case "describe":
       return null
     default:
       return { keys: Object.keys(input).sort().slice(0, MAX_ENTRIES) }
+  }
+}
+
+function summarizeAutomationDraft(value: unknown): unknown {
+  const draft = asRecord(value)
+  if (!draft) return null
+  const scope = asRecord(draft.scope)
+  const action = asRecord(draft.action)
+  const trigger = asRecord(draft.trigger)
+  const run = asRecord(draft.run)
+  const retry = asRecord(draft.retry)
+  const budget = asRecord(draft.budget)
+  const capabilities = asRecord(run?.customPermissions)
+  const literal = (item: unknown) => (typeof item === "string" ? safeLiteral(item) : null)
+  const boundedNumbers = (record: Record<string, unknown> | null, keys: string[]) =>
+    Object.fromEntries(
+      keys.flatMap((key) =>
+        typeof record?.[key] === "number" || record?.[key] === null ? [[key, record[key]]] : [],
+      ),
+    )
+  return {
+    name: summarizeText(draft.name),
+    description: summarizeText(draft.description),
+    scope: scope
+      ? {
+          type: literal(scope.type),
+          projectId: summarizeText(scope.projectId),
+          taskId: summarizeText(scope.taskId),
+          chatId: summarizeText(scope.chatId),
+        }
+      : null,
+    action: action
+      ? {
+          type: literal(action.type),
+          taskName: summarizeText(action.taskName),
+          chatName: summarizeText(action.chatName),
+        }
+      : null,
+    trigger: trigger
+      ? {
+          type: literal(trigger.type),
+          cron: summarizeText(trigger.cron),
+          timezone: summarizeText(trigger.timezone),
+          catchUp: literal(trigger.catchUp),
+          projectId: summarizeText(trigger.projectId),
+          taskId: summarizeText(trigger.taskId),
+          chatId: summarizeText(trigger.chatId),
+          rootPath: summarizeText(trigger.rootPath),
+          statuses: Array.isArray(trigger.statuses) ? trigger.statuses.map(literal) : [],
+          includeGlobCount: Array.isArray(trigger.includeGlobs) ? trigger.includeGlobs.length : 0,
+          excludeGlobCount: Array.isArray(trigger.excludeGlobs) ? trigger.excludeGlobs.length : 0,
+          ...boundedNumbers(trigger, ["debounceMs"]),
+        }
+      : null,
+    run: run
+      ? {
+          prompt: summarizeText(run.prompt),
+          harness: literal(run.harness),
+          model: summarizeText(run.model),
+          permissionMode: literal(run.permissionMode),
+          worktreeStrategy: literal(run.worktreeStrategy),
+          worktreePath: summarizeText(run.worktreePath),
+          capabilityFlags: capabilities,
+        }
+      : null,
+    retry: boundedNumbers(retry, ["maxAttempts", "initialDelayMs", "maxDelayMs", "deadlineMs"]),
+    budget: boundedNumbers(budget, [
+      "maxDurationMs",
+      "maxTotalTokens",
+      "maxCostUsdMicros",
+      "maxConcurrentRuns",
+    ]),
   }
 }
 
@@ -838,9 +1004,22 @@ function resultDigest(summary: string): string | null {
 
 function isRetrySafeClaim(claim: Pick<AuditRow, "tier" | "toolName" | "inputSummary">): boolean {
   if (claim.tier === 0) return true
-  if (claim.toolName !== "launch_run") return false
+  if (
+    claim.toolName === "create_automation_draft" ||
+    claim.toolName === "update_automation" ||
+    claim.toolName === "enable_automation" ||
+    claim.toolName === "propose_task" ||
+    claim.toolName === "update_task_proposal" ||
+    claim.toolName === "cancel_task_proposal"
+  ) {
+    return true
+  }
   try {
-    return Object.prototype.hasOwnProperty.call(JSON.parse(claim.inputSummary), "idempotencyKey")
+    const input = JSON.parse(claim.inputSummary) as Record<string, unknown>
+    if (claim.toolName === "launch_run") {
+      return Object.prototype.hasOwnProperty.call(input, "idempotencyKey")
+    }
+    return false
   } catch {
     return false
   }

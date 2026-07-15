@@ -1,6 +1,7 @@
 "use client"
 
 import { useVirtualizer } from "@tanstack/react-virtual"
+import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { AlignJustify, Plus } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -82,6 +83,8 @@ import { usePastedTextFiles } from "../hooks/use-pasted-text-files"
 import { useFocusInputOnEnter } from "../hooks/use-focus-input-on-enter"
 import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
+import { useLocalModelPickerSurface } from "../../local-models/use-local-model-picker-surface"
+import { RuntimeSelector, allowedRuntimePreferences, productRuntime } from "../runtime-settings"
 import { getResolvedHotkey } from "../../../lib/hotkeys"
 import {
   AgentsFileMention,
@@ -190,6 +193,7 @@ const agents: Array<{
   { id: "codex", name: "OpenAI Codex" },
   { id: "openrouter", name: "OpenRouter", hasModels: true },
   { id: "nanogpt", name: "NanoGPT", hasModels: true },
+  { id: "local", name: "Local · Ollama", hasModels: true },
 ]
 
 interface NewChatFormProps {
@@ -299,6 +303,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   // Note: defaultAgentMode is initialized synchronously via atomWithStorage with getOnInit: true
   const defaultAgentMode = useAtomValue(defaultAgentModeAtom)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => defaultAgentMode)
+  const [runtimePreference, setRuntimePreference] = useState<AgentRuntimePreference>("auto")
+  const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
   // Toggle mode helper
   const toggleMode = useCallback(() => {
     setAgentMode(getNextMode)
@@ -332,6 +338,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     hasCustomClaudeConfig
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
+  const localModelPicker = useLocalModelPickerSurface()
   const handleOpenVoiceSettings = useCallback(() => {
     setSettingsActiveTab("voice")
     setSettingsDialogOpen(true)
@@ -395,6 +402,17 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       setSelectedAgent(nextAgent)
     }
   }, [enabledAgents, fallbackAgent, preferredAgentId, selectedAgent.id])
+
+  useEffect(() => {
+    if (!allowedRuntimePreferences(selectedAgent.id).includes(runtimePreference)) {
+      setRuntimePreference("auto")
+    }
+  }, [runtimePreference, selectedAgent.id])
+  const resolvedRuntimePreference =
+    runtimePreference === "auto" ? productRuntime(selectedAgent.id) : runtimePreference
+  const runtimeBlockedReason = runtimeReleases.find(
+    (release) => release.runtime === resolvedRuntimePreference && !release.enabledForNewLaunches,
+  )?.reason
 
   // Get available models (with offline support)
   const availableModels = useAvailableModels()
@@ -537,6 +555,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   }, [lastSelectedCodexFastMode, selectedCodexModel.supportsFastMode, setLastSelectedCodexFastMode])
 
   const selectedChatModel = useMemo(() => {
+    if (selectedAgent.id === "local") {
+      return localModelPicker.selectedModelId ?? ""
+    }
     if (selectedAgent.id === "codex") {
       return `${selectedCodexModel.id}/${selectedCodexReasoning}`
     }
@@ -549,6 +570,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return selectedModel?.id ?? DEFAULT_CLAUDE_MODEL_ID
   }, [
     selectedAgent.id,
+    localModelPicker.selectedModelId,
     selectedCodexModel.id,
     selectedCodexReasoning,
     selectedCursorModel.id,
@@ -561,6 +583,9 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     selectedOllamaModel || availableModels.recommendedModel || availableModels.ollamaModels[0]
   const claudeAgent = enabledAgents.find((agent) => agent.id === "claude-code") || fallbackAgent
   const selectedModelLabel = useMemo(() => {
+    if (selectedAgent.id === "local") {
+      return localModelPicker.selectedModelId ?? "Choose local model"
+    }
     if (selectedAgent.id === "codex") {
       return selectedCodexModel.name
     }
@@ -592,6 +617,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     return `${selectedModel.name} ${selectedModel.version}`
   }, [
     selectedAgent.id,
+    localModelPicker.selectedModelId,
     selectedCodexModel.name,
     selectedCursorModel.name,
     lastSelectedOpencodeModels,
@@ -1356,6 +1382,13 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
 
   const handleSend = useCallback(async () => {
     await finishVoiceBeforeSend()
+
+    if (selectedAgent.id === "local" && !localModelPicker.canLaunch) {
+      toast.error("Choose a refreshed, chat-capable local model before launch.")
+      setSettingsActiveTab("local-models")
+      setSettingsDialogOpen(true)
+      return
+    }
     // Get value from uncontrolled editor
     let message = editorRef.current?.getValue() || ""
 
@@ -1479,6 +1512,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       name: message.trim().slice(0, 50), // Use first 50 chars as chat name
       harness: selectedAgent.id,
       model: selectedChatModel,
+      runtimePreference,
       initialMessageParts: parts.length > 0 ? parts : undefined,
       baseBranch:
         chatScope === "project" && workMode === "worktree"
@@ -1505,10 +1539,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     pastedTexts,
     selectedChatModel,
     selectedAgent.id,
+    runtimePreference,
     agentMode,
     reasoningOutputEnabled,
     trpcUtils,
     finishVoiceBeforeSend,
+    localModelPicker.canLaunch,
+    setSettingsActiveTab,
+    setSettingsDialogOpen,
   ])
 
   const handleMentionSelect = useCallback((mention: FileMentionOption) => {
@@ -2327,6 +2365,19 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                               })),
                           },
                         }}
+                        local={{
+                          ...localModelPicker,
+                          onOpenSettings: () => {
+                            setSettingsActiveTab("local-models")
+                            setSettingsDialogOpen(true)
+                          },
+                        }}
+                      />
+                      <RuntimeSelector
+                        harness={selectedAgent.id}
+                        value={runtimePreference}
+                        onChange={setRuntimePreference}
+                        disabled={createChatMutation.isPending}
                       />
                       <AgentModelTuningSelector
                         selectedAgentId={selectedAgent.id as AgentProviderId}
@@ -2406,7 +2457,8 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           isUploading ||
                           ((chatScope === "project" || chatScope === "task") &&
                             !validatedProject) ||
-                          (chatScope === "task" && !selectedTask),
+                          (chatScope === "task" && !selectedTask) ||
+                          runtimeBlockedReason,
                         )}
                         onClick={handleSend}
                         mode={agentMode}
@@ -2416,6 +2468,12 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                   </div>
                 </PromptInputActions>
               </PromptInput>
+
+              {runtimeBlockedReason ? (
+                <p role="alert" className="mt-2 px-2 text-xs text-amber-600 dark:text-amber-300">
+                  {runtimeBlockedReason} Choose Flapstack Native to launch now.
+                </p>
+              ) : null}
 
               {/* Scope, project, work mode, and branch selectors - directly under input */}
               <div className="mt-1.5 md:mt-2 ml-[5px] flex flex-wrap items-center gap-2">

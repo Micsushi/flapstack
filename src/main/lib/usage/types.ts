@@ -4,7 +4,14 @@
 // free of Electron / renderer imports so the daemon can import it standalone.
 
 /** Providers Flapstack tracks usage for. Stage 2 (S2.0) scope only. */
-export const USAGE_PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt"] as const
+export const USAGE_PROVIDER_IDS = [
+  "codex",
+  "anthropic",
+  "cursor",
+  "openrouter",
+  "nanogpt",
+  "local",
+] as const
 export type UsageProviderId = (typeof USAGE_PROVIDER_IDS)[number]
 
 /** Where a sample came from. Never fabricate historical detail from a current
@@ -66,6 +73,9 @@ export interface UsageSampleInput {
   costUsd?: number | null
   /** Derived estimate in USD when exact cost is unavailable. */
   costUsdEstimated?: number | null
+  /** Pricing catalog version used for an estimate. Persisted as normalized
+   * provenance inside rawPayload without adding a schema migration. */
+  pricingVersion?: string | null
   currency?: string
   percentUsed?: number | null
   quotaUsed?: number | null

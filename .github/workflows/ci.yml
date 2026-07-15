@@ -1,18 +1,14 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches:
       - main
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   verify:
-    runs-on: [self-hosted, linux, flapstack]
-    timeout-minutes: 20
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4

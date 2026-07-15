@@ -24,8 +24,9 @@ import {
   type UsageHistoryRange,
   type UsageStatus,
 } from "./agents-usage-helpers"
+import { AdvancedUsageExplorer } from "../../../features/usage/advanced-usage-explorer"
 
-const PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt"] as const
+const PROVIDER_IDS = ["codex", "anthropic", "cursor", "openrouter", "nanogpt", "local"] as const
 type ProviderId = (typeof PROVIDER_IDS)[number]
 type UsageScope = "all-visible" | "flapstack-only"
 
@@ -35,6 +36,7 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   cursor: "Cursor",
   openrouter: "OpenRouter",
   nanogpt: "NanoGPT",
+  local: "Local / Ollama",
 }
 
 const ALL_PROVIDERS = "__all_providers__"
@@ -1324,6 +1326,8 @@ export function AgentsUsageTab() {
           )}
         </section>
       )}
+
+      <AdvancedUsageExplorer />
 
       <details
         className="group rounded-xl border border-border bg-foreground/[0.02]"

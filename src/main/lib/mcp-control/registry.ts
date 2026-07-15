@@ -5,6 +5,9 @@ import type { AppendMcpAuditRecord, McpAuditStatus, McpDispatchBlock } from "./a
 import { evaluateMcpToolGate } from "./gate"
 import { createMcpReadService, type McpReadService } from "./read-service"
 import { evaluateMcpGateWithSelfReference } from "./self-reference"
+import { mcpProjectVaultToolNames, type McpProjectVaultService } from "./project-vault-service"
+import { mcpAutomationToolNames, type McpAutomationService } from "./automation-service"
+import { mcpTaskProposalToolNames, type McpTaskProposalService } from "./task-proposal-service"
 import type {
   McpCallerIdentity,
   McpControlResponse,
@@ -27,6 +30,9 @@ export type McpInvocationDependencies = {
   invocationId?: () => string
   audit?: McpAuditWriter
   mutations?: McpMutationService
+  projectVaults?: McpProjectVaultService
+  automationControls?: McpAutomationService
+  taskProposalControls?: McpTaskProposalService
   /** Single post-gate dispatch hook for future mutation handlers. */
   execute?: (input: {
     tool: McpControlTool
@@ -75,6 +81,13 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "list_orchestrations",
+    description: "List the caller-visible orchestration fleet without scheduling work.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
     name: "list_chats",
     description: "List caller-visible chats.",
     tier: 0,
@@ -107,6 +120,48 @@ export const mcpControlTools: McpControlTool[] = [
     description: "Search caller-visible object metadata.",
     tier: 0,
     requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "list_vault_sections",
+    description: "List typed knowledge sections in a caller-visible project vault.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_vault_section",
+    description: "Read one exact caller-visible project vault section.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "create_vault_section",
+    description: "Create one approved typed project vault section from expected version zero.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "update_vault_section",
+    description: "Replace one exact project vault section using its current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "update_vault_handoff",
+    description: "Replace the bounded handoff section using its current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
+    status: "implemented",
+  },
+  {
+    name: "record_vault_decision",
+    description: "Append one bounded decision entry using the decision section's current version.",
+    tier: 2,
+    requiredCapabilities: ["projectWrite"],
     status: "implemented",
   },
   {
@@ -194,8 +249,71 @@ export const mcpControlTools: McpControlTool[] = [
     status: "implemented",
   },
   {
+    name: "list_automations",
+    description: "List caller-visible local automations.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_automation",
+    description: "Read one caller-visible local automation and its exact version.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
     name: "create_automation_draft",
-    description: "Create a non-runnable automation draft.",
+    description: "Create an idempotent, non-runnable local automation draft.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "update_automation",
+    description: "Update an exact automation version after user approval.",
+    tier: 3,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "enable_automation",
+    description: "Enable or disable an exact automation version after user approval.",
+    tier: 3,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "propose_task",
+    description: "Create one bounded, inert AI task proposal for later user review.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "list_task_proposals",
+    description: "List task proposals owned by this caller within its durable scope.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "read_task_proposal",
+    description: "Read one exact task proposal owned by this caller.",
+    tier: 0,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "update_task_proposal",
+    description: "Update one pending task proposal using its exact version.",
+    tier: 1,
+    requiredCapabilities: [],
+    status: "implemented",
+  },
+  {
+    name: "cancel_task_proposal",
+    description: "Terminally cancel and archive one pending task proposal.",
     tier: 1,
     requiredCapabilities: [],
     status: "implemented",
@@ -429,6 +547,7 @@ export async function invokeMcpControlTool(
       dependencies,
       invocationId,
       startedAt,
+      true,
     )
   }
 
@@ -485,6 +604,7 @@ export async function invokeMcpControlTool(
     dependencies,
     invocationId,
     startedAt,
+    false,
   )
 }
 
@@ -496,9 +616,13 @@ async function auditedDispatch(
   dependencies: McpInvocationDependencies,
   invocationId: string,
   startedAt: number,
+  approved: boolean,
 ): Promise<McpControlResponse> {
   try {
-    const response = await dispatch(tool, caller, input, readService, dependencies)
+    const response = await dispatch(tool, caller, input, readService, dependencies, {
+      invocationId,
+      approved,
+    })
     const terminalAuditPersisted = audit(dependencies, {
       invocationId,
       startedAt,
@@ -604,10 +728,21 @@ function dispatch(
   input: unknown,
   readService: McpReadService | undefined,
   dependencies: McpInvocationDependencies,
+  context: { invocationId: string; approved: boolean },
 ): McpControlResponse | Promise<McpControlResponse> {
   return (
     dependencies.execute?.({ tool, caller, rawInput: input }) ??
-    executeImplementedTool(tool.name, caller, input, readService, dependencies.mutations)
+    executeImplementedTool(
+      tool.name,
+      caller,
+      input,
+      readService,
+      dependencies.mutations,
+      dependencies.projectVaults,
+      dependencies.automationControls,
+      dependencies.taskProposalControls,
+      context,
+    )
   )
 }
 
@@ -617,6 +752,13 @@ function executeImplementedTool(
   input: unknown,
   readService?: McpReadService,
   mutations?: McpMutationService,
+  projectVaults?: McpProjectVaultService,
+  automationControls?: McpAutomationService,
+  taskProposalControls?: McpTaskProposalService,
+  context: { invocationId: string; approved: boolean } = {
+    invocationId: "untracked",
+    approved: false,
+  },
 ): McpControlResponse | Promise<McpControlResponse> {
   if (name === "ping") {
     return { ok: true, data: { status: "ok", caller: snapshotCaller(caller) } }
@@ -626,6 +768,33 @@ function executeImplementedTool(
       ok: true,
       data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
     }
+  }
+
+  if (mcpProjectVaultToolNames.has(name)) {
+    return projectVaults
+      ? projectVaults.invoke(name, caller, input)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Project vault service is unavailable." },
+        }
+  }
+
+  if (mcpAutomationToolNames.has(name)) {
+    return automationControls
+      ? automationControls.invoke(name, caller, input, context)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Automation control is unavailable." },
+        }
+  }
+
+  if (mcpTaskProposalToolNames.has(name)) {
+    return taskProposalControls
+      ? taskProposalControls.invoke(name, caller, input)
+      : {
+          ok: false,
+          error: { code: "tool-unavailable", message: "Task proposals are unavailable." },
+        }
   }
 
   if (mcpControlTools.some((tool) => tool.name === name && tool.tier > 0)) {

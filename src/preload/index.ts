@@ -21,6 +21,13 @@ import {
   DEV_TEST_CONTROL_VIEW_CHANNEL,
   type DevTestControlViewPayload,
 } from "../shared/dev-test-control"
+import type {
+  WorkspaceOwnershipInvalidation,
+  WorkspacePaneClaimResult,
+  WorkspacePaneOpenResult,
+  WorkspacePaneWindowTarget,
+  WorkspaceWindowOpenTarget,
+} from "../shared/workspace-window-ownership"
 
 // Only initialize Sentry in production to avoid IPC errors in dev mode
 if (process.env.NODE_ENV === "production") {
@@ -96,6 +103,45 @@ contextBridge.exposeInMainWorld("desktopApi", {
   releaseChat: (chatId: string) => ipcRenderer.invoke("chat:release", chatId) as Promise<void>,
   focusChatOwner: (chatId: string) =>
     ipcRenderer.invoke("chat:focus-owner", chatId) as Promise<boolean>,
+
+  openWorkspacePane: (target: WorkspacePaneWindowTarget) =>
+    ipcRenderer.invoke("workspace-window:open-pane", target) as Promise<WorkspacePaneOpenResult>,
+  openWorkspaceWindow: (target: WorkspaceWindowOpenTarget) =>
+    ipcRenderer.invoke(
+      "workspace-window:open-workspace",
+      target,
+    ) as Promise<WorkspacePaneOpenResult>,
+  claimWorkspacePane: (target: WorkspacePaneWindowTarget, mode: "claim" | "move" = "claim") =>
+    ipcRenderer.invoke("workspace-window:claim-pane", {
+      ...target,
+      mode,
+    }) as Promise<WorkspacePaneClaimResult>,
+  releaseWorkspacePane: (target: WorkspacePaneWindowTarget) =>
+    ipcRenderer.invoke("workspace-window:release-pane", target) as Promise<void>,
+  focusWorkspacePaneOwner: (workspaceId: string, paneId: string) =>
+    ipcRenderer.invoke("workspace-window:focus-pane-owner", {
+      workspaceId,
+      paneId,
+    }) as Promise<boolean>,
+  pullBackWorkspacePane: (workspaceId: string, paneId: string) =>
+    ipcRenderer.invoke("workspace-window:pull-back-pane", {
+      workspaceId,
+      paneId,
+    }) as Promise<WorkspacePaneClaimResult>,
+  openWorkspaceRemainder: (input: {
+    projectId?: string
+    workspaceId: string
+    skipPaneId: string
+  }) =>
+    ipcRenderer.invoke(
+      "workspace-window:open-remainder",
+      input,
+    ) as Promise<WorkspacePaneOpenResult>,
+  onWorkspaceOwnershipChanged: (callback: (payload: WorkspaceOwnershipInvalidation) => void) => {
+    const handler = (_event: unknown, payload: WorkspaceOwnershipInvalidation) => callback(payload)
+    ipcRenderer.on("workspace-window:ownership-changed", handler)
+    return () => ipcRenderer.removeListener("workspace-window:ownership-changed", handler)
+  },
 
   // DevTools
   toggleDevTools: () => ipcRenderer.invoke("window:toggle-devtools"),
@@ -321,6 +367,23 @@ export interface DesktopApi {
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>
+  openWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<WorkspacePaneOpenResult>
+  openWorkspaceWindow: (target: WorkspaceWindowOpenTarget) => Promise<WorkspacePaneOpenResult>
+  claimWorkspacePane: (
+    target: WorkspacePaneWindowTarget,
+    mode?: "claim" | "move",
+  ) => Promise<WorkspacePaneClaimResult>
+  releaseWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<void>
+  focusWorkspacePaneOwner: (workspaceId: string, paneId: string) => Promise<boolean>
+  pullBackWorkspacePane: (workspaceId: string, paneId: string) => Promise<WorkspacePaneClaimResult>
+  openWorkspaceRemainder: (input: {
+    projectId?: string
+    workspaceId: string
+    skipPaneId: string
+  }) => Promise<WorkspacePaneOpenResult>
+  onWorkspaceOwnershipChanged: (
+    callback: (payload: WorkspaceOwnershipInvalidation) => void,
+  ) => () => void
   toggleDevTools: () => Promise<void>
   unlockDevTools: () => Promise<void>
   setAnalyticsOptOut: (optedOut: boolean) => Promise<void>

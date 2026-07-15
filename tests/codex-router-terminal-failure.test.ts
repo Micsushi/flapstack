@@ -1,11 +1,12 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const mocks = vi.hoisted(() => ({
   createACPProvider: vi.fn(),
@@ -64,6 +65,7 @@ import { closeDatabase } from "../src/main/lib/db"
 import { recoverLegacyQueuedRunPrompts } from "../src/main/lib/db/migrate"
 import { codexRouter } from "../src/main/lib/trpc/routers/codex"
 import { drainPendingMcpRuns, type QueuedAgentRun } from "../src/main/lib/run-launch-service"
+import { providerExtensionId } from "../src/main/lib/provider-extensions"
 
 let directory = ""
 let databasePath = ""
@@ -176,7 +178,79 @@ describe("Codex router terminal provider failure", () => {
 
     expect(readVisibleTranscript()).toEqual(["A", "A-response", "B", "B-response"])
   })
+
+  it("passes task-resolved skill and MCP policy into the real Codex ACP launch", async () => {
+    seedCodexExtensionPolicy()
+
+    await collectStream(
+      await codexRouter.createCaller({ getWindow: () => null }).chat({
+        runId: "run-auth",
+        chatId: "chat-auth",
+        subChatId: "sub-auth",
+        prompt: "Test provider policy",
+        cwd: directory,
+        mode: "agent",
+      }),
+    )
+
+    expect(mocks.createACPProvider).toHaveBeenCalledTimes(1)
+    const providerOptions = mocks.createACPProvider.mock.calls[0]![0]
+    const config = JSON.parse(providerOptions.env.CODEX_CONFIG)
+    expect(config.skills.config).toContainEqual({
+      path: join(directory, ".agents", "skills", "policy-alpha-task", "SKILL.md"),
+      enabled: false,
+    })
+    expect(config.mcp_servers["policy-alpha-mcp"]).toMatchObject({ enabled: false })
+    expect(providerOptions.session.mcpServers).not.toContainEqual(
+      expect.objectContaining({ name: "policy-alpha-mcp" }),
+    )
+  })
 })
+
+function seedCodexExtensionPolicy(): void {
+  const skillPath = join(directory, ".agents", "skills", "policy-alpha-task", "SKILL.md")
+  const enabledSkillPath = join(directory, ".agents", "skills", "policy-beta-enabled", "SKILL.md")
+  const configPath = join(directory, ".codex", "config.toml")
+  mkdirSync(resolve(skillPath, ".."), { recursive: true })
+  mkdirSync(resolve(enabledSkillPath, ".."), { recursive: true })
+  mkdirSync(resolve(configPath, ".."), { recursive: true })
+  writeFileSync(
+    skillPath,
+    "---\nname: policy-alpha-task\ndescription: disabled fixture\n---\nfixture\n",
+  )
+  writeFileSync(
+    enabledSkillPath,
+    "---\nname: policy-beta-enabled\ndescription: enabled fixture\n---\nfixture\n",
+  )
+  writeFileSync(
+    configPath,
+    '[mcp_servers."policy-alpha-mcp"]\ncommand = "disabled-fixture"\n\n[mcp_servers."policy-beta-mcp"]\ncommand = "enabled-fixture"\n',
+  )
+
+  const sqlite = new Database(databasePath)
+  sqlite.pragma("foreign_keys = ON")
+  sqlite
+    .prepare("INSERT INTO projects (id, name, path) VALUES ('policy-project', 'Policy', ?)")
+    .run(directory)
+  sqlite
+    .prepare(
+      "INSERT INTO tasks (id, project_id, name) VALUES ('policy-task', 'policy-project', 'Policy task')",
+    )
+    .run()
+  sqlite
+    .prepare(
+      "UPDATE chats SET scope = 'task', project_id = 'policy-project', task_id = 'policy-task' WHERE id = 'chat-auth'",
+    )
+    .run()
+  const insertPolicy = sqlite.prepare(
+    `INSERT INTO extension_enablement_policies
+      (extension_id, harness, kind, native_scope, scope_type, scope_id, project_id, task_id, enabled)
+     VALUES (?, 'codex', ?, 'project', 'task', 'policy-task', 'policy-project', 'policy-task', 0)`,
+  )
+  insertPolicy.run(providerExtensionId("codex", "skill", skillPath), "skill")
+  insertPolicy.run(providerExtensionId("codex", "mcp", `${configPath}#policy-alpha-mcp`), "mcp")
+  sqlite.close()
+}
 
 async function launchThroughRealCodexRouter(run: QueuedAgentRun): Promise<void> {
   const stream = await codexRouter.createCaller({ getWindow: () => null }).chat({
@@ -225,11 +299,15 @@ function seedPendingRun(sqlite: Database.Database): void {
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, initial_prompt, status, started_at
+        prompt_message_id, initial_prompt, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
       ) VALUES ('run-auth', 'chat-auth', 'sub-auth', 'codex', 'full-access', ?,
-        'mcp-auth-prompt', 'Test provider auth failure', 'pending', 1)`,
+        'mcp-auth-prompt', 'Test provider auth failure', 'pending', 1,
+        ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory)
+    .run(directory, ...testRuntimeSnapshotSqlValues())
   sqlite
     .prepare(
       `INSERT INTO mcp_audit_records (
@@ -247,11 +325,14 @@ function seedSecondPendingRun(): void {
     .prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-        prompt_message_id, status, started_at
+        prompt_message_id, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
       ) VALUES ('run-second', 'chat-auth', 'sub-auth', 'codex', 'full-access', ?,
-        'mcp-second-prompt', 'pending', 2)`,
+        'mcp-second-prompt', 'pending', 2, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(directory)
+    .run(directory, ...testRuntimeSnapshotSqlValues())
   sqlite.close()
 }
 

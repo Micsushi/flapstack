@@ -3,6 +3,13 @@ import type {
   DevRendererControlRequest,
   DevRendererControlResponse,
 } from "../shared/dev-renderer-control"
+import type {
+  WorkspaceOwnershipInvalidation,
+  WorkspacePaneClaimResult,
+  WorkspacePaneOpenResult,
+  WorkspacePaneWindowTarget,
+  WorkspaceWindowOpenTarget,
+} from "../shared/workspace-window-ownership"
 
 export interface UpdateInfo {
   version: string
@@ -115,6 +122,23 @@ export interface DesktopApi {
   claimChat: (chatId: string) => Promise<{ ok: true } | { ok: false; ownerStableId: string }>
   releaseChat: (chatId: string) => Promise<void>
   focusChatOwner: (chatId: string) => Promise<boolean>
+  openWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<WorkspacePaneOpenResult>
+  openWorkspaceWindow: (target: WorkspaceWindowOpenTarget) => Promise<WorkspacePaneOpenResult>
+  claimWorkspacePane: (
+    target: WorkspacePaneWindowTarget,
+    mode?: "claim" | "move",
+  ) => Promise<WorkspacePaneClaimResult>
+  releaseWorkspacePane: (target: WorkspacePaneWindowTarget) => Promise<void>
+  focusWorkspacePaneOwner: (workspaceId: string, paneId: string) => Promise<boolean>
+  pullBackWorkspacePane: (workspaceId: string, paneId: string) => Promise<WorkspacePaneClaimResult>
+  openWorkspaceRemainder: (input: {
+    projectId?: string
+    workspaceId: string
+    skipPaneId: string
+  }) => Promise<WorkspacePaneOpenResult>
+  onWorkspaceOwnershipChanged: (
+    callback: (payload: WorkspaceOwnershipInvalidation) => void,
+  ) => () => void
 
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void

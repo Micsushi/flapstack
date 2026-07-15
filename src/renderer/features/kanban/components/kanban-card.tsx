@@ -1,298 +1,166 @@
-import { memo } from "react"
-import { AnimatePresence, motion } from "motion/react"
+import { memo, useState } from "react"
+import { Archive, GitBranch, MessageSquare, Play, ExternalLink } from "lucide-react"
 import { formatTimeAgo } from "../../../lib/utils/format-time-ago"
 import { cn } from "../../../lib/utils"
-import type { SubChatStatus } from "../lib/derive-status"
-import { LoadingDot, QuestionIcon, ArchiveIcon } from "../../../components/ui/icons"
-import { Pin } from "lucide-react"
-import { Checkbox } from "../../../components/ui/checkbox"
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "../../../components/ui/context-menu"
+  getTaskKanbanCardAriaLabel,
+  getTaskKanbanKeyboardMove,
+  type TaskKanbanCard as TaskKanbanCardData,
+  type TaskKanbanMoveTarget,
+} from "../../../../shared/task-kanban"
+import { describePlanSourceLinkStatus } from "../../../../shared/plan-kanban-consistency"
+import { Badge } from "../../../components/ui/badge"
+import { trpc } from "../../../lib/trpc"
+import { PlanSourceComparisonDialog } from "../../plan/plan-source-comparison-dialog"
 
-export interface KanbanCardData {
-  id: string
-  name: string | null
-  chatId: string
-  chatName: string | null
-  projectName: string | null
-  branch: string | null
-  mode: "plan" | "agent"
-  status: SubChatStatus
-  hasUnseenChanges: boolean
-  hasPendingPlan: boolean
-  hasPendingQuestion: boolean
-  createdAt: Date
-  updatedAt: Date | null
-  isDraft?: boolean
-  stats?: { fileCount: number; additions: number; deletions: number }
-  isPinned?: boolean
-  isSelected?: boolean
-}
+export type { TaskKanbanCardData }
 
 interface KanbanCardProps {
-  card: KanbanCardData
-  isMultiSelectMode: boolean
-  onClick: (e: React.MouseEvent) => void
-  onCheckboxClick: (e: React.MouseEvent, chatId: string) => void
-  onTogglePin: (chatId: string) => void
-  onRename: (chat: { id: string; name: string | null }) => void
-  onArchive: (chatId: string) => void
-  onCopyBranch: (branch: string) => void
-  onExportChat: (params: { chatId: string; format: "markdown" | "json" | "text" }) => void
-  onCopyChat: (params: { chatId: string; format: "markdown" | "json" | "text" }) => void
+  card: TaskKanbanCardData
+  orderedColumnTaskIds: readonly string[]
+  moveEnabled: boolean
+  onOpenTask: (card: TaskKanbanCardData) => void
+  onOpenChat: (card: TaskKanbanCardData) => void
+  onMove: (card: TaskKanbanCardData, target: TaskKanbanMoveTarget) => void
+  onArchive: (card: TaskKanbanCardData) => void
+  onDragStart: (taskId: string) => void
+  onDropBefore: (taskId: string) => void
 }
 
 export const KanbanCard = memo(function KanbanCard({
   card,
-  isMultiSelectMode,
-  onClick,
-  onCheckboxClick,
-  onTogglePin,
-  onRename,
+  orderedColumnTaskIds,
+  moveEnabled,
+  onOpenTask,
+  onOpenChat,
+  onMove,
   onArchive,
-  onCopyBranch,
-  onExportChat,
-  onCopyChat,
+  onDragStart,
+  onDropBefore,
 }: KanbanCardProps) {
-  const timeAgo = formatTimeAgo(card.updatedAt || card.createdAt)
-
-  // Build display text: projectName + branch (if exists)
-  const displayText = card.branch
-    ? card.projectName
-      ? `${card.projectName} • ${card.branch}`
-      : card.branch
-    : card.projectName || "Local project"
-
-  // Status flags
-  const isLoading = card.status === "in-progress"
-  const hasUnseenChanges = card.hasUnseenChanges
-  const hasPendingPlan = card.hasPendingPlan
-  const hasPendingQuestion = card.hasPendingQuestion
-
-  // Show status indicator if there's something to show (pin has lowest priority)
-  const showStatusIndicator =
-    hasPendingQuestion || isLoading || hasPendingPlan || hasUnseenChanges || card.isPinned
-
-  // Card content (shared between draft and regular cards)
-  const cardContent = (
-    <div className="flex items-start gap-2.5">
-      {/* Checkbox for multi-select mode */}
-      {isMultiSelectMode && !card.isDraft && (
-        <div className="pt-0.5 flex-shrink-0">
-          <Checkbox
-            checked={card.isSelected}
-            onClick={(e) => onCheckboxClick(e, card.chatId)}
-            className="h-4 w-4"
-          />
-        </div>
-      )}
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        {/* First row: name + status indicator (справа!) */}
-        <div className="flex items-center gap-1">
-          <span className="truncate block text-sm leading-tight flex-1">
-            {card.name || "New Workspace"}
-          </span>
-
-          {/* Status indicator container - справа от названия */}
-          {!isMultiSelectMode && (
-            <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center relative">
-              {/* Indicator - absolute, скрывается при hover */}
-              {showStatusIndicator && (
-                <div className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
-                  <AnimatePresence mode="wait">
-                    {hasPendingQuestion ? (
-                      <motion.div
-                        key="question"
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <QuestionIcon className="w-2.5 h-2.5 text-blue-500" />
-                      </motion.div>
-                    ) : isLoading ? (
-                      <motion.div
-                        key="loading"
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <LoadingDot
-                          isLoading={true}
-                          className="w-2.5 h-2.5 text-muted-foreground"
-                        />
-                      </motion.div>
-                    ) : hasPendingPlan ? (
-                      <motion.div
-                        key="plan"
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
-                        className="w-1.5 h-1.5 rounded-full bg-amber-500"
-                      />
-                    ) : hasUnseenChanges ? (
-                      <motion.div
-                        key="unseen"
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <LoadingDot
-                          isLoading={false}
-                          className="w-2.5 h-2.5 text-muted-foreground"
-                        />
-                      </motion.div>
-                    ) : card.isPinned ? (
-                      <motion.div
-                        key="pinned"
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <Pin className="w-2.5 h-2.5 text-muted-foreground/60" />
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
-                </div>
-              )}
-
-              {/* Archive button - absolute, appears on hover */}
-              {!card.isDraft && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onArchive(card.chatId)
-                  }}
-                  tabIndex={-1}
-                  className="absolute inset-0 flex items-center justify-center text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
-                  aria-label="Archive workspace"
-                >
-                  <ArchiveIcon className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Second row: project/branch + stats + time */}
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 min-w-0">
-          <span className="truncate flex-1 min-w-0">{displayText}</span>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {card.stats && (card.stats.additions > 0 || card.stats.deletions > 0) && (
-              <>
-                <span className="text-green-600 dark:text-green-400">+{card.stats.additions}</span>
-                <span className="text-red-600 dark:text-red-400">-{card.stats.deletions}</span>
-              </>
-            )}
-            <span>{timeAgo}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+  const [comparisonOpen, setComparisonOpen] = useState(false)
+  const timeAgo = formatTimeAgo(card.updatedAt ?? card.createdAt ?? new Date())
+  const sourceLinks = trpc.planSources.sourceLinks.useQuery(
+    { projectId: card.projectId },
+    {
+      enabled: Boolean(card.sourcePath),
+      refetchOnWindowFocus: true,
+      refetchInterval: 5_000,
+    },
+  )
+  const sourceLink = sourceLinks.data?.find(
+    (link) => link.kind === "task" && link.entity.id === card.id,
   )
 
-  // Don't show context menu for drafts
-  if (card.isDraft) {
-    return (
+  return (
+    <article
+      className="group rounded-md border border-border/60 bg-card p-2 shadow-sm transition-colors hover:border-border"
+      draggable={moveEnabled}
+      onDragStart={() => onDragStart(card.id)}
+      onDragOver={(event) => {
+        if (moveEnabled) event.preventDefault()
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onDropBefore(card.id)
+      }}
+      data-task-id={card.id}
+    >
       <button
         type="button"
-        onClick={onClick}
         className={cn(
-          "w-full text-left py-1.5 cursor-pointer group relative",
-          "pl-2 pr-2 rounded-md",
-          "bg-card border border-border/50",
-          "hover:bg-accent/50 hover:border-border",
-          "transition-colors duration-75",
-          "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
+          "w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          moveEnabled && "cursor-grab active:cursor-grabbing",
         )}
+        aria-label={getTaskKanbanCardAriaLabel(card)}
+        onClick={() => onOpenTask(card)}
+        onKeyDown={(event) => {
+          const target = getTaskKanbanKeyboardMove(
+            card,
+            orderedColumnTaskIds,
+            event.key,
+            event.altKey && moveEnabled,
+          )
+          if (!target) return
+          event.preventDefault()
+          onMove(card, target)
+        }}
       >
-        {cardContent}
-      </button>
-    )
-  }
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          className={cn(
-            "w-full text-left py-1.5 cursor-pointer group relative",
-            "pl-2 pr-2 rounded-md",
-            "bg-card border border-border/50",
-            "hover:bg-accent/50 hover:border-border",
-            "transition-colors duration-75",
-            "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-            card.isSelected && "bg-primary/10 border-primary/30",
+        <span className="flex items-center gap-1">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{card.name}</span>
+          {sourceLink && (
+            <Badge
+              variant={sourceLink.diverged ? "destructive" : "outline"}
+              className="shrink-0 text-[9px]"
+            >
+              {describePlanSourceLinkStatus(sourceLink.status)}
+            </Badge>
           )}
-        >
-          {cardContent}
-        </button>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={() => onTogglePin(card.chatId)}>
-          {card.isPinned ? "Unpin workspace" : "Pin workspace"}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onRename({ id: card.chatId, name: card.name })}>
-          Rename workspace
-        </ContextMenuItem>
-        {card.branch && (
-          <ContextMenuItem onClick={() => onCopyBranch(card.branch!)}>
-            Copy branch name
-          </ContextMenuItem>
+        </span>
+        {card.description && (
+          <span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
+            {card.description}
+          </span>
         )}
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>Export workspace</ContextMenuSubTrigger>
-          <ContextMenuSubContent sideOffset={6} alignOffset={-4}>
-            <ContextMenuItem
-              onClick={() => onExportChat({ chatId: card.chatId, format: "markdown" })}
+        <span className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="truncate">{card.project.gitRepo ?? card.project.name}</span>
+          {card.primaryBranch && (
+            <span className="flex min-w-0 items-center gap-0.5" title={card.primaryBranch}>
+              <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{card.primaryBranch}</span>
+            </span>
+          )}
+          <span className="ml-auto shrink-0">{timeAgo}</span>
+        </span>
+      </button>
+
+      <div className="mt-2 flex items-center gap-2 border-t border-border/50 pt-1.5 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1" title={`${card.chats.total} linked chats`}>
+          <MessageSquare className="h-3 w-3" aria-hidden="true" />
+          {card.chats.active}
+        </span>
+        <span className="inline-flex items-center gap-1" title={`${card.runs.total} linked runs`}>
+          <Play className="h-3 w-3" aria-hidden="true" />
+          {card.runs.running > 0 ? `${card.runs.running} running` : card.runs.total}
+        </span>
+        <span className="ml-auto flex items-center gap-0.5">
+          {card.chats.latestId && (
+            <button
+              type="button"
+              className="rounded p-1 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onOpenChat(card)}
+              aria-label={`Open latest chat for ${card.name}`}
+              title="Open latest chat"
             >
-              Download as Markdown
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onExportChat({ chatId: card.chatId, format: "json" })}>
-              Download as JSON
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onExportChat({ chatId: card.chatId, format: "text" })}>
-              Download as Text
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              onClick={() => onCopyChat({ chatId: card.chatId, format: "markdown" })}
+              <ExternalLink className="h-3 w-3" />
+            </button>
+          )}
+          {sourceLink && (
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setComparisonOpen(true)}
+              aria-label={`Compare plan source for ${card.name}`}
+              title="Compare durable task with current plan source"
             >
-              Copy as Markdown
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onCopyChat({ chatId: card.chatId, format: "json" })}>
-              Copy as JSON
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onCopyChat({ chatId: card.chatId, format: "text" })}>
-              Copy as Text
-            </ContextMenuItem>
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        {typeof window !== "undefined" && window.desktopApi && (
-          <ContextMenuItem onClick={() => window.desktopApi?.newWindow({ chatId: card.chatId })}>
-            Open in new window
-          </ContextMenuItem>
-        )}
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={() => onArchive(card.chatId)}>Archive workspace</ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+              Compare
+            </button>
+          )}
+          <button
+            type="button"
+            className="rounded p-1 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onArchive(card)}
+            aria-label={`Archive task ${card.name}`}
+            title="Archive task"
+          >
+            <Archive className="h-3 w-3" />
+          </button>
+        </span>
+      </div>
+      {sourceLink && comparisonOpen && (
+        <PlanSourceComparisonDialog link={sourceLink} onClose={() => setComparisonOpen(false)} />
+      )}
+    </article>
   )
 })

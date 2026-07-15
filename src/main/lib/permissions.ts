@@ -505,6 +505,75 @@ export function mapClaudeSdkPermissionMode(
   }
 }
 
+export function buildLocalModelPermissionApplication(params: {
+  permissionMode: PermissionMode
+  cwd?: string | null
+  customPermissions?: CustomPermissionToggles | null
+}): HarnessPermissionApplication {
+  const cwd = params.cwd?.trim() || null
+  const custom = params.customPermissions
+  const customMissing = params.permissionMode === "custom" && !custom
+  const policy = (capability: "projectWrite" | "shell" | "git" | "network") => {
+    switch (params.permissionMode) {
+      case "read-only":
+        return "deny"
+      case "ask-before-edits":
+        return "ask"
+      case "auto-edit-project-only":
+        return capability === "projectWrite" ? "project-only" : "deny"
+      case "full-access":
+        return "allow"
+      case "custom":
+        return custom?.[capability] ? "allow" : "deny"
+    }
+  }
+  const limitations: HarnessPermissionLimitation[] = customMissing
+    ? [
+        {
+          control: "filesystem-write-scope",
+          requested: "custom",
+          reason:
+            "The stored custom permission snapshot is missing or invalid; all local mutation tiers fail closed.",
+        },
+      ]
+    : []
+  const enforced: HarnessPermissionApplication["enforced"] = [
+    {
+      control: "process-cwd",
+      applied: Boolean(cwd),
+      ...(cwd ? { value: cwd } : {}),
+      reason: cwd
+        ? "The local tool loop is rooted at this registered worktree."
+        : "No registered worktree was provided for this launch.",
+    },
+    {
+      control: "filesystem-write-scope",
+      applied: true,
+      value: policy("projectWrite"),
+      reason:
+        "The Flapstack local tool loop revalidates project writes and fails closed outside the registered root.",
+    },
+    ...(["shell", "git", "network"] as const).map((control) => ({
+      control,
+      applied: true,
+      value: policy(control),
+      reason: `The Flapstack local tool loop applies the ${control} policy before execution.`,
+    })),
+  ]
+
+  return {
+    requested: params.permissionMode,
+    applied: !customMissing,
+    degraded: customMissing,
+    enforced,
+    limitations,
+    warnings: limitations.map((limitation) => limitation.reason),
+    reason: customMissing
+      ? "Local custom permissions fail closed because no valid stored snapshot is available."
+      : "Flapstack applies local tool-tier policies before exposing any tool to Ollama.",
+  }
+}
+
 export function buildClaudePermissionApplication(params: {
   permissionMode: PermissionMode
   cwd?: string | null

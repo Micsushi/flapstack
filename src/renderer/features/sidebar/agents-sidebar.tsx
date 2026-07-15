@@ -55,10 +55,16 @@ import {
   MessageSquare,
   ClipboardList,
   Activity,
+  BookOpenText,
+  BookOpen,
   Star,
   Plus,
   ArrowRightLeft,
   Copy,
+  Inbox,
+  Workflow,
+  Network,
+  LayoutGrid,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -146,6 +152,7 @@ import { useHaptic } from "./hooks/use-haptic"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
+import { StartAgentDialog } from "../agent-profiles/start-agent-dialog"
 import { getModelChipMeta } from "../agents/constants"
 import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
@@ -2002,6 +2009,7 @@ const ChatListSection = React.memo(function ChatListSection({
   const isProjectSection = kind === "project"
   const isTaskSection = kind === "task"
   const isReferenceSection = kind === "pinned" || kind === "starred"
+  const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
   const isTopLevelScopedSection = isGlobalSection || isProjectSection
   const sectionDragKind =
     lifecycleTarget?.type === "project"
@@ -2254,6 +2262,10 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2" onSelect={() => setStartAgentDialogOpen(true)}>
+            <Network className="h-3.5 w-3.5 text-muted-foreground" />
+            Start named agent
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
         </>
       )}
@@ -2354,6 +2366,10 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </ContextMenuItem>
+          <ContextMenuItem className="gap-2" onClick={() => setStartAgentDialogOpen(true)}>
+            <Network className="h-3.5 w-3.5 text-muted-foreground" />
+            Start named agent
+          </ContextMenuItem>
           <ContextMenuSeparator />
         </>
       )}
@@ -2387,6 +2403,14 @@ const ChatListSection = React.memo(function ChatListSection({
 
   return (
     <>
+      {lifecycleTarget?.type === "task" && (
+        <StartAgentDialog
+          open={startAgentDialogOpen}
+          onOpenChange={setStartAgentDialogOpen}
+          source={{ kind: "task", taskId: lifecycleTarget.id }}
+          projectId={parentProjectId ?? null}
+        />
+      )}
       {showBeforeSectionDrop && effectiveSectionDragId && (
         <DropSeparator
           className={sectionDropSeparatorClass}
@@ -3212,6 +3236,10 @@ export function AgentsSidebar({
 
   // Fetch all local chats (no project filter)
   const { data: localChats } = trpc.chats.list.useQuery({})
+  const { data: automationInbox } = trpc.automations.inbox.useQuery(
+    { unreadOnly: true, limit: 1 },
+    { refetchInterval: 5_000 },
+  )
 
   // Fetch user's teams (same as web) - always enabled to allow merged list
   const { data: teams, isLoading: isTeamsLoading, isError: isTeamsError } = useUserTeams(true)
@@ -6480,9 +6508,84 @@ export function AgentsSidebar({
 
       <div className="px-2 pb-3 flex-shrink-0">
         <ButtonCustom
-          variant={desktopView === "usage" ? "secondary" : "ghost"}
+          variant={desktopView === "orchestration-fleet" ? "secondary" : "ghost"}
           size="sm"
           className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={desktopView === "orchestration-fleet" ? "page" : undefined}
+          onClick={() => {
+            setSelectedChatId(null)
+            setShowNewChatForm(false)
+            setDesktopView("orchestration-fleet")
+            setSearchQuery("")
+          }}
+        >
+          <Network className="h-4 w-4" />
+          <span>Orchestration fleet</span>
+        </ButtonCustom>
+        <ButtonCustom
+          variant={desktopView === "tasks" ? "secondary" : "ghost"}
+          size="sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={desktopView === "tasks" ? "page" : undefined}
+          onClick={() => {
+            setSelectedChatId(null)
+            setSelectedDraftId(null)
+            setShowNewChatForm(false)
+            setDesktopView("tasks")
+            setSearchQuery("")
+          }}
+        >
+          <ClipboardList className="h-4 w-4" />
+          <span>Tasks</span>
+        </ButtonCustom>
+        <ButtonCustom
+          variant={
+            desktopView === "automations" || desktopView === "automations-detail"
+              ? "secondary"
+              : "ghost"
+          }
+          size="sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={
+            desktopView === "automations" || desktopView === "automations-detail"
+              ? "page"
+              : undefined
+          }
+          onClick={() => {
+            setSelectedChatId(null)
+            setShowNewChatForm(false)
+            setDesktopView("automations")
+            setSearchQuery("")
+          }}
+        >
+          <Workflow className="h-4 w-4" />
+          <span>Automations</span>
+        </ButtonCustom>
+        <ButtonCustom
+          variant={desktopView === "inbox" ? "secondary" : "ghost"}
+          size="sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+          aria-current={desktopView === "inbox" ? "page" : undefined}
+          aria-label={`Automation inbox, ${automationInbox?.unreadCount ?? 0} unread`}
+          onClick={() => {
+            setSelectedChatId(null)
+            setShowNewChatForm(false)
+            setDesktopView("inbox")
+            setSearchQuery("")
+          }}
+        >
+          <Inbox className="h-4 w-4" />
+          <span>Inbox</span>
+          {(automationInbox?.unreadCount ?? 0) > 0 && (
+            <span className="ml-auto rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
+              {automationInbox!.unreadCount}
+            </span>
+          )}
+        </ButtonCustom>
+        <ButtonCustom
+          variant={desktopView === "usage" ? "secondary" : "ghost"}
+          size="sm"
+          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
           onClick={() => {
             setSettingsActiveTab("usage")
             setSettingsDialogOpen(true)
@@ -6491,6 +6594,51 @@ export function AgentsSidebar({
           <Activity className="h-4 w-4" />
           <span>Usage</span>
         </ButtonCustom>
+        {selectedProject && (
+          <>
+            <ButtonCustom
+              variant={desktopView === "plan" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "plan" ? "page" : undefined}
+              onClick={() => {
+                setSelectedDraftId(null)
+                setShowNewChatForm(false)
+                setDesktopView("plan")
+                setSearchQuery("")
+              }}
+            >
+              <BookOpenText className="h-4 w-4" />
+              <span>Plan</span>
+            </ButtonCustom>
+            <ButtonCustom
+              variant={desktopView === "project-vault" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              onClick={() => {
+                setSelectedChatId(null)
+                setDesktopView("project-vault")
+              }}
+            >
+              <BookOpen className="h-4 w-4" />
+              <span>Project knowledge</span>
+            </ButtonCustom>
+            <ButtonCustom
+              variant={desktopView === "saved-workspaces" ? "secondary" : "ghost"}
+              size="sm"
+              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
+              aria-current={desktopView === "saved-workspaces" ? "page" : undefined}
+              onClick={() => {
+                setShowNewChatForm(false)
+                setDesktopView("saved-workspaces")
+                setSearchQuery("")
+              }}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              <span>Saved workspaces</span>
+            </ButtonCustom>
+          </>
+        )}
       </div>
 
       {/* Search and project actions */}

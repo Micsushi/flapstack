@@ -59,6 +59,7 @@ import {
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
 import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 import { resolveReasoningControls } from "../../../../shared/reasoning-output"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 
 const providerSchema = z.enum(OPENCODE_HARNESSES)
 const permissionModeSchema = z.enum(permissionModes)
@@ -413,6 +414,12 @@ export const opencodeRouter = router({
                     persistedRunSnapshot?.customPermissions ?? chat.customPermissions!,
                   )
                 : null
+            const runtimeSnapshot = constructRuntimeSnapshot(db, {
+              chatId: input.chatId,
+              harness: input.provider,
+              model: input.model,
+              permission: runtimePermissionSnapshot(permissionMode, customPermissions),
+            })
             const messages = parseStoredMessages(subChat.messages)
             const last = messages[messages.length - 1]
             const duplicate =
@@ -446,6 +453,7 @@ export const opencodeRouter = router({
               .run()
             db.insert(agentRuns)
               .values({
+                ...runtimeSnapshot,
                 id: runId,
                 chatId: input.chatId,
                 subChatId: input.subChatId,

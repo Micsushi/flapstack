@@ -10,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { readMcpCallerIdentity } from "../src/main/lib/mcp-control/identity"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const transports: StdioClientTransport[] = []
 const directories: string[] = []
@@ -42,9 +43,15 @@ describe("Flapstack MCP stdio transport", () => {
       .run()
     database
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, status, started_at) VALUES ('run-transport-test', 'chat-transport-test', 'codex', 'read-only', 'running', 0)",
+        `INSERT INTO agent_runs (
+          id, chat_id, harness, permission_mode, status, started_at,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES ('run-transport-test', 'chat-transport-test', 'codex', 'read-only',
+          'running', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run()
+      .run(...testRuntimeSnapshotSqlValues())
     database.close()
     const entry = fileURLToPath(new URL("../src/main/mcp-control-stdio.ts", import.meta.url))
     const transport = new StdioClientTransport({
@@ -75,11 +82,18 @@ describe("Flapstack MCP stdio transport", () => {
       "describe",
       "list_projects",
       "list_tasks",
+      "list_orchestrations",
       "list_chats",
       "list_runs",
       "list_worktrees",
       "list_artifacts",
       "search",
+      "list_vault_sections",
+      "read_vault_section",
+      "create_vault_section",
+      "update_vault_section",
+      "update_vault_handoff",
+      "record_vault_decision",
       "create_chat",
       "spawn_thread",
       "orchestrate_task",
@@ -92,7 +106,16 @@ describe("Flapstack MCP stdio transport", () => {
       "add_attachment",
       "write_attachment_to_worktree",
       "launch_run",
+      "list_automations",
+      "read_automation",
       "create_automation_draft",
+      "update_automation",
+      "enable_automation",
+      "propose_task",
+      "list_task_proposals",
+      "read_task_proposal",
+      "update_task_proposal",
+      "cancel_task_proposal",
     ])
 
     const ping = await client.callTool({ name: "ping", arguments: {} })

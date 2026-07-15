@@ -3,8 +3,11 @@ import { chmodSync, rmSync } from "node:fs"
 import { createConnection, createServer } from "node:net"
 import { join } from "node:path"
 import {
+  invalidationForProjectVaultChange,
   parseProductMcpRendererInvalidation,
+  PRODUCT_MCP_INVALIDATION_CHANNEL,
   PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV,
+  type ProjectVaultRendererChange,
   type ProductMcpRendererInvalidation,
 } from "../../../shared/product-mcp-invalidation"
 
@@ -98,4 +101,46 @@ export async function publishProductMcpInvalidation(
     socket.once("error", () => finish(false))
     socket.once("close", () => finish(false))
   })
+}
+
+/** Publish a committed main-process mutation through the same all-window bridge. */
+export function publishLocalProductInvalidation(event: ProductMcpRendererInvalidation): void {
+  const endpoint = getProductMcpInvalidationEndpoint()
+  if (endpoint) void publishProductMcpInvalidation(event, endpoint)
+}
+
+export function publishLocalProjectVaultInvalidation(change: ProjectVaultRendererChange): void {
+  try {
+    publishLocalProductInvalidation(invalidationForProjectVaultChange(change))
+  } catch {
+    // Notification is best effort after the durable mutation has committed.
+  }
+}
+
+type ProductInvalidationWindow = {
+  isDestroyed: () => boolean
+  webContents: {
+    isDestroyed?: () => boolean
+    send: (channel: string, payload: ProductMcpRendererInvalidation) => void
+  }
+}
+
+/** Send once to every live renderer. Receivers only invalidate queries and never rebroadcast. */
+export function broadcastProductInvalidationToWindows(
+  event: ProductMcpRendererInvalidation,
+  windows: readonly ProductInvalidationWindow[],
+): number {
+  const safe = parseProductMcpRendererInvalidation(event)
+  if (!safe) return 0
+  let sent = 0
+  for (const window of windows) {
+    if (window.isDestroyed() || window.webContents.isDestroyed?.()) continue
+    try {
+      window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, safe)
+      sent += 1
+    } catch {
+      // A renderer can disappear between the liveness check and send.
+    }
+  }
+  return sent
 }

@@ -14,6 +14,8 @@ import { trpc } from "@/lib/trpc"
 import { cn } from "@/lib/utils"
 import { getHarnessChipMeta } from "@/features/agents/constants"
 import { formatModelDisplayName } from "../../../../shared/model-catalog"
+import { useAtom } from "jotai"
+import { automationEvidenceRunIdAtom } from "@/features/automations/state"
 
 type RunStatus = "running" | "success" | "failure" | "cancelled" | string
 
@@ -62,6 +64,7 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
       },
     },
   )
+  const [requestedRunId, setRequestedRunId] = useAtom(automationEvidenceRunIdAtom)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [showRestorePreview, setShowRestorePreview] = useState(false)
   const [showAllRuns, setShowAllRuns] = useState(false)
@@ -79,6 +82,13 @@ export function RunHistoryWidget({ chatId }: { chatId: string }) {
       setSelectedRunId(runs[0]?.id ?? null)
     }
   }, [runs, selectedRunId])
+
+  useEffect(() => {
+    if (!requestedRunId || !runs.some((run) => run.id === requestedRunId)) return
+    setSelectedRunId(requestedRunId)
+    setShowAllRuns(true)
+    setRequestedRunId(null)
+  }, [requestedRunId, runs, setRequestedRunId])
 
   useEffect(() => {
     setShowRestorePreview(false)

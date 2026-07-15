@@ -117,7 +117,7 @@ export function bindFilesystemRootIdentity(
     .values({ ...captured, boundAt: new Date() })
     .onConflictDoNothing()
     .run()
-  return verifyFilesystemRootRegistration(workspacePath, database)
+  return assertRegisteredFilesystemRoot(workspacePath, database)
 }
 
 export function backfillFilesystemRootRegistrations(
@@ -148,12 +148,13 @@ export function backfillFilesystemRootRegistrations(
 }
 
 function verifyOrBindFilesystemRoot(workspacePath: string): RegisteredFilesystemRoot {
-  return verifyFilesystemRootRegistration(workspacePath, getDatabase())
+  return assertRegisteredFilesystemRoot(workspacePath, getDatabase())
 }
 
-function verifyFilesystemRootRegistration(
+/** Verify any previously bound app-managed filesystem root. */
+export function assertRegisteredFilesystemRoot(
   workspacePath: string,
-  db: Pick<BetterSQLite3Database<typeof schema>, "select">,
+  db: Pick<BetterSQLite3Database<typeof schema>, "select"> = getDatabase(),
 ): RegisteredFilesystemRoot {
   const existing = db
     .select()

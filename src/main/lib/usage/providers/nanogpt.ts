@@ -13,7 +13,7 @@
 // The model endpoint refreshes live pricing. NanoGPT does not document an
 // account-wide usage/balance endpoint, so E6 records completed run usage here.
 
-import { estimateCostUsd } from "../pricing"
+import { estimateCostWithProvenance } from "../pricing"
 import { getProviderJson } from "./http"
 import { upsertModelPricing } from "../pricing"
 import {
@@ -34,7 +34,7 @@ export function buildEstimatedNanoGptSample(params: {
   reasoningTokens?: number
   source: UsageSampleInput["source"]
 }): UsageSampleInput | null {
-  const estimated = estimateCostUsd("nanogpt", params.model, params)
+  const estimated = estimateCostWithProvenance("nanogpt", params.model, params)
   if (estimated == null) return null
   return {
     providerId: "nanogpt",
@@ -44,7 +44,8 @@ export function buildEstimatedNanoGptSample(params: {
     inputTokens: params.inputTokens ?? null,
     outputTokens: params.outputTokens ?? null,
     reasoningTokens: params.reasoningTokens ?? null,
-    costUsdEstimated: estimated,
+    costUsdEstimated: estimated.costUsd,
+    pricingVersion: estimated.pricingVersion,
   }
 }
 

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { closeDatabase } from "../src/main/lib/db"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 import * as schema from "../src/main/lib/db/schema"
 import {
   buildMcpStdioRegistration,
@@ -173,16 +174,17 @@ describe("Flapstack MCP per-chat exposure", () => {
         "INSERT INTO sub_chats (id, chat_id, harness, permission_mode, messages, run_status) VALUES ('sub-1', 'chat-1', 'codex', 'read-only', '[]', 'running')",
       )
       .run()
-    sqlite
-      .prepare(
-        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-old', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
-      )
-      .run()
-    sqlite
-      .prepare(
-        "INSERT INTO agent_runs (id, chat_id, sub_chat_id, harness, permission_mode, status) VALUES ('run-normal', 'chat-1', 'sub-1', 'codex', 'read-only', 'running')",
-      )
-      .run()
+    const insertRun = sqlite.prepare(
+      `INSERT INTO agent_runs (
+        id, chat_id, sub_chat_id, harness, permission_mode, status,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, 'chat-1', 'sub-1', 'codex', 'read-only', 'running',
+        ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    insertRun.run("run-old", ...testRuntimeSnapshotSqlValues())
+    insertRun.run("run-normal", ...testRuntimeSnapshotSqlValues())
     sqlite
       .prepare(
         "INSERT INTO mcp_approval_requests (id, invocation_id, caller_chat_id, caller_run_id, tool_name, tier, target_summary, input_summary, created_at, expires_at) VALUES ('approval-old', 'invocation-old', 'chat-1', 'run-old', 'spawn_thread', 3, 'test target', '{}', ?, ?)",
@@ -236,9 +238,15 @@ describe("Flapstack MCP per-chat exposure", () => {
     const reloaded = new Database(databasePath)
     reloaded
       .prepare(
-        "INSERT INTO agent_runs (id, chat_id, harness, permission_mode, status) VALUES ('run-new', 'chat-1', 'codex', 'read-only', 'running')",
+        `INSERT INTO agent_runs (
+          id, chat_id, harness, permission_mode, status,
+          runtime_snapshot_version, runtime_preference, runtime_preference_source,
+          resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+          runtime_capability_snapshot, runtime_control_snapshot
+        ) VALUES ('run-new', 'chat-1', 'codex', 'read-only', 'running',
+          ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run()
+      .run(...testRuntimeSnapshotSqlValues())
     reloaded.close()
     expect(
       resolveTrustedMcpCaller(

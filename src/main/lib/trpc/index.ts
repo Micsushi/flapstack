@@ -1,6 +1,7 @@
 import { initTRPC } from "@trpc/server"
 import { BrowserWindow } from "electron"
 import superjson from "superjson"
+import { acquireConfiguredAppDatabaseOperation } from "../db/access"
 
 /**
  * Context passed to all tRPC procedures
@@ -29,8 +30,19 @@ const t = initTRPC.context<Context>().create({
  * Export reusable router and procedure helpers
  */
 export const router = t.router
-export const publicProcedure = t.procedure
 export const middleware = t.middleware
+export const databaseMaintenanceProcedure = t.procedure
+
+const databaseOperationMiddleware = middleware(async ({ next }) => {
+  const release = acquireConfiguredAppDatabaseOperation()
+  try {
+    return await next()
+  } finally {
+    release()
+  }
+})
+
+export const publicProcedure = t.procedure.use(databaseOperationMiddleware)
 
 /**
  * Middleware to log procedure calls

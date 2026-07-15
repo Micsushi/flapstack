@@ -1,8 +1,10 @@
-import Database from "better-sqlite3"
+import type Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { createHash, randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { z } from "zod"
+import { projectVaultSectionIds } from "../project-vaults/registry"
 import { readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getPermissionPreferences } from "../permissions"
@@ -23,7 +25,16 @@ import type {
   McpControlResponse,
   McpMutationService,
 } from "./types"
-import { AGENT_HARNESSES, type AgentHarness } from "../../../shared/harness-types"
+import {
+  AGENT_HARNESSES,
+  type AgentHarness,
+  type RunPermissionMode,
+} from "../../../shared/harness-types"
+import {
+  constructRuntimeSnapshot,
+  runtimePermissionSnapshot,
+  runtimeSnapshotSqlValues,
+} from "../agent-runtime/snapshot"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
@@ -73,18 +84,12 @@ const schemas = {
       overwrite: z.boolean().default(false),
     })
     .strict(),
-  create_automation_draft: z
-    .object({
-      name,
-      trigger: z.enum(["schedule", "file-change", "run-complete", "manual"]),
-      dryRun: z.literal(true).default(true),
-    })
-    .strict(),
   launch_run: z
     .object({
       chatId: id,
       initialPrompt: z.string().trim().min(1).max(100_000),
       idempotencyKey: id,
+      vaultContextSectionIds: z.array(z.enum(projectVaultSectionIds)).optional(),
     })
     .strict(),
 } as const
@@ -110,7 +115,7 @@ export function createMcpMutationService(
       const input = schema.safeParse(rawInput)
       if (!input.success)
         return fail("invalid-input", input.error.issues[0]?.message ?? "Invalid input.")
-      const db = new Database(databasePath)
+      const db = openAppDatabase(databasePath)
       try {
         db.pragma("foreign_keys = ON")
         db.pragma("busy_timeout = 5000")
@@ -152,15 +157,6 @@ export function createMcpMutationService(
             )
           case "launch_run":
             return launchRun(db, scope, input.data as z.infer<typeof schemas.launch_run>)
-          case "create_automation_draft":
-            return {
-              ok: true,
-              data: {
-                draft: input.data,
-                runnable: false,
-                reason: "Automation activation is disabled.",
-              },
-            }
         }
         return fail("invalid-input", "Unsupported mutation operation.")
       } catch (error) {
@@ -196,9 +192,10 @@ function launchRun(
 ): McpControlResponse {
   const chat = target(db, scope, "chat", input.chatId)
   if (chat.archived_at) return fail("stale-target", "Chat is archived.")
-  const harness = chat.harness
-  if (!AGENT_HARNESSES.includes(harness as AgentHarness))
+  const harnessValue = chat.harness
+  if (typeof harnessValue !== "string" || !AGENT_HARNESSES.includes(harnessValue as AgentHarness))
     return fail("invalid-input", "Chat does not use a launchable harness.")
+  const harness = harnessValue as AgentHarness
   const subChat = db
     .prepare(
       "SELECT id, messages, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
@@ -206,7 +203,7 @@ function launchRun(
     .get(input.chatId) as Row | undefined
   if (!subChat) return fail("stale-target", "Chat conversation is missing.")
   const model = subChat.model ?? chat.model ?? null
-  if ((harness === "openrouter" || harness === "nanogpt") && !model) {
+  if ((harness === "openrouter" || harness === "nanogpt" || harness === "local") && !model) {
     return fail("invalid-input", `${harness} chats require a model before launch.`)
   }
   const promptMessageId = `mcp-${input.idempotencyKey}`
@@ -231,13 +228,22 @@ function launchRun(
       "Custom permission settings are missing for this conversation.",
     )
   }
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: input.chatId,
+    harness,
+    model: (subChat.model ?? chat.model ?? null) as string | null,
+    permission: runtimePermissionSnapshot(permissionMode as RunPermissionMode, customPermissions),
+  })
   const transaction = db.transaction(() => {
     db.prepare("UPDATE sub_chats SET run_status = 'pending' WHERE id = ?").run(subChat.id)
     db.prepare(
       `INSERT INTO agent_runs (
         id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,
-        worktree_path, prompt_message_id, initial_prompt, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        worktree_path, prompt_message_id, initial_prompt, vault_context_sections,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source, resolved_runtime,
+        runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+        runtime_control_snapshot, status, started_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(
       runId,
       input.chatId,
@@ -249,6 +255,10 @@ function launchRun(
       subChat.worktree_path ?? chat.worktree_path ?? null,
       promptMessageId,
       input.initialPrompt,
+      input.vaultContextSectionIds === undefined
+        ? null
+        : JSON.stringify(input.vaultContextSectionIds),
+      ...runtimeSnapshotSqlValues(runtimeSnapshot),
       nowEpochSeconds(),
     )
   })
@@ -544,11 +554,22 @@ async function spawnThread(
       now,
     )
     if (runId) {
+      const runtimeSnapshot = constructRuntimeSnapshot(db, {
+        chatId,
+        harness: contract.plan.targetHarness,
+        permission: runtimePermissionSnapshot(
+          contract.plan.permission.mode,
+          contract.plan.permission.customPermissions,
+        ),
+      })
       db.prepare(
         `INSERT INTO agent_runs (
           id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions, worktree_path,
-          prompt_message_id, initial_prompt, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+          prompt_message_id, initial_prompt, runtime_snapshot_version, runtime_preference,
+          runtime_preference_source, resolved_runtime, runtime_adapter_version,
+          runtime_protocol_version, runtime_capability_snapshot, runtime_control_snapshot,
+          status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
       ).run(
         runId,
         chatId,
@@ -562,6 +583,7 @@ async function spawnThread(
         resolved.worktreePath,
         promptMessageId,
         contract.plan.launch.initialPrompt,
+        ...runtimeSnapshotSqlValues(runtimeSnapshot),
         now,
       )
     }

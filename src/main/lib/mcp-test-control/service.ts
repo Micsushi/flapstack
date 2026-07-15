@@ -26,6 +26,7 @@ import {
   subChats,
 } from "../db"
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
 import { DEFAULT_CLAUDE_MODEL_ID, normalizeOpencodeModelId } from "../../../shared/model-catalog"
 import {
   OPENCODE_HARNESSES,
@@ -824,6 +825,12 @@ export function prepareProductMcpCaller(input: {
     const run = tx
       .insert(agentRuns)
       .values({
+        ...constructRuntimeSnapshot(db, {
+          chatId,
+          harness,
+          model,
+          permission: runtimePermissionSnapshot(permissionMode, null),
+        }),
         id: runId,
         chatId,
         subChatId,
@@ -1835,13 +1842,15 @@ export async function launchHarnessTestRun(input: {
     worktreePath: project.path,
     projectPath: project.path,
   } as const
-  const { createMainRunLauncher } = await import("../main-run-launcher")
-  void createMainRunLauncher()(run).catch((error: unknown) =>
-    console.warn(
-      `[dev-mcp] ${harness} test run ${runId} ended with:`,
-      error instanceof Error ? error.message : "unknown failure",
-    ),
-  )
+  const { getMainRuntimeLaunchService } = await import("../main-run-launcher")
+  void getMainRuntimeLaunchService(getDatabasePath())
+    .launch(run)
+    .catch((error: unknown) =>
+      console.warn(
+        `[dev-mcp] ${harness} test run ${runId} ended with:`,
+        error instanceof Error ? error.message : "unknown failure",
+      ),
+    )
   return {
     launched: true,
     runId,

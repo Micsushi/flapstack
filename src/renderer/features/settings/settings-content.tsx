@@ -11,6 +11,10 @@ import { AgentsAppearanceTab } from "../../components/dialogs/settings-tabs/agen
 import { AgentsDebugTab } from "../../components/dialogs/settings-tabs/agents-debug-tab"
 import { AgentsMcpTab } from "../../components/dialogs/settings-tabs/agents-mcp-tab"
 import { AgentsModelsTab } from "../../components/dialogs/settings-tabs/agents-models-tab"
+import { AgentsRuntimesTab } from "../../components/dialogs/settings-tabs/agents-runtimes-tab"
+import { AgentsLocalModelsTab } from "../../components/dialogs/settings-tabs/agents-local-models-tab"
+import { AgentsCoordinationEnginesTab } from "../../components/dialogs/settings-tabs/agents-coordination-engines-tab"
+import { AgentsProfilesStudioTab } from "../../components/dialogs/settings-tabs/agents-profiles-studio-tab"
 import { AgentsPreferencesTab } from "../../components/dialogs/settings-tabs/agents-preferences-tab"
 import { AgentsPermissionsTab } from "../../components/dialogs/settings-tabs/agents-permissions-tab"
 import { AgentsProjectsTab } from "../../components/dialogs/settings-tabs/agents-project-worktree-tab"
@@ -19,6 +23,7 @@ import { AgentsApiProvidersTab } from "../../components/dialogs/settings-tabs/ag
 import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-usage-tab"
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
 import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
+import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/agents-portability-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
 import { revealSettingsTarget } from "./settings-target"
 
@@ -78,6 +83,14 @@ export function SettingsContent() {
         return <AgentsPermissionsTab />
       case "models":
         return <AgentsModelsTab />
+      case "runtimes":
+        return <AgentsRuntimesTab />
+      case "local-models":
+        return <AgentsLocalModelsTab />
+      case "coordination":
+        return <AgentsCoordinationEnginesTab />
+      case "agent-profiles":
+        return <AgentsProfilesStudioTab />
       case "api-providers":
         return <AgentsApiProvidersTab />
       case "voice":
@@ -96,6 +109,8 @@ export function SettingsContent() {
         return <AgentsProjectsTab />
       case "usage":
         return <AgentsUsageTab />
+      case "portability":
+        return <AgentsPortabilityTab />
       case "debug":
         return showDebugTab ? <AgentsDebugTab /> : null
       default:
@@ -108,6 +123,7 @@ export function SettingsContent() {
     activeTab === "mcp" ||
     activeTab === "skills" ||
     activeTab === "agents" ||
+    activeTab === "agent-profiles" ||
     activeTab === "projects" ||
     activeTab === "plugins"
 

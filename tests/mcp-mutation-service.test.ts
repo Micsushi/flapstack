@@ -120,13 +120,13 @@ describe("MCP mutation service", () => {
     ).resolves.toMatchObject({ ok: false, error: { code: "stale-target" } })
   })
 
-  it("keeps automation drafts non-runnable", async () => {
+  it("does not retain the legacy automation scaffold in the generic mutation service", async () => {
     const result = await createMcpMutationService(path).invoke(
       "create_automation_draft",
       { chatId: "chat-1", permissionMode: "full-access" },
       { name: "Daily review", trigger: "schedule" },
     )
-    expect(result).toMatchObject({ ok: true, data: { runnable: false } })
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid-input" } })
   })
 
   it("queues launch_run once for an idempotency key", async () => {
@@ -141,6 +141,7 @@ describe("MCP mutation service", () => {
       chatId: "chat-2",
       initialPrompt: "Run the tests.",
       idempotencyKey: "launch-1",
+      vaultContextSectionIds: ["index", "handoff"] as const,
     }
     const first = await service.invoke("launch_run", { chatId: "chat-1" }, input)
     const second = await service.invoke("launch_run", { chatId: "chat-1" }, input)
@@ -148,9 +149,12 @@ describe("MCP mutation service", () => {
     expect(first).toMatchObject({ ok: true, data: { created: true } })
     expect(second).toMatchObject({ ok: true, data: { created: false } })
     expect(sqlite.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 1 })
-    expect(sqlite.prepare("SELECT status, initial_prompt FROM agent_runs").get()).toEqual({
+    expect(
+      sqlite.prepare("SELECT status, initial_prompt, vault_context_sections FROM agent_runs").get(),
+    ).toEqual({
       status: "pending",
       initial_prompt: "Run the tests.",
+      vault_context_sections: '["index","handoff"]',
     })
     expect(sqlite.prepare("SELECT messages FROM sub_chats WHERE id = 'sub-2'").get()).toEqual({
       messages: "[]",
@@ -297,7 +301,7 @@ describe("MCP mutation service", () => {
       )
       .all() as Array<{ invocation_id: string; status: string }>
     expect(audit.map((row) => row.status)).toEqual(
-      expect.arrayContaining(["approval-required", "dispatch-started", "completed", "failed"]),
+      expect.arrayContaining(["allowed", "dispatch-started", "completed", "failed"]),
     )
     expect(new Set(audit.map((row) => row.invocation_id)).size).toBe(1)
     approvals.shutdown()

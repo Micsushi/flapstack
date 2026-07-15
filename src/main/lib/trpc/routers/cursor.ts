@@ -37,6 +37,7 @@ import {
   prependStartupContext,
 } from "../../harness/launch-context"
 import { getUsageSecret } from "../../usage/secrets"
+import { buildExtensionRunContext } from "../../extension-management"
 import { getChatMcpExposure, registerActiveProductMcpSession } from "../../mcp-control/exposure"
 import { prependFlapstackMcpGuidance } from "../../mcp-control/guidance"
 import { buildMcpStdioRegistration } from "../../mcp-control/registration"
@@ -47,6 +48,7 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { publicProcedure, router } from "../index"
+import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
 
 const HARNESS = "cursor-agent" as const
 
@@ -178,6 +180,13 @@ async function createCursorRun(params: {
   const existingRun = db.select().from(agentRuns).where(eq(agentRuns.id, params.runId)).get()
   if (existingRun) return existingRun
 
+  const runtimeSnapshot = constructRuntimeSnapshot(db, {
+    chatId: params.chatId,
+    harness: HARNESS,
+    model: params.model,
+    permission: runtimePermissionSnapshot(params.permissionMode, params.customPermissions),
+  })
+
   // Cancel stale running rows for this sub-chat (Codex fix pattern).
   db.update(agentRuns)
     .set({ status: "cancelled", completedAt: new Date() })
@@ -193,6 +202,7 @@ async function createCursorRun(params: {
   const run = db
     .insert(agentRuns)
     .values({
+      ...runtimeSnapshot,
       id: params.runId,
       chatId: params.chatId,
       subChatId: params.subChatId,
@@ -479,8 +489,20 @@ export const cursorRouter = router({
               sessionMode: sessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
+            const extensionContext = await buildExtensionRunContext(db, {
+              chatId: input.chatId,
+              harness: HARNESS,
+              cwd: input.cwd,
+            })
+            const runContextMetadata = {
+              ...contextBundle.metadata,
+              extensionPolicy: extensionContext.manifest,
+            }
             const promptForModel = prependFlapstackMcpGuidance(
-              prependStartupContext(input.prompt, contextBundle.context),
+              prependStartupContext(
+                input.prompt,
+                [contextBundle.context, extensionContext.context].filter(Boolean).join("\n\n"),
+              ),
               productMcpEnabledAtLaunch,
             )
 
@@ -664,7 +686,7 @@ export const cursorRouter = router({
                   outputTokens: metadata.outputTokens,
                   totalTokens: metadata.totalTokens,
                   resultSubtype: metadata.resultSubtype,
-                  context: contextBundle.metadata,
+                  context: runContextMetadata,
                 },
               }
               const latest = db
@@ -692,7 +714,7 @@ export const cursorRouter = router({
                 runId: input.runId,
                 sessionId: metadata.sessionId,
                 durationMs: metadata.durationMs ?? Date.now() - startedAt,
-                context: contextBundle.metadata,
+                context: runContextMetadata,
                 resultSubtype:
                   metadata.resultSubtype ?? (runStatus === "success" ? "success" : "error"),
               },

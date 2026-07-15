@@ -1,6 +1,12 @@
 import { z } from "zod"
 import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "./permission-capabilities"
 import { AGENT_HARNESSES } from "./harness-types"
+import { agentRuntimePreferenceSchema } from "./agent-runtime"
+import {
+  coordinationEngineSchema,
+  type ResolvedCoordinationEngineSnapshot,
+} from "./coordination-engine"
+import { validateLocalModelEndpoint } from "./local-model-contract"
 
 const idSchema = z.string().trim().min(1).max(200)
 
@@ -27,6 +33,13 @@ export const orchestrationControlActions = ["pause", "resume", "stop"] as const
 export const orchestrationControlActionSchema = z.enum(orchestrationControlActions)
 
 export const orchestrationHarnessSchema = z.enum(AGENT_HARNESSES)
+export const orchestrationLocalToolTierSchema = z.enum([
+  "read",
+  "project-write",
+  "shell",
+  "git",
+  "network",
+])
 export const orchestrationPermissionModeSchema = z.enum([
   "read-only",
   "ask-before-edits",
@@ -47,6 +60,35 @@ export const orchestrationCostQualitySchema = z.enum([
   "estimated",
   "unknown",
 ])
+
+export const orchestrationFleetStates = ["all", "active", "terminal", "unknown"] as const
+export const orchestrationFleetStateSchema = z.enum(orchestrationFleetStates)
+
+export const orchestrationFleetArchiveScopes = ["visible", "archived", "all"] as const
+export const orchestrationFleetArchiveScopeSchema = z.enum(orchestrationFleetArchiveScopes)
+
+export const orchestrationFleetSorts = [
+  "updated-desc",
+  "updated-asc",
+  "created-desc",
+  "created-asc",
+  "name-asc",
+] as const
+export const orchestrationFleetSortSchema = z.enum(orchestrationFleetSorts)
+
+export const orchestrationFleetQuerySchema = z
+  .object({
+    projectIds: z.array(idSchema).max(100).default([]),
+    taskIds: z.array(idSchema).max(100).default([]),
+    statuses: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+    providers: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    state: orchestrationFleetStateSchema.default("all"),
+    archiveScope: orchestrationFleetArchiveScopeSchema.default("visible"),
+    sort: orchestrationFleetSortSchema.default("updated-desc"),
+    limit: z.number().int().min(1).max(100).default(25),
+    cursor: z.string().max(1_024).optional(),
+  })
+  .strict()
 
 export const orchestrationStopConditionsSchema = z
   .object({
@@ -78,6 +120,7 @@ export const orchestrationStopConditionsSchema = z
 export const orchestrationAgentDefinitionSchema = z
   .object({
     agentId: idSchema.optional(),
+    definitionId: idSchema.optional(),
     role: z.string().trim().min(1).max(120),
     name: z.string().trim().min(1).max(160).optional(),
     prompt: z.string().trim().min(1).max(100_000),
@@ -85,6 +128,9 @@ export const orchestrationAgentDefinitionSchema = z
     harness: orchestrationHarnessSchema,
     provider: z.string().trim().min(1).max(120).optional(),
     model: z.string().trim().min(1).max(200).optional(),
+    localEndpoint: z.string().trim().min(1).max(512).optional(),
+    runtimePreference: agentRuntimePreferenceSchema.optional(),
+    requiredLocalToolTiers: z.array(orchestrationLocalToolTierSchema).max(5).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: z
@@ -147,12 +193,54 @@ export const orchestrationAgentDefinitionSchema = z
       "cursor-agent": ["cursor"],
       openrouter: ["openrouter"],
       nanogpt: ["nanogpt"],
+      local: ["local", "ollama"],
     }[value.harness]
     if (provider && !supportedProviders.includes(provider)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["provider"],
         message: `Provider ${value.provider} is not supported by ${value.harness}.`,
+      })
+    }
+    if (value.harness === "local" && !value.model) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["model"],
+        message: "Local orchestration workers require an exact model identity.",
+      })
+    }
+    if (value.harness === "local" && value.localEndpoint) {
+      const endpoint = validateLocalModelEndpoint(value.localEndpoint)
+      if (!endpoint.valid) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["localEndpoint"],
+          message: endpoint.message,
+        })
+      }
+    }
+    if (value.harness !== "local" && value.localEndpoint) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["localEndpoint"],
+        message: "Local endpoints apply only to local workers.",
+      })
+    }
+    if (value.harness !== "local" && (value.requiredLocalToolTiers?.length ?? 0) > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredLocalToolTiers"],
+        message: "Local tool-tier requirements apply only to local workers.",
+      })
+    }
+    if (
+      value.requiredLocalToolTiers &&
+      new Set(value.requiredLocalToolTiers).size !== value.requiredLocalToolTiers.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredLocalToolTiers"],
+        message: "Local tool-tier requirements cannot contain duplicates.",
       })
     }
     if ((value.harness === "openrouter" || value.harness === "nanogpt") && !value.model) {
@@ -174,6 +262,7 @@ export const createOrchestrationInputSchema = z
     initiatingChatId: idSchema,
     maxParallelAgents: z.number().int().min(1).max(64),
     maxDepth: z.number().int().min(1).max(32).default(8),
+    coordinationEngine: coordinationEngineSchema.optional(),
     stopConditions: orchestrationStopConditionsSchema.default({}),
     agents: z.array(orchestrationAgentDefinitionSchema).min(1).max(256),
   })
@@ -231,6 +320,9 @@ export type OrchestrationAgentDefinition = z.infer<typeof orchestrationAgentDefi
 export type CreateOrchestrationInput = z.infer<typeof createOrchestrationInputSchema>
 export type AddOrchestrationAgentInput = z.infer<typeof addOrchestrationAgentInputSchema>
 export type OrchestrationUsageUpdate = z.infer<typeof orchestrationUsageUpdateSchema>
+export type OrchestrationFleetQuery = z.infer<typeof orchestrationFleetQuerySchema>
+export type OrchestrationFleetState = z.infer<typeof orchestrationFleetStateSchema>
+export type OrchestrationFleetSort = z.infer<typeof orchestrationFleetSortSchema>
 
 export type OrchestrationAgentDto = {
   id: string
@@ -263,6 +355,7 @@ export type OrchestrationTaskDto = {
   name: string
   initiatingChatId: string
   status: OrchestrationStatus
+  engine: ResolvedCoordinationEngineSnapshot
   maxParallelAgents: number
   maxDepth: number
   stopConditions: OrchestrationStopConditions
@@ -296,6 +389,7 @@ export type OrchestrationTaskOverviewDto = {
 
 export type OrchestrationLineageDto = {
   taskId: string
+  engine?: ResolvedCoordinationEngineSnapshot
   nodes: Array<{
     agentId: string
     chatId: string | null
@@ -304,10 +398,103 @@ export type OrchestrationLineageDto = {
     role: string
     name: string
     status: OrchestrationAgentStatus
+    depth?: number
+    harness?: string
+    stale?: boolean
+    orphaned?: boolean
+    chatState?: "live" | "archived" | "missing" | "unknown"
+    coordinationIdentity?: string | null
+    controls?: {
+      send: { enabled: boolean; reason: string }
+      followUp: { enabled: boolean; reason: string }
+      interrupt: { enabled: boolean; reason: string }
+    }
   }>
   edges: Array<{
     fromAgentId: string
     toAgentId: string
     kind: "spawned" | "replacement"
   }>
+  messages?: Array<{
+    id: string
+    agentId: string | null
+    direction: "inbound" | "outbound"
+    kind: "message" | "follow-up" | "interrupt" | "mailbox"
+    state: "recorded" | "queued" | "delivered" | "failed" | "uncertain"
+    body: string | null
+    providerMessageId: string | null
+    createdAt: number
+  }>
+}
+
+export type OrchestrationFleetFreshness = "live" | "stale" | "terminal" | "unknown"
+
+export type OrchestrationFleetAgentDto = {
+  id: string
+  status: string
+  role: string
+  name: string
+  harness: string
+  provider: string
+  providerProvenance: "definition" | "harness" | "unknown"
+  progressPercent: number
+  blockerCount: number
+  totalTokens: number
+  costUsdMicros: number | null
+  costQuality: string
+  chat: { id: string | null; state: "live" | "archived" | "missing" | "unknown" }
+  run: { id: string | null; status: string | null }
+}
+
+export type OrchestrationFleetItemDto = {
+  taskId: string
+  taskName: string
+  taskArchived: boolean
+  projectId: string
+  projectName: string
+  projectArchived: boolean
+  status: string
+  state: "active" | "terminal" | "unknown"
+  freshness: OrchestrationFleetFreshness
+  freshnessReason: string
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+  maxParallelAgents: number
+  maxDepth: number
+  blockerCount: number
+  providers: string[]
+  harnesses: string[]
+  aggregate: OrchestrationAggregateDto
+  engine: {
+    id: "workflow" | "codex-v2" | "codex-v1"
+    label: string
+    version: string
+    provenance: "per-launch" | "project" | "global" | "product" | "legacy"
+  }
+  coordinationIdentity: { kind: "task"; label: string }
+  initiatingChat: {
+    id: string
+    state: "live" | "archived" | "missing" | "unknown"
+  }
+  operationWorkspace: {
+    id: string | null
+    state: "live" | "missing"
+  }
+  agents: OrchestrationFleetAgentDto[]
+}
+
+export type OrchestrationFleetFacetDto = { id: string; label: string; count: number }
+
+export type OrchestrationFleetPageDto = {
+  items: OrchestrationFleetItemDto[]
+  total: number
+  nextCursor: string | null
+  observedAt: number
+  facets: {
+    projects: OrchestrationFleetFacetDto[]
+    tasks: OrchestrationFleetFacetDto[]
+    statuses: OrchestrationFleetFacetDto[]
+    providers: OrchestrationFleetFacetDto[]
+  }
 }

@@ -4,6 +4,16 @@ These items are intentionally outside Stage 3 acceptance. Their absence must
 not block Stage 3 completion or turn a passing Preview validation into a
 release failure.
 
+## Cross-agent mobile companion
+
+All phone connection, pairing, remote-control, PWA, and mobile notification work
+is intentionally outside Stage 4 and must not block its completion.
+
+Existing mobile contracts, default-off LAN HTTPS bridge, device pairing, and
+sequenced snapshot/event recovery are preserved on local branch
+`codex/future-mobile-companion` at `65169c6`. Resume that branch only when the
+future mobile feature is explicitly promoted again.
+
 ## Organization usage APIs
 
 - OpenAI Admin organization usage/cost validation (`U6-01`) is deferred.
@@ -55,3 +65,17 @@ fixtures green. It does not claim native Windows or Linux runtime parity from
 macOS evidence. The Stage 4 closeout must run each native matrix on real target
 hosts, record any platform-specific repair, and update the support statement
 before those platforms are promoted.
+
+## Stage 4 F3/F11 runtime composition follow-ups
+
+- F11 should expose its owned Codex App Server request/version authority through
+  F3's `codexCoordination` consumer port. F3 must not create a second provider
+  process or notification parser.
+- F11 should forward F3's queued-run `outputSchema` to each supported adapter's
+  public structured-output option. F3 already validates the final durable
+  activity projection and fails closed when output is absent or invalid.
+- Provider-neutral active-run pause/resume remains an optional F11 method.
+  Until composed, F3 cascade control records no false paused/resumed state.
+- Live request compatibility, credentials, provider permissions, package
+  residency, and native Windows path proof remain acceptance evidence, not a
+  reason to duplicate provider ownership in F3.

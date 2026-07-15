@@ -175,6 +175,10 @@ export type SettingsTab =
   | "preferences"
   | "permissions"
   | "models"
+  | "runtimes"
+  | "local-models"
+  | "coordination"
+  | "agent-profiles"
   | "api-providers"
   | "voice"
   | "skills"
@@ -184,6 +188,7 @@ export type SettingsTab =
   | "worktrees"
   | "projects"
   | "usage"
+  | "portability"
   | "debug"
   | "beta"
   | "future"
@@ -217,6 +222,20 @@ export type ModelProfile = {
 export const selectedOllamaModelAtom = atomWithStorage<string | null>(
   "agents:selected-ollama-model",
   null, // null = use recommended model
+  undefined,
+  { getOnInit: true },
+)
+
+export const localModelEndpointAtom = atomWithStorage<string>(
+  "agents:local-model-endpoint",
+  "http://127.0.0.1:11434",
+  undefined,
+  { getOnInit: true },
+)
+
+export const selectedLocalModelIdAtom = atomWithStorage<string | null>(
+  "agents:selected-local-model",
+  null,
   undefined,
   { getOnInit: true },
 )

@@ -3,6 +3,8 @@ out
 dist
 release
 coverage
+docs/evidence
+tests/fixtures/extension-management/native
 resources/bin
 native/**/target
 package-lock.json

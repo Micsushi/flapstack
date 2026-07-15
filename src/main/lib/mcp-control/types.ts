@@ -45,6 +45,7 @@ export type McpControlErrorCode =
   | "stale-caller"
   | "stale-target"
   | "approval-denied"
+  | "approval-required"
   | "approval-timeout"
   | "approval-cancelled"
   | "approval-shutdown"
@@ -54,8 +55,10 @@ export type McpControlErrorCode =
   | "out-of-scope"
   | "forbidden-loop"
   | "forbidden-target"
+  | "secret-detected"
   | "not-found"
   | "reconciliation-required"
+  | "usage-budget-exhausted"
   | "conflict"
   | "internal-error"
 

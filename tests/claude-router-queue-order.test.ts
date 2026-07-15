@@ -1,14 +1,16 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
+import { testRuntimeSnapshotSqlValues } from "./agent-runtime-test-db"
 
 const mocks = vi.hoisted(() => ({
   checkOfflineFallback: vi.fn(),
+  query: vi.fn(),
   responses: [] as string[],
 }))
 
@@ -73,26 +75,30 @@ vi.mock("../src/main/lib/harness/launch-context", () => ({
 }))
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: () =>
-    (async function* () {
-      const response = mocks.responses.shift() ?? "missing-response"
-      yield {
-        type: "assistant",
-        uuid: `uuid-${response}`,
-        session_id: `session-${response}`,
-        message: {
-          model: "claude-test",
-          content: [{ type: "text", text: response }],
-        },
-      }
-      yield { type: "result", subtype: "success", session_id: `session-${response}` }
-    })(),
+  query: mocks.query,
 }))
+
+function claudeResponseStream() {
+  return (async function* () {
+    const response = mocks.responses.shift() ?? "missing-response"
+    yield {
+      type: "assistant",
+      uuid: `uuid-${response}`,
+      session_id: `session-${response}`,
+      message: {
+        model: "claude-test",
+        content: [{ type: "text", text: response }],
+      },
+    }
+    yield { type: "result", subtype: "success", session_id: `session-${response}` }
+  })()
+}
 
 import { closeDatabase } from "../src/main/lib/db"
 import { recoverLegacyQueuedRunPrompts } from "../src/main/lib/db/migrate"
 import { drainPendingMcpRuns, type QueuedAgentRun } from "../src/main/lib/run-launch-service"
 import { claudeRouter } from "../src/main/lib/trpc/routers/claude"
+import { providerExtensionId } from "../src/main/lib/provider-extensions"
 
 let directory = ""
 let databasePath = ""
@@ -108,6 +114,7 @@ beforeEach(() => {
   expect(recoverLegacyQueuedRunPrompts(sqlite)).toBe(2)
   sqlite.close()
   mocks.responses.splice(0, mocks.responses.length, "A-response", "B-response")
+  mocks.query.mockReset().mockImplementation(claudeResponseStream)
   mocks.checkOfflineFallback.mockReset().mockResolvedValue({
     config: undefined,
     isUsingOllama: false,
@@ -132,7 +139,76 @@ describe("Claude legacy queue routing", () => {
 
     expect(readVisibleTranscript()).toEqual(["A", "A-response", "B", "B-response"])
   })
+
+  it("passes task-resolved skill and MCP policy into the real Claude SDK launch", async () => {
+    seedClaudeExtensionPolicy()
+    mocks.responses.splice(0, mocks.responses.length, "policy-response")
+
+    await launchThroughClaudeRouter({
+      runId: "run-a",
+      chatId: "chat-order",
+      subChatId: "sub-order",
+      prompt: "A",
+      worktreePath: directory,
+    } as QueuedAgentRun)
+
+    expect(mocks.query).toHaveBeenCalledTimes(1)
+    const options = mocks.query.mock.calls[0]![0].options
+    expect(options.skills).toContain("policy-beta-enabled")
+    expect(options.skills).not.toContain("policy-alpha-task")
+    expect(options.strictMcpConfig).toBe(true)
+    expect(options.mcpServers?.["policy-alpha-mcp"]).toBeUndefined()
+  })
 })
+
+function seedClaudeExtensionPolicy(): void {
+  const skillPath = join(directory, ".claude", "skills", "policy-alpha-task", "SKILL.md")
+  const enabledSkillPath = join(directory, ".claude", "skills", "policy-beta-enabled", "SKILL.md")
+  const mcpPath = join(directory, ".mcp.json")
+  mkdirSync(resolve(skillPath, ".."), { recursive: true })
+  mkdirSync(resolve(enabledSkillPath, ".."), { recursive: true })
+  writeFileSync(
+    skillPath,
+    "---\nname: policy-alpha-task\ndescription: disabled fixture\n---\nfixture\n",
+  )
+  writeFileSync(
+    enabledSkillPath,
+    "---\nname: policy-beta-enabled\ndescription: enabled fixture\n---\nfixture\n",
+  )
+  writeFileSync(
+    mcpPath,
+    JSON.stringify({
+      mcpServers: {
+        "policy-alpha-mcp": { command: "disabled-fixture" },
+        "policy-beta-mcp": { command: "enabled-fixture" },
+      },
+    }),
+  )
+
+  const sqlite = new Database(databasePath)
+  sqlite.pragma("foreign_keys = ON")
+  sqlite
+    .prepare("INSERT INTO projects (id, name, path) VALUES ('policy-project', 'Policy', ?)")
+    .run(directory)
+  sqlite
+    .prepare(
+      "INSERT INTO tasks (id, project_id, name) VALUES ('policy-task', 'policy-project', 'Policy task')",
+    )
+    .run()
+  sqlite
+    .prepare(
+      "UPDATE chats SET scope = 'task', project_id = 'policy-project', task_id = 'policy-task' WHERE id = 'chat-order'",
+    )
+    .run()
+  const insertPolicy = sqlite.prepare(
+    `INSERT INTO extension_enablement_policies
+      (extension_id, harness, kind, native_scope, scope_type, scope_id, project_id, task_id, enabled)
+     VALUES (?, 'claude-code', ?, 'project', 'task', 'policy-task', 'policy-project', 'policy-task', 0)`,
+  )
+  insertPolicy.run(providerExtensionId("claude", "skill", skillPath), "skill")
+  insertPolicy.run(providerExtensionId("claude", "mcp", `${mcpPath}#policy-alpha-mcp`), "mcp")
+  sqlite.close()
+}
 
 async function launchThroughClaudeRouter(run: QueuedAgentRun): Promise<void> {
   const stream = await claudeRouter.createCaller({ getWindow: () => null }).chat({
@@ -180,11 +256,15 @@ function seedLegacyQueue(sqlite: Database.Database): void {
   const insert = sqlite.prepare(
     `INSERT INTO agent_runs (
       id, chat_id, sub_chat_id, harness, permission_mode, worktree_path,
-      prompt_message_id, status, started_at
-    ) VALUES (?, 'chat-order', 'sub-order', 'claude-code', 'full-access', ?, ?, 'pending', ?)`,
+      prompt_message_id, status, started_at,
+      runtime_snapshot_version, runtime_preference, runtime_preference_source,
+      resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+      runtime_capability_snapshot, runtime_control_snapshot
+    ) VALUES (?, 'chat-order', 'sub-order', 'claude-code', 'full-access', ?, ?, 'pending', ?,
+      ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-  insert.run("run-a", directory, "mcp-order-a", 1)
-  insert.run("run-b", directory, "mcp-order-b", 2)
+  insert.run("run-a", directory, "mcp-order-a", 1, ...testRuntimeSnapshotSqlValues("claude-code"))
+  insert.run("run-b", directory, "mcp-order-b", 2, ...testRuntimeSnapshotSqlValues("claude-code"))
 }
 
 function readVisibleTranscript(): string[] {

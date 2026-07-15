@@ -5,10 +5,11 @@
 // env). Pragmas match store.applyUsageStorePragmas so app reads + daemon writes
 // coexist safely.
 
-import Database from "better-sqlite3"
+import { openAppDatabase } from "../db/access"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { existsSync } from "node:fs"
 import * as schema from "../db/schema"
+import { backfillUsageAttribution } from "../usage/attribution"
 import { applyUsageStorePragmas, type UsageDb } from "../usage/store"
 
 export function resolveSharedDbPath(): string {
@@ -24,8 +25,9 @@ export function openDaemonDb(): { db: UsageDb; close: () => void } {
   if (!existsSync(path)) {
     throw new Error(`Shared usage DB not found at ${path}; launch the app once to create it.`)
   }
-  const sqlite = new Database(path)
+  const sqlite = openAppDatabase(path)
   applyUsageStorePragmas(sqlite)
   const db = drizzle(sqlite, { schema })
+  backfillUsageAttribution(db)
   return { db, close: () => sqlite.close() }
 }

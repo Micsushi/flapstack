@@ -13,6 +13,7 @@
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm"
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "../db/schema"
+import { prepareUsageFact } from "./attribution"
 import { redactUsageDiagnostic } from "./diagnostics"
 import { deriveDedupeKey, microsToUsd, usdToMicros } from "./source-tags"
 import type {
@@ -69,37 +70,57 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
   if (samples.length === 0) return 0
   let inserted = 0
   for (const sample of samples) {
-    const dedupeKey = deriveDedupeKey(sample)
+    const normalizedSample = { ...sample, capturedAt: sample.capturedAt ?? new Date() }
+    const dedupeKey = deriveDedupeKey(normalizedSample)
+    const enrichment = prepareUsageFact(db, normalizedSample)
+    const attribution = enrichment.snapshot
+    const classification = enrichment.classification
     const row: schema.NewUsageSample = {
-      providerId: sample.providerId,
-      accountTag: sample.accountTag ?? "",
-      source: sample.source,
-      costQuality: sample.costQuality,
-      sourceTag: sample.sourceTag ?? null,
-      metricKey: sample.metricKey ?? null,
-      capturedAt: sample.capturedAt ?? new Date(),
-      windowStart: sample.windowStart ?? null,
-      windowEnd: sample.windowEnd ?? null,
-      inputTokens: sample.inputTokens ?? null,
-      outputTokens: sample.outputTokens ?? null,
-      reasoningTokens: sample.reasoningTokens ?? null,
-      totalTokens: sample.totalTokens ?? null,
-      requestCount: sample.requestCount ?? null,
-      costUsd: usdToMicros(sample.costUsd),
-      costUsdEstimated: usdToMicros(sample.costUsdEstimated),
-      currency: sample.currency ?? "USD",
-      percentUsed: sample.percentUsed ?? null,
-      quotaUsed: sample.quotaUsed ?? null,
-      quotaLimit: sample.quotaLimit ?? null,
-      quotaUnit: sample.quotaUnit ?? null,
-      resetAt: sample.resetAt ?? null,
-      model: sample.model ?? null,
-      generationId: sample.generationId ?? null,
-      runId: sample.runId ?? null,
-      rawPayload: serializeRawPayload(sample.rawPayload),
+      providerId: normalizedSample.providerId,
+      accountTag: normalizedSample.accountTag ?? "",
+      source: normalizedSample.source,
+      costQuality: normalizedSample.costQuality,
+      sourceTag: normalizedSample.sourceTag ?? null,
+      metricKey: normalizedSample.metricKey ?? null,
+      capturedAt: normalizedSample.capturedAt,
+      windowStart: normalizedSample.windowStart ?? null,
+      windowEnd: normalizedSample.windowEnd ?? null,
+      inputTokens: normalizedSample.inputTokens ?? null,
+      outputTokens: normalizedSample.outputTokens ?? null,
+      reasoningTokens: normalizedSample.reasoningTokens ?? null,
+      totalTokens: normalizedSample.totalTokens ?? null,
+      requestCount: normalizedSample.requestCount ?? null,
+      costUsd: usdToMicros(normalizedSample.costUsd),
+      costUsdEstimated: usdToMicros(normalizedSample.costUsdEstimated),
+      currency: normalizedSample.currency ?? "USD",
+      percentUsed: normalizedSample.percentUsed ?? null,
+      quotaUsed: normalizedSample.quotaUsed ?? null,
+      quotaLimit: normalizedSample.quotaLimit ?? null,
+      quotaUnit: normalizedSample.quotaUnit ?? null,
+      resetAt: normalizedSample.resetAt ?? null,
+      model: normalizedSample.model ?? enrichment.model,
+      generationId: normalizedSample.generationId ?? null,
+      runId: normalizedSample.runId ?? null,
+      attributionState: attribution.state,
+      attributionHarness: attribution.harness,
+      attributionProjectId: attribution.projectId,
+      attributionProjectName: attribution.projectName,
+      attributionTaskId: attribution.taskId,
+      attributionTaskName: attribution.taskName,
+      attributionChatId: attribution.chatId,
+      attributionChatName: attribution.chatName,
+      attributionAutomationId: attribution.automationId,
+      attributionAutomationName: attribution.automationName,
+      attributionOrchestrationId: attribution.orchestrationId,
+      attributionOrchestrationName: attribution.orchestrationName,
+      attributionRunId: attribution.runId,
+      sourceClass: classification.sourceClass,
+      dedupeStrategy: classification.dedupeStrategy,
+      dedupeGroupKey: classification.dedupeGroupKey,
+      rawPayload: serializeRawPayload(normalizedSample.rawPayload, normalizedSample.pricingVersion),
       dedupeKey,
     }
-    const incomingQualityRank = costQualityRank(sample.costQuality)
+    const incomingQualityRank = costQualityRank(normalizedSample.costQuality)
     const hasIncomingCost = row.costUsd != null || row.costUsdEstimated != null
     const currentQualityRank = sql<number>`CASE ${schema.usageSamples.costQuality}
       WHEN 'exact' THEN 3
@@ -110,7 +131,14 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
     const updateValues = {
       providerId: row.providerId,
       accountTag: row.accountTag,
-      source: row.source,
+      source: sql<string>`CASE
+        WHEN ${row.sourceClass} = 'flapstack-run' THEN ${row.source}
+        WHEN ${schema.usageSamples.sourceClass} = 'flapstack-run' THEN ${schema.usageSamples.source}
+        WHEN ${row.sourceClass} = 'external-provider' THEN ${row.source}
+        WHEN ${schema.usageSamples.sourceClass} = 'external-provider'
+          THEN ${schema.usageSamples.source}
+        ELSE ${row.source}
+      END`,
       capturedAt: row.capturedAt,
       currency: row.currency,
       dedupeKey: row.dedupeKey,
@@ -128,7 +156,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       ...(row.quotaLimit != null ? { quotaLimit: row.quotaLimit } : {}),
       ...(row.quotaUnit != null ? { quotaUnit: row.quotaUnit } : {}),
       ...(row.resetAt != null ? { resetAt: row.resetAt } : {}),
-      ...(row.model != null ? { model: row.model } : {}),
+      model: sql<string | null>`COALESCE(${schema.usageSamples.model}, ${row.model})`,
       ...(row.generationId != null ? { generationId: row.generationId } : {}),
       ...(row.rawPayload != null ? { rawPayload: row.rawPayload } : {}),
       // A retry or later estimate may add token/raw metadata, but it must never
@@ -138,7 +166,7 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
           THEN ${schema.usageSamples.costQuality}
         WHEN ${currentQualityRank} > ${incomingQualityRank}
           THEN ${schema.usageSamples.costQuality}
-        ELSE ${sample.costQuality}
+          ELSE ${normalizedSample.costQuality}
       END`,
       costUsd: sql<number | null>`CASE
         WHEN ${hasIncomingCost ? 0 : 1} = 1
@@ -156,7 +184,76 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
       END`,
       // Provider reconciliation identifies a stored run by generation id and
       // does not know the run id itself. Never erase that existing link.
-      runId: sql<string | null>`COALESCE(${row.runId}, ${schema.usageSamples.runId})`,
+      runId: sql<string | null>`COALESCE(${schema.usageSamples.runId}, ${row.runId})`,
+      attributionState: sql<string>`CASE
+        WHEN ${schema.usageSamples.attributionState} = 'attributed'
+          THEN ${schema.usageSamples.attributionState}
+        ELSE ${row.attributionState}
+      END`,
+      attributionHarness: immutableAttributionValue(
+        schema.usageSamples.attributionHarness,
+        row.attributionHarness,
+      ),
+      attributionProjectId: immutableAttributionValue(
+        schema.usageSamples.attributionProjectId,
+        row.attributionProjectId,
+      ),
+      attributionProjectName: immutableAttributionValue(
+        schema.usageSamples.attributionProjectName,
+        row.attributionProjectName,
+      ),
+      attributionTaskId: immutableAttributionValue(
+        schema.usageSamples.attributionTaskId,
+        row.attributionTaskId,
+      ),
+      attributionTaskName: immutableAttributionValue(
+        schema.usageSamples.attributionTaskName,
+        row.attributionTaskName,
+      ),
+      attributionChatId: immutableAttributionValue(
+        schema.usageSamples.attributionChatId,
+        row.attributionChatId,
+      ),
+      attributionChatName: immutableAttributionValue(
+        schema.usageSamples.attributionChatName,
+        row.attributionChatName,
+      ),
+      attributionAutomationId: immutableAttributionValue(
+        schema.usageSamples.attributionAutomationId,
+        row.attributionAutomationId,
+      ),
+      attributionAutomationName: immutableAttributionValue(
+        schema.usageSamples.attributionAutomationName,
+        row.attributionAutomationName,
+      ),
+      attributionOrchestrationId: immutableAttributionValue(
+        schema.usageSamples.attributionOrchestrationId,
+        row.attributionOrchestrationId,
+      ),
+      attributionOrchestrationName: immutableAttributionValue(
+        schema.usageSamples.attributionOrchestrationName,
+        row.attributionOrchestrationName,
+      ),
+      attributionRunId: immutableAttributionValue(
+        schema.usageSamples.attributionRunId,
+        row.attributionRunId,
+      ),
+      sourceClass: sql<string>`CASE
+        WHEN ${row.sourceClass} = 'flapstack-run' THEN 'flapstack-run'
+        WHEN ${schema.usageSamples.sourceClass} = 'flapstack-run' THEN 'flapstack-run'
+        WHEN ${row.sourceClass} = 'external-provider' THEN 'external-provider'
+        WHEN ${schema.usageSamples.sourceClass} = 'external-provider' THEN 'external-provider'
+        ELSE ${row.sourceClass}
+      END`,
+      dedupeStrategy: sql<string>`CASE
+        WHEN ${schema.usageSamples.dedupeStrategy} = 'exact-fact'
+          THEN ${schema.usageSamples.dedupeStrategy}
+        ELSE ${row.dedupeStrategy}
+      END`,
+      dedupeGroupKey: sql<string | null>`CASE
+        WHEN ${schema.usageSamples.dedupeStrategy} = 'exact-fact' THEN NULL
+        ELSE ${row.dedupeGroupKey}
+      END`,
     }
     const result = await withWriteRetry(() =>
       db
@@ -169,6 +266,13 @@ export async function insertSamples(db: UsageDb, samples: UsageSampleInput[]): P
     await upsertUsageCycle(db, sample)
   }
   return inserted
+}
+
+function immutableAttributionValue<T>(column: T, incoming: string | null | undefined) {
+  return sql<string | null>`CASE
+    WHEN ${schema.usageSamples.attributionState} = 'attributed' THEN ${column}
+    ELSE ${incoming ?? null}
+  END`
 }
 
 /** Roll windowed samples into the historical cycle table. Cost and token
@@ -196,7 +300,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
     totalCostUsdEstimated: usdToMicros(sample.costUsdEstimated),
     totalTokens: sample.totalTokens ?? null,
     costQuality: sample.costQuality,
-    rawPayload: serializeRawPayload(sample.rawPayload),
+    rawPayload: serializeRawPayload(sample.rawPayload, sample.pricingVersion),
     dedupeKey,
     updatedAt: new Date(),
   }
@@ -212,7 +316,7 @@ async function upsertUsageCycle(db: UsageDb, sample: UsageSampleInput): Promise<
     cycleStart,
     cycleEnd,
     resetAt: sample.resetAt ?? null,
-    rawPayload: serializeRawPayload(sample.rawPayload),
+    rawPayload: serializeRawPayload(sample.rawPayload, sample.pricingVersion),
     updatedAt: new Date(),
     ...(hasIncomingCost
       ? {
@@ -478,10 +582,20 @@ export async function upsertProviderState(
 
 /** Serialize provider diagnostics without allowing malformed/circular payloads
  * or common credential fields into the shared DB. */
-function serializeRawPayload(payload: unknown): string | null {
-  if (payload == null) return null
+function serializeRawPayload(payload: unknown, pricingVersion?: string | null): string | null {
+  const normalizedVersion = pricingVersion?.trim() || null
+  if (normalizedVersion && normalizedVersion.length > 256) {
+    throw new Error("Usage pricing version must be 256 characters or fewer.")
+  }
+  if (payload == null && normalizedVersion == null) return null
+  const normalizedPayload = normalizedVersion
+    ? {
+        flapstackProvenance: { pricingVersion: normalizedVersion },
+        payload: payload ?? null,
+      }
+    : payload
   try {
-    return JSON.stringify(payload, (key, value) =>
+    return JSON.stringify(normalizedPayload, (key, value) =>
       /^(authorization|credential|password|secret|api.?key|access.?token|refresh.?token|id.?token)$/i.test(
         key,
       )

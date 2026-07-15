@@ -19,7 +19,16 @@ import { hasActiveCodexStreams, abortAllCodexStreams } from "../lib/trpc/routers
 import { hasActiveCursorStreams, abortAllCursorStreams } from "../lib/trpc/routers/cursor"
 import { hasActiveOpencodeStreams, abortAllOpencodeStreams } from "../lib/trpc/routers/opencode"
 import { registerThemeScannerIPC } from "../lib/vscode-theme-scanner"
-import { windowManager } from "./window-manager"
+import type {
+  WorkspacePaneWindowTarget,
+  WorkspaceWindowOpenTarget,
+} from "../../shared/workspace-window-ownership"
+import {
+  stableWorkspaceRemainderWindowId,
+  stableWorkspaceRootWindowId,
+  stableWorkspaceWindowId,
+  windowManager,
+} from "./window-manager"
 
 // Flag to bypass close confirmation when app.quit() has already been confirmed
 let isQuitting = false
@@ -273,6 +282,168 @@ function registerIpcHandlers(): void {
     return windowManager.focusChatOwner(chatId)
   })
 
+  ipcMain.handle("workspace-window:open-pane", (event, raw: WorkspacePaneWindowTarget) => {
+    const source = getWindowFromEvent(event)
+    const input = validWorkspacePaneTarget(raw)
+    if (!source || !input) return ownershipFailure("unknown")
+
+    const currentOwner = windowManager.getWorkspacePaneOwner(input.workspaceId, input.paneId)
+    if (currentOwner !== undefined && currentOwner !== source.id) {
+      windowManager.focusWorkspacePaneOwner(input.workspaceId, input.paneId)
+      const owner = windowManager.get(currentOwner)
+      return {
+        ok: true as const,
+        state: "focused" as const,
+        ownerStableId: owner ? windowManager.getStableId(owner) : "unknown",
+      }
+    }
+
+    const conflicts = windowManager.inspectWorkspacePaneClaim(
+      input.workspaceId,
+      input.paneId,
+      input.chatIds,
+      source.id,
+    )
+    if (conflicts.length > 0) {
+      return { ok: false as const, ownerStableId: conflicts[0].ownerStableId, conflicts }
+    }
+
+    const stableWindowId = stableWorkspaceWindowId(input.workspaceId, input.paneId)
+    const stableWindowState = windowManager.focusStableWindow(stableWindowId)
+    if (stableWindowState === "focused") {
+      return { ok: true as const, state: "focused" as const, ownerStableId: stableWindowId }
+    }
+    if (stableWindowState === "recovering") return ownershipRecovering(stableWindowId)
+
+    const popout = createWindow({
+      projectId: input.projectId,
+      workspaceId: input.workspaceId,
+      paneId: input.paneId,
+      stableWindowId,
+    })
+    const claim = windowManager.transferWorkspacePane(
+      input.workspaceId,
+      input.paneId,
+      input.chatIds,
+      source.id,
+      popout.id,
+      source.id,
+    )
+    if (!claim.ok) {
+      popout.destroy()
+      return claim
+    }
+    return { ok: true as const, state: "opened" as const, ownerStableId: stableWindowId }
+  })
+
+  ipcMain.handle("workspace-window:open-workspace", (event, raw: WorkspaceWindowOpenTarget) => {
+    const source = getWindowFromEvent(event)
+    const input = validWorkspaceWindowTarget(raw)
+    if (!source || !input) return ownershipFailure("unknown")
+    const stableWindowId = stableWorkspaceRootWindowId(input.workspaceId)
+    const stableWindowState = windowManager.focusStableWindow(stableWindowId)
+    if (stableWindowState === "focused") {
+      return { ok: true as const, state: "focused" as const, ownerStableId: stableWindowId }
+    }
+    if (stableWindowState === "recovering") return ownershipRecovering(stableWindowId)
+
+    const conflicts = input.panes.flatMap((pane) =>
+      windowManager.inspectWorkspacePaneClaim(
+        input.workspaceId,
+        pane.paneId,
+        pane.chatIds,
+        source.id,
+      ),
+    )
+    if (conflicts.length > 0) {
+      return { ok: false as const, ownerStableId: conflicts[0].ownerStableId, conflicts }
+    }
+
+    const workspaceWindow = createWindow({
+      projectId: input.projectId,
+      workspaceId: input.workspaceId,
+      stableWindowId,
+    })
+    for (const pane of input.panes) {
+      windowManager.claimWorkspacePane(
+        input.workspaceId,
+        pane.paneId,
+        pane.chatIds,
+        workspaceWindow.id,
+        { move: true, returnWindowId: source.id },
+      )
+    }
+    return { ok: true as const, state: "opened" as const, ownerStableId: stableWindowId }
+  })
+
+  ipcMain.handle(
+    "workspace-window:claim-pane",
+    (event, raw: WorkspacePaneWindowTarget & { mode?: "claim" | "move" }) => {
+      const win = getWindowFromEvent(event)
+      const input = validWorkspacePaneTarget(raw)
+      if (!win || !input) return ownershipFailure("unknown")
+      return windowManager.claimWorkspacePane(
+        input.workspaceId,
+        input.paneId,
+        input.chatIds,
+        win.id,
+        { move: raw?.mode === "move" },
+      )
+    },
+  )
+
+  ipcMain.handle("workspace-window:release-pane", (event, raw: WorkspacePaneWindowTarget) => {
+    const win = getWindowFromEvent(event)
+    const input = validWorkspacePaneTarget(raw)
+    if (!win || !input) return
+    windowManager.releaseWorkspacePane(input.workspaceId, input.paneId, input.chatIds, win.id)
+  })
+
+  ipcMain.handle(
+    "workspace-window:focus-pane-owner",
+    (_event, raw: Pick<WorkspacePaneWindowTarget, "workspaceId" | "paneId">) => {
+      const input = validWorkspacePaneIdentity(raw)
+      return input ? windowManager.focusWorkspacePaneOwner(input.workspaceId, input.paneId) : false
+    },
+  )
+
+  ipcMain.handle(
+    "workspace-window:pull-back-pane",
+    (event, raw: Pick<WorkspacePaneWindowTarget, "workspaceId" | "paneId">) => {
+      const win = getWindowFromEvent(event)
+      const input = validWorkspacePaneIdentity(raw)
+      if (!win || !input) return ownershipFailure("unknown")
+      const result = windowManager.pullBackWorkspacePane(input.workspaceId, input.paneId, win.id)
+      if (result.ok) setImmediate(() => win.close())
+      return result
+    },
+  )
+
+  ipcMain.handle(
+    "workspace-window:open-remainder",
+    (event, raw: { projectId?: string; workspaceId: string; skipPaneId: string }) => {
+      const source = getWindowFromEvent(event)
+      const identity = validWorkspacePaneIdentity({
+        workspaceId: raw?.workspaceId,
+        paneId: raw?.skipPaneId,
+      })
+      if (!source || !identity) return { ok: false as const }
+      const stableWindowId = stableWorkspaceRemainderWindowId(identity.workspaceId, identity.paneId)
+      const stableWindowState = windowManager.focusStableWindow(stableWindowId)
+      if (stableWindowState === "focused") {
+        return { ok: true as const, state: "focused" as const, ownerStableId: stableWindowId }
+      }
+      if (stableWindowState === "recovering") return ownershipRecovering(stableWindowId)
+      createWindow({
+        projectId: validOptionalId(raw.projectId),
+        workspaceId: identity.workspaceId,
+        skipPaneId: identity.paneId,
+        stableWindowId,
+      })
+      return { ok: true as const, state: "opened" as const, ownerStableId: stableWindowId }
+    },
+  )
+
   // Set window title
   ipcMain.handle("window:set-title", (event, title: string) => {
     const win = getWindowFromEvent(event)
@@ -446,7 +617,17 @@ function getUseNativeFramePreference(): boolean {
  * @param options.chatId Open this chat in the new window
  * @param options.subChatId Open this sub-chat in the new window
  */
-export function createWindow(options?: { chatId?: string; subChatId?: string }): BrowserWindow {
+export type CreateWindowOptions = {
+  chatId?: string
+  subChatId?: string
+  projectId?: string
+  workspaceId?: string
+  paneId?: string
+  skipPaneId?: string
+  stableWindowId?: string
+}
+
+export function createWindow(options?: CreateWindowOptions): BrowserWindow {
   // Register IPC handlers before creating first window
   registerIpcHandlers()
 
@@ -481,7 +662,7 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
   })
 
   // Register window with manager and get stable ID for localStorage namespacing
-  const stableWindowId = windowManager.register(window)
+  const stableWindowId = windowManager.register(window, options?.stableWindowId)
   console.log(
     `[Main] Created window ${window.id} with stable ID "${stableWindowId}" (total: ${windowManager.count()})`,
   )
@@ -624,6 +805,10 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
     params.set("windowId", windowId)
     if (options?.chatId) params.set("chatId", options.chatId)
     if (options?.subChatId) params.set("subChatId", options.subChatId)
+    if (options?.projectId) params.set("projectId", options.projectId)
+    if (options?.workspaceId) params.set("workspaceId", options.workspaceId)
+    if (options?.paneId) params.set("paneId", options.paneId)
+    if (options?.skipPaneId) params.set("skipPaneId", options.skipPaneId)
   }
 
   if (devServerUrl) {
@@ -663,4 +848,73 @@ export function createWindow(options?: { chatId?: string; subChatId?: string }):
  */
 export function createMainWindow(): BrowserWindow {
   return createWindow()
+}
+
+function validWorkspacePaneTarget(value: unknown): WorkspacePaneWindowTarget | null {
+  if (!value || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  const identity = validWorkspacePaneIdentity(record)
+  if (!identity || !Array.isArray(record.chatIds) || record.chatIds.length > 128) return null
+  const chatIds = record.chatIds.map(validRequiredId)
+  if (chatIds.some((id) => id === null)) return null
+  return {
+    ...identity,
+    projectId: validOptionalId(record.projectId),
+    chatIds: [...new Set(chatIds as string[])],
+  }
+}
+
+function validWorkspaceWindowTarget(value: unknown): WorkspaceWindowOpenTarget | null {
+  if (!value || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  const workspaceId = validRequiredId(record.workspaceId)
+  if (!workspaceId || !Array.isArray(record.panes) || record.panes.length > 128) return null
+  const panes = record.panes.map((pane) => {
+    if (!pane || typeof pane !== "object") return null
+    const paneRecord = pane as Record<string, unknown>
+    const paneId = validRequiredId(paneRecord.paneId)
+    if (!paneId || !Array.isArray(paneRecord.chatIds) || paneRecord.chatIds.length > 128)
+      return null
+    const chatIds = paneRecord.chatIds.map(validRequiredId)
+    if (chatIds.some((chatId) => chatId === null)) return null
+    return { paneId, chatIds: [...new Set(chatIds as string[])] }
+  })
+  if (panes.some((pane) => pane === null)) return null
+  return {
+    workspaceId,
+    projectId: validOptionalId(record.projectId),
+    panes: panes as WorkspaceWindowOpenTarget["panes"],
+  }
+}
+
+function validWorkspacePaneIdentity(
+  value: unknown,
+): Pick<WorkspacePaneWindowTarget, "workspaceId" | "paneId"> | null {
+  if (!value || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  const workspaceId = validRequiredId(record.workspaceId)
+  const paneId = validRequiredId(record.paneId)
+  return workspaceId && paneId ? { workspaceId, paneId } : null
+}
+
+function validRequiredId(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const normalized = value.trim()
+  return normalized && normalized.length <= 200 ? normalized : null
+}
+
+function validOptionalId(value: unknown): string | undefined {
+  return value === undefined ? undefined : (validRequiredId(value) ?? undefined)
+}
+
+function ownershipFailure(ownerStableId: string) {
+  return {
+    ok: false as const,
+    ownerStableId,
+    conflicts: [{ kind: "workspace-pane" as const, ownerStableId }],
+  }
+}
+
+function ownershipRecovering(ownerStableId: string) {
+  return { ...ownershipFailure(ownerStableId), reason: "recovering" as const }
 }

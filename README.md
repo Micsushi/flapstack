@@ -19,6 +19,10 @@ current gate truth; the [release lane handoff](docs/stage3-release-handoff.md)
 records remaining release authority and cleanup.
 [Stage 2 matrix](docs/stage2-full-feature-test-matrix.md) is retained as a
 historical criteria record and crosswalk.
+Stage 4 portability behavior and operating limits are documented in
+[Portability and Private Sync](docs/portability-and-private-sync.md).
+Stage 4 plan-source, task-board, promotion, proposal, and concurrency contracts
+are documented in [Plan and Kanban](docs/plan-and-kanban.md).
 The research-only dynamic-vocabulary architecture is explicitly deferred: it is
 not an approved Stage 2 requirement and is not claimed as implemented.
 
@@ -172,15 +176,24 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
 - Multi-agent orchestration with lineage, budgets, depth limits, and kill controls.
 - Saved project/task workspaces combining chats, terminals, agents, worktrees,
   browser/editor/diff panes, tabs, and pop-outs.
+- Automation and scheduler with approval, dry-run, budgets, history, and kill controls.
+- Local models through the app-owned permission-gated agent loop.
+- Advanced usage and limits across runs, chats, tasks, projects, accounts, and harnesses.
+- Versioned import/export plus optional user-owned private sync.
+- Linked Plan and Kanban views with approved task/chat creation.
+- Agent Runtimes preserving native Codex/Claude behavior with Flapstack Native
+  compatibility and per-harness/project/chat selection.
+- Reusable Agent Profiles and Personalities for deterministic workflow roles
+  and standalone named specialists without expanding their authority.
+
+Stage 4 is the final planned stage for now. New ideas stay parked until the user
+explicitly adds them to Stage 4 or creates a later stage.
+Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
+[Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
+and [execution plan](docs/stage4-execution-plan.md).
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
 dictation; no separate Flapstack voice platform is planned.
-
-### Later
-
-- Automation and scheduler.
-- Local models.
-- Additional usage providers, account coverage, and dashboard depth.
 
 ## Development
 

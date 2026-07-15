@@ -5,13 +5,16 @@ import type { McpCallerIdentity } from "./types"
 import { invokeMcpControlTool, listImplementedMcpControlTools } from "./registry"
 import { mcpReadInputShapes } from "./read-service"
 import { createMcpMutationService, mcpMutationInputShapes } from "./mutation-service"
+import { createMcpProjectVaultService, mcpProjectVaultInputShapes } from "./project-vault-service"
+import { createMcpAutomationService, mcpAutomationInputShapes } from "./automation-service"
+import { createMcpTaskProposalService, mcpTaskProposalInputShapes } from "./task-proposal-service"
 import { McpApprovalLifecycle } from "./approval-lifecycle"
 import {
   appendMcpAuditRecord,
   findUnresolvedMcpDispatch,
   recoverMcpDispatchClaims,
 } from "./audit-storage"
-import { getDatabase } from "../db"
+import { beginDatabaseOperation, getDatabase } from "../db"
 import { createSqliteMcpCallerStore, resolveTrustedMcpCaller } from "./identity"
 import { createSqliteMcpApprovalCoordinator } from "./approval-coordinator"
 import { publishProductMcpInvalidation } from "./invalidation-bridge"
@@ -33,49 +36,65 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const publishApprovalChange = () =>
     publish({ version: 1, source: "product-mcp", domains: ["approvals"] })
   const approvals = new McpApprovalLifecycle(
-    createSqliteMcpApprovalCoordinator(getDatabase(), publishApprovalChange),
+    createSqliteMcpApprovalCoordinator(getDatabase, publishApprovalChange),
     publishApprovalChange,
   )
   const callerStore = createSqliteMcpCallerStore()
   const mutations = createMcpMutationService()
+  const projectVaults = createMcpProjectVaultService()
+  const automationControls = createMcpAutomationService()
+  const taskProposalControls = createMcpTaskProposalService()
 
   for (const tool of listImplementedMcpControlTools()) {
     server.registerTool(
       tool.name,
       {
         description: tool.description,
-        inputSchema: mcpReadInputShapes[tool.name] ?? mcpMutationInputShapes[tool.name],
+        inputSchema:
+          mcpReadInputShapes[tool.name] ??
+          mcpMutationInputShapes[tool.name] ??
+          mcpProjectVaultInputShapes[tool.name] ??
+          mcpAutomationInputShapes[tool.name] ??
+          mcpTaskProposalInputShapes[tool.name],
         annotations: { readOnlyHint: tool.tier === 0, destructiveHint: tool.tier >= 2 },
       },
       async (input, extra) => {
-        // MCP SDK callbacks with no input schema receive only the request context.
-        const toolInput = extra ? input : {}
-        // Provider request IDs are caller-controlled and can be replayed. Every
-        // received invocation owns a fresh internal identity instead.
-        const invocationId = randomUUID()
-        const response = await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
-          approvals,
-          approvalId: () => invocationId,
-          invocationId: () => invocationId,
-          audit: {
-            append: (record) => {
-              appendMcpAuditRecord(getDatabase(), record)
-              publish({ version: 1, source: "product-mcp", domains: ["audit"] })
+        const releaseDatabaseOperation = beginDatabaseOperation()
+        try {
+          // MCP SDK callbacks with no input schema receive only the request context.
+          const toolInput = extra ? input : {}
+          // Provider request IDs are caller-controlled and can be replayed. Every
+          // received invocation owns a fresh internal identity instead.
+          const invocationId = randomUUID()
+          const response = await invokeMcpControlTool(tool.name, caller, toolInput, undefined, {
+            approvals,
+            approvalId: () => invocationId,
+            invocationId: () => invocationId,
+            audit: {
+              append: (record) => {
+                appendMcpAuditRecord(getDatabase(), record)
+                publish({ version: 1, source: "product-mcp", domains: ["audit"] })
+              },
+              findUnresolvedDispatch: (lookup) => {
+                recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0, limit: 25 })
+                return findUnresolvedMcpDispatch(getDatabase(), lookup)
+              },
             },
-            findUnresolvedDispatch: (lookup) => {
-              recoverMcpDispatchClaims(getDatabase(), { staleAfterMs: 0, limit: 25 })
-              return findUnresolvedMcpDispatch(getDatabase(), lookup)
-            },
-          },
-          mutations,
-          resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
-        })
-        const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
-        if (invalidation) publish(invalidation)
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(response) }],
-          structuredContent: response,
-          isError: !response.ok,
+            mutations,
+            projectVaults,
+            automationControls,
+            taskProposalControls,
+            resolveCaller: (launchIdentity) => resolveTrustedMcpCaller(launchIdentity, callerStore),
+          })
+          const invalidation = invalidationForProductMcpMutation(tool.name, toolInput, response)
+          if (invalidation) publish(invalidation)
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(response) }],
+            structuredContent: response,
+            isError: !response.ok,
+          }
+        } finally {
+          releaseDatabaseOperation()
         }
       },
     )

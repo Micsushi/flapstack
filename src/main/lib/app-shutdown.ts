@@ -10,6 +10,7 @@ export type QuitApp = {
 export type AppShutdownSteps = {
   persistProviderSessions(): void | Promise<void>
   cancelPendingOAuth(): void | Promise<void>
+  stopAutomationScheduler(): void | Promise<void>
   stopDevMcpServer(): void | Promise<void>
   stopProductMcpBridge(): void | Promise<void>
   cleanupGitWatchers(): void | Promise<void>
@@ -66,6 +67,7 @@ export async function runAppShutdown(steps: AppShutdownSteps): Promise<void> {
 
   await run(steps.persistProviderSessions)
   await run(steps.cancelPendingOAuth)
+  await run(steps.stopAutomationScheduler)
   await run(steps.stopDevMcpServer)
   await run(steps.stopProductMcpBridge)
   await run(steps.cleanupGitWatchers)

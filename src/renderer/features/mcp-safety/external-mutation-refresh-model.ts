@@ -1,15 +1,50 @@
 import {
   mergeProductMcpRendererInvalidations,
+  type ProjectVaultRendererChange,
   type ProductMcpRendererInvalidation,
 } from "../../../shared/product-mcp-invalidation"
 
 type Invalidate = () => unknown | Promise<unknown>
+
+export type ProjectVaultQueryInvalidators = {
+  project: (input: { projectId: string }) => unknown | Promise<unknown>
+  list: (input: { projectId: string }) => unknown | Promise<unknown>
+  get: (input: {
+    projectId: string
+    sectionId: ProjectVaultRendererChange["sectionId"]
+  }) => unknown | Promise<unknown>
+  backups: (input: {
+    projectId: string
+    sectionId: ProjectVaultRendererChange["sectionId"]
+  }) => unknown | Promise<unknown>
+  backup: (input: {
+    projectId: string
+    sectionId: ProjectVaultRendererChange["sectionId"]
+  }) => unknown | Promise<unknown>
+  search: (input: { projectId: string }) => unknown | Promise<unknown>
+}
+
+export function createProjectVaultQueryInvalidator(
+  invalidators: ProjectVaultQueryInvalidators,
+): ProductMcpRendererInvalidators["projectVault"] {
+  return (projectId, change) =>
+    change
+      ? Promise.all([
+          invalidators.list({ projectId }),
+          invalidators.get({ projectId, sectionId: change.sectionId }),
+          invalidators.backups({ projectId, sectionId: change.sectionId }),
+          invalidators.backup({ projectId, sectionId: change.sectionId }),
+          invalidators.search({ projectId }),
+        ])
+      : invalidators.project({ projectId })
+}
 
 export type ProductMcpRendererInvalidators = {
   projectsList: Invalidate
   projectsArchived: Invalidate
   tasksList: Invalidate
   tasksArchived: Invalidate
+  task: (id: string) => unknown | Promise<unknown>
   chatsList: Invalidate
   chatsArchived: Invalidate
   chat: (id: string) => unknown | Promise<unknown>
@@ -20,6 +55,14 @@ export type ProductMcpRendererInvalidators = {
   audit: Invalidate
   orchestrationTask: (taskId: string) => unknown | Promise<unknown>
   chatLineage: (chatId: string) => unknown | Promise<unknown>
+  projectVault: (
+    projectId: string,
+    change?: ProjectVaultRendererChange,
+  ) => unknown | Promise<unknown>
+  automations: Invalidate
+  taskProposals: Invalidate
+  planSources: (projectId?: string) => unknown | Promise<unknown>
+  providerExtensions: Invalidate
 }
 
 export function createProductMcpRendererInvalidator(
@@ -33,6 +76,7 @@ export function createProductMcpRendererInvalidator(
     }
     if (domains.has("tasks")) {
       pending.push(invalidators.tasksList(), invalidators.tasksArchived())
+      pending.push(...(event.taskIds ?? []).map((id) => invalidators.task(id)))
     }
     if (domains.has("chats")) {
       pending.push(invalidators.chatsList(), invalidators.chatsArchived())
@@ -51,6 +95,26 @@ export function createProductMcpRendererInvalidator(
       pending.push(...(event.taskIds ?? []).map((id) => invalidators.orchestrationTask(id)))
       pending.push(...(event.chatIds ?? []).map((id) => invalidators.chatLineage(id)))
     }
+    if (domains.has("vaults")) {
+      const exactProjects = new Set<string>()
+      for (const change of event.vaultChanges ?? []) {
+        exactProjects.add(change.projectId)
+        pending.push(invalidators.projectVault(change.projectId, change))
+      }
+      pending.push(
+        ...(event.projectIds ?? [])
+          .filter((id) => !exactProjects.has(id))
+          .map((id) => invalidators.projectVault(id)),
+      )
+    }
+    if (domains.has("automations")) pending.push(invalidators.automations())
+    if (domains.has("task-proposals")) pending.push(invalidators.taskProposals())
+    if (domains.has("plan-sources")) {
+      const projectIds = event.projectIds ?? []
+      if (projectIds.length === 0) pending.push(invalidators.planSources())
+      else pending.push(...projectIds.map((id) => invalidators.planSources(id)))
+    }
+    if (domains.has("provider-extensions")) pending.push(invalidators.providerExtensions())
     await Promise.all(pending)
   }
 }

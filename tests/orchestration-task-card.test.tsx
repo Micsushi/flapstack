@@ -16,7 +16,21 @@ import {
 } from "../src/renderer/features/agents/ui/orchestration-task-card"
 import { readRendererOrchestrationCard } from "../src/renderer/features/agents/lib/orchestration-test-state"
 
-vi.mock("../src/renderer/lib/trpc", () => ({ trpc: {} }))
+vi.mock("../src/renderer/lib/trpc", () => ({
+  trpc: {
+    useUtils: () => ({
+      orchestrationOperations: { listActivity: { invalidate: vi.fn() } },
+    }),
+    orchestrationOperations: {
+      listActivity: {
+        useQuery: () => ({ isLoading: false, error: null, data: [] }),
+      },
+      rebuildActivity: {
+        useMutation: () => ({ isPending: false, mutate: vi.fn() }),
+      },
+    },
+  },
+}))
 
 const definition = {
   role: "Implementer",
@@ -161,6 +175,7 @@ describe("orchestration task card", () => {
           onRetry={() => undefined}
           onReplace={() => undefined}
           onAdd={() => undefined}
+          onOpenWorkspace={() => undefined}
         />,
       )
     })
@@ -208,6 +223,7 @@ describe("orchestration task card", () => {
   it("renders aggregate state and exposes accessible controls", () => {
     const onNavigate = vi.fn()
     const onControl = vi.fn()
+    const onOpenWorkspace = vi.fn()
     act(() => {
       root.render(
         <OrchestrationOverviewCard
@@ -219,6 +235,7 @@ describe("orchestration task card", () => {
           onRetry={vi.fn()}
           onReplace={vi.fn()}
           onAdd={vi.fn()}
+          onOpenWorkspace={onOpenWorkspace}
         />,
       )
     })
@@ -234,6 +251,13 @@ describe("orchestration task card", () => {
     expect(pause).not.toBeNull()
     act(() => pause!.click())
     expect(onControl).toHaveBeenCalledWith("pause")
+
+    const workspace = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open operation workspace"]',
+    )
+    expect(workspace).not.toBeNull()
+    act(() => workspace!.click())
+    expect(onOpenWorkspace).toHaveBeenCalledOnce()
 
     const child = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open child agent chat UI worker"]',

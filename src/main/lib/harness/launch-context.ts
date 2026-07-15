@@ -232,7 +232,7 @@ async function collectLaunchContextFiles(
 export async function buildHarnessContextBundle(params: {
   cwd: string
   projectPath?: string
-  harness: "codex" | "claude-code" | "cursor-agent" | "opencode"
+  harness: "codex" | "claude-code" | "cursor-agent" | "opencode" | "local"
   vaultConfigPath?: string
   userPrompt?: string
   sessionMode?: HarnessContextSessionMode
@@ -347,7 +347,7 @@ ${gitSection}
 export async function buildHarnessStartupContext(params: {
   cwd: string
   projectPath?: string
-  harness: "codex" | "claude-code" | "cursor-agent" | "opencode"
+  harness: "codex" | "claude-code" | "cursor-agent" | "opencode" | "local"
   vaultConfigPath?: string
   userPrompt?: string
   sessionMode?: HarnessContextSessionMode

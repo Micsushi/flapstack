@@ -8,9 +8,28 @@ import {
   getAuthManager as getAuthManagerFromModule,
 } from "./auth-manager"
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from "./lib/analytics"
-import { closeDatabase, getDatabasePath, initDatabase } from "./lib/db"
-import { createMainRunLauncher } from "./lib/main-run-launcher"
+import {
+  beginDatabaseMaintenance,
+  closeDatabase,
+  endDatabaseMaintenance,
+  getDatabasePath,
+  initDatabase,
+  registerDatabaseMaintenanceParticipant,
+  withDatabaseOperation,
+} from "./lib/db"
+import { getMainRuntimeLaunchService } from "./lib/main-run-launcher"
 import { createAgentOrchestrationService } from "./lib/agent-orchestration/service"
+import {
+  advancePendingWorkflows,
+  recoverOrchestrationOperations,
+  registerMainRuntimeOperations,
+  registerWorkflowAgentMaterializer,
+} from "./lib/agent-orchestration/operations-runtime"
+import { createLazyAgentProfileWorkflowMaterializerPort } from "./lib/agent-profiles/workflow-binding"
+import { CronAutomationNextFireCalculator } from "./lib/automation/cron"
+import { createAutomationExecutionDispatcher } from "./lib/automation/runtime"
+import { AutomationScheduler } from "./lib/automation/scheduler"
+import { reconcileOperationWorkspaces } from "./lib/saved-workspaces/operations"
 import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "./lib/run-launch-service"
 import { reconcileVoiceHistory } from "./lib/speech/history"
 import { runStartupCatchUp } from "./lib/usage/catch-up"
@@ -20,10 +39,10 @@ import {
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
 import {
+  broadcastProductInvalidationToWindows,
   startProductMcpInvalidationBridge,
   type ProductMcpInvalidationBridge,
 } from "./lib/mcp-control/invalidation-bridge"
-import { PRODUCT_MCP_INVALIDATION_CHANNEL } from "../shared/product-mcp-invalidation"
 import { getAppUsageSecret } from "./lib/usage/app-secrets"
 import { runIsolatedStartupTasks, runRequiredStartup } from "./lib/startup-gate"
 import {
@@ -32,6 +51,7 @@ import {
   runAppShutdown,
 } from "./lib/app-shutdown"
 import { getUsageSecret } from "./lib/usage/secrets"
+import { stopRunningRunsOverUsageBudget } from "./lib/usage/budgets"
 import {
   getLaunchDirectory,
   isCliInstalled,
@@ -40,6 +60,8 @@ import {
   parseLaunchDirectory,
 } from "./lib/cli"
 import { cleanupGitWatchers } from "./lib/git/watcher"
+import { recoverInterruptedImports } from "./lib/portability/importer"
+import { beginExclusivePortabilityOperation } from "./lib/portability/operations"
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from "./lib/mcp-auth"
 import {
   getAllMcpConfigHandler,
@@ -76,6 +98,7 @@ import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
 let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
+let automationScheduler: AutomationScheduler | null = null
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -117,7 +140,7 @@ async function abortAndWaitForAgentSessions(): Promise<void> {
   pendingRunTimer = null
   const stopped = await abortAndWaitForShutdownIdle({
     abort: abortAllAgentSessions,
-    isIdle: () => !pendingRunDrainActive && !hasActiveAgentSessions(),
+    isIdle: () => !pendingRunDrainActive && !workflowAdvanceActive && !hasActiveAgentSessions(),
     timeoutMs: 10_000,
   })
   if (!stopped) {
@@ -186,6 +209,7 @@ export function getAppUrl(): string {
 let authManager: AuthManager
 let pendingRunTimer: NodeJS.Timeout | null = null
 let pendingRunDrainActive = false
+let workflowAdvanceActive = false
 
 export function getAuthManager(): AuthManager {
   // First try to get from module, fallback to local variable for backwards compat
@@ -869,7 +893,27 @@ if (gotTheLock) {
     trackAppOpened()
 
     const startupReady = await runRequiredStartup({
-      initialize: () => {
+      initialize: async () => {
+        const releasePortability = await beginExclusivePortabilityOperation()
+        let portabilityRecovery: Awaited<ReturnType<typeof recoverInterruptedImports>>
+        try {
+          portabilityRecovery = await recoverInterruptedImports(
+            join(app.getPath("userData"), "data", "portability"),
+            getDatabasePath(),
+            {
+              beforeApply: () => beginDatabaseMaintenance("portability-startup-recovery"),
+              afterApply: () => endDatabaseMaintenance("portability-startup-recovery"),
+            },
+          )
+        } finally {
+          releasePortability()
+        }
+        const recovered = portabilityRecovery.filter((entry) => entry.action === "rolled-back")
+        if (recovered.length > 0) {
+          console.warn(
+            `[Portability] Recovered ${recovered.length} interrupted import operation(s).`,
+          )
+        }
         initDatabase()
         console.log("[App] Database initialized")
       },
@@ -885,11 +929,7 @@ if (gotTheLock) {
               run: async () => {
                 productMcpInvalidationBridge = await startProductMcpInvalidationBridge({
                   onInvalidation: (payload) => {
-                    for (const window of BrowserWindow.getAllWindows()) {
-                      if (!window.isDestroyed()) {
-                        window.webContents.send(PRODUCT_MCP_INVALIDATION_CHANNEL, payload)
-                      }
-                    }
+                    broadcastProductInvalidationToWindows(payload, BrowserWindow.getAllWindows())
                   },
                 })
               },
@@ -897,34 +937,103 @@ if (gotTheLock) {
             {
               name: "Dev MCP server",
               run: async () => {
-                devMcpServer = await startDevMcpServer({
+                const devMcpInput = {
                   enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
                   userDataPath: app.getPath("userData"),
                   checkout: app.getAppPath(),
                   profile: basename(app.getPath("userData")),
+                }
+                devMcpServer = await startDevMcpServer(devMcpInput)
+                registerDatabaseMaintenanceParticipant("dev-mcp-server", {
+                  pause: async () => {
+                    await devMcpServer?.stop()
+                    devMcpServer = null
+                  },
+                  resume: async () => {
+                    devMcpServer = await startDevMcpServer(devMcpInput)
+                  },
                 })
               },
             },
             {
               name: "Interrupted MCP run recovery",
-              run: () => recoverInterruptedMcpRuns(getDatabasePath()),
+              run: () => {
+                const databasePath = getDatabasePath()
+                return recoverInterruptedMcpRuns(
+                  databasePath,
+                  getMainRuntimeLaunchService(databasePath),
+                )
+              },
+            },
+            {
+              name: "Multi-agent operations projection and control recovery",
+              run: () => {
+                const databasePath = getDatabasePath()
+                registerMainRuntimeOperations(
+                  databasePath,
+                  getMainRuntimeLaunchService(databasePath),
+                )
+                registerWorkflowAgentMaterializer(
+                  createLazyAgentProfileWorkflowMaterializerPort(initDatabase),
+                )
+                return recoverOrchestrationOperations(databasePath)
+              },
+            },
+            {
+              name: "Automation scheduler",
+              run: async () => {
+                automationScheduler = new AutomationScheduler({
+                  databasePath: getDatabasePath(),
+                  owner: `desktop-${process.pid}`,
+                  nextFireCalculator: new CronAutomationNextFireCalculator(),
+                  dispatch: createAutomationExecutionDispatcher(getDatabasePath()),
+                  maxSleepMs: 500,
+                  onError: (error) => console.error("[App] Automation scheduler failed:", error),
+                })
+                await automationScheduler.start()
+              },
+            },
+            {
+              name: "Operation workspace reconciliation",
+              run: () => reconcileOperationWorkspaces(getDatabasePath()),
             },
             {
               name: "Pending run scheduler",
               run: () => {
-                const pendingRunLauncher = createMainRunLauncher()
-                const orchestrationService = createAgentOrchestrationService(getDatabasePath())
+                const databasePath = getDatabasePath()
+                const runtimeLaunchService = getMainRuntimeLaunchService(databasePath)
+                const pendingRunLauncher = runtimeLaunchService.launch
+                const orchestrationService = createAgentOrchestrationService(databasePath)
                 const launchPendingRuns = async () => {
                   if (pendingRunDrainActive) return
                   pendingRunDrainActive = true
                   try {
                     orchestrationService.tickAll()
+                    if (!workflowAdvanceActive) {
+                      workflowAdvanceActive = true
+                      void advancePendingWorkflows(databasePath)
+                        .then((result) => {
+                          if (result.failed > 0)
+                            console.error(
+                              `[App] ${result.failed}/${result.attempted} workflow advances failed.`,
+                            )
+                        })
+                        .catch((error) => console.error("[App] Workflow advance failed:", error))
+                        .finally(() => {
+                          workflowAdvanceActive = false
+                        })
+                    }
                     for (const request of orchestrationService.listCancellationRequests()) {
-                      if (request.harness === "codex") cancelActiveCodexRun(request)
-                      else if (request.harness === "claude-code") cancelActiveClaudeSession(request)
-                      else if (request.harness === "cursor-agent") cancelActiveCursorRun(request)
-                      else cancelActiveOpencodeRun(request)
-                      orchestrationService.acknowledgeCancellationRequest(request.runId)
+                      const handled = await runtimeLaunchService.cancel(
+                        request.runId,
+                        "orchestration-cancelled",
+                      )
+                      if (handled) {
+                        orchestrationService.acknowledgeCancellationRequest(request.runId)
+                      }
+                    }
+                    for (const request of stopRunningRunsOverUsageBudget(initDatabase())) {
+                      await runtimeLaunchService.cancel(request.runId, "usage-budget-exceeded")
                     }
                     await drainPendingMcpRuns(getDatabasePath(), pendingRunLauncher)
                   } catch (error) {
@@ -933,17 +1042,27 @@ if (gotTheLock) {
                     pendingRunDrainActive = false
                   }
                 }
-                pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                const resumePendingRunScheduler = () => {
+                  if (!pendingRunTimer)
+                    pendingRunTimer = setInterval(() => void launchPendingRuns(), 500)
+                }
+                registerDatabaseMaintenanceParticipant("pending-run-scheduler", {
+                  pause: abortAndWaitForAgentSessions,
+                  resume: resumePendingRunScheduler,
+                })
+                resumePendingRunScheduler()
                 void launchPendingRuns()
               },
             },
             {
               name: "Usage startup catch-up",
               run: () => {
-                void runStartupCatchUp({
-                  db: initDatabase(),
-                  getSecret: getAppUsageSecret,
-                }).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
+                void withDatabaseOperation(() =>
+                  runStartupCatchUp({
+                    db: initDatabase(),
+                    getSecret: getAppUsageSecret,
+                  }),
+                ).catch((error) => console.warn("[Usage] Startup catch-up failed:", error))
               },
             },
           ],
@@ -954,6 +1073,8 @@ if (gotTheLock) {
       cleanup: async () => {
         if (pendingRunTimer) clearInterval(pendingRunTimer)
         pendingRunTimer = null
+        await automationScheduler?.stop()
+        automationScheduler = null
         await devMcpServer?.stop()
         devMcpServer = null
         await productMcpInvalidationBridge?.stop()
@@ -1020,6 +1141,10 @@ if (gotTheLock) {
       runAppShutdown({
         persistProviderSessions: abortAndWaitForAgentSessions,
         cancelPendingOAuth: () => cancelAllPendingOAuth(),
+        stopAutomationScheduler: async () => {
+          await automationScheduler?.stop()
+          automationScheduler = null
+        },
         stopDevMcpServer: async () => {
           await devMcpServer?.stop()
           devMcpServer = null

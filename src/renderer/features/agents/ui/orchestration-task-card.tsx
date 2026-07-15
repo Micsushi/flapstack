@@ -1,7 +1,17 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { CirclePause, CirclePlay, GitFork, Plus, RefreshCw, Replace, Square } from "lucide-react"
+import { useSetAtom } from "jotai"
+import {
+  CirclePause,
+  CirclePlay,
+  GitFork,
+  PanelsTopLeft,
+  Plus,
+  RefreshCw,
+  Replace,
+  Square,
+} from "lucide-react"
 import { toast } from "sonner"
 import type {
   OrchestrationAgentDefinition,
@@ -11,6 +21,7 @@ import type {
   OrchestrationStopConditions,
   OrchestrationTaskOverviewDto,
 } from "../../../../shared/agent-orchestration"
+import type { CoordinationEngine } from "../../../../shared/coordination-engine"
 import {
   customPermissionCapabilityKeys,
   disabledCustomPermissions,
@@ -28,6 +39,12 @@ import { Input } from "../../../components/ui/input"
 import { Textarea } from "../../../components/ui/textarea"
 import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
+import { desktopViewAtom } from "../atoms"
+import { openOperationWorkspace } from "../../saved-workspaces/operation-navigation"
+import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
+import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
+import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
+import { OrchestrationActivityPanel } from "./orchestration-activity-panel"
 
 type AgentEditorMode =
   | { kind: "create-orchestration"; createTask: boolean }
@@ -212,6 +229,9 @@ export function OrchestrationOverviewCard({
   onRetry,
   onReplace,
   onAdd,
+  onLineageAction,
+  onStartCoordination,
+  onOpenWorkspace,
 }: {
   overview: OrchestrationTaskOverviewDto
   lineage: OrchestrationLineageDto
@@ -222,9 +242,15 @@ export function OrchestrationOverviewCard({
   onRetry: (agent: OrchestrationAgentDto) => void
   onReplace: (agent: OrchestrationAgentDto) => void
   onAdd: () => void
+  onLineageAction?: (
+    agentId: string,
+    action: "send" | "follow-up" | "interrupt",
+    message: string | null,
+  ) => void
+  onStartCoordination?: () => void
+  onOpenWorkspace: () => void
 }) {
   const { orchestration, aggregate, agents } = overview
-  const navigation = getLineageNavigation(overview, lineage, currentChatId)
   const cost = formatOrchestrationCost(
     aggregate.exactCostUsdMicros,
     aggregate.providerReportedCostUsdMicros,
@@ -263,6 +289,15 @@ export function OrchestrationOverviewCard({
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            onClick={onOpenWorkspace}
+            aria-label="Open operation workspace"
+          >
+            <PanelsTopLeft className="h-3.5 w-3.5" />
+          </Button>
           {canPause && (
             <Button
               size="icon"
@@ -347,36 +382,28 @@ export function OrchestrationOverviewCard({
         <p className="text-[10px] text-muted-foreground">Stop at {stopConditions.join(" · ")}</p>
       )}
 
-      {(navigation.parentChatId || navigation.childChats.length > 0) && (
-        <div className="rounded-md border border-border/60 p-2">
-          <div className="mb-1.5 text-[10px] font-medium text-muted-foreground">Lineage</div>
-          <div className="flex flex-wrap gap-1">
-            {navigation.parentChatId && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 px-2 text-[10px]"
-                onClick={() => onNavigate(navigation.parentChatId!)}
-                aria-label="Open parent agent chat"
-              >
-                <GitFork className="mr-1 h-3 w-3 rotate-180" /> Parent
-              </Button>
-            )}
-            {navigation.childChats.map((child) => (
-              <Button
-                key={child.id}
-                variant="outline"
-                size="sm"
-                className="h-6 max-w-full px-2 text-[10px]"
-                onClick={() => onNavigate(child.id)}
-                aria-label={`Open child agent chat ${child.label}`}
-              >
-                <GitFork className="mr-1 h-3 w-3" /> <span className="truncate">{child.label}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
+      {lineage.engine &&
+        lineage.engine.engine !== "workflow" &&
+        !lineage.engine.providerIdentity && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[10px]"
+            disabled={busy || !onStartCoordination}
+            onClick={onStartCoordination}
+          >
+            Start {lineage.engine.engine} coordination
+          </Button>
+        )}
+
+      <OrchestrationLineageTree
+        lineage={lineage}
+        onNavigate={onNavigate}
+        currentChatId={currentChatId}
+        onAction={onLineageAction}
+      />
+
+      <OrchestrationActivityPanel taskId={orchestration.taskId} agents={agents} />
 
       <ul aria-label="Orchestration agents" className="space-y-1.5">
         {agents.map((agent) => (
@@ -493,12 +520,14 @@ function StopNumberField({
 
 function AgentEditorDialog({
   mode,
+  projectId,
   open,
   busy,
   onOpenChange,
   onSubmit,
 }: {
   mode: AgentEditorMode
+  projectId: string
   open: boolean
   busy: boolean
   onOpenChange: (open: boolean) => void
@@ -507,12 +536,18 @@ function AgentEditorDialog({
     maxParallelAgents: number,
     taskName: string,
     stopConditions: OrchestrationStopConditions,
+    coordinationEngine: CoordinationEngine | undefined,
   ) => void
 }) {
   const seed = mode.kind === "replace" ? mode.agent.definition : emptyDefinition
   const [definition, setDefinition] = useState<OrchestrationAgentDefinition>(seed)
   const [maxParallelAgents, setMaxParallelAgents] = useState(2)
   const [taskName, setTaskName] = useState("Agent orchestration")
+  const [coordinationEngine, setCoordinationEngine] = useState<CoordinationEngine | null>(null)
+  const enginePreview = trpc.coordinationEngines.preview.useQuery({
+    projectId,
+    perLaunchEngine: coordinationEngine,
+  })
   const [stopFields, setStopFields] = useState({
     targetCompletedAgents: "",
     targetProgressPercent: "",
@@ -585,6 +620,27 @@ function AgentEditorDialog({
               <option value="cursor-agent">Cursor</option>
               <option value="openrouter">OpenRouter</option>
               <option value="nanogpt">NanoGPT</option>
+              <option value="local">Local</option>
+            </select>
+          </label>
+          <label className="text-xs">
+            Runtime preference
+            <select
+              className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              value={definition.runtimePreference ?? "auto"}
+              onChange={(event) =>
+                setDefinition({
+                  ...definition,
+                  runtimePreference: event.target.value as NonNullable<
+                    OrchestrationAgentDefinition["runtimePreference"]
+                  >,
+                })
+              }
+            >
+              <option value="auto">Auto</option>
+              <option value="codex">Codex</option>
+              <option value="claude-code">Claude Code</option>
+              <option value="flapstack-native">Flapstack native</option>
             </select>
           </label>
           <label className="text-xs">
@@ -615,6 +671,7 @@ function AgentEditorDialog({
                     "cursor-agent": "cursor",
                     openrouter: "openrouter",
                     nanogpt: "nanogpt",
+                    local: "local",
                   }[definition.harness]
                 }
               >
@@ -625,6 +682,7 @@ function AgentEditorDialog({
                     "cursor-agent": "Cursor",
                     openrouter: "OpenRouter",
                     nanogpt: "NanoGPT",
+                    local: "Local / Ollama",
                   }[definition.harness]
                 }
               </option>
@@ -715,6 +773,14 @@ function AgentEditorDialog({
               <option value="none">None</option>
             </select>
           </label>
+          {mode.kind === "create-orchestration" && (
+            <CoordinationEngineLaunchPreviewPanel
+              preview={enginePreview.data ?? null}
+              selection={coordinationEngine}
+              onSelectionChange={setCoordinationEngine}
+              loading={enginePreview.isLoading}
+            />
+          )}
           {mode.kind === "create-orchestration" && (
             <label className="text-xs">
               Maximum parallel agents
@@ -857,32 +923,40 @@ function AgentEditorDialog({
               (Boolean(stopFields.maxCostUsd) &&
                 !stopFields.maxTotalTokens &&
                 !stopFields.maxWallClockMinutes) ||
+              (mode.kind === "create-orchestration" &&
+                (enginePreview.isLoading || enginePreview.data?.ok === false)) ||
               (mode.kind === "create-orchestration" && mode.createTask && !taskName.trim())
             }
             onClick={() =>
-              onSubmit(definition, maxParallelAgents, taskName, {
-                ...(stopFields.targetCompletedAgents && {
-                  targetCompletedAgents: Number(stopFields.targetCompletedAgents),
-                }),
-                ...(stopFields.targetProgressPercent && {
-                  targetProgressPercent: Number(stopFields.targetProgressPercent),
-                }),
-                ...(stopFields.maxWallClockMinutes && {
-                  maxWallClockMs: Number(stopFields.maxWallClockMinutes) * 60_000,
-                }),
-                ...(stopFields.maxTotalTokens && {
-                  maxTotalTokens: Number(stopFields.maxTotalTokens),
-                }),
-                ...(stopFields.maxCostUsd && {
-                  maxCostUsdMicros: Math.round(Number(stopFields.maxCostUsd) * 1_000_000),
-                }),
-                ...(stopFields.maxFailures && {
-                  maxFailures: Number(stopFields.maxFailures),
-                }),
-                ...(stopFields.maxBlockers && {
-                  maxBlockers: Number(stopFields.maxBlockers),
-                }),
-              })
+              onSubmit(
+                definition,
+                maxParallelAgents,
+                taskName,
+                {
+                  ...(stopFields.targetCompletedAgents && {
+                    targetCompletedAgents: Number(stopFields.targetCompletedAgents),
+                  }),
+                  ...(stopFields.targetProgressPercent && {
+                    targetProgressPercent: Number(stopFields.targetProgressPercent),
+                  }),
+                  ...(stopFields.maxWallClockMinutes && {
+                    maxWallClockMs: Number(stopFields.maxWallClockMinutes) * 60_000,
+                  }),
+                  ...(stopFields.maxTotalTokens && {
+                    maxTotalTokens: Number(stopFields.maxTotalTokens),
+                  }),
+                  ...(stopFields.maxCostUsd && {
+                    maxCostUsdMicros: Math.round(Number(stopFields.maxCostUsd) * 1_000_000),
+                  }),
+                  ...(stopFields.maxFailures && {
+                    maxFailures: Number(stopFields.maxFailures),
+                  }),
+                  ...(stopFields.maxBlockers && {
+                    maxBlockers: Number(stopFields.maxBlockers),
+                  }),
+                },
+                coordinationEngine ?? undefined,
+              )
             }
           >
             {busy ? "Saving…" : title}
@@ -904,6 +978,7 @@ export function OrchestrationTaskCard({
   currentChatId: string
   onNavigate: (chatId: string) => void
 }) {
+  const setDesktopView = useSetAtom(desktopViewAtom)
   const utils = trpc.useUtils()
   const taskQueryId = taskId ?? ""
   const overviewQuery = trpc.spawnedAgents.getTaskOverview.useQuery(
@@ -936,8 +1011,15 @@ export function OrchestrationTaskCard({
   const replace = trpc.spawnedAgents.replaceAgent.useMutation(mutationOptions)
   const add = trpc.spawnedAgents.addAgent.useMutation(mutationOptions)
   const create = trpc.spawnedAgents.createOrchestration.useMutation(mutationOptions)
+  const coordinate =
+    trpc.orchestrationOperations.executeCoordinationAction.useMutation(mutationOptions)
   const busy =
-    control.isPending || retry.isPending || replace.isPending || add.isPending || create.isPending
+    control.isPending ||
+    retry.isPending ||
+    replace.isPending ||
+    add.isPending ||
+    create.isPending ||
+    coordinate.isPending
   const overview = overviewQuery.data
   const lineage = lineageQuery.data
 
@@ -945,11 +1027,25 @@ export function OrchestrationTaskCard({
     () => (editorMode?.kind === "replace" ? editorMode.agent : null),
     [editorMode],
   )
+  const openWorkspace = async (operationTaskId: string) => {
+    try {
+      const opened = await openOperationWorkspace({
+        projectId,
+        taskId: operationTaskId,
+        fetchWorkspace: (input) => utils.savedWorkspaces.getOperationForTask.fetch(input),
+        showSavedWorkspaces: () => setDesktopView("saved-workspaces"),
+      })
+      if (!opened) toast.error("Operation workspace metadata is not available yet.")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Operation workspace could not open.")
+    }
+  }
   const submit = (
     agent: OrchestrationAgentDefinition,
     maxParallelAgents: number,
     taskName: string,
     stopConditions: OrchestrationStopConditions,
+    coordinationEngine: CoordinationEngine | undefined,
   ) => {
     if (editorMode?.kind === "create-orchestration") {
       create.mutate(
@@ -959,17 +1055,20 @@ export function OrchestrationTaskCard({
           initiatingChatId: currentChatId,
           maxParallelAgents,
           stopConditions,
+          coordinationEngine,
           agents: [agent],
         },
         {
-          onSuccess: async () => {
+          onSuccess: async (result) => {
             setEditorMode(null)
             await Promise.all([
               utils.tasks.list.invalidate(),
               utils.chats.list.invalidate(),
               utils.chats.get.invalidate({ id: currentChatId }),
               utils.spawnedAgents.previewLineage.invalidate(),
+              utils.savedWorkspaces.list.invalidate(),
             ])
+            await openWorkspace(result.orchestration.taskId)
           },
         },
       )
@@ -1011,6 +1110,7 @@ export function OrchestrationTaskCard({
           <AgentEditorDialog
             key={editorMode.kind}
             mode={editorMode}
+            projectId={projectId}
             open
             busy={busy}
             onOpenChange={(open) => !open && setEditorMode(null)}
@@ -1034,11 +1134,45 @@ export function OrchestrationTaskCard({
         onRetry={(agent) => retry.mutate({ taskId: taskQueryId, agentId: agent.id })}
         onReplace={(agent) => setEditorMode({ kind: "replace", agent })}
         onAdd={() => setEditorMode({ kind: "add" })}
+        onLineageAction={(agentId, action, message) => {
+          const providerIdentity = lineage.engine?.providerIdentity
+          if (!providerIdentity) {
+            toast.error("Coordination provider identity is unavailable.")
+            return
+          }
+          coordinate.mutate({
+            taskId: taskQueryId,
+            action: {
+              schemaVersion: 1,
+              kind: action,
+              orchestrationId: taskQueryId,
+              providerIdentity,
+              targetAgentId: agentId,
+              message,
+            },
+          })
+        }}
+        onStartCoordination={() =>
+          coordinate.mutate({
+            taskId: taskQueryId,
+            action: {
+              schemaVersion: 1,
+              kind: "start",
+              orchestrationId: taskQueryId,
+              providerIdentity: null,
+            },
+          })
+        }
+        onOpenWorkspace={() => void openWorkspace(overview.orchestration.taskId)}
       />
+      <div className="px-3 pb-3">
+        <OrchestrationWorkflowPanel taskId={taskQueryId} />
+      </div>
       {editorMode && (
         <AgentEditorDialog
           key={`${editorMode.kind}-${selectedReplacement?.id ?? "new"}`}
           mode={editorMode}
+          projectId={projectId}
           open
           busy={busy}
           onOpenChange={(open) => !open && setEditorMode(null)}

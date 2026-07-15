@@ -1,19 +1,44 @@
 name: Provider Drift
 
 on:
+  schedule:
+    - cron: "17 */6 * * *"
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  pull_request:
+    paths:
+      - ".github/workflows/provider-drift.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/check-codex-model-catalog.mjs"
+      - "src/shared/model-catalog.ts"
+      - "tests/model-catalog.test.ts"
 
 permissions:
   contents: read
 
 jobs:
+  scheduled-health:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Check
+        run: npm run check
+
   codex-catalog:
-    if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, flapstack]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -35,6 +60,7 @@ jobs:
         run: npx codex debug models --bundled > codex-models-bundled.json
 
       - name: Read live Codex model catalog
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || secrets.CODEX_API_KEY }}
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
@@ -46,7 +72,7 @@ jobs:
           npx codex debug models > codex-models-live.json
 
       - name: Check live Codex catalog drift
-        if: hashFiles('codex-models-live.json') != ''
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && hashFiles('codex-models-live.json') != ''
         env:
           CODEX_MODELS_CATALOG_JSON: codex-models-live.json
           REQUIRE_CODEX_MODELS_CATALOG: "1"
@@ -57,7 +83,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: codex-model-catalogs
-          retention-days: 1
           path: |
             codex-models-bundled.json
             codex-models-live.json

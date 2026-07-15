@@ -7,9 +7,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { migrateDatabase } from "../src/main/lib/db/migrate"
+import {
+  migrateDatabase,
+  normalizeMultiAgentOperationsTransitionMigration,
+} from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
-import { recoverInterruptedMcpRuns } from "../src/main/lib/run-launch-service"
+import { drainPendingMcpRuns, recoverInterruptedMcpRuns } from "../src/main/lib/run-launch-service"
 
 const sourceMigrations = resolve(process.cwd(), "drizzle")
 const directories: string[] = []
@@ -21,7 +24,7 @@ afterEach(() => {
 })
 
 describe("Stage 3 migration rebase", () => {
-  it("builds a fresh profile with safe Stage 3 defaults and append-only audit", () => {
+  it("builds a fresh profile with safe Stage 3 defaults and append-only audit", async () => {
     const { path, sqlite } = database("fresh")
     try {
       migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
@@ -32,13 +35,210 @@ describe("Stage 3 migration rebase", () => {
         .run()
 
       expectStage3Schema(sqlite, "fresh-chat")
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }
   })
 
-  it("upgrades the current main-era migration state once without duplicate schema", () => {
+  it("upgrades the exact final Stage 3 migration baseline into Stage 4", () => {
+    const { sqlite, directory } = database("final-stage3")
+    try {
+      migrate(drizzle(sqlite, { schema }), {
+        migrationsFolder: migrationSubset(directory, 25),
+      })
+      for (const [tag, legacyWhen] of [
+        ["0024_mcp_exposure_default_on", 1784134199062],
+        ["0025_all_provider_mcp_default_on", 1784135036918],
+      ] as const) {
+        sqlite
+          .prepare("UPDATE __drizzle_migrations SET created_at = ? WHERE created_at = ?")
+          .run(legacyWhen, migrationEntry(tag).when)
+      }
+      sqlite
+        .prepare(
+          `INSERT INTO projects (id, name, path, created_at, updated_at)
+           VALUES ('final-stage3-project', 'Final Stage 3', '/tmp/final-stage3', 1784030400, 1784030400)`,
+        )
+        .run()
+
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+      expect(tableNames(sqlite)).toEqual(
+        expect.arrayContaining([
+          "project_vault_policies",
+          "task_proposals",
+          "project_vaults",
+          "plan_source_registrations",
+          "automation_executions",
+          "usage_budgets",
+          "extension_enablement_policies",
+        ]),
+      )
+      expect(sqlite.prepare("SELECT name, created_at FROM projects").all()).toEqual([
+        { name: "Final Stage 3", created_at: 1784030400 },
+      ])
+      for (const tag of ["0024_mcp_exposure_default_on", "0025_all_provider_mcp_default_on"]) {
+        const entry = migrationEntry(tag)
+        expect(
+          sqlite
+            .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+            .get(entry.when),
+        ).toEqual({ count: 1 })
+      }
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("runs canonical 0037 normally for a fresh profile", () => {
+    const { sqlite } = database("fresh-canonical-0037")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      const entry = migrationEntry("0037_multi_agent_operations")
+      const hash = createHash("sha256")
+        .update(readFileSync(join(sourceMigrations, `${entry.tag}.sql`), "utf8"))
+        .digest("hex")
+
+      expect(tableNames(sqlite)).toContain("orchestration_transition_events")
+      expect(
+        sqlite
+          .prepare("SELECT hash FROM __drizzle_migrations WHERE created_at = ?")
+          .get(entry.when),
+      ).toEqual({ hash })
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("repairs a supported pre-table 0037 profile exactly once and preserves data", async () => {
+    const { path, sqlite } = database("missing-transition-table")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      sqlite
+        .prepare(
+          `INSERT INTO orchestration_templates
+             (id, name, version, definition_json, created_at, updated_at)
+           VALUES ('preserved-template', 'Preserved', 1, '{"schemaVersion":1}', 1, 1)`,
+        )
+        .run()
+      sqlite.exec("DROP TABLE orchestration_transition_events")
+      const entry = migrationEntry("0037_multi_agent_operations")
+      sqlite
+        .prepare("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?")
+        .run("bcd3c32d26d654245b9534525d42b980acad6ed05e6f5b0d1ae7a8b42077b04e", entry.when)
+      expect(tableNames(sqlite)).not.toContain("orchestration_transition_events")
+
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(true)
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(false)
+
+      expect(tableNames(sqlite)).toContain("orchestration_transition_events")
+      expect(
+        sqlite
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name",
+          )
+          .all("orchestration_transition_events"),
+      ).toEqual([
+        { name: "orchestration_transition_dedup_idx" },
+        { name: "orchestration_transition_task_order_idx" },
+        { name: "sqlite_autoindex_orchestration_transition_events_1" },
+      ])
+      expect(sqlite.prepare("SELECT name FROM orchestration_templates").all()).toEqual([
+        { name: "Preserved" },
+      ])
+      expect(
+        sqlite
+          .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+          .get(entry.when),
+      ).toEqual({ count: 1 })
+      expect(await drainPendingMcpRuns(path, async () => {})).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("leaves an already-complete 0037 profile unchanged", () => {
+    const { sqlite } = database("complete-0037")
+    try {
+      migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+      const before = sqlite
+        .prepare(
+          "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? OR name = ? ORDER BY type, name",
+        )
+        .all("orchestration_transition_events", "orchestration_transition_events")
+
+      expect(normalizeMultiAgentOperationsTransitionMigration(sqlite, sourceMigrations)).toBe(false)
+      expect(
+        sqlite
+          .prepare(
+            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ? OR name = ? ORDER BY type, name",
+          )
+          .all("orchestration_transition_events", "orchestration_transition_events"),
+      ).toEqual(before)
+    } finally {
+      sqlite.close()
+    }
+  })
+
+  it("fails closed for recorded 0037 with missing or partial authority", () => {
+    const missing = database("missing-0037-authority").sqlite
+    const partial = database("partial-0037-authority").sqlite
+    const hostile = database("hostile-0037-authority").sqlite
+    try {
+      const entry = migrationEntry("0037_multi_agent_operations")
+      for (const sqlite of [missing, partial, hostile]) {
+        sqlite.exec(
+          "CREATE TABLE __drizzle_migrations (id integer PRIMARY KEY AUTOINCREMENT, hash text NOT NULL, created_at numeric)",
+        )
+        sqlite
+          .prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('legacy', ?)")
+          .run(entry.when)
+      }
+      partial.exec("CREATE TABLE task_orchestrations (task_id text NOT NULL)")
+      hostile.exec(`
+        CREATE TABLE task_orchestrations (task_id text PRIMARY KEY NOT NULL);
+        CREATE TABLE orchestration_transition_events (
+          id text,
+          dedup_key text,
+          task_id text,
+          entity_type text,
+          entity_id text,
+          agent_id text,
+          run_id text,
+          kind text,
+          phase text,
+          summary text,
+          created_at integer
+        );
+        CREATE INDEX orchestration_transition_dedup_idx
+          ON orchestration_transition_events (id);
+        CREATE UNIQUE INDEX orchestration_transition_task_order_idx
+          ON orchestration_transition_events (created_at);
+      `)
+      const hostileSchemaBefore = sqliteSchema(hostile)
+
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(missing, sourceMigrations),
+      ).toThrow(/missing task_orchestrations authority/i)
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(partial, sourceMigrations),
+      ).toThrow(/missing task_orchestrations authority/i)
+      expect(() =>
+        normalizeMultiAgentOperationsTransitionMigration(hostile, sourceMigrations),
+      ).toThrow(/malformed or partial/i)
+      expect(tableNames(missing)).not.toContain("orchestration_transition_events")
+      expect(tableNames(partial)).not.toContain("orchestration_transition_events")
+      expect(sqliteSchema(hostile)).toEqual(hostileSchemaBefore)
+    } finally {
+      missing.close()
+      partial.close()
+      hostile.close()
+    }
+  })
+
+  it("upgrades the current main-era migration state once without duplicate schema", async () => {
     const { path, sqlite, directory } = database("main-era")
     try {
       const mainMigrations = migrationSubset(directory, 16)
@@ -53,7 +253,7 @@ describe("Stage 3 migration rebase", () => {
       migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
 
       expectStage3Schema(sqlite, "main-chat")
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }
@@ -188,7 +388,7 @@ describe("Stage 3 migration rebase", () => {
     }
   })
 
-  it("reconciles the legacy Stage 3 chain after applying its missing main-era migration", () => {
+  it("reconciles the legacy Stage 3 chain after applying its missing main-era migration", async () => {
     const { path, sqlite, directory } = database("legacy")
     try {
       const preVoiceDurationMigrations = migrationSubset(directory, 15)
@@ -218,7 +418,7 @@ describe("Stage 3 migration rebase", () => {
       expect(
         sqlite.prepare("SELECT id FROM mcp_audit_records WHERE id = 'legacy-audit'").all(),
       ).toEqual([{ id: "legacy-audit" }])
-      expect(recoverInterruptedMcpRuns(path)).toBe(0)
+      expect(await recoverInterruptedMcpRuns(path)).toBe(0)
     } finally {
       sqlite.close()
     }
@@ -301,6 +501,38 @@ describe("Stage 3 migration rebase", () => {
       sqlite.close()
     }
   })
+
+  it.each([
+    { name: "old-0023", lastMigration: 23 },
+    { name: "old-0030", lastMigration: 30 },
+  ])(
+    "upgrades a pre-sync Stage 4 $name profile without losing feature data",
+    ({ name, lastMigration }) => {
+      const { sqlite, directory } = database(`stage4-${name}`)
+      try {
+        migrate(drizzle(sqlite, { schema }), {
+          migrationsFolder: preSyncStage4MigrationSubset(directory, lastMigration),
+        })
+        seedPreSyncStage4Data(sqlite, lastMigration)
+
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+        migrateDatabase(drizzle(sqlite, { schema }), sqlite, sourceMigrations)
+
+        expectStage4Data(sqlite, lastMigration)
+        expect(
+          sqlite.prepare("SELECT created_at FROM projects WHERE id = 'stage4-project'").get(),
+        ).toEqual({ created_at: 1784030400 })
+        const timestampEntry = migrationEntry("0023_stage3_timestamp_seconds")
+        expect(
+          sqlite
+            .prepare("SELECT count(*) count FROM __drizzle_migrations WHERE created_at = ?")
+            .get(timestampEntry.when),
+        ).toEqual({ count: 1 })
+      } finally {
+        sqlite.close()
+      }
+    },
+  )
 })
 
 function database(name: string): {
@@ -332,6 +564,183 @@ function migrationSubset(directory: string, lastIndex: number): string {
     cpSync(join(sourceMigrations, `${entry.tag}.sql`), join(target, `${entry.tag}.sql`))
   }
   return target
+}
+
+function preSyncStage4MigrationSubset(directory: string, lastIndex: number): string {
+  const target = join(directory, `pre-sync-stage4-through-${lastIndex}`)
+  mkdirSync(join(target, "meta"), { recursive: true })
+  const journal = JSON.parse(
+    readFileSync(join(sourceMigrations, "meta", "_journal.json"), "utf8"),
+  ) as {
+    version: string
+    dialect: string
+    entries: Array<{
+      idx: number
+      version: string
+      when: number
+      tag: string
+      breakpoints: boolean
+    }>
+  }
+  const entries = [
+    ...journal.entries.filter((entry) => entry.idx <= 22),
+    {
+      ...journal.entries.find((entry) => entry.idx === 23)!,
+      when: 1784010172812,
+      tag: "0023_equal_zzzax",
+    },
+    ...journal.entries
+      .filter((entry) => entry.idx >= 26 && entry.idx <= lastIndex + 2)
+      .map((entry) => ({
+        ...entry,
+        idx: entry.idx - 2,
+        tag: renumberMigrationTag(entry.tag, -2),
+      })),
+  ]
+  writeFileSync(
+    join(target, "meta", "_journal.json"),
+    `${JSON.stringify({ ...journal, entries }, null, 2)}\n`,
+  )
+
+  for (const entry of entries) {
+    if (entry.idx === 23) {
+      writeFileSync(join(target, `${entry.tag}.sql`), PRE_SYNC_STAGE4_0023_SQL)
+      continue
+    }
+    const currentTag = entry.idx >= 24 ? renumberMigrationTag(entry.tag, 2) : entry.tag
+    const sql = readFileSync(join(sourceMigrations, `${currentTag}.sql`), "utf8")
+    if (entry.idx === 24) {
+      const taskProposalStart = sql.indexOf("CREATE TABLE `task_proposals`")
+      if (taskProposalStart < 0) throw new Error("Missing Stage 4 0024 task proposal SQL")
+      writeFileSync(join(target, `${entry.tag}.sql`), sql.slice(taskProposalStart))
+      continue
+    }
+    writeFileSync(join(target, `${entry.tag}.sql`), sql)
+  }
+  return target
+}
+
+function renumberMigrationTag(tag: string, offset: number): string {
+  const match = /^(\d{4})(_.+)$/.exec(tag)
+  if (!match) throw new Error(`Invalid migration tag: ${tag}`)
+  return `${String(Number(match[1]) + offset).padStart(4, "0")}${match[2]}`
+}
+
+const PRE_SYNC_STAGE4_0023_SQL = `CREATE TABLE \`project_vault_policies\` (
+  \`project_id\` text PRIMARY KEY NOT NULL,
+  \`location_mode\` text DEFAULT 'app-managed' NOT NULL,
+  \`central_path\` text NOT NULL,
+  \`project_owned_path\` text,
+  \`git_tracking_enabled\` integer DEFAULT false NOT NULL,
+  \`portability_mode\` text DEFAULT 'export-required' NOT NULL,
+  \`worktree_mode\` text DEFAULT 'shared-across-worktrees' NOT NULL,
+  \`deletion_mode\` text DEFAULT 'retain-until-explicit-delete' NOT NULL,
+  \`created_at\` integer,
+  \`updated_at\` integer,
+  FOREIGN KEY (\`project_id\`) REFERENCES \`projects\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);\n`
+
+function seedPreSyncStage4Data(sqlite: Database.Database, lastMigration: number): void {
+  const milliseconds = Date.UTC(2026, 6, 14, 12, 0, 0)
+  sqlite
+    .prepare(
+      `INSERT INTO projects (id, name, path, created_at, updated_at)
+       VALUES ('stage4-project', 'Stage 4', '/tmp/stage4', ?, ?)`,
+    )
+    .run(milliseconds, milliseconds)
+  sqlite
+    .prepare(
+      `INSERT INTO project_vault_policies (
+        project_id, central_path, created_at, updated_at
+      ) VALUES ('stage4-project', '/tmp/stage4-vault', ?, ?)`,
+    )
+    .run(milliseconds, milliseconds)
+
+  if (lastMigration >= 24) {
+    sqlite
+      .prepare(
+        `INSERT INTO task_proposals (
+          id, project_id, proposed_by_chat_id, name, created_at, updated_at
+        ) VALUES ('stage4-proposal', 'stage4-project', 'stage4-chat', 'Keep me', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 25) {
+    sqlite
+      .prepare(
+        `INSERT INTO project_vaults (project_id, root_path, created_at, updated_at)
+         VALUES ('stage4-project', '/tmp/stage4-vault', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 26) {
+    sqlite
+      .prepare(
+        `INSERT INTO plan_source_registrations (
+          id, project_id, relative_path, created_at, updated_at
+        ) VALUES ('stage4-plan', 'stage4-project', 'PLAN.md', ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 29) {
+    sqlite
+      .prepare(
+        `INSERT INTO usage_budgets (
+          id, name, scope_type, threshold_type, threshold_value, action, created_at, updated_at
+        ) VALUES (
+          'stage4-budget', 'Budget', 'global', 'total-tokens', 1000, 'soft-alert', ?, ?
+        )`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+  if (lastMigration >= 30) {
+    sqlite
+      .prepare(
+        `INSERT INTO extension_enablement_policies (
+          extension_id, harness, kind, native_scope, scope_type, scope_id, enabled,
+          created_at, updated_at
+        ) VALUES ('stage4-extension', 'codex', 'skill', 'user', 'user', 'user', 1, ?, ?)`,
+      )
+      .run(milliseconds, milliseconds)
+  }
+}
+
+function expectStage4Data(sqlite: Database.Database, lastMigration: number): void {
+  expect(tableNames(sqlite)).toEqual(
+    expect.arrayContaining([
+      "project_vault_policies",
+      "task_proposals",
+      "project_vaults",
+      "plan_source_registrations",
+      "automation_executions",
+      "usage_budgets",
+      "extension_enablement_policies",
+    ]),
+  )
+  expect(sqlite.prepare("SELECT central_path FROM project_vault_policies").all()).toEqual([
+    { central_path: "/tmp/stage4-vault" },
+  ])
+  if (lastMigration >= 24) {
+    expect(sqlite.prepare("SELECT name FROM task_proposals").all()).toEqual([{ name: "Keep me" }])
+  }
+  if (lastMigration >= 25) {
+    expect(sqlite.prepare("SELECT root_path FROM project_vaults").all()).toEqual([
+      { root_path: "/tmp/stage4-vault" },
+    ])
+  }
+  if (lastMigration >= 26) {
+    expect(sqlite.prepare("SELECT relative_path FROM plan_source_registrations").all()).toEqual([
+      { relative_path: "PLAN.md" },
+    ])
+  }
+  if (lastMigration >= 29) {
+    expect(sqlite.prepare("SELECT name FROM usage_budgets").all()).toEqual([{ name: "Budget" }])
+  }
+  if (lastMigration >= 30) {
+    expect(sqlite.prepare("SELECT extension_id FROM extension_enablement_policies").all()).toEqual([
+      { extension_id: "stage4-extension" },
+    ])
+  }
 }
 
 function expectStage3Schema(sqlite: Database.Database, chatId: string): void {
@@ -471,6 +880,17 @@ function tableNames(sqlite: Database.Database): string[] {
       name: string
     }>
   ).map((row) => row.name)
+}
+
+function sqliteSchema(sqlite: Database.Database): Array<{
+  type: string
+  name: string
+  table: string
+  sql: string | null
+}> {
+  return sqlite
+    .prepare("SELECT type, name, tbl_name AS 'table', sql FROM sqlite_master ORDER BY type, name")
+    .all() as Array<{ type: string; name: string; table: string; sql: string | null }>
 }
 
 function triggerNames(sqlite: Database.Database): string[] {
