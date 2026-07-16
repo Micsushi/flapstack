@@ -35,6 +35,7 @@ import {
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
+import { normalizeChatMode, resolveChatModePermission } from "../../../shared/chat-mode"
 
 const itemSchema = z.enum(["project", "task", "chat"])
 const name = z.string().trim().min(1).max(200)
@@ -198,7 +199,7 @@ function launchRun(
   const harness = harnessValue as AgentHarness
   const subChat = db
     .prepare(
-      "SELECT id, messages, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
+      "SELECT id, messages, mode, permission_mode, worktree_path, model FROM sub_chats WHERE chat_id = ? ORDER BY created_at LIMIT 1",
     )
     .get(input.chatId) as Row | undefined
   if (!subChat) return fail("stale-target", "Chat conversation is missing.")
@@ -217,7 +218,13 @@ function launchRun(
     }
 
   const runId = stableRunId(input.chatId, input.idempotencyKey)
-  const permissionMode = String(subChat.permission_mode ?? chat.permission_mode)
+  const requestedPermissionMode = String(
+    subChat.permission_mode ?? chat.permission_mode,
+  ) as RunPermissionMode
+  const permissionMode = resolveChatModePermission(
+    normalizeChatMode(typeof subChat.mode === "string" ? subChat.mode : null),
+    requestedPermissionMode,
+  )
   const customPermissions =
     permissionMode === "custom" && typeof chat.custom_permissions === "string"
       ? chat.custom_permissions

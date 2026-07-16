@@ -26,7 +26,13 @@ describe("usage credential hardening", () => {
     temp = mkdtempSync(join(tmpdir(), "flapstack-usage-secrets-"))
     previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
     process.env.FLAPSTACK_CONFIG_DIR = temp
-    vi.mocked(spawnSync).mockReturnValue({ status: 44, stdout: "", stderr: "" } as never)
+    const missingCredentialStatus =
+      process.platform === "darwin" ? 44 : process.platform === "linux" ? 1 : 0
+    vi.mocked(spawnSync).mockReturnValue({
+      status: missingCredentialStatus,
+      stdout: "",
+      stderr: "",
+    } as never)
   })
 
   afterEach(() => {
@@ -53,21 +59,25 @@ describe("usage credential hardening", () => {
   it("refuses to create a plaintext fallback when secure storage is unavailable", () => {
     vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "", stderr: "" } as never)
     expect(() => setUsageSecret("openrouter.api_key", "must-not-be-plaintext")).toThrow(
-      /Secure credential storage is unavailable|macOS login Keychain is locked or denied access/,
+      /Secure credential storage is unavailable|macOS login Keychain is locked or denied access|Secret Service|Windows Credential Manager/,
     )
     const path = join(temp, "usage-secrets.json")
     expect(() => readFileSync(path, "utf8")).toThrow()
   })
 
-  it("passes a Keychain secret through stdin instead of process arguments", () => {
+  it("passes a secure-store secret through stdin instead of process arguments", () => {
     vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: "", stderr: "" } as never)
     setUsageSecret("openrouter.api_key", "super-secret-value")
     const [, args, options] = vi.mocked(spawnSync).mock.calls.at(-1)!
     expect(args).not.toContain("super-secret-value")
-    expect(options).toMatchObject({
-      input: "super-secret-value\nsuper-secret-value\n",
-      timeout: 10_000,
-    })
+    if (process.platform === "darwin") {
+      expect(options).toMatchObject({
+        input: "super-secret-value\nsuper-secret-value\n",
+        timeout: 10_000,
+      })
+    } else if (process.platform === "linux") {
+      expect(options).toMatchObject({ input: "super-secret-value" })
+    }
   })
 
   it("uses an explicit secret namespace for isolated daemon evidence", () => {

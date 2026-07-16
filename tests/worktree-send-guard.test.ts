@@ -16,5 +16,15 @@ describe("stale worktree send guard", () => {
     expect(source).toContain("repairUnavailableCheckoutMutation")
     expect(source).toContain('"Choose repository"')
     expect(source).toContain("No Chats were changed.")
+
+    const queueSource = readFileSync(
+      "src/renderer/features/agents/components/queue-processor.tsx",
+      "utf8",
+    )
+    expect(queueSource).toContain("resolveWorktreeStatus.query")
+    expect(queueSource).toContain('checkout.status === "unknown"')
+    expect(queueSource.indexOf("resolveWorktreeStatus.query")).toBeLessThan(
+      queueSource.indexOf("popItem"),
+    )
   })
 })

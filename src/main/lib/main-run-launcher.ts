@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { existsSync } from "node:fs"
+import { randomUUID } from "node:crypto"
 import { createAppRouter } from "./trpc/routers"
 import {
   loadAgentRunReconciliationState,
@@ -18,7 +19,9 @@ import {
 } from "../../shared/agent-activity"
 import type {
   HarnessAdapterFactory,
+  ResolvedAgentRuntime,
   ResolvedRuntimeLaunch,
+  RuntimeAdapterProbe,
   RuntimeAdapterContext,
   RuntimeAdapterSession,
   RuntimeAdapterTurn,
@@ -81,6 +84,13 @@ import {
   resolveLocalModelToolTiers,
 } from "../../shared/local-model-contract"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
+import type { AgentInputRequest } from "../../shared/agent-input"
+import { agentInputLifecycle } from "./agent-input/service"
+import {
+  formatClaudeInputAnswers,
+  normalizeClaudeInputQuestions,
+} from "./agent-input/claude-adapter"
+import { isClaudeReadOnlyToolAllowed, isCustomToolAllowed } from "./permissions"
 import {
   buildProjectVaultRunContext,
   persistProjectVaultContextManifest,
@@ -134,7 +144,9 @@ export class MainRuntimeLaunchService {
     this.databasePath = options.databasePath ?? getDatabasePath()
     this.hookStore = options.hookStore ?? new FileHookStateStore()
     this.hookRuntimeExecutor = options.hookRuntimeExecutor ?? new NodeManagedHookRuntimeExecutor()
-    this.permissionHandler = options.permissionHandler
+    this.permissionHandler =
+      options.permissionHandler ??
+      ((runId, request) => this.requestDefaultPermission(runId, request))
     this.inputHandler = options.inputHandler
     const nativeFactory = createFlapstackNativeAdapterFactory({
       resolveDelegation: (harness) =>
@@ -269,6 +281,10 @@ export class MainRuntimeLaunchService {
     }
   }
 
+  async probe(runtime: ResolvedAgentRuntime, harness: string): Promise<RuntimeAdapterProbe> {
+    return await this.registry.probe(runtime, harness)
+  }
+
   async pause(runId: string): Promise<boolean> {
     return await this.coordinator.pause(runId)
   }
@@ -358,6 +374,72 @@ export class MainRuntimeLaunchService {
     return await this.permissionHandler(runId, request)
   }
 
+  private async requestDefaultPermission(runId: string, request: unknown): Promise<unknown> {
+    const run = this.runs.get(runId) ?? loadRunningAgentRun(this.databasePath, runId)
+    if (!run) throw new Error(`Runtime permission request references unknown run ${runId}.`)
+    const record = isPlainRecord(request) ? request : {}
+    const provider = typeof record.provider === "string" ? record.provider : null
+    const method = typeof record.method === "string" ? record.method : null
+    const toolName =
+      typeof record.toolName === "string"
+        ? record.toolName
+        : method === "item/fileChange/requestApproval"
+          ? "File change"
+          : method === "item/commandExecution/requestApproval"
+            ? "Command execution"
+            : "Runtime tool"
+    const requestId =
+      typeof record.requestId === "string" && record.requestId.trim()
+        ? record.requestId
+        : `${runId}:permission:${randomUUID()}`
+    const createdAt = Date.now()
+    const inputRequest: AgentInputRequest = {
+      requestId,
+      chatId: run.subChatId,
+      runId,
+      origin: {
+        harness: run.harness,
+        provider: provider ?? run.runtimeLaunch?.resolvedRuntime ?? run.harness,
+        ...(run.model ? { model: run.model } : {}),
+        toolName,
+      },
+      capability: { mode: "native", sameRun: true },
+      questions: [
+        {
+          id: "permission",
+          header: "Permission",
+          question: `Allow ${toolName} for this run?`,
+          options: [
+            { id: "allow-once", label: "Allow once" },
+            { id: "deny", label: "Deny" },
+          ],
+          multiSelect: false,
+          allowCustom: false,
+        },
+      ],
+      status: "pending",
+      createdAt,
+      expiresAt: createdAt + 15 * 60_000,
+    }
+    const resolution = await agentInputLifecycle.create(inputRequest, { timeoutMs: 15 * 60_000 })
+    const allowed =
+      resolution.status === "answered" &&
+      resolution.response.answers.permission?.includes("Allow once")
+
+    if (provider === "claude-code") {
+      return allowed
+        ? {
+            behavior: "allow",
+            updatedInput: isPlainRecord(record.toolInput) ? record.toolInput : {},
+          }
+        : { behavior: "deny", message: "User denied the tool request." }
+    }
+    if (method === "item/permissions/requestApproval") {
+      return { permissions: {}, scope: "turn", strictAutoReview: true }
+    }
+    return { decision: allowed ? "accept" : "cancel" }
+  }
+
   private async requestInputFromProvider(runId: string, request: unknown): Promise<unknown> {
     if (!this.inputHandler) throw new Error("Runtime input bridge is unavailable.")
     return await this.inputHandler(runId, request)
@@ -440,7 +522,7 @@ export class MainRuntimeLaunchService {
           unavailableReason: existsSync(binary) ? null : "Bundled Claude Code binary is missing.",
         }
       },
-      buildQueryOptions: async (context) => {
+      buildQueryOptions: async (context, _prompt, abortController) => {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
         const sdkOptions = getClaudeExtensionSdkOptions(authority.policy)
         const hooks = buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
@@ -457,7 +539,79 @@ export class MainRuntimeLaunchService {
           cwd: authority.cwd,
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
           includePartialMessages: true,
-          settingSources: ["project", "user"],
+          settingSources: ["user", "project", "local"],
+          canUseTool: async (
+            toolName: string,
+            toolInput: Record<string, unknown>,
+            options: { toolUseID: string },
+          ) => {
+            if (toolName === "AskUserQuestion") {
+              const questions = normalizeClaudeInputQuestions(toolInput.questions)
+              if (questions.length === 0) {
+                return { behavior: "deny", message: "Claude supplied no structured questions." }
+              }
+              const createdAt = Date.now()
+              const resolution = await agentInputLifecycle.create(
+                {
+                  requestId: options.toolUseID,
+                  chatId: context.subChatId ?? context.chatId,
+                  runId: context.runId,
+                  origin: {
+                    harness: "claude-code",
+                    provider: "anthropic",
+                    ...(context.launch.model ? { model: context.launch.model } : {}),
+                    toolName,
+                  },
+                  capability: { mode: "native", sameRun: true },
+                  questions,
+                  status: "pending",
+                  createdAt,
+                  expiresAt: createdAt + 15 * 60_000,
+                },
+                { timeoutMs: 15 * 60_000, signal: abortController.signal },
+              )
+              if (resolution.status !== "answered") {
+                return { behavior: "deny", message: resolution.message }
+              }
+              return {
+                behavior: "allow",
+                updatedInput: {
+                  questions: toolInput.questions,
+                  answers: formatClaudeInputAnswers(questions, resolution.response.answers),
+                },
+              }
+            }
+            const mode = context.launch.permission.mode
+            if (mode === "read-only") {
+              return isClaudeReadOnlyToolAllowed(toolName)
+                ? { behavior: "allow", updatedInput: toolInput }
+                : {
+                    behavior: "deny",
+                    message: `Tool "${toolName}" blocked by read-only permission mode.`,
+                  }
+            }
+            if (mode === "custom") {
+              const permissions = parseRuntimeCustomPermissions(
+                this.runs.get(context.runId)?.customPermissions ?? null,
+              )
+              return isCustomToolAllowed(permissions, toolName)
+                ? { behavior: "allow", updatedInput: toolInput }
+                : {
+                    behavior: "deny",
+                    message: `Tool "${toolName}" is disabled by custom permissions.`,
+                  }
+            }
+            if (mode === "full-access" || mode === "auto-edit-project-only") {
+              return { behavior: "allow", updatedInput: toolInput }
+            }
+            return await this.requestPermissionFromProvider(context.runId, {
+              provider: "claude-code",
+              requestId: options.toolUseID,
+              toolName,
+              toolInput,
+              toolUseID: options.toolUseID,
+            })
+          },
           systemPrompt: {
             type: "preset" as const,
             preset: "claude_code" as const,
@@ -1041,6 +1195,7 @@ async function launchLegacyStream(
   const model =
     run.harness === "codex" ? resolveCodexLaunchModel(run.model, run.reasoningEffort) : run.model
   const chatMode = normalizeChatMode(run.chatMode)
+  const reasoningEnabled = run.reasoningEffort !== "minimal" && run.reasoningEffort !== "none"
   if (run.harness === "local") {
     return launchLocalModelStream(caller, run, cwd)
   }
@@ -1055,8 +1210,10 @@ async function launchLegacyStream(
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
         mode: chatMode,
-        reasoningEnabled: run.reasoningEffort !== "minimal",
-        ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
+        reasoningEnabled,
+        ...(legacyCodexEffort(run.reasoningEffort)
+          ? { reasoningEffort: legacyCodexEffort(run.reasoningEffort)! }
+          : {}),
       })
     case "claude-code":
       return caller.claude.chat({
@@ -1068,9 +1225,9 @@ async function launchLegacyStream(
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
         mode: chatMode,
-        reasoningEnabled: run.reasoningEffort !== "minimal",
-        ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
-          ? { effort: run.reasoningEffort }
+        reasoningEnabled,
+        ...(legacyClaudeEffort(run.reasoningEffort)
+          ? { effort: legacyClaudeEffort(run.reasoningEffort)! }
           : {}),
       })
     case "cursor-agent":
@@ -1083,7 +1240,7 @@ async function launchLegacyStream(
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
-        reasoningEnabled: run.reasoningEffort !== "minimal",
+        reasoningEnabled,
       })
     case "openrouter":
     case "nanogpt":
@@ -1097,8 +1254,8 @@ async function launchLegacyStream(
         mode: chatMode,
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
-        reasoningEnabled: run.reasoningEffort !== "minimal",
-        reasoningEffort: run.reasoningEffort ?? "high",
+        reasoningEnabled,
+        reasoningEffort: legacyCodexEffort(run.reasoningEffort) ?? "high",
       })
     default:
       return unsupportedHarness(run)
@@ -1170,12 +1327,32 @@ function resolveCodexLaunchModel(
 ): string | null {
   const normalized = model?.trim()
   if (!normalized) return null
-  const effort = reasoningEffort && reasoningEffort !== "minimal" ? reasoningEffort : "low"
+  const effort =
+    reasoningEffort === "max" || reasoningEffort === "ultra"
+      ? "xhigh"
+      : reasoningEffort && reasoningEffort !== "minimal" && reasoningEffort !== "none"
+        ? reasoningEffort
+        : "low"
   const withoutEffort = normalized
-    .replace(/\/(?:minimal|low|medium|high|xhigh)$/i, "")
-    .replace(/\[(?:minimal|low|medium|high|xhigh)\]$/i, "")
+    .replace(/\/(?:none|minimal|low|medium|high|xhigh|max|ultra)$/i, "")
+    .replace(/\[(?:none|minimal|low|medium|high|xhigh|max|ultra)\]$/i, "")
   if (withoutEffort.includes("/")) return normalized
   return `${withoutEffort}/${effort}`
+}
+
+function legacyCodexEffort(
+  effort: QueuedAgentRun["reasoningEffort"],
+): "minimal" | "low" | "medium" | "high" | "xhigh" | null {
+  if (effort === "none") return "minimal"
+  if (effort === "max" || effort === "ultra") return "xhigh"
+  return effort
+}
+
+function legacyClaudeEffort(
+  effort: QueuedAgentRun["reasoningEffort"],
+): "low" | "medium" | "high" | "xhigh" | "max" | null {
+  if (!effort || effort === "none" || effort === "minimal") return null
+  return effort === "ultra" ? "max" : effort
 }
 
 async function* iterateStream(stream: unknown): AsyncIterable<unknown> {

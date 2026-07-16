@@ -63,14 +63,19 @@ type RuntimeChatEvent =
       runId: string
       events: ReturnType<typeof loadInteractiveRuntimeActivity>["events"]
     }
-  | { type: "finished"; runId: string }
+  | { type: "finished"; runId: string; durationMs: number }
 
 export const agentRuntimeChatRouter = router({
-  resolve: publicProcedure.input(resolveInputSchema).query(({ input }) => {
+  resolve: publicProcedure.input(resolveInputSchema).query(async ({ input }) => {
     const path = getDatabasePath()
+    const authority = requireRuntimeLaunchAuthority(path)
     const database = openAppDatabase(path, { readonly: true })
     try {
-      return resolveInteractiveRuntime(database, input)
+      const preliminary = resolveInteractiveRuntime(database, input)
+      const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
+      return resolveInteractiveRuntime(database, input, {
+        [preliminary.resolvedRuntime]: probe,
+      })
     } finally {
       database.close()
     }
@@ -87,7 +92,11 @@ export const agentRuntimeChatRouter = router({
         const database = openAppDatabase(path)
         let run
         try {
-          run = materializeInteractiveRuntimeRun(database, input)
+          const preliminary = resolveInteractiveRuntime(database, input)
+          const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
+          run = materializeInteractiveRuntimeRun(database, input, {
+            [preliminary.resolvedRuntime]: probe,
+          })
         } finally {
           database.close()
         }
@@ -95,6 +104,7 @@ export const agentRuntimeChatRouter = router({
           await authority.cancel(input.runId, "interactive-runtime-subscription-closed")
           return
         }
+        const startedAtMs = Date.now()
         emit.next({
           type: "started",
           runId: input.runId,
@@ -189,7 +199,7 @@ export const agentRuntimeChatRouter = router({
           })
         }
         finished = true
-        emit.next({ type: "finished", runId: input.runId })
+        emit.next({ type: "finished", runId: input.runId, durationMs: Date.now() - startedAtMs })
         emit.complete()
       })().catch((error) => {
         if (!disposed) emit.error(error)

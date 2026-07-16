@@ -1,3 +1,5 @@
+import { runtimePatchStats } from "./runtime-patch-stats"
+
 export interface GitCommitInfo {
   type: "commit"
   message: string
@@ -185,7 +187,12 @@ export function extractChangedFiles(parts: any[], projectPath?: string): Changed
         if (filePath.includes("claude-sessions") || filePath.includes("Application Support")) {
           continue
         }
-        const stats = unifiedDiffStats(change.diff || part.input?.diff || "")
+        const stats = runtimePatchStats({
+          filePath,
+          changeDiff: change.diff,
+          aggregateDiff: part.input?.diff,
+          changeCount: changes.length,
+        })
         const existing = fileMap.get(filePath)
         if (existing) {
           existing.additions += stats.additions
@@ -233,14 +240,4 @@ export function extractChangedFiles(parts: any[], projectPath?: string): Changed
   }
 
   return Array.from(fileMap.values())
-}
-
-function unifiedDiffStats(diff: string): { additions: number; deletions: number } {
-  let additions = 0
-  let deletions = 0
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++
-    if (line.startsWith("-") && !line.startsWith("---")) deletions++
-  }
-  return { additions, deletions }
 }

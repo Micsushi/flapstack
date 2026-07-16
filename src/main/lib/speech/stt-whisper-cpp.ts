@@ -360,7 +360,11 @@ export async function verifyWhisperBinary(binaryPath: string): Promise<boolean> 
     const cached = verifiedBinaries.get(binaryPath)
     if (cached?.mtimeMs === info.mtimeMs) return cached.valid
     const output = await execFileCapture(binaryPath, ["--help"], { timeout: 5_000 })
-    const valid = /whisper(?:\.cpp|-cli)|usage:/i.test(output)
+    const valid =
+      /whisper(?:\.cpp|-cli)/i.test(output) ||
+      (/usage:/i.test(output) &&
+        /(?:^|\s)-m(?:odel)?\b/im.test(output) &&
+        /(?:^|\s)-f(?:ile)?\b/im.test(output))
     verifiedBinaries.set(binaryPath, { mtimeMs: info.mtimeMs, valid })
     return valid
   } catch {

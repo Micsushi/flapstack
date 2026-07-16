@@ -2,6 +2,7 @@ import { toast } from "sonner"
 import type { ChatMode } from "../../../../shared/chat-mode"
 import { trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityChatChunkMapper } from "./runtime-activity-chat-chunks"
+import { directRuntimeFinishMetadata } from "./runtime-finish-metadata"
 import { RuntimeResponseLabelFilter, RuntimeTextChatChunkMapper } from "./runtime-text-chat-chunks"
 
 type DirectRuntimeHarness = "codex" | "claude-code"
@@ -42,6 +43,7 @@ export async function createDirectRuntimeStream(input: {
         runId,
         new RuntimeResponseLabelFilter(!input.hotlineEnabled),
       )
+      let startedAtMs = Date.now()
       let subscription: { unsubscribe(): void } | null = null
       const close = () => {
         if (closed) return
@@ -82,7 +84,9 @@ export async function createDirectRuntimeStream(input: {
         {
           onData(event) {
             if (closed) return
-            if (event.type === "assistant-text") {
+            if (event.type === "started") {
+              startedAtMs = Date.now()
+            } else if (event.type === "assistant-text") {
               for (const chunk of activityMapper.beforeText()) controller.enqueue(chunk)
               for (const chunk of textMapper.map(event)) controller.enqueue(chunk)
             } else if (event.type === "activity-batch") {
@@ -96,10 +100,12 @@ export async function createDirectRuntimeStream(input: {
               for (const chunk of activityMapper.finish()) controller.enqueue(chunk)
               controller.enqueue({
                 type: "message-metadata",
-                messageMetadata: {
+                messageMetadata: directRuntimeFinishMetadata({
                   runId,
-                  transport: `${input.harness}-runtime`,
-                },
+                  harness: input.harness,
+                  startedAtMs,
+                  durationMs: event.durationMs,
+                }),
               })
               controller.enqueue({ type: "finish" })
               close()

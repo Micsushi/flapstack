@@ -6,7 +6,7 @@ import {
   type ChatMode,
 } from "../../../shared/chat-mode"
 import type { AgentHarness, RunPermissionMode } from "../../../shared/harness-types"
-import type { ResolvedAgentRuntime } from "../../../shared/agent-runtime"
+import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/agent-runtime"
 import type { AgentActivityEvent } from "../../../shared/agent-activity"
 import {
   resolveAgentHotlineEnabled,
@@ -50,6 +50,7 @@ type ChatRow = {
   sub_model: string | null
   sub_permission_mode: string | null
   sub_worktree_path: string | null
+  sub_session_id: string | null
   messages: string
   project_path: string | null
 }
@@ -58,20 +59,24 @@ export function resolveInteractiveRuntime(
   database: Database.Database,
   input: Pick<InteractiveRuntimeInput, "chatId" | "subChatId" | "harness" | "model" | "mode"> &
     Partial<Pick<InteractiveRuntimeInput, "reasoningEffort" | "reasoningEnabled">>,
+  adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
 ): { resolvedRuntime: ResolvedAgentRuntime; direct: boolean } {
   const context = requireContext(database, input.chatId, input.subChatId, input.harness)
   const permissionMode = resolvePermissionMode(context, input.mode)
+  const model = input.model?.trim() || context.sub_model || context.chat_model || null
   const snapshot = constructRuntimeSnapshot(database, {
     chatId: input.chatId,
     harness: input.harness,
-    model: input.model,
+    model,
     permission: runtimePermissionSnapshot(permissionMode, context.custom_permissions),
     controls: {
       modelEffort: input.reasoningEffort ?? null,
       modelThinking: input.reasoningEnabled ?? true,
       reasoningDisplay: input.reasoningEnabled ?? true,
     },
+    adapterProbes,
   })
+  assertRuntimeContinuationCompatible(database, context, snapshot.resolvedRuntime)
   return {
     resolvedRuntime: snapshot.resolvedRuntime,
     direct: snapshot.resolvedRuntime !== "flapstack-native",
@@ -81,6 +86,7 @@ export function resolveInteractiveRuntime(
 export function materializeInteractiveRuntimeRun(
   database: Database.Database,
   input: InteractiveRuntimeInput,
+  adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
 ): QueuedAgentRun {
   const context = requireContext(database, input.chatId, input.subChatId, input.harness)
   const permissionMode = resolvePermissionMode(context, input.mode)
@@ -95,7 +101,9 @@ export function materializeInteractiveRuntimeRun(
       modelThinking: input.reasoningEnabled,
       reasoningDisplay: input.reasoningEnabled,
     },
+    adapterProbes,
   })
+  assertRuntimeContinuationCompatible(database, context, snapshot.resolvedRuntime)
   if (snapshot.resolvedRuntime === "flapstack-native") {
     throw new Error("Interactive Runtime bridge received a Flapstack Native launch.")
   }
@@ -247,13 +255,21 @@ export function persistInteractiveRuntimeAssistantFallback(
       const row = database
         .prepare(
           `SELECT r.sub_chat_id sub_chat_id, r.resolved_runtime resolved_runtime,
+                  r.started_at started_at, r.completed_at completed_at,
                   s.messages messages
            FROM agent_runs r
            JOIN sub_chats s ON s.id = r.sub_chat_id
            WHERE r.id = ?`,
         )
         .get(runId) as
-        { sub_chat_id: string; resolved_runtime: string; messages: string } | undefined
+        | {
+            sub_chat_id: string
+            resolved_runtime: string
+            started_at: number | null
+            completed_at: number | null
+            messages: string
+          }
+        | undefined
       if (!row) return
       const messages = parseMessages(row.messages)
       if (
@@ -277,7 +293,13 @@ export function persistInteractiveRuntimeAssistantFallback(
         id: randomUUID(),
         role: "assistant",
         parts: [{ type: "text", text }],
-        metadata: { runId, transport: `${row.resolved_runtime}-runtime` },
+        metadata: {
+          runId,
+          transport: `${row.resolved_runtime}-runtime`,
+          ...(row.started_at != null && row.completed_at != null
+            ? { durationMs: Math.max(0, row.completed_at - row.started_at) * 1_000 }
+            : {}),
+        },
       })
       database
         .prepare("UPDATE sub_chats SET messages = ?, updated_at = ? WHERE id = ?")
@@ -317,6 +339,7 @@ function requireContext(
               c.worktree_path chat_worktree_path,
               s.id sub_chat_id, s.harness sub_harness, s.model sub_model,
               s.permission_mode sub_permission_mode, s.worktree_path sub_worktree_path,
+              s.session_id sub_session_id,
               s.messages, p.path project_path
        FROM chats c
        JOIN sub_chats s ON s.chat_id = c.id
@@ -330,6 +353,26 @@ function requireContext(
     throw new Error(`Runtime Chat uses ${persistedHarness}, not ${harness}.`)
   }
   return row
+}
+
+function assertRuntimeContinuationCompatible(
+  database: Database.Database,
+  context: ChatRow,
+  resolvedRuntime: ResolvedAgentRuntime,
+): void {
+  if (!context.sub_session_id || resolvedRuntime === "flapstack-native") return
+  const latest = database
+    .prepare(
+      `SELECT resolved_runtime FROM agent_runs
+       WHERE sub_chat_id = ?
+       ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(context.sub_chat_id) as { resolved_runtime: string | null } | undefined
+  const previousRuntime = latest?.resolved_runtime ?? "flapstack-native"
+  if (previousRuntime === resolvedRuntime) return
+  throw new Error(
+    `This Chat already has a ${previousRuntime} provider session. Start a new Chat to use ${resolvedRuntime}; provider sessions cannot switch Runtime in place.`,
+  )
 }
 
 function resolvePermissionMode(context: ChatRow, mode: ChatMode): RunPermissionMode {
@@ -352,11 +395,5 @@ function parseMessages(value: string): Array<Record<string, unknown> & { id?: un
 function queuedReasoningEffort(
   value: InteractiveRuntimeInput["reasoningEffort"],
 ): QueuedAgentRun["reasoningEffort"] {
-  return value === "minimal" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-    ? value
-    : null
+  return value
 }

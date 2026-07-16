@@ -1,8 +1,10 @@
 import type { AgentRunLauncher } from "../run-launch-service"
+import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/agent-runtime"
 
 export type RuntimeLaunchAuthority = {
   launch: AgentRunLauncher
   cancel(runId: string, reason: string): Promise<boolean>
+  probe(runtime: ResolvedAgentRuntime, harness: string): Promise<RuntimeAdapterProbe>
 }
 
 const authorities = new Map<string, RuntimeLaunchAuthority>()

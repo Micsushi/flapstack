@@ -26,4 +26,21 @@ describe("Runtime patch file projection", () => {
       { filePath: "/repo/src/new.ts", displayPath: "src/new.ts", additions: 1, deletions: 0 },
     ])
   })
+
+  it("does not credit one aggregate patch to every changed path", () => {
+    expect(
+      extractChangedFiles([
+        {
+          type: "tool-ApplyPatch",
+          input: {
+            changes: [{ path: "/repo/src/a.ts" }, { path: "/repo/src/b.ts" }],
+            diff: "--- a/src/a.ts\n+++ b/src/a.ts\n-old\n+new",
+          },
+        },
+      ]),
+    ).toEqual([
+      { filePath: "/repo/src/a.ts", displayPath: "a.ts", additions: 1, deletions: 1 },
+      { filePath: "/repo/src/b.ts", displayPath: "b.ts", additions: 0, deletions: 0 },
+    ])
+  })
 })

@@ -109,7 +109,7 @@ describe("Agent Runtime feature acceptance", () => {
     expect(activeChat).toContain("IsolatedMessagesSection")
     expect(activeChat).toContain("ToolCallComponent={AgentToolCall}")
     expect(activeChat).toContain("MessageGroupWrapper={MessageGroup}")
-    expect(activeChat).toContain("updateSubChatMessages")
+    expect(activeChat).toContain("mergeRuntimeSubChatMessages")
     expect(activeChat).toContain("latestAssistantUsesDirectRuntime(latestMessages)")
     expect(activeChat).not.toContain("RuntimeActivityPanel")
     expect(activeChat).not.toContain("agentActivity.list.useQuery")

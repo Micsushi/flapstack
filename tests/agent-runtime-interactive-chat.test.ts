@@ -114,6 +114,21 @@ describe("interactive Runtime launch bridge", () => {
     ).toEqual({ resolvedRuntime: "flapstack-native", direct: false })
   })
 
+  it("blocks switching an existing legacy provider session to a direct Runtime", () => {
+    seedChat("codex", "auto", [])
+    database.prepare("UPDATE sub_chats SET session_id = 'legacy-session' WHERE id = 'sub'").run()
+
+    expect(() =>
+      resolveInteractiveRuntime(database, {
+        chatId: "chat",
+        subChatId: "sub",
+        harness: "codex",
+        model: "gpt-5.5",
+        mode: "write",
+      }),
+    ).toThrow("provider sessions cannot switch Runtime in place")
+  })
+
   it("projects authoritative completed Runtime text into the chat response", () => {
     seedChat("claude-code", "auto", [])
     materializeInteractiveRuntimeRun(database, {

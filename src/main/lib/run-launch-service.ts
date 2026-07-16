@@ -30,7 +30,7 @@ export type QueuedAgentRun = {
   chatMode?: ChatMode
   hotlineEnabled?: boolean
   model: string | null
-  reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
+  reasoningEffort: "minimal" | "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null
   permissionMode: string
   customPermissions: string | null
   worktreePath: string | null

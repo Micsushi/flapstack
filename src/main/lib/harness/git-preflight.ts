@@ -21,7 +21,7 @@ export type GitPreflightSnapshot = {
 }
 
 const REPOSITORY_STATE_QUESTION =
-  /\b(?:repo(?:sitory)?|status|progress|complete(?:d|ion)?|remaining|stage|worktree(?:s)?|branch(?:es)?)\b/i
+  /\b(?:repo(?:sitory)?|status|progress|complete(?:d|ion)?|remaining|stage|worktree(?:s)?|branch(?:es)?|review|commit|head|diff|changes?)\b/i
 
 export function isRepositoryStateQuestion(prompt: string): boolean {
   return REPOSITORY_STATE_QUESTION.test(prompt)
@@ -123,6 +123,9 @@ Worktrees (${snapshot.worktrees.length}):
 ${worktrees || "- none reported by Git"}
 
 Evidence rule: ${evidenceRule}
+If the user says current, last, latest, or HEAD commit without naming another
+ref, the review target is exactly ${snapshot.headSha} in
+${snapshot.repositoryRoot}. Resolve and report the target before reviewing it.
 This snapshot is routing evidence, not proof that a task is complete.
 --- END LIVE GIT PREFLIGHT ---`
 }

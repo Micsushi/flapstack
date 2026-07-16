@@ -1,6 +1,7 @@
 import { useSetAtom } from "jotai"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { subChatFilesAtom, subChatToChatMapAtom, type SubChatFileChange } from "../atoms"
+import { runtimePatchStats } from "../utils/runtime-patch-stats"
 // import { REPO_ROOT_PATH } from "@/lib/codesandbox-constants"
 const REPO_ROOT_PATH = "/workspace" // Desktop mock
 
@@ -146,7 +147,12 @@ export function useChangedFilesTracking(
             for (const change of changes) {
               const filePath = change.path
               if (!filePath || isSessionFile(filePath)) continue
-              const stats = unifiedDiffStats(change.diff ?? part.input?.diff ?? "")
+              const stats = runtimePatchStats({
+                filePath,
+                changeDiff: change.diff,
+                aggregateDiff: part.input?.diff,
+                changeCount: changes.length,
+              })
               const existing = patchStates.get(filePath)
               patchStates.set(filePath, {
                 additions: (existing?.additions ?? 0) + stats.additions,
@@ -265,14 +271,4 @@ export function useChangedFilesTracking(
   }, [subChatId, chatId, setSubChatToChatMap])
 
   return { changedFiles, recomputeChangedFiles }
-}
-
-function unifiedDiffStats(diff: string): { additions: number; deletions: number } {
-  let additions = 0
-  let deletions = 0
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) additions++
-    if (line.startsWith("-") && !line.startsWith("---")) deletions++
-  }
-  return { additions, deletions }
 }

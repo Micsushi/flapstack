@@ -1029,6 +1029,28 @@ describe("Stage 1 E1 worktree resolution", () => {
       path: realpathSync(getDetachedChatCheckoutPath(chat.id)),
     })
   })
+
+  it("repairs only the selected chat when inherited checkout paths are null", async () => {
+    const project = insertProject("repair-null-checkout")
+    mkdirSync(project.path, { recursive: true })
+    execFileSync("git", ["init", "--quiet", project.path])
+    vi.mocked(getCurrentBranch).mockResolvedValue("main")
+    const first = insertChat({ scope: "project", projectId: project.id, name: "First inherited" })
+    const second = insertChat({ scope: "project", projectId: project.id, name: "Second inherited" })
+
+    const result = await chatsRouter.createCaller(ctx).repairUnavailableCheckout({
+      id: first.id,
+      unavailablePath: join(homeDir, "deleted-inherited-checkout"),
+    })
+
+    expect(result.status === "repaired" ? result.repairedChatIds : []).toEqual([first.id])
+    expect(getDatabase().select().from(chats).where(eq(chats.id, first.id)).get()).toMatchObject({
+      worktreePath: realpathSync(project.path),
+    })
+    expect(getDatabase().select().from(chats).where(eq(chats.id, second.id)).get()).toMatchObject({
+      worktreePath: null,
+    })
+  })
 })
 
 describe("Stage 1 E1 search archive and scope filters", () => {

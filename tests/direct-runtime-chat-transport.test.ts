@@ -4,8 +4,25 @@ import {
   RuntimeResponseLabelFilter,
   RuntimeTextChatChunkMapper,
 } from "../src/renderer/features/agents/lib/runtime-text-chat-chunks"
+import { directRuntimeFinishMetadata } from "../src/renderer/features/agents/lib/runtime-finish-metadata"
 
 describe("direct runtime chat transport", () => {
+  it("persists the measured Runtime duration for the Worked for label", () => {
+    expect(
+      directRuntimeFinishMetadata({
+        runId: "run",
+        harness: "codex",
+        startedAtMs: 1_000,
+        durationMs: 22_000,
+      }),
+    ).toEqual({
+      runId: "run",
+      transport: "codex-runtime",
+      startedAt: 1_000,
+      durationMs: 22_000,
+    })
+  })
+
   it("persists only when the latest assistant reply came from a direct Runtime", () => {
     const oldDirect = {
       role: "assistant",

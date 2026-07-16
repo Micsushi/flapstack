@@ -8,16 +8,19 @@ on:
 
 jobs:
   verify:
-    runs-on: macos-14
+    runs-on: [self-hosted, Linux, X64, flapstack]
+    timeout-minutes: 30
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps

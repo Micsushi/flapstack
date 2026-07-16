@@ -6582,8 +6582,20 @@ Make sure to preserve all functionality from both branches when resolving confli
       const latestMessagesJson = JSON.stringify(latestMessages)
 
       if (latestAssistantUsesDirectRuntime(latestMessages)) {
-        void trpcClient.chats.updateSubChatMessages
+        void trpcClient.chats.mergeRuntimeSubChatMessages
           .mutate({ id: subChatId, messages: latestMessagesJson })
+          .then((updated: { messages?: string } | null | undefined) => {
+            if (typeof updated?.messages !== "string") return
+            utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
+              if (!old?.subChats || !Array.isArray(old.subChats)) return old
+              return {
+                ...old,
+                subChats: old.subChats.map((sc: any) =>
+                  sc.id === subChatId ? { ...sc, messages: updated.messages } : sc,
+                ),
+              }
+            })
+          })
           .catch((error: unknown) => {
             console.error("[Runtime chat] Failed to persist normal chat messages:", error)
           })

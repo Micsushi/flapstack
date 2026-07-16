@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
-type FileIdentity = { dev: number | bigint; ino: number | bigint }
+type FileIdentity = { dev: number | bigint; ino: number | bigint; fileType: number }
 
 export type RootedWriteSource = { data: string | Uint8Array } | { sourcePath: string }
 
@@ -619,12 +619,16 @@ async function lstatOrNull(path: string) {
   }
 }
 
-function identity(info: { dev: number | bigint; ino: number | bigint }): FileIdentity {
-  return { dev: info.dev, ino: info.ino }
+function identity(info: {
+  dev: number | bigint
+  ino: number | bigint
+  mode: number
+}): FileIdentity {
+  return { dev: info.dev, ino: info.ino, fileType: info.mode & constants.S_IFMT }
 }
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
-  return left.dev === right.dev && left.ino === right.ino
+  return left.dev === right.dev && left.ino === right.ino && left.fileType === right.fileType
 }
 
 function existsError(): NodeJS.ErrnoException {

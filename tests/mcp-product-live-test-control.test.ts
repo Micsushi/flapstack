@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url"
 import Database from "better-sqlite3"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { migrate } from "drizzle-orm/better-sqlite3/migrator"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -111,7 +111,7 @@ describe("authenticated dev control for live product MCP", () => {
 
   it("binds live caller worktree only to the running dev checkout", () => {
     expect(prepareProductMcpCaller({ harness: "codex", repoPath: "/tmp" })).toMatchObject({
-      worktreePath: "/private/tmp",
+      worktreePath: realpathSync("/tmp"),
     })
     expect(() => prepareProductMcpCaller({ harness: "codex", repoPath: directory })).toThrow(
       /running dev checkout/,

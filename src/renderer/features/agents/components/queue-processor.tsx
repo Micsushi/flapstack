@@ -12,6 +12,7 @@ import { loadingSubChatsAtom, setLoading, clearLoading } from "../atoms"
 import { MENTION_PREFIXES } from "../mentions/agents-mentions-editor"
 import { utf8ToBase64 } from "../utils/base64"
 import type { AgentQueueItem } from "../lib/queue-utils"
+import { trpcClient } from "../../../lib/trpc"
 
 // Delay between processing queue items (ms)
 const QUEUE_PROCESS_DELAY = 1000
@@ -31,6 +32,7 @@ export function QueueProcessor() {
   const processingRef = useRef<Set<string>>(new Set())
   // Track timers for cleanup
   const timersRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const checkoutBlockedRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     // Function to process queue for a specific sub-chat
@@ -57,6 +59,28 @@ export function QueueProcessor() {
       if (!chat) {
         return
       }
+
+      const parentChatId = agentChatStore.getParentChatId(subChatId)
+      if (!parentChatId) return
+      let checkout
+      try {
+        checkout = await trpcClient.chats.resolveWorktreeStatus.query({ id: parentChatId })
+      } catch (error) {
+        console.error("[QueueProcessor] Failed to verify queued-message checkout:", error)
+        scheduleProcessing(subChatId)
+        return
+      }
+      if (checkout.status === "unknown") {
+        if (!checkoutBlockedRef.current.has(subChatId)) {
+          checkoutBlockedRef.current.add(subChatId)
+          toast.error("Checkout unavailable", {
+            description: "Fix or replace this Chat's checkout before queued messages can run.",
+          })
+        }
+        scheduleProcessing(subChatId)
+        return
+      }
+      checkoutBlockedRef.current.delete(subChatId)
 
       // Mark as processing
       processingRef.current.add(subChatId)
@@ -142,14 +166,11 @@ export function QueueProcessor() {
         useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
 
         // Set loading state for sidebar indicator
-        const parentChatId = agentChatStore.getParentChatId(subChatId)
-        if (parentChatId) {
-          setLoading(
-            (fn) => appStore.set(loadingSubChatsAtom, fn(appStore.get(loadingSubChatsAtom))),
-            subChatId,
-            parentChatId,
-          )
-        }
+        setLoading(
+          (fn) => appStore.set(loadingSubChatsAtom, fn(appStore.get(loadingSubChatsAtom))),
+          subChatId,
+          parentChatId,
+        )
 
         // Signal active-chat to scroll to bottom BEFORE sending so that
         // shouldAutoScrollRef is true for the entire streaming duration.

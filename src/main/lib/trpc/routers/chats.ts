@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm"
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
 import { BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
 import * as path from "path"
@@ -47,6 +47,7 @@ import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visibl
 import { agentRuntimePreferenceSchema } from "../../../../shared/agent-runtime"
 import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-lifecycle"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
+import { mergeRuntimeMessages } from "../../agent-runtime/message-merge"
 
 const newChatPermissionModeSchema = z.enum([
   "read-only",
@@ -69,6 +70,7 @@ async function persistChatCheckout(input: {
   chatId: string
   requestedPath: string
   repairMatchingChats: boolean
+  matchingPath?: string | null
 }): Promise<CheckoutRepairResult> {
   const db = getDatabase()
   const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
@@ -82,15 +84,14 @@ async function persistChatCheckout(input: {
   bindFilesystemRootIdentity(target.path)
 
   let affected = [{ id: chat.id }]
-  if (input.repairMatchingChats && chat.projectId) {
-    const stalePathCondition = chat.worktreePath
-      ? eq(chats.worktreePath, chat.worktreePath)
-      : isNull(chats.worktreePath)
-    affected = db
+  const matchingPath = input.matchingPath?.trim() || chat.worktreePath
+  if (input.repairMatchingChats && chat.projectId && matchingPath) {
+    const matching = db
       .select({ id: chats.id })
       .from(chats)
-      .where(and(eq(chats.projectId, chat.projectId), stalePathCondition))
+      .where(and(eq(chats.projectId, chat.projectId), eq(chats.worktreePath, matchingPath)))
       .all()
+    affected = [{ id: chat.id }, ...matching.filter((candidate) => candidate.id !== chat.id)]
   }
 
   const repairedChatIds = affected.map((row) => row.id)
@@ -108,8 +109,8 @@ async function persistChatCheckout(input: {
       .where(inArray(chats.id, repairedChatIds))
       .run()
 
-    const staleSubChatPathCondition = chat.worktreePath
-      ? eq(subChats.worktreePath, chat.worktreePath)
+    const staleSubChatPathCondition = matchingPath
+      ? or(eq(subChats.chatId, chat.id), eq(subChats.worktreePath, matchingPath))
       : isNull(subChats.worktreePath)
     tx.update(subChats)
       .set({ worktreePath: target.path, updatedAt })
@@ -421,6 +422,7 @@ export const chatsRouter = router({
           chatId: input.id,
           requestedPath: option.path,
           repairMatchingChats: true,
+          matchingPath: input.unavailablePath,
         })
       }
 
@@ -1412,6 +1414,23 @@ export const chatsRouter = router({
         .where(eq(subChats.id, input.id))
         .returning()
         .get()
+    }),
+
+  mergeRuntimeSubChatMessages: publicProcedure
+    .input(z.object({ id: z.string(), messages: z.string() }))
+    .mutation(({ input }) => {
+      const db = getDatabase()
+      return db.transaction((tx) => {
+        const current = tx.select().from(subChats).where(eq(subChats.id, input.id)).get()
+        if (!current) throw new Error("Sub-chat not found")
+        const messages = mergeRuntimeMessages(current.messages, input.messages)
+        return tx
+          .update(subChats)
+          .set({ messages, updatedAt: new Date() })
+          .where(eq(subChats.id, input.id))
+          .returning()
+          .get()
+      })
     }),
 
   /**
