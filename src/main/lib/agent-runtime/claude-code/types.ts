@@ -49,6 +49,10 @@ export type ClaudeRuntimeDependencies = {
     prompt: string,
     abortController: AbortController,
   ): Promise<Record<string, unknown>> | Record<string, unknown>
+  resolvePrompt?(
+    context: RuntimeAdapterContext,
+    prompt: string,
+  ): Promise<string | AsyncIterable<unknown>> | string | AsyncIterable<unknown>
   loadSession(context: RuntimeAdapterContext): Promise<ClaudeRuntimeResumeState | null>
   persistSession(context: RuntimeAdapterContext, sessionId: string): Promise<void> | void
   clearStaleSession(context: RuntimeAdapterContext, sessionId: string): Promise<void> | void

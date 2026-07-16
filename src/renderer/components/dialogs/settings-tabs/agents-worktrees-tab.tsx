@@ -262,7 +262,7 @@ export function AgentsWorktreesTab() {
                       name: "Worktree Setup",
                       initialMessageParts: [{ type: "text", text: prompt }],
                       useWorktree: false,
-                      mode: "agent",
+                      mode: "write",
                     })
                   }
                 }}

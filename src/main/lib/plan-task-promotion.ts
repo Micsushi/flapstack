@@ -331,7 +331,7 @@ export function promotePlanCandidate(
         id: subChatId,
         chatId: chat.id,
         name: input.taskName,
-        mode: "agent",
+        mode: "write",
         permissionMode: input.permissionMode,
         worktreePath: selectedWorktreePath,
         runStatus: null,

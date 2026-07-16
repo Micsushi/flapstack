@@ -2,7 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { createElement } from "react"
 import { describe, expect, it } from "vitest"
 import { RuntimeSelector } from "../src/renderer/features/agents/runtime-settings/runtime-selector"
-import { buildRuntimeSettingsRows } from "../src/renderer/features/agents/runtime-settings/runtime-settings-model"
+import {
+  allowedRuntimePreferences,
+  buildRuntimeSettingsRows,
+} from "../src/renderer/features/agents/runtime-settings/runtime-settings-model"
 
 describe("Agent Runtime settings presentation", () => {
   const releases = [
@@ -50,7 +53,7 @@ describe("Agent Runtime settings presentation", () => {
     )
   })
 
-  it("renders the short Runtime label and only compatible choices", () => {
+  it("renders a compact automatic-runtime trigger without a separate label", () => {
     const html = renderToStaticMarkup(
       createElement(RuntimeSelector, {
         harness: "claude-code",
@@ -59,9 +62,13 @@ describe("Agent Runtime settings presentation", () => {
       }),
     )
     expect(html).toContain('aria-label="Runtime"')
-    expect(html).toContain("Automatic")
-    expect(html).toContain("Claude Code")
-    expect(html).toContain("Flapstack Native")
-    expect(html).not.toContain(">Codex<")
+    expect(html).toContain("Automatic runtime")
+    expect(html).not.toContain("<select")
+    expect(html).not.toContain("<span>Runtime</span>")
+    expect(allowedRuntimePreferences("claude-code")).toEqual([
+      "auto",
+      "claude-code",
+      "flapstack-native",
+    ])
   })
 })

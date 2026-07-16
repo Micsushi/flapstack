@@ -86,7 +86,12 @@ import {
   persistProjectVaultContextManifest,
   ProjectVaultContextRejectedError,
 } from "./project-vaults/run-context"
-import { prependStartupContext } from "./harness/launch-context"
+import { applyChatModeInstruction, normalizeChatMode } from "../../shared/chat-mode"
+import { buildHarnessContextBundle, buildStartupInstructions } from "./harness/launch-context"
+import {
+  registerRuntimeLaunchAuthority,
+  resetRuntimeLaunchAuthoritiesForTests,
+} from "./agent-runtime/launch-access"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -116,6 +121,7 @@ export class MainRuntimeLaunchService {
   private readonly runs = new Map<string, QueuedAgentRun>()
   private readonly streams = new Map<string, unknown>()
   private readonly states = new Map<string, "running" | "completed" | "uncertain">()
+  private readonly prelaunchCancellations = new Set<string>()
   private readonly persistedCancellations = new Map<string, Promise<boolean>>()
   private readonly persistedOperations = new Map<string, Promise<void>>()
   private readonly databasePath: string
@@ -141,7 +147,17 @@ export class MainRuntimeLaunchService {
       options.codexFactory ??
       (createCodexRuntimeAdapterFactory({
         appendActivity: (runId, events) => this.appendActivity(runId, events),
-        resolveThreadParams: async (context) => {
+        resolveTurnInput: (context, prompt) => {
+          const images = this.runs.get(context.runId)?.images ?? []
+          return [
+            { type: "text", text: prompt, text_elements: [] },
+            ...images.map((image) => ({
+              type: "image",
+              url: `data:${image.mediaType};base64,${image.base64Data}`,
+            })),
+          ]
+        },
+        resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
           const config = applyCodexExtensionPolicyConfig(
             buildManagedCodexHookConfig(authority.hooks),
@@ -149,6 +165,9 @@ export class MainRuntimeLaunchService {
           )
           return {
             cwd: authority.cwd,
+            ...(operation === "start" && context.instructions
+              ? { developerInstructions: context.instructions }
+              : {}),
             ...codexPermissionOptions(context.launch.permission.mode),
             ...(Object.keys(config).length > 0 ? { config } : {}),
           }
@@ -192,15 +211,23 @@ export class MainRuntimeLaunchService {
   }
 
   readonly launch: AgentRunLauncher = async (run) => {
+    if (this.runs.has(run.runId) || this.coordinator.runState(run.runId)) {
+      throw new Error(`Runtime run ${run.runId} is already active.`)
+    }
     this.runs.set(run.runId, run)
     try {
-      const prompt = await this.resolveDirectRuntimePrompt(run)
+      const instructions = await this.resolveDirectRuntimeInstructions(run)
+      if (this.prelaunchCancellations.has(run.runId)) {
+        throw new RuntimeLaunchCancelledError(run.runId)
+      }
+      const resolvedLaunch = run.runtimeLaunch ?? legacyLaunch(run)
       await this.coordinator.launch({
         runId: run.runId,
         chatId: run.chatId,
         subChatId: run.subChatId,
-        launch: run.runtimeLaunch ?? legacyLaunch(run),
-        prompt,
+        launch: resolvedLaunch,
+        prompt: resolveRuntimeTurnPrompt(run, resolvedLaunch),
+        instructions,
         persistedSession: await this.loadPersistedSession(run.runId),
       })
     } catch (error) {
@@ -214,6 +241,7 @@ export class MainRuntimeLaunchService {
       }
       throw error
     } finally {
+      this.prelaunchCancellations.delete(run.runId)
       this.runs.delete(run.runId)
       this.streams.delete(run.runId)
     }
@@ -222,6 +250,11 @@ export class MainRuntimeLaunchService {
   async cancel(runId: string, reason: string): Promise<boolean> {
     if (this.coordinator.runState(runId)) {
       return await this.coordinator.cancel(runId, reason)
+    }
+    if (this.runs.has(runId) && loadRunningAgentRun(this.databasePath, runId)) {
+      this.prelaunchCancellations.add(runId)
+      await this.persistLifecycle(runId, "cancelled", reason)
+      return true
     }
     const inFlight = this.persistedCancellations.get(runId)
     if (inFlight) return await inFlight
@@ -425,6 +458,11 @@ export class MainRuntimeLaunchService {
           pathToClaudeCodeExecutable: await resolveBundledClaudePath(),
           includePartialMessages: true,
           settingSources: ["project", "user"],
+          systemPrompt: {
+            type: "preset" as const,
+            preset: "claude_code" as const,
+            ...(context.instructions ? { append: context.instructions } : {}),
+          },
           ...claudePermissionOptions(context.launch.permission.mode),
           ...(context.launch.model ? { model: context.launch.model } : {}),
           ...sdkOptions,
@@ -432,6 +470,8 @@ export class MainRuntimeLaunchService {
           ...(Object.keys(hooks).length > 0 ? { hooks, includeHookEvents: true } : {}),
         }
       },
+      resolvePrompt: (context, prompt) =>
+        buildClaudeRuntimePrompt(prompt, this.runs.get(context.runId)?.images ?? []),
       loadSession: async (context) => {
         const session = await this.loadPersistedSession(context.runId)
         return session?.providerSessionId ? { sessionId: session.providerSessionId } : null
@@ -483,7 +523,10 @@ export class MainRuntimeLaunchService {
     try {
       db.transaction(() => {
         const run = this.requireRunRow(db, runId)
-        const identity = session.providerSessionId ?? session.providerThreadId
+        const identity =
+          run.resolved_runtime === "codex"
+            ? session.providerThreadId
+            : (session.providerSessionId ?? session.providerThreadId)
         if (run.sub_chat_id && identity) {
           db.prepare("UPDATE sub_chats SET session_id = ?, updated_at = ? WHERE id = ?").run(
             identity,
@@ -621,7 +664,7 @@ export class MainRuntimeLaunchService {
     try {
       const row = db
         .prepare(
-          `SELECT s.session_id, a.provider_session_id, a.provider_thread_id
+          `SELECT r.resolved_runtime, s.session_id, a.provider_session_id, a.provider_thread_id
            FROM agent_runs r
            LEFT JOIN sub_chats s ON s.id = r.sub_chat_id
            LEFT JOIN agent_activity_events a ON a.storage_id = (
@@ -633,14 +676,21 @@ export class MainRuntimeLaunchService {
         .get(runId) as
         | {
             session_id: string | null
+            resolved_runtime: string
             provider_session_id: string | null
             provider_thread_id: string | null
           }
         | undefined
       if (!row) return null
+      const fallbackIdentity = allowSubChatFallback ? row.session_id : null
       const providerSessionId =
-        row.provider_session_id ?? (allowSubChatFallback ? row.session_id : null) ?? null
-      const providerThreadId = row.provider_thread_id ?? null
+        row.provider_session_id ??
+        (row.resolved_runtime === "codex" ? null : fallbackIdentity) ??
+        null
+      const providerThreadId =
+        row.provider_thread_id ??
+        (row.resolved_runtime === "codex" ? fallbackIdentity : null) ??
+        null
       return providerSessionId || providerThreadId ? { providerSessionId, providerThreadId } : null
     } finally {
       db.close()
@@ -745,13 +795,24 @@ export class MainRuntimeLaunchService {
     }
   }
 
-  private async resolveDirectRuntimePrompt(run: QueuedAgentRun): Promise<string> {
+  private async resolveDirectRuntimeInstructions(run: QueuedAgentRun): Promise<string | null> {
     const runtime = run.runtimeLaunch?.resolvedRuntime
-    if (runtime !== "codex" && runtime !== "claude-code") return run.prompt
+    if (runtime !== "codex" && runtime !== "claude-code") return null
 
     const sqlite = this.open()
     try {
       const database = drizzle(sqlite, { schema })
+      const cwd = run.worktreePath || run.projectPath
+      const contextBundle =
+        cwd && existsSync(cwd)
+          ? await buildHarnessContextBundle({
+              cwd,
+              ...(run.projectPath ? { projectPath: run.projectPath } : {}),
+              harness: runtime,
+              userPrompt: run.prompt,
+              providerNativeInstructions: true,
+            })
+          : null
       let vaultContext
       try {
         vaultContext = await buildProjectVaultRunContext(database, {
@@ -772,15 +833,23 @@ export class MainRuntimeLaunchService {
         runId: run.runId,
         manifest: vaultContext.manifest,
       })
-      return prependStartupContext(run.prompt, vaultContext.context)
+      return (
+        buildStartupInstructions(
+          [contextBundle?.context, vaultContext.context].filter(Boolean).join("\n\n"),
+          run.prompt,
+          { hotlineEnabled: run.hotlineEnabled },
+        ) || null
+      )
     } finally {
       sqlite.close()
     }
   }
 
   private requireRunRow(db: Database.Database, runId: string) {
-    const row = db.prepare("SELECT id, sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
-      { id: string; sub_chat_id: string | null } | undefined
+    const row = db
+      .prepare("SELECT id, sub_chat_id, resolved_runtime FROM agent_runs WHERE id = ?")
+      .get(runId) as
+      { id: string; sub_chat_id: string | null; resolved_runtime: string } | undefined
     if (!row) throw new Error(`Runtime run ${runId} is missing.`)
     return row
   }
@@ -791,6 +860,40 @@ export class MainRuntimeLaunchService {
     db.pragma("busy_timeout = 5000")
     return db
   }
+}
+
+export function resolveRuntimeTurnPrompt(
+  run: Pick<QueuedAgentRun, "prompt" | "chatMode">,
+  launch: Pick<ResolvedRuntimeLaunch, "resolvedRuntime">,
+): string {
+  return launch.resolvedRuntime === "flapstack-native"
+    ? run.prompt
+    : applyChatModeInstruction(run.prompt, normalizeChatMode(run.chatMode))
+}
+
+function buildClaudeRuntimePrompt(
+  prompt: string,
+  images: Array<{ base64Data: string; mediaType: string; filename?: string }>,
+): string | AsyncIterable<unknown> {
+  if (images.length === 0) return prompt
+  const content = [
+    ...images.map((image) => ({
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: image.mediaType,
+        data: image.base64Data,
+      },
+    })),
+    ...(prompt.trim() ? [{ type: "text" as const, text: prompt }] : []),
+  ]
+  return (async function* () {
+    yield {
+      type: "user" as const,
+      message: { role: "user" as const, content },
+      parent_tool_use_id: null,
+    }
+  })()
 }
 
 async function loadClaudeMcpServers(cwd: string): Promise<Record<string, McpServerConfig>> {
@@ -834,11 +937,13 @@ export function getMainRuntimeLaunchService(
     service = new MainRuntimeLaunchService({ ...options, databasePath })
     services.set(databasePath, service)
   }
+  registerRuntimeLaunchAuthority(databasePath, service)
   return service
 }
 
 export function resetMainRuntimeLaunchServicesForTests(): void {
   services.clear()
+  resetRuntimeLaunchAuthoritiesForTests()
 }
 
 /** Central Runtime dispatch for durable MCP, automation, retry, and worker runs. */
@@ -935,6 +1040,7 @@ async function launchLegacyStream(
   if (!cwd) throw new Error("Run has no project or worktree path.")
   const model =
     run.harness === "codex" ? resolveCodexLaunchModel(run.model, run.reasoningEffort) : run.model
+  const chatMode = normalizeChatMode(run.chatMode)
   if (run.harness === "local") {
     return launchLocalModelStream(caller, run, cwd)
   }
@@ -948,7 +1054,7 @@ async function launchLegacyStream(
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
-        mode: "agent",
+        mode: chatMode,
         reasoningEnabled: run.reasoningEffort !== "minimal",
         ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}),
       })
@@ -961,7 +1067,7 @@ async function launchLegacyStream(
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
-        mode: "agent",
+        mode: chatMode,
         reasoningEnabled: run.reasoningEffort !== "minimal",
         ...(run.reasoningEffort && run.reasoningEffort !== "minimal"
           ? { effort: run.reasoningEffort }
@@ -973,6 +1079,7 @@ async function launchLegacyStream(
         chatId: run.chatId,
         subChatId: run.subChatId,
         prompt: run.prompt,
+        mode: chatMode,
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         ...(model ? { model } : {}),
@@ -987,6 +1094,7 @@ async function launchLegacyStream(
         provider: run.harness,
         model: requireModel(run),
         prompt: run.prompt,
+        mode: chatMode,
         cwd,
         ...(run.projectPath ? { projectPath: run.projectPath } : {}),
         reasoningEnabled: run.reasoningEffort !== "minimal",
@@ -1029,6 +1137,7 @@ async function launchLocalModelStream(
     chatId: run.chatId,
     subChatId: run.subChatId,
     prompt: run.prompt,
+    mode: normalizeChatMode(run.chatMode),
     model,
     endpoint,
     cwd,

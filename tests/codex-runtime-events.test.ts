@@ -114,4 +114,32 @@ describe("direct Codex Runtime event mapping", () => {
       { kind: "lifecycle", phase: "failed", payload: { detail: "TERMINAL_ERROR_A" } },
     ])
   })
+
+  it("preserves structured Codex tool arguments and results", () => {
+    const [event] = mapCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "mcpToolCall",
+          id: "tool-1",
+          server: "filesystem",
+          tool: "read_file",
+          status: "completed",
+          arguments: { path: "src/app.ts" },
+          result: { content: "export const ready = true" },
+        },
+      },
+    })
+
+    expect(event).toMatchObject({
+      kind: "tool",
+      providerToolId: "tool-1",
+      payload: {
+        input: { path: "src/app.ts" },
+        output: { content: "export const ready = true" },
+      },
+    })
+  })
 })

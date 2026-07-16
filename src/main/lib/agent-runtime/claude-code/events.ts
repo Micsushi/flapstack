@@ -16,10 +16,17 @@ import {
 } from "../event-values"
 
 type JsonRecord = Record<string, unknown>
-type BlockState = { type: string; id: string | null; name: string | null }
+type BlockState = {
+  type: string
+  id: string | null
+  name: string | null
+  inputJson: string
+}
 
 const MAX_ACTIVITY_TEXT_BYTES = MAX_AGENT_ACTIVITY_PAYLOAD_BYTES - 1_024
 const MAX_SHORT_TEXT_BYTES = 512
+const MAX_STRUCTURED_PAYLOAD_BYTES = 24_000
+const MAX_STRUCTURED_SUMMARY_BYTES = 8_192
 const MAX_PROVIDER_ID_BYTES = 2_048
 const MAX_INIT_LIST = 100
 const MAX_INIT_VALUE_BYTES = 256
@@ -51,6 +58,7 @@ export class ClaudeRuntimeProtocolError extends Error {
 
 export class ClaudeRuntimeEventMapper {
   private readonly blocks = new Map<number, BlockState>()
+  private messageId: string | null = null
 
   constructor(private readonly controls: RuntimeLaunchControls) {}
 
@@ -77,9 +85,13 @@ export class ClaudeRuntimeEventMapper {
     const event = record(message.event)
     const type = string(event.type)
     const index = integer(event.index)
+    if (type === "message_start") {
+      this.messageId = string(record(event.message).id)
+    }
     const base = this.base(message, type || "stream-event", {
       contentIndex: index,
-      providerItemId: messageItemId(event),
+      providerItemId: messageItemId(event) || this.messageId,
+      providerMessageId: messageItemId(event) || this.messageId,
     })
 
     if (type === "message_start") {
@@ -97,7 +109,7 @@ export class ClaudeRuntimeEventMapper {
       const blockType = string(block.type) || "unknown"
       const id = string(block.id)
       const name = string(block.name)
-      this.blocks.set(index, { type: blockType, id, name })
+      this.blocks.set(index, { type: blockType, id, name, inputJson: "" })
       return this.mapBlockStart(base, blockType, id, name)
     }
 
@@ -178,12 +190,12 @@ export class ClaudeRuntimeEventMapper {
       ]
     }
     if (deltaType === "input_json_delta" && block?.type.includes("tool")) {
+      block.inputJson += string(delta.partial_json) || ""
       const toolBase = { ...base, providerToolId: block.id }
       return [
         activity(toolBase, "tool", "updated", "tool", "sensitive", {
           name: block.name || "unknown",
           state: "input-streaming",
-          inputSummary: "[tool input redacted]",
         }),
       ]
     }
@@ -205,10 +217,12 @@ export class ClaudeRuntimeEventMapper {
     }
     if (block.type === "tool_use" || block.type === "server_tool_use") {
       const toolBase = { ...base, providerToolId: block.id }
+      const input = parseToolInput(block.inputJson)
       return [
-        activity(toolBase, "tool", "completed", "tool", "sensitive", {
+        activity(toolBase, "tool", "updated", "tool", "sensitive", {
           name: block.name || "unknown",
           state: "input-complete",
+          ...(input === undefined ? {} : { input }),
         }),
       ]
     }
@@ -223,23 +237,31 @@ export class ClaudeRuntimeEventMapper {
     const blocks = rawBlocks.slice(0, MAX_PROVIDER_BLOCKS)
     const messageBase = this.base(message, "assistant", {
       providerItemId: string(sdkMessage.id),
+      providerMessageId: string(sdkMessage.id),
       providerParentItemId: parentId,
     })
     const output: AgentActivityAppend[] = []
 
     if (string(message.error)) {
       output.push(
-        activity(messageBase, "warning", "failed", "status", "sensitive", {
-          message: sanitizeClaudeDiagnostic(string(message.error) || "Claude assistant error"),
-          code: string(message.error),
-        }),
+        activity(
+          childIdentity(messageBase, "warning"),
+          "warning",
+          "failed",
+          "status",
+          "sensitive",
+          {
+            message: sanitizeClaudeDiagnostic(string(message.error) || "Claude assistant error"),
+            code: string(message.error),
+          },
+        ),
       )
     }
 
     blocks.forEach((rawBlock, index) => {
       const block = record(rawBlock)
       const type = string(block.type) || "unknown"
-      const base = { ...messageBase, contentIndex: index }
+      const base = childIdentity(messageBase, `block:${index}`, { contentIndex: index })
       if (type === "text") {
         const text = string(block.text) || ""
         if (parentId) {
@@ -266,7 +288,7 @@ export class ClaudeRuntimeEventMapper {
           activity({ ...base, providerToolId: toolId }, "tool", "started", "tool", "sensitive", {
             name: string(block.name) || "unknown",
             state: "requested",
-            inputSummary: "[tool input redacted]",
+            input: block.input,
           }),
         )
       } else if (CRITICAL_UNKNOWN.test(type)) {
@@ -278,15 +300,24 @@ export class ClaudeRuntimeEventMapper {
 
     if (rawBlocks.length > blocks.length) {
       output.push(
-        activity(messageBase, "warning", "updated", "status", "public", {
-          message: `Claude assistant content truncated from ${rawBlocks.length} to ${blocks.length} blocks.`,
-          code: "content-block-limit",
-        }),
+        activity(
+          childIdentity(messageBase, "content-block-limit"),
+          "warning",
+          "updated",
+          "status",
+          "public",
+          {
+            message: `Claude assistant content truncated from ${rawBlocks.length} to ${blocks.length} blocks.`,
+            code: "content-block-limit",
+          },
+        ),
       )
     }
 
     const usage = record(sdkMessage.usage)
-    if (Object.keys(usage).length > 0 && !parentId) output.push(this.usage(messageBase, usage))
+    if (Object.keys(usage).length > 0 && !parentId) {
+      output.push(this.usage(childIdentity(messageBase, "usage"), usage))
+    }
     return output
   }
 
@@ -295,16 +326,25 @@ export class ClaudeRuntimeEventMapper {
     const sdkMessage = record(message.message)
     const blocks = array(sdkMessage.content)
     const parentId = string(message.parent_tool_use_id)
-    const base = this.base(message, "user", { providerParentItemId: parentId })
+    const userMessageId = string(sdkMessage.id) || string(message.uuid)
+    const base = this.base(message, "user", {
+      providerMessageId: userMessageId,
+      providerItemId: userMessageId,
+      providerParentItemId: parentId,
+    })
     const output: AgentActivityAppend[] = []
 
     blocks.forEach((rawBlock, index) => {
       const block = record(rawBlock)
       if (string(block.type) !== "tool_result") return
       const toolId = string(block.tool_use_id)
+      const result = message.tool_use_result ?? block.content
       output.push(
         activity(
-          { ...base, contentIndex: index, providerToolId: toolId },
+          childIdentity(base, `tool-result:${index}:${toolId || "unknown"}`, {
+            contentIndex: index,
+            providerToolId: toolId,
+          }),
           "tool",
           block.is_error === true ? "failed" : "completed",
           "tool",
@@ -312,7 +352,8 @@ export class ClaudeRuntimeEventMapper {
           {
             name: "tool-result",
             state: block.is_error === true ? "failed" : "completed",
-            outputSummary: "[tool output redacted]",
+            output: result,
+            outputSummary: structuredSummary(result),
           },
         ),
       )
@@ -333,26 +374,46 @@ export class ClaudeRuntimeEventMapper {
       numTurns: finite(message.num_turns),
     })
     const output: AgentActivityAppend[] = [
-      activity(base, "lifecycle", failed ? "failed" : "completed", "status", "public", {
-        state: `result:${string(message.subtype) || (failed ? "error" : "success")}`,
-        detail,
-      }),
-      this.usage(base, record(message.usage), finite(message.total_cost_usd)),
+      activity(
+        childIdentity(base, "lifecycle"),
+        "lifecycle",
+        failed ? "failed" : "completed",
+        "status",
+        "public",
+        {
+          state: `result:${string(message.subtype) || (failed ? "error" : "success")}`,
+          detail,
+        },
+      ),
+      this.usage(
+        childIdentity(base, "usage"),
+        record(message.usage),
+        finite(message.total_cost_usd),
+      ),
     ]
 
-    for (const error of array(message.errors).slice(0, 100)) {
+    for (const [index, error] of array(message.errors).slice(0, 100).entries()) {
       output.push(
-        activity(base, "warning", "failed", "status", "sensitive", {
-          message: sanitizeClaudeDiagnostic(String(error)),
-          code: "claude-result-error",
-        }),
+        activity(
+          childIdentity(base, `error:${index}`),
+          "warning",
+          "failed",
+          "status",
+          "sensitive",
+          {
+            message: sanitizeClaudeDiagnostic(String(error)),
+            code: "claude-result-error",
+          },
+        ),
       )
     }
-    for (const denialValue of array(message.permission_denials).slice(0, 100)) {
+    for (const [index, denialValue] of array(message.permission_denials).slice(0, 100).entries()) {
       const denial = record(denialValue)
       output.push(
         activity(
-          { ...base, providerToolId: string(denial.tool_use_id) },
+          childIdentity(base, `permission-denial:${index}`, {
+            providerToolId: string(denial.tool_use_id),
+          }),
           "permission",
           "failed",
           "tool",
@@ -739,10 +800,71 @@ function boundPayload(kind: AgentActivityAppend["kind"], payload: unknown): unkn
       value[field] = truncateUtf8(value[field] as string, MAX_ACTIVITY_TEXT_BYTES)
     }
   }
+  if ("input" in value) value.input = boundStructured(value.input)
+  if ("output" in value) value.output = boundStructured(value.output)
   if (kind === "opaque-metadata" || kind === "private-metadata") {
     value.metadata = { retainedPayload: false, bounded: true }
   }
   return value
+}
+
+function parseToolInput(value: string): unknown | undefined {
+  if (!value.trim()) return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return { raw: truncateUtf8(value, MAX_ACTIVITY_TEXT_BYTES) }
+  }
+}
+
+function structuredSummary(value: unknown): string | null {
+  if (typeof value === "string") return truncateUtf8(value, MAX_STRUCTURED_SUMMARY_BYTES)
+  if (value === null || value === undefined) return null
+  try {
+    return truncateUtf8(JSON.stringify(value), MAX_STRUCTURED_SUMMARY_BYTES)
+  } catch {
+    return truncateUtf8(String(value), MAX_STRUCTURED_SUMMARY_BYTES)
+  }
+}
+
+function boundStructured(value: unknown): unknown {
+  const bounded = boundStructuredValue(value)
+  try {
+    return Buffer.byteLength(JSON.stringify(bounded), "utf8") <= MAX_STRUCTURED_PAYLOAD_BYTES
+      ? bounded
+      : "[structured payload truncated]"
+  } catch {
+    return "[structured payload truncated]"
+  }
+}
+
+function boundStructuredValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value
+  if (typeof value === "string") return truncateUtf8(value, 8_192)
+  if (depth >= 6) return "[nested payload truncated]"
+  if (Array.isArray(value)) {
+    return value.slice(0, 100).map((item) => boundStructuredValue(item, depth + 1))
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 100)
+        .map(([key, item]) => [truncateUtf8(key, 512), boundStructuredValue(item, depth + 1)]),
+    )
+  }
+  return truncateUtf8(String(value), 8_192)
+}
+
+function childIdentity(
+  base: AgentActivityAppendBase,
+  suffix: string,
+  overrides: Partial<AgentActivityAppendBase> = {},
+): AgentActivityAppendBase {
+  return {
+    ...base,
+    ...overrides,
+    dedupKey: `${base.dedupKey || "claude:event"}:${suffix}`,
+  }
 }
 
 function boundList(values: string[]): string[] {

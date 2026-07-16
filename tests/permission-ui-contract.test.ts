@@ -37,6 +37,25 @@ describe("permission UI contract", () => {
     expect(source).toContain("Filter chats, projects, or tasks")
   })
 
+  it("keeps runtime first below both inputs and puts new-chat targets above", () => {
+    const activeChat = readSource("src/renderer/features/agents/main/chat-input-area.tsx")
+    const newChat = readSource("src/renderer/features/agents/main/new-chat-form.tsx")
+    const chatsRouter = readSource("src/main/lib/trpc/routers/chats.ts")
+
+    for (const surface of [activeChat, newChat]) {
+      expect(surface.indexOf("<RuntimeSelector")).toBeLessThan(
+        surface.indexOf("<PermissionSelector"),
+      )
+      expect(surface.indexOf("<PermissionSelector")).toBeLessThan(
+        surface.indexOf("<AgentModeSelector"),
+      )
+    }
+    expect(newChat).toContain("Target selectors - directly above input")
+    expect(newChat).toContain("permissionMode: permissionModeOverride ?? undefined")
+    expect(chatsRouter).toContain("permissionMode: newChatPermissionModeSchema.optional()")
+    expect(chatsRouter).toContain("permissionMode: input.permissionMode ?? inheritedMode")
+  })
+
   it("updates Settings search on the input change event", () => {
     const source = readSource("src/renderer/features/settings/settings-sidebar.tsx")
     expect(source).toContain("onChange={(event) => setSearchQuery(event.target.value)}")

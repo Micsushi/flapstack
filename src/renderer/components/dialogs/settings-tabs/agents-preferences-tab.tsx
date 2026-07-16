@@ -13,6 +13,7 @@ import {
   type AgentMode,
   type AutoAdvanceTarget,
 } from "../../../lib/atoms"
+import { CHAT_MODES, CHAT_MODE_META } from "../../../../shared/chat-mode"
 import { APP_META, type ExternalApp } from "../../../../shared/external-apps"
 
 // Editor icon imports
@@ -135,6 +136,7 @@ function useIsNarrowScreen(): boolean {
 }
 
 export function AgentsPreferencesTab() {
+  const trpcUtils = trpc.useUtils()
   const [reasoningOutputEnabled, setReasoningOutputEnabled] = useAtom(reasoningOutputEnabledAtom)
   const [soundEnabled, setSoundEnabled] = useAtom(soundNotificationsEnabledAtom)
   const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useAtom(
@@ -147,6 +149,14 @@ export function AgentsPreferencesTab() {
   const [defaultAgentMode, setDefaultAgentMode] = useAtom(defaultAgentModeAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
+  const { data: runtimeActivityFixtureSettings } =
+    trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
+  const setRuntimeActivityFixtureSettings =
+    trpc.debug.setRuntimeActivityFixtureSettings.useMutation({
+      onSuccess: (settings) => {
+        trpcUtils.debug.getRuntimeActivityFixtureSettings.setData(undefined, settings)
+      },
+    })
 
   // Co-authored-by setting from Claude settings.json
   const { data: includeCoAuthoredBy, refetch: refetchCoAuthoredBy } =
@@ -206,9 +216,9 @@ export function AgentsPreferencesTab() {
           tabIndex={-1}
         >
           <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Default Mode</span>
+            <span className="text-sm font-medium text-foreground">Default chat mode</span>
             <span className="text-xs text-muted-foreground">
-              Mode for new agents (Plan = read-only, Agent = can edit)
+              How new chats should work by default
             </span>
           </div>
           <Select
@@ -216,11 +226,14 @@ export function AgentsPreferencesTab() {
             onValueChange={(value: AgentMode) => setDefaultAgentMode(value)}
           >
             <SelectTrigger className="w-auto px-2">
-              <span className="text-xs">{defaultAgentMode === "agent" ? "Agent" : "Plan"}</span>
+              <span className="text-xs">{CHAT_MODE_META[defaultAgentMode].label}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="agent">Agent</SelectItem>
-              <SelectItem value="plan">Plan</SelectItem>
+              {CHAT_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {CHAT_MODE_META[mode].label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -472,6 +485,34 @@ export function AgentsPreferencesTab() {
           </DropdownMenu>
         </div>
       </div>
+
+      {/* Developer testing */}
+      {runtimeActivityFixtureSettings?.available && (
+        <div className="bg-background rounded-lg border border-border overflow-hidden">
+          <div
+            className="flex items-center justify-between gap-6 p-4 outline-none"
+            data-settings-id="preferences-runtime-activity-fixtures"
+            tabIndex={-1}
+          >
+            <div className="flex flex-col space-y-1">
+              <span className="text-sm font-medium text-foreground">
+                Runtime activity test controls
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Show controls that create provider-free test runs in project chats.
+              </span>
+            </div>
+            <Switch
+              checked={runtimeActivityFixtureSettings?.enabled ?? false}
+              onCheckedChange={(enabled) => setRuntimeActivityFixtureSettings.mutate({ enabled })}
+              disabled={
+                runtimeActivityFixtureSettings === undefined ||
+                setRuntimeActivityFixtureSettings.isPending
+              }
+            />
+          </div>
+        </div>
+      )}
 
       {/* Privacy */}
       <div className="bg-background rounded-lg border border-border overflow-hidden">

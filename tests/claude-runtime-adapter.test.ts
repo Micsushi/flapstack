@@ -64,7 +64,7 @@ describe("Claude Code Runtime adapter", () => {
         expect.objectContaining({
           kind: "subagent",
           providerParentItemId: "tool-1",
-          providerMessageId: "assistant-child-uuid-1",
+          providerMessageId: "provider-child-message-1",
         }),
         expect.objectContaining({
           kind: "lifecycle",
@@ -111,6 +111,29 @@ describe("Claude Code Runtime adapter", () => {
         providerToolId: "tool-permission-1",
       }),
     ])
+  })
+
+  it("passes launch-owned multimodal prompts to the Claude SDK query", async () => {
+    const multimodalPrompt = iterable([
+      { type: "user", message: { role: "user", content: [{ type: "image" }] } },
+    ])
+    let receivedPrompt: unknown = null
+    const adapter = createClaudeCodeRuntimeAdapter(
+      baseDependencies({
+        resolvePrompt: () => multimodalPrompt,
+        query(input) {
+          receivedPrompt = input.prompt
+          return iterable(fixture.events)
+        },
+      }),
+    )
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "Inspect this image")
+
+    await collect(adapter.streamActivity(context, session, turn))
+
+    expect(receivedPrompt).toBe(multimodalPrompt)
   })
 
   it("reports pinned availability and exact drift diagnostics", async () => {

@@ -221,7 +221,7 @@ async function runClaude(runId: string, prompt = `Prompt for ${runId}`): Promise
     subChatId: "sub-1",
     prompt,
     cwd: directory,
-    mode: "agent",
+    mode: "write",
   })
   return await collectStream(stream)
 }

@@ -14,6 +14,8 @@ import {
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
+import { normalizeChatMode } from "../../../../shared/chat-mode"
+import { useAgentSubChatStore } from "../stores/sub-chat-store"
 
 /**
  * Client transport for the Cursor (`cursor-agent`) harness - Stage 2 Track D.
@@ -155,6 +157,11 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
 
     const model = getSelectedCursorModel(this.config.subChatId)
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
+    const mode = normalizeChatMode(
+      useAgentSubChatStore
+        .getState()
+        .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
+    )
 
     return new ReadableStream({
       start: (controller) => {
@@ -174,6 +181,7 @@ export class CursorChatTransport implements ChatTransport<UIMessage> {
             chatId: this.config.chatId,
             runId,
             prompt,
+            mode,
             cwd: this.config.cwd,
             ...(this.config.projectPath ? { projectPath: this.config.projectPath } : {}),
             model,

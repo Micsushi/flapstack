@@ -4,6 +4,11 @@ import { app, shell } from "electron"
 import { getAuthManager } from "../../../index"
 import { z } from "zod"
 import { clearNetworkCache } from "../../ollama/network-detector"
+import {
+  getRuntimeActivityFixtureSettings,
+  isRuntimeActivityFixtureAvailable,
+  setRuntimeActivityFixtureSettings,
+} from "../../agent-runtime/activity-fixture-settings"
 
 // Protocol constant (must match main/index.ts)
 const IS_DEV = !!process.env.ELECTRON_RENDERER_URL
@@ -21,6 +26,22 @@ export function isOfflineSimulated(): boolean {
 }
 
 export const debugRouter = router({
+  getRuntimeActivityFixtureSettings: publicProcedure.query(() => {
+    return {
+      ...getRuntimeActivityFixtureSettings(),
+      available: isRuntimeActivityFixtureAvailable(app.isPackaged, IS_DEV),
+    }
+  }),
+
+  setRuntimeActivityFixtureSettings: publicProcedure
+    .input(z.object({ enabled: z.boolean() }).strict())
+    .mutation(({ input }) => {
+      if (!isRuntimeActivityFixtureAvailable(app.isPackaged, IS_DEV)) {
+        throw new Error("Runtime activity test controls are available only in development builds.")
+      }
+      return { ...setRuntimeActivityFixtureSettings(input), available: true }
+    }),
+
   /**
    * Get system information for debug display
    */

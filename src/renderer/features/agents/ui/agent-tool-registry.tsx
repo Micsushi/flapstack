@@ -263,6 +263,24 @@ export const AgentToolRegistry: Record<string, ToolMeta> = {
     variant: "simple",
   },
 
+  "tool-ApplyPatch": {
+    icon: IconEditFile,
+    title: (part) => {
+      const isPending = part.state !== "output-available" && part.state !== "output-error"
+      return isPending ? "Applying patch" : "Applied patch"
+    },
+    subtitle: (part) => {
+      const paths = (part.input?.changes ?? [])
+        .map((change: { path?: string }) => change.path)
+        .filter(Boolean)
+      if (paths.length === 0 && part.input?.path) paths.push(part.input.path)
+      if (paths.length === 0) return ""
+      if (paths.length === 1) return getDisplayPath(paths[0])
+      return `${paths.length} files`
+    },
+    variant: "simple",
+  },
+
   // Cloning indicator - shown while sandbox is being created
   "tool-cloning": {
     icon: GitBranch,

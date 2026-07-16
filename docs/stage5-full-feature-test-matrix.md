@@ -89,14 +89,34 @@ live, usability, device, provider, package, or native-platform rows.
 
 ## Runtime and orchestration composition
 
-- [ ] **S5-RO01** F3 coordination uses one F11-owned provider client/request
-      authority with exact capability/version and no silent fallback.
-- [ ] **S5-RO02** Required workflow schemas reach supported adapters and invalid,
-      absent, or unsupported output fails before barrier success.
-- [ ] **S5-RO03** Pause/resume is capability-gated and races with terminal/cancel
-      preserve authoritative per-target results.
-- [ ] **S5-RO04** Activity references, reservations, cancellation, crash/restart,
-      mixed Runtimes, providers, packages, and platforms pass without replay.
+- [ ] **S5-RO01** Every launch previews and snapshots an exact compatible
+      harness/Runtime/provider/model/account/profile/permission/worktree target;
+      Codex cannot use Claude Code Runtime, Claude cannot use Codex Runtime, and
+      no unavailable choice silently falls back.
+- [ ] **S5-RO02** F3 coordination uses one F11-owned provider client/session/event
+      authority with exact capability/version; Codex V1/V2 and Claude/native
+      paths do not create duplicate protocol or activity owners.
+- [ ] **S5-RO03** Codex-to-Claude and Claude-to-Codex `Continue with` each create
+      a separately navigable child Chat/native session with immutable lineage
+      and only the previewed, labeled visible-context manifest.
+- [ ] **S5-RO04** Bidirectional `Delegate to` and mixed workflows exchange
+      versioned task/result envelopes with durable structured output, artifacts,
+      changes, limitations, terminal evidence, and child Chat/run identity.
+- [ ] **S5-RO05** Secrets, credentials, private/encrypted reasoning, provider
+      session state, hidden tool state, and unselected files never cross provider
+      context, logs, diagnostics, audit, or export boundaries.
+- [ ] **S5-RO06** Child permissions, provider account, descendants, budgets,
+      workspace/worktree, approvals, cancel/pause/resume/steer, and partial group
+      results remain capability-gated, previewed, conflict-safe, and no broader
+      than every delegation ceiling.
+- [ ] **S5-RO07** Activity, result, reservation, usage/cost references,
+      cancellation, terminal races, retry, forced crash/restart, uncertain state,
+      mixed Runtimes, packages, and platforms preserve exact provenance without
+      replay or double counting.
+- [ ] **S5-RO08** Verified Dev and macOS preview-package walkthroughs prove both
+      provider directions, incompatible-target repair, accessibility, diagnostics,
+      cancellation, and recovery; Windows/Linux rows remain open until observed
+      natively by S5-F10.
 
 ## Organization usage APIs
 
@@ -162,7 +182,8 @@ live, usability, device, provider, package, or native-platform rows.
 - [ ] **S5-I02** Clean install and Stage 4 upgrade/rollback preserve all supported
       data, identity, authority, history, and preferences.
 - [ ] **S5-I03** One project exercises onboarding, shared personality/profile,
-      mixed workflow/Reviewer child, grid, visual context, mobile, usage,
+      mixed workflow/Reviewer child, bidirectional Codex/Claude delegation,
+      child-Chat lineage, grid, visual context, mobile, usage,
       Obsidian knowledge graph/context round trip, restart, audit, and export
       with matching durable state.
 - [ ] **S5-I04** Independent security/privacy, UI/accessibility/usability,

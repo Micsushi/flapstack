@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from "vitest"
 import Database from "better-sqlite3"
 import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import { getRuntimeDiagnostics } from "../src/main/lib/agent-runtime/diagnostics"
-import { RUNTIME_RELEASE_POLICY } from "../src/main/lib/agent-runtime/release-policy"
+import {
+  buildRuntimeReleasePolicy,
+  RUNTIME_RELEASE_POLICY,
+} from "../src/main/lib/agent-runtime/release-policy"
 import {
   applyActivityMigration,
   applyRuntimeMigration,
@@ -25,6 +28,7 @@ const FEATURE_SUITES = [
   "agent-runtime-continuation.test.ts",
   "agent-runtime-registry.test.ts",
   "agent-runtime-provider-router-guard.test.ts",
+  "agent-runtime-interactive-chat.test.ts",
   "agent-runtime-orchestration-bridge.test.ts",
 ] as const
 
@@ -81,10 +85,16 @@ describe("Agent Runtime feature acceptance", () => {
     expect(serialized).not.toContain("raw-secret-session")
   })
 
-  it("keeps native defaults gated until observed release evidence and documents repair", () => {
+  it("keeps production defaults gated while allowing explicit native Runtime testing", () => {
     expect(RUNTIME_RELEASE_POLICY.codex.enabledForNewLaunches).toBe(false)
     expect(RUNTIME_RELEASE_POLICY["claude-code"].enabledForNewLaunches).toBe(false)
     expect(RUNTIME_RELEASE_POLICY["flapstack-native"].enabledForNewLaunches).toBe(true)
+    const testingPolicy = buildRuntimeReleasePolicy(true)
+    expect(testingPolicy.codex).toMatchObject({ enabledForNewLaunches: true, reason: null })
+    expect(testingPolicy["claude-code"]).toMatchObject({
+      enabledForNewLaunches: true,
+      reason: null,
+    })
     const guide = read("docs/agent-runtimes.md")
     expect(guide).toContain("never silently")
     expect(guide).toContain("Continue with Runtime")
@@ -92,15 +102,35 @@ describe("Agent Runtime feature acceptance", () => {
     expect(read("docs/stage4-full-feature-test-matrix.md")).toContain("S4-AR10")
   })
 
-  it("wires durable activity and Runtime selection into the production renderer", () => {
+  it("keeps Runtime selection while the production renderer uses normal chat UI", () => {
     const activeChat = read("src/renderer/features/agents/main/active-chat.tsx")
     const input = read("src/renderer/features/agents/main/chat-input-area.tsx")
     const newChat = read("src/renderer/features/agents/main/new-chat-form.tsx")
-    expect(activeChat).toContain("RuntimeActivityPanel")
-    expect(activeChat).toContain("agentActivity.list.useQuery")
+    expect(activeChat).toContain("IsolatedMessagesSection")
+    expect(activeChat).toContain("ToolCallComponent={AgentToolCall}")
+    expect(activeChat).toContain("MessageGroupWrapper={MessageGroup}")
+    expect(activeChat).toContain("updateSubChatMessages")
+    expect(activeChat).toContain("latestAssistantUsesDirectRuntime(latestMessages)")
+    expect(activeChat).not.toContain("RuntimeActivityPanel")
+    expect(activeChat).not.toContain("agentActivity.list.useQuery")
     expect(input).toContain("continueWithRuntime")
     expect(input).toContain("RuntimeSelector")
     expect(newChat).toContain("runtimePreference")
+
+    for (const surface of [input, newChat]) {
+      expect(surface.indexOf("<AgentModelSelector")).toBeLessThan(
+        surface.indexOf("<AgentModelTuningSelector"),
+      )
+    }
+    expect(newChat).toContain("Target selectors - directly above input")
+    for (const surface of [input, newChat]) {
+      expect(surface.indexOf("<RuntimeSelector")).toBeLessThan(
+        surface.indexOf("<PermissionSelector"),
+      )
+      expect(surface.indexOf("<PermissionSelector")).toBeLessThan(
+        surface.indexOf("<AgentModeSelector"),
+      )
+    }
   })
 })
 

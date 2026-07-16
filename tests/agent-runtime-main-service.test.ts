@@ -8,6 +8,7 @@ import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity
 import {
   getMainRuntimeLaunchService,
   resetMainRuntimeLaunchServicesForTests,
+  resolveRuntimeTurnPrompt,
 } from "../src/main/lib/main-run-launcher"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
@@ -49,6 +50,21 @@ afterEach(() => {
 })
 
 describe("process-wide Runtime launch service", () => {
+  it("leaves Native prompts raw because legacy routers apply chat mode themselves", () => {
+    expect(
+      resolveRuntimeTurnPrompt(
+        { prompt: "Inspect this", chatMode: "review" },
+        { resolvedRuntime: "flapstack-native" },
+      ),
+    ).toBe("Inspect this")
+    expect(
+      resolveRuntimeTurnPrompt(
+        { prompt: "Inspect this", chatMode: "review" },
+        { resolvedRuntime: "codex" },
+      ),
+    ).toContain("Review mode:")
+  })
+
   it("owns one registry/coordinator and keeps real disabled factories recoverable", () => {
     const first = getMainRuntimeLaunchService(path)
     const second = getMainRuntimeLaunchService(path)
@@ -81,7 +97,7 @@ describe("process-wide Runtime launch service", () => {
     })
     expect(
       sqlite.prepare("SELECT session_id FROM sub_chats WHERE id = 'sub-durable'").get(),
-    ).toEqual({ session_id: "session-durable" })
+    ).toEqual({ session_id: "thread-durable" })
     const events = sqlite
       .prepare(
         `SELECT kind, phase, provider_session_id, provider_thread_id, provider_turn_id
@@ -102,7 +118,62 @@ describe("process-wide Runtime launch service", () => {
     expect(value.reconcile).not.toHaveBeenCalled()
   })
 
-  it("loads only selected project vault context into a direct Runtime prompt", async () => {
+  it("resumes a second Codex turn with the durable provider thread identity", async () => {
+    seedDirectRun("first-turn")
+    const resumed: RuntimeAdapterSession[] = []
+    const prompts: string[] = []
+    const factory = vi.fn(() => {
+      const adapter = directAdapter()
+      adapter.resumeSession = async (_context, session) => {
+        resumed.push(session)
+        return session
+      }
+      adapter.startTurn = async (_context, _session, prompt) => {
+        prompts.push(prompt)
+        return { providerTurnId: "turn" }
+      }
+      return adapter
+    })
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: factory,
+      enableCodex: true,
+    })
+    await service.launch(queued("first-turn"))
+    seedFollowupRun("second-turn", "first-turn")
+    const followup = queued("second-turn")
+    followup.chatId = "chat-first-turn"
+    followup.subChatId = "sub-first-turn"
+    followup.chatMode = "review"
+    followup.prompt = "Follow up"
+
+    await service.launch(followup)
+
+    expect(resumed).toContainEqual({
+      providerSessionId: null,
+      providerThreadId: "thread-first-turn",
+    })
+    expect(prompts[1]).toContain("Review mode:")
+    expect(prompts[1]).toContain("Follow up")
+  })
+
+  it("persists cancellation before provider launch authority is reserved", async () => {
+    seedDirectRun("prelaunch-cancel")
+    const factory = vi.fn(() => directAdapter())
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: factory,
+      enableCodex: true,
+    })
+
+    const launch = service.launch(queued("prelaunch-cancel"))
+    await expect(service.cancel("prelaunch-cancel", "operator stopped")).resolves.toBe(true)
+    await expect(launch).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
+    expect(factory).not.toHaveBeenCalled()
+    expect(
+      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'prelaunch-cancel'").get(),
+    ).toEqual({ status: "cancelled" })
+  })
+
+  it("loads selected project vault context through provider instructions", async () => {
     seedDirectRun("vault-context")
     const projectRoot = join(directory, "project")
     const appDataRoot = join(directory, "app-data")
@@ -143,9 +214,11 @@ describe("process-wide Runtime launch service", () => {
     })
 
     let providerPrompt = ""
+    let providerInstructions = ""
     const value = directAdapter()
-    value.startTurn = vi.fn(async (_context, _session, prompt) => {
+    value.startTurn = vi.fn(async (context, _session, prompt) => {
       providerPrompt = prompt
+      providerInstructions = context.instructions ?? ""
       return { providerTurnId: "turn-vault-context" }
     })
     const service = getMainRuntimeLaunchService(path, {
@@ -158,9 +231,10 @@ describe("process-wide Runtime launch service", () => {
 
     await service.launch(run)
 
-    expect(providerPrompt).toContain("SELECTED DIRECT RUNTIME CONTEXT")
-    expect(providerPrompt).not.toContain("UNSELECTED DIRECT RUNTIME CONTEXT")
-    expect(providerPrompt).toContain("Prompt")
+    expect(providerPrompt).toBe("Prompt")
+    expect(providerInstructions).toContain("SELECTED DIRECT RUNTIME CONTEXT")
+    expect(providerInstructions).not.toContain("UNSELECTED DIRECT RUNTIME CONTEXT")
+    expect(providerInstructions).not.toContain("--- USER REQUEST ---")
     const manifest = sqlite
       .prepare("SELECT vault_context_manifest manifest FROM agent_runs WHERE id = ?")
       .get("vault-context") as { manifest: string }
@@ -1016,6 +1090,30 @@ function seedDirectRun(runId: string): void {
       runId,
       `chat-${runId}`,
       `sub-${runId}`,
+      `mcp-${runId}`,
+      ...testRuntimeSnapshotSqlValues("codex", "codex"),
+    )
+}
+
+function seedFollowupRun(runId: string, previousRunId: string): void {
+  sqlite
+    .prepare("UPDATE sub_chats SET run_status = 'running' WHERE id = ?")
+    .run(`sub-${previousRunId}`)
+  sqlite
+    .prepare(
+      `INSERT INTO agent_runs (
+        id, chat_id, sub_chat_id, harness, model, permission_mode, worktree_path,
+        prompt_message_id, initial_prompt, status, started_at,
+        runtime_snapshot_version, runtime_preference, runtime_preference_source,
+        resolved_runtime, runtime_adapter_version, runtime_protocol_version,
+        runtime_capability_snapshot, runtime_control_snapshot
+      ) VALUES (?, ?, ?, 'codex', 'model', 'read-only', '/tmp/project', ?, 'Follow up', 'running', 2,
+        ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      runId,
+      `chat-${previousRunId}`,
+      `sub-${previousRunId}`,
       `mcp-${runId}`,
       ...testRuntimeSnapshotSqlValues("codex", "codex"),
     )

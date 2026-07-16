@@ -4,8 +4,6 @@ import type { BuiltinCommandAction, SlashCommandOption } from "./types"
  * Prompt texts for prompt-based slash commands
  */
 export const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction["type"], string>> = {
-  review:
-    "Please review the code in the current context and provide feedback on code quality, potential bugs, and improvements.",
   "pr-comments": "Generate detailed PR review comments for the changes in the current context.",
   "release-notes": "Generate release notes summarizing the changes in this codebase.",
   "security-review":
@@ -44,8 +42,7 @@ Now analyze this project and create .flapstack/worktree.json with the appropriat
  */
 export function isPromptCommand(
   type: BuiltinCommandAction["type"],
-): type is
-  "review" | "pr-comments" | "release-notes" | "security-review" | "commit" | "worktree-setup" {
+): type is "pr-comments" | "release-notes" | "security-review" | "commit" | "worktree-setup" {
   return type in COMMAND_PROMPTS
 }
 
@@ -68,10 +65,17 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: "builtin",
   },
   {
-    id: "builtin:agent",
-    name: "agent",
-    command: "/agent",
-    description: "Switch to Agent mode (applies changes directly)",
+    id: "builtin:write",
+    name: "write",
+    command: "/write",
+    description: "Switch to Write mode",
+    category: "builtin",
+  },
+  {
+    id: "builtin:read",
+    name: "read",
+    command: "/read",
+    description: "Switch to read-only mode",
     category: "builtin",
   },
   {
@@ -93,7 +97,7 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     id: "builtin:review",
     name: "review",
     command: "/review",
-    description: "Ask agent to review your code",
+    description: "Switch to read-only Review mode",
     category: "builtin",
   },
   {

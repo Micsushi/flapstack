@@ -27,6 +27,9 @@ import {
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
+import type { ChatMode } from "../../../../shared/chat-mode"
+import { createDirectRuntimeStream, splitCodexRuntimeModel } from "./direct-runtime-chat-transport"
+import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
 
 type UIMessageChunk = any
 
@@ -35,7 +38,7 @@ type ACPChatTransportConfig = {
   subChatId: string
   cwd: string
   projectPath?: string
-  mode: "plan" | "agent"
+  mode: ChatMode
   provider: "codex"
 }
 
@@ -154,6 +157,22 @@ export class ACPChatTransport implements ChatTransport<UIMessage> {
       .configured
     const selectedModel = getSelectedCodexModel(this.config.subChatId, hasApiKey)
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
+    const directModel = splitCodexRuntimeModel(selectedModel)
+    const directStream = await createDirectRuntimeStream({
+      chatId: this.config.chatId,
+      subChatId: this.config.subChatId,
+      harness: "codex",
+      prompt,
+      ...(typeof lastUser?.id === "string" ? { promptMessageId: lastUser.id } : {}),
+      model: directModel.model,
+      mode: currentMode,
+      reasoningEffort: directModel.effort,
+      reasoningEnabled,
+      images,
+      hotlineEnabled: resolveAgentHotlineEnabled(options.messages),
+      abortSignal: options.abortSignal,
+    })
+    if (directStream) return directStream
 
     return new ReadableStream({
       start: (controller) => {

@@ -79,6 +79,7 @@ import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
 import { requireVoiceUiFixture } from "./carryover-controls"
 import { listDevAgentInputRendererStates } from "./renderer-state"
+import { resolveCanonicalProjectPath } from "../projects/project-path"
 import {
   authorizeMcpDispatchRetry,
   listMcpAuditRecords,
@@ -585,7 +586,7 @@ export function createTestOrchestrationFixture(input: {
   if (!existsSync(requestedPath) || !statSync(requestedPath).isDirectory()) {
     throw new Error("Orchestration fixture project path must be an existing directory")
   }
-  const projectPath = realpathSync(requestedPath)
+  const projectPath = resolveCanonicalProjectPath(requestedPath)
   const db = getDatabase()
   const existingProject = db.select().from(projects).where(eq(projects.path, projectPath)).get()
   if (existingProject?.archivedAt) throw new Error("Orchestration fixture project is archived")
@@ -621,7 +622,7 @@ export function createTestOrchestrationFixture(input: {
       .values({
         chatId: chat.id,
         name: chat.name,
-        mode: "agent",
+        mode: "write",
         harness,
         permissionMode,
         worktreePath: project.path,
@@ -812,7 +813,7 @@ export function prepareProductMcpCaller(input: {
         id: subChatId,
         chatId,
         name,
-        mode: "agent",
+        mode: "write",
         harness,
         model,
         permissionMode,
@@ -1327,10 +1328,11 @@ export async function getProviderStatus() {
 }
 
 export function ensureTestProject(input?: { name?: string }, repoPath = process.cwd()) {
-  const projectPath = resolve(repoPath)
-  if (!existsSync(projectPath) || !statSync(projectPath).isDirectory()) {
+  const requestedPath = resolve(repoPath)
+  if (!existsSync(requestedPath) || !statSync(requestedPath).isDirectory()) {
     throw new Error("Active development checkout is not a directory")
   }
+  const projectPath = resolveCanonicalProjectPath(requestedPath)
   const db = getDatabase()
   const existing = db.select().from(projects).where(eq(projects.path, projectPath)).get()
   const now = new Date()
@@ -1671,7 +1673,7 @@ export function createTestChat(input: {
       .values({
         chatId: chat.id,
         name: input.name,
-        mode: "agent",
+        mode: "write",
         harness: input.provider,
         model: input.model,
         permissionMode,

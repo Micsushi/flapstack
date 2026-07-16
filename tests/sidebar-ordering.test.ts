@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildOrderedIds,
   moveIdInOrder,
+  orderSidebarProjects,
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
@@ -12,6 +13,20 @@ import {
 } from "../src/renderer/features/sidebar/sidebar-ordering"
 
 describe("sidebar ordering", () => {
+  it("applies a project order that remains a manual drag order", () => {
+    const projects = [
+      { id: "b", name: "Beta", updatedAt: new Date("2026-01-01") },
+      { id: "a", name: "Alpha", updatedAt: new Date("2026-02-01") },
+    ]
+
+    const ordered = orderSidebarProjects(projects, "name-asc")
+    expect(ordered).toEqual(["a", "b"])
+    expect(moveIdInOrder(ordered, ordered, "b", "a", "before")).toEqual(["b", "a"])
+    expect(orderSidebarProjects(projects, "name-desc")).toEqual(["b", "a"])
+    expect(orderSidebarProjects(projects, "newest")).toEqual(["a", "b"])
+    expect(orderSidebarProjects(projects, "oldest")).toEqual(["b", "a"])
+  })
+
   it("moves a mixed project child up before a task in one drop", () => {
     const activeIds = ["task:one", "chat:a", "task:two", "chat:b"]
 
@@ -118,11 +133,12 @@ describe("sidebar ordering", () => {
     ).toEqual([])
   })
 
-  it("highlights both items around task-chat and chat-chat boundaries", () => {
+  it("highlights both items around task-chat, chat-chat, and chat-task boundaries", () => {
     const items = [
       { id: "task:one", groupId: "project-a" },
       { id: "chat:one", groupId: "project-a" },
       { id: "chat:two", groupId: "project-a" },
+      { id: "task:two", groupId: "project-a" },
     ]
 
     expect(
@@ -130,6 +146,9 @@ describe("sidebar ordering", () => {
     ).toEqual(["chat:one", "task:one"])
     expect(resolveBoundaryHighlightIds({ items, targetId: "chat:one", position: "after" })).toEqual(
       ["chat:one", "chat:two"],
+    )
+    expect(resolveBoundaryHighlightIds({ items, targetId: "chat:two", position: "after" })).toEqual(
+      ["chat:two", "task:two"],
     )
   })
 

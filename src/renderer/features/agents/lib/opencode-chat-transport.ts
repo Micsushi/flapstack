@@ -9,6 +9,8 @@ import { trpcClient } from "../../../lib/trpc"
 import { pendingAuthRetryMessageAtom, subChatReasoningEnabledAtomFamily } from "../atoms"
 import { showProviderErrorToast } from "./error-toast"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
+import { normalizeChatMode } from "../../../../shared/chat-mode"
+import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import {
   bindAgentChatAbort,
   createAgentChatSubscriptionObserver,
@@ -147,6 +149,11 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
       .find((message) => message.role === "assistant")
     const sessionId = (lastAssistant?.metadata as AgentMessageMetadata | undefined)?.sessionId
     const reasoningEnabled = appStore.get(subChatReasoningEnabledAtomFamily(this.config.subChatId))
+    const mode = normalizeChatMode(
+      useAgentSubChatStore
+        .getState()
+        .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
+    )
 
     return new ReadableStream({
       start: (controller) => {
@@ -165,6 +172,7 @@ export class OpencodeChatTransport implements ChatTransport<UIMessage> {
             provider: this.config.provider,
             model: this.config.model,
             prompt,
+            mode,
             reasoningEnabled,
             reasoningEffort: "high",
             cwd: this.config.cwd,

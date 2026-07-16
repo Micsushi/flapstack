@@ -8,6 +8,23 @@ import type { RuntimeCapabilitySnapshot, RuntimeLaunchControls } from "../src/sh
 import { activity } from "./runtime-activity-test-helpers"
 
 describe("Runtime activity component", () => {
+  it("renders chat-sized timelines at their measured heights so scrolling stays stable", () => {
+    const events = Array.from({ length: 30 }, (_, index) =>
+      activity(
+        "agent-text",
+        { text: `variable-height activity ${index}\n${"detail ".repeat(index % 5)}` },
+        { storageId: index + 1, sequence: index + 1, eventId: `stable-event-${index + 1}` },
+      ),
+    )
+
+    const html = renderToStaticMarkup(
+      <RuntimeActivityTimeline events={events} status="ready" viewportHeight={320} />,
+    )
+
+    expect((html.match(/data-runtime-activity-key=/g) ?? []).length).toBe(30)
+    expect(html).not.toContain('data-index="')
+  })
+
   it("is collected as TSX and renders one virtualized provider-neutral surface", () => {
     const events = Array.from({ length: 500 }, (_, index) =>
       activity(

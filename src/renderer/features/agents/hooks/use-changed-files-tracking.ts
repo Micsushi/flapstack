@@ -11,6 +11,9 @@ interface MessagePart {
     old_string?: string
     new_string?: string
     content?: string
+    path?: string | null
+    diff?: string | null
+    changes?: Array<{ path?: string; diff?: string | null }>
   }
 }
 
@@ -126,10 +129,33 @@ export function useChangedFilesTracking(
           displayPath: string
         }
       >()
+      const patchStates = new Map<
+        string,
+        { additions: number; deletions: number; displayPath: string }
+      >()
 
       for (const msg of inputMessages) {
         if (msg.role !== "assistant") continue
         for (const part of msg.parts || []) {
+          if (part.type === "tool-ApplyPatch") {
+            const changes = part.input?.changes?.length
+              ? part.input.changes
+              : part.input?.path
+                ? [{ path: part.input.path, diff: part.input.diff }]
+                : []
+            for (const change of changes) {
+              const filePath = change.path
+              if (!filePath || isSessionFile(filePath)) continue
+              const stats = unifiedDiffStats(change.diff ?? part.input?.diff ?? "")
+              const existing = patchStates.get(filePath)
+              patchStates.set(filePath, {
+                additions: (existing?.additions ?? 0) + stats.additions,
+                deletions: (existing?.deletions ?? 0) + stats.deletions,
+                displayPath: getDisplayPath(filePath),
+              })
+            }
+            continue
+          }
           if (part.type === "tool-Edit" || part.type === "tool-Write") {
             const filePath = part.input?.file_path
             if (!filePath) continue
@@ -174,6 +200,15 @@ export function useChangedFilesTracking(
           additions: stats.additions,
           deletions: stats.deletions,
         })
+      }
+      for (const [filePath, state] of patchStates) {
+        const existing = result.find((file) => file.filePath === filePath)
+        if (existing) {
+          existing.additions += state.additions
+          existing.deletions += state.deletions
+        } else {
+          result.push({ filePath, ...state })
+        }
       }
 
       return result
@@ -230,4 +265,14 @@ export function useChangedFilesTracking(
   }, [subChatId, chatId, setSubChatToChatMap])
 
   return { changedFiles, recomputeChangedFiles }
+}
+
+function unifiedDiffStats(diff: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions++
+    if (line.startsWith("-") && !line.startsWith("---")) deletions++
+  }
+  return { additions, deletions }
 }

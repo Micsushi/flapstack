@@ -101,7 +101,7 @@ const SearchHistoryPopover = memo(
         const timeAgo = formatTimeAgo(subChat.updated_at || subChat.created_at)
         const isLoading = loadingSubChats.has(subChat.id)
         const hasUnseen = subChatUnseenChanges.has(subChat.id)
-        const mode = subChat.mode || "agent"
+        const mode = subChat.mode || "write"
         const hasPendingQuestion = pendingQuestionsMap.has(subChat.id)
         const hasPendingPlan = pendingPlanApprovals.has(subChat.id)
 
@@ -708,8 +708,8 @@ export function SubChatSelector({
                   const hasUnseen = subChatUnseenChanges.has(subChat.id)
                   const hasTabsToRight = index < openSubChats.length - 1
                   const isPinned = pinnedSubChatIds.includes(subChat.id)
-                  // Get mode from sub-chat itself (defaults to "agent")
-                  const mode = subChat.mode || "agent"
+                  // Get mode from sub-chat itself.
+                  const mode = subChat.mode || "write"
                   // Check if this chat is waiting for user answer
                   const hasPendingQuestion = pendingQuestionsMap.has(subChat.id)
                   // Check if this chat has a pending plan approval
@@ -980,7 +980,7 @@ export function SubChatSelector({
                 variant="ghost"
                 size="icon"
                 onClick={() => onOpenDiff?.()}
-                className="h-6 w-6 p-0 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] flex-shrink-0 rounded-md flex items-center justify-center hover:bg-foreground/10"
+                className="h-7 w-7 p-0 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] flex-shrink-0 rounded-md flex items-center justify-center hover:bg-accent hover:text-accent-foreground"
               >
                 <DiffIcon className="h-4 w-4" />
                 <span className="sr-only">Open diff</span>
@@ -1009,7 +1009,7 @@ export function SubChatSelector({
                 variant="ghost"
                 size="icon"
                 onClick={() => onOpenTerminal?.()}
-                className="h-6 w-6 p-0 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] flex-shrink-0 rounded-md flex items-center justify-center hover:bg-foreground/10"
+                className="h-7 w-7 p-0 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] flex-shrink-0 rounded-md flex items-center justify-center hover:bg-accent hover:text-accent-foreground"
               >
                 <TerminalSquare className="h-4 w-4" />
                 <span className="sr-only">Open terminal</span>

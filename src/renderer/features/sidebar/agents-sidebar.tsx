@@ -48,7 +48,6 @@ import {
   MessageSquarePlus,
   ListPlus,
   FolderGit2,
-  FolderPlus,
   FolderOpen,
   GitBranch,
   GitFork,
@@ -59,12 +58,17 @@ import {
   BookOpen,
   Star,
   Plus,
+  SquarePen,
   ArrowRightLeft,
   Copy,
   Inbox,
   Workflow,
   Network,
   LayoutGrid,
+  Check,
+  FilePenLine,
+  Library,
+  Zap,
 } from "lucide-react"
 // import { useRouter } from "next/navigation" // Desktop doesn't use next/navigation
 // Desktop: archive is handled inline, not via hook
@@ -165,6 +169,7 @@ import {
 } from "./chat-move-destinations"
 import {
   moveIdInOrder,
+  orderSidebarProjects,
   resolveBoundaryHighlightIds,
   resolveMoveIndicatorIds,
   resolveSidebarDragCursor,
@@ -172,8 +177,10 @@ import {
   resolveTaskGroupDropTarget,
   resolveTaskHeaderDropPosition,
   type DragInsertPosition,
+  type SidebarProjectOrder,
   type SidebarDropPosition,
 } from "./sidebar-ordering"
+import { getNonMainWorktreeLabel } from "./worktree-chip"
 
 // GitHub avatar with loading placeholder
 const GitHubAvatar = React.memo(function GitHubAvatar({
@@ -256,7 +263,6 @@ const SCOPED_SECTION_BACKGROUND_OPACITY = 0.25
 const TASK_SECTION_BACKGROUND_OPACITY = 0.34
 const SCOPED_CHAT_BACKGROUND_OPACITY = 0.09
 const SCOPED_CHAT_BACKGROUND_HOVER_OPACITY = 0.14
-const LEGACY_GENERATED_WORKTREE_CHIP_CUTOFF = new Date("2026-07-07T17:35:00.000Z")
 const SIDEBAR_POINTER_DRAG_THRESHOLD = 4
 
 function clampColorChannel(value: number) {
@@ -378,7 +384,7 @@ function findSidebarPointerDropTarget(
   clientY: number,
   draggingKind: string,
   draggingId: string,
-) {
+): { kind: string; id: string; position: SidebarDropPosition } | null {
   const target = document.elementFromPoint(clientX, clientY)
   if (!(target instanceof HTMLElement)) return null
 
@@ -558,71 +564,28 @@ function useSidebarPointerDragSource({
   )
 }
 
-function normalizeWorktreePath(path?: string | null) {
-  return path?.trim().replace(/[\\/]+$/, "") ?? null
-}
-
-function getWorktreeDisplayName(path?: string | null) {
-  const normalized = normalizeWorktreePath(path)
-  return normalized?.split(/[\\/]/).filter(Boolean).at(-1) ?? null
-}
-
-function sanitizeProjectNameForWorktreePath(name?: string | null) {
-  const sanitized =
-    name
-      ?.toLowerCase()
-      .replace(/[\s_]+/g, "-")
-      .replace(/[^a-z0-9\-.]/g, "")
-      .replace(/-{2,}/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 50) ?? ""
-
-  return sanitized || "project"
-}
-
-function isGeneratedProjectWorktreePath({
-  scope,
-  taskId,
-  worktreePath,
-  branch,
-  baseBranch,
-  projectName,
-  createdAt,
-}: {
-  scope?: "global" | "project" | "task" | null
-  taskId?: string | null
-  worktreePath?: string | null
-  branch?: string | null
-  baseBranch?: string | null
-  projectName?: string | null
-  createdAt?: Date | null
-}) {
-  const normalizedWorktreePath = normalizeWorktreePath(worktreePath)
-  if (scope !== "project" || taskId || !normalizedWorktreePath || !branch || !baseBranch) {
-    return false
-  }
-  if (!createdAt || createdAt.getTime() >= LEGACY_GENERATED_WORKTREE_CHIP_CUTOFF.getTime()) {
-    return false
-  }
-
-  const projectSlug = sanitizeProjectNameForWorktreePath(projectName)
-  return normalizedWorktreePath.includes(`/.flapstack/worktrees/${projectSlug}/`)
-}
-
 function DropSeparator({
   className,
+  // Vertical nudge (applied to the outer wrapper) to center the line in the gap
+  // between the two items. It must live here, not on the inner line: the line is
+  // a framer-motion element whose animated `transform` overrides any Tailwind
+  // translate class. A chat item's visible content is inset ~13px inside its
+  // box, so the line sits ~5px below the visual center of the gap without a
+  // nudge; callers pass the offset that recenters their context.
+  offsetClassName = "-translate-y-[2px]",
   onDragEnter,
   onDragOver,
   onDrop,
 }: {
   className?: string
+  offsetClassName?: string
   onDragEnter?: (event: React.DragEvent<HTMLDivElement>) => void
   onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void
   onDrop?: (event: React.DragEvent<HTMLDivElement>) => void
 }) {
   return (
     <div
-      className={cn("pointer-events-none relative z-10 h-0", className)}
+      className={cn("pointer-events-none relative z-10 h-0", offsetClassName, className)}
       aria-hidden="true"
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
@@ -632,9 +595,22 @@ function DropSeparator({
         initial={{ opacity: 0, scaleX: 0.2 }}
         animate={{ opacity: 1, scaleX: 1 }}
         transition={{ type: "spring", stiffness: 560, damping: 34, mass: 0.55 }}
-        className="absolute left-0 right-0 top-0 h-px origin-left -translate-y-1/2 rounded-full bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.35)]"
+        className="absolute left-0 right-0 top-0 h-px origin-left rounded-full bg-primary shadow-[0_0_6px_hsl(var(--primary)/0.35)]"
       />
     </div>
+  )
+}
+
+function ExpandedSectionIndicator() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scaleX: 0.2 }}
+      animate={{ opacity: 1, scaleX: 1 }}
+      exit={{ opacity: 0, scaleX: 0.2 }}
+      transition={{ type: "spring", stiffness: 560, damping: 34, mass: 0.55 }}
+      className="pointer-events-none absolute bottom-0 left-2 right-2 h-px origin-left rounded-full bg-foreground/20 shadow-[0_0_6px_hsl(var(--foreground)/0.15)]"
+      aria-hidden="true"
+    />
   )
 }
 
@@ -1797,7 +1773,6 @@ function chatListSectionPropsAreEqual(
 
   // Check Maps by reference
   if (prevProps.projectsMap !== nextProps.projectsMap) return false
-  if (prevProps.taskDefaultWorktrees !== nextProps.taskDefaultWorktrees) return false
   if (prevProps.workspaceFileStats !== nextProps.workspaceFileStats) return false
 
   // Callback functions are stable from useCallback in parent
@@ -1870,7 +1845,6 @@ interface ChatListSectionProps {
       path?: string | null
     }
   >
-  taskDefaultWorktrees: Map<string, string | null>
   workspaceFileStats: Map<string, { fileCount: number; additions: number; deletions: number }>
   filteredChats: Array<{ id: string }>
   canShowPinOption: boolean
@@ -1960,7 +1934,6 @@ const ChatListSection = React.memo(function ChatListSection({
   pinnedChatIds,
   projectsMap,
   workspaceFileStats,
-  taskDefaultWorktrees,
   filteredChats,
   canShowPinOption,
   areAllSelectedPinned,
@@ -2577,7 +2550,11 @@ const ChatListSection = React.memo(function ChatListSection({
                         : undefined
                     }
                   >
-                    <Plus className="h-3.5 w-3.5" />
+                    {lifecycleTarget?.type === "project" ? (
+                      <SquarePen className="h-3.5 w-3.5" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 )}
                 {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
@@ -2671,29 +2648,11 @@ const ChatListSection = React.memo(function ChatListSection({
               const isLastInSection = chat.id === chats.at(-1)?.id
               const isJustCreated = justCreatedIds.has(chat.id)
               const isStarred = starredChatIds.has(chat.id)
-              const defaultWorktreePath = chat.taskId
-                ? (taskDefaultWorktrees.get(chat.taskId) ?? project?.path ?? null)
-                : (project?.path ?? null)
-              const normalizedChatWorktreePath = normalizeWorktreePath(chat.worktreePath)
-              const normalizedDefaultWorktreePath = normalizeWorktreePath(defaultWorktreePath)
-              const isGeneratedDefaultProjectWorktree = isGeneratedProjectWorktreePath({
-                scope: chat.scope,
-                taskId: chat.taskId,
+              const worktreeLabel = getNonMainWorktreeLabel({
+                projectPath: project?.path,
                 worktreePath: chat.worktreePath,
-                branch: chat.branch,
-                baseBranch: (chat as any).baseBranch,
-                projectName: project?.name,
-                createdAt: (chat as any).createdAt,
               })
-              const hasCustomWorktree = Boolean(
-                normalizedChatWorktreePath &&
-                !isGeneratedDefaultProjectWorktree &&
-                (!normalizedDefaultWorktreePath ||
-                  normalizedChatWorktreePath !== normalizedDefaultWorktreePath),
-              )
-              const worktreeLabel = hasCustomWorktree
-                ? getWorktreeDisplayName(normalizedChatWorktreePath)
-                : null
+              const hasCustomWorktree = worktreeLabel !== null
               const itemDragId = hideHeader ? (sectionDragId ?? chat.id) : chat.id
               const showBeforeChatDrop =
                 !usesSectionDropSeparator &&
@@ -3006,6 +2965,55 @@ const SidebarHeader = memo(function SidebarHeader({
   )
 })
 
+const SidebarGroupHeader = memo(function SidebarGroupHeader({
+  title,
+  icon: Icon,
+  isCollapsed,
+  onToggle,
+  actions,
+  className,
+}: {
+  title: string
+  icon: React.ComponentType<{ className?: string }>
+  isCollapsed: boolean
+  onToggle: () => void
+  actions?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        "group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
+        !isCollapsed && "mb-2",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 text-left"
+        aria-expanded={!isCollapsed}
+      >
+        <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="truncate text-xs font-medium">{title}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 flex-shrink-0 opacity-0 transition-[opacity,transform] group-hover/header:opacity-100",
+            isCollapsed && "-rotate-90",
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {actions && (
+        <div className="pointer-events-none flex items-center opacity-0 transition-opacity group-hover/header:pointer-events-auto group-hover/header:opacity-100">
+          {actions}
+        </div>
+      )}
+      <AnimatePresence>{!isCollapsed && <ExpandedSectionIndicator />}</AnimatePresence>
+    </div>
+  )
+})
+
 // Isolated Help Section - subscribes to agentsHelpPopoverOpenAtom internally
 // to prevent sidebar re-renders when popover opens/closes
 interface HelpSectionProps {
@@ -3109,8 +3117,7 @@ export function AgentsSidebar({
   const { trigger: triggerHaptic } = useHaptic()
 
   // Resolved hotkeys for tooltips
-  const { primary: newWorkspaceHotkey, alt: newWorkspaceAltHotkey } =
-    useResolvedHotkeyDisplayWithAlt("new-workspace")
+  const { primary: newWorkspaceHotkey } = useResolvedHotkeyDisplayWithAlt("new-workspace")
   const settingsHotkey = useResolvedHotkeyDisplay("open-settings")
 
   // Rename dialog state
@@ -3144,6 +3151,14 @@ export function AgentsSidebar({
   const [starredProjectIds, setStarredProjectIds] = useState<Set<string>>(new Set())
   const [starredTaskIds, setStarredTaskIds] = useState<Set<string>>(new Set())
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set())
+  const [hiddenNavigationItems, setHiddenNavigationItems] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem("flapstack-sidebar-hidden-navigation-items")
+      return stored ? new Set<string>(JSON.parse(stored) as string[]) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const [manualOrderByKey, setManualOrderByKey] = useState<Record<string, string[]>>({})
   const [projectColorsById, setProjectColorsById] = useState<Record<string, string>>(() => {
     try {
@@ -3424,11 +3439,6 @@ export function AgentsSidebar({
     if (!projects) return new Map()
     return new Map(projects.map((p) => [p.id, p]))
   }, [projects])
-
-  const taskDefaultWorktrees = useMemo(() => {
-    if (!tasks) return new Map<string, string | null>()
-    return new Map(tasks.map((task) => [task.id, task.primaryWorktreePath]))
-  }, [tasks])
 
   // Fetch all archived chats (to get count)
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
@@ -3783,6 +3793,13 @@ export function AgentsSidebar({
       JSON.stringify([...collapsedSectionIds]),
     )
   }, [collapsedSectionIds])
+
+  useEffect(() => {
+    localStorage.setItem(
+      "flapstack-sidebar-hidden-navigation-items",
+      JSON.stringify([...hiddenNavigationItems]),
+    )
+  }, [hiddenNavigationItems])
 
   useEffect(() => {
     localStorage.setItem("flapstack-sidebar-manual-order", JSON.stringify(manualOrderByKey))
@@ -5634,6 +5651,16 @@ export function AgentsSidebar({
     cloneProjectMutation.mutate({ repoUrl: repoUrl.trim() })
   }
 
+  const handleOrderProjects = useCallback(
+    (order: SidebarProjectOrder) => {
+      setManualOrderByKey((current) => ({
+        ...current,
+        projects: orderSidebarProjects(projects ?? [], order),
+      }))
+    },
+    [projects],
+  )
+
   const openNewGlobalChat = useCallback(() => {
     triggerHaptic("light")
     localStorage.setItem("flapstack:new-chat-scope", "global")
@@ -6412,6 +6439,22 @@ export function AgentsSidebar({
     [chatSections, collapsedSectionIds],
   )
 
+  const visibleProjectSections = useMemo(
+    () =>
+      visibleChatSections.filter(
+        (section) => section.kind === "project" || section.kind === "task",
+      ),
+    [visibleChatSections],
+  )
+
+  const visibleOtherSections = useMemo(
+    () =>
+      visibleChatSections.filter(
+        (section) => section.kind !== "project" && section.kind !== "task",
+      ),
+    [visibleChatSections],
+  )
+
   const boundaryHighlightIds = useMemo(
     () =>
       new Set(
@@ -6429,14 +6472,14 @@ export function AgentsSidebar({
 
   const projectAfterDropSectionIndex = useMemo(() => {
     if (dragOverItem?.kind !== "project" || dragOverItem.position !== "after") return -1
-    return visibleChatSections.reduce((lastIndex, section, index) => {
+    return visibleProjectSections.reduce((lastIndex, section, index) => {
       const isTargetProjectHeader =
         section.lifecycleTarget?.type === "project" &&
         section.lifecycleTarget.id === dragOverItem.id
       const isTargetProjectChild = section.parentProjectId === dragOverItem.id
       return isTargetProjectHeader || isTargetProjectChild ? index : lastIndex
     }, -1)
-  }, [dragOverItem, visibleChatSections])
+  }, [dragOverItem, visibleProjectSections])
 
   const forceSidebarMoveCursor = useCallback((event: React.DragEvent<HTMLElement>) => {
     if (!draggingItemRef.current) return
@@ -6492,7 +6535,6 @@ export function AgentsSidebar({
     isDesktop,
     pinnedChatIds,
     projectsMap,
-    taskDefaultWorktrees,
     workspaceFileStats,
     filteredChats,
     canShowPinOption,
@@ -6535,6 +6577,127 @@ export function AgentsSidebar({
     starredChatIds,
   }
 
+  const renderSidebarSection = (
+    section: (typeof visibleChatSections)[number],
+    sectionIndex: number,
+    sectionCount: number,
+  ) => {
+    const suppressProjectHeaderAfterDrop =
+      section.lifecycleTarget?.type === "project" &&
+      dragOverItem?.kind === "project" &&
+      dragOverItem.id === section.lifecycleTarget.id &&
+      dragOverItem.position === "after"
+
+    return (
+      <React.Fragment key={section.id}>
+        <ChatListSection
+          {...sharedChatListSectionProps}
+          title={section.title}
+          sectionId={section.id}
+          sectionDragId={section.sectionDragId}
+          hideHeader={section.hideHeader}
+          parentProjectId={section.parentProjectId}
+          kind={section.kind}
+          projectColor={section.projectColor}
+          isCollapsed={collapsedSectionIds.has(section.id)}
+          isDraggingSection={
+            Boolean(section.sectionDragId || section.lifecycleTarget) &&
+            Boolean(draggingItem) &&
+            draggingItem!.kind ===
+              (section.sectionDragId ? "project-child" : section.lifecycleTarget?.type) &&
+            draggingItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+          }
+          isDragOverSection={
+            Boolean(section.sectionDragId || section.lifecycleTarget) &&
+            Boolean(dragOverItem) &&
+            dragOverItem!.kind ===
+              (section.sectionDragId ? "project-child" : section.lifecycleTarget?.type) &&
+            dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+          }
+          isSectionBoundaryHighlighted={
+            Boolean(section.sectionDragId) && boundaryHighlightIds.has(section.sectionDragId!)
+          }
+          isMoveIntoSection={
+            (section.lifecycleTarget?.type === "task" &&
+              section.lifecycleTarget.id === indicatorIds.taskId) ||
+            (section.lifecycleTarget?.type === "project" &&
+              section.lifecycleTarget.id === indicatorIds.projectId)
+          }
+          dragOverSectionPosition={
+            !suppressProjectHeaderAfterDrop &&
+            Boolean(section.sectionDragId || section.lifecycleTarget) &&
+            Boolean(dragOverItem) &&
+            dragOverItem!.kind ===
+              (section.sectionDragId ? "project-child" : section.lifecycleTarget?.type) &&
+            dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
+              ? dragOverItem!.position
+              : null
+          }
+          draggingKind={draggingItem?.kind}
+          draggingId={draggingItem?.id}
+          dragOverKind={dragOverItem?.kind}
+          dragOverId={dragOverItem?.id}
+          dragOverPosition={dragOverItem?.position}
+          lifecycleTarget={section.lifecycleTarget}
+          chats={section.chats}
+          onCreateGlobalChat={openNewGlobalChat}
+          onCreateProjectChat={openNewProjectChat}
+          onCreateProjectTask={createProjectTask}
+          onChangeProjectColor={handleChangeProjectColor}
+          lifecyclePending={
+            pinProjectMutation.isPending ||
+            unpinProjectMutation.isPending ||
+            archiveProjectMutation.isPending ||
+            pinTaskMutation.isPending ||
+            unpinTaskMutation.isPending ||
+            archiveTaskMutation.isPending
+          }
+        />
+        {section.kind === "global" && sectionIndex < sectionCount - 1 && (
+          <div aria-hidden="true" className="h-2.5" />
+        )}
+        {(section.kind === "project" || section.kind === "task") &&
+          sectionIndex === projectAfterDropSectionIndex &&
+          dragOverItem && (
+            <DropSeparator
+              onDragEnter={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = "move"
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = "move"
+                handleDragOverItem(dragOverItem.kind, dragOverItem.id, dragOverItem.position)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = "move"
+                handleDropItem(dragOverItem.kind, dragOverItem.id, dragOverItem.position)
+              }}
+            />
+          )}
+      </React.Fragment>
+    )
+  }
+
+  const navigationVisibilityLabels = [
+    "Automations",
+    "Inbox",
+    "Orchestration fleet",
+    ...(selectedProject ? ["Plan", "Project knowledge", "Saved workspaces"] : []),
+    "Tasks",
+    "Usage",
+  ].sort((a, b) => a.localeCompare(b))
+
+  const handleToggleNavigationVisibility = (label: string) => {
+    setHiddenNavigationItems((current) => {
+      const next = new Set(current)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
+  }
+
   // Mobile fullscreen mode - render without ResizableSidebar wrapper
   const sidebarContent = (
     <div
@@ -6563,291 +6726,216 @@ export function AgentsSidebar({
         closeButtonRef={closeButtonRef}
       />
 
-      <div className="px-2 pb-3 flex-shrink-0">
-        <ButtonCustom
-          variant={desktopView === "orchestration-fleet" ? "secondary" : "ghost"}
-          size="sm"
-          className="h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          aria-current={desktopView === "orchestration-fleet" ? "page" : undefined}
-          onClick={() => {
-            setSelectedChatId(null)
-            setShowNewChatForm(false)
-            setDesktopView("orchestration-fleet")
-            setSearchQuery("")
-          }}
-        >
-          <Network className="h-4 w-4" />
-          <span>Orchestration fleet</span>
-        </ButtonCustom>
-        <ButtonCustom
-          variant={desktopView === "tasks" ? "secondary" : "ghost"}
-          size="sm"
-          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          aria-current={desktopView === "tasks" ? "page" : undefined}
-          onClick={() => {
-            setSelectedChatId(null)
-            setSelectedDraftId(null)
-            setShowNewChatForm(false)
-            setDesktopView("tasks")
-            setSearchQuery("")
-          }}
-        >
-          <ClipboardList className="h-4 w-4" />
-          <span>Tasks</span>
-        </ButtonCustom>
-        <ButtonCustom
-          variant={
-            desktopView === "automations" || desktopView === "automations-detail"
-              ? "secondary"
-              : "ghost"
-          }
-          size="sm"
-          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          aria-current={
-            desktopView === "automations" || desktopView === "automations-detail"
-              ? "page"
-              : undefined
-          }
-          onClick={() => {
-            setSelectedChatId(null)
-            setShowNewChatForm(false)
-            setDesktopView("automations")
-            setSearchQuery("")
-          }}
-        >
-          <Workflow className="h-4 w-4" />
-          <span>Automations</span>
-        </ButtonCustom>
-        <ButtonCustom
-          variant={desktopView === "inbox" ? "secondary" : "ghost"}
-          size="sm"
-          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          aria-current={desktopView === "inbox" ? "page" : undefined}
-          aria-label={`Automation inbox, ${automationInbox?.unreadCount ?? 0} unread`}
-          onClick={() => {
-            setSelectedChatId(null)
-            setShowNewChatForm(false)
-            setDesktopView("inbox")
-            setSearchQuery("")
-          }}
-        >
-          <Inbox className="h-4 w-4" />
-          <span>Inbox</span>
-          {(automationInbox?.unreadCount ?? 0) > 0 && (
-            <span className="ml-auto rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
-              {automationInbox!.unreadCount}
-            </span>
-          )}
-        </ButtonCustom>
-        <ButtonCustom
-          variant={desktopView === "usage" ? "secondary" : "ghost"}
-          size="sm"
-          className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-          onClick={() => {
-            setSettingsActiveTab("usage")
-            setSettingsDialogOpen(true)
-          }}
-        >
-          <Activity className="h-4 w-4" />
-          <span>Usage</span>
-        </ButtonCustom>
-        {selectedProject && (
-          <>
-            <ButtonCustom
-              variant={desktopView === "plan" ? "secondary" : "ghost"}
-              size="sm"
-              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-              aria-current={desktopView === "plan" ? "page" : undefined}
-              onClick={() => {
-                setSelectedDraftId(null)
-                setShowNewChatForm(false)
-                setDesktopView("plan")
-                setSearchQuery("")
+      {/* Global search stays directly below the product name. */}
+      <div className="flex-shrink-0 px-2 pb-3">
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            placeholder="Search projects and chats..."
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault()
+                searchInputRef.current?.blur()
+                setIsSearchFocused(false)
+                setFocusedChatIndex(-1)
+                return
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault()
+                setFocusedChatIndex((current) =>
+                  current === -1 ? 0 : Math.min(current + 1, filteredChats.length - 1),
+                )
+                return
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault()
+                setFocusedChatIndex((current) =>
+                  current === -1 ? filteredChats.length - 1 : Math.max(current - 1, 0),
+                )
+                return
+              }
+              if (event.key === "Enter" && focusedChatIndex >= 0) {
+                event.preventDefault()
+                const focusedChat = filteredChats[focusedChatIndex]
+                if (focusedChat) {
+                  handleChatClick(focusedChat.id)
+                  searchInputRef.current?.blur()
+                  setFocusedChatIndex(-1)
+                }
+              }
+            }}
+            className={cn(
+              "w-full rounded-lg border border-input bg-muted pl-7 text-sm placeholder:text-muted-foreground/40",
+              isMobileFullscreen ? "h-10" : "h-7",
+            )}
+          />
+        </div>
+        {(isSearchFocused || searchQuery.trim().length > 0) && (
+          <div className="pt-2" onMouseDown={(event) => event.preventDefault()}>
+            <ScopedSearchPanel
+              selectedChatId={selectedLocalChat?.id ?? null}
+              selectedProjectId={selectedLocalChat?.projectId ?? null}
+              selectedTaskId={selectedLocalChat?.taskId ?? null}
+              onNavigateChat={(chatId, subChatId, messageId, query) => {
+                if (subChatId) {
+                  useAgentSubChatStore.getState().queueNavigation(chatId, subChatId)
+                }
+                void handleChatClick(chatId).then(() => {
+                  window.setTimeout(() => {
+                    focusScopedSearchResult({ query: query ?? "", messageId })
+                  }, 0)
+                })
+                searchInputRef.current?.blur()
               }}
-            >
-              <BookOpenText className="h-4 w-4" />
-              <span>Plan</span>
-            </ButtonCustom>
-            <ButtonCustom
-              variant={desktopView === "project-vault" ? "secondary" : "ghost"}
-              size="sm"
-              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-              onClick={() => {
-                setSelectedChatId(null)
-                setDesktopView("project-vault")
-              }}
-            >
-              <BookOpen className="h-4 w-4" />
-              <span>Project knowledge</span>
-            </ButtonCustom>
-            <ButtonCustom
-              variant={desktopView === "saved-workspaces" ? "secondary" : "ghost"}
-              size="sm"
-              className="mt-1 h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm"
-              aria-current={desktopView === "saved-workspaces" ? "page" : undefined}
-              onClick={() => {
-                setShowNewChatForm(false)
-                setDesktopView("saved-workspaces")
-                setSearchQuery("")
-              }}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              <span>Saved workspaces</span>
-            </ButtonCustom>
-          </>
+            />
+          </div>
         )}
       </div>
 
-      {/* Search and project actions */}
-      <div className="px-2 pb-3 flex-shrink-0">
-        <div className="space-y-2">
-          {/* Search Input */}
-          <div className="relative">
-            <Input
-              ref={searchInputRef}
-              placeholder="Search projects and chats..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setIsSearchFocused(true)}
-              onBlur={() => window.setTimeout(() => setIsSearchFocused(false), 120)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault()
-                  searchInputRef.current?.blur()
-                  setIsSearchFocused(false)
-                  setFocusedChatIndex(-1) // Reset focus
-                  return
-                }
-
-                if (e.key === "ArrowDown") {
-                  e.preventDefault()
-                  setFocusedChatIndex((prev) => {
-                    // If no focus yet, start from first item
-                    if (prev === -1) return 0
-                    // Otherwise move down
-                    return prev < filteredChats.length - 1 ? prev + 1 : prev
-                  })
-                  return
-                }
-
-                if (e.key === "ArrowUp") {
-                  e.preventDefault()
-                  setFocusedChatIndex((prev) => {
-                    // If no focus yet, start from last item
-                    if (prev === -1) return filteredChats.length - 1
-                    // Otherwise move up
-                    return prev > 0 ? prev - 1 : prev
-                  })
-                  return
-                }
-
-                if (e.key === "Enter") {
-                  e.preventDefault()
-                  // Only open if something is focused (not -1)
-                  if (focusedChatIndex >= 0) {
-                    const focusedChat = filteredChats[focusedChatIndex]
-                    if (focusedChat) {
-                      handleChatClick(focusedChat.id)
-                      searchInputRef.current?.blur()
-                      setFocusedChatIndex(-1) // Reset focus after selection
-                    }
-                  }
-                  return
-                }
-              }}
-              className={cn(
-                "w-full rounded-lg text-sm bg-muted border border-input placeholder:text-muted-foreground/40",
-                isMobileFullscreen ? "h-10" : "h-7",
-              )}
-            />
-          </div>
-          {(isSearchFocused || searchQuery.trim().length > 0) && (
-            <div onMouseDown={(event) => event.preventDefault()}>
-              <ScopedSearchPanel
-                selectedChatId={selectedLocalChat?.id ?? null}
-                selectedProjectId={selectedLocalChat?.projectId ?? null}
-                selectedTaskId={selectedLocalChat?.taskId ?? null}
-                onNavigateChat={(chatId, subChatId, messageId, query) => {
-                  if (subChatId) {
-                    useAgentSubChatStore.getState().queueNavigation(chatId, subChatId)
-                  }
-                  void handleChatClick(chatId).then(() => {
-                    window.setTimeout(() => {
-                      focusScopedSearchResult({
-                        query: query ?? "",
-                        messageId,
-                      })
-                    }, 0)
-                  })
-                  searchInputRef.current?.blur()
-                }}
-              />
-            </div>
-          )}
-          <DropdownMenu>
-            <Tooltip delayDuration={500}>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <ButtonCustom
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      "px-2 w-full hover:bg-foreground/10 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] text-foreground rounded-lg gap-1.5",
-                      isMobileFullscreen ? "h-10" : "h-7",
-                    )}
-                  >
-                    <FolderPlus className="h-4 w-4" />
-                    <span className="text-sm font-medium">
-                      {openProjectMutation.isPending || cloneProjectMutation.isPending
-                        ? "Adding Project..."
-                        : "Add Project"}
+      {/* Navigation is sorted at render time so new destinations cannot drift out of order. */}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div className="min-h-7 flex-shrink-0 px-2 pb-1">
+            {[
+              {
+                label: "Automations",
+                Icon: Workflow,
+                isActive: desktopView === "automations" || desktopView === "automations-detail",
+                onClick: () => {
+                  setSelectedChatId(null)
+                  setShowNewChatForm(false)
+                  setDesktopView("automations")
+                  setSearchQuery("")
+                },
+              },
+              {
+                label: "Inbox",
+                Icon: Inbox,
+                isActive: desktopView === "inbox",
+                ariaLabel: `Automation inbox, ${automationInbox?.unreadCount ?? 0} unread`,
+                suffix:
+                  (automationInbox?.unreadCount ?? 0) > 0 ? (
+                    <span className="ml-auto rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
+                      {automationInbox!.unreadCount}
                     </span>
-                  </ButtonCustom>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="flex flex-col items-start gap-1">
-                <span>Add or clone a project</span>
-                {newWorkspaceHotkey && (
-                  <span className="flex items-center gap-1.5">
-                    <Kbd>{newWorkspaceHotkey}</Kbd>
-                    {newWorkspaceAltHotkey && (
-                      <>
-                        <span className="text-[10px] opacity-50">or</span>
-                        <Kbd>{newWorkspaceAltHotkey}</Kbd>
-                      </>
-                    )}
-                  </span>
-                )}
-              </TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="start" className="w-56" sideOffset={6}>
-              <DropdownMenuItem
-                className="gap-2"
-                onSelect={() => toast.info("Create new folder is not wired yet")}
-              >
-                <FolderPlus className="h-3.5 w-3.5 text-muted-foreground" />
-                Create new folder
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="gap-2"
-                onSelect={handleCloneProject}
-                disabled={cloneProjectMutation.isPending}
-              >
-                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                Clone a repo
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="gap-2"
-                onSelect={handleAddExistingProject}
-                disabled={openProjectMutation.isPending}
-              >
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                Add existing folder
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+                  ) : null,
+                onClick: () => {
+                  setSelectedChatId(null)
+                  setShowNewChatForm(false)
+                  setDesktopView("inbox")
+                  setSearchQuery("")
+                },
+              },
+              {
+                label: "Orchestration fleet",
+                Icon: Network,
+                isActive: desktopView === "orchestration-fleet",
+                onClick: () => {
+                  setSelectedChatId(null)
+                  setShowNewChatForm(false)
+                  setDesktopView("orchestration-fleet")
+                  setSearchQuery("")
+                },
+              },
+              ...(selectedProject
+                ? [
+                    {
+                      label: "Plan",
+                      Icon: BookOpenText,
+                      isActive: desktopView === "plan",
+                      onClick: () => {
+                        setSelectedDraftId(null)
+                        setShowNewChatForm(false)
+                        setDesktopView("plan")
+                        setSearchQuery("")
+                      },
+                    },
+                    {
+                      label: "Project knowledge",
+                      Icon: BookOpen,
+                      isActive: desktopView === "project-vault",
+                      onClick: () => {
+                        setSelectedChatId(null)
+                        setDesktopView("project-vault")
+                        setSearchQuery("")
+                      },
+                    },
+                    {
+                      label: "Saved workspaces",
+                      Icon: LayoutGrid,
+                      isActive: desktopView === "saved-workspaces",
+                      onClick: () => {
+                        setShowNewChatForm(false)
+                        setDesktopView("saved-workspaces")
+                        setSearchQuery("")
+                      },
+                    },
+                  ]
+                : []),
+              {
+                label: "Tasks",
+                Icon: ClipboardList,
+                isActive: desktopView === "tasks",
+                onClick: () => {
+                  setSelectedChatId(null)
+                  setSelectedDraftId(null)
+                  setShowNewChatForm(false)
+                  setDesktopView("tasks")
+                  setSearchQuery("")
+                },
+              },
+              {
+                label: "Usage",
+                Icon: Activity,
+                isActive: desktopView === "usage",
+                onClick: () => {
+                  setSettingsActiveTab("usage")
+                  setSettingsDialogOpen(true)
+                },
+              },
+            ]
+              .filter(({ label }) => !hiddenNavigationItems.has(label))
+              .sort((a, b) => a.label.localeCompare(b.label))
+              .map(({ label, Icon, isActive, onClick, ...item }, index) => (
+                <ButtonCustom
+                  key={label}
+                  variant={isActive ? "secondary" : "ghost"}
+                  size="sm"
+                  className={cn(
+                    "h-7 w-full justify-start gap-2 rounded-lg px-2 text-sm",
+                    index > 0 && "mt-1",
+                  )}
+                  aria-current={isActive ? "page" : undefined}
+                  aria-label={"ariaLabel" in item ? item.ariaLabel : undefined}
+                  onClick={onClick}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{label}</span>
+                  {"suffix" in item ? item.suffix : null}
+                </ButtonCustom>
+              ))}
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          {navigationVisibilityLabels.map((label) => (
+            <ContextMenuItem
+              key={label}
+              className="gap-2"
+              onSelect={() => handleToggleNavigationVisibility(label)}
+            >
+              <Check
+                className={cn("h-3.5 w-3.5", hiddenNavigationItems.has(label) && "opacity-0")}
+              />
+              {label}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuContent>
+      </ContextMenu>
 
       {/* Scrollable Agents List */}
       <div className="flex-1 min-h-0 relative">
@@ -6859,7 +6947,18 @@ export function AgentsSidebar({
             isMultiSelectMode ? "px-0" : "px-2",
           )}
         >
+          {!searchQuery && (
+            <SidebarGroupHeader
+              title="Quick access"
+              icon={Zap}
+              className="mt-[10px]"
+              isCollapsed={collapsedSectionIds.has("quick-access")}
+              onToggle={() => handleToggleSection("quick-access")}
+            />
+          )}
+
           {!searchQuery &&
+            !collapsedSectionIds.has("quick-access") &&
             [
               {
                 title: "Pinned",
@@ -6878,7 +6977,7 @@ export function AgentsSidebar({
               .map((section) => (
                 <div
                   key={section.kind}
-                  className={cn("mb-0", isMultiSelectMode ? "px-0" : "-mx-1")}
+                  className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150"
                 >
                   <ChatListSection
                     {...sharedChatListSectionProps}
@@ -6937,8 +7036,13 @@ export function AgentsSidebar({
               ))}
 
           {/* Drafts Section - always show regardless of chat source mode */}
-          {drafts.length > 0 && !searchQuery && (
-            <div className={cn("mb-0", isMultiSelectMode ? "px-0" : "-mx-1")}>
+          {drafts.length > 0 && !searchQuery && !collapsedSectionIds.has("quick-access") && (
+            <div
+              className={cn(
+                "mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150",
+                isMultiSelectMode ? "px-0" : "-mx-1",
+              )}
+            >
               <div
                 onClick={() => handleToggleSection("drafts")}
                 onKeyDown={(event) => {
@@ -6969,7 +7073,7 @@ export function AgentsSidebar({
                   />
                 </span>
                 <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
+                  <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
                   <h3 className="flex-1 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
                     Drafts
                   </h3>
@@ -7006,143 +7110,132 @@ export function AgentsSidebar({
             </div>
           )}
 
-          {/* Chats Section */}
-          {filteredChats.length > 0 ? (
-            <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
-              {visibleChatSections.map((section, sectionIndex) => {
-                const suppressProjectHeaderAfterDrop =
-                  section.lifecycleTarget?.type === "project" &&
-                  dragOverItem?.kind === "project" &&
-                  dragOverItem.id === section.lifecycleTarget.id &&
-                  dragOverItem.position === "after"
-
-                return (
-                  <React.Fragment key={section.id}>
-                    <ChatListSection
-                      {...sharedChatListSectionProps}
-                      title={section.title}
-                      sectionId={section.id}
-                      sectionDragId={section.sectionDragId}
-                      hideHeader={section.hideHeader}
-                      parentProjectId={section.parentProjectId}
-                      kind={section.kind}
-                      projectColor={section.projectColor}
-                      isCollapsed={collapsedSectionIds.has(section.id)}
-                      isDraggingSection={
-                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
-                        Boolean(draggingItem) &&
-                        draggingItem!.kind ===
-                          (section.sectionDragId
-                            ? "project-child"
-                            : section.lifecycleTarget?.type) &&
-                        draggingItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
-                      }
-                      isDragOverSection={
-                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
-                        Boolean(dragOverItem) &&
-                        dragOverItem!.kind ===
-                          (section.sectionDragId
-                            ? "project-child"
-                            : section.lifecycleTarget?.type) &&
-                        dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
-                      }
-                      isSectionBoundaryHighlighted={
-                        Boolean(section.sectionDragId) &&
-                        boundaryHighlightIds.has(section.sectionDragId!)
-                      }
-                      isMoveIntoSection={
-                        (section.lifecycleTarget?.type === "task" &&
-                          section.lifecycleTarget.id === indicatorIds.taskId) ||
-                        (section.lifecycleTarget?.type === "project" &&
-                          section.lifecycleTarget.id === indicatorIds.projectId)
-                      }
-                      dragOverSectionPosition={
-                        !suppressProjectHeaderAfterDrop &&
-                        Boolean(section.sectionDragId || section.lifecycleTarget) &&
-                        Boolean(dragOverItem) &&
-                        dragOverItem!.kind ===
-                          (section.sectionDragId
-                            ? "project-child"
-                            : section.lifecycleTarget?.type) &&
-                        dragOverItem!.id === (section.sectionDragId ?? section.lifecycleTarget?.id)
-                          ? dragOverItem!.position
-                          : null
-                      }
-                      draggingKind={draggingItem?.kind}
-                      draggingId={draggingItem?.id}
-                      dragOverKind={dragOverItem?.kind}
-                      dragOverId={dragOverItem?.id}
-                      dragOverPosition={dragOverItem?.position}
-                      lifecycleTarget={section.lifecycleTarget}
-                      chats={section.chats}
-                      onCreateGlobalChat={openNewGlobalChat}
-                      onCreateProjectChat={openNewProjectChat}
-                      onCreateProjectTask={createProjectTask}
-                      onChangeProjectColor={handleChangeProjectColor}
-                      lifecyclePending={
-                        pinProjectMutation.isPending ||
-                        unpinProjectMutation.isPending ||
-                        archiveProjectMutation.isPending ||
-                        pinTaskMutation.isPending ||
-                        unpinTaskMutation.isPending ||
-                        archiveTaskMutation.isPending
-                      }
-                    />
-                    {section.kind === "global" && sectionIndex < visibleChatSections.length - 1 && (
-                      <div aria-hidden="true" className="h-2.5" />
-                    )}
-                    {sectionIndex === projectAfterDropSectionIndex && dragOverItem && (
-                      <DropSeparator
-                        onDragEnter={(event) => {
-                          event.preventDefault()
-                          event.dataTransfer.dropEffect = "move"
-                        }}
-                        onDragOver={(event) => {
-                          event.preventDefault()
-                          event.dataTransfer.dropEffect = "move"
-                          handleDragOverItem(
-                            dragOverItem.kind,
-                            dragOverItem.id,
-                            dragOverItem.position,
-                          )
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault()
-                          event.dataTransfer.dropEffect = "move"
-                          handleDropItem(dragOverItem.kind, dragOverItem.id, dragOverItem.position)
-                        }}
-                      />
-                    )}
-                  </React.Fragment>
-                )
-              })}
+          {/* Global and remote chat structures live under Quick access. */}
+          {(searchQuery || !collapsedSectionIds.has("quick-access")) && (
+            <div
+              className={cn(
+                !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
+              )}
+            >
+              {visibleOtherSections.map((section, index) =>
+                renderSidebarSection(section, index, visibleOtherSections.length),
+              )}
             </div>
-          ) : null}
-
+          )}
+          {!searchQuery && (
+            <SidebarGroupHeader
+              title="Projects"
+              icon={Library}
+              className="mt-[10px]"
+              isCollapsed={collapsedSectionIds.has("projects-group")}
+              onToggle={() => handleToggleSection("projects-group")}
+              actions={
+                <>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-foreground/10 hover:text-foreground"
+                        aria-label="Order projects"
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuItem onSelect={() => handleOrderProjects("name-asc")}>
+                        Order A to Z
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => handleOrderProjects("name-desc")}>
+                        Order Z to A
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => handleOrderProjects("newest")}>
+                        Newest updated first
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => handleOrderProjects("oldest")}>
+                        Oldest updated first
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <DropdownMenu>
+                    <Tooltip delayDuration={500}>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-foreground/10 hover:text-foreground"
+                            aria-label="Add project"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        Add project
+                        {newWorkspaceHotkey && <Kbd>{newWorkspaceHotkey}</Kbd>}
+                      </TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuItem
+                        className="gap-2"
+                        onSelect={handleAddExistingProject}
+                        disabled={openProjectMutation.isPending}
+                      >
+                        <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                        Add existing folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="gap-2"
+                        onSelect={handleCloneProject}
+                        disabled={cloneProjectMutation.isPending}
+                      >
+                        <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                        Clone a repo
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
+              }
+            />
+          )}
+          {(searchQuery || !collapsedSectionIds.has("projects-group")) && (
+            <div
+              className={cn(
+                !searchQuery && "animate-in fade-in-0 slide-in-from-top-1 duration-150",
+              )}
+            >
+              {visibleProjectSections.map((section, index) =>
+                renderSidebarSection(section, index, visibleProjectSections.length),
+              )}
+            </div>
+          )}
           {archivedLifecycleItems.length > 0 && !searchQuery && (
-            <div className={cn("mb-4", isMultiSelectMode ? "px-0" : "-mx-1")}>
+            <div className="mb-4">
               <button
                 type="button"
                 onClick={() => setIsArchiveOpen((open) => !open)}
+                aria-expanded={isArchiveOpen}
                 className={cn(
-                  "flex w-full items-center h-6 mb-1 text-muted-foreground hover:text-foreground transition-colors",
-                  isMultiSelectMode ? "pl-3 pr-3" : "pl-2 pr-2",
+                  "group/archive relative mt-[10px] flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+                  isArchiveOpen ? "mb-2" : "mb-1",
                 )}
               >
+                <ArchiveIcon className="mr-2 h-3.5 w-3.5" />
+                <span className="whitespace-nowrap text-xs font-medium">Archive</span>
                 <ChevronDown
                   className={cn(
-                    "mr-1.5 h-3.5 w-3.5 transition-transform",
-                    isArchiveOpen ? "rotate-0" : "-rotate-90",
+                    "ml-1 h-3.5 w-3.5 opacity-0 transition-[opacity,transform] group-hover/archive:opacity-100",
+                    !isArchiveOpen && "-rotate-90",
                   )}
+                  aria-hidden="true"
                 />
-                <ArchiveIcon className="mr-1.5 h-3.5 w-3.5" />
-                <span className="text-xs font-medium whitespace-nowrap">Archive</span>
                 <span className="ml-auto text-[11px] tabular-nums text-muted-foreground/60">
                   {archivedLifecycleItems.length}
                 </span>
+                <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>
               </button>
               {isArchiveOpen && (
-                <div className="list-none p-0 m-0">
+                <div className="list-none p-0 m-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
                   {archivedLifecycleItems.map((item) => (
                     <div
                       key={`${item.type}-${item.id}`}

@@ -57,6 +57,11 @@ import {
   type PermissionMode,
 } from "../../permissions"
 import { OPENCODE_HARNESSES } from "../../../../shared/harness-types"
+import {
+  applyChatModeInstruction,
+  CHAT_MODES,
+  resolveChatModePermission,
+} from "../../../../shared/chat-mode"
 import { sanitizeHarnessEnvelopeEcho } from "../../../../shared/harness-envelope-sanitizer"
 import { resolveReasoningControls } from "../../../../shared/reasoning-output"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent-runtime/snapshot"
@@ -282,6 +287,7 @@ export const opencodeRouter = router({
         provider: providerSchema,
         model: z.string().min(1),
         prompt: z.string().min(1),
+        mode: z.enum(CHAT_MODES).default("write"),
         cwd: z.string().min(1),
         projectPath: z.string().optional(),
         sessionId: z.string().optional(),
@@ -404,9 +410,10 @@ export const opencodeRouter = router({
               .from(agentRuns)
               .where(eq(agentRuns.id, runId))
               .get()
-            permissionMode =
+            const requestedPermissionMode =
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolvePermissionMode(subChat.permissionMode, chat.permissionMode)
+            permissionMode = resolveChatModePermission(input.mode, requestedPermissionMode)
             const customPermissions =
               permissionMode === "custom" &&
               (persistedRunSnapshot?.customPermissions || chat.customPermissions)
@@ -530,7 +537,10 @@ export const opencodeRouter = router({
               messageMetadata,
             })
             const promptForModel = prependFlapstackMcpGuidance(
-              prependStartupContext(input.prompt, contextBundle.context),
+              prependStartupContext(
+                applyChatModeInstruction(input.prompt, input.mode),
+                contextBundle.context,
+              ),
               productMcpEnabledAtLaunch,
             )
             const productMcp = productMcpEnabledAtLaunch

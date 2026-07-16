@@ -15,12 +15,12 @@ import {
   type CodexReasoningLevel,
 } from "../../../../shared/model-catalog"
 import type { FileMentionOption } from "../mentions/agents-mentions-editor"
+import { CHAT_MODES, normalizeChatMode, type ChatMode } from "../../../../shared/chat-mode"
 
-// Agent mode type - extensible for future modes like "debug"
-export type AgentMode = "agent" | "plan"
+export type AgentMode = ChatMode
 
 // Ordered list of modes - Shift+Tab cycles through these
-export const AGENT_MODES: AgentMode[] = ["agent", "plan"]
+export const AGENT_MODES: AgentMode[] = [...CHAT_MODES]
 
 // Get next mode in cycle (for Shift+Tab toggle)
 export function getNextMode(current: AgentMode): AgentMode {
@@ -555,7 +555,7 @@ const subChatModesStorageAtom = atomWithStorage<Record<string, AgentMode>>(
 // atomFamily to get/set mode per subChatId
 export const subChatModeAtomFamily = atomFamily((subChatId: string) =>
   atom(
-    (get) => get(subChatModesStorageAtom)[subChatId] ?? "agent",
+    (get) => normalizeChatMode(get(subChatModesStorageAtom)[subChatId]),
     (get, set, newMode: AgentMode) => {
       const current = get(subChatModesStorageAtom)
       set(subChatModesStorageAtom, { ...current, [subChatId]: newMode })
@@ -817,10 +817,8 @@ export const archiveSearchQueryAtom = atom<string>("")
 export const archiveRepositoryFilterAtom = atom<string | null>(null)
 
 // Track last used mode (plan/agent) per chat
-// Map<chatId, "plan" | "agent">
-export const lastChatModesAtom = atom<Map<string, "plan" | "agent">>(
-  new Map<string, "plan" | "agent">(),
-)
+// Map<chatId, persisted chat mode>
+export const lastChatModesAtom = atom<Map<string, AgentMode>>(new Map<string, AgentMode>())
 
 // Mobile view mode - chat (default, shows NewChatForm), chats list, preview, diff, or terminal
 export type AgentsMobileViewMode = "chats" | "chat" | "preview" | "diff" | "terminal"

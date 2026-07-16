@@ -1,11 +1,14 @@
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { AGENT_ACTIVITY_KINDS } from "../src/shared/agent-activity"
+import { createDevRuntimeActivityFixtureService } from "../src/main/lib/agent-runtime/dev-activity-fixtures"
 import {
-  createDevRuntimeActivityFixtureService,
-  isDevRuntimeActivityFixtureEnabled,
-} from "../src/main/lib/agent-runtime/dev-activity-fixtures"
+  getRuntimeActivityFixtureSettings,
+  isRuntimeActivityFixtureAvailable,
+  setRuntimeActivityFixtureSettings,
+} from "../src/main/lib/agent-runtime/activity-fixture-settings"
 import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import { projectDevRuntimeActivityView } from "../src/renderer/features/agents/runtime-activity"
 import { createActivityTestDatabase } from "./agent-activity-test-db"
@@ -38,12 +41,27 @@ function fixtureDatabase() {
 
 const scope = { projectId: "project-1", chatId: "chat-1", subChatId: "subchat-1" }
 
-describe("Flapstack Dev Runtime activity fixture", () => {
-  it("is enabled only for an unpackaged development renderer", () => {
-    expect(isDevRuntimeActivityFixtureEnabled(false, "http://127.0.0.1:5173")).toBe(true)
-    expect(isDevRuntimeActivityFixtureEnabled(true, "http://127.0.0.1:5173")).toBe(false)
-    expect(isDevRuntimeActivityFixtureEnabled(false, undefined)).toBe(false)
-    expect(isDevRuntimeActivityFixtureEnabled(false, " ")).toBe(false)
+describe("Runtime activity test fixture", () => {
+  it("is available only in unpackaged development builds", () => {
+    expect(isRuntimeActivityFixtureAvailable(false, true)).toBe(true)
+    expect(isRuntimeActivityFixtureAvailable(true, true)).toBe(false)
+    expect(isRuntimeActivityFixtureAvailable(false, false)).toBe(false)
+  })
+
+  it("persists an explicit setting that defaults off", () => {
+    const configDir = mkdtempSync(resolve(tmpdir(), "flapstack-runtime-fixtures-"))
+    const previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR
+    process.env.FLAPSTACK_CONFIG_DIR = configDir
+    try {
+      expect(getRuntimeActivityFixtureSettings()).toEqual({ enabled: false })
+      expect(setRuntimeActivityFixtureSettings({ enabled: true })).toEqual({ enabled: true })
+      expect(getRuntimeActivityFixtureSettings()).toEqual({ enabled: true })
+      expect(setRuntimeActivityFixtureSettings({ enabled: false })).toEqual({ enabled: false })
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.FLAPSTACK_CONFIG_DIR
+      else process.env.FLAPSTACK_CONFIG_DIR = previousConfigDir
+      rmSync(configDir, { recursive: true, force: true })
+    }
   })
 
   it("seeds bounded project/run-scoped terminal and replay data without provider state", () => {
@@ -127,7 +145,7 @@ describe("Flapstack Dev Runtime activity fixture", () => {
     const database = fixtureDatabase()
     const store = createAgentActivityStore(database)
     const disabled = createDevRuntimeActivityFixtureService(database, store, { enabled: false })
-    expect(() => disabled.seed(scope)).toThrow("only in Flapstack Dev")
+    expect(() => disabled.seed(scope)).toThrow("Enable Runtime activity test controls")
     expect(database.prepare("SELECT COUNT(*) count FROM agent_runs").get()).toEqual({ count: 0 })
 
     const enabled = createDevRuntimeActivityFixtureService(database, store, { enabled: true })
@@ -169,20 +187,36 @@ describe("Flapstack Dev Runtime activity fixture", () => {
     expect(JSON.stringify(corrupt.events.at(-1))).not.toContain("fixture answer")
   })
 
-  it("keeps the router absent outside Dev and exposes controls in the normal chat UI", () => {
+  it("fails closed in the router and hides the normal chat UI when unavailable", () => {
     const routerSource = readFileSync(
       resolve(process.cwd(), "src/main/lib/trpc/routers/index.ts"),
+      "utf8",
+    )
+    const fixtureRouterSource = readFileSync(
+      resolve(process.cwd(), "src/main/lib/trpc/routers/dev-runtime-activity-fixtures.ts"),
       "utf8",
     )
     const activeChatSource = readFileSync(
       resolve(process.cwd(), "src/renderer/features/agents/main/active-chat.tsx"),
       "utf8",
     )
-    expect(routerSource).toContain(
-      "const devRuntimeActivityFixturesEnabled = !app.isPackaged && IS_DEV",
+    const controlsSource = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/renderer/features/agents/runtime-activity/runtime-activity-fixture-controls.tsx",
+      ),
+      "utf8",
     )
     expect(routerSource).toContain("devRuntimeActivityFixturesEnabled")
+    expect(routerSource).toContain(
+      "{ devRuntimeActivityFixtures: devRuntimeActivityFixturesRouter }",
+    )
+    expect(fixtureRouterSource).toContain(
+      "isRuntimeActivityFixtureAvailable(app.isPackaged, IS_DEV)",
+    )
     expect(activeChatSource).toContain("<RuntimeActivityFixtureControls")
-    expect(activeChatSource).toContain("import.meta.env.DEV")
+    expect(controlsSource).toContain("getRuntimeActivityFixtureSettings.useQuery()")
+    expect(controlsSource).toContain("!settings.data?.available")
+    expect(controlsSource).toContain("trpc.devRuntimeActivityFixtures!")
   })
 })

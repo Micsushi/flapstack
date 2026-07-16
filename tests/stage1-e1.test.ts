@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { eq, sql } from "drizzle-orm"
@@ -20,8 +21,14 @@ import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
 import { permissionsRouter } from "../src/main/lib/trpc/routers/permissions"
 import { searchRouter } from "../src/main/lib/trpc/routers/search"
 import { tasksRouter } from "../src/main/lib/trpc/routers/tasks"
-import { listWorktreeOptions, resolveDefaultWorktree } from "../src/main/lib/worktree-resolver"
-import { createWorktree } from "../src/main/lib/git/worktree"
+import {
+  getDetachedChatCheckoutPath,
+  getResolvedWorktreeStatus,
+  listWorktreeOptions,
+  resolveDefaultWorktree,
+} from "../src/main/lib/worktree-resolver"
+import { createWorktree, getCurrentBranch } from "../src/main/lib/git/worktree"
+import { createWorktreeForChat } from "../src/main/lib/git"
 
 const electronState = vi.hoisted(() => ({
   userDataPath: "/tmp/flapstack-vitest-initial",
@@ -129,6 +136,13 @@ function createTestSchema() {
       vault_context_sections text,
       pinned_at integer,
       archived_at integer
+    )`,
+    `CREATE TABLE filesystem_root_registrations (
+      path text PRIMARY KEY NOT NULL,
+      canonical_path text NOT NULL,
+      device_id text,
+      inode_id text,
+      bound_at integer NOT NULL
     )`,
     `CREATE TABLE tasks (
       id text PRIMARY KEY NOT NULL,
@@ -334,7 +348,7 @@ describe("top-level chat forks", () => {
       .insert(subChats)
       .values({
         chatId: sourceChat.id,
-        mode: "agent",
+        mode: "write",
         messages: JSON.stringify([
           { id: "user-1", role: "user", parts: [{ type: "text", text: "Fix it" }] },
           {
@@ -461,7 +475,6 @@ describe("Stage 1 E1 scope lifecycle", () => {
       permissionMode: "full-access",
       worktreePath: project.path,
     })
-
     const taskChat = await chatCaller.create({
       scope: "task",
       taskId: task.id,
@@ -798,6 +811,30 @@ describe("Stage 1 E1 scope lifecycle", () => {
 })
 
 describe("Stage 1 E1 worktree resolution", () => {
+  it("treats a symlink alias of the default checkout as the same checkout", async () => {
+    const checkout = join(homeDir, "canonical-checkout")
+    const alias = join(homeDir, "checkout-alias")
+    mkdirSync(checkout)
+    execFileSync("git", ["init", "-q", checkout])
+    symlinkSync(checkout, alias, "dir")
+    const project = insertProject("alias-project", { path: checkout })
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Aliased default",
+      worktreePath: alias,
+    })
+
+    expect(listWorktreeOptions(chat.id)).toEqual([
+      { path: checkout, label: "Project checkout", kind: "project", isDefault: true },
+    ])
+    expect(await getResolvedWorktreeStatus(chat.id)).toMatchObject({
+      status: "ok",
+      path: realpathSync(checkout),
+      isDefault: true,
+    })
+  })
+
   it("resolves global, project, task primary, and selected worktree options", () => {
     const project = insertProject("worktrees")
     const task = insertTask(project.id, "Primary task", {
@@ -858,6 +895,139 @@ describe("Stage 1 E1 worktree resolution", () => {
     expect(first.primaryBranch).toContain(firstTask.id.slice(-8))
     expect(second.primaryBranch).toContain(secondTask.id.slice(-8))
     expect(vi.mocked(createWorktree)).toHaveBeenCalledTimes(2)
+  })
+
+  it("passes a named and chosen location to Git worktree creation", async () => {
+    const project = insertProject("named-worktree")
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Named worktree chat",
+    })
+    const parentDirectory = join(homeDir, "chosen-parent")
+    const worktreePath = join(parentDirectory, "feature-name")
+    vi.mocked(createWorktreeForChat).mockResolvedValue({
+      success: true,
+      worktreePath,
+      branch: "random-branch",
+      baseBranch: "main",
+    })
+
+    const result = await chatsRouter.createCaller(ctx).createWorktreeForExistingChat({
+      id: chat.id,
+      name: "Feature Name",
+      parentDirectory,
+    })
+
+    expect(createWorktreeForChat).toHaveBeenCalledWith(
+      project.path,
+      "named-worktree",
+      chat.id,
+      undefined,
+      undefined,
+      expect.objectContaining({
+        worktreeName: "Feature Name",
+        parentDirectory,
+      }),
+    )
+    expect(result.worktreePath).toBe(worktreePath)
+  })
+
+  it("repairs every chat sharing a dead checkout and persists the valid fallback", async () => {
+    const project = insertProject("repair-checkouts")
+    mkdirSync(project.path, { recursive: true })
+    execFileSync("git", ["init", "--quiet", project.path])
+    const repairedPath = realpathSync(project.path)
+    vi.mocked(getCurrentBranch).mockImplementation(async (candidate) => {
+      if (candidate === project.path || candidate.endsWith("/repair-checkouts")) return "main"
+      throw new Error("checkout missing")
+    })
+
+    const stalePath = join(homeDir, "deleted-worktree")
+    const first = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "First stale chat",
+      worktreePath: stalePath,
+    })
+    const second = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Second stale chat",
+      worktreePath: stalePath,
+    })
+    const conversation = getDatabase()
+      .insert(subChats)
+      .values({ chatId: first.id, worktreePath: stalePath })
+      .returning()
+      .get()
+
+    const result = await chatsRouter.createCaller(ctx).repairUnavailableCheckout({
+      id: first.id,
+      unavailablePath: stalePath,
+    })
+
+    expect(result).toMatchObject({
+      status: "repaired",
+      path: repairedPath,
+      branch: "main",
+    })
+    expect(result.status === "repaired" ? result.repairedChatIds.sort() : []).toEqual(
+      [first.id, second.id].sort(),
+    )
+    expect(getDatabase().select().from(chats).where(eq(chats.id, first.id)).get()).toMatchObject({
+      worktreePath: repairedPath,
+      branch: "main",
+    })
+    expect(getDatabase().select().from(chats).where(eq(chats.id, second.id)).get()).toMatchObject({
+      worktreePath: repairedPath,
+      branch: "main",
+    })
+    expect(
+      getDatabase().select().from(subChats).where(eq(subChats.id, conversation.id)).get(),
+    ).toMatchObject({ worktreePath: repairedPath })
+  })
+
+  it("keeps project placement and falls back to no project files when every checkout is gone", async () => {
+    vi.mocked(getCurrentBranch).mockResolvedValue(null)
+    const project = insertProject("missing-project")
+    const missingWorktree = join(homeDir, "missing-worktree")
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Detached fallback",
+      worktreePath: missingWorktree,
+    })
+    const otherChat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Another detached fallback",
+      worktreePath: missingWorktree,
+    })
+
+    const result = await chatsRouter.createCaller(ctx).repairUnavailableCheckout({
+      id: chat.id,
+      unavailablePath: missingWorktree,
+    })
+
+    expect(result).toMatchObject({
+      status: "repaired",
+      path: realpathSync(getDetachedChatCheckoutPath(chat.id)),
+      detached: true,
+    })
+    expect(getDatabase().select().from(chats).where(eq(chats.id, chat.id)).get()).toMatchObject({
+      scope: "project",
+      projectId: project.id,
+      worktreePath: realpathSync(getDetachedChatCheckoutPath(chat.id)),
+    })
+    expect(
+      getDatabase().select().from(chats).where(eq(chats.id, otherChat.id)).get(),
+    ).toMatchObject({ worktreePath: missingWorktree })
+    expect(result.status === "repaired" ? result.repairedChatIds : []).toEqual([chat.id])
+    expect(await getResolvedWorktreeStatus(chat.id)).toMatchObject({
+      status: "detached",
+      path: realpathSync(getDetachedChatCheckoutPath(chat.id)),
+    })
   })
 })
 

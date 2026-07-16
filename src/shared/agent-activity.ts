@@ -107,6 +107,8 @@ const payloadSchemas = {
     .object({
       name: shortText,
       state: shortText,
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
       inputSummary: boundedText.nullable().optional(),
       outputSummary: boundedText.nullable().optional(),
     })
@@ -124,6 +126,19 @@ const payloadSchemas = {
       path: boundedText.nullable().optional(),
       state: shortText,
       summary: boundedText.nullable().optional(),
+      diff: boundedText.nullable().optional(),
+      changes: z
+        .array(
+          z
+            .object({
+              path: boundedText,
+              kind: z.string().max(128).nullable().optional(),
+              diff: boundedText.nullable().optional(),
+            })
+            .strict(),
+        )
+        .max(500)
+        .optional(),
     })
     .strict(),
   permission: z

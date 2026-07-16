@@ -5,6 +5,7 @@ import { cn } from "../../../lib/utils"
 import { GitHubLogo, IconSpinner, PlanIcon, AgentIcon } from "../../../components/ui/canvas-icons"
 import { useAtomValue } from "jotai"
 import { agentsUnseenChangesAtom, lastChatModesAtom } from "../atoms"
+import type { ChatMode } from "../../../../shared/chat-mode"
 
 // GitHub avatar with loading placeholder
 function GitHubAvatar({
@@ -73,7 +74,7 @@ function ChatIconWithBadge({
 }: {
   isLoading: boolean
   hasUnseenChanges: boolean
-  lastMode: "plan" | "agent"
+  lastMode: ChatMode
   isSelected?: boolean
   gitOwner?: string | null
   gitProvider?: string | null
@@ -142,7 +143,7 @@ export function AgentChatCard({
   const lastChatModes = useAtomValue(lastChatModesAtom)
 
   const hasUnseenChanges = unseenChanges.has(chat.id)
-  const lastMode = lastChatModes.get(chat.id) || "agent"
+  const lastMode = lastChatModes.get(chat.id) || "write"
   // isLoading is already derived from loadingSubChatsAtom (local tracking)
   const actualIsLoading = isLoading
 

@@ -305,9 +305,9 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
   control(
     "preferences-default-mode",
     "preferences",
-    "Default mode",
-    "Plan or Agent for new chats",
-    ["plan", "agent", "read only"],
+    "Default chat mode",
+    "Write, Plan, Read, or Review for new chats",
+    ["write", "plan", "read", "review", "read only"],
   ),
   control(
     "preferences-coauthor",
@@ -358,6 +358,13 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     "Preferred editor",
     "Default app for opening project folders",
     ["vscode", "cursor", "terminal", "ide"],
+  ),
+  control(
+    "preferences-runtime-activity-fixtures",
+    "preferences",
+    "Runtime activity test controls",
+    "Show controls that create provider-free test runs in project chats",
+    ["developer", "testing", "fixtures", "terminal runs", "runtime activity"],
   ),
   control(
     "preferences-analytics",

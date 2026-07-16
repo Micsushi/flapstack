@@ -71,6 +71,7 @@ vi.mock("../src/main/lib/harness/launch-context", () => ({
     metadata: { sourceFingerprint: "test" },
   })),
   getLastHarnessContextFingerprint: () => undefined,
+  buildStartupInstructions: () => "",
   prependStartupContext: (prompt: string) => prompt,
 }))
 
@@ -217,7 +218,7 @@ async function launchThroughClaudeRouter(run: QueuedAgentRun): Promise<void> {
     subChatId: run.subChatId,
     prompt: run.prompt,
     cwd: run.worktreePath!,
-    mode: "agent",
+    mode: "write",
     historyEnabled: false,
     enableTasks: false,
   })

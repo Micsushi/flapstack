@@ -23,6 +23,9 @@ import {
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import type { AgentMessageMetadata } from "../ui/agent-message-usage"
 import { handleAgentInputChunk } from "./agent-input-transport"
+import type { ChatMode } from "../../../../shared/chat-mode"
+import { createDirectRuntimeStream } from "./direct-runtime-chat-transport"
+import { resolveAgentHotlineEnabled } from "../../../../shared/agent-hotline"
 
 function openClaudeLoginModal() {
   appStore.set(claudeLoginModalConfigAtom, {
@@ -133,7 +136,7 @@ type IPCChatTransportConfig = {
   subChatId: string
   cwd: string
   projectPath?: string // Original project path for MCP config lookup (when using worktrees)
-  mode: "plan" | "agent"
+  mode: ChatMode
   model?: string
 }
 
@@ -186,6 +189,22 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
         .getState()
         .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode ||
       this.config.mode
+
+    const directStream = await createDirectRuntimeStream({
+      chatId: this.config.chatId,
+      subChatId: this.config.subChatId,
+      harness: "claude-code",
+      prompt,
+      ...(typeof lastUser?.id === "string" ? { promptMessageId: lastUser.id } : {}),
+      model: modelString,
+      mode: currentMode,
+      reasoningEffort: claudeEffort,
+      reasoningEnabled: reasoningOutputEnabled,
+      images,
+      hotlineEnabled: resolveAgentHotlineEnabled(options.messages),
+      abortSignal: options.abortSignal,
+    })
+    if (directStream) return directStream
 
     // Stream debug logging
     const subId = this.config.subChatId.slice(-8)

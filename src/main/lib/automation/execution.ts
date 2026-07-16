@@ -22,6 +22,7 @@ import {
   createAgentOrchestrationService,
 } from "../agent-orchestration/service"
 import type { AgentRunLauncher, QueuedAgentRun } from "../run-launch-service"
+import { normalizeChatMode } from "../../../shared/chat-mode"
 import { parseJsonText, parseNullableJsonText } from "../json"
 import * as dbSchema from "../db/schema"
 import {
@@ -1269,8 +1270,9 @@ function createChatTarget(
 function queuedRunById(database: Sqlite, runId: string): QueuedAgentRun | null {
   const row = database
     .prepare(
-      `SELECT r.*, p.path project_path
+      `SELECT r.*, s.mode chat_mode, p.path project_path
        FROM agent_runs r JOIN chats c ON c.id = r.chat_id
+       JOIN sub_chats s ON s.id = r.sub_chat_id
        LEFT JOIN projects p ON p.id = c.project_id
        WHERE r.id = ?`,
     )
@@ -1282,6 +1284,7 @@ function queuedRunById(database: Sqlite, runId: string): QueuedAgentRun | null {
     subChatId: String(row.sub_chat_id),
     harness: row.harness as AgentHarness,
     prompt: String(row.initial_prompt),
+    chatMode: normalizeChatMode(row.chat_mode),
     model: stringOrNull(row.model),
     reasoningEffort: null,
     permissionMode: String(row.permission_mode),

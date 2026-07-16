@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm"
 import { BrowserWindow } from "electron"
 import type { CredentialId, CredentialMetadata } from "../../../shared/credential-types"
+import type { ChatMode } from "../../../shared/chat-mode"
 import {
   DEV_MCP_SETTINGS_INVALIDATION_CHANNEL,
   type DevMcpSettingsDomain,
@@ -166,7 +167,7 @@ export async function setChatPermission(input: {
 export async function previewPermission(input: {
   harness: "claude-code" | "codex" | "cursor-agent" | "openrouter" | "nanogpt"
   mode: PermissionMode
-  chatMode?: "plan" | "agent"
+  chatMode?: ChatMode
   chatId?: string
   customPermissions?: CustomPermissionToggles
 }) {

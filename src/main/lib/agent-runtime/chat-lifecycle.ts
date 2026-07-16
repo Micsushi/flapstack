@@ -192,7 +192,7 @@ export class RuntimeChatLifecycleService {
             ids.subChatId,
             ids.chatId,
             name,
-            sourceConversation.mode ?? "agent",
+            sourceConversation.mode ?? "write",
             sourceConversation.harness ?? source.harness ?? null,
             sourceConversation.model ?? source.model ?? null,
             sourceConversation.permission_mode ?? source.permission_mode,

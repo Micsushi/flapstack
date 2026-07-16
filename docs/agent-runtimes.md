@@ -16,10 +16,12 @@ Automatic resolves by harness after chat, project, and global overrides. An
 explicit unavailable choice blocks before provider intent. Flapstack never
 silently changes the stored preference or falls back to another Runtime.
 
-Direct Codex and native Claude Code defaults remain release-gated until their
-pinned protocol, credentialed live, restart, and packaged-app checks pass. The
-Runtimes Settings page shows the exact unavailable reason. Choose Flapstack
-Native explicitly when the native gate is open.
+Direct Codex and native Claude Code defaults remain release-gated in production
+until their pinned protocol, credentialed live, restart, and packaged-app checks
+pass. Flapstack Dev enables both direct Runtimes so those checks can be run.
+Preview packages can opt in with
+`FLAPSTACK_ENABLE_UNVERIFIED_NATIVE_RUNTIMES=1`. Adapter probes still reject a
+missing login, missing binary, or unsupported version instead of falling back.
 
 ## Select and continue
 
@@ -76,10 +78,12 @@ readable through its immutable snapshot or legacy projection.
 
 ## Fixture capture and redaction
 
-### Flapstack Dev activity fixtures
+### Runtime activity test fixtures
 
-Project chats in `Flapstack Dev` expose a **Flapstack Dev Runtime fixtures**
-fieldset above the normal transcript. **Seed terminal runs** creates three
+The **Runtime activity test controls** toggle in Settings > Preferences exposes
+a **Runtime activity test fixtures** fieldset above project-chat transcripts in
+unpackaged development builds. Packaged preview and production builds hide the
+toggle and reject fixture operations. The toggle defaults off. **Seed terminal runs** creates three
 bounded, deterministic, provider-free runs for completed, cancelled, and failed
 terminal states. Their durable activity covers every Runtime event kind plus
 ordered identities, section boundaries, search/filter/copy/export content, and
@@ -91,10 +95,10 @@ After seeding, **View state** can show live, stale, loading, empty, error, and
 corruption handling without database or filesystem edits. The corruption row is
 an in-memory redacted placeholder; it never stores malformed or private data.
 Fixture runs use read-only authority, no worktree path, no prompt, no
-credentials, no provider process, and zero provider cost. The router and UI are
-available only when the verified development renderer is running in an
-unpackaged app. Preview and production packages do not register the fixture
-router or render its controls.
+credentials, no provider process, and zero provider cost. The fixture router is
+registered only in unpackaged development builds and still fails closed unless
+the persisted setting is enabled. Turning the setting off hides the controls
+immediately and blocks seed, reset, and status operations.
 
 Capture against the pinned provider/package version. Replace account, project,
 path, repository, prompt, secret, token, session, thread, message, tool, and

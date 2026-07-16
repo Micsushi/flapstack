@@ -188,8 +188,8 @@ All five were repaired in this pass.
 - Codex saved reasoning summary is largely end-of-run backfill rather than a proven live provider bridge.
 - Terminal title sanitization removes control characters but must be tested with secret-shaped commands; do not assume it redacts credentials.
 - Remote-stats policy and several OpenSpec task checkboxes remain administratively stale.
-- Dynamic vocabulary is deferred/out of Stage 2. Its research architecture must
-  receive a future OpenSpec approval before implementation.
+- Dynamic vocabulary was deferred/out of Stage 2 and is now planned under the
+  approved Stage 5 S5-F1 product-polish change.
 
 ## 5. Repairs completed during this review
 

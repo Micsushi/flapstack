@@ -5,6 +5,7 @@
 
 import { useMemo } from "react"
 import { normalizeCodexToolPart } from "../../shared/codex-tool-normalizer"
+import type { ChatMode } from "../../shared/chat-mode"
 import { trpc, trpcClient } from "./trpc"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -329,10 +330,13 @@ export const api = {
           onError: (err) => opts?.onError?.(err),
         })
         return {
-          mutate: (args?: { subChatId: string; mode: "plan" | "agent" }) => {
+          mutate: (args?: { subChatId: string; mode: ChatMode }) => {
             if (args?.subChatId && args?.mode) {
               mutation.mutate({ id: args.subChatId, mode: args.mode })
             }
+          },
+          mutateAsync: async (args: { subChatId: string; mode: ChatMode }) => {
+            return await mutation.mutateAsync({ id: args.subChatId, mode: args.mode })
           },
           isPending: mutation.isPending,
         }

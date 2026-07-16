@@ -39,6 +39,14 @@ change tracking.
     sidebar chat shows exactly one visible conversation; nested sub-chat tabs,
     quick switch, and the vertical **Chats** pane were removed, and `sub_chats`
     rows persist only as internal storage compatibility.
+  - User-facing terminology: Chat is the canonical navigation object for every
+    independently addressable provider thread, standalone agent, spawned
+    worker, or subagent conversation. Each materializes a durable `chats` row
+    in the left sidebar with lineage to its parent. One Chat/thread represents
+    one durable agent identity; a run is one bounded activation of that same
+    agent, not another agent. Agent runs and provider thread/session IDs remain
+    internal metadata, not separate navigation types; transient provider
+    activity without its own addressable conversation stays in the parent Chat.
   - React Query: Server state via tRPC (auto-caching, refetch)
 - **Database**: Drizzle ORM with SQLite, auto-migration on app startup
 - **Agent Integration**: Claude Code and Codex are the initial target harnesses;

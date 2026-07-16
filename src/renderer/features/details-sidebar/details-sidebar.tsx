@@ -147,7 +147,7 @@ interface DetailsSidebarProps {
   worktreePath: string | null
   /** Plan path for plan section */
   planPath: string | null
-  /** Current agent mode (plan or agent) */
+  /** Current chat mode. */
   mode: AgentMode
   /** Callback when "Build plan" is clicked */
   onBuildPlan?: () => void

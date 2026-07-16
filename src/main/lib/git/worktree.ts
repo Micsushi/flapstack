@@ -1,15 +1,15 @@
 import { execFile } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { mkdir, readFile, stat } from "node:fs/promises"
-import { devNull, homedir } from "node:os"
-import { join } from "node:path"
+import { mkdir, readFile, realpath, stat, unlink } from "node:fs/promises"
+import { devNull, homedir, tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 import simpleGit from "simple-git"
 import { adjectives, animals, uniqueNamesGenerator } from "unique-names-generator"
 import { checkGitLfsAvailable, getShellEnvironment } from "./shell-env"
 import { executeWorktreeSetup } from "./worktree-config"
 import type { WorktreeSetupResult } from "./worktree-config"
-import { generateWorktreeFolderName } from "./worktree-naming"
+import { resolveWorktreeFolderName } from "./worktree-naming"
 import { bindFilesystemRootIdentity } from "./security/path-validation"
 
 const execFileAsync = promisify(execFile)
@@ -115,12 +115,94 @@ export function generateBranchName(): string {
   return `${name}-${suffix}`
 }
 
+export interface CreateWorktreeResult {
+  commitHash: string
+  bootstrappedEmptyRepository: boolean
+}
+
+async function createEmptyRootCommit(
+  mainRepoPath: string,
+  env: Record<string, string>,
+): Promise<string> {
+  const temporaryIndex = join(
+    tmpdir(),
+    `flapstack-empty-index-${process.pid}-${randomBytes(6).toString("hex")}`,
+  )
+  const indexEnv = { ...env, GIT_INDEX_FILE: temporaryIndex }
+
+  try {
+    await execFileAsync("git", ["-C", mainRepoPath, "read-tree", "--empty"], {
+      env: indexEnv,
+      timeout: 30_000,
+    })
+    const { stdout: treeOutput } = await execFileAsync("git", ["-C", mainRepoPath, "write-tree"], {
+      env: indexEnv,
+      encoding: "utf8",
+      timeout: 30_000,
+    })
+    const { stdout: commitOutput } = await execFileAsync(
+      "git",
+      ["-C", mainRepoPath, "commit-tree", treeOutput.trim(), "-m", "Initialize worktree"],
+      { env, encoding: "utf8", timeout: 30_000 },
+    )
+    return commitOutput.trim()
+  } finally {
+    await unlink(temporaryIndex).catch(() => undefined)
+  }
+}
+
+async function resolveWorktreeStartCommit(
+  mainRepoPath: string,
+  startPoint: string,
+  env: Record<string, string>,
+): Promise<{ commitHash: string; bootstrappedEmptyRepository: boolean }> {
+  const git = simpleGit(mainRepoPath)
+  const candidates = [...new Set([startPoint, startPoint.replace(/^origin\//, "")])]
+
+  for (const candidate of candidates) {
+    try {
+      return {
+        commitHash: (await git.revparse([`${candidate}^{commit}`])).trim(),
+        bootstrappedEmptyRepository: false,
+      }
+    } catch {}
+  }
+
+  try {
+    await git.revparse(["HEAD^{commit}"])
+    throw new Error(`Base branch not found: ${startPoint}`)
+  } catch (error) {
+    if (error instanceof Error && error.message === `Base branch not found: ${startPoint}`) {
+      throw error
+    }
+  }
+
+  try {
+    return {
+      commitHash: await createEmptyRootCommit(mainRepoPath, env),
+      bootstrappedEmptyRepository: true,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const lowerMessage = message.toLowerCase()
+    if (
+      lowerMessage.includes("author identity unknown") ||
+      lowerMessage.includes("unable to auto-detect email address")
+    ) {
+      throw new Error(
+        "This repository has no commits, and Git user.name/user.email are not configured. Configure your Git identity or make the first commit, then retry.",
+      )
+    }
+    throw error
+  }
+}
+
 export async function createWorktree(
   mainRepoPath: string,
   branch: string,
   worktreePath: string,
   startPoint = "origin/main",
-): Promise<void> {
+): Promise<CreateWorktreeResult> {
   const usesLfs = await repoUsesLfs(mainRepoPath)
 
   try {
@@ -139,20 +221,11 @@ export async function createWorktree(
       }
     }
 
-    // Resolve startPoint to commit hash to avoid Windows escaping issues with ^{commit}
-    const git = simpleGit(mainRepoPath)
-    let commitHash: string
-    try {
-      commitHash = (await git.revparse([`${startPoint}^{commit}`])).trim()
-    } catch {
-      // Fallback to local branch if origin/branch doesn't exist
-      const localBranch = startPoint.replace(/^origin\//, "")
-      try {
-        commitHash = (await git.revparse([`${localBranch}^{commit}`])).trim()
-      } catch {
-        commitHash = (await git.revparse([startPoint])).trim()
-      }
-    }
+    const { commitHash, bootstrappedEmptyRepository } = await resolveWorktreeStartCommit(
+      mainRepoPath,
+      startPoint,
+      env,
+    )
 
     await execFileAsync(
       "git",
@@ -160,6 +233,7 @@ export async function createWorktree(
       { env, timeout: 120_000 },
     )
     bindFilesystemRootIdentity(worktreePath)
+    return { commitHash, bootstrappedEmptyRepository }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     const lowerError = errorMessage.toLowerCase()
@@ -288,29 +362,22 @@ export async function getDefaultBranch(mainRepoPath: string): Promise<string> {
         return symrefMatch[1]
       }
     } catch {}
-  } else {
-    // No remote - use the current local branch or check for common branch names
-    try {
-      const currentBranch = await getCurrentBranch(mainRepoPath)
-      if (currentBranch) {
-        return currentBranch
-      }
-    } catch {}
-
-    // Fallback: check for common default branch names locally
-    try {
-      const localBranches = await git.branchLocal()
-      for (const candidate of ["main", "master", "develop", "trunk"]) {
-        if (localBranches.all.includes(candidate)) {
-          return candidate
-        }
-      }
-      // If we have any local branches, use the first one
-      if (localBranches.all.length > 0) {
-        return localBranches.all[0]
-      }
-    } catch {}
   }
+
+  // An origin may exist without any fetched refs. Fall back to a real local
+  // branch before assuming main.
+  try {
+    const currentBranch = await getCurrentBranch(mainRepoPath)
+    if (currentBranch) return currentBranch
+  } catch {}
+
+  try {
+    const localBranches = await git.branchLocal()
+    for (const candidate of ["main", "master", "develop", "trunk"]) {
+      if (localBranches.all.includes(candidate)) return candidate
+    }
+    if (localBranches.all.length > 0) return localBranches.all[0]
+  } catch {}
 
   return "main"
 }
@@ -814,6 +881,8 @@ export interface WorktreeResult {
 
 export interface CreateWorktreeForChatOptions {
   onSetupComplete?: (result: WorktreeSetupResult) => void
+  worktreeName?: string
+  parentDirectory?: string
 }
 
 /**
@@ -844,16 +913,25 @@ export async function createWorktreeForChat(
 
     const branch = generateBranchName()
     const worktreesDir = join(homedir(), ".flapstack", "worktrees")
-    const projectWorktreeDir = join(worktreesDir, projectSlug)
-    const folderName = generateWorktreeFolderName(projectWorktreeDir)
-    const worktreePath = join(projectWorktreeDir, folderName)
+    const defaultParentDirectory = join(worktreesDir, projectSlug)
+    let parentDirectory = defaultParentDirectory
+    if (options?.parentDirectory) {
+      const requestedParent = resolve(options.parentDirectory)
+      const parentStats = await stat(requestedParent).catch(() => null)
+      if (!parentStats?.isDirectory()) {
+        throw new Error("Choose an existing folder for the worktree location.")
+      }
+      parentDirectory = await realpath(requestedParent)
+    }
+    const folderName = resolveWorktreeFolderName(parentDirectory, options?.worktreeName)
+    const worktreePath = join(parentDirectory, folderName)
 
     // Determine startPoint based on branch type
     // For local branches, use the local ref directly
     // For remote branches or when type is not specified, use origin/{branch}
     const startPoint = branchType === "local" ? baseBranch : `origin/${baseBranch}`
 
-    await createWorktree(projectPath, branch, worktreePath, startPoint)
+    const creation = await createWorktree(projectPath, branch, worktreePath, startPoint)
 
     // Run worktree setup commands in BACKGROUND (don't block chat creation)
     // This allows the user to start chatting immediately while deps install
@@ -877,7 +955,12 @@ export async function createWorktreeForChat(
         console.warn(`[worktree] Setup failed: ${errorMsg}`)
       })
 
-    return { success: true, worktreePath, branch, baseBranch }
+    return {
+      success: true,
+      worktreePath,
+      branch,
+      baseBranch: creation.bootstrappedEmptyRepository ? undefined : baseBranch,
+    }
   } catch (error) {
     return {
       success: false,

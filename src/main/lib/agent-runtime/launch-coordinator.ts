@@ -20,6 +20,7 @@ export type RuntimeLaunchIdentity = {
 export type RuntimeLaunchRequest = RuntimeLaunchIdentity & {
   launch: ResolvedRuntimeLaunch
   prompt: string
+  instructions?: string | null
   persistedSession?: RuntimeAdapterSession | null
   signal?: AbortSignal
 }
@@ -168,6 +169,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       chatId: request.chatId,
       subChatId: request.subChatId,
       launch: request.launch,
+      instructions: request.instructions?.trim() || null,
       signal: controller.signal,
     }
     const active: ActiveLaunch<TActivity> = {
@@ -353,6 +355,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       chatId: request.chatId,
       subChatId: request.subChatId,
       launch: request.launch,
+      instructions: request.instructions?.trim() || null,
       signal: controller.signal,
     }
     const reconciled = await safeReconcile(adapter, context)
@@ -421,6 +424,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       chatId: request.chatId,
       subChatId: request.subChatId,
       launch: request.launch,
+      instructions: request.instructions?.trim() || null,
       signal: request.signal ?? new AbortController().signal,
     }
     return safeReconcile(adapter, context)

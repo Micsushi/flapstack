@@ -5,6 +5,8 @@ import {
   createAgentChatSubscriptionObserver,
   extractChatMessageText,
 } from "./subscription-chat-transport"
+import { normalizeChatMode } from "../../../../shared/chat-mode"
+import { useAgentSubChatStore } from "../stores/sub-chat-store"
 
 type UIMessageChunk = any
 
@@ -30,6 +32,11 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
   }): Promise<ReadableStream<UIMessageChunk>> {
     const lastUser = [...options.messages].reverse().find((message) => message.role === "user")
     const prompt = extractChatMessageText(lastUser)
+    const mode = normalizeChatMode(
+      useAgentSubChatStore
+        .getState()
+        .allSubChats.find((subChat) => subChat.id === this.config.subChatId)?.mode,
+    )
 
     return new ReadableStream({
       start: (controller) => {
@@ -46,6 +53,7 @@ export class LocalModelChatTransport implements ChatTransport<UIMessage> {
             subChatId: this.config.subChatId,
             runId,
             prompt,
+            mode,
             model: this.config.model,
             endpoint: this.config.endpoint,
             cwd: this.config.cwd,

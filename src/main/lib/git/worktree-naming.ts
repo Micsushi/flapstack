@@ -36,6 +36,35 @@ export function sanitizeProjectName(name: string): string {
 }
 
 /**
+ * Convert a user-facing worktree name into one safe folder segment.
+ * The folder name is also the worktree label shown in the UI.
+ */
+export function sanitizeWorktreeName(name: string): string {
+  const sanitized = name
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9.-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 50)
+    .replace(/[.-]+$/g, "")
+
+  if (!sanitized) throw new Error("Enter a worktree name using letters or numbers.")
+  return sanitized
+}
+
+export function resolveWorktreeFolderName(parentDir: string, requestedName?: string): string {
+  if (!requestedName?.trim()) return generateWorktreeFolderName(parentDir)
+
+  const folderName = sanitizeWorktreeName(requestedName)
+  if (existsSync(join(parentDir, folderName))) {
+    throw new Error(`A folder named "${folderName}" already exists in this location.`)
+  }
+  return folderName
+}
+
+/**
  * Generate a unique, human-readable folder name for a worktree.
  * Uses adjective-landscape pattern (e.g., "golden-meadow", "quiet-ridge").
  * Checks the parent directory for existing folders to avoid collisions.

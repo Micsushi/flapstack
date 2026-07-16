@@ -7,6 +7,11 @@ import {
   formatCursorModelForCli,
   type CursorEffortLevel,
 } from "../../../../shared/model-catalog"
+import {
+  applyChatModeInstruction,
+  CHAT_MODES,
+  resolveChatModePermission,
+} from "../../../../shared/chat-mode"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { agentRuns, chats, getDatabase, getDatabasePath, subChats } from "../../db"
 import {
@@ -365,6 +370,7 @@ export const cursorRouter = router({
         chatId: z.string(),
         runId: z.string(),
         prompt: z.string(),
+        mode: z.enum(CHAT_MODES).default("write"),
         model: z.string().optional(),
         cwd: z.string(),
         projectPath: z.string().optional(),
@@ -464,12 +470,13 @@ export const cursorRouter = router({
               .from(agentRuns)
               .where(eq(agentRuns.id, input.runId))
               .get()
-            const permissionMode =
+            const requestedPermissionMode =
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolveCursorPermissionMode({
                 subChatPermissionMode: existingSubChat.permissionMode,
                 chatPermissionMode: existingChat.permissionMode,
               })
+            const permissionMode = resolveChatModePermission(input.mode, requestedPermissionMode)
             const permissionApplication = buildCursorPermissionApplication({
               permissionMode,
               cwd: input.cwd,
@@ -500,7 +507,7 @@ export const cursorRouter = router({
             }
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
-                input.prompt,
+                applyChatModeInstruction(input.prompt, input.mode),
                 [contextBundle.context, extensionContext.context].filter(Boolean).join("\n\n"),
               ),
               productMcpEnabledAtLaunch,

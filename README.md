@@ -58,6 +58,26 @@ Projects and tasks are context containers. Chats are the primary object. Agent
 runs should be traceable to prompts, checkpoints, file-change manifests, models,
 harnesses, permissions, and worktrees.
 
+### Terminology Invariant
+
+In the user interface, **Chat** is the canonical name for an independently
+addressable conversation. A provider thread, standalone agent, spawned agent,
+worker, or subagent with its own conversation is represented by a durable Chat
+and appears in the left sidebar. Parent/initiator lineage explains how spawned
+Chats relate to their source.
+
+One Chat/thread represents one durable agent identity and its conversation. A
+run is one bounded activation of that agent: a prompt or automation trigger
+starts it, and success, failure, or cancellation ends it. Follow-up work may
+create another run in the same Chat without creating another agent. A newly
+spawned subagent is a new agent identity and therefore gets its own Chat/thread.
+
+Provider thread/session IDs, run records, and compatibility `sub_chats` rows
+stay internal. They do not create separate Threads, Agents, or Subagents
+navigation. Provider activity without its own addressable conversation stays
+inside the parent Chat; a distinct provider conversation must become its own
+sidebar Chat.
+
 ## Plan
 
 ### Stage 0: Repo Adoption

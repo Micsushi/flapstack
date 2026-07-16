@@ -489,9 +489,9 @@ export const crossScopeMoveEnabledAtom = atomWithStorage<boolean>(
 )
 
 // Preferences - Default Agent Mode
-// Controls what mode new chats/sub-chats start in (Plan = read-only, Agent = can edit)
+// Controls how new chats/sub-chats work.
 // Re-using AgentMode type from features/agents/atoms
-import { type AgentMode as AgentModeType } from "../../features/agents/atoms"
+import { normalizeChatMode, type ChatMode } from "../../../shared/chat-mode"
 
 // Migration: convert old isPlanMode boolean to new defaultAgentMode string
 // This runs once when the module loads
@@ -502,18 +502,44 @@ if (typeof window !== "undefined") {
   if (oldValue !== null && localStorage.getItem(newKey) === null) {
     // Old value was JSON boolean, new value is JSON string
     const wasInPlanMode = oldValue === "true"
-    localStorage.setItem(newKey, JSON.stringify(wasInPlanMode ? "plan" : "agent"))
+    localStorage.setItem(newKey, JSON.stringify(wasInPlanMode ? "plan" : "write"))
     localStorage.removeItem(oldKey)
     console.log(
       "[atoms] Migrated isPlanMode to defaultAgentMode:",
-      wasInPlanMode ? "plan" : "agent",
+      wasInPlanMode ? "plan" : "write",
     )
+  }
+
+  const storedDefault = localStorage.getItem(newKey)
+  if (storedDefault !== null) {
+    try {
+      localStorage.setItem(newKey, JSON.stringify(normalizeChatMode(JSON.parse(storedDefault))))
+    } catch {
+      localStorage.setItem(newKey, JSON.stringify("write"))
+    }
+  }
+
+  const storedSubChatModes = localStorage.getItem("agents:subChatModes")
+  if (storedSubChatModes !== null) {
+    try {
+      const parsed = JSON.parse(storedSubChatModes) as Record<string, unknown>
+      localStorage.setItem(
+        "agents:subChatModes",
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(parsed).map(([subChatId, mode]) => [subChatId, normalizeChatMode(mode)]),
+          ),
+        ),
+      )
+    } catch {
+      localStorage.removeItem("agents:subChatModes")
+    }
   }
 }
 
-export const defaultAgentModeAtom = atomWithStorage<AgentModeType>(
+export const defaultAgentModeAtom = atomWithStorage<ChatMode>(
   "preferences:default-agent-mode",
-  "agent", // Default to agent mode
+  "write",
   undefined,
   { getOnInit: true },
 )

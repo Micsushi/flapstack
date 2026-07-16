@@ -20,6 +20,11 @@ import {
   DEFAULT_CODEX_MODEL_WITH_REASONING,
   formatCodexModelForAcp,
 } from "../../../../shared/model-catalog"
+import {
+  applyChatModeInstruction,
+  CHAT_MODES,
+  resolveChatModePermission,
+} from "../../../../shared/chat-mode"
 import { captureCheckpoint, captureNoChangeManifest } from "../../checkpoints"
 import { getClaudeShellEnvironment } from "../../claude/env"
 import { resolveProjectPathFromWorktree } from "../../claude-config"
@@ -1841,7 +1846,7 @@ export const codexRouter = router({
         model: z.string().optional(),
         cwd: z.string(),
         projectPath: z.string().optional(),
-        mode: z.enum(["plan", "agent"]).default("agent"),
+        mode: z.enum(CHAT_MODES).default("write"),
         sessionId: z.string().optional(),
         forceNewSession: z.boolean().optional(),
         reasoningEnabled: z.boolean().default(true),
@@ -2005,7 +2010,7 @@ export const codexRouter = router({
             }
             const promptForModel = prependFlapstackMcpGuidance(
               prependStartupContext(
-                input.prompt,
+                applyChatModeInstruction(input.prompt, input.mode),
                 [contextBundle.context, vaultContext.context, extensionContext.context]
                   .filter(Boolean)
                   .join("\n\n"),
@@ -2031,12 +2036,13 @@ export const codexRouter = router({
               .from(agentRuns)
               .where(eq(agentRuns.id, input.runId))
               .get()
-            const permissionMode =
+            const requestedPermissionMode =
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolveCodexPermissionMode({
                 subChatPermissionMode: existingSubChat.permissionMode,
                 chatPermissionMode: existingChat.permissionMode,
               })
+            const permissionMode = resolveChatModePermission(input.mode, requestedPermissionMode)
             const permissionApplication = buildCodexPermissionApplication({
               permissionMode,
               cwd: input.cwd,

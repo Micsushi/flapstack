@@ -1,16 +1,15 @@
-import { app } from "electron"
 import { z } from "zod"
-import { IS_DEV } from "../../../constants"
-import {
-  createDevRuntimeActivityFixtureService,
-  isDevRuntimeActivityFixtureEnabled,
-} from "../../agent-runtime/dev-activity-fixtures"
+import { createDevRuntimeActivityFixtureService } from "../../agent-runtime/dev-activity-fixtures"
+import { getRuntimeActivityFixtureSettings } from "../../agent-runtime/activity-fixture-settings"
+import { isRuntimeActivityFixtureAvailable } from "../../agent-runtime/activity-fixture-settings"
 import {
   broadcastAgentActivityInvalidation,
   getAgentActivityStore,
 } from "../../agent-runtime/activity-service"
 import { getDatabase } from "../../db"
 import { publicProcedure, router } from "../index"
+import { app } from "electron"
+import { IS_DEV } from "../../../constants"
 
 const fixtureScopeSchema = z
   .object({
@@ -22,10 +21,9 @@ const fixtureScopeSchema = z
 
 function fixtureService() {
   return createDevRuntimeActivityFixtureService(getDatabase(), getAgentActivityStore(), {
-    enabled: isDevRuntimeActivityFixtureEnabled(
-      app.isPackaged,
-      IS_DEV ? process.env.ELECTRON_RENDERER_URL : undefined,
-    ),
+    enabled:
+      isRuntimeActivityFixtureAvailable(app.isPackaged, IS_DEV) &&
+      getRuntimeActivityFixtureSettings().enabled,
     onInvalidated: broadcastAgentActivityInvalidation,
   })
 }

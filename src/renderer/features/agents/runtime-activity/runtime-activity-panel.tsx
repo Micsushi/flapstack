@@ -36,6 +36,8 @@ export function RuntimeActivityPanel({
     { refetchInterval: isStreaming ? 750 : false },
   )
   const diagnostics = trpc.agentRuntimeDefaults.diagnostics.useQuery({ chatId })
+  const fixtureSettings = trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
+  const fixtureControlsEnabled = fixtureSettings.data?.enabled ?? false
   const actualStatus = page.isError
     ? "error"
     : page.isLoading && events.length === 0
@@ -49,11 +51,11 @@ export function RuntimeActivityPanel({
     () =>
       projectDevRuntimeActivityView(
         events,
-        import.meta.env.DEV ? devViewMode : "activity",
+        fixtureControlsEnabled ? devViewMode : "activity",
         actualStatus,
         page.error?.message ?? null,
       ),
-    [actualStatus, devViewMode, events, page.error?.message],
+    [actualStatus, devViewMode, events, fixtureControlsEnabled, page.error?.message],
   )
 
   useEffect(() => {
@@ -69,6 +71,10 @@ export function RuntimeActivityPanel({
     setHasMore(false)
     setDevViewMode("activity")
   }, [chatId])
+
+  useEffect(() => {
+    if (!fixtureControlsEnabled) setDevViewMode("activity")
+  }, [fixtureControlsEnabled])
 
   const oldestStorageId = useMemo(
     () => events.reduce((minimum, event) => Math.min(minimum, event.storageId), Infinity),
@@ -96,15 +102,13 @@ export function RuntimeActivityPanel({
 
   return (
     <div className="space-y-3">
-      {import.meta.env.DEV ? (
-        <RuntimeActivityFixtureControls
-          projectId={projectId}
-          chatId={chatId}
-          subChatId={subChatId}
-          viewMode={devViewMode}
-          onViewModeChange={setDevViewMode}
-        />
-      ) : null}
+      <RuntimeActivityFixtureControls
+        projectId={projectId}
+        chatId={chatId}
+        subChatId={subChatId}
+        viewMode={devViewMode}
+        onViewModeChange={setDevViewMode}
+      />
       {diagnostics.data ? (
         <details id="runtime-diagnostics" className="rounded-md border border-border/60 px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium">Runtime diagnostics</summary>
@@ -139,7 +143,7 @@ export function RuntimeActivityPanel({
         hasMore={view.events.length > 0 && hasMore}
         onLoadMore={loadingMore ? undefined : loadMore}
         onRetry={() => {
-          if (import.meta.env.DEV && devViewMode === "error") setDevViewMode("activity")
+          if (fixtureControlsEnabled && devViewMode === "error") setDevViewMode("activity")
           void page.refetch()
         }}
         diagnosticsHref="#runtime-diagnostics"

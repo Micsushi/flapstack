@@ -21,6 +21,7 @@ import {
   type CustomPermissionCapabilities,
 } from "../../shared/permission-capabilities"
 import { nowEpochSeconds } from "./db/timestamps"
+import { toProviderChatMode, type ChatMode } from "../../shared/chat-mode"
 
 const require = createRequire(import.meta.url)
 
@@ -485,9 +486,9 @@ function getCursorPermissionLimitations(mode: PermissionMode): HarnessPermission
 
 export function mapClaudeSdkPermissionMode(
   appPermissionMode: PermissionMode,
-  chatMode: "plan" | "agent",
+  chatMode: ChatMode,
 ): ClaudeSdkPermissionApplication {
-  if (chatMode === "plan") {
+  if (toProviderChatMode(chatMode) === "plan") {
     return { sdkPermissionMode: "plan", allowDangerouslySkipPermissions: false }
   }
 

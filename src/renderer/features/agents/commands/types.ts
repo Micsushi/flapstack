@@ -34,11 +34,12 @@ export interface SlashTriggerPayload {
 export type BuiltinCommandAction =
   | { type: "clear" }
   | { type: "plan" }
-  | { type: "agent" }
+  | { type: "write" }
+  | { type: "read" }
+  | { type: "review" }
   | { type: "compact" }
   | { type: "caveman" }
   // Prompt-based commands (send to agent)
-  | { type: "review" }
   | { type: "pr-comments" }
   | { type: "release-notes" }
   | { type: "security-review" }

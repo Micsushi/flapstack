@@ -72,6 +72,11 @@ import {
 import { getAgentInputCapability } from "../../harness/input-capabilities"
 import type { AgentInputRequest } from "../../../../shared/agent-input"
 import {
+  applyChatModeInstruction,
+  CHAT_MODES,
+  resolveChatModePermission,
+} from "../../../../shared/chat-mode"
+import {
   ensureMcpTokensFresh,
   fetchMcpTools,
   fetchMcpToolsStdio,
@@ -990,7 +995,7 @@ export const claudeRouter = router({
         prompt: z.string(),
         cwd: z.string(),
         projectPath: z.string().optional(), // Original project path for MCP config lookup
-        mode: z.enum(["plan", "agent"]).default("agent"),
+        mode: z.enum(CHAT_MODES).default("write"),
         sessionId: z.string().optional(),
         model: z.string().optional(),
         effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
@@ -1370,7 +1375,7 @@ export const claudeRouter = router({
             metadata.vaultContext = vaultContext.manifest
             metadata.extensionPolicy = extensionContext.manifest
             const contextualPrompt = prependStartupContext(
-              finalPrompt,
+              applyChatModeInstruction(finalPrompt, input.mode),
               [contextBundle.context, vaultContext.context, extensionContext.context]
                 .filter(Boolean)
                 .join("\n\n"),
@@ -1743,7 +1748,7 @@ export const claudeRouter = router({
               metadata.context = contextBundle.metadata
               const freshPrompt = buildPrompt(
                 prependStartupContext(
-                  finalPrompt,
+                  applyChatModeInstruction(finalPrompt, input.mode),
                   [contextBundle.context, vaultContext.context, extensionContext.context]
                     .filter(Boolean)
                     .join("\n\n"),
@@ -1810,9 +1815,13 @@ export const claudeRouter = router({
                   .where(eq(agentRuns.id, input.runId))
                   .get()
               : null
-            const resolvedPermissionMode =
+            const requestedPermissionMode =
               parsePermissionMode(persistedRunSnapshot?.permissionMode) ??
               resolveClaudeRunPermission(input.chatId)
+            const resolvedPermissionMode = resolveChatModePermission(
+              input.mode,
+              requestedPermissionMode,
+            )
             const storedCustomPermissions = db
               .select({ customPermissions: chats.customPermissions })
               .from(chats)

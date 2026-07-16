@@ -64,13 +64,6 @@ const FIXTURE_RUNS = [
   },
 ] as const
 
-export function isDevRuntimeActivityFixtureEnabled(
-  isPackaged: boolean,
-  rendererUrl: string | undefined,
-): boolean {
-  return !isPackaged && Boolean(rendererUrl?.trim())
-}
-
 export class DevRuntimeActivityFixtureService {
   private readonly sqlite: Sqlite
 
@@ -182,7 +175,7 @@ export class DevRuntimeActivityFixtureService {
 
   private assertEnabled(): void {
     if (!this.options.enabled) {
-      throw new Error("Runtime activity fixtures are available only in Flapstack Dev.")
+      throw new Error("Enable Runtime activity test controls in Settings before using fixtures.")
     }
   }
 
@@ -279,7 +272,7 @@ function fixtureCapabilities() {
       subagentActivity: supported,
       hookDiagnostics: supported,
     },
-    limitations: ["Deterministic Flapstack Dev fixture. No provider process is launched."],
+    limitations: ["Deterministic Runtime activity test fixture. No provider process is launched."],
     unavailableReason: null,
   }
 }

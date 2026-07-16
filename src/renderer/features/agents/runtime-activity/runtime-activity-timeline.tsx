@@ -1,5 +1,6 @@
 "use client"
 
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   memo,
   useCallback,
@@ -25,7 +26,6 @@ import {
   selectRuntimeActivitySource,
   serializeRuntimeActivity,
   updateRuntimeLaunchControl,
-  virtualizeRuntimeActivity,
   visibleRuntimeControlKeys,
   type RuntimeActivityExportFormat,
   type RuntimeActivityFilters,
@@ -190,7 +190,6 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
     ...initialFilters,
   })
   const [transcriptMode, setTranscriptMode] = useState(false)
-  const [scrollTop, setScrollTop] = useState(0)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const manualExpansionRef = useRef(new Map<string, boolean>())
@@ -218,10 +217,21 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
       ].includes(row.kind),
     )
   }, [allRows, filters, transcriptMode])
-  const window = useMemo(
-    () => virtualizeRuntimeActivity(filteredRows, scrollTop, viewportHeight, estimatedRowHeight),
-    [estimatedRowHeight, filteredRows, scrollTop, viewportHeight],
-  )
+  const shouldVirtualize = filteredRows.length > 100
+  const rowVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? filteredRows.length : 0,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => estimatedRowHeight,
+    getItemKey: (index) => filteredRows[index]?.key ?? index,
+    overscan: 6,
+    initialRect: { width: 0, height: viewportHeight },
+    observeElementRect: (_instance, callback) => {
+      callback({ width: viewportRef.current?.clientWidth ?? 0, height: viewportHeight })
+      return () => undefined
+    },
+    measureElement: (element) => element.getBoundingClientRect().height || estimatedRowHeight,
+  })
+  const virtualRows = rowVirtualizer.getVirtualItems()
 
   useEffect(() => {
     setExpandedKeys(() => {
@@ -271,7 +281,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
     if (!row) return
     row.focus({ preventScroll: true })
     if (document.activeElement === row) pendingFocusKeyRef.current = null
-  }, [expandedKeys, filteredRows, selectedKey, window.end, window.start])
+  }, [expandedKeys, filteredRows, selectedKey, virtualRows])
 
   const registerRowElement = useCallback((key: string, element: HTMLElement | null) => {
     if (element) rowElementsRef.current.set(key, element)
@@ -281,7 +291,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
   const updateFilter = useCallback(
     <K extends keyof RuntimeActivityFilters>(key: K, value: RuntimeActivityFilters[K]) => {
       setFilters((current) => ({ ...current, [key]: value }))
-      setScrollTop(0)
+      if (viewportRef.current) viewportRef.current.scrollTop = 0
     },
     [],
   )
@@ -318,19 +328,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
         selectedIndexRef.current = nextIndex
         pendingFocusKeyRef.current = next.key
         setSelectedKey(next.key)
-        const rowTop = nextIndex * estimatedRowHeight
-        const rowBottom = rowTop + estimatedRowHeight
-        const maxScrollTop = Math.max(0, filteredRows.length * estimatedRowHeight - viewportHeight)
-        const nextTop =
-          rowTop < scrollTop
-            ? rowTop
-            : rowBottom > scrollTop + viewportHeight
-              ? Math.min(maxScrollTop, rowBottom - viewportHeight)
-              : scrollTop
-        if (nextTop !== scrollTop) {
-          if (viewportRef.current) viewportRef.current.scrollTop = nextTop
-          setScrollTop(nextTop)
-        }
+        if (shouldVirtualize) rowVirtualizer.scrollToIndex(nextIndex, { align: "auto" })
       } else if (
         (event.key === "Enter" || event.key === " ") &&
         activeKey &&
@@ -349,7 +347,7 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
         })
       }
     },
-    [estimatedRowHeight, filteredRows, scrollTop, selectedKey, viewportHeight],
+    [filteredRows, rowVirtualizer, selectedKey, shouldVirtualize],
   )
 
   const stateMessage =
@@ -432,38 +430,75 @@ export const RuntimeActivityTimeline = memo(function RuntimeActivityTimeline({
           aria-busy={status === "loading"}
           tabIndex={0}
           onKeyDown={onTimelineKeyDown}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
           style={{ height: viewportHeight, overflowY: "auto" }}
-          className="space-y-2 overflow-y-auto rounded-md border border-border/60 p-2"
+          className="overflow-y-auto rounded-md border border-border/60 p-2"
         >
-          <div aria-hidden="true" style={{ height: window.topSpacer }} />
-          {window.rows.map((row, localIndex) => {
-            const absoluteIndex = window.start + localIndex
-            const expanded = expandedKeys.has(row.key)
-            return (
-              <RuntimeActivityRowView
-                key={row.key}
-                row={row}
-                index={absoluteIndex}
-                total={filteredRows.length}
-                expanded={expanded}
-                selected={selectedKey === row.key}
-                onSelect={() => setSelectedKey(row.key)}
-                onElement={(element) => registerRowElement(row.key, element)}
-                onToggle={() =>
-                  setExpandedKeys((current) => {
-                    const next = new Set(current)
-                    const expanded = !next.has(row.key)
-                    manualExpansionRef.current.set(row.key, expanded)
-                    if (expanded) next.add(row.key)
-                    else next.delete(row.key)
-                    return next
-                  })
-                }
-              />
-            )
-          })}
-          <div aria-hidden="true" style={{ height: window.bottomSpacer }} />
+          {shouldVirtualize ? (
+            <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+              {virtualRows.map((virtualRow) => {
+                const row = filteredRows[virtualRow.index]
+                if (!row) return null
+                const expanded = expandedKeys.has(row.key)
+                return (
+                  <div
+                    key={virtualRow.key}
+                    ref={rowVirtualizer.measureElement}
+                    data-index={virtualRow.index}
+                    className="absolute left-0 top-0 w-full pb-2"
+                    style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  >
+                    <RuntimeActivityRowView
+                      row={row}
+                      index={virtualRow.index}
+                      total={filteredRows.length}
+                      expanded={expanded}
+                      selected={selectedKey === row.key}
+                      onSelect={() => setSelectedKey(row.key)}
+                      onElement={(element) => registerRowElement(row.key, element)}
+                      onToggle={() =>
+                        setExpandedKeys((current) => {
+                          const next = new Set(current)
+                          const expanded = !next.has(row.key)
+                          manualExpansionRef.current.set(row.key, expanded)
+                          if (expanded) next.add(row.key)
+                          else next.delete(row.key)
+                          return next
+                        })
+                      }
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredRows.map((row, index) => {
+                const expanded = expandedKeys.has(row.key)
+                return (
+                  <RuntimeActivityRowView
+                    key={row.key}
+                    row={row}
+                    index={index}
+                    total={filteredRows.length}
+                    expanded={expanded}
+                    selected={selectedKey === row.key}
+                    onSelect={() => setSelectedKey(row.key)}
+                    onElement={(element) => registerRowElement(row.key, element)}
+                    onToggle={() =>
+                      setExpandedKeys((current) => {
+                        const next = new Set(current)
+                        const expanded = !next.has(row.key)
+                        manualExpansionRef.current.set(row.key, expanded)
+                        if (expanded) next.add(row.key)
+                        else next.delete(row.key)
+                        return next
+                      })
+                    }
+                  />
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
       {hasMore && onLoadMore && (

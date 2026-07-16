@@ -231,11 +231,14 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           </span>
         </div>
       )}
-      {!isMobile && !isEditing && (projectLabel || providerName) && (
-        <div className="mr-6 flex shrink-0 items-center gap-2">
+      {!isMobile && !isEditing && workspaceBranch && (
+        <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>
+      )}
+      {!isMobile && !isEditing && (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {projectLabel && (
             <span
-              className="inline-flex h-6 shrink-0 items-center rounded-md border px-2.5 text-xs font-medium"
+              className="inline-flex h-7 shrink-0 items-center rounded-md border px-2.5 text-sm font-medium"
               style={{
                 color: projectColor ?? undefined,
                 borderColor: projectColor
@@ -252,27 +255,20 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           {providerName && (
             <span
               className={cn(
-                "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium",
+                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium",
                 providerClassName,
               )}
             >
-              <ProviderChipIcon provider={provider} className="h-3.5 w-3.5" />
+              <ProviderChipIcon provider={provider} className="h-4 w-4" />
               {providerName}
             </span>
           )}
-        </div>
-      )}
-      {!isMobile && !isEditing && workspaceBranch && (
-        <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>
-      )}
-      {!isMobile && !isEditing && (
-        <div className="ml-auto flex shrink-0 items-center gap-3">
           <OpenInButton path={localFolderPath} label="Open in" />
           {onCopyChat && (
             <button
               type="button"
               onClick={onCopyChat}
-              className="relative z-30 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+              className="relative z-30 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md p-0 text-foreground/70 transition-colors hover:bg-accent hover:text-accent-foreground"
               style={{
                 // @ts-expect-error - WebKit-specific property for Electron window dragging
                 WebkitAppRegion: "no-drag",
@@ -282,8 +278,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
               data-dev-chat-copy-source="active-header"
               data-chat-id={copyChatId}
             >
-              <CopyIcon className="h-3.5 w-3.5" />
-              <span className="text-xs font-medium">Copy full chat</span>
+              <CopyIcon className="h-4 w-4" />
             </button>
           )}
         </div>

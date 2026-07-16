@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm"
-import { BrowserWindow } from "electron"
+import { BrowserWindow, dialog } from "electron"
 import * as fs from "fs/promises"
 import * as path from "path"
 import simpleGit from "simple-git"
@@ -20,6 +20,7 @@ import {
   removeWorktree,
   sanitizeProjectName,
 } from "../../git"
+import { bindFilesystemRootIdentity } from "../../git/security/path-validation"
 import type { WorktreeSetupResult } from "../../git/worktree-config"
 import { computeContentHash, gitCache } from "../../git/cache"
 import { splitUnifiedDiffByFile } from "../../git/diff-parser"
@@ -28,7 +29,9 @@ import { applyRollbackStash } from "../../git/stash"
 import { checkInternetConnection, checkOllamaStatus } from "../../ollama"
 import { terminalManager } from "../../terminal/manager"
 import {
+  getDetachedChatCheckoutPath,
   getResolvedWorktreeStatus,
+  isDetachedChatCheckoutPath,
   isManagedFlapstackWorktreePath,
   listWorktreeOptions,
   resolveDefaultWorktree,
@@ -43,6 +46,93 @@ import { getPermissionPreferences } from "../../permissions"
 import { omitHiddenFileContentFromMessage } from "../../../../shared/chat-visible-content"
 import { agentRuntimePreferenceSchema } from "../../../../shared/agent-runtime"
 import { createRuntimeChatLifecycleService } from "../../agent-runtime/chat-lifecycle"
+import { CHAT_MODES } from "../../../../shared/chat-mode"
+
+const newChatPermissionModeSchema = z.enum([
+  "read-only",
+  "ask-before-edits",
+  "auto-edit-project-only",
+  "full-access",
+])
+
+type CheckoutRepairResult =
+  | {
+      status: "repaired"
+      path: string
+      branch: string | null
+      repairedChatIds: string[]
+      detached: boolean
+    }
+  | { status: "cancelled" }
+
+async function persistChatCheckout(input: {
+  chatId: string
+  requestedPath: string
+  repairMatchingChats: boolean
+}): Promise<CheckoutRepairResult> {
+  const db = getDatabase()
+  const chat = db.select().from(chats).where(eq(chats.id, input.chatId)).get()
+  if (!chat) throw new Error("Chat not found")
+
+  const target = await validateCustomWorktreePath(input.requestedPath)
+  if (!target.valid) throw new Error(target.error)
+
+  // A selected checkout becomes a durable run root, so bind its filesystem
+  // identity before persisting it. Later replacement or symlink swaps fail closed.
+  bindFilesystemRootIdentity(target.path)
+
+  let affected = [{ id: chat.id }]
+  if (input.repairMatchingChats && chat.projectId) {
+    const stalePathCondition = chat.worktreePath
+      ? eq(chats.worktreePath, chat.worktreePath)
+      : isNull(chats.worktreePath)
+    affected = db
+      .select({ id: chats.id })
+      .from(chats)
+      .where(and(eq(chats.projectId, chat.projectId), stalePathCondition))
+      .all()
+  }
+
+  const repairedChatIds = affected.map((row) => row.id)
+  if (repairedChatIds.length === 0) repairedChatIds.push(chat.id)
+  const updatedAt = new Date()
+
+  db.transaction((tx) => {
+    tx.update(chats)
+      .set({
+        worktreePath: target.path,
+        branch: target.branch,
+        baseBranch: null,
+        updatedAt,
+      })
+      .where(inArray(chats.id, repairedChatIds))
+      .run()
+
+    const staleSubChatPathCondition = chat.worktreePath
+      ? eq(subChats.worktreePath, chat.worktreePath)
+      : isNull(subChats.worktreePath)
+    tx.update(subChats)
+      .set({ worktreePath: target.path, updatedAt })
+      .where(and(inArray(subChats.chatId, repairedChatIds), staleSubChatPathCondition))
+      .run()
+  })
+
+  return {
+    status: "repaired",
+    path: target.path,
+    branch: target.branch,
+    repairedChatIds,
+    detached: isDetachedChatCheckoutPath(target.path),
+  }
+}
+
+async function ensureDetachedChatCheckout(chatId: string): Promise<string> {
+  const checkoutPath = getDetachedChatCheckoutPath(chatId)
+  await fs.mkdir(checkoutPath, { recursive: true })
+  const git = simpleGit(checkoutPath)
+  if (!(await git.checkIsRepo())) await git.init()
+  return checkoutPath
+}
 
 type WorktreeSetupFailurePayload = {
   kind: "create-failed" | "setup-failed"
@@ -308,12 +398,100 @@ export const chatsRouter = router({
     .input(z.object({ path: z.string().min(1) }))
     .query(({ input }) => validateCustomWorktreePath(input.path)),
 
+  selectWorktree: publicProcedure
+    .input(z.object({ id: z.string(), path: z.string().min(1) }))
+    .mutation(({ input }) =>
+      persistChatCheckout({
+        chatId: input.id,
+        requestedPath: input.path,
+        repairMatchingChats: false,
+      }),
+    ),
+
+  repairUnavailableCheckout: publicProcedure
+    .input(z.object({ id: z.string(), unavailablePath: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const options = listWorktreeOptions(input.id)
+      for (const option of options) {
+        if (option.path === input.unavailablePath) continue
+        if (option.kind === "detached") continue
+        const status = await getResolvedWorktreeStatus(input.id, option.path)
+        if (status.status !== "ok") continue
+        return persistChatCheckout({
+          chatId: input.id,
+          requestedPath: option.path,
+          repairMatchingChats: true,
+        })
+      }
+
+      return persistChatCheckout({
+        chatId: input.id,
+        requestedPath: await ensureDetachedChatCheckout(input.id),
+        repairMatchingChats: false,
+      })
+    }),
+
+  chooseReplacementCheckout: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      if (!window) throw new Error("No window available for checkout selection")
+      const selection = await dialog.showOpenDialog(window, {
+        properties: ["openDirectory"],
+        title: "Choose the Git repository folder itself, not its parent folder",
+        buttonLabel: "Use this repository",
+      })
+      if (selection.canceled || selection.filePaths.length === 0) {
+        return { status: "cancelled" } as const
+      }
+
+      return persistChatCheckout({
+        chatId: input.id,
+        requestedPath: selection.filePaths[0]!,
+        repairMatchingChats: true,
+      })
+    }),
+
+  chooseCheckout: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+      if (!window) throw new Error("No window available for checkout selection")
+      const selection = await dialog.showOpenDialog(window, {
+        properties: ["openDirectory"],
+        title: "Choose an existing Git checkout",
+        buttonLabel: "Use this checkout",
+      })
+      if (selection.canceled || selection.filePaths.length === 0) {
+        return { status: "cancelled" } as const
+      }
+
+      return persistChatCheckout({
+        chatId: input.id,
+        requestedPath: selection.filePaths[0]!,
+        repairMatchingChats: false,
+      })
+    }),
+
+  chooseWorktreeParentDirectory: publicProcedure.mutation(async ({ ctx }) => {
+    const window = ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow()
+    if (!window) throw new Error("No window available for folder selection")
+    const selection = await dialog.showOpenDialog(window, {
+      properties: ["openDirectory", "createDirectory"],
+      title: "Choose where to create the worktree",
+      buttonLabel: "Use this location",
+    })
+    return selection.canceled ? null : (selection.filePaths[0] ?? null)
+  }),
+
   createWorktreeForExistingChat: publicProcedure
     .input(
       z.object({
         id: z.string(),
         baseBranch: z.string().optional(),
         branchType: z.enum(["local", "remote"]).optional(),
+        name: z.string().trim().min(1).max(100).optional(),
+        parentDirectory: z.string().trim().min(1).max(4_096).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -339,6 +517,8 @@ export const chatsRouter = router({
         input.baseBranch,
         input.branchType,
         {
+          worktreeName: input.name,
+          parentDirectory: input.parentDirectory,
           onSetupComplete: (setupResult: WorktreeSetupResult) => {
             if (setupResult.success) return
             const message =
@@ -353,11 +533,6 @@ export const chatsRouter = router({
       )
 
       if (!result.success || !result.worktreePath) {
-        sendWorktreeSetupFailure(requestingWindowId, {
-          kind: "create-failed",
-          message: result.error || "Worktree creation failed.",
-          projectId: project.id,
-        })
         throw new Error(result.error || "Worktree creation failed")
       }
 
@@ -389,6 +564,7 @@ export const chatsRouter = router({
         name: z.string().optional(),
         model: z.string().optional(),
         runtimePreference: agentRuntimePreferenceSchema.optional(),
+        permissionMode: newChatPermissionModeSchema.optional(),
         initialMessage: z.string().optional(),
         initialMessageParts: z
           .array(
@@ -415,7 +591,7 @@ export const chatsRouter = router({
         baseBranch: z.string().optional(), // Branch to base the worktree off
         branchType: z.enum(["local", "remote"]).optional(), // Whether baseBranch is local or remote
         useWorktree: z.boolean().default(true), // If false, work directly in project dir
-        mode: z.enum(["plan", "agent"]).default("agent"),
+        mode: z.enum(CHAT_MODES).default("write"),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -466,8 +642,11 @@ export const chatsRouter = router({
           projectId: project?.id ?? null,
           taskId: task?.id ?? null,
           scope: input.scope,
-          permissionMode: inheritedMode,
-          customPermissions: inheritedMode === "custom" ? inheritedCustomPermissions : null,
+          permissionMode: input.permissionMode ?? inheritedMode,
+          customPermissions:
+            input.permissionMode === undefined && inheritedMode === "custom"
+              ? inheritedCustomPermissions
+              : null,
           mcpExposureEnabled: true,
           harness: input.harness,
           model: input.model,
@@ -1028,7 +1207,7 @@ export const chatsRouter = router({
       z.object({
         chatId: z.string(),
         name: z.string().optional(),
-        mode: z.enum(["plan", "agent"]).default("agent"),
+        mode: z.enum(CHAT_MODES).default("write"),
       }),
     )
     .mutation(({ input }) => {
@@ -1336,7 +1515,7 @@ export const chatsRouter = router({
    * Update sub-chat mode
    */
   updateSubChatMode: publicProcedure
-    .input(z.object({ id: z.string(), mode: z.enum(["plan", "agent"]) }))
+    .input(z.object({ id: z.string(), mode: z.enum(CHAT_MODES) }))
     .mutation(({ input }) => {
       const db = getDatabase()
       return db
@@ -2016,10 +2195,9 @@ export const chatsRouter = router({
       for (const row of allSubChats) {
         if (!row.subChatId || !row.chatId) continue
 
-        // If mode is "agent", plan is already approved - skip
-        if (row.mode === "agent") continue
+        if (row.mode !== "plan") continue
 
-        // Only check for ExitPlanMode in plan mode sub-chats
+        // Only check for ExitPlanMode in Plan-mode chats.
         if (!row.messages) continue
 
         try {

@@ -22,7 +22,7 @@ interface PlanWidgetProps {
   planPath: string | null
   /** Plan refetch trigger */
   refetchTrigger?: number
-  /** Current agent mode (plan or agent) */
+  /** Current chat mode. */
   mode?: AgentMode
   /** Callback when "Approve" is clicked */
   onApprovePlan?: () => void
@@ -42,7 +42,7 @@ export const PlanWidget = memo(function PlanWidget({
   worktreePath,
   planPath,
   refetchTrigger,
-  mode = "agent",
+  mode = "write",
   onApprovePlan,
   onExpandPlan,
 }: PlanWidgetProps) {

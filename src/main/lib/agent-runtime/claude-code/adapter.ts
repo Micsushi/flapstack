@@ -133,9 +133,19 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
     session: RuntimeAdapterSession,
   ): Promise<RuntimeAdapterSession> {
     this.assertContext(context)
-    const current = this.requireState(context)
-    this.assertMutableBeforeDispatch(current, "resume session")
     const providerSessionId = session.providerSessionId?.trim() || null
+    let current = this.runs.get(context.runId)
+    if (!current) {
+      const resumed = { providerSessionId, providerThreadId: null }
+      current = this.createState(
+        context,
+        resumed,
+        providerSessionId ? { sessionId: providerSessionId } : null,
+      )
+      this.runs.set(context.runId, current)
+      return current.session
+    }
+    this.assertMutableBeforeDispatch(current, "resume session")
     current.session = { providerSessionId, providerThreadId: null }
     current.resume = providerSessionId
       ? current.resume?.sessionId === providerSessionId
@@ -167,8 +177,11 @@ export class ClaudeCodeRuntimeAdapter implements HarnessAdapter<AgentActivityApp
       ...buildClaudeRuntimeSdkControls(context.launch.controls),
     }
     applyClaudeRuntimeResumeOptions(options, state.resume)
+    const providerPrompt = this.dependencies.resolvePrompt
+      ? await this.dependencies.resolvePrompt(context, prompt)
+      : prompt
     state.prompt = prompt
-    state.queryInput = { prompt, options }
+    state.queryInput = { prompt: providerPrompt, options }
     state.turnStarted = true
     return { providerTurnId: null }
   }

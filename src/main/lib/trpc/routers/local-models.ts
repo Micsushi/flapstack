@@ -8,6 +8,11 @@ import {
 } from "../../../../shared/local-model-contract"
 import { parseCustomPermissionCapabilities } from "../../../../shared/permission-capabilities"
 import {
+  applyChatModeInstruction,
+  CHAT_MODES,
+  resolveChatModePermission,
+} from "../../../../shared/chat-mode"
+import {
   fallbackToCachedLocalModelCatalog,
   getOllamaEndpointConfig,
   probeLocalModelCatalog,
@@ -113,6 +118,7 @@ export const localModelsRouter = router({
         subChatId: z.string().min(1),
         runId: z.string().min(1),
         prompt: z.string().min(1),
+        mode: z.enum(CHAT_MODES).default("write"),
         model: z.string().min(1),
         endpoint: z.string().trim().min(1).max(512),
         cwd: z.string().min(1),
@@ -152,10 +158,11 @@ export const localModelsRouter = router({
               .get()
             if (!row) throw new Error("Local model chat was not found.")
 
-            const permissionMode = parsePermissionMode(
+            const requestedPermissionMode = parsePermissionMode(
               row.subChatPermissionMode ?? row.chatPermissionMode,
             )
-            if (!permissionMode) throw new Error("Local model permission mode is invalid.")
+            if (!requestedPermissionMode) throw new Error("Local model permission mode is invalid.")
+            const permissionMode = resolveChatModePermission(input.mode, requestedPermissionMode)
             const worktree = assertRegisteredWorktree(
               row.worktreePath ?? row.chatWorktreePath ?? input.cwd,
             )
@@ -210,6 +217,7 @@ export const localModelsRouter = router({
               chatId: input.chatId,
               subChatId: input.subChatId,
               prompt: input.prompt,
+              modelPrompt: applyChatModeInstruction(input.prompt, input.mode),
               model: launchModel,
               permissionMode,
               customPermissions: row.customPermissions,

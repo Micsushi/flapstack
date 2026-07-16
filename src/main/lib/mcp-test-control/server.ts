@@ -7,6 +7,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import * as z from "zod/v4"
 import { CREDENTIAL_IDS } from "../../../shared/credential-types"
+import { CHAT_MODES } from "../../../shared/chat-mode"
 import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "../../../shared/permission-capabilities"
 import { permissionModes } from "../permissions"
 import {
@@ -1492,7 +1493,7 @@ function registerTools(server: McpServer): void {
       inputSchema: {
         harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt"]),
         mode: permissionModeSchema,
-        chatMode: z.enum(["plan", "agent"]).optional(),
+        chatMode: z.enum(CHAT_MODES).optional(),
         chatId: z.string().min(1).optional(),
         customPermissions: customPermissionsSchema.optional(),
       },

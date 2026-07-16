@@ -24,6 +24,7 @@ import {
 import { customPermissionCapabilitiesSchema } from "../../../../shared/permission-capabilities"
 import { buildOpencodePermissionApplication } from "../../harness/opencode-sidecar"
 import { publicProcedure, router } from "../index"
+import { CHAT_MODES, resolveChatModePermission } from "../../../../shared/chat-mode"
 
 const permissionModeSchema = z.enum(permissionModes)
 const permissionChangeBehaviorSchema = z.enum(permissionChangeBehaviors)
@@ -148,42 +149,46 @@ export const permissionsRouter = router({
       z.object({
         harness: z.enum(["claude-code", "codex", "cursor-agent", "openrouter", "nanogpt", "local"]),
         mode: permissionModeSchema,
-        chatMode: z.enum(["plan", "agent"]).default("agent"),
+        chatMode: z.enum(CHAT_MODES).default("write"),
         cwd: z.string().nullable().optional(),
         customPermissions: customPermissionsSchema.nullable().optional(),
       }),
     )
     .query(({ input }) => {
+      const effectivePermissionMode = resolveChatModePermission(input.chatMode, input.mode)
       if (input.harness === "codex") {
         return buildCodexPermissionApplication({
-          permissionMode: input.mode,
+          permissionMode: effectivePermissionMode,
           cwd: input.cwd,
           customPermissions: input.customPermissions,
         })
       }
       if (input.harness === "cursor-agent") {
-        return buildCursorPermissionApplication({ permissionMode: input.mode, cwd: input.cwd })
+        return buildCursorPermissionApplication({
+          permissionMode: effectivePermissionMode,
+          cwd: input.cwd,
+        })
       }
       if (input.harness === "openrouter" || input.harness === "nanogpt") {
         return buildOpencodePermissionApplication({
-          permissionMode: input.mode,
+          permissionMode: effectivePermissionMode,
           cwd: input.cwd,
           customPermissions: input.customPermissions,
         })
       }
       if (input.harness === "local") {
         return buildLocalModelPermissionApplication({
-          permissionMode: input.mode,
+          permissionMode: effectivePermissionMode,
           cwd: input.cwd,
           customPermissions: input.customPermissions,
         })
       }
-      const sdk = mapClaudeSdkPermissionMode(input.mode, input.chatMode)
+      const sdk = mapClaudeSdkPermissionMode(effectivePermissionMode, input.chatMode)
       return buildClaudePermissionApplication({
-        permissionMode: input.mode,
+        permissionMode: effectivePermissionMode,
         cwd: input.cwd,
         sdkPermissionMode: sdk.sdkPermissionMode,
-        canUseToolReadOnlyGuard: input.mode === "read-only",
+        canUseToolReadOnlyGuard: effectivePermissionMode === "read-only",
         customPermissions: input.customPermissions,
       })
     }),

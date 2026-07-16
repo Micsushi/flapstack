@@ -150,6 +150,7 @@ import type { AgentProviderId } from "../components/agent-model-selector"
 import { OpenLocallyDialog } from "../components/open-locally-dialog"
 import { PreviewSetupHoverCard } from "../components/preview-setup-hover-card"
 import type { TextSelectionSource } from "../context/text-selection-context"
+import { normalizeChatMode, type ChatMode } from "../../../../shared/chat-mode"
 import { TextSelectionProvider } from "../context/text-selection-context"
 import { useAgentsFileUpload, type UploadedImage } from "../hooks/use-agents-file-upload"
 import { useAutoImport } from "../hooks/use-auto-import"
@@ -184,6 +185,7 @@ import {
   type SelectedTextContext,
 } from "../lib/queue-utils"
 import { RemoteChatTransport } from "../lib/remote-chat-transport"
+import { latestAssistantUsesDirectRuntime } from "../lib/runtime-text-chat-chunks"
 import { FileOpenProvider, MENTION_PREFIXES, type AgentsMentionsEditorHandle } from "../mentions"
 import { ChatSearchBar, chatSearchCurrentMatchAtom, SearchHighlightProvider } from "../search"
 import { agentChatStore } from "../stores/agent-chat-store"
@@ -232,7 +234,6 @@ import {
 import { ChatInputArea } from "./chat-input-area"
 import { IsolatedMessagesSection } from "./isolated-messages-section"
 import { RuntimeActivityFixtureControls } from "../runtime-activity/runtime-activity-fixture-controls"
-import { RuntimeActivityPanel } from "../runtime-activity/runtime-activity-panel"
 // import { selectedTeamIdAtom } from "@/lib/atoms/team"
 const selectedTeamIdAtom = atom<string | null>(null)
 // import type { PlanType } from "@/lib/config/subscription-plans"
@@ -359,7 +360,7 @@ const CHAT_LAYOUT = {
   stickyTopSidebarClosed: "top-2",
   stickyTopMobile: "top-2",
   // Header padding when absolute
-  headerPaddingSidebarOpen: "pt-3 pb-12 px-3 pl-2",
+  headerPaddingSidebarOpen: "pt-2.5 pb-12 px-3 pl-2",
   headerPaddingSidebarClosed: "p-2 pt-1.5",
 } as const
 
@@ -1736,16 +1737,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const notifiedPendingQuestionIdsRef = useRef<Set<string>>(new Set())
   const isVisiblePane = isActive || isSplitPane
   const { notifyAgentNeedsInput } = useDesktopNotifications()
-  const { data: runtimeActivityPresence } = trpc.agentActivity.list.useQuery(
-    {
-      chatId: parentChatId,
-      limit: 1,
-      direction: "backward",
-      corruptionMode: "redacted-placeholder",
-    },
-    { enabled: Boolean(parentChatId), refetchInterval: isActive ? 1_000 : false },
-  )
-  const hasRuntimeActivity = (runtimeActivityPresence?.events.length ?? 0) > 0
 
   // Keep isActive in ref for use in callbacks (avoid stale closures)
   const isVisiblePaneRef = useRef(isVisiblePane)
@@ -1992,29 +1983,41 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Plan mode state (per-subChat using atomFamily)
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtomFamily(subChatId))
+  const persistedModeRef = useRef<AgentMode>(subChatMode)
+  const latestRequestedModeRef = useRef<AgentMode>(subChatMode)
+  const modeMutationTailRef = useRef<Promise<void>>(Promise.resolve())
 
   // Mutation for updating sub-chat mode in database
-  const updateSubChatModeMutation = api.agents.updateSubChatMode.useMutation({
-    onSuccess: () => {
-      // Invalidate to refetch with new mode from DB
-      utils.agents.getAgentChat.invalidate({ chatId: parentChatId })
-    },
-    onError: (error, variables) => {
-      // Don't revert if sub-chat not found in DB - it may not be persisted yet
-      // This is expected for new sub-chats that haven't been saved to DB
-      if (error.message === "Sub-chat not found") {
-        console.warn("Sub-chat not found in DB, keeping local mode state")
-        return
-      }
+  const updateSubChatModeMutation = api.agents.updateSubChatMode.useMutation()
+  const queueModePersistence = useCallback(
+    (mode: AgentMode) => {
+      latestRequestedModeRef.current = mode
+      if (subChatId.startsWith("temp-")) return
 
-      // Revert local state on error to maintain sync with database
-      const revertedMode: AgentMode = variables.mode === "plan" ? "agent" : "plan"
-      setSubChatMode(revertedMode)
-      // Also update store for consistency
-      useAgentSubChatStore.getState().updateSubChatMode(variables.subChatId, revertedMode)
-      console.error("Failed to update sub-chat mode:", error.message)
+      modeMutationTailRef.current = modeMutationTailRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            await updateSubChatModeMutation.mutateAsync({ subChatId, mode })
+            persistedModeRef.current = mode
+            void utils.agents.getAgentChat.invalidate({ chatId: parentChatId })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (message === "Sub-chat not found") {
+              console.warn("Sub-chat not found in DB, keeping local mode state")
+              return
+            }
+            if (latestRequestedModeRef.current === mode) {
+              const revertedMode = persistedModeRef.current
+              setSubChatMode(revertedMode)
+              useAgentSubChatStore.getState().updateSubChatMode(subChatId, revertedMode)
+            }
+            console.error("Failed to update sub-chat mode:", message)
+          }
+        })
     },
-  })
+    [parentChatId, setSubChatMode, subChatId, updateSubChatModeMutation, utils.agents.getAgentChat],
+  )
 
   // Sync atomFamily mode to Zustand store on mount/subChatId change
   // This ensures the sidebar shows the correct mode icon
@@ -2088,12 +2091,9 @@ const ChatViewInner = memo(function ChatViewInner({
       // Update Zustand store (for other components that read from store)
       useAgentSubChatStore.getState().updateSubChatMode(subChatId, newMode)
 
-      // Save to database (skip temp IDs that haven't been persisted yet)
-      if (!subChatId.startsWith("temp-")) {
-        updateSubChatModeMutation.mutate({ subChatId, mode: newMode })
-      }
+      queueModePersistence(newMode)
     },
-    [subChatId, setSubChatMode, updateSubChatModeMutation],
+    [queueModePersistence, setSubChatMode, subChatId],
   )
 
   // File/image upload hook
@@ -3116,28 +3116,26 @@ const ChatViewInner = memo(function ChatViewInner({
     }
   }, [])
 
-  // Handle plan approval - sends "Build plan" message and switches to agent mode
+  // Handle plan approval - sends "Build plan" message and switches to Write mode.
   const handleApprovePlan = useCallback(() => {
     // Update store mode synchronously BEFORE sending (transport reads from store)
-    useAgentSubChatStore.getState().updateSubChatMode(subChatId, "agent")
+    useAgentSubChatStore.getState().updateSubChatMode(subChatId, "write")
 
     // Sync mode to database for sidebar indicator (getPendingPlanApprovals)
-    if (!subChatId.startsWith("temp-")) {
-      updateSubChatModeMutation.mutate({ subChatId, mode: "agent" })
-    }
+    queueModePersistence("write")
 
     // Update atomFamily state (for UI) - this also syncs to store via effect
-    setSubChatMode("agent")
+    setSubChatMode("write")
 
     // Keep following the live response without yanking the transcript before the message renders.
     shouldAutoScrollRef.current = true
 
-    // Send "Build plan" message (now in agent mode)
+    // Send "Build plan" message (now in Write mode).
     sendMessageRef.current({
       role: "user",
       parts: [{ type: "text", text: "Implement plan" }],
     })
-  }, [subChatId, setSubChatMode, updateSubChatModeMutation])
+  }, [queueModePersistence, setSubChatMode, subChatId])
 
   // Handle pending "Build plan" from sidebar
   useEffect(() => {
@@ -3473,7 +3471,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
         const newChat = result.chat
         const newSubChat = result.subChat
-        const newMode = (newSubChat.mode as "plan" | "agent") || "agent"
+        const newMode = normalizeChatMode(newSubChat.mode)
 
         await Promise.all([
           localUtils.chats.list.invalidate({}),
@@ -4355,7 +4353,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Check if there's an unapproved plan (in plan mode with completed ExitPlanMode)
   const hasUnapprovedPlan = useMemo(() => {
-    // If already in agent mode, plan is approved (mode is the source of truth)
+    // If no longer in Plan mode, the plan is approved (mode is the source of truth).
     if (subChatMode !== "plan") return false
 
     // Look for completed ExitPlanMode in messages
@@ -4722,41 +4720,29 @@ const ChatViewInner = memo(function ChatViewInner({
               {/* ISOLATED: Messages rendered via Jotai atom subscription
                 Each component subscribes to specific atoms and only re-renders when those change
                 KEY: Force remount on subChatId change to ensure fresh atom reads after syncMessages */}
-              {hasRuntimeActivity ? (
-                <RuntimeActivityPanel
-                  chatId={parentChatId}
+              <>
+                <RuntimeActivityFixtureControls
                   projectId={projectId ?? null}
+                  chatId={parentChatId}
                   subChatId={subChatId}
-                  legacyMessages={messages}
-                  isStreaming={isStreaming}
                 />
-              ) : (
-                <>
-                  {import.meta.env.DEV ? (
-                    <RuntimeActivityFixtureControls
-                      projectId={projectId ?? null}
-                      chatId={parentChatId}
-                      subChatId={subChatId}
-                    />
-                  ) : null}
-                  <IsolatedMessagesSection
-                    key={subChatId}
-                    subChatId={subChatId}
-                    chatId={parentChatId}
-                    isMobile={isMobile}
-                    sandboxSetupStatus={sandboxSetupStatus}
-                    stickyTopClass={stickyTopClass}
-                    sandboxSetupError={sandboxSetupError}
-                    onRetrySetup={onRetrySetup}
-                    UserBubbleComponent={AgentUserMessageBubble}
-                    ToolCallComponent={AgentToolCall}
-                    MessageGroupWrapper={MessageGroup}
-                    toolRegistry={AgentToolRegistry}
-                    onRollback={handleRollback}
-                    onFork={handleForkFromMessage}
-                  />
-                </>
-              )}
+                <IsolatedMessagesSection
+                  key={subChatId}
+                  subChatId={subChatId}
+                  chatId={parentChatId}
+                  isMobile={isMobile}
+                  sandboxSetupStatus={sandboxSetupStatus}
+                  stickyTopClass={stickyTopClass}
+                  sandboxSetupError={sandboxSetupError}
+                  onRetrySetup={onRetrySetup}
+                  UserBubbleComponent={AgentUserMessageBubble}
+                  ToolCallComponent={AgentToolCall}
+                  MessageGroupWrapper={MessageGroup}
+                  toolRegistry={AgentToolRegistry}
+                  onRollback={handleRollback}
+                  onFork={handleForkFromMessage}
+                />
+              </>
             </div>
           </div>
         </div>
@@ -4935,7 +4921,7 @@ export function ChatView({
 
   // Get active sub-chat ID from store for mode tracking (reactive)
   const activeSubChatIdForMode = useAgentSubChatStore((state) => state.activeSubChatId)
-  // Use per-subChat mode atom - falls back to "agent" if no active sub-chat
+  // Use the per-chat mode atom, falling back to the saved default.
   const subChatModeAtom = useMemo(
     () => subChatModeAtomFamily(activeSubChatIdForMode || ""),
     [activeSubChatIdForMode],
@@ -5513,7 +5499,7 @@ export function ChatView({
   const agentSubChats = (agentChat?.subChats ?? []) as Array<{
     id: string
     name?: string | null
-    mode?: "plan" | "agent" | null
+    mode?: ChatMode | "agent" | null
     created_at?: Date | string | null
     updated_at?: Date | string | null
     messages?: any
@@ -6347,7 +6333,7 @@ Make sure to preserve all functionality from both branches when resolving confli
         // Prefer DB timestamp, fall back to local timestamp, then current time
         created_at: createdAt ?? existingLocal?.created_at ?? new Date().toISOString(),
         updated_at: updatedAt ?? existingLocal?.updated_at,
-        mode: (sc.mode as "plan" | "agent" | undefined) || existingLocal?.mode || "agent",
+        mode: sc.mode ? normalizeChatMode(sc.mode) : (existingLocal?.mode ?? "write"),
       }
     })
     const dbSubChatIds = new Set(dbSubChats.map((sc) => sc.id))
@@ -6594,6 +6580,14 @@ Make sure to preserve all functionality from both branches when resolving confli
       const latestMessages = (chat as any)?.messages
       if (!Array.isArray(latestMessages)) return
       const latestMessagesJson = JSON.stringify(latestMessages)
+
+      if (latestAssistantUsesDirectRuntime(latestMessages)) {
+        void trpcClient.chats.updateSubChatMessages
+          .mutate({ id: subChatId, messages: latestMessagesJson })
+          .catch((error: unknown) => {
+            console.error("[Runtime chat] Failed to persist normal chat messages:", error)
+          })
+      }
 
       utils.agents.getAgentChat.setData({ chatId }, (old: any) => {
         if (!old?.subChats || !Array.isArray(old.subChats)) return old
@@ -7458,7 +7452,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                     created_at: new Date(),
                     updated_at: new Date(),
                     messages: "[]",
-                    mode: "agent",
+                    mode: "write",
                     stream_id: null,
                     chat_id: chatId,
                   },
@@ -7616,7 +7610,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="ml-1 h-6 w-6 text-violet-300"
+                                  className="ml-2 h-7 w-7 text-violet-300"
                                   onClick={() => setSelectedChatId(agentChat.parentChatId!)}
                                   aria-label="Open parent agent chat"
                                 >
@@ -7631,7 +7625,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="ml-1 h-6 w-6"
+                                className="ml-1 h-7 w-7"
                                 onClick={() => setStartAgentDialogOpen(true)}
                                 aria-label="Start named agent from this chat"
                               >
@@ -7649,7 +7643,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                   size="sm"
                                   onClick={handleOpenLocally}
                                   disabled={isImporting}
-                                  className="h-6 px-2 gap-1.5 text-xs font-medium ml-2"
+                                  className="ml-2 h-7 gap-1.5 px-2.5 text-sm font-medium"
                                 >
                                   {isImporting ? (
                                     <IconSpinner className="h-3 w-3 animate-spin" />
@@ -7679,7 +7673,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                               variant="ghost"
                               size="icon"
                               onClick={() => setIsPreviewSidebarOpen(true)}
-                              className="h-6 w-6 p-0 hover:bg-foreground/10 transition-colors text-foreground flex-shrink-0 rounded-md ml-2"
+                              className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-foreground/10"
                               aria-label="Open preview"
                             >
                               <IconOpenSidebarRight className="h-4 w-4" />
@@ -7694,7 +7688,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                               variant="ghost"
                               size="icon"
                               disabled
-                              className="h-6 w-6 p-0 text-muted-foreground flex-shrink-0 rounded-md cursor-not-allowed pointer-events-none"
+                              className="h-7 w-7 flex-shrink-0 cursor-not-allowed rounded-md p-0 text-muted-foreground pointer-events-none"
                               aria-label="Preview not available"
                             >
                               <IconOpenSidebarRight className="h-4 w-4" />
@@ -7714,7 +7708,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => setIsDetailsSidebarOpen(true)}
-                                  className="h-6 w-6 p-0 hover:bg-foreground/10 transition-colors text-foreground flex-shrink-0 rounded-md ml-2"
+                                  className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                                   aria-label="View details"
                                 >
                                   <IconOpenSidebarRight className="h-4 w-4" />
@@ -7734,7 +7728,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => setIsTerminalSidebarOpen(true)}
-                                  className="h-6 w-6 p-0 hover:bg-foreground/10 transition-colors text-foreground flex-shrink-0 rounded-md ml-2"
+                                  className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                                   aria-label="Open terminal"
                                 >
                                   <TerminalSquare className="h-4 w-4" />
@@ -7754,7 +7748,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                             variant="ghost"
                             onClick={handleRestoreWorkspace}
                             disabled={restoreWorkspaceMutation.isPending}
-                            className="h-6 px-2 gap-1.5 hover:bg-foreground/10 transition-colors text-foreground flex-shrink-0 rounded-md ml-2 flex items-center"
+                            className="ml-2 flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-foreground/10"
                             aria-label="Restore workspace"
                           >
                             <UnarchiveIcon className="h-4 w-4" />
@@ -7999,7 +7993,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                 className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground rounded-md cursor-not-allowed"
                               >
                                 <AgentIcon className="h-3.5 w-3.5" />
-                                <span>Agent</span>
+                                <span>Write</span>
                                 <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                               </button>
 

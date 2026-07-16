@@ -125,6 +125,7 @@ export type StreamLocalModelChatInput = {
   chatId: string
   subChatId: string
   prompt: string
+  modelPrompt?: string
   model: string
   permissionMode: RunPermissionMode
   customPermissions?: string | null
@@ -346,7 +347,7 @@ export class LocalModelChatService {
       const messages = assembleLocalModelMessages({
         context: context.context,
         transcript,
-        prompt: input.prompt,
+        prompt: input.modelPrompt ?? input.prompt,
         maxTranscriptChars: input.maxTranscriptChars,
       })
       const toolsEnabled = localReadToolsEnabled(input.metadata)

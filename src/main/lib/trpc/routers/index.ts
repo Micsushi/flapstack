@@ -45,6 +45,7 @@ import { localModelsRouter } from "./local-models"
 import { taskProposalsRouter } from "./task-proposals"
 import { agentRuntimeDefaultsRouter } from "./agent-runtime-defaults"
 import { agentActivityRouter } from "./agent-activity"
+import { agentRuntimeChatRouter } from "./agent-runtime-chat"
 import { savedWorkspacesRouter } from "./saved-workspaces"
 import { coordinationEnginesRouter } from "./coordination-engines"
 import { orchestrationOperationsRouter } from "./orchestration-operations"
@@ -54,6 +55,7 @@ import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
 import { basename } from "node:path"
 import { isDevTestControlEnabled } from "../../mcp-test-control/lifecycle"
+import { isRuntimeActivityFixtureAvailable } from "../../agent-runtime/activity-fixture-settings"
 import { IS_DEV } from "../../../constants"
 
 /**
@@ -67,8 +69,10 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
       app.isPackaged &&
       basename(process.execPath) === "Flapstack Preview",
   )
-  const devRuntimeActivityFixturesEnabled = !app.isPackaged && IS_DEV
-
+  const devRuntimeActivityFixturesEnabled = isRuntimeActivityFixtureAvailable(
+    app.isPackaged,
+    IS_DEV,
+  )
   return router({
     agentInput: agentInputRouter,
     projects: projectsRouter,
@@ -115,14 +119,15 @@ export function createAppRouter(getWindow: () => BrowserWindow | null) {
     taskProposals: taskProposalsRouter,
     agentRuntimeDefaults: agentRuntimeDefaultsRouter,
     agentActivity: agentActivityRouter,
+    agentRuntimeChat: agentRuntimeChatRouter,
     savedWorkspaces: savedWorkspacesRouter,
     coordinationEngines: coordinationEnginesRouter,
     orchestrationOperations: orchestrationOperationsRouter,
     agentProfiles: agentProfilesRouter,
-    ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     ...(devRuntimeActivityFixturesEnabled
       ? { devRuntimeActivityFixtures: devRuntimeActivityFixturesRouter }
       : {}),
+    ...(devTestControlEnabled ? { devMcpTestControl: devMcpTestControlRouter } : {}),
     // Git operations - named "changes" to match Superset API
     changes: createGitRouter(),
   })

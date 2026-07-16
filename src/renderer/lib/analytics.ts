@@ -4,6 +4,7 @@
  */
 
 import posthog from "posthog-js"
+import type { ChatMode } from "../../shared/chat-mode"
 
 // PostHog configuration from environment
 const POSTHOG_DESKTOP_KEY = import.meta.env.VITE_POSTHOG_KEY
@@ -167,7 +168,7 @@ export function shutdown() {
 export function trackMessageSent(data: {
   workspaceId: string
   messageLength: number
-  mode: "plan" | "agent"
+  mode: ChatMode
 }) {
   capture("message_sent", {
     workspace_id: data.workspaceId,

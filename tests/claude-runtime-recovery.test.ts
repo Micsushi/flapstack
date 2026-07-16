@@ -10,6 +10,23 @@ import {
 import { baseDependencies, collect, iterable, runtimeContext } from "./claude-runtime-test-helpers"
 
 describe("Claude Runtime session and restart recovery", () => {
+  it("initializes run state when the coordinator resumes a persisted session", async () => {
+    const adapter = createClaudeCodeRuntimeAdapter(baseDependencies())
+    const context = runtimeContext()
+    const session = await adapter.resumeSession(context, {
+      providerSessionId: "persisted-session",
+      providerThreadId: null,
+    })
+
+    expect(session).toEqual({
+      providerSessionId: "persisted-session",
+      providerThreadId: null,
+    })
+    await expect(adapter.startTurn(context, session, "FIXTURE_PROMPT")).resolves.toEqual({
+      providerTurnId: null,
+    })
+  })
+
   it("reuses resume, resume-at, and fork session options", () => {
     const resume: Record<string, unknown> = { continue: true }
     applyClaudeRuntimeResumeOptions(resume, {

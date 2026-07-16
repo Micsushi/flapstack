@@ -65,7 +65,7 @@ export function MobileChatHeader({
   }, [allSubChats, activeSubChatId])
 
   const isLoading = activeSubChatId ? loadingSubChatsAtomValue.has(activeSubChatId) : false
-  const mode = activeSubChat?.mode || "agent"
+  const mode = activeSubChat?.mode || "write"
 
   return (
     <div

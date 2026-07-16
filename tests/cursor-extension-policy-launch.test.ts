@@ -38,6 +38,7 @@ vi.mock("../src/main/lib/harness/launch-context", () => ({
     metadata: { sourceFingerprint: "test" },
   })),
   getLastHarnessContextFingerprint: () => undefined,
+  buildStartupInstructions: () => "",
   prependStartupContext: (prompt: string) => prompt,
 }))
 

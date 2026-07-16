@@ -239,11 +239,11 @@ describe("permissions", () => {
   })
 
   it.each([
-    ["full-access", "agent", "bypassPermissions", true],
-    ["auto-edit-project-only", "agent", "acceptEdits", false],
-    ["read-only", "agent", "dontAsk", false],
-    ["ask-before-edits", "agent", "default", false],
-    ["custom", "agent", "default", false],
+    ["full-access", "write", "bypassPermissions", true],
+    ["auto-edit-project-only", "write", "acceptEdits", false],
+    ["read-only", "write", "dontAsk", false],
+    ["ask-before-edits", "write", "default", false],
+    ["custom", "write", "default", false],
     ["full-access", "plan", "plan", false],
   ] as const)(
     "maps %s/%s to Claude SDK permission mode %s",

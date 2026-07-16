@@ -16,6 +16,20 @@ const VIEW_LABELS: Record<DevRuntimeActivityViewMode, string> = {
 }
 
 export function RuntimeActivityFixtureControls({
+  ...props
+}: {
+  projectId: string | null
+  chatId: string
+  subChatId: string
+  viewMode?: DevRuntimeActivityViewMode
+  onViewModeChange?: (mode: DevRuntimeActivityViewMode) => void
+}) {
+  const settings = trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
+  if (!settings.data?.available || !settings.data.enabled) return null
+  return <EnabledRuntimeActivityFixtureControls {...props} />
+}
+
+function EnabledRuntimeActivityFixtureControls({
   projectId,
   chatId,
   subChatId,
@@ -34,7 +48,7 @@ export function RuntimeActivityFixtureControls({
   const fixtureUtils = utils.devRuntimeActivityFixtures!
   const input = projectId ? { projectId, chatId, subChatId } : null
   const status = fixtureApi.status.useQuery(input!, {
-    enabled: import.meta.env.DEV && input !== null,
+    enabled: input !== null,
   })
   const refresh = async () => {
     await Promise.all([
@@ -59,8 +73,6 @@ export function RuntimeActivityFixtureControls({
     onError: (error) => setResult(error.message),
   })
 
-  if (!import.meta.env.DEV) return null
-
   const busy = seed.isPending || reset.isPending || status.isLoading
   const replay = async () => {
     const run = status.data?.runs[0]
@@ -82,10 +94,10 @@ export function RuntimeActivityFixtureControls({
 
   return (
     <fieldset
-      aria-label="Development Runtime activity fixtures"
+      aria-label="Runtime activity test fixtures"
       className="rounded-md border border-dashed border-border/70 px-3 py-2 text-xs"
     >
-      <legend className="px-1 font-medium">Flapstack Dev Runtime fixtures</legend>
+      <legend className="px-1 font-medium">Runtime activity test fixtures</legend>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"

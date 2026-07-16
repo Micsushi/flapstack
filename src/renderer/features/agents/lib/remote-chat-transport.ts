@@ -1,5 +1,6 @@
 import type { ChatTransport, UIMessage } from "ai"
 import { toast } from "sonner"
+import type { ChatMode } from "../../../../shared/chat-mode"
 
 type UIMessageChunk = any
 
@@ -8,7 +9,7 @@ type RemoteChatTransportConfig = {
   subChatId: string
   subChatName: string
   sandboxUrl: string
-  mode: "plan" | "agent"
+  mode: ChatMode
   model?: string // Claude model ID (e.g., "claude-sonnet-4-6")
 }
 

@@ -8,6 +8,7 @@ import {
   buildHarnessStartupContext,
   getLastHarnessContextFingerprint,
   FLAPSTACK_DEFAULT_BEHAVIOR_INSTRUCTION,
+  buildStartupInstructions,
   prependStartupContext,
 } from "../src/main/lib/harness/launch-context"
 import {
@@ -69,6 +70,15 @@ describe("harness launch context", () => {
     expect(prompt).toContain("--- USER REQUEST ---\nWhat is loaded?\n--- END USER REQUEST ---")
   })
 
+  it("builds provider-native instructions without embedding the user request", () => {
+    const instructions = buildStartupInstructions("Follow repo rules.", "Fix the test")
+
+    expect(instructions).toContain("Follow repo rules.")
+    expect(instructions).toContain("FLAPSTACK RESPONSE CONTRACT")
+    expect(instructions).not.toContain("--- USER REQUEST ---")
+    expect(instructions).not.toContain("Fix the test")
+  })
+
   it("labels Cursor startup context as Cursor", async () => {
     writeFileSync(join(rootPath, "AGENTS.md"), "# Repo agents")
 
@@ -111,6 +121,22 @@ describe("harness launch context", () => {
     expect(bundle.metadata.sourcePaths.some((sourcePath) => sourcePath.endsWith("CLAUDE.md"))).toBe(
       false,
     )
+  })
+
+  it("does not duplicate AGENTS.md when Codex loads provider-native instructions", async () => {
+    writeFileSync(join(rootPath, "AGENTS.md"), "# Native Codex rules")
+    writeFileSync(join(rootPath, "CLAUDE.md"), "# Shared cross-provider rules")
+
+    const bundle = await buildHarnessContextBundle({
+      cwd: rootPath,
+      harness: "codex",
+      providerNativeInstructions: true,
+      vaultConfigPath: noVaultConfigPath(),
+    })
+
+    expect(bundle.context).not.toContain("Native Codex rules")
+    expect(bundle.context).toContain("Shared cross-provider rules")
+    expect(bundle.metadata.sourcePaths).not.toContain(join(rootPath, "AGENTS.md"))
   })
 
   it("loads an explicitly enabled machine-local vault without making it required", async () => {
@@ -211,6 +237,12 @@ After`
 
     expect(prependStartupContext("hello", context)).not.toContain("Spoken:")
     expect(prependStartupContext("hotline on", context)).toContain("Spoken:")
+    expect(buildStartupInstructions(context, "continue", { hotlineEnabled: true })).toContain(
+      "Spoken:",
+    )
+    expect(
+      buildStartupInstructions(context, "hotline off", { hotlineEnabled: false }),
+    ).not.toContain("Spoken:")
   })
 
   it("removes stray read-aloud references outside the managed block by default", () => {

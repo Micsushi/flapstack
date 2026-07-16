@@ -22,6 +22,10 @@ import {
   permissionModes,
   type CustomPermissionToggles,
 } from "../../permissions"
+import {
+  findProjectByCanonicalPath,
+  resolveCanonicalProjectPath,
+} from "../../projects/project-path"
 
 const execAsync = promisify(exec)
 const permissionModeSchema = z.enum(permissionModes)
@@ -99,7 +103,7 @@ export const projectsRouter = router({
       return null
     }
 
-    const folderPath = result.filePaths[0]!
+    const folderPath = resolveCanonicalProjectPath(result.filePaths[0]!)
     const folderName = basename(folderPath)
 
     // Get git remote info
@@ -109,7 +113,7 @@ export const projectsRouter = router({
     const permissionPreferences = getPermissionPreferences()
 
     // Check if project already exists
-    const existing = db.select().from(projects).where(eq(projects.path, folderPath)).get()
+    const existing = findProjectByCanonicalPath(db.select().from(projects).all(), folderPath)
 
     if (existing) {
       bindRegisteredFilesystemRoot(folderPath)
@@ -337,12 +341,13 @@ export const projectsRouter = router({
 
       // Check if already cloned
       if (existsSync(clonePath)) {
+        const projectPath = resolveCanonicalProjectPath(clonePath)
         // Project might already exist in DB
         const db = getDatabase()
-        const existing = db.select().from(projects).where(eq(projects.path, clonePath)).get()
+        const existing = findProjectByCanonicalPath(db.select().from(projects).all(), projectPath)
 
         if (existing) {
-          bindRegisteredFilesystemRoot(clonePath)
+          bindRegisteredFilesystemRoot(projectPath)
           trackProjectOpened({
             id: existing.id,
             hasGitRemote: !!existing.gitRemoteUrl,
@@ -351,13 +356,13 @@ export const projectsRouter = router({
         }
 
         // Create project for existing clone
-        const gitInfo = await getGitRemoteInfo(clonePath)
-        bindFilesystemRootIdentity(clonePath)
+        const gitInfo = await getGitRemoteInfo(projectPath)
+        bindFilesystemRootIdentity(projectPath)
         const newProject = db
           .insert(projects)
           .values({
             name: repo,
-            path: clonePath,
+            path: projectPath,
             gitRemoteUrl: gitInfo.remoteUrl,
             gitProvider: gitInfo.provider,
             gitOwner: gitInfo.owner,
@@ -382,14 +387,15 @@ export const projectsRouter = router({
 
       // Get git info and create project
       const db = getDatabase()
-      const gitInfo = await getGitRemoteInfo(clonePath)
+      const projectPath = resolveCanonicalProjectPath(clonePath)
+      const gitInfo = await getGitRemoteInfo(projectPath)
 
-      bindFilesystemRootIdentity(clonePath)
+      bindFilesystemRootIdentity(projectPath)
       const newProject = db
         .insert(projects)
         .values({
           name: repo,
-          path: clonePath,
+          path: projectPath,
           gitRemoteUrl: gitInfo.remoteUrl,
           gitProvider: gitInfo.provider,
           gitOwner: gitInfo.owner,
@@ -440,7 +446,7 @@ export const projectsRouter = router({
         return { success: false as const, reason: "canceled" as const }
       }
 
-      const folderPath = result.filePaths[0]
+      const folderPath = resolveCanonicalProjectPath(result.filePaths[0])
       const gitInfo = await getGitRemoteInfo(folderPath)
 
       // Validate it's the correct repo
@@ -457,7 +463,7 @@ export const projectsRouter = router({
 
       // Create or update project
       const db = getDatabase()
-      const existing = db.select().from(projects).where(eq(projects.path, folderPath)).get()
+      const existing = findProjectByCanonicalPath(db.select().from(projects).all(), folderPath)
 
       if (existing) {
         bindRegisteredFilesystemRoot(folderPath)

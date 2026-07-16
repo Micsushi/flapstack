@@ -17,6 +17,8 @@ import {
   type OrchestrationAgentDefinition,
 } from "../../shared/agent-orchestration"
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
+import { normalizeChatMode, type ChatMode } from "../../shared/chat-mode"
+import { resolveAgentHotlineEnabled } from "../../shared/agent-hotline"
 
 export type QueuedAgentRun = {
   runId: string
@@ -24,6 +26,9 @@ export type QueuedAgentRun = {
   subChatId: string
   harness: AgentHarness
   prompt: string
+  images?: Array<{ base64Data: string; mediaType: string; filename?: string }>
+  chatMode?: ChatMode
+  hotlineEnabled?: boolean
   model: string | null
   reasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh" | null
   permissionMode: string
@@ -79,7 +84,7 @@ export function loadRunningAgentRun(databasePath: string, runId: string): Queued
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
-          r.initial_prompt, s.messages, c.project_id, p.path project_path,
+          r.initial_prompt, s.messages, s.mode chat_mode, c.project_id, p.path project_path,
           oa.definition orchestration_definition
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
@@ -113,7 +118,7 @@ export async function recoverInterruptedMcpRuns(
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection}, r.worktree_path, r.prompt_message_id,
-          r.initial_prompt, s.messages, c.project_id, p.path project_path,
+          r.initial_prompt, s.messages, s.mode chat_mode, c.project_id, p.path project_path,
           oa.definition orchestration_definition
          FROM agent_runs r
          JOIN chats c ON c.id = r.chat_id
@@ -210,7 +215,7 @@ export async function drainPendingMcpRuns(
       .prepare(
         `SELECT r.id, r.chat_id, r.sub_chat_id, r.harness, r.model, r.permission_mode,
           r.custom_permissions, ${runtimeProjection},
-          r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages,
+          r.worktree_path, r.prompt_message_id, r.initial_prompt, s.messages, s.mode chat_mode,
           c.project_id, p.path project_path,
           oa.definition orchestration_definition
          FROM agent_runs r
@@ -405,6 +410,8 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     subChatId: String(row.sub_chat_id),
     harness: row.harness as AgentHarness,
     prompt,
+    chatMode: normalizeChatMode(row.chat_mode),
+    hotlineEnabled: resolveAgentHotlineEnabled(parseDurableMessages(row.messages)),
     model: typeof row.model === "string" ? row.model : null,
     reasoningEffort: isReasoningEffort(durableDefinition?.reasoningEffort)
       ? durableDefinition.reasoningEffort
@@ -415,6 +422,16 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
     ...localInputs,
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
+  }
+}
+
+function parseDurableMessages(value: unknown): unknown[] {
+  if (typeof value !== "string") return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
 }
 

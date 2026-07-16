@@ -205,10 +205,21 @@ export function mapCodexNotification(
           "running",
           firstChangePath(params.changes),
           summarizeChanges(params.changes),
+          params.changes,
         ),
       ]
     case "turn/diff/updated":
-      return [patch(base, "updated", "running", null, string(params.diff))]
+      return [
+        patch(
+          base,
+          "updated",
+          "running",
+          null,
+          string(params.diff),
+          undefined,
+          string(params.diff),
+        ),
+      ]
     case "command/exec/outputDelta":
     case "process/outputDelta":
     case "item/commandExecution/terminalInteraction":
@@ -467,10 +478,19 @@ function mapItem(
       ]
     case "fileChange":
       return [
-        patch(base, phase, state, firstChangePath(item.changes), summarizeChanges(item.changes)),
+        patch(
+          base,
+          phase,
+          state,
+          firstChangePath(item.changes),
+          summarizeChanges(item.changes),
+          item.changes,
+        ),
       ]
     case "mcpToolCall":
-    case "dynamicToolCall":
+    case "dynamicToolCall": {
+      const toolInput = item.arguments ?? item.input
+      const toolOutput = item.result ?? item.error
       return [
         {
           ...base,
@@ -486,10 +506,13 @@ function mapItem(
                 : (string(item.tool) ?? "dynamic-tool"),
             ),
             state: boundedShort(state),
+            ...(toolInput === undefined ? {} : { input: fitMetadata(toolInput) }),
+            ...(toolOutput === undefined ? {} : { output: fitMetadata(toolOutput) }),
             outputSummary: boundedNullable(toolResultSummary(item)),
           },
         },
       ]
+    }
     case "collabAgentToolCall":
     case "subAgentActivity":
       return [
@@ -638,6 +661,8 @@ function patch(
   state: string,
   path: string | null,
   summary: string | null,
+  rawChanges?: unknown,
+  diff?: string | null,
 ): AgentActivityAppend {
   return {
     ...base,
@@ -649,8 +674,23 @@ function patch(
       state: boundedShort(state),
       path: boundedNullable(path),
       summary: boundedNullable(summary),
+      diff: boundedNullable(diff),
+      ...(rawChanges === undefined ? {} : { changes: normalizeChanges(rawChanges) }),
     },
   }
+}
+
+function normalizeChanges(value: unknown) {
+  return array(value)
+    .slice(0, 500)
+    .map((change) => {
+      const item = record(change)
+      return {
+        path: boundedText(string(item.path) ?? "unknown"),
+        kind: boundedNullable(string(item.kind) ?? string(item.type)),
+        diff: boundedNullable(string(item.diff) ?? string(item.patch) ?? string(item.unified_diff)),
+      }
+    })
 }
 
 function usage(base: ActivityIdentity, value: unknown): AgentActivityAppend {

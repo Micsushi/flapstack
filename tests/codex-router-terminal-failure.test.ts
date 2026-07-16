@@ -50,6 +50,7 @@ vi.mock("../src/main/lib/harness/launch-context", () => ({
     metadata: { sourceFingerprint: "test" },
   })),
   getLastHarnessContextFingerprint: () => undefined,
+  buildStartupInstructions: () => "",
   prependStartupContext: (prompt: string) => prompt,
 }))
 
@@ -189,7 +190,7 @@ describe("Codex router terminal provider failure", () => {
         subChatId: "sub-auth",
         prompt: "Test provider policy",
         cwd: directory,
-        mode: "agent",
+        mode: "write",
       }),
     )
 
@@ -259,7 +260,7 @@ async function launchThroughRealCodexRouter(run: QueuedAgentRun): Promise<void> 
     subChatId: run.subChatId,
     prompt: run.prompt,
     cwd: run.worktreePath!,
-    mode: "agent",
+    mode: "write",
   })
   const chunks = await collectStream(stream)
   const terminalError = chunks.find(

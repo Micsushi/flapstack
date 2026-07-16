@@ -43,7 +43,7 @@ describe("Claude Runtime SDK event mapping", () => {
     )
     expect(childTool).toMatchObject({
       providerParentItemId: "tool-1",
-      providerMessageId: "assistant-child-uuid-1",
+      providerMessageId: "provider-child-message-1",
       contentIndex: 1,
     })
     expect(events.filter((event) => event.kind === "hook")).toHaveLength(2)
@@ -118,6 +118,97 @@ describe("Claude Runtime SDK event mapping", () => {
     )
   })
 
+  it("assigns distinct dedup identities to blocks and usage from one SDK message", () => {
+    const mapper = new ClaudeRuntimeEventMapper(controls())
+    const event = fixture.events.find(
+      (candidate) => (candidate as { uuid?: string }).uuid === "assistant-uuid-1",
+    )!
+    const mapped = mapper.map(event)
+    const keys = mapped.map((activity) => activity.dedupKey)
+
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(mapped.map((activity) => activity.kind)).toEqual(
+      expect.arrayContaining(["provider-visible-reasoning", "agent-text", "tool", "usage"]),
+    )
+  })
+
+  it("preserves streamed tool input and waits for the user tool result to complete it", () => {
+    const mapper = new ClaudeRuntimeEventMapper(controls())
+    const messages = [
+      {
+        type: "stream_event",
+        uuid: "wrapper-start",
+        session_id: "session-1",
+        event: { type: "message_start", message: { id: "message-1" } },
+      },
+      {
+        type: "stream_event",
+        uuid: "wrapper-tool-start",
+        session_id: "session-1",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool-1", name: "Bash" },
+        },
+      },
+      {
+        type: "stream_event",
+        uuid: "wrapper-tool-input",
+        session_id: "session-1",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"command":"npm test"}' },
+        },
+      },
+      {
+        type: "stream_event",
+        uuid: "wrapper-tool-stop",
+        session_id: "session-1",
+        event: { type: "content_block_stop", index: 0 },
+      },
+      {
+        type: "user",
+        uuid: "tool-result-message",
+        session_id: "session-1",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              content: "passed",
+              is_error: false,
+            },
+          ],
+        },
+        tool_use_result: { stdout: "passed", exitCode: 0 },
+      },
+    ] as unknown as SDKMessage[]
+
+    const events = messages.flatMap((message) => mapper.map(message))
+    const inputComplete = events.find(
+      (event) => event.kind === "tool" && event.payload.state === "input-complete",
+    )
+    expect(inputComplete).toMatchObject({
+      phase: "updated",
+      providerMessageId: "message-1",
+      providerToolId: "tool-1",
+      payload: { input: { command: "npm test" } },
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool",
+        phase: "completed",
+        providerToolId: "tool-1",
+        payload: expect.objectContaining({
+          output: { stdout: "passed", exitCode: 0 },
+          outputSummary: '{"stdout":"passed","exitCode":0}',
+        }),
+      }),
+    )
+  })
+
   it("bounds oversized provider text, init lists, identities, and tool names before append", () => {
     const mapper = new ClaudeRuntimeEventMapper(controls())
     const huge = "🧠".repeat(40_000)
@@ -158,6 +249,40 @@ describe("Claude Runtime SDK event mapping", () => {
     const tool = assistant.find((activity) => activity.kind === "tool")
     expect(Buffer.byteLength(tool?.payload.name || "", "utf8")).toBeLessThanOrEqual(512)
     expect((init[0].payload as { detail?: string }).detail).toContain('"toolsTruncated":true')
+  })
+
+  it("bounds the total serialized size of structured tool input and output", () => {
+    const mapper = new ClaudeRuntimeEventMapper(controls())
+    const hugeObject = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [`field-${index}`, "x".repeat(8_192)]),
+    )
+    const messages = [
+      {
+        type: "assistant",
+        uuid: "assistant-large-tool",
+        session_id: "session-1",
+        message: {
+          id: "message-large-tool",
+          content: [{ type: "tool_use", id: "tool-large", name: "Read", input: hugeObject }],
+        },
+      },
+      {
+        type: "user",
+        uuid: "user-large-result",
+        session_id: "session-1",
+        message: {
+          id: "message-large-result",
+          content: [{ type: "tool_result", tool_use_id: "tool-large", content: hugeObject }],
+        },
+      },
+    ] as unknown as SDKMessage[]
+
+    for (const event of messages.flatMap((message) => mapper.map(message))) {
+      expect(Buffer.byteLength(JSON.stringify(event.payload), "utf8")).toBeLessThanOrEqual(
+        MAX_AGENT_ACTIVITY_PAYLOAD_BYTES,
+      )
+      expect(() => parseAgentActivityAppend(event)).not.toThrow()
+    }
   })
 })
 

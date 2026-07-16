@@ -33,7 +33,8 @@ describe("custom worktree validation", () => {
     expect(await validateCustomWorktreePath(dir)).toEqual({
       valid: false,
       path: realpathSync(dir),
-      error: "The selected directory is not a Git checkout.",
+      error:
+        "Choose the Git repository folder itself, not its parent folder. For example, choose …/GitHub/flapstack instead of …/GitHub.",
     })
   })
 
@@ -70,6 +71,20 @@ describe("custom worktree validation", () => {
       valid: true,
       path: realpathSync(dir),
       branch: "main",
+    })
+
+    execFileSync("git", ["-C", dir, "checkout", "-b", "different-branch"], {
+      stdio: "ignore",
+    })
+    expect(await validateCustomWorktreePath(dir)).toMatchObject({
+      valid: true,
+      branch: "different-branch",
+    })
+
+    execFileSync("git", ["-C", dir, "checkout", "--detach"], { stdio: "ignore" })
+    expect(await validateCustomWorktreePath(dir)).toMatchObject({
+      valid: true,
+      branch: null,
     })
   })
 })

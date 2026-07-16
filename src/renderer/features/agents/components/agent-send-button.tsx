@@ -129,7 +129,7 @@ export function AgentSendButton({
   className = "",
   size = "sm",
   ariaLabel,
-  mode = "agent",
+  mode = "write",
   hasContent = false,
   showVoiceInput = false,
   isRecording = false,

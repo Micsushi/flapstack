@@ -2,10 +2,11 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual"
 import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
+import type { RunPermissionMode } from "../../../../shared/harness-types"
+import { isReadOnlyChatMode, resolveChatModePermission } from "../../../../shared/chat-mode"
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { AlignJustify, Plus } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import { Button } from "../../../components/ui/button"
 import {
   DropdownMenu,
@@ -14,12 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu"
 import {
-  AgentIcon,
   AttachIcon,
   BranchIcon,
   CheckIcon,
   IconChevronDown,
-  PlanIcon,
   SearchIcon,
 } from "../../../components/ui/icons"
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover"
@@ -105,6 +104,8 @@ import {
 } from "../../../components/ui/prompt-input"
 import { agentsSidebarOpenAtom, agentsUnseenChangesAtom } from "../atoms"
 import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
+import { AgentModeSelector } from "../components/agent-mode-selector"
+import { PermissionSelector } from "../components/permission-selector"
 import {
   AgentModelSelector,
   AgentModelTuningSelector,
@@ -136,10 +137,18 @@ import {
   type ClaudeEffortLevel,
   type CodexReasoningLevel,
 } from "../lib/models"
+import { getSelectableRunPermissionModes, RUN_PERMISSION_MODE_LABELS } from "../constants"
 // import type { PlanType } from "@/lib/config/subscription-plans"
 type PlanType = string
 type ChatScope = "global" | "project" | "task"
+type NewChatPermissionMode = Exclude<RunPermissionMode, "custom">
 const DEFAULT_PROJECT_COLOR = "#38bdf8"
+
+function parseRunPermissionMode(value: unknown): RunPermissionMode {
+  return typeof value === "string" && value in RUN_PERMISSION_MODE_LABELS
+    ? (value as RunPermissionMode)
+    : "ask-before-edits"
+}
 
 // Agent providers
 const agents: Array<{
@@ -231,6 +240,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     () => projectTasks?.find((task) => task.id === selectedTaskId) ?? null,
     [projectTasks, selectedTaskId],
   )
+  const selectedProjectRecord = useMemo(
+    () => projectsList?.find((project) => project.id === validatedProject?.id) ?? null,
+    [projectsList, validatedProject?.id],
+  )
 
   useEffect(() => {
     if (!validatedProject && chatScope !== "global") {
@@ -264,7 +277,19 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const defaultAgentMode = useAtomValue(defaultAgentModeAtom)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => defaultAgentMode)
   const [runtimePreference, setRuntimePreference] = useState<AgentRuntimePreference>("auto")
+  const [permissionModeOverride, setPermissionModeOverride] =
+    useState<NewChatPermissionMode | null>(null)
   const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
+  const { data: permissionPreferences } = trpc.permissions.getPreferences.useQuery()
+  const inheritedPermissionMode = parseRunPermissionMode(
+    chatScope === "task"
+      ? selectedTask?.defaultPermissionMode
+      : chatScope === "project"
+        ? selectedProjectRecord?.defaultPermissionMode
+        : permissionPreferences?.globalDefault,
+  )
+  const selectedPermissionMode = permissionModeOverride ?? inheritedPermissionMode
+  const effectivePermissionMode = resolveChatModePermission(agentMode, selectedPermissionMode)
   // Toggle mode helper
   const toggleMode = useCallback(() => {
     setAgentMode(getNextMode)
@@ -368,6 +393,10 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       setRuntimePreference("auto")
     }
   }, [runtimePreference, selectedAgent.id])
+  const selectableNewChatPermissionModes = useMemo(
+    () => getSelectableRunPermissionModes(selectedAgent.id).filter((mode) => mode !== "custom"),
+    [selectedAgent.id],
+  )
   const resolvedRuntimePreference =
     runtimePreference === "auto" ? productRuntime(selectedAgent.id) : runtimePreference
   const runtimeBlockedReason = runtimeReleases.find(
@@ -669,21 +698,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [slashSearchText, setSlashSearchText] = useState("")
   const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
 
-  // Mode tooltip state (floating tooltip like canvas)
-  const [modeTooltip, setModeTooltip] = useState<{
-    visible: boolean
-    position: { top: number; left: number }
-    mode: "agent" | "plan"
-  } | null>(null)
-  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const hasShownTooltipRef = useRef(false)
-  const [modeDropdownOpen, setModeDropdownOpen] = useState(false)
-
-  useEffect(() => {
-    if (!modeDropdownOpen) {
-      setModeTooltip(null)
-    }
-  }, [modeDropdownOpen])
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
 
   // Voice input state
@@ -1376,6 +1390,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
       harness: selectedAgent.id,
       model: selectedChatModel,
       runtimePreference,
+      permissionMode: permissionModeOverride ?? undefined,
       initialMessageParts: parts.length > 0 ? parts : undefined,
       baseBranch:
         chatScope === "project" && workMode === "worktree"
@@ -1403,6 +1418,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     selectedChatModel,
     selectedAgent.id,
     runtimePreference,
+    permissionModeOverride,
     agentMode,
     reasoningOutputEnabled,
     trpcUtils,
@@ -1550,10 +1566,14 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
               setAgentMode("plan")
             }
             return
-          case "agent":
-            if (agentMode === "plan") {
-              setAgentMode("agent")
-            }
+          case "write":
+            setAgentMode("write")
+            return
+          case "read":
+            setAgentMode("read")
+            return
+          case "review":
+            setAgentMode("review")
             return
         }
       }
@@ -1910,6 +1930,220 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
             onDrop={handleDrop}
           >
             <div className="relative w-full cursor-text" onClick={handleContainerClick}>
+              {/* Target selectors - directly above input */}
+              <div className="mb-2 ml-[5px] flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
+                  {(["global", "project", "task"] as const).map((scope) => {
+                    const disabled =
+                      (scope === "project" && !validatedProject) ||
+                      (scope === "task" && (!validatedProject || !projectTasks?.length))
+                    return (
+                      <button
+                        key={scope}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => {
+                          setChatScope(scope)
+                          persistDraftDestination(scope, validatedProject)
+                        }}
+                        className={cn(
+                          "rounded px-2 py-1 text-xs font-medium transition-colors",
+                          chatScope === scope
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                          disabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
+                        )}
+                      >
+                        {scope === "global" ? "Global" : scope === "project" ? "Project" : "Task"}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <ProjectSelector
+                  onProjectChange={(project) => persistDraftDestination(chatScope, project)}
+                />
+
+                {chatScope === "task" && validatedProject && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={!projectTasks?.length}
+                      className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="truncate max-w-[140px]">
+                        {selectedTask?.name ?? "No tasks"}
+                      </span>
+                      <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" sideOffset={6} className="min-w-[220px]">
+                      {projectTasks?.map((task) => (
+                        <DropdownMenuItem
+                          key={task.id}
+                          onClick={() => setSelectedTaskId(task.id)}
+                          className="justify-between gap-2"
+                        >
+                          <span className="truncate">{task.name}</span>
+                          {selectedTaskId === task.id && (
+                            <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+
+                {/* Work mode selector - between project and branch */}
+                {validatedProject && chatScope === "project" && (
+                  <WorkModeSelector
+                    value={workMode}
+                    onChange={setWorkMode}
+                    disabled={createChatMutation.isPending}
+                  />
+                )}
+
+                {/* Branch selector - only visible when worktree mode is selected */}
+                {validatedProject && chatScope === "project" && workMode === "worktree" && (
+                  <Popover
+                    open={branchPopoverOpen}
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        setBranchSearch("") // Clear search on close
+                      }
+                      setBranchPopoverOpen(open)
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <button
+                        className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                        disabled={branchesQuery.isLoading}
+                      >
+                        <BranchIcon className="w-4 h-4" />
+                        <span className="truncate max-w-[100px]">
+                          {selectedBranch || branchesQuery.data?.defaultBranch || "main"}
+                        </span>
+                        <IconChevronDown className="w-3 h-3 opacity-50" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-0" align="start">
+                      {/* Search input with Create button */}
+                      <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 my-1 rounded-md bg-muted/50">
+                        <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="Search branches..."
+                          value={branchSearch}
+                          onChange={(e) => setBranchSearch(e.target.value)}
+                          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 flex items-center gap-1 text-xs shrink-0"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setCreateBranchDialogOpen(true)
+                            setBranchPopoverOpen(false)
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                          Create
+                        </Button>
+                      </div>
+
+                      {/* Virtualized branch list */}
+                      {filteredBranches.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-muted-foreground">
+                          No branches found.
+                        </div>
+                      ) : (
+                        <div
+                          ref={branchListRef}
+                          className="overflow-auto py-1 scrollbar-hide"
+                          style={{
+                            height: Math.min(filteredBranches.length * 32 + 8, 300),
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: `${branchVirtualizer.getTotalSize()}px`,
+                              width: "100%",
+                              position: "relative",
+                            }}
+                          >
+                            {branchVirtualizer.getVirtualItems().map((virtualItem) => {
+                              const branch = filteredBranches[virtualItem.index]
+                              const isSelected =
+                                (selectedBranch === branch.name &&
+                                  selectedBranchType === branch.type) ||
+                                (!selectedBranch && branch.isDefault && branch.type === "local")
+                              return (
+                                <button
+                                  key={`${branch.type}-${branch.name}`}
+                                  onClick={() => {
+                                    setSelectedBranch(branch.name, branch.type)
+                                    setBranchPopoverOpen(false)
+                                    setBranchSearch("")
+                                  }}
+                                  className={cn(
+                                    "flex items-center gap-1.5 w-[calc(100%-8px)] mx-1 px-1.5 text-sm text-left absolute left-0 top-0 rounded-md cursor-default select-none outline-none transition-colors",
+                                    isSelected
+                                      ? "dark:bg-neutral-800 text-foreground"
+                                      : "dark:hover:bg-neutral-800 hover:text-foreground",
+                                  )}
+                                  style={{
+                                    height: `${virtualItem.size}px`,
+                                    transform: `translateY(${virtualItem.start}px)`,
+                                  }}
+                                >
+                                  <BranchIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                                  <span className="truncate flex-1">{branch.name}</span>
+                                  <span
+                                    className={cn(
+                                      "text-[10px] px-1.5 py-0.5 rounded shrink-0",
+                                      branch.type === "local"
+                                        ? "bg-blue-500/10 text-blue-500"
+                                        : "bg-orange-500/10 text-orange-500",
+                                    )}
+                                  >
+                                    {branch.type}
+                                  </span>
+                                  {branch.committedAt && (
+                                    <span className="text-xs text-muted-foreground/70 shrink-0">
+                                      {formatRelativeTime(branch.committedAt)}
+                                    </span>
+                                  )}
+                                  {branch.isDefault && (
+                                    <span className="text-[10px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded shrink-0">
+                                      default
+                                    </span>
+                                  )}
+                                  {isSelected && <CheckIcon className="h-4 w-4 shrink-0 ml-auto" />}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                )}
+
+                {/* Create Branch Dialog */}
+                {validatedProject && (
+                  <CreateBranchDialog
+                    open={createBranchDialogOpen}
+                    onOpenChange={setCreateBranchDialogOpen}
+                    projectPath={validatedProject.path}
+                    branches={branches}
+                    defaultBranch={branchesQuery.data?.defaultBranch || "main"}
+                    onBranchCreated={(branchName) => {
+                      setSelectedBranch(branchName, "local")
+                    }}
+                  />
+                )}
+              </div>
               <PromptInput
                 className={cn(
                   "border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
@@ -1946,166 +2180,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                 </div>
                 <PromptInputActions className="w-full">
                   <div className="flex items-center gap-0.5 flex-1 min-w-0">
-                    {/* Mode toggle (Agent/Plan) */}
-                    <DropdownMenu
-                      open={modeDropdownOpen}
-                      onOpenChange={(open) => {
-                        setModeDropdownOpen(open)
-                        if (!open) {
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          setModeTooltip(null)
-                          hasShownTooltipRef.current = false
-                        }
-                      }}
-                    >
-                      <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
-                        {agentMode === "plan" ? (
-                          <PlanIcon className="h-3.5 w-3.5" />
-                        ) : (
-                          <AgentIcon className="h-3.5 w-3.5" />
-                        )}
-                        <span>{agentMode === "plan" ? "Plan" : "Agent"}</span>
-                        <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="start"
-                        sideOffset={6}
-                        className="!min-w-[116px] !w-[116px]"
-                        onCloseAutoFocus={(e) => e.preventDefault()}
-                      >
-                        <DropdownMenuItem
-                          onClick={() => {
-                            // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            setModeTooltip(null)
-                            setAgentMode("agent")
-                            setModeDropdownOpen(false)
-                          }}
-                          className="justify-between gap-2"
-                          onMouseEnter={(e) => {
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            const rect = e.currentTarget.getBoundingClientRect()
-                            const showTooltip = () => {
-                              setModeTooltip({
-                                visible: true,
-                                position: {
-                                  top: rect.top,
-                                  left: rect.right + 8,
-                                },
-                                mode: "agent",
-                              })
-                              hasShownTooltipRef.current = true
-                              tooltipTimeoutRef.current = null
-                            }
-                            if (hasShownTooltipRef.current) {
-                              showTooltip()
-                            } else {
-                              tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            setModeTooltip(null)
-                          }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <AgentIcon className="w-4 h-4 text-muted-foreground" />
-                            <span>Agent</span>
-                          </div>
-                          {agentMode !== "plan" && (
-                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => {
-                            // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            setModeTooltip(null)
-                            setAgentMode("plan")
-                            setModeDropdownOpen(false)
-                          }}
-                          className="justify-between gap-2"
-                          onMouseEnter={(e) => {
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            const rect = e.currentTarget.getBoundingClientRect()
-                            const showTooltip = () => {
-                              setModeTooltip({
-                                visible: true,
-                                position: {
-                                  top: rect.top,
-                                  left: rect.right + 8,
-                                },
-                                mode: "plan",
-                              })
-                              hasShownTooltipRef.current = true
-                              tooltipTimeoutRef.current = null
-                            }
-                            if (hasShownTooltipRef.current) {
-                              showTooltip()
-                            } else {
-                              tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            if (tooltipTimeoutRef.current) {
-                              clearTimeout(tooltipTimeoutRef.current)
-                              tooltipTimeoutRef.current = null
-                            }
-                            setModeTooltip(null)
-                          }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <PlanIcon className="w-4 h-4 text-muted-foreground" />
-                            <span>Plan</span>
-                          </div>
-                          {agentMode === "plan" && (
-                            <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                          )}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                      {modeTooltip?.visible &&
-                        createPortal(
-                          <div
-                            className="fixed z-[100000]"
-                            style={{
-                              top: modeTooltip.position.top + 14,
-                              left: modeTooltip.position.left,
-                              transform: "translateY(-50%)",
-                            }}
-                          >
-                            <div
-                              data-tooltip="true"
-                              className="relative rounded-[12px] bg-popover px-2.5 py-1.5 text-xs text-popover-foreground dark max-w-[150px]"
-                            >
-                              <span>
-                                {modeTooltip.mode === "agent"
-                                  ? "Apply changes directly without a plan"
-                                  : "Create a plan before making changes"}
-                              </span>
-                            </div>
-                          </div>,
-                          document.body,
-                        )}
-                    </DropdownMenu>
-
                     <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                       <AgentModelSelector
                         open={isModelDropdownOpen}
@@ -2236,12 +2310,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                           },
                         }}
                       />
-                      <RuntimeSelector
-                        harness={selectedAgent.id}
-                        value={runtimePreference}
-                        onChange={setRuntimePreference}
-                        disabled={createChatMutation.isPending}
-                      />
                       <AgentModelTuningSelector
                         selectedAgentId={selectedAgent.id as AgentProviderId}
                         reasoningEnabled={reasoningOutputEnabled}
@@ -2338,219 +2406,27 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                 </p>
               ) : null}
 
-              {/* Scope, project, work mode, and branch selectors - directly under input */}
-              <div className="mt-1.5 md:mt-2 ml-[5px] flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
-                  {(["global", "project", "task"] as const).map((scope) => {
-                    const disabled =
-                      (scope === "project" && !validatedProject) ||
-                      (scope === "task" && (!validatedProject || !projectTasks?.length))
-                    return (
-                      <button
-                        key={scope}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => {
-                          setChatScope(scope)
-                          persistDraftDestination(scope, validatedProject)
-                        }}
-                        className={cn(
-                          "rounded px-2 py-1 text-xs font-medium transition-colors",
-                          chatScope === scope
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
-                          disabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
-                        )}
-                      >
-                        {scope === "global" ? "Global" : scope === "project" ? "Project" : "Task"}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                <ProjectSelector
-                  onProjectChange={(project) => persistDraftDestination(chatScope, project)}
+              <div className="mt-1.5 ml-[5px] flex flex-wrap items-center gap-2 md:mt-2">
+                <RuntimeSelector
+                  harness={selectedAgent.id}
+                  value={runtimePreference}
+                  onChange={setRuntimePreference}
+                  disabled={createChatMutation.isPending}
                 />
-
-                {chatScope === "task" && validatedProject && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      disabled={!projectTasks?.length}
-                      className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <span className="truncate max-w-[140px]">
-                        {selectedTask?.name ?? "No tasks"}
-                      </span>
-                      <IconChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" sideOffset={6} className="min-w-[220px]">
-                      {projectTasks?.map((task) => (
-                        <DropdownMenuItem
-                          key={task.id}
-                          onClick={() => setSelectedTaskId(task.id)}
-                          className="justify-between gap-2"
-                        >
-                          <span className="truncate">{task.name}</span>
-                          {selectedTaskId === task.id && (
-                            <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-                          )}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-
-                {/* Work mode selector - between project and branch */}
-                {validatedProject && chatScope === "project" && (
-                  <WorkModeSelector
-                    value={workMode}
-                    onChange={setWorkMode}
-                    disabled={createChatMutation.isPending}
-                  />
-                )}
-
-                {/* Branch selector - only visible when worktree mode is selected */}
-                {validatedProject && chatScope === "project" && workMode === "worktree" && (
-                  <Popover
-                    open={branchPopoverOpen}
-                    onOpenChange={(open) => {
-                      if (!open) {
-                        setBranchSearch("") // Clear search on close
-                      }
-                      setBranchPopoverOpen(open)
-                    }}
-                  >
-                    <PopoverTrigger asChild>
-                      <button
-                        className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-                        disabled={branchesQuery.isLoading}
-                      >
-                        <BranchIcon className="w-4 h-4" />
-                        <span className="truncate max-w-[100px]">
-                          {selectedBranch || branchesQuery.data?.defaultBranch || "main"}
-                        </span>
-                        <IconChevronDown className="w-3 h-3 opacity-50" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-80 p-0" align="start">
-                      {/* Search input with Create button */}
-                      <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 my-1 rounded-md bg-muted/50">
-                        <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <input
-                          type="text"
-                          placeholder="Search branches..."
-                          value={branchSearch}
-                          onChange={(e) => setBranchSearch(e.target.value)}
-                          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                          autoFocus
-                        />
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 px-1.5 flex items-center gap-1 text-xs shrink-0"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            setCreateBranchDialogOpen(true)
-                            setBranchPopoverOpen(false)
-                          }}
-                        >
-                          <Plus className="h-3 w-3" />
-                          Create
-                        </Button>
-                      </div>
-
-                      {/* Virtualized branch list */}
-                      {filteredBranches.length === 0 ? (
-                        <div className="py-6 text-center text-sm text-muted-foreground">
-                          No branches found.
-                        </div>
-                      ) : (
-                        <div
-                          ref={branchListRef}
-                          className="overflow-auto py-1 scrollbar-hide"
-                          style={{
-                            height: Math.min(filteredBranches.length * 32 + 8, 300),
-                          }}
-                        >
-                          <div
-                            style={{
-                              height: `${branchVirtualizer.getTotalSize()}px`,
-                              width: "100%",
-                              position: "relative",
-                            }}
-                          >
-                            {branchVirtualizer.getVirtualItems().map((virtualItem) => {
-                              const branch = filteredBranches[virtualItem.index]
-                              const isSelected =
-                                (selectedBranch === branch.name &&
-                                  selectedBranchType === branch.type) ||
-                                (!selectedBranch && branch.isDefault && branch.type === "local")
-                              return (
-                                <button
-                                  key={`${branch.type}-${branch.name}`}
-                                  onClick={() => {
-                                    setSelectedBranch(branch.name, branch.type)
-                                    setBranchPopoverOpen(false)
-                                    setBranchSearch("")
-                                  }}
-                                  className={cn(
-                                    "flex items-center gap-1.5 w-[calc(100%-8px)] mx-1 px-1.5 text-sm text-left absolute left-0 top-0 rounded-md cursor-default select-none outline-none transition-colors",
-                                    isSelected
-                                      ? "dark:bg-neutral-800 text-foreground"
-                                      : "dark:hover:bg-neutral-800 hover:text-foreground",
-                                  )}
-                                  style={{
-                                    height: `${virtualItem.size}px`,
-                                    transform: `translateY(${virtualItem.start}px)`,
-                                  }}
-                                >
-                                  <BranchIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                                  <span className="truncate flex-1">{branch.name}</span>
-                                  <span
-                                    className={cn(
-                                      "text-[10px] px-1.5 py-0.5 rounded shrink-0",
-                                      branch.type === "local"
-                                        ? "bg-blue-500/10 text-blue-500"
-                                        : "bg-orange-500/10 text-orange-500",
-                                    )}
-                                  >
-                                    {branch.type}
-                                  </span>
-                                  {branch.committedAt && (
-                                    <span className="text-xs text-muted-foreground/70 shrink-0">
-                                      {formatRelativeTime(branch.committedAt)}
-                                    </span>
-                                  )}
-                                  {branch.isDefault && (
-                                    <span className="text-[10px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded shrink-0">
-                                      default
-                                    </span>
-                                  )}
-                                  {isSelected && <CheckIcon className="h-4 w-4 shrink-0 ml-auto" />}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                )}
-
-                {/* Create Branch Dialog */}
-                {validatedProject && (
-                  <CreateBranchDialog
-                    open={createBranchDialogOpen}
-                    onOpenChange={setCreateBranchDialogOpen}
-                    projectPath={validatedProject.path}
-                    branches={branches}
-                    defaultBranch={branchesQuery.data?.defaultBranch || "main"}
-                    onBranchCreated={(branchName) => {
-                      setSelectedBranch(branchName, "local")
-                    }}
-                  />
-                )}
+                <PermissionSelector
+                  harness={selectedAgent.id}
+                  value={effectivePermissionMode}
+                  options={selectableNewChatPermissionModes}
+                  onChange={(mode) => {
+                    if (mode !== "custom") setPermissionModeOverride(mode)
+                  }}
+                  disabled={createChatMutation.isPending || isReadOnlyChatMode(agentMode)}
+                />
+                <AgentModeSelector
+                  value={agentMode}
+                  onChange={setAgentMode}
+                  disabled={createChatMutation.isPending}
+                />
               </div>
 
               {/* Worktree config banner - moved to corner banner below */}
@@ -2616,7 +2492,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                     model: selectedChatModel,
                     initialMessageParts: [{ type: "text", text: prompt }],
                     useWorktree: false,
-                    mode: "agent",
+                    mode: "write",
                   })
                 }
               }}

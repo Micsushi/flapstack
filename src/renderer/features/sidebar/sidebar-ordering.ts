@@ -1,5 +1,30 @@
 export type DragInsertPosition = "before" | "after"
 export type SidebarDropPosition = DragInsertPosition | "inside"
+export type SidebarProjectOrder = "name-asc" | "name-desc" | "newest" | "oldest"
+
+export function orderSidebarProjects(
+  projects: Array<{
+    id: string
+    name: string
+    gitRepo?: string | null
+    updatedAt?: Date | null
+  }>,
+  order: SidebarProjectOrder,
+) {
+  return [...projects]
+    .sort((a, b) => {
+      if (order === "newest" || order === "oldest") {
+        const direction = order === "newest" ? -1 : 1
+        const timeDelta =
+          ((a.updatedAt?.getTime() ?? 0) - (b.updatedAt?.getTime() ?? 0)) * direction
+        if (timeDelta !== 0) return timeDelta
+      }
+
+      const nameDelta = (a.gitRepo || a.name).localeCompare(b.gitRepo || b.name)
+      return order === "name-desc" ? -nameDelta : nameDelta
+    })
+    .map((project) => project.id)
+}
 
 export function resolveBoundaryHighlightIds({
   items,

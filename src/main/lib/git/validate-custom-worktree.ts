@@ -26,7 +26,8 @@ export async function validateCustomWorktreePath(
       return {
         valid: false,
         path: resolvedPath,
-        error: "The selected directory is not a Git checkout.",
+        error:
+          "Choose the Git repository folder itself, not its parent folder. For example, choose …/GitHub/flapstack instead of …/GitHub.",
       }
     }
     const checkoutRoot = await realpath((await git.revparse(["--show-toplevel"])).trim())

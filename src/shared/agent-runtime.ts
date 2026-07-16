@@ -130,6 +130,7 @@ export type RuntimeAdapterContext = {
   chatId: string
   subChatId: string | null
   launch: ResolvedRuntimeLaunch
+  instructions?: string | null
   signal: AbortSignal
 }
 

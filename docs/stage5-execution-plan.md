@@ -21,7 +21,8 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 ### Wave 1 — Foundations
 
 - S5-F1 T1-T2: UI audit and shared interaction/design primitives.
-- S5-F7 T1: Runtime/orchestration ownership contract.
+- S5-F7 T1: Runtime/orchestration ownership, exact execution-target, and
+  harness/Runtime compatibility contract.
 - S5-F8 T1: organization API/credential/provenance decision.
 - S5-F9 T1-T2: performance budgets and harness.
 - S5-F10 T1: platform/release matrix and credential/host inventory.
@@ -36,7 +37,9 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 - S5-F4 bridge/pairing/events before PWA/actions.
 - S5-F5 in-app capture before standalone helper.
 - S5-F6 grid layout/bindings before group controls.
-- S5-F7 Runtime composition and recovery.
+- S5-F7 exact target resolution, native authority, bidirectional
+  Codex/Claude continuation and delegation, bounded task/result envelopes,
+  authority/worktree controls, activity/usage, and no-replay recovery.
 - S5-F8 adapters, reconciliation, and dashboard.
 - S5-F9 optimizations after measurement.
 - S5-F10 native packaging lanes as hosts/credentials become available.
@@ -45,7 +48,8 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 
 ### Wave 3 — Cross-feature composition
 
-- F7 Runtime controls/activity unblock F4 mobile and F6 swarm controls.
+- F7 target preview, child-Chat lineage, Runtime controls/activity, and
+  cross-provider result contracts unblock F3 profiles, F4 mobile, and F6 swarm.
 - F1 UI primitives and Settings IA unblock F2/F3 UI closeout.
 - F9 budgets cover F1-F8 workloads.
 - F10 native hosts close F5 capture/helper and F7 Runtime platform proof.
@@ -75,6 +79,17 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 - Agent Profile remains the only complete named agent configuration. Personality
   is reusable presentation; preset is used only for onboarding visibility.
 - Mobile, visual helper, and swarm UI reuse existing local authority and data.
+- Native Runtime compatibility is not universal: Codex never uses the Claude
+  Code Runtime and Claude Code never uses the Codex Runtime. Cross-provider work
+  creates a distinct child Chat/native session through explicit `Continue with`
+  or `Delegate to` composition.
+- Cross-provider context contains only previewed visible history and selected
+  artifact references. Credentials, private/encrypted reasoning, provider
+  session state, hidden tool state, and unselected files never cross the boundary.
+- Child permissions, descendants, budgets, account, workspace, and worktree are
+  resolved explicitly and cannot exceed the initiator's delegation ceiling.
+- Provider usage remains attributed to the actual child target and is aggregated
+  by reference without double counting.
 - The knowledge graph derives from Markdown. SQLite graph/search state is
   rebuildable and never becomes a second knowledge source of truth.
 - App-managed knowledge remains outside Git. Project-owned untracked knowledge

@@ -162,7 +162,7 @@ export function ProjectSelector({ onProjectChange }: ProjectSelectorProps = {}) 
       <button
         onClick={handleOpenFolder}
         disabled={openFolder.isPending}
-        className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+        className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
       >
         <FolderPlusIcon className="h-3.5 w-3.5" />
         <span>{openFolder.isPending ? "Adding..." : "Add repository"}</span>
@@ -181,7 +181,7 @@ export function ProjectSelector({ onProjectChange }: ProjectSelectorProps = {}) 
       >
         <PopoverTrigger asChild>
           <button
-            className="flex items-center gap-1.5 px-2 py-1 text-sm text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+            className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-[background-color,color] duration-150 ease-out rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
             type="button"
           >
             <ProjectIcon project={validSelection} className="h-4 w-4" />

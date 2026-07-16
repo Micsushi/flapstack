@@ -7,6 +7,7 @@ import { PostHog } from "posthog-node"
 import { app } from "electron"
 import * as fs from "fs"
 import * as path from "path"
+import type { ChatMode } from "../../shared/chat-mode"
 
 // PostHog configuration - hardcoded key for opensource users, env var override for internal builds
 // This enables analytics for all users including those building from source
@@ -293,7 +294,7 @@ export function trackWorkspaceDeleted(workspaceId: string) {
 export function trackMessageSent(data: {
   workspaceId: string
   subChatId?: string
-  mode: "plan" | "agent"
+  mode: ChatMode
 }) {
   capture("message_sent", {
     workspace_id: data.workspaceId,

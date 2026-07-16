@@ -27,7 +27,7 @@ interface AgentPlanSidebarProps {
   onBuildPlan?: () => void
   /** Timestamp that triggers refetch when changed (e.g., after plan Edit completes) */
   refetchTrigger?: number
-  /** Current agent mode (plan or agent) */
+  /** Current chat mode. */
   mode?: AgentMode
 }
 
@@ -38,7 +38,7 @@ export function AgentPlanSidebar({
   onClose,
   onBuildPlan,
   refetchTrigger,
-  mode = "agent",
+  mode = "write",
 }: AgentPlanSidebarProps) {
   // View mode: rendered markdown or plaintext
   const [viewMode, setViewMode] = useState<"rendered" | "plaintext">("rendered")

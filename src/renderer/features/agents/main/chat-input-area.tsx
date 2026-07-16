@@ -3,7 +3,6 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai"
 import { AlertTriangle, ChevronDown, RefreshCw } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 
 import { Button } from "../../../components/ui/button"
 import {
@@ -23,15 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu"
-import {
-  AgentIcon,
-  AttachIcon,
-  CheckIcon,
-  IconSpinner,
-  OriginalMCPIcon,
-  PlanIcon,
-  SettingsIcon,
-} from "../../../components/ui/icons"
+import { AttachIcon, CheckIcon, IconSpinner, OriginalMCPIcon } from "../../../components/ui/icons"
 import { Kbd } from "../../../components/ui/kbd"
 import {
   PromptInput,
@@ -86,6 +77,8 @@ import {
   type AgentProviderId,
 } from "../components/agent-model-selector"
 import { AgentSendButton, AgentVoiceButton } from "../components/agent-send-button"
+import { AgentModeSelector } from "../components/agent-mode-selector"
+import { PermissionSelector } from "../components/permission-selector"
 import type { UploadedFile, UploadedImage } from "../hooks/use-agents-file-upload"
 import { useAvailableModels } from "../hooks/use-available-models"
 import { useVoiceInputHotkey } from "../hooks/use-voice-input-hotkey"
@@ -127,6 +120,7 @@ import { useDictationSession } from "../voice/dictation-session"
 import { registerVoiceHistoryInsertTarget } from "../../../lib/voice-history-insert"
 import { registerPermissionUiTestControl } from "../lib/permission-ui-test-control"
 import type { RunPermissionMode } from "../../../../shared/harness-types"
+import { isReadOnlyChatMode, resolveChatModePermission } from "../../../../shared/chat-mode"
 import type { AgentRuntimePreference } from "../../../../shared/agent-runtime"
 import {
   customPermissionCapabilityKeys,
@@ -136,7 +130,6 @@ import {
 import {
   formatPermissionMode,
   getSelectableRunPermissionModes,
-  isSelectableRunPermissionMode,
   RUN_PERMISSION_MODE_LABELS,
 } from "../constants"
 
@@ -458,6 +451,8 @@ export const ChatInputArea = memo(function ChatInputArea({
     selectedTargetWorktreePathAtom,
   )
   const currentTargetWorktreePath = targetWorktreePath ?? storedTargetWorktreePath
+  const [newWorktreeName, setNewWorktreeName] = useState("")
+  const [newWorktreeParentDirectory, setNewWorktreeParentDirectory] = useState<string | null>(null)
   const [customWorktreeInput, setCustomWorktreeInput] = useState("")
   const customWorktreeValidationRef = useRef(0)
   const [customWorktreeError, setCustomWorktreeError] = useState<string | null>(null)
@@ -541,22 +536,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [showSlashDropdown, setShowSlashDropdown] = useState(false)
   const [slashSearchText, setSlashSearchText] = useState("")
   const [slashPosition, setSlashPosition] = useState({ top: 0, left: 0 })
-
-  // Mode dropdown state
-  const [modeDropdownOpen, setModeDropdownOpen] = useState(false)
-  const [modeTooltip, setModeTooltip] = useState<{
-    visible: boolean
-    position: { top: number; left: number }
-    mode: "agent" | "plan"
-  } | null>(null)
-  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const hasShownTooltipRef = useRef(false)
-
-  useEffect(() => {
-    if (!modeDropdownOpen) {
-      setModeTooltip(null)
-    }
-  }, [modeDropdownOpen])
 
   // Model dropdown state
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
@@ -1044,6 +1023,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   )
   const createWorktreeMutation = trpc.chats.createWorktreeForExistingChat.useMutation({
     onSuccess: (chat) => {
+      setNewWorktreeName("")
+      setNewWorktreeParentDirectory(null)
       updateTargetWorktreePath(chat.worktreePath ?? null)
       trpcUtils.chats.list.invalidate()
       trpcUtils.chats.get.invalidate({ id: parentChatId })
@@ -1053,16 +1034,29 @@ export const ChatInputArea = memo(function ChatInputArea({
       })
     },
     onError: (error) => {
-      toast.error(`Failed to create worktree: ${error.message}`)
+      toast.error(
+        error.message.startsWith("Failed to create worktree:")
+          ? error.message
+          : `Failed to create worktree: ${error.message}`,
+      )
     },
   })
+  const selectWorktreeMutation = trpc.chats.selectWorktree.useMutation()
+  const repairUnavailableCheckoutMutation = trpc.chats.repairUnavailableCheckout.useMutation()
+  const chooseReplacementCheckoutMutation = trpc.chats.chooseReplacementCheckout.useMutation()
+  const chooseCheckoutMutation = trpc.chats.chooseCheckout.useMutation()
+  const chooseWorktreeParentDirectoryMutation =
+    trpc.chats.chooseWorktreeParentDirectory.useMutation()
 
   const defaultWorktreeOption = useMemo(
     () => worktreeOptions.find((option) => option.isDefault) ?? worktreeOptions[0],
     [worktreeOptions],
   )
   const selectedWorktreePath =
-    currentTargetWorktreePath ?? defaultWorktreeOption?.path ?? projectPath
+    currentTargetWorktreePath ??
+    runtimeChat?.worktreePath ??
+    defaultWorktreeOption?.path ??
+    projectPath
   const selectedWorktreeOption = useMemo(
     () => worktreeOptions.find((option) => option.path === selectedWorktreePath),
     [selectedWorktreePath, worktreeOptions],
@@ -1089,12 +1083,176 @@ export const ChatInputArea = memo(function ChatInputArea({
     },
   )
   const worktreeNeedsRefresh = resolvedWorktreeStatus?.status === "unknown"
+  const worktreeIsDetached = resolvedWorktreeStatus?.status === "detached"
+  const worktreeDisplayLabel = worktreeIsDetached ? "No project files" : selectedWorktreeLabel
+  const worktreeBlockedReason = worktreeNeedsRefresh
+    ? `${selectedWorktreeLabel} was removed. Fix automatically uses the project checkout when available; otherwise this Chat continues without project files.`
+    : null
+  const detachedWorktreeWarning = worktreeIsDetached
+    ? "The original checkout was removed. This Chat still works, but it has no project files."
+    : null
+
+  const persistTargetWorktreePath = useCallback(
+    async (requestedPath: string) => {
+      const result = await selectWorktreeMutation.mutateAsync({
+        id: parentChatId,
+        path: requestedPath,
+      })
+      if (result.status !== "repaired") return
+      updateTargetWorktreePath(result.path)
+      await Promise.all([
+        trpcUtils.chats.get.invalidate({ id: parentChatId }),
+        trpcUtils.chats.list.invalidate(),
+        trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId }),
+        trpcUtils.chats.resolveWorktreeStatus.invalidate(),
+      ])
+    },
+    [
+      parentChatId,
+      selectWorktreeMutation,
+      trpcUtils.chats.get,
+      trpcUtils.chats.list,
+      trpcUtils.chats.listWorktreeOptions,
+      trpcUtils.chats.resolveWorktreeStatus,
+      updateTargetWorktreePath,
+    ],
+  )
+
+  const repairUnavailableCheckout = useCallback(async () => {
+    try {
+      const result = await repairUnavailableCheckoutMutation.mutateAsync({
+        id: parentChatId,
+        ...(selectedWorktreePath ? { unavailablePath: selectedWorktreePath } : {}),
+      })
+      if (result.status === "cancelled") return
+      updateTargetWorktreePath(result.path)
+      await Promise.all([
+        trpcUtils.chats.get.invalidate({ id: parentChatId }),
+        trpcUtils.chats.list.invalidate(),
+        trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId }),
+        trpcUtils.chats.resolveWorktreeStatus.invalidate(),
+      ])
+      if (result.detached) {
+        toast.warning("Continued without project files", {
+          description:
+            result.repairedChatIds.length === 1
+              ? "The Chat stayed in its project. Choose a repository later to reconnect it."
+              : `${result.repairedChatIds.length} Chats stayed in their project. Choose a repository later to reconnect them.`,
+        })
+      } else {
+        toast.success(
+          result.repairedChatIds.length === 1
+            ? "Using the project checkout"
+            : `${result.repairedChatIds.length} Chats now use the project checkout`,
+          { description: result.path },
+        )
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error("Could not fix checkout", {
+        description: `${message} No Chats were changed.`,
+      })
+    }
+  }, [
+    parentChatId,
+    repairUnavailableCheckoutMutation,
+    selectedWorktreePath,
+    trpcUtils.chats.get,
+    trpcUtils.chats.list,
+    trpcUtils.chats.listWorktreeOptions,
+    trpcUtils.chats.resolveWorktreeStatus,
+    updateTargetWorktreePath,
+  ])
+
+  const chooseReplacementCheckout = useCallback(async () => {
+    try {
+      const result = await chooseReplacementCheckoutMutation.mutateAsync({ id: parentChatId })
+      if (result.status === "cancelled") return
+      updateTargetWorktreePath(result.path)
+      await Promise.all([
+        trpcUtils.chats.get.invalidate({ id: parentChatId }),
+        trpcUtils.chats.list.invalidate(),
+        trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId }),
+        trpcUtils.chats.resolveWorktreeStatus.invalidate(),
+      ])
+      toast.success(
+        result.repairedChatIds.length === 1
+          ? "Repository reconnected"
+          : `${result.repairedChatIds.length} Chats reconnected`,
+        { description: result.path },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes("not its parent folder")) {
+        toast.error("Choose a repository, not its parent folder", {
+          description:
+            "Select a folder where Git works, such as …/GitHub/flapstack—not …/GitHub. No Chats were changed.",
+        })
+      } else {
+        toast.error("Could not reconnect repository", {
+          description: `${message} No Chats were changed.`,
+        })
+      }
+    }
+  }, [
+    chooseReplacementCheckoutMutation,
+    parentChatId,
+    trpcUtils.chats.get,
+    trpcUtils.chats.list,
+    trpcUtils.chats.listWorktreeOptions,
+    trpcUtils.chats.resolveWorktreeStatus,
+    updateTargetWorktreePath,
+  ])
+
+  const browseExistingCheckout = useCallback(async () => {
+    try {
+      const result = await chooseCheckoutMutation.mutateAsync({ id: parentChatId })
+      if (result.status === "cancelled") return
+      updateTargetWorktreePath(result.path)
+      await Promise.all([
+        trpcUtils.chats.get.invalidate({ id: parentChatId }),
+        trpcUtils.chats.list.invalidate(),
+        trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId }),
+        trpcUtils.chats.resolveWorktreeStatus.invalidate(),
+      ])
+      toast.success("Existing checkout selected", { description: result.path })
+    } catch (error) {
+      toast.error("Could not use checkout", {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [
+    chooseCheckoutMutation,
+    parentChatId,
+    trpcUtils.chats.get,
+    trpcUtils.chats.list,
+    trpcUtils.chats.listWorktreeOptions,
+    trpcUtils.chats.resolveWorktreeStatus,
+    updateTargetWorktreePath,
+  ])
+
+  const chooseWorktreeLocation = useCallback(async () => {
+    try {
+      const selectedDirectory = await chooseWorktreeParentDirectoryMutation.mutateAsync()
+      if (selectedDirectory) setNewWorktreeParentDirectory(selectedDirectory)
+    } catch (error) {
+      toast.error("Could not choose worktree location", {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [chooseWorktreeParentDirectoryMutation])
 
   useEffect(() => {
     if (currentTargetWorktreePath) return
+    if (runtimeChat?.worktreePath) return
     if (!defaultWorktreeOption?.path) return
     setStoredTargetWorktreePath(defaultWorktreeOption.path)
-  }, [currentTargetWorktreePath, defaultWorktreeOption?.path, setStoredTargetWorktreePath])
+  }, [
+    currentTargetWorktreePath,
+    defaultWorktreeOption?.path,
+    runtimeChat?.worktreePath,
+    setStoredTargetWorktreePath,
+  ])
   const canSwitchProvider = messageTokenData.messageCount === 0 && !isStreaming && !sandboxId
 
   // MCP status - from getAllMcpConfig query (provides global/local grouping)
@@ -1161,13 +1319,14 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Plan mode - per-subChat using atomFamily
   const subChatModeAtom = useMemo(() => subChatModeAtomFamily(subChatId), [subChatId])
   const [subChatMode, setSubChatMode] = useAtom(subChatModeAtom)
+  const effectivePermissionMode = resolveChatModePermission(subChatMode, requestedPermissionMode)
   const { data: permissionPreview } = trpc.permissions.previewHarness.useQuery({
     harness: provider,
-    mode: requestedPermissionMode,
+    mode: effectivePermissionMode,
     chatMode: subChatMode,
     cwd: selectedWorktreePath ?? null,
     customPermissions:
-      requestedPermissionMode === "custom"
+      effectivePermissionMode === "custom"
         ? (permissionResolution?.customPermissions ?? disabledCustomPermissions)
         : null,
   })
@@ -1443,6 +1602,11 @@ export const ChatInputArea = memo(function ChatInputArea({
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
+    if (worktreeBlockedReason) {
+      toast.error("Checkout unavailable", { description: worktreeBlockedReason })
+      return
+    }
+
     // Capture the chat-bound callback before transcription finishes. The input can
     // unmount while the user navigates, but this send must keep its original target.
     const sendToCapturedChat = onSend
@@ -1474,6 +1638,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     onStop,
     onSend,
     finishVoiceBeforeSend,
+    worktreeBlockedReason,
   ])
 
   // Mention select handler
@@ -1542,10 +1707,14 @@ export const ChatInputArea = memo(function ChatInputArea({
               updateMode("plan")
             }
             return
-          case "agent":
-            if (subChatMode === "plan") {
-              updateMode("agent")
-            }
+          case "write":
+            updateMode("write")
+            return
+          case "read":
+            updateMode("read")
+            return
+          case "review":
+            updateMode("review")
             return
           case "compact":
             // Trigger context compaction
@@ -1803,7 +1972,17 @@ export const ChatInputArea = memo(function ChatInputArea({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <div className="relative w-full cursor-text" onClick={() => editorRef.current?.focus()}>
+          <div
+            className="relative w-full cursor-text"
+            onClick={(event) => {
+              if (
+                event.target === event.currentTarget ||
+                !(event.target as HTMLElement).closest("button, [contenteditable]")
+              ) {
+                editorRef.current?.focus()
+              }
+            }}
+          >
             <PromptInput
               className={cn(
                 "mb-9 border bg-input-background relative z-10 p-2 rounded-xl transition-[border-color,box-shadow] duration-150",
@@ -1936,170 +2115,6 @@ export const ChatInputArea = memo(function ChatInputArea({
               </div>
               <PromptInputActions className="w-full">
                 <div className="relative flex items-center gap-0.5 flex-1 min-w-0">
-                  {/* Mode toggle (Agent/Plan) */}
-                  <DropdownMenu
-                    open={modeDropdownOpen}
-                    onOpenChange={(open) => {
-                      setModeDropdownOpen(open)
-                      if (!open) {
-                        if (tooltipTimeoutRef.current) {
-                          clearTimeout(tooltipTimeoutRef.current)
-                          tooltipTimeoutRef.current = null
-                        }
-                        setModeTooltip(null)
-                        hasShownTooltipRef.current = false
-                      }
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <button className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50 outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
-                        {subChatMode === "plan" ? (
-                          <PlanIcon className="h-3 w-3 shrink-0" />
-                        ) : (
-                          <AgentIcon className="h-3 w-3 shrink-0" />
-                        )}
-                        <span className="truncate">
-                          {subChatMode === "plan" ? "Plan" : "Agent"}
-                        </span>
-                        <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      sideOffset={6}
-                      className="!min-w-[116px] !w-[116px]"
-                      onCloseAutoFocus={(e) => e.preventDefault()}
-                    >
-                      <DropdownMenuItem
-                        onClick={() => {
-                          // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          setModeTooltip(null)
-                          updateMode("agent")
-                          setModeDropdownOpen(false)
-                        }}
-                        className="justify-between gap-2"
-                        onMouseEnter={(e) => {
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          const showTooltip = () => {
-                            setModeTooltip({
-                              visible: true,
-                              position: {
-                                top: rect.top,
-                                left: rect.right + 8,
-                              },
-                              mode: "agent",
-                            })
-                            hasShownTooltipRef.current = true
-                            tooltipTimeoutRef.current = null
-                          }
-                          if (hasShownTooltipRef.current) {
-                            showTooltip()
-                          } else {
-                            tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                          }
-                        }}
-                        onMouseLeave={() => {
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          setModeTooltip(null)
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <AgentIcon className="w-4 h-4 text-muted-foreground" />
-                          <span>Agent</span>
-                        </div>
-                        {subChatMode !== "plan" && (
-                          <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          // Clear tooltip before closing dropdown (onMouseLeave won't fire)
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          setModeTooltip(null)
-                          updateMode("plan")
-                          setModeDropdownOpen(false)
-                        }}
-                        className="justify-between gap-2"
-                        onMouseEnter={(e) => {
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          const showTooltip = () => {
-                            setModeTooltip({
-                              visible: true,
-                              position: {
-                                top: rect.top,
-                                left: rect.right + 8,
-                              },
-                              mode: "plan",
-                            })
-                            hasShownTooltipRef.current = true
-                            tooltipTimeoutRef.current = null
-                          }
-                          if (hasShownTooltipRef.current) {
-                            showTooltip()
-                          } else {
-                            tooltipTimeoutRef.current = setTimeout(showTooltip, 1000)
-                          }
-                        }}
-                        onMouseLeave={() => {
-                          if (tooltipTimeoutRef.current) {
-                            clearTimeout(tooltipTimeoutRef.current)
-                            tooltipTimeoutRef.current = null
-                          }
-                          setModeTooltip(null)
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <PlanIcon className="w-4 h-4 text-muted-foreground" />
-                          <span>Plan</span>
-                        </div>
-                        {subChatMode === "plan" && (
-                          <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                        )}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                    {modeTooltip?.visible &&
-                      createPortal(
-                        <div
-                          className="fixed z-[100000]"
-                          style={{
-                            top: modeTooltip.position.top + 14,
-                            left: modeTooltip.position.left,
-                            transform: "translateY(-50%)",
-                          }}
-                        >
-                          <div
-                            data-tooltip="true"
-                            className="relative rounded-[12px] bg-popover px-2.5 py-1.5 text-xs text-popover-foreground dark max-w-[150px]"
-                          >
-                            <span>
-                              {modeTooltip.mode === "agent"
-                                ? "Apply changes directly without a plan"
-                                : "Create a plan before making changes"}
-                            </span>
-                          </div>
-                        </div>,
-                        document.body,
-                      )}
-                  </DropdownMenu>
-
                   <div className="group/model-controls flex min-w-0 items-center gap-0.5">
                     <AgentModelSelector
                       open={isModelDropdownOpen}
@@ -2267,68 +2282,32 @@ export const ChatInputArea = memo(function ChatInputArea({
                         },
                       }}
                     />
+                  </div>
+
+                  <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
                     <RuntimeSelector
                       harness={provider}
                       value={runtimePreference}
                       onChange={(preference) => void handleRuntimeChange(preference)}
                       disabled={isStreaming || setRuntimePreferenceMutation.isPending}
                     />
-                  </div>
-
-                  <div className="absolute left-0 top-[calc(100%+18px)] flex max-w-[calc(100vw-5rem)] items-center gap-1 overflow-hidden text-xs">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button className="flex max-w-[150px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70">
-                          <span className="truncate">
-                            {isSelectableRunPermissionMode(requestedPermissionMode, provider)
-                              ? RUN_PERMISSION_MODE_LABELS[requestedPermissionMode]
-                              : "Legacy mode - change required"}
-                          </span>
-                          <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="start"
-                        sideOffset={6}
-                        className="!min-w-[220px]"
-                        onCloseAutoFocus={(e) => e.preventDefault()}
-                      >
-                        {selectablePermissionModes.map((mode) => (
-                          <DropdownMenuItem
-                            key={mode}
-                            onClick={() => handlePermissionModeChange(mode)}
-                            className="justify-between gap-2"
-                          >
-                            <span>{RUN_PERMISSION_MODE_LABELS[mode]}</span>
-                            {requestedPermissionMode === mode && (
-                              <CheckIcon className="h-3.5 w-3.5 ml-auto shrink-0" />
-                            )}
-                          </DropdownMenuItem>
-                        ))}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={handleOpenPermissionSettings}
-                          className="justify-between gap-3"
-                        >
-                          <span className="flex items-center gap-2">
-                            <SettingsIcon className="h-3.5 w-3.5" />
-                            Change behavior
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {permissionPreferences?.changeBehavior === "all-chats"
-                              ? "All chats"
-                              : permissionPreferences?.changeBehavior === "current-chat"
-                                ? "This chat"
-                                : "Ask every time"}
-                          </span>
-                        </DropdownMenuItem>
-                        {requestedPermissionMode === "custom" && (
-                          <div className="border-t px-2 py-2 text-[11px] text-muted-foreground">
-                            New custom mode starts with every capability disabled until configured.
-                          </div>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <PermissionSelector
+                      harness={provider}
+                      value={effectivePermissionMode}
+                      options={selectablePermissionModes}
+                      onChange={handlePermissionModeChange}
+                      disabled={isReadOnlyChatMode(subChatMode)}
+                      onOpenSettings={handleOpenPermissionSettings}
+                      settingsMeta={
+                        permissionPreferences?.changeBehavior === "all-chats"
+                          ? "All chats"
+                          : permissionPreferences?.changeBehavior === "current-chat"
+                            ? "This chat"
+                            : "Ask every time"
+                      }
+                      customHint="New custom mode starts with every capability disabled until configured."
+                    />
+                    <AgentModeSelector value={subChatMode} onChange={updateMode} />
 
                     {permissionPreview?.degraded && (
                       <Popover>
@@ -2412,13 +2391,16 @@ export const ChatInputArea = memo(function ChatInputArea({
                           <button
                             className={cn(
                               "flex max-w-[190px] items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
-                              worktreeNeedsRefresh && "text-amber-600 dark:text-amber-400",
+                              (worktreeNeedsRefresh || worktreeIsDetached) &&
+                                "text-amber-600 dark:text-amber-400",
                             )}
                           >
                             <span className="truncate">
                               {worktreeNeedsRefresh
-                                ? `Needs refresh: ${selectedWorktreeLabel}`
-                                : `${isNonDefaultWorktree ? "Worktree: " : ""}${selectedWorktreeLabel}`}
+                                ? `Checkout removed: ${selectedWorktreeLabel}`
+                                : worktreeIsDetached
+                                  ? worktreeDisplayLabel
+                                  : `${isNonDefaultWorktree ? "Worktree: " : ""}${worktreeDisplayLabel}`}
                             </span>
                             <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
                           </button>
@@ -2426,13 +2408,70 @@ export const ChatInputArea = memo(function ChatInputArea({
                         <DropdownMenuContent
                           align="start"
                           sideOffset={6}
-                          className="!min-w-[260px] max-w-[420px]"
+                          className="!min-w-[360px] max-w-[440px]"
                           onCloseAutoFocus={(e) => e.preventDefault()}
                         >
+                          {worktreeNeedsRefresh && (
+                            <>
+                              <DropdownMenuItem
+                                disabled={repairUnavailableCheckoutMutation.isPending}
+                                onClick={() => void repairUnavailableCheckout()}
+                                className="items-start gap-3"
+                              >
+                                <RefreshCw
+                                  className={cn(
+                                    "h-3.5 w-3.5 mt-0.5 shrink-0",
+                                    repairUnavailableCheckoutMutation.isPending && "animate-spin",
+                                  )}
+                                />
+                                <div className="min-w-0">
+                                  <div>
+                                    {repairUnavailableCheckoutMutation.isPending
+                                      ? "Fixing checkout..."
+                                      : "Fix automatically"}
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    Use the project checkout. If it is also gone, continue without
+                                    project files.
+                                  </div>
+                                </div>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={chooseReplacementCheckoutMutation.isPending}
+                                onClick={() => void chooseReplacementCheckout()}
+                                className="items-start gap-3"
+                              >
+                                <div className="min-w-0 pl-6">
+                                  <div>Choose a repository instead</div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    Select the repository folder itself, not its parent folder.
+                                  </div>
+                                </div>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                            </>
+                          )}
+                          {worktreeIsDetached && (
+                            <>
+                              <DropdownMenuItem
+                                disabled={chooseReplacementCheckoutMutation.isPending}
+                                onClick={() => void chooseReplacementCheckout()}
+                                className="items-start gap-3"
+                              >
+                                <div className="min-w-0">
+                                  <div>Reconnect a repository</div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    Restore project files without moving this Chat.
+                                  </div>
+                                </div>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                            </>
+                          )}
                           {worktreeOptions.map((option) => (
                             <DropdownMenuItem
                               key={option.path}
-                              onClick={() => updateTargetWorktreePath(option.path)}
+                              onClick={() => void persistTargetWorktreePath(option.path)}
                               className="items-start justify-between gap-3"
                             >
                               <div className="min-w-0">
@@ -2455,37 +2494,107 @@ export const ChatInputArea = memo(function ChatInputArea({
                             </div>
                           )}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            disabled={!canCreateWorktree || createWorktreeMutation.isPending}
-                            onClick={() => createWorktreeMutation.mutate({ id: parentChatId })}
-                            className="items-start gap-3"
+                          <div
+                            className="space-y-2 px-2 py-1.5"
+                            onKeyDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
                           >
-                            <RefreshCw
-                              className={cn(
-                                "h-3.5 w-3.5 mt-0.5 shrink-0",
-                                createWorktreeMutation.isPending && "animate-spin",
-                              )}
-                            />
-                            <div className="min-w-0">
-                              <div>
-                                {createWorktreeMutation.isPending
-                                  ? "Creating worktree..."
-                                  : "Create new worktree"}
+                            <div>
+                              <div className="text-xs font-medium text-foreground">
+                                Create worktree
                               </div>
                               <div className="text-[11px] text-muted-foreground">
-                                Creates the git worktree, branch, and runs setup commands.
+                                Runs Git, creates a branch, then runs setup commands.
                               </div>
                             </div>
-                          </DropdownMenuItem>
+                            <label className="block">
+                              <span className="mb-1 block text-[11px] text-muted-foreground">
+                                Name
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  value={newWorktreeName}
+                                  onChange={(event) => setNewWorktreeName(event.target.value)}
+                                  placeholder="feature-name"
+                                  spellCheck={false}
+                                  autoCapitalize="none"
+                                  className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !canCreateWorktree ||
+                                    !newWorktreeName.trim() ||
+                                    createWorktreeMutation.isPending
+                                  }
+                                  onClick={() =>
+                                    createWorktreeMutation.mutate({
+                                      id: parentChatId,
+                                      name: newWorktreeName.trim(),
+                                      ...(newWorktreeParentDirectory
+                                        ? { parentDirectory: newWorktreeParentDirectory }
+                                        : {}),
+                                    })
+                                  }
+                                  className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
+                                >
+                                  <RefreshCw
+                                    className={cn(
+                                      "h-3 w-3",
+                                      createWorktreeMutation.isPending && "animate-spin",
+                                    )}
+                                  />
+                                  {createWorktreeMutation.isPending ? "Creating..." : "Create"}
+                                </button>
+                              </div>
+                            </label>
+                            <div>
+                              <div className="mb-1 text-[11px] text-muted-foreground">Location</div>
+                              <div className="flex items-center gap-1">
+                                <div
+                                  className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground"
+                                  title={newWorktreeParentDirectory ?? "Default Flapstack location"}
+                                >
+                                  {newWorktreeParentDirectory ?? "Default Flapstack location"}
+                                </div>
+                                {newWorktreeParentDirectory && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setNewWorktreeParentDirectory(null)}
+                                    className="h-7 shrink-0 rounded-md px-2 text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                  >
+                                    Reset
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={chooseWorktreeParentDirectoryMutation.isPending}
+                                  onClick={() => void chooseWorktreeLocation()}
+                                  className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
+                                >
+                                  {chooseWorktreeParentDirectoryMutation.isPending
+                                    ? "Choosing..."
+                                    : "Choose..."}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              Spaces become hyphens. The name labels the worktree folder and chip.
+                            </div>
+                          </div>
                           <DropdownMenuSeparator />
-                          {/* Custom worktree path: for a checkout not in the list. */}
                           <div
-                            className="px-2 py-1.5"
+                            className="space-y-1 px-2 py-1.5"
                             onKeyDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <div className="mb-1 text-[11px] text-muted-foreground">
-                              Custom worktree path
+                            <div>
+                              <div className="text-xs font-medium text-foreground">
+                                Use existing checkout
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                Browse to an existing Git worktree or repository.
+                              </div>
                             </div>
                             <div className="flex items-center gap-1">
                               <input
@@ -2499,6 +2608,14 @@ export const ChatInputArea = memo(function ChatInputArea({
                                 spellCheck={false}
                                 className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
                               />
+                              <button
+                                type="button"
+                                disabled={chooseCheckoutMutation.isPending}
+                                onClick={() => void browseExistingCheckout()}
+                                className="h-7 shrink-0 rounded-md border border-border px-2 text-xs hover:bg-muted/50 disabled:opacity-50"
+                              >
+                                {chooseCheckoutMutation.isPending ? "Choosing..." : "Browse..."}
+                              </button>
                               <button
                                 type="button"
                                 disabled={!isValidCustomWorktree || isValidatingCustomWorktree}
@@ -2522,7 +2639,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                                       customWorktreeInput.trim() !== requestedPath
                                     )
                                       return
-                                    updateTargetWorktreePath(result.path)
+                                    await persistTargetWorktreePath(result.path)
                                     setCustomWorktreeInput("")
                                   } catch (error) {
                                     if (customWorktreeValidationRef.current !== requestId) return
@@ -2630,7 +2747,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                           (diffTextContexts?.length ?? 0) === 0 &&
                           queueLength === 0) ||
                         isUploading ||
-                        Boolean(runtimeBlockedReason)
+                        Boolean(runtimeBlockedReason) ||
+                        Boolean(worktreeBlockedReason)
                       }
                       hasContent={
                         hasContent ||
@@ -2665,6 +2783,40 @@ export const ChatInputArea = memo(function ChatInputArea({
               <p role="alert" className="mt-2 px-2 text-xs text-amber-600 dark:text-amber-300">
                 {runtimeBlockedReason} Continue with Flapstack Native to launch now.
               </p>
+            ) : null}
+            {worktreeBlockedReason ? (
+              <div
+                role="alert"
+                className="mt-2 flex items-center gap-2 px-2 text-xs text-amber-600 dark:text-amber-300"
+              >
+                <span>{worktreeBlockedReason}</span>
+                <button
+                  type="button"
+                  disabled={repairUnavailableCheckoutMutation.isPending}
+                  onClick={() => void repairUnavailableCheckout()}
+                  className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
+                >
+                  {repairUnavailableCheckoutMutation.isPending ? "Fixing..." : "Fix automatically"}
+                </button>
+              </div>
+            ) : null}
+            {detachedWorktreeWarning ? (
+              <div
+                role="status"
+                className="mt-2 flex items-center gap-2 px-2 text-xs text-amber-600 dark:text-amber-300"
+              >
+                <span>{detachedWorktreeWarning}</span>
+                <button
+                  type="button"
+                  disabled={chooseReplacementCheckoutMutation.isPending}
+                  onClick={() => void chooseReplacementCheckout()}
+                  className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
+                >
+                  {chooseReplacementCheckoutMutation.isPending
+                    ? "Choosing..."
+                    : "Choose repository"}
+                </button>
+              </div>
             ) : null}
           </div>
         </div>

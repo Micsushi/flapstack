@@ -17,6 +17,7 @@ import {
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
 import type { QueuedAgentRun } from "../run-launch-service"
+import { normalizeChatMode } from "../../../shared/chat-mode"
 import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/operations"
 import {
   AgentProfileResolver,
@@ -991,8 +992,9 @@ function resolveWorktree(source: SourceDto, snapshot: ResolvedAgentProfileSnapsh
 function queuedRun(db: Database.Database, runId: string): QueuedAgentRun {
   const row = db
     .prepare(
-      `SELECT r.*, p.path project_path FROM agent_runs r
-       JOIN chats c ON c.id = r.chat_id LEFT JOIN projects p ON p.id = c.project_id
+      `SELECT r.*, s.mode chat_mode, p.path project_path FROM agent_runs r
+       JOIN chats c ON c.id = r.chat_id JOIN sub_chats s ON s.id = r.sub_chat_id
+       LEFT JOIN projects p ON p.id = c.project_id
        WHERE r.id = ?`,
     )
     .get(runId) as Row
@@ -1002,6 +1004,7 @@ function queuedRun(db: Database.Database, runId: string): QueuedAgentRun {
     subChatId: String(row.sub_chat_id),
     harness: String(row.harness) as QueuedAgentRun["harness"],
     prompt: String(row.initial_prompt),
+    chatMode: normalizeChatMode(row.chat_mode),
     model: stringOrNull(row.model),
     reasoningEffort: null,
     permissionMode: String(row.permission_mode),

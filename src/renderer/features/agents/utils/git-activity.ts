@@ -173,6 +173,33 @@ export function extractChangedFiles(parts: any[], projectPath?: string): Changed
   const fileMap = new Map<string, ChangedFileInfo>()
 
   for (const part of parts) {
+    if (part.type === "tool-ApplyPatch") {
+      const changes = part.input?.changes?.length
+        ? part.input.changes
+        : part.input?.path
+          ? [{ path: part.input.path, diff: part.input.diff }]
+          : []
+      for (const change of changes) {
+        const filePath = change.path || ""
+        if (!filePath) continue
+        if (filePath.includes("claude-sessions") || filePath.includes("Application Support")) {
+          continue
+        }
+        const stats = unifiedDiffStats(change.diff || part.input?.diff || "")
+        const existing = fileMap.get(filePath)
+        if (existing) {
+          existing.additions += stats.additions
+          existing.deletions += stats.deletions
+        } else {
+          fileMap.set(filePath, {
+            filePath,
+            displayPath: toRelativePath(filePath, projectPath),
+            ...stats,
+          })
+        }
+      }
+      continue
+    }
     if (part.type !== "tool-Edit" && part.type !== "tool-Write") continue
     const filePath: string = part.input?.file_path || ""
     if (!filePath) continue
@@ -206,4 +233,14 @@ export function extractChangedFiles(parts: any[], projectPath?: string): Changed
   }
 
   return Array.from(fileMap.values())
+}
+
+function unifiedDiffStats(diff: string): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions++
+    if (line.startsWith("-") && !line.startsWith("---")) deletions++
+  }
+  return { additions, deletions }
 }

@@ -300,7 +300,7 @@ export async function createCarryoverRunFixture(input: {
         .values({
           chatId: chat.id,
           name: chat.name,
-          mode: "agent",
+          mode: "write",
           harness: "codex",
           model: "gpt-5.5",
           permissionMode: "read-only",
@@ -316,7 +316,7 @@ export async function createCarryoverRunFixture(input: {
         .values({
           chatId: chat.id,
           name: "Background input fixture",
-          mode: "agent",
+          mode: "write",
           harness: "codex",
           model: "gpt-5.5",
           permissionMode: "read-only",
