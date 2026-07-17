@@ -43,6 +43,7 @@ import {
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
+import { isBetaFeatureEnabled } from "../beta-features/settings"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -64,6 +65,7 @@ export type AutomationExecutionErrorCode =
   | "invalid-lease"
   | "concurrency-limit"
   | "usage-budget-exhausted"
+  | "feature-disabled"
 
 export class AutomationExecutionError extends Error {
   constructor(
@@ -398,6 +400,15 @@ export class AutomationExecutionService {
   ): PreparedExecution {
     const plan = loadPlan(database, automationId)
     requireApproved(plan)
+    if (
+      (plan.scope.scopeType === "task" || plan.action.type === "create-task-run") &&
+      !isBetaFeatureEnabled("planning")
+    ) {
+      fail("feature-disabled", "Planning & Task Board is disabled.")
+    }
+    if (plan.action.type === "create-task-run" && !isBetaFeatureEnabled("orchestration")) {
+      fail("feature-disabled", "Orchestration is disabled.")
+    }
     const target = resolveAutomationTarget(database, plan.scope)
     if (!target) fail("stale-target", "Automation target is missing or archived.")
     if (plan.action.type === "run-chat" && !target.subChatId) {

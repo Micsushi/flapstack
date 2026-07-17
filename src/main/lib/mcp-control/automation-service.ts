@@ -100,7 +100,12 @@ export function createMcpAutomationService(
             return error("invalid-input", "Unsupported automation operation.")
         }
       } catch (cause) {
-        if (cause instanceof AutomationControlError) return error(cause.code, cause.message)
+        if (cause instanceof AutomationControlError) {
+          return error(
+            cause.code === "feature-disabled" ? "tool-unavailable" : cause.code,
+            cause.message,
+          )
+        }
         return error("internal-error", "Automation control failed.")
       }
     },
@@ -115,6 +120,7 @@ function error(
     | "conflict"
     | "approval-required"
     | "stale-caller"
+    | "tool-unavailable"
     | "internal-error",
   message: string,
 ): McpControlResponse {

@@ -665,7 +665,7 @@ export const agentRuntimeDefaults = sqliteTable(
     ),
     check(
       "agent_runtime_defaults_preference_check",
-      sql`${table.preference} in ('auto', 'codex', 'claude-code', 'flapstack-native')`,
+      sql`${table.preference} in ('auto', 'codex', 'codex-enhanced', 'claude-code', 'claude-code-enhanced', 'flapstack-native')`,
     ),
     check("agent_runtime_defaults_version_check", sql`${table.version} >= 1`),
   ],

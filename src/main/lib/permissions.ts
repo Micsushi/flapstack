@@ -22,6 +22,7 @@ import {
 } from "../../shared/permission-capabilities"
 import { nowEpochSeconds } from "./db/timestamps"
 import { toProviderChatMode, type ChatMode } from "../../shared/chat-mode"
+import { isWithinProjectBoundary } from "./permission-boundary"
 
 const require = createRequire(import.meta.url)
 
@@ -668,6 +669,63 @@ export function isCustomToolAllowed(
   const capability = customCapabilityForToolName(toolName)
   if (capability === "unknown") return false
   return capability === null || permissions[capability]
+}
+
+export type ClaudeRuntimeToolDecision =
+  | { behavior: "allow"; updatedInput: Record<string, unknown> }
+  | { behavior: "deny"; message: string }
+
+/** Returns null when Claude must ask through Flapstack's permission bridge. */
+export async function resolveClaudeRuntimeToolPermission(input: {
+  mode: PermissionMode
+  customPermissions?: CustomPermissionToggles | null
+  cwd: string
+  toolName: string
+  toolInput: Record<string, unknown>
+}): Promise<ClaudeRuntimeToolDecision | null> {
+  const allow = { behavior: "allow" as const, updatedInput: input.toolInput }
+  if (input.mode === "full-access") return allow
+  if (input.mode === "read-only") {
+    return isClaudeReadOnlyToolAllowed(input.toolName)
+      ? allow
+      : {
+          behavior: "deny",
+          message: `Tool "${input.toolName}" blocked by read-only permission mode.`,
+        }
+  }
+
+  const capability = customCapabilityForToolName(input.toolName)
+  if (input.mode === "custom") {
+    if (!isCustomToolAllowed(input.customPermissions, input.toolName)) {
+      return {
+        behavior: "deny",
+        message: `Tool "${input.toolName}" is disabled by custom permissions.`,
+      }
+    }
+    if (capability !== "projectWrite") return allow
+  } else if (input.mode === "auto-edit-project-only") {
+    if (isClaudeReadOnlyToolAllowed(input.toolName)) return allow
+    if (capability !== "projectWrite") return null
+  } else if (input.mode === "ask-before-edits") {
+    return isClaudeReadOnlyToolAllowed(input.toolName) ? allow : null
+  }
+
+  const requestedPath = claudeWritePath(input.toolInput)
+  if (!requestedPath || !(await isWithinProjectBoundary(input.cwd, requestedPath))) {
+    return {
+      behavior: "deny",
+      message: "Project edits cannot leave the selected worktree boundary.",
+    }
+  }
+  return allow
+}
+
+function claudeWritePath(toolInput: Record<string, unknown>): string {
+  for (const key of ["file_path", "notebook_path", "path"] as const) {
+    const value = toolInput[key]
+    if (typeof value === "string" && value.trim()) return value.trim()
+  }
+  return ""
 }
 
 function getCodexPermissionLimitations(

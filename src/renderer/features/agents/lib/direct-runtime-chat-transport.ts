@@ -1,6 +1,8 @@
 import { toast } from "sonner"
+import { getQueryKey } from "@trpc/react-query"
 import type { ChatMode } from "../../../../shared/chat-mode"
-import { trpcClient } from "../../../lib/trpc"
+import { getQueryClient } from "../../../contexts/TRPCProvider"
+import { trpc, trpcClient } from "../../../lib/trpc"
 import { RuntimeActivityChatChunkMapper } from "./runtime-activity-chat-chunks"
 import { directRuntimeFinishMetadata } from "./runtime-finish-metadata"
 import { RuntimeResponseLabelFilter, RuntimeTextChatChunkMapper } from "./runtime-text-chat-chunks"
@@ -22,7 +24,7 @@ export async function createDirectRuntimeStream(input: {
   hotlineEnabled: boolean
   abortSignal?: AbortSignal
 }): Promise<ReadableStream<any> | null> {
-  const resolution = await trpcClient.agentRuntimeChat.resolve.query({
+  const resolution = await trpcClient.agentRuntimeChat.prepare.mutate({
     chatId: input.chatId,
     subChatId: input.subChatId,
     harness: input.harness,
@@ -31,6 +33,7 @@ export async function createDirectRuntimeStream(input: {
     reasoningEffort: input.reasoningEffort,
     reasoningEnabled: input.reasoningEnabled,
   })
+  refreshPinnedRuntimeSelection(input.chatId)
   if (!resolution.direct) return null
 
   const runId = crypto.randomUUID()
@@ -128,6 +131,15 @@ export async function createDirectRuntimeStream(input: {
     cancel() {
       cancelStream?.()
     },
+  })
+}
+
+function refreshPinnedRuntimeSelection(chatId: string): void {
+  const queryClient = getQueryClient()
+  if (!queryClient) return
+  void queryClient.invalidateQueries({
+    queryKey: getQueryKey(trpc.chats.get, { id: chatId }, "query"),
+    exact: true,
   })
 }
 

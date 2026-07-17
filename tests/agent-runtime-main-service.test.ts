@@ -6,6 +6,7 @@ import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createAgentActivityStore } from "../src/main/lib/agent-runtime/activity-store"
 import {
+  codexPermissionProfileApproval,
   getMainRuntimeLaunchService,
   resetMainRuntimeLaunchServicesForTests,
   resolveRuntimeTurnPrompt,
@@ -50,6 +51,27 @@ afterEach(() => {
 })
 
 describe("process-wide Runtime launch service", () => {
+  it("grants requested Codex permission profiles only after approval", () => {
+    const request = {
+      params: {
+        permissions: {
+          network: { enabled: true },
+          fileSystem: null,
+        },
+      },
+    }
+    expect(codexPermissionProfileApproval(request, true)).toEqual({
+      permissions: { network: { enabled: true } },
+      scope: "turn",
+      strictAutoReview: true,
+    })
+    expect(codexPermissionProfileApproval(request, false)).toEqual({
+      permissions: {},
+      scope: "turn",
+      strictAutoReview: true,
+    })
+  })
+
   it("leaves Native prompts raw because legacy routers apply chat mode themselves", () => {
     expect(
       resolveRuntimeTurnPrompt(
@@ -226,6 +248,7 @@ describe("process-wide Runtime launch service", () => {
       enableCodex: true,
     })
     const run = queued("vault-context")
+    run.runtimeLaunch!.requestedPreference = "codex-enhanced"
     run.worktreePath = projectRoot
     run.projectPath = projectRoot
 
@@ -243,6 +266,24 @@ describe("process-wide Runtime launch service", () => {
       harness: "codex",
       selectedSectionIds: ["context"],
     })
+  })
+
+  it("keeps provider-parity Runtime free of Flapstack startup instructions", async () => {
+    seedDirectRun("provider-parity")
+    let providerInstructions: string | null | undefined = "not-called"
+    const value = directAdapter()
+    value.startTurn = vi.fn(async (context) => {
+      providerInstructions = context.instructions
+      return { providerTurnId: "turn-provider-parity" }
+    })
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+
+    await service.launch(queued("provider-parity"))
+
+    expect(providerInstructions).toBeNull()
   })
 
   it("reads durable success after process-style service recreation without provider access", async () => {

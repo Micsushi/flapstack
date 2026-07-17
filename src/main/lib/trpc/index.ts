@@ -1,7 +1,9 @@
-import { initTRPC } from "@trpc/server"
+import { initTRPC, TRPCError } from "@trpc/server"
 import { BrowserWindow } from "electron"
 import superjson from "superjson"
 import { acquireConfiguredAppDatabaseOperation } from "../db/access"
+import { betaFeatureForTrpcPath, isBetaFeatureEnabled } from "../beta-features/settings"
+import type { BetaFeatureId } from "../../../shared/beta-features"
 
 /**
  * Context passed to all tRPC procedures
@@ -33,7 +35,14 @@ export const router = t.router
 export const middleware = t.middleware
 export const databaseMaintenanceProcedure = t.procedure
 
-const databaseOperationMiddleware = middleware(async ({ next }) => {
+const databaseOperationMiddleware = middleware(async ({ path, next }) => {
+  const betaFeature = betaFeatureForTrpcPath(path)
+  if (betaFeature && !isBetaFeatureEnabled(betaFeature)) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `Enable ${betaFeature} in Settings > Beta Features to use this feature.`,
+    })
+  }
   const release = acquireConfiguredAppDatabaseOperation()
   try {
     return await next()
@@ -43,6 +52,17 @@ const databaseOperationMiddleware = middleware(async ({ next }) => {
 })
 
 export const publicProcedure = t.procedure.use(databaseOperationMiddleware)
+
+export const betaProcedure = (feature: BetaFeatureId) =>
+  publicProcedure.use(async ({ next }) => {
+    if (!isBetaFeatureEnabled(feature)) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: `Enable ${feature} in Settings > Beta Features to use this feature.`,
+      })
+    }
+    return next()
+  })
 
 /**
  * Middleware to log procedure calls

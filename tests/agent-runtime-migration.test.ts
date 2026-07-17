@@ -10,7 +10,11 @@ import {
   runtimePermissionSnapshot,
   runtimeSnapshotSqlValues,
 } from "../src/main/lib/agent-runtime/snapshot"
-import { applyRuntimeMigration, createLegacyRuntimeDatabase } from "./agent-runtime-test-db"
+import {
+  applyRuntimeMigration,
+  applyRuntimeModeMigration,
+  createLegacyRuntimeDatabase,
+} from "./agent-runtime-test-db"
 
 const temporaryDirectories: string[] = []
 
@@ -197,6 +201,85 @@ describe("Agent Runtime migration", () => {
     expect(
       database.prepare("SELECT resolved_runtime FROM agent_runs WHERE id = 'run-1'").get(),
     ).toEqual({ resolved_runtime: "codex" })
+    database.close()
+  })
+
+  it("adds enhanced preferences without rewriting existing Runtime identity", () => {
+    const database = createLegacyRuntimeDatabase()
+    applyRuntimeMigration(database)
+    database.prepare("INSERT INTO projects (id) VALUES ('project-1')").run()
+    database
+      .prepare(
+        `INSERT INTO chats (id, project_id, harness, permission_mode)
+         VALUES ('chat-1', 'project-1', 'codex', 'read-only')`,
+      )
+      .run()
+    const defaults = createRuntimeDefaultsService(database)
+    defaults.write({
+      scope: { type: "global", id: null },
+      harness: "codex",
+      preference: "codex",
+      expectedVersion: 0,
+    })
+    database
+      .prepare(
+        `INSERT INTO agent_runs (
+          id, chat_id, harness, permission_mode, status, runtime_snapshot_version,
+          runtime_preference, runtime_preference_source, resolved_runtime,
+          runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+          runtime_control_snapshot
+        ) VALUES ('before-split', 'chat-1', 'codex', 'read-only', 'completed', 1,
+          'auto', 'product', 'codex', 'adapter', 'protocol',
+          '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+      )
+      .run()
+
+    applyRuntimeModeMigration(database)
+
+    expect(defaults.get({ type: "global", id: null }, "codex")).toMatchObject({
+      preference: "codex-enhanced",
+    })
+    expect(
+      database.prepare("SELECT runtime_preference FROM chats WHERE id = 'chat-1'").get(),
+    ).toEqual({ runtime_preference: "codex-enhanced" })
+    expect(
+      database.prepare("SELECT runtime_preference FROM agent_runs WHERE id = 'before-split'").get(),
+    ).toEqual({ runtime_preference: "codex-enhanced" })
+    defaults.write({
+      scope: { type: "project", id: "project-1" },
+      harness: "codex",
+      preference: "codex-enhanced",
+      expectedVersion: 0,
+    })
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO agent_runs (
+            id, chat_id, harness, permission_mode, status, runtime_snapshot_version,
+            runtime_preference, runtime_preference_source, resolved_runtime,
+            runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+            runtime_control_snapshot
+          ) VALUES ('enhanced', 'chat-1', 'codex', 'read-only', 'pending', 1,
+            'codex-enhanced', 'project', 'codex', 'adapter', 'protocol',
+            '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+        )
+        .run(),
+    ).not.toThrow()
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO agent_runs (
+            id, chat_id, harness, permission_mode, status, runtime_snapshot_version,
+            runtime_preference, runtime_preference_source, resolved_runtime,
+            runtime_adapter_version, runtime_protocol_version, runtime_capability_snapshot,
+            runtime_control_snapshot
+          ) VALUES ('invalid', 'chat-1', 'codex', 'read-only', 'pending', 1,
+            'codex-imaginary', 'project', 'codex', 'adapter', 'protocol',
+            '{"schemaVersion":1}', '{"schemaVersion":1}')`,
+        )
+        .run(),
+    ).toThrow(/requires Runtime snapshot/i)
+    expect(database.pragma("integrity_check", { simple: true })).toBe("ok")
     database.close()
   })
 })

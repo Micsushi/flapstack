@@ -83,7 +83,13 @@ import { useToggleFocusOnCmdEsc } from "../hooks/use-toggle-focus-on-cmd-esc"
 import { useLocalDictationSetup } from "../hooks/use-local-dictation-setup"
 import { useVoiceInputHotkey } from "../hooks/use-voice-input-hotkey"
 import { useLocalModelPickerSurface } from "../../local-models/use-local-model-picker-surface"
-import { RuntimeSelector, allowedRuntimePreferences, productRuntime } from "../runtime-settings"
+import { useBetaFeatures } from "../../settings/use-beta-features"
+import {
+  RuntimeSelector,
+  allowedRuntimePreferences,
+  resolveConfiguredRuntimePreference,
+  resolvedRuntimeAdapter,
+} from "../runtime-settings"
 import {
   AgentsFileMention,
   AgentsMentionsEditor,
@@ -171,6 +177,7 @@ interface NewChatFormProps {
 }
 
 export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewChatFormProps = {}) {
+  const betaFeatures = useBetaFeatures()
   // UNCONTROLLED: just track if editor has content for send button
   const [hasContent, setHasContent] = useState(false)
   const [selectedTeamId] = useAtom(selectedTeamIdAtom)
@@ -280,6 +287,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   const [permissionModeOverride, setPermissionModeOverride] =
     useState<NewChatPermissionMode | null>(null)
   const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
+  const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery()
   const { data: permissionPreferences } = trpc.permissions.getPreferences.useQuery()
   const inheritedPermissionMode = parseRunPermissionMode(
     chatScope === "task"
@@ -397,10 +405,15 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     () => getSelectableRunPermissionModes(selectedAgent.id).filter((mode) => mode !== "custom"),
     [selectedAgent.id],
   )
-  const resolvedRuntimePreference =
-    runtimePreference === "auto" ? productRuntime(selectedAgent.id) : runtimePreference
+  const resolvedRuntimePreference = resolveConfiguredRuntimePreference({
+    harness: selectedAgent.id,
+    chatPreference: runtimePreference,
+    projectId: validatedProject?.id,
+    defaults: runtimeDefaults,
+  })
+  const resolvedRuntime = resolvedRuntimeAdapter(resolvedRuntimePreference, selectedAgent.id)
   const runtimeBlockedReason = runtimeReleases.find(
-    (release) => release.runtime === resolvedRuntimePreference && !release.enabledForNewLaunches,
+    (release) => release.runtime === resolvedRuntime && !release.enabledForNewLaunches,
   )?.reason
 
   // Get available models (with offline support)
@@ -2410,6 +2423,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                 <RuntimeSelector
                   harness={selectedAgent.id}
                   value={runtimePreference}
+                  automaticPreference={resolvedRuntimePreference}
                   onChange={setRuntimePreference}
                   disabled={createChatMutation.isPending}
                 />

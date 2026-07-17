@@ -14,10 +14,12 @@ import {
   mapCodexAcpModeId,
   mapClaudeSdkPermissionMode,
   resolvePermission,
+  resolveClaudeRuntimeToolPermission,
   setPermissionChangeBehavior,
   setGlobalDefault,
   type PermissionMode,
 } from "../src/main/lib/permissions"
+import { disabledCustomPermissions } from "../src/shared/permission-capabilities"
 
 let configDir: string
 
@@ -270,5 +272,69 @@ describe("permissions", () => {
     for (const toolName of ["Write", "Bash", "Task", "mcp__repo__list_files", "FutureTool"]) {
       expect(isClaudeReadOnlyToolAllowed(toolName)).toBe(false)
     }
+  })
+
+  it("keeps direct Claude mid-level permissions inside their exact authority", async () => {
+    const inside = join("src", "inside.ts")
+    const outside = join(tmpdir(), "outside.ts")
+    const custom = { ...disabledCustomPermissions, projectWrite: true }
+
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "auto-edit-project-only",
+        cwd: configDir,
+        toolName: "Bash",
+        toolInput: { command: "git status" },
+      }),
+    ).resolves.toBeNull()
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "ask-before-edits",
+        cwd: configDir,
+        toolName: "Read",
+        toolInput: { file_path: inside },
+      }),
+    ).resolves.toMatchObject({ behavior: "allow" })
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "ask-before-edits",
+        cwd: configDir,
+        toolName: "Write",
+        toolInput: { file_path: inside },
+      }),
+    ).resolves.toBeNull()
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "auto-edit-project-only",
+        cwd: configDir,
+        toolName: "Write",
+        toolInput: { file_path: inside },
+      }),
+    ).resolves.toMatchObject({ behavior: "allow" })
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "auto-edit-project-only",
+        cwd: configDir,
+        toolName: "Write",
+        toolInput: { file_path: outside },
+      }),
+    ).resolves.toMatchObject({ behavior: "deny" })
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "custom",
+        customPermissions: custom,
+        cwd: configDir,
+        toolName: "Write",
+        toolInput: { file_path: outside },
+      }),
+    ).resolves.toMatchObject({ behavior: "deny" })
+    await expect(
+      resolveClaudeRuntimeToolPermission({
+        mode: "full-access",
+        cwd: configDir,
+        toolName: "Bash",
+        toolInput: { command: "git status" },
+      }),
+    ).resolves.toMatchObject({ behavior: "allow" })
   })
 })

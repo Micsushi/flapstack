@@ -67,7 +67,12 @@ import {
   type AgentMode,
   type SubChatFileChange,
 } from "../atoms"
-import { RuntimeSelector, productRuntime, runtimePreferenceLabel } from "../runtime-settings"
+import {
+  RuntimeSelector,
+  resolveConfiguredRuntimePreference,
+  resolvedRuntimeAdapter,
+  runtimePreferenceLabel,
+} from "../runtime-settings"
 import { useAgentSubChatStore } from "../stores/sub-chat-store"
 import { agentChatStore } from "../stores/agent-chat-store"
 import { AgentsSlashCommand, type SlashCommandOption } from "../commands"
@@ -432,11 +437,17 @@ export const ChatInputArea = memo(function ChatInputArea({
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   const { data: runtimeChat } = trpc.chats.get.useQuery({ id: parentChatId })
   const { data: runtimeReleases = [] } = trpc.agentRuntimeDefaults.capabilities.useQuery()
+  const { data: runtimeDefaults = [] } = trpc.agentRuntimeDefaults.list.useQuery()
   const runtimePreference = (runtimeChat?.runtimePreference ?? "auto") as AgentRuntimePreference
-  const resolvedRuntimePreference =
-    runtimePreference === "auto" ? productRuntime(provider) : runtimePreference
+  const resolvedRuntimePreference = resolveConfiguredRuntimePreference({
+    harness: provider,
+    chatPreference: runtimePreference,
+    projectId: runtimeChat?.projectId,
+    defaults: runtimeDefaults,
+  })
+  const resolvedRuntime = resolvedRuntimeAdapter(resolvedRuntimePreference, provider)
   const runtimeBlockedReason = runtimeReleases.find(
-    (release) => release.runtime === resolvedRuntimePreference && !release.enabledForNewLaunches,
+    (release) => release.runtime === resolvedRuntime && !release.enabledForNewLaunches,
   )?.reason
   const [pendingRuntimeContinuation, setPendingRuntimeContinuation] =
     useState<AgentRuntimePreference | null>(null)
@@ -1043,6 +1054,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   })
   const selectWorktreeMutation = trpc.chats.selectWorktree.useMutation()
   const repairUnavailableCheckoutMutation = trpc.chats.repairUnavailableCheckout.useMutation()
+  const reconnectReplacedCheckoutMutation = trpc.chats.reconnectReplacedCheckout.useMutation()
   const chooseReplacementCheckoutMutation = trpc.chats.chooseReplacementCheckout.useMutation()
   const chooseCheckoutMutation = trpc.chats.chooseCheckout.useMutation()
   const chooseWorktreeParentDirectoryMutation =
@@ -1082,12 +1094,15 @@ export const ChatInputArea = memo(function ChatInputArea({
       refetchInterval: 5_000,
     },
   )
-  const worktreeNeedsRefresh = resolvedWorktreeStatus?.status === "unknown"
+  const worktreeWasReplaced = resolvedWorktreeStatus?.status === "replaced"
+  const worktreeNeedsRefresh = resolvedWorktreeStatus?.status === "unknown" || worktreeWasReplaced
   const worktreeIsDetached = resolvedWorktreeStatus?.status === "detached"
   const worktreeDisplayLabel = worktreeIsDetached ? "No project files" : selectedWorktreeLabel
-  const worktreeBlockedReason = worktreeNeedsRefresh
-    ? `${selectedWorktreeLabel} was removed. Fix automatically uses the project checkout when available; otherwise this Chat continues without project files.`
-    : null
+  const worktreeBlockedReason = worktreeWasReplaced
+    ? resolvedWorktreeStatus.error
+    : worktreeNeedsRefresh
+      ? `${selectedWorktreeLabel} was removed. Fix automatically uses the project checkout when available; otherwise this Chat continues without project files.`
+      : null
   const detachedWorktreeWarning = worktreeIsDetached
     ? "The original checkout was removed. This Chat still works, but it has no project files."
     : null
@@ -1120,6 +1135,23 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   const repairUnavailableCheckout = useCallback(async () => {
     try {
+      if (worktreeWasReplaced && selectedWorktreePath) {
+        const result = await reconnectReplacedCheckoutMutation.mutateAsync({
+          id: parentChatId,
+          path: selectedWorktreePath,
+        })
+        updateTargetWorktreePath(result.path)
+        await Promise.all([
+          trpcUtils.chats.get.invalidate({ id: parentChatId }),
+          trpcUtils.chats.list.invalidate(),
+          trpcUtils.chats.listWorktreeOptions.invalidate({ id: parentChatId }),
+          trpcUtils.chats.resolveWorktreeStatus.invalidate(),
+        ])
+        toast.success("Repository reconnected", {
+          description: "Flapstack verified and saved the current folder identity.",
+        })
+        return
+      }
       const result = await repairUnavailableCheckoutMutation.mutateAsync({
         id: parentChatId,
         ...(selectedWorktreePath ? { unavailablePath: selectedWorktreePath } : {}),
@@ -1155,6 +1187,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     }
   }, [
     parentChatId,
+    reconnectReplacedCheckoutMutation,
     repairUnavailableCheckoutMutation,
     selectedWorktreePath,
     trpcUtils.chats.get,
@@ -1162,6 +1195,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     trpcUtils.chats.listWorktreeOptions,
     trpcUtils.chats.resolveWorktreeStatus,
     updateTargetWorktreePath,
+    worktreeWasReplaced,
   ])
 
   const chooseReplacementCheckout = useCallback(async () => {
@@ -1603,7 +1637,9 @@ export const ChatInputArea = memo(function ChatInputArea({
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
     if (worktreeBlockedReason) {
-      toast.error("Checkout unavailable", { description: worktreeBlockedReason })
+      toast.error(worktreeWasReplaced ? "Checkout was replaced" : "Checkout unavailable", {
+        description: worktreeBlockedReason,
+      })
       return
     }
 
@@ -1639,6 +1675,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     onSend,
     finishVoiceBeforeSend,
     worktreeBlockedReason,
+    worktreeWasReplaced,
   ])
 
   // Mention select handler
@@ -2288,6 +2325,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                     <RuntimeSelector
                       harness={provider}
                       value={runtimePreference}
+                      automaticPreference={resolvedRuntimePreference}
                       onChange={(preference) => void handleRuntimeChange(preference)}
                       disabled={isStreaming || setRuntimePreferenceMutation.isPending}
                     />
@@ -2397,7 +2435,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           >
                             <span className="truncate">
                               {worktreeNeedsRefresh
-                                ? `Checkout removed: ${selectedWorktreeLabel}`
+                                ? `${worktreeWasReplaced ? "Checkout replaced" : "Checkout removed"}: ${selectedWorktreeLabel}`
                                 : worktreeIsDetached
                                   ? worktreeDisplayLabel
                                   : `${isNonDefaultWorktree ? "Worktree: " : ""}${worktreeDisplayLabel}`}
@@ -2414,25 +2452,34 @@ export const ChatInputArea = memo(function ChatInputArea({
                           {worktreeNeedsRefresh && (
                             <>
                               <DropdownMenuItem
-                                disabled={repairUnavailableCheckoutMutation.isPending}
+                                disabled={
+                                  repairUnavailableCheckoutMutation.isPending ||
+                                  reconnectReplacedCheckoutMutation.isPending
+                                }
                                 onClick={() => void repairUnavailableCheckout()}
                                 className="items-start gap-3"
                               >
                                 <RefreshCw
                                   className={cn(
                                     "h-3.5 w-3.5 mt-0.5 shrink-0",
-                                    repairUnavailableCheckoutMutation.isPending && "animate-spin",
+                                    (repairUnavailableCheckoutMutation.isPending ||
+                                      reconnectReplacedCheckoutMutation.isPending) &&
+                                      "animate-spin",
                                   )}
                                 />
                                 <div className="min-w-0">
                                   <div>
-                                    {repairUnavailableCheckoutMutation.isPending
+                                    {repairUnavailableCheckoutMutation.isPending ||
+                                    reconnectReplacedCheckoutMutation.isPending
                                       ? "Fixing checkout..."
-                                      : "Fix automatically"}
+                                      : worktreeWasReplaced
+                                        ? "Review and reconnect"
+                                        : "Fix automatically"}
                                   </div>
                                   <div className="text-[11px] text-muted-foreground">
-                                    Use the project checkout. If it is also gone, continue without
-                                    project files.
+                                    {worktreeWasReplaced
+                                      ? "Reconnect only after confirming this is the repository you expect."
+                                      : "Use the project checkout. If it is also gone, continue without project files."}
                                   </div>
                                 </div>
                               </DropdownMenuItem>
@@ -2792,11 +2839,19 @@ export const ChatInputArea = memo(function ChatInputArea({
                 <span>{worktreeBlockedReason}</span>
                 <button
                   type="button"
-                  disabled={repairUnavailableCheckoutMutation.isPending}
+                  disabled={
+                    repairUnavailableCheckoutMutation.isPending ||
+                    reconnectReplacedCheckoutMutation.isPending
+                  }
                   onClick={() => void repairUnavailableCheckout()}
                   className="shrink-0 rounded border border-amber-500/40 px-1.5 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
                 >
-                  {repairUnavailableCheckoutMutation.isPending ? "Fixing..." : "Fix automatically"}
+                  {repairUnavailableCheckoutMutation.isPending ||
+                  reconnectReplacedCheckoutMutation.isPending
+                    ? "Fixing..."
+                    : worktreeWasReplaced
+                      ? "Review and reconnect"
+                      : "Fix automatically"}
                 </button>
               </div>
             ) : null}

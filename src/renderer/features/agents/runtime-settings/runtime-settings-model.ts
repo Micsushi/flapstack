@@ -1,8 +1,9 @@
-import type {
-  AgentRuntimeDefaultDto,
-  AgentRuntimePreference,
-  ResolvedAgentRuntime,
-  RuntimeDefaultScope,
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimeDefaultDto,
+  type AgentRuntimePreference,
+  type ResolvedAgentRuntime,
+  type RuntimeDefaultScope,
 } from "../../../../shared/agent-runtime"
 import { AGENT_HARNESSES, type AgentHarness } from "../../../../shared/harness-types"
 
@@ -39,14 +40,54 @@ const LABELS: Record<AgentHarness, string> = {
 export function runtimePreferenceLabel(preference: AgentRuntimePreference): string {
   if (preference === "auto") return "Automatic"
   if (preference === "codex") return "Codex"
+  if (preference === "codex-enhanced") return "Codex Enhanced"
   if (preference === "claude-code") return "Claude Code"
+  if (preference === "claude-code-enhanced") return "Claude Code Enhanced"
   return "Flapstack Native"
 }
 
 export function allowedRuntimePreferences(harness: string): AgentRuntimePreference[] {
-  if (harness === "codex") return ["auto", "codex", "flapstack-native"]
-  if (harness === "claude-code") return ["auto", "claude-code", "flapstack-native"]
+  if (harness === "codex") {
+    return ["auto", "codex", "codex-enhanced", "flapstack-native"]
+  }
+  if (harness === "claude-code") {
+    return ["auto", "claude-code", "claude-code-enhanced", "flapstack-native"]
+  }
   return ["auto", "flapstack-native"]
+}
+
+export function resolveConfiguredRuntimePreference(input: {
+  harness: string
+  chatPreference: AgentRuntimePreference
+  projectId?: string | null
+  defaults: AgentRuntimeDefaultDto[]
+}): Exclude<AgentRuntimePreference, "auto"> {
+  if (input.chatPreference !== "auto") return input.chatPreference
+  const project = input.projectId
+    ? input.defaults.find(
+        (entry) =>
+          entry.scope.type === "project" &&
+          entry.scope.id === input.projectId &&
+          entry.harness === input.harness &&
+          entry.preference !== "auto",
+      )
+    : null
+  if (project && project.preference !== "auto") return project.preference
+  const global = input.defaults.find(
+    (entry) =>
+      entry.scope.type === "global" &&
+      entry.harness === input.harness &&
+      entry.preference !== "auto",
+  )
+  if (global && global.preference !== "auto") return global.preference
+  return productRuntime(input.harness)
+}
+
+export function resolvedRuntimeAdapter(
+  preference: AgentRuntimePreference,
+  harness: string,
+): ResolvedAgentRuntime {
+  return runtimeAdapterForPreference(preference) ?? productRuntime(harness)
 }
 
 export function buildRuntimeSettingsRows(input: {
@@ -80,9 +121,18 @@ export function buildRuntimeSettingsRows(input: {
       selected: current?.preference ?? "auto",
       version: current?.version ?? 0,
       inherited,
-      options: (["auto", "codex", "claude-code", "flapstack-native"] as const).map((value) => {
+      options: (
+        [
+          "auto",
+          "codex",
+          "codex-enhanced",
+          "claude-code",
+          "claude-code-enhanced",
+          "flapstack-native",
+        ] as const
+      ).map((value) => {
         const compatible = allowed.includes(value)
-        const resolved = value === "auto" ? productRuntime(harness) : value
+        const resolved = runtimeAdapterForPreference(value) ?? productRuntime(harness)
         const release = releases.get(resolved)
         return {
           value,

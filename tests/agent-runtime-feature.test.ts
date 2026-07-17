@@ -95,6 +95,18 @@ describe("Agent Runtime feature acceptance", () => {
       enabledForNewLaunches: true,
       reason: null,
     })
+    const previousNodeEnv = process.env.NODE_ENV
+    const previousRendererUrl = process.env.ELECTRON_RENDERER_URL
+    process.env.NODE_ENV = "development"
+    delete process.env.ELECTRON_RENDERER_URL
+    try {
+      expect(buildRuntimeReleasePolicy().codex.enabledForNewLaunches).toBe(false)
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = previousNodeEnv
+      if (previousRendererUrl === undefined) delete process.env.ELECTRON_RENDERER_URL
+      else process.env.ELECTRON_RENDERER_URL = previousRendererUrl
+    }
     const guide = read("docs/agent-runtimes.md")
     expect(guide).toContain("never silently")
     expect(guide).toContain("Continue with Runtime")
@@ -131,6 +143,14 @@ describe("Agent Runtime feature acceptance", () => {
         surface.indexOf("<AgentModeSelector"),
       )
     }
+  })
+
+  it("checks the durable checkout identity before direct Runtime run materialization", () => {
+    const router = read("src/main/lib/trpc/routers/agent-runtime-chat.ts")
+    expect(router).toContain("await assertRuntimeCheckoutReady(input.chatId)")
+    expect(router.indexOf("await assertRuntimeCheckoutReady(input.chatId)")).toBeLessThan(
+      router.indexOf("materializeInteractiveRuntimeRun(database, input"),
+    )
   })
 })
 

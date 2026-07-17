@@ -7,6 +7,7 @@ import { homedir, platform } from "node:os"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { execFileSync } from "node:child_process"
+import { sleep } from "../../../shared/sleep"
 
 export type DaemonPlatform = "darwin" | "win32" | "linux" | "unsupported"
 
@@ -395,7 +396,7 @@ async function waitUntilStopped(probe: () => boolean): Promise<void> {
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
     if (probe()) return
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    await sleep(25)
   }
   throw new Error("Timed out stopping the installed usage daemon service.")
 }

@@ -1,6 +1,9 @@
 import Database from "better-sqlite3"
 import { createHash } from "node:crypto"
-import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+} from "../../../shared/agent-runtime"
 import { formatChatHandoff, type HandoffMessage } from "../chat-handoff"
 import { millisecondsToEpochSeconds } from "../db/timestamps"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
@@ -314,7 +317,7 @@ export function createRuntimeChatLifecycleService(
 }
 
 function assertCompatible(harness: string, preference: AgentRuntimePreference): void {
-  const runtime = preference === "auto" ? productRuntimeForHarness(harness) : preference
+  const runtime = runtimeAdapterForPreference(preference) ?? productRuntimeForHarness(harness)
   const compatibility = checkRuntimeCompatibility(harness, runtime)
   if (!compatibility.compatible) {
     throw new RuntimeChatLifecycleError("runtime-incompatible", compatibility.reason.message)
@@ -396,8 +399,10 @@ function result(
 }
 
 function runtimeLabel(preference: AgentRuntimePreference): string {
+  if (preference === "claude-code-enhanced") return "Claude Code Enhanced"
   if (preference === "claude-code") return "Claude Code"
   if (preference === "flapstack-native") return "Flapstack Native"
+  if (preference === "codex-enhanced") return "Codex Enhanced"
   if (preference === "codex") return "Codex"
   return "Automatic Runtime"
 }

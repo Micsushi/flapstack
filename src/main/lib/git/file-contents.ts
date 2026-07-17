@@ -238,6 +238,8 @@ async function getFileVersions(
 
 /** Helper to safely get git show content with size limit and memory protection */
 async function safeGitShow(git: ReturnType<typeof simpleGit>, spec: string): Promise<string> {
+  // Reject leading-dash specs so they can't be parsed as git flags.
+  if (spec.startsWith("-")) return ""
   try {
     // Preflight: check blob size before loading into memory
     // This prevents memory spikes from large files in git history

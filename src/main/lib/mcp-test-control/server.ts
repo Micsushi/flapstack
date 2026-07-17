@@ -12,6 +12,7 @@ import { CUSTOM_PERMISSION_SCHEMA_VERSION } from "../../../shared/permission-cap
 import { permissionModes } from "../permissions"
 import {
   archiveTestChat,
+  archiveTestTask,
   archiveTestProject,
   cancelRun,
   cleanupProductMcpCaller,
@@ -1351,6 +1352,21 @@ function registerTools(server: McpServer): void {
     async (input) => {
       try {
         return result(mutateTestOrchestration(input))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "archive_test_task",
+    {
+      description: "Reversibly archive one test task and every idle linked chat.",
+      inputSchema: { taskId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(archiveTestTask(input))
       } catch (error) {
         return failure(error)
       }

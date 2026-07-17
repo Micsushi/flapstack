@@ -18,7 +18,7 @@ credential, accessibility, performance, and documentation evidence.
 | Agent Profile chooser, reusable Markdown personalities, launch defaults, speed/effort, and descendant behavior         | S5-F3 — Agent Profiles and reusable personalities    |
 | Phone pairing, monitoring, steering, approvals, PWA, and mobile notifications                                          | S5-F4 — Cross-agent mobile companion                 |
 | Screenshot capture, visual attachments, annotation, and visual context provenance                                      | S5-F5 — Visual context and screenshot capture        |
-| Terminal grids, saved layouts, multi-agent workspaces, and swarm controls                                              | S5-F6 — Terminal-grid and swarm workspaces           |
+| Chat splits, floating windows, terminal grids, saved layouts, multi-agent workspaces, and swarm controls               | S5-F6 — Multi-pane Chat and swarm workspaces         |
 | Stage 4 F3/F11 ownership, structured-output, control, activity, and recovery follow-ups                                | S5-F7 — Runtime/orchestration composition            |
 | OpenAI and Anthropic organization usage/cost APIs                                                                      | S5-F8 — Organization usage APIs                      |
 | Startup, interaction, streaming, concurrency, memory, and long-run performance                                         | S5-F9 — Performance and scale                        |

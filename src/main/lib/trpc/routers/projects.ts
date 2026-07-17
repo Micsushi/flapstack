@@ -10,6 +10,7 @@ import { existsSync } from "node:fs"
 import { mkdir, copyFile, unlink } from "node:fs/promises"
 import { extname } from "node:path"
 import { getGitRemoteInfo } from "../../git"
+import { sleep } from "../../../../shared/sleep"
 import {
   bindFilesystemRootIdentity,
   bindRegisteredFilesystemRoot,
@@ -90,7 +91,7 @@ export const projectsRouter = router({
       console.log("[Projects] Window not focused, focusing before dialog...")
       window.focus()
       // Small delay to ensure focus is applied by the OS
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await sleep(100)
     }
 
     const result = await dialog.showOpenDialog(window, {
@@ -433,7 +434,7 @@ export const projectsRouter = router({
       // Ensure window is focused
       if (!window.isFocused()) {
         window.focus()
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await sleep(100)
       }
 
       const result = await dialog.showOpenDialog(window, {
@@ -516,7 +517,7 @@ export const projectsRouter = router({
       // Ensure window is focused
       if (!window.isFocused()) {
         window.focus()
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await sleep(100)
       }
 
       // Default to ~/.flapstack/repos/
@@ -550,7 +551,7 @@ export const projectsRouter = router({
 
       if (!window.isFocused()) {
         window.focus()
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await sleep(100)
       }
 
       const result = await dialog.showOpenDialog(window, {

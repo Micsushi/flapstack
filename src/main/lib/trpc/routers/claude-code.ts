@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm"
-import { safeStorage, shell } from "electron"
+import { safeStorage } from "electron"
+import { openExternalSafe } from "../../open-external"
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { promisify, stripVTControlCharacters } from "node:util"
@@ -12,6 +13,7 @@ import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
+import { sleep } from "../../../../shared/sleep"
 
 const execFileAsync = promisify(execFile)
 
@@ -198,7 +200,7 @@ async function finishLocalClaudeAuthSession(
   if (session.cancelled) return
   if (session.timeout) clearTimeout(session.timeout)
   if (session.browserFallback) clearTimeout(session.browserFallback)
-  await new Promise((resolve) => setTimeout(resolve, 400))
+  await sleep(400)
 
   claudeAuthStatusCache = null
   const token = getExistingClaudeToken()?.trim()
@@ -524,7 +526,7 @@ export const claudeCodeRouter = router({
       if (!session || session.status.flowId !== input.flowId || !session.status.oauthUrl) {
         throw new Error("Claude sign-in URL is not ready yet.")
       }
-      await shell.openExternal(session.status.oauthUrl)
+      await openExternalSafe(session.status.oauthUrl)
       return { success: true }
     }),
 
@@ -641,7 +643,7 @@ export const claudeCodeRouter = router({
    * Open OAuth URL in browser
    */
   openOAuthUrl: publicProcedure.input(z.string()).mutation(async ({ input: url }) => {
-    await shell.openExternal(url)
+    await openExternalSafe(url)
     return { success: true }
   }),
 })

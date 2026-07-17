@@ -4,12 +4,12 @@ import { useDesktopNotifications } from "../agents/hooks/use-desktop-notificatio
 import { collectNewAutomationInboxNotifications } from "./inbox-state"
 
 /** Runs with the main agent workspace, independent of whether the Inbox view is open. */
-export function useAutomationInboxNotifications() {
+export function useAutomationInboxNotifications(enabled: boolean) {
   const initializedIds = useRef<Set<string> | null>(null)
   const { showNotification } = useDesktopNotifications()
   const inbox = trpc.automations.inbox.useQuery(
     { unreadOnly: true, limit: 200 },
-    { refetchInterval: 5_000 },
+    { refetchInterval: 5_000, enabled },
   )
 
   useEffect(() => {

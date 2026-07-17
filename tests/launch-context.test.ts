@@ -74,7 +74,7 @@ describe("harness launch context", () => {
     const instructions = buildStartupInstructions("Follow repo rules.", "Fix the test")
 
     expect(instructions).toContain("Follow repo rules.")
-    expect(instructions).toContain("FLAPSTACK RESPONSE CONTRACT")
+    expect(instructions).not.toContain("FLAPSTACK RESPONSE CONTRACT")
     expect(instructions).not.toContain("--- USER REQUEST ---")
     expect(instructions).not.toContain("Fix the test")
   })
@@ -219,10 +219,7 @@ Hidden detail.
     expect(startupBlock).not.toContain("Displayed:")
     expect(startupBlock).not.toMatch(/\b(?:hotline|read[_ -]?aloud|spoken|displayed)\b/i)
     expect(prompt).toContain("--- USER REQUEST ---\n/caveman ultra\n--- END USER REQUEST ---")
-    expect(prompt).toContain("--- FLAPSTACK RESPONSE CONTRACT ---\ncaveman full\nponytail full")
-    expect(prompt.indexOf("--- FLAPSTACK RESPONSE CONTRACT ---")).toBeLessThan(
-      prompt.indexOf("--- USER REQUEST ---"),
-    )
+    expect(prompt).not.toContain("--- FLAPSTACK RESPONSE CONTRACT ---")
   })
 
   it("includes Agent Hotline formatting only when the current request enables it", () => {
@@ -252,7 +249,7 @@ After`
     )
 
     expect(prompt).not.toMatch(/\b(?:hotline|read[_ -]?aloud|spoken|displayed)\b/i)
-    expect(prompt).toContain("Use ordinary prose formatting.")
+    expect(prompt).toBe("hello")
   })
 
   it("keeps resumed session context compact without resending startup files", async () => {

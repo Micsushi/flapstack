@@ -24,6 +24,7 @@ import {
 import { desktopViewAtom } from "../agents/atoms"
 import { searchSettings, type SettingsSearchEntry } from "./settings-search"
 import { getVisibleSettingsTabs, type SettingsProviderScope } from "./settings-visibility"
+import { useBetaFeatures } from "./use-beta-features"
 
 // Check if we're in development mode
 const isDevelopment = import.meta.env.DEV
@@ -96,6 +97,7 @@ export function SettingsSidebar() {
   const setDesktopView = useSetAtom(desktopViewAtom)
   const isDesktop = useAtomValue(isDesktopAtom)
   const { data: apiProviders = [] } = trpc.opencode.listProviders.useQuery()
+  const betaFeatures = useBetaFeatures()
 
   // Settings has its own full-width drag bar, so keep the native macOS window
   // controls available for minimize, fullscreen, and window management.
@@ -114,19 +116,23 @@ export function SettingsSidebar() {
 
   const mainTabs = useMemo(
     () =>
-      getVisibleSettingsTabs("main", { showDevelopment: showDebugTab }).map((tab) => ({
-        ...tab,
-        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
-      })),
-    [showDebugTab],
+      getVisibleSettingsTabs("main", { showDevelopment: showDebugTab, betaFeatures }).map(
+        (tab) => ({
+          ...tab,
+          icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+        }),
+      ),
+    [betaFeatures, showDebugTab],
   )
   const advancedTabs = useMemo(
     () =>
-      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab }).map((tab) => ({
-        ...tab,
-        icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
-      })),
-    [showDebugTab],
+      getVisibleSettingsTabs("advanced", { showDevelopment: showDebugTab, betaFeatures }).map(
+        (tab) => ({
+          ...tab,
+          icon: SETTINGS_TAB_ICONS[tab.id] ?? SlidersFilledIcon,
+        }),
+      ),
+    [betaFeatures, showDebugTab],
   )
 
   const availableApiProviders = useMemo(
@@ -145,8 +151,9 @@ export function SettingsSidebar() {
       searchSettings(searchQuery, {
         showDevelopment: showDebugTab,
         availableProviders: availableApiProviders,
+        betaFeatures,
       }),
-    [availableApiProviders, searchQuery, showDebugTab],
+    [availableApiProviders, betaFeatures, searchQuery, showDebugTab],
   )
 
   useEffect(() => {

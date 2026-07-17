@@ -1,7 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { BrowserWindow, shell } from "electron"
+import { BrowserWindow } from "electron"
+import { openExternalSafe } from "./open-external"
 import {
   getMcpServerConfig,
   GLOBAL_MCP_PATH,
@@ -257,7 +258,7 @@ export async function startMcpOAuth(
     })
 
     // Open browser
-    shell.openExternal(authUrl)
+    void openExternalSafe(authUrl)
   })
 }
 

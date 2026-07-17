@@ -30,7 +30,9 @@ import {
   resetPlanKanbanDevFixture,
 } from "../../plan-kanban-dev-fixtures"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("planning")
 
 const sourcePathSchema = z.string().trim().min(1).max(4096)
 const devFixtureInput = z.object({ projectId: z.string().trim().min(1).max(128) })

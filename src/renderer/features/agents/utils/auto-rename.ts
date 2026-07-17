@@ -1,5 +1,5 @@
+import { sleep } from "../../../../shared/sleep"
 // Helper to sleep for a given duration
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 interface AutoRenameParams {
   subChatId: string

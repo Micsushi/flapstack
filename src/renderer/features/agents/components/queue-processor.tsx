@@ -61,7 +61,10 @@ export function QueueProcessor() {
       }
 
       const parentChatId = agentChatStore.getParentChatId(subChatId)
-      if (!parentChatId) return
+      if (!parentChatId) {
+        scheduleProcessing(subChatId)
+        return
+      }
       let checkout
       try {
         checkout = await trpcClient.chats.resolveWorktreeStatus.query({ id: parentChatId })
@@ -70,12 +73,15 @@ export function QueueProcessor() {
         scheduleProcessing(subChatId)
         return
       }
-      if (checkout.status === "unknown") {
+      if (checkout.status === "unknown" || checkout.status === "replaced") {
         if (!checkoutBlockedRef.current.has(subChatId)) {
           checkoutBlockedRef.current.add(subChatId)
-          toast.error("Checkout unavailable", {
-            description: "Fix or replace this Chat's checkout before queued messages can run.",
-          })
+          toast.error(
+            checkout.status === "replaced" ? "Checkout was replaced" : "Checkout unavailable",
+            {
+              description: checkout.error,
+            },
+          )
         }
         scheduleProcessing(subChatId)
         return

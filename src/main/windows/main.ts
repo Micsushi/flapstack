@@ -1,7 +1,6 @@
 import {
   BrowserWindow,
   Notification,
-  shell,
   nativeTheme,
   ipcMain,
   app,
@@ -9,9 +8,11 @@ import {
   nativeImage,
   dialog,
 } from "electron"
+import { sleep } from "../../shared/sleep"
 import { join } from "path"
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs"
 import { createIPCHandler } from "trpc-electron/main"
+import { openExternalSafe } from "../lib/open-external"
 import { createAppRouter } from "../lib/trpc/routers"
 import { registerGitWatcherIPC } from "../lib/git/watcher"
 import { hasActiveClaudeSessions, abortAllClaudeSessions } from "../lib/trpc/routers/claude"
@@ -480,7 +481,7 @@ function registerIpcHandlers(): void {
   })
 
   // Shell
-  ipcMain.handle("shell:open-external", (_event, url: string) => shell.openExternal(url))
+  ipcMain.handle("shell:open-external", (_event, url: string) => openExternalSafe(url))
 
   // Clipboard
   ipcMain.handle("clipboard:write", (_event, text: string) => clipboard.writeText(text))
@@ -503,7 +504,7 @@ function registerIpcHandlers(): void {
       // Ensure window is focused before showing dialog (required on macOS)
       if (!win.isFocused()) {
         win.focus()
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await sleep(100)
       }
 
       const result = await dialog.showSaveDialog(win, {
@@ -755,7 +756,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
 
   // Handle external links
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    void openExternalSafe(url)
     return { action: "deny" }
   })
 

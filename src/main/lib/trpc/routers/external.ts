@@ -1,4 +1,5 @@
 import { clipboard, shell } from "electron"
+import { openExternalSafe } from "../../open-external"
 import { execFileSync, spawn } from "node:child_process"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -115,7 +116,7 @@ export const externalRouter = router({
     }),
 
   openExternal: publicProcedure.input(z.string()).mutation(async ({ input: url }) => {
-    await shell.openExternal(url)
-    return { success: true }
+    const opened = await openExternalSafe(url)
+    return { success: opened }
   }),
 })

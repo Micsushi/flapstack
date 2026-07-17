@@ -9,10 +9,13 @@ import {
   loadInteractiveRuntimeAssistantText,
   materializeInteractiveRuntimeRun,
   persistInteractiveRuntimeAssistantFallback,
+  prepareInteractiveRuntimeLaunch,
   resolveInteractiveRuntime,
 } from "../src/main/lib/agent-runtime/interactive-chat"
+import { createRuntimeDefaultsService } from "../src/main/lib/agent-runtime/defaults"
 import { migrateDatabase } from "../src/main/lib/db/migrate"
 import * as schema from "../src/main/lib/db/schema"
+import type { AgentRuntimePreference } from "../src/shared/agent-runtime"
 
 let directory = ""
 let database: Database.Database
@@ -86,9 +89,14 @@ describe("interactive Runtime launch bridge", () => {
           .get(),
       ).toEqual({
         status: "running",
-        runtime_preference: "auto",
+        runtime_preference: runtime,
         resolved_runtime: runtime,
         initial_prompt: "Test direct Runtime",
+      })
+      expect(
+        database.prepare("SELECT runtime_preference FROM chats WHERE id = 'chat'").get(),
+      ).toEqual({
+        runtime_preference: runtime,
       })
       const messages = JSON.parse(
         (
@@ -98,6 +106,41 @@ describe("interactive Runtime launch bridge", () => {
         ).messages,
       ) as Array<{ id: string }>
       expect(messages.map((message) => message.id)).toEqual(["prompt-1"])
+    },
+  )
+
+  it.each([
+    ["codex", null, "codex", true],
+    ["claude-code", null, "claude-code", true],
+    ["codex", "codex-enhanced", "codex-enhanced", true],
+    ["claude-code", "flapstack-native", "flapstack-native", false],
+  ] as const)(
+    "pins the first %s launch to its resolved %s default",
+    (harness, configuredDefault, expectedPreference, direct) => {
+      seedChat(harness, "auto", [])
+      if (configuredDefault) {
+        createRuntimeDefaultsService(database).write({
+          scope: { type: "global", id: null },
+          harness,
+          preference: configuredDefault,
+          expectedVersion: 0,
+        })
+      }
+
+      expect(
+        prepareInteractiveRuntimeLaunch(database, {
+          chatId: "chat",
+          subChatId: "sub",
+          harness,
+          model: "model",
+          mode: "write",
+        }),
+      ).toMatchObject({ runtimePreference: expectedPreference, direct })
+      expect(
+        database.prepare("SELECT runtime_preference FROM chats WHERE id = 'chat'").get(),
+      ).toEqual({
+        runtime_preference: expectedPreference,
+      })
     },
   )
 
@@ -126,7 +169,37 @@ describe("interactive Runtime launch bridge", () => {
         model: "gpt-5.5",
         mode: "write",
       }),
-    ).toThrow("provider sessions cannot switch Runtime in place")
+    ).toThrow("provider sessions cannot switch Runtime behavior in place")
+  })
+
+  it("blocks parity-to-Enhanced reuse even when both use the Codex adapter", () => {
+    seedChat("codex", "auto", [])
+    materializeInteractiveRuntimeRun(database, {
+      runId: "parity-run",
+      chatId: "chat",
+      subChatId: "sub",
+      harness: "codex",
+      prompt: "Start in parity",
+      model: "gpt-5.6-sol",
+      mode: "write",
+      reasoningEffort: "high",
+      reasoningEnabled: true,
+    })
+    database.prepare("UPDATE agent_runs SET status = 'success' WHERE id = 'parity-run'").run()
+    database.prepare("UPDATE sub_chats SET session_id = 'codex-thread' WHERE id = 'sub'").run()
+    database
+      .prepare("UPDATE chats SET runtime_preference = 'codex-enhanced' WHERE id = 'chat'")
+      .run()
+
+    expect(() =>
+      resolveInteractiveRuntime(database, {
+        chatId: "chat",
+        subChatId: "sub",
+        harness: "codex",
+        model: "gpt-5.6-sol",
+        mode: "write",
+      }),
+    ).toThrow("cannot switch Runtime behavior in place")
   })
 
   it("projects authoritative completed Runtime text into the chat response", () => {
@@ -332,7 +405,7 @@ describe("interactive Runtime launch bridge", () => {
 
 function seedChat(
   harness: "codex" | "claude-code",
-  runtimePreference: "auto" | "flapstack-native",
+  runtimePreference: AgentRuntimePreference,
   messages: unknown[],
 ): void {
   database

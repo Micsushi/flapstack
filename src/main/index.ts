@@ -97,6 +97,11 @@ import {
   setIsQuitting,
 } from "./windows/main"
 import { windowManager } from "./windows/window-manager"
+import {
+  getBetaFeatureSettings,
+  isBetaFeatureEnabled,
+  subscribeBetaFeatureSettings,
+} from "./lib/beta-features/settings"
 
 import { IS_DEV, AUTH_SERVER_PORT } from "./constants"
 
@@ -104,6 +109,10 @@ let devMcpServer: DevMcpServerHandle | null = null
 let productMcpInvalidationBridge: ProductMcpInvalidationBridge | null = null
 let automationScheduler: AutomationScheduler | null = null
 let automationTriggerRuntime: AutomationTriggerRuntime | null = null
+let unsubscribeBetaFeatureSettings: (() => void) | null = null
+let orchestrationBetaInitialized = false
+let operationWorkspaceBetaInitialized = false
+let automationBetaTransition = Promise.resolve()
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
@@ -151,6 +160,59 @@ async function abortAndWaitForAgentSessions(): Promise<void> {
   if (!stopped) {
     throw new Error("Timed out waiting for agent sessions to stop during shutdown")
   }
+}
+
+async function startAutomationBetaServices(): Promise<void> {
+  if (automationTriggerRuntime || automationScheduler) return
+  automationTriggerRuntime = new AutomationTriggerRuntime({
+    databasePath: getDatabasePath(),
+    onError: (error) => console.error("[App] Automation trigger runtime failed:", error),
+  })
+  automationScheduler = new AutomationScheduler({
+    databasePath: getDatabasePath(),
+    owner: `desktop-${process.pid}`,
+    nextFireCalculator: new CronAutomationNextFireCalculator(),
+    dispatch: createAutomationExecutionDispatcher(getDatabasePath()),
+    maxSleepMs: 500,
+    onError: (error) => console.error("[App] Automation scheduler failed:", error),
+  })
+  try {
+    await automationTriggerRuntime.start()
+    await automationScheduler.start()
+  } catch (error) {
+    await stopAutomationBetaServices()
+    throw error
+  }
+}
+
+async function stopAutomationBetaServices(): Promise<void> {
+  const triggerRuntime = automationTriggerRuntime
+  const scheduler = automationScheduler
+  automationTriggerRuntime = null
+  automationScheduler = null
+  await triggerRuntime?.stop()
+  await scheduler?.stop()
+}
+
+function queueAutomationBetaTransition(enabled: boolean): void {
+  automationBetaTransition = automationBetaTransition
+    .then(() => (enabled ? startAutomationBetaServices() : stopAutomationBetaServices()))
+    .catch((error) => console.error("[App] Beta automation transition failed:", error))
+}
+
+function initializeOrchestrationBetaServices(): void {
+  if (orchestrationBetaInitialized) return
+  orchestrationBetaInitialized = true
+  const databasePath = getDatabasePath()
+  registerMainRuntimeOperations(databasePath, getMainRuntimeLaunchService(databasePath))
+  registerWorkflowAgentMaterializer(createLazyAgentProfileWorkflowMaterializerPort(initDatabase))
+  recoverOrchestrationOperations(databasePath)
+}
+
+function initializeOperationWorkspaceBetaServices(): void {
+  if (operationWorkspaceBetaInitialized) return
+  operationWorkspaceBetaInitialized = true
+  reconcileOperationWorkspaces(getDatabasePath())
 }
 
 // Set dev mode userData path BEFORE requestSingleInstanceLock()
@@ -973,45 +1035,23 @@ if (gotTheLock) {
             {
               name: "Multi-agent operations projection and control recovery",
               run: () => {
-                const databasePath = getDatabasePath()
-                registerMainRuntimeOperations(
-                  databasePath,
-                  getMainRuntimeLaunchService(databasePath),
-                )
-                registerWorkflowAgentMaterializer(
-                  createLazyAgentProfileWorkflowMaterializerPort(initDatabase),
-                )
-                return recoverOrchestrationOperations(databasePath)
+                if (!isBetaFeatureEnabled("orchestration")) return
+                initializeOrchestrationBetaServices()
               },
             },
             {
-              name: "Automation event triggers",
+              name: "Automation services",
               run: async () => {
-                automationTriggerRuntime = new AutomationTriggerRuntime({
-                  databasePath: getDatabasePath(),
-                  onError: (error) =>
-                    console.error("[App] Automation trigger runtime failed:", error),
-                })
-                await automationTriggerRuntime.start()
-              },
-            },
-            {
-              name: "Automation scheduler",
-              run: async () => {
-                automationScheduler = new AutomationScheduler({
-                  databasePath: getDatabasePath(),
-                  owner: `desktop-${process.pid}`,
-                  nextFireCalculator: new CronAutomationNextFireCalculator(),
-                  dispatch: createAutomationExecutionDispatcher(getDatabasePath()),
-                  maxSleepMs: 500,
-                  onError: (error) => console.error("[App] Automation scheduler failed:", error),
-                })
-                await automationScheduler.start()
+                if (!isBetaFeatureEnabled("automations")) return
+                await startAutomationBetaServices()
               },
             },
             {
               name: "Operation workspace reconciliation",
-              run: () => reconcileOperationWorkspaces(getDatabasePath()),
+              run: () => {
+                if (!isBetaFeatureEnabled("savedWorkspaces")) return
+                initializeOperationWorkspaceBetaServices()
+              },
             },
             {
               name: "Pending run scheduler",
@@ -1024,8 +1064,11 @@ if (gotTheLock) {
                   if (pendingRunDrainActive) return
                   pendingRunDrainActive = true
                   try {
-                    orchestrationService.tickAll()
-                    if (!workflowAdvanceActive) {
+                    if (isBetaFeatureEnabled("orchestration")) {
+                      initializeOrchestrationBetaServices()
+                      orchestrationService.tickAll()
+                    }
+                    if (isBetaFeatureEnabled("orchestration") && !workflowAdvanceActive) {
                       workflowAdvanceActive = true
                       void advancePendingWorkflows(databasePath)
                         .then((result) => {
@@ -1039,13 +1082,15 @@ if (gotTheLock) {
                           workflowAdvanceActive = false
                         })
                     }
-                    for (const request of orchestrationService.listCancellationRequests()) {
-                      const handled = await runtimeLaunchService.cancel(
-                        request.runId,
-                        "orchestration-cancelled",
-                      )
-                      if (handled) {
-                        orchestrationService.acknowledgeCancellationRequest(request.runId)
+                    if (isBetaFeatureEnabled("orchestration")) {
+                      for (const request of orchestrationService.listCancellationRequests()) {
+                        const handled = await runtimeLaunchService.cancel(
+                          request.runId,
+                          "orchestration-cancelled",
+                        )
+                        if (handled) {
+                          orchestrationService.acknowledgeCancellationRequest(request.runId)
+                        }
                       }
                     }
                     const usageDatabase = initDatabase()
@@ -1089,13 +1134,28 @@ if (gotTheLock) {
           ],
           (name, error) => console.error(`[App] ${name} failed:`, error),
         )
+        let previousBetaSettings = getBetaFeatureSettings()
+        unsubscribeBetaFeatureSettings = subscribeBetaFeatureSettings((settings) => {
+          if (settings.automations !== previousBetaSettings.automations) {
+            queueAutomationBetaTransition(settings.automations)
+          }
+          if (settings.orchestration && !previousBetaSettings.orchestration) {
+            initializeOrchestrationBetaServices()
+          }
+          if (settings.savedWorkspaces && !previousBetaSettings.savedWorkspaces) {
+            initializeOperationWorkspaceBetaServices()
+          }
+          previousBetaSettings = settings
+        })
         createMainWindow()
       },
       cleanup: async () => {
         if (pendingRunTimer) clearInterval(pendingRunTimer)
         pendingRunTimer = null
-        await automationScheduler?.stop()
-        automationScheduler = null
+        unsubscribeBetaFeatureSettings?.()
+        unsubscribeBetaFeatureSettings = null
+        await automationBetaTransition
+        await stopAutomationBetaServices()
         await devMcpServer?.stop()
         devMcpServer = null
         await productMcpInvalidationBridge?.stop()
@@ -1163,10 +1223,10 @@ if (gotTheLock) {
         persistProviderSessions: abortAndWaitForAgentSessions,
         cancelPendingOAuth: () => cancelAllPendingOAuth(),
         stopAutomationScheduler: async () => {
-          await automationTriggerRuntime?.stop()
-          automationTriggerRuntime = null
-          await automationScheduler?.stop()
-          automationScheduler = null
+          unsubscribeBetaFeatureSettings?.()
+          unsubscribeBetaFeatureSettings = null
+          await automationBetaTransition
+          await stopAutomationBetaServices()
         },
         stopDevMcpServer: async () => {
           await devMcpServer?.stop()

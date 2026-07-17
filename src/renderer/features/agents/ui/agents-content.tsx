@@ -94,6 +94,12 @@ import {
   InboxView,
   useAutomationInboxNotifications,
 } from "../../automations"
+import { useBetaFeatures } from "../../settings/use-beta-features"
+import {
+  formatScopeChatTimestamp,
+  getScopeChatContext,
+  scopeChatTimestampMs,
+} from "../lib/scope-chat-card"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -124,6 +130,18 @@ function AgentsContentInner() {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
   const [openChatIds, setOpenChatIds] = useAtom(openAgentChatIdsAtom)
   const [desktopView, setDesktopView] = useAtom(desktopViewAtom)
+  const betaFeatures = useBetaFeatures()
+  const effectiveDesktopView =
+    (desktopView === "orchestration-fleet" && !betaFeatures.orchestration) ||
+    ((desktopView === "automations" ||
+      desktopView === "automations-detail" ||
+      desktopView === "inbox") &&
+      !betaFeatures.automations) ||
+    ((desktopView === "tasks" || desktopView === "plan") && !betaFeatures.planning) ||
+    (desktopView === "project-vault" && !betaFeatures.projectMemory) ||
+    (desktopView === "saved-workspaces" && !betaFeatures.savedWorkspaces)
+      ? null
+      : desktopView
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const selectedChatScope = useAtomValue(selectedChatScopeAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
@@ -173,7 +191,11 @@ function AgentsContentInner() {
   const { signOut } = useClerk()
   const isAdmin = useIsAdmin()
   const { notifyAgentNeedsInput } = useDesktopNotifications()
-  useAutomationInboxNotifications()
+  useAutomationInboxNotifications(betaFeatures.automations)
+
+  useEffect(() => {
+    if (desktopView !== effectiveDesktopView) setDesktopView(effectiveDesktopView)
+  }, [desktopView, effectiveDesktopView, setDesktopView])
   const notifiedBackgroundRequestIdsRef = useRef(new Set<string>())
 
   // Quick-switch dialog state - Agents (Opt+Ctrl+Tab)
@@ -266,6 +288,7 @@ function AgentsContentInner() {
     { enabled: !!selectedTeamId },
   )
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
+  const { data: scopeTasks = [] } = trpc.tasks.list.useQuery({ includeArchived: true })
   const { data: liveAgentInputs = [] } = trpc.agentInput.listWithContext.useQuery(undefined, {
     refetchInterval: import.meta.env.DEV ? 250 : 1_000,
   })
@@ -352,7 +375,7 @@ function AgentsContentInner() {
     const getChatUpdatedAt = (chat: NonNullable<typeof agentChats>[number]) => {
       const value = (chat as typeof chat & { updated_at?: Date | string | number | null })
         .updated_at
-      return chat.updatedAt ?? value ?? 0
+      return scopeChatTimestampMs(chat.updatedAt ?? value ?? 0)
     }
     return agentChats
       .filter((chat) => {
@@ -365,11 +388,13 @@ function AgentsContentInner() {
         return chat.taskId === selectedChatScope.id
       })
       .sort((a, b) => {
-        const aUpdated = new Date(getChatUpdatedAt(a)).getTime()
-        const bUpdated = new Date(getChatUpdatedAt(b)).getTime()
-        return bUpdated - aUpdated
+        return getChatUpdatedAt(b) - getChatUpdatedAt(a)
       })
   }, [agentChats, selectedChatScope])
+  const scopeTasksById = useMemo(
+    () => new Map(scopeTasks.map((task) => [task.id, task])),
+    [scopeTasks],
+  )
 
   useEffect(() => {
     if (!agentChats || !archivedChats || openChatIds.length === 0) return
@@ -1107,7 +1132,10 @@ function AgentsContentInner() {
   // Track sub-chats sidebar open state for animation control
   // Now renders even while loading to show spinner (mobile always uses tabs)
   const isSubChatsSidebarOpen =
-    selectedChatId && effectiveSubChatsSidebarMode === "sidebar" && !isMobile && !desktopView
+    selectedChatId &&
+    effectiveSubChatsSidebarMode === "sidebar" &&
+    !isMobile &&
+    !effectiveDesktopView
 
   useEffect(() => {
     // When sidebar closes, reset for animation on next open
@@ -1161,27 +1189,27 @@ function AgentsContentInner() {
     return (
       <div className="flex h-full bg-background" data-agents-page data-mobile-view>
         {/* Mobile: Settings fullscreen view */}
-        {desktopView === "orchestration-fleet" ? (
+        {effectiveDesktopView === "orchestration-fleet" ? (
           <OrchestrationFleetView />
-        ) : desktopView === "automations" ? (
+        ) : effectiveDesktopView === "automations" ? (
           <AutomationsView />
-        ) : desktopView === "automations-detail" ? (
+        ) : effectiveDesktopView === "automations-detail" ? (
           <AutomationsDetailView />
-        ) : desktopView === "inbox" ? (
+        ) : effectiveDesktopView === "inbox" ? (
           <InboxView />
-        ) : desktopView === "settings" ? (
+        ) : effectiveDesktopView === "settings" ? (
           <SettingsContent />
-        ) : desktopView === "usage" ? (
+        ) : effectiveDesktopView === "usage" ? (
           <div className="h-full overflow-y-auto select-text">
             <AgentsUsageTab />
           </div>
-        ) : desktopView === "tasks" ? (
+        ) : effectiveDesktopView === "tasks" ? (
           <KanbanView />
-        ) : desktopView === "plan" ? (
+        ) : effectiveDesktopView === "plan" ? (
           <PlanView />
-        ) : desktopView === "project-vault" ? (
+        ) : effectiveDesktopView === "project-vault" ? (
           <ProjectVaultView key={selectedProject?.id} />
-        ) : desktopView === "saved-workspaces" ? (
+        ) : effectiveDesktopView === "saved-workspaces" ? (
           <SavedWorkspacesView
             projectId={selectedProject?.id ?? null}
             initialProjectId={workspaceWindowParams.projectId}
@@ -1312,27 +1340,27 @@ function AgentsContentInner() {
 
         {/* Main content */}
         <div className="flex-1 min-w-0 overflow-hidden" style={{ minWidth: "350px" }}>
-          {desktopView === "orchestration-fleet" ? (
+          {effectiveDesktopView === "orchestration-fleet" ? (
             <OrchestrationFleetView />
-          ) : desktopView === "automations" ? (
+          ) : effectiveDesktopView === "automations" ? (
             <AutomationsView />
-          ) : desktopView === "automations-detail" ? (
+          ) : effectiveDesktopView === "automations-detail" ? (
             <AutomationsDetailView />
-          ) : desktopView === "inbox" ? (
+          ) : effectiveDesktopView === "inbox" ? (
             <InboxView />
-          ) : desktopView === "settings" ? (
+          ) : effectiveDesktopView === "settings" ? (
             <SettingsContent />
-          ) : desktopView === "usage" ? (
+          ) : effectiveDesktopView === "usage" ? (
             <div className="h-full overflow-y-auto select-text">
               <AgentsUsageTab />
             </div>
-          ) : desktopView === "tasks" ? (
+          ) : effectiveDesktopView === "tasks" ? (
             <KanbanView />
-          ) : desktopView === "plan" ? (
+          ) : effectiveDesktopView === "plan" ? (
             <PlanView />
-          ) : desktopView === "project-vault" ? (
+          ) : effectiveDesktopView === "project-vault" ? (
             <ProjectVaultView key={selectedProject?.id} />
-          ) : desktopView === "saved-workspaces" ? (
+          ) : effectiveDesktopView === "saved-workspaces" ? (
             <SavedWorkspacesView
               projectId={selectedProject?.id ?? null}
               initialProjectId={workspaceWindowParams.projectId}
@@ -1508,36 +1536,58 @@ function AgentsContentInner() {
               <div className="flex-1 overflow-auto px-6 py-4">
                 {scopeChats.length > 0 ? (
                   <div className="grid gap-2">
-                    {scopeChats.map((chat) => (
-                      <button
-                        key={chat.id}
-                        type="button"
-                        className="flex items-center gap-3 rounded-md border border-border/70 bg-card px-3 py-2 text-left transition-colors hover:bg-muted/60"
-                        onClick={() => {
-                          setSelectedChatId(chat.id)
-                          setSelectedChatIsRemote(false)
-                          setChatSourceMode("local")
-                        }}
-                      >
-                        <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-foreground">
-                            {chat.name || "New Chat"}
+                    {scopeChats.map((chat) => {
+                      const task = chat.taskId ? scopeTasksById.get(chat.taskId) : null
+                      const context = getScopeChatContext(chat, task)
+                      const updatedAt =
+                        chat.updatedAt ??
+                        (
+                          chat as typeof chat & {
+                            updated_at?: Date | string | number | null
+                          }
+                        ).updated_at
+                      return (
+                        <button
+                          key={chat.id}
+                          type="button"
+                          className="flex items-center gap-3 rounded-md border border-border/70 bg-card px-3 py-2 text-left transition-colors hover:bg-muted/60"
+                          onClick={() => {
+                            setSelectedChatId(chat.id)
+                            setSelectedChatIsRemote(false)
+                            setChatSourceMode("local")
+                          }}
+                        >
+                          <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium text-foreground">
+                              {chat.name || "New Chat"}
+                            </div>
+                            {(context.taskName || context.testFixture) && (
+                              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                                {context.taskName && (
+                                  <span className="max-w-full truncate">
+                                    Task: {context.taskName}
+                                  </span>
+                                )}
+                                {context.taskArchived && (
+                                  <span className="rounded bg-muted px-1.5 py-0.5">
+                                    Archived task
+                                  </span>
+                                )}
+                                {context.testFixture && (
+                                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-500">
+                                    Test fixture
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {formatScopeChatTimestamp(updatedAt)}
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(
-                              chat.updatedAt ??
-                                (
-                                  chat as typeof chat & {
-                                    updated_at?: Date | string | number | null
-                                  }
-                                ).updated_at ??
-                                Date.now(),
-                            ).toLocaleString()}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                        </button>
+                      )
+                    })}
                   </div>
                 ) : (
                   <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground">

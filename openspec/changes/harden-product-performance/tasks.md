@@ -23,7 +23,7 @@
 - Acceptance: Same fixture/result schema across platforms; report includes SHA/build/hardware; content/secrets absent; harness overhead measured.
 - Verification: Harness self-tests, repeatability/variance study, redaction scan, cross-platform smoke.
 - Blocked by: S5-F9-T1
-- Blocks: S5-F6-T7, S5-F9-T3, S5-F9-T4, S5-F9-T5, S5-F9-T6, S5-F9-T7, S5-F9-T8
+- Blocks: S5-F6-T9, S5-F9-T3, S5-F9-T4, S5-F9-T5, S5-F9-T6, S5-F9-T7, S5-F9-T8
 - Context: Vitest, Electron traces, performance APIs, fixture builders.
 
 ### S5-F9-T3 — Meet cold/warm startup and first-use budgets
@@ -74,7 +74,7 @@
 - Out of scope: Advertising unsupported unlimited concurrency.
 - Acceptance: Limits enforce before exhaustion; events remain ordered/durable; cancel responsive; cleanup returns resources.
 - Verification: Deterministic concurrency/output-flood/partial-cancel/restart/soak tests and live supported tier.
-- Blocked by: S5-F6-T7, S5-F7-T7, S5-F9-T1, S5-F9-T2
+- Blocked by: S5-F6-T9, S5-F7-T7, S5-F9-T1, S5-F9-T2
 - Blocks: S5-F9-T8
 - Context: orchestration scheduler, Runtime activity, terminal manager, grid.
 

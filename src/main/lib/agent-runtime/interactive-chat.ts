@@ -7,6 +7,7 @@ import {
 } from "../../../shared/chat-mode"
 import type { AgentHarness, RunPermissionMode } from "../../../shared/harness-types"
 import type { ResolvedAgentRuntime, RuntimeAdapterProbe } from "../../../shared/agent-runtime"
+import type { AgentRuntimePreference } from "../../../shared/agent-runtime"
 import type { AgentActivityEvent } from "../../../shared/agent-activity"
 import {
   resolveAgentHotlineEnabled,
@@ -76,11 +77,59 @@ export function resolveInteractiveRuntime(
     },
     adapterProbes,
   })
-  assertRuntimeContinuationCompatible(database, context, snapshot.resolvedRuntime)
+  assertRuntimeContinuationCompatible(
+    database,
+    context,
+    snapshot.resolvedRuntime,
+    snapshot.runtimePreference,
+  )
   return {
     resolvedRuntime: snapshot.resolvedRuntime,
     direct: snapshot.resolvedRuntime !== "flapstack-native",
   }
+}
+
+export function prepareInteractiveRuntimeLaunch(
+  database: Database.Database,
+  input: Pick<InteractiveRuntimeInput, "chatId" | "subChatId" | "harness" | "model" | "mode"> &
+    Partial<Pick<InteractiveRuntimeInput, "reasoningEffort" | "reasoningEnabled">>,
+  adapterProbes?: Partial<Record<ResolvedAgentRuntime, RuntimeAdapterProbe>>,
+): {
+  resolvedRuntime: ResolvedAgentRuntime
+  runtimePreference: AgentRuntimePreference
+  direct: boolean
+} {
+  return database
+    .transaction(() => {
+      const context = requireContext(database, input.chatId, input.subChatId, input.harness)
+      const permissionMode = resolvePermissionMode(context, input.mode)
+      const model = input.model?.trim() || context.sub_model || context.chat_model || null
+      const snapshot = constructRuntimeSnapshot(database, {
+        chatId: input.chatId,
+        harness: input.harness,
+        model,
+        permission: runtimePermissionSnapshot(permissionMode, context.custom_permissions),
+        controls: {
+          modelEffort: input.reasoningEffort ?? null,
+          modelThinking: input.reasoningEnabled ?? true,
+          reasoningDisplay: input.reasoningEnabled ?? true,
+        },
+        adapterProbes,
+      })
+      assertRuntimeContinuationCompatible(
+        database,
+        context,
+        snapshot.resolvedRuntime,
+        snapshot.runtimePreference,
+      )
+      pinAutomaticRuntimePreference(database, input.chatId, snapshot.runtimePreference)
+      return {
+        resolvedRuntime: snapshot.resolvedRuntime,
+        runtimePreference: snapshot.runtimePreference,
+        direct: snapshot.resolvedRuntime !== "flapstack-native",
+      }
+    })
+    .immediate()
 }
 
 export function materializeInteractiveRuntimeRun(
@@ -103,7 +152,12 @@ export function materializeInteractiveRuntimeRun(
     },
     adapterProbes,
   })
-  assertRuntimeContinuationCompatible(database, context, snapshot.resolvedRuntime)
+  assertRuntimeContinuationCompatible(
+    database,
+    context,
+    snapshot.resolvedRuntime,
+    snapshot.runtimePreference,
+  )
   if (snapshot.resolvedRuntime === "flapstack-native") {
     throw new Error("Interactive Runtime bridge received a Flapstack Native launch.")
   }
@@ -132,6 +186,8 @@ export function materializeInteractiveRuntimeRun(
         )
         .get(input.subChatId) as { id: string } | undefined
       if (active) throw new Error("This Chat already has an active Runtime run.")
+
+      pinAutomaticRuntimePreference(database, input.chatId, snapshot.runtimePreference)
 
       const messages = parseMessages(context.messages)
       if (!messages.some((message) => message.id === promptMessageId)) {
@@ -218,6 +274,20 @@ export function materializeInteractiveRuntimeRun(
     projectPath: context.project_path,
     runtimeLaunch: launch,
   }
+}
+
+function pinAutomaticRuntimePreference(
+  database: Database.Database,
+  chatId: string,
+  preference: AgentRuntimePreference,
+): void {
+  database
+    .prepare(
+      `UPDATE chats
+       SET runtime_preference = ?, updated_at = ?
+       WHERE id = ? AND COALESCE(runtime_preference, 'auto') = 'auto'`,
+    )
+    .run(preference, nowEpochSeconds(), chatId)
 }
 
 export function loadInteractiveRuntimeAssistantText(
@@ -359,19 +429,22 @@ function assertRuntimeContinuationCompatible(
   database: Database.Database,
   context: ChatRow,
   resolvedRuntime: ResolvedAgentRuntime,
+  runtimePreference: AgentRuntimePreference,
 ): void {
   if (!context.sub_session_id || resolvedRuntime === "flapstack-native") return
   const latest = database
     .prepare(
-      `SELECT resolved_runtime FROM agent_runs
+      `SELECT resolved_runtime, runtime_preference FROM agent_runs
        WHERE sub_chat_id = ?
        ORDER BY started_at DESC, rowid DESC LIMIT 1`,
     )
-    .get(context.sub_chat_id) as { resolved_runtime: string | null } | undefined
+    .get(context.sub_chat_id) as
+    { resolved_runtime: string | null; runtime_preference: string | null } | undefined
   const previousRuntime = latest?.resolved_runtime ?? "flapstack-native"
-  if (previousRuntime === resolvedRuntime) return
+  const previousPreference = latest?.runtime_preference ?? previousRuntime
+  if (previousRuntime === resolvedRuntime && previousPreference === runtimePreference) return
   throw new Error(
-    `This Chat already has a ${previousRuntime} provider session. Start a new Chat to use ${resolvedRuntime}; provider sessions cannot switch Runtime in place.`,
+    `This Chat already has a ${previousPreference} provider session. Start a new Chat to use ${runtimePreference}; provider sessions cannot switch Runtime behavior in place.`,
   )
 }
 

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "crypto"
-import { shell } from "electron"
+import { openExternalSafe } from "./open-external"
 import { createServer, type Server } from "http"
 import { URL } from "url"
 
@@ -759,7 +759,7 @@ export class CraftOAuth {
 
     // Open browser for authorization
     this.callbacks.onStatus("Opening browser for authorization...")
-    await shell.openExternal(authUrl.toString())
+    await openExternalSafe(authUrl.toString())
 
     // Wait for the authorization code
     this.callbacks.onStatus("Waiting for you to authorize in browser...")

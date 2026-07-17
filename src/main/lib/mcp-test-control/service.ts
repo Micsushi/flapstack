@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { createHash, randomUUID } from "node:crypto"
 import { and, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
+import { sleep } from "../../../shared/sleep"
 import {
   existsSync,
   mkdtempSync,
@@ -24,6 +25,7 @@ import {
   getDatabasePath,
   projects,
   subChats,
+  tasks,
 } from "../db"
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
@@ -1739,6 +1741,57 @@ export function archiveTestChat(input: { chatId: string }) {
   }
 }
 
+export function archiveTestTask(input: { taskId: string }) {
+  const db = getDatabase()
+  const task = db.select().from(tasks).where(eq(tasks.id, input.taskId)).get()
+  if (!task) throw new Error("Task not found")
+
+  const taskChats = db
+    .select({ id: chats.id, archivedAt: chats.archivedAt })
+    .from(chats)
+    .where(eq(chats.taskId, input.taskId))
+    .all()
+  const activeChatIds = taskChats.filter((chat) => !chat.archivedAt).map((chat) => chat.id)
+  if (task.archivedAt && activeChatIds.length === 0) {
+    return {
+      archived: true,
+      alreadyArchived: true,
+      taskId: task.id,
+      archivedChatIds: [],
+      archivedAt: task.archivedAt.toISOString(),
+    }
+  }
+  if (activeChatIds.length > 0) {
+    const activeRun = db
+      .select({ id: agentRuns.id, chatId: agentRuns.chatId })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.status, "running"), isNull(agentRuns.completedAt)))
+      .all()
+      .find((run) => activeChatIds.includes(run.chatId))
+    if (activeRun) throw new Error(`Task chat has an active run: ${activeRun.id}`)
+  }
+
+  const archivedAt = new Date()
+  db.transaction((tx) => {
+    tx.update(tasks).set({ archivedAt, updatedAt: archivedAt }).where(eq(tasks.id, task.id)).run()
+    tx.update(chats)
+      .set({ archivedAt, updatedAt: archivedAt })
+      .where(and(eq(chats.taskId, task.id), isNull(chats.archivedAt)))
+      .run()
+  })
+
+  for (const chatId of activeChatIds) {
+    notifyTestControlView({ action: "chat-archived", chatId })
+  }
+  return {
+    archived: true,
+    alreadyArchived: Boolean(task.archivedAt) && activeChatIds.length === 0,
+    taskId: task.id,
+    archivedChatIds: activeChatIds,
+    archivedAt: archivedAt.toISOString(),
+  }
+}
+
 export async function launchTestRun(input: {
   subChatId: string
   prompt: string
@@ -1904,7 +1957,7 @@ export async function waitForRunState(input: {
   while (Date.now() < timeoutAt) {
     const state = getRunState({ runId: input.runId })
     if (state.run && state.run.status !== "running") return { completed: true, ...state }
-    await new Promise((resolve) => setTimeout(resolve, pollMs))
+    await sleep(pollMs)
   }
   return {
     completed: false,
@@ -2019,7 +2072,7 @@ export async function waitForRun(input: {
       return { completed: true, ...verified }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollMs))
+    await sleep(pollMs)
   }
 
   return {

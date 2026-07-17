@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useRef, useMemo, useEffect, useCallback, memo, forwardRef } from "react"
+import { useState, useRef, useMemo, useEffect, useCallback, memo } from "react"
 import { createPortal, flushSync } from "react-dom"
 import { motion, AnimatePresence } from "motion/react"
 import { Button as ButtonCustom } from "../../components/ui/button"
@@ -38,7 +38,6 @@ import {
   useRenameRemoteChat,
 } from "../../lib/hooks/use-remote-chats"
 import { usePrefetchLocalChat } from "../../lib/hooks/use-prefetch-local-chat"
-import { ArchivePopover } from "../agents/ui/archive-popover"
 import { isReservedArchivedAccentColor } from "../agents/lib/open-chat-tabs"
 import {
   ChevronDown,
@@ -114,6 +113,7 @@ import {
   ArchiveIcon,
   UnarchiveIcon,
   TrashIcon,
+  DiffIcon,
   QuestionCircleIcon,
   QuestionIcon,
   KeyboardIcon,
@@ -123,13 +123,13 @@ import { Input } from "../../components/ui/input"
 import { Button } from "../../components/ui/button"
 import {
   selectedAgentChatIdAtom,
+  openAgentChatIdsAtom,
   selectedChatIsRemoteAtom,
   previousAgentChatIdAtom,
   selectedDraftIdAtom,
   showNewChatFormAtom,
   loadingSubChatsAtom,
   agentsUnseenChangesAtom,
-  archivePopoverOpenAtom,
   agentsDebugModeAtom,
   selectedChatScopeAtom,
   selectedProjectAtom,
@@ -153,6 +153,7 @@ import { TrafficLightSpacer, TrafficLights } from "../agents/components/traffic-
 import { useHotkeys } from "react-hotkeys-hook"
 import { Checkbox } from "../../components/ui/checkbox"
 import { useHaptic } from "./hooks/use-haptic"
+import { resolveSectionHeaderScopeSelection } from "./section-header-scope"
 import { TypewriterText } from "../../components/ui/typewriter-text"
 import { exportChat, copyChat, type ExportFormat } from "../agents/lib/export-chat"
 import { ScopedSearchPanel } from "../search/scoped-search-panel"
@@ -160,6 +161,7 @@ import { StartAgentDialog } from "../agent-profiles/start-agent-dialog"
 import { getModelChipMeta } from "../agents/constants"
 import { ProviderChipIcon } from "../agents/components/provider-chip-icon"
 import { focusScopedSearchResultAtom } from "../agents/search/chat-search-atoms"
+import { useBetaFeatures } from "../settings/use-beta-features"
 import {
   buildChatMoveDestinations,
   chatMoveTargetKey,
@@ -1751,6 +1753,8 @@ function chatListSectionPropsAreEqual(
   if (prevProps.projectColor !== nextProps.projectColor) return false
   if (prevProps.projectColorsById !== nextProps.projectColorsById) return false
   if (prevProps.showWhenEmpty !== nextProps.showWhenEmpty) return false
+  if (prevProps.showEmptyState !== nextProps.showEmptyState) return false
+  if (prevProps.hasOpenChats !== nextProps.hasOpenChats) return false
   if (prevProps.isMobileFullscreen !== nextProps.isMobileFullscreen) return false
   if (prevProps.isDesktop !== nextProps.isDesktop) return false
   if (prevProps.showIcon !== nextProps.showIcon) return false
@@ -1791,6 +1795,8 @@ interface ChatListSectionProps {
   projectColor?: string | null
   projectColorsById?: Record<string, string>
   showWhenEmpty?: boolean
+  showEmptyState?: boolean
+  hasOpenChats?: boolean
   isCollapsed?: boolean
   isDraggingSection?: boolean
   isDragOverSection?: boolean
@@ -1877,6 +1883,7 @@ interface ChatListSectionProps {
   onCreateProjectChat?: (projectId: string) => void
   onCreateProjectTask?: (projectId: string) => void
   onCreateTaskChat?: (taskId: string) => void
+  planningEnabled?: boolean
   onChangeProjectColor?: (projectId: string, color: string) => void
   onToggleSection?: (sectionId: string) => void
   onSelectScope?: (scope: SelectedChatScope) => void
@@ -1907,6 +1914,8 @@ const ChatListSection = React.memo(function ChatListSection({
   projectColor,
   projectColorsById,
   showWhenEmpty = false,
+  showEmptyState = false,
+  hasOpenChats = false,
   isCollapsed = false,
   isDraggingSection = false,
   isDragOverSection = false,
@@ -1960,6 +1969,7 @@ const ChatListSection = React.memo(function ChatListSection({
   onCreateProjectChat,
   onCreateProjectTask,
   onCreateTaskChat,
+  planningEnabled = false,
   onChangeProjectColor,
   onToggleSection,
   onSelectScope,
@@ -2126,12 +2136,27 @@ const ChatListSection = React.memo(function ChatListSection({
     if (canCollapse && sectionId) {
       const willExpand = isCollapsed
       onToggleSection?.(sectionId)
-      onSelectScope?.(willExpand ? getHeaderScope() : null)
+      const scopeSelection = resolveSectionHeaderScopeSelection({
+        isProjectSection,
+        hasOpenChats,
+        willExpand,
+        scope: getHeaderScope(),
+      })
+      if (scopeSelection !== undefined) onSelectScope?.(scopeSelection)
       return
     }
 
     onSelectScope?.(getHeaderScope())
-  }, [canCollapse, getHeaderScope, isCollapsed, onSelectScope, onToggleSection, sectionId])
+  }, [
+    canCollapse,
+    getHeaderScope,
+    hasOpenChats,
+    isCollapsed,
+    isProjectSection,
+    onSelectScope,
+    onToggleSection,
+    sectionId,
+  ])
   const handleSeparatorDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = "move"
@@ -2174,13 +2199,15 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </DropdownMenuItem>
-          <DropdownMenuItem
-            className="gap-2"
-            onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
-          >
-            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New task
-          </DropdownMenuItem>
+          {planningEnabled && (
+            <DropdownMenuItem
+              className="gap-2"
+              onSelect={() => onCreateProjectTask?.(lifecycleTarget.id)}
+            >
+              <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+              New task
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <div
             className="px-2 py-1.5"
@@ -2281,13 +2308,15 @@ const ChatListSection = React.memo(function ChatListSection({
             <MessageSquarePlus className="h-3.5 w-3.5 text-muted-foreground" />
             New chat
           </ContextMenuItem>
-          <ContextMenuItem
-            className="gap-2"
-            onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
-          >
-            <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
-            New task
-          </ContextMenuItem>
+          {planningEnabled && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => onCreateProjectTask?.(lifecycleTarget.id)}
+            >
+              <ListPlus className="h-3.5 w-3.5 text-muted-foreground" />
+              New task
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           <div
             className="px-2 py-1.5"
@@ -2493,7 +2522,10 @@ const ChatListSection = React.memo(function ChatListSection({
                     className={cn(
                       "whitespace-nowrap truncate flex-1",
                       isTopLevelScopedSection || isTaskSection || isReferenceSection
-                        ? "text-[11px] font-semibold uppercase tracking-wide text-white"
+                        ? cn(
+                            "text-[11px] font-semibold tracking-wide text-white",
+                            !isProjectSection && "uppercase",
+                          )
                         : "text-xs font-medium text-muted-foreground",
                     )}
                   >
@@ -2601,6 +2633,14 @@ const ChatListSection = React.memo(function ChatListSection({
               <ContextMenuContent className="w-52">{contextLifecycleMenu}</ContextMenuContent>
             )}
           </ContextMenu>
+        )}
+        {!isCollapsed && showEmptyState && (
+          <div
+            data-sidebar-empty-state="project"
+            className="mb-1 ml-9 flex h-7 items-center text-xs text-muted-foreground/60"
+          >
+            No chats
+          </div>
         )}
         {!isCollapsed && chats.length > 0 && (
           <div
@@ -2804,65 +2844,6 @@ interface AgentsSidebarProps {
   isMobileFullscreen?: boolean
   onChatSelect?: () => void
 }
-
-// Memoized Archive Button to prevent re-creation on every sidebar render
-const ArchiveButton = memo(
-  forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(
-    function ArchiveButton(props, ref) {
-      return (
-        <button
-          ref={ref}
-          type="button"
-          className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
-          {...props}
-        >
-          <ArchiveIcon className="h-4 w-4" />
-        </button>
-      )
-    },
-  ),
-)
-
-// Isolated Archive Section - subscribes to archivePopoverOpenAtom internally
-// to prevent sidebar re-renders when popover opens/closes
-interface ArchiveSectionProps {
-  archivedChatsCount: number
-}
-
-const ArchiveSection = memo(function ArchiveSection({ archivedChatsCount }: ArchiveSectionProps) {
-  const archivePopoverOpen = useAtomValue(archivePopoverOpenAtom)
-  const [blockArchiveTooltip, setBlockArchiveTooltip] = useState(false)
-  const prevArchivePopoverOpen = useRef(false)
-  const archiveButtonRef = useRef<HTMLButtonElement>(null)
-
-  // Handle tooltip blocking when popover closes
-  useEffect(() => {
-    if (prevArchivePopoverOpen.current && !archivePopoverOpen) {
-      archiveButtonRef.current?.blur()
-      setBlockArchiveTooltip(true)
-      const timer = setTimeout(() => setBlockArchiveTooltip(false), 300)
-      prevArchivePopoverOpen.current = archivePopoverOpen
-      return () => clearTimeout(timer)
-    }
-    prevArchivePopoverOpen.current = archivePopoverOpen
-  }, [archivePopoverOpen])
-
-  if (archivedChatsCount === 0) return null
-
-  return (
-    <Tooltip
-      delayDuration={500}
-      open={archivePopoverOpen || blockArchiveTooltip ? false : undefined}
-    >
-      <TooltipTrigger asChild>
-        <div>
-          <ArchivePopover trigger={<ArchiveButton ref={archiveButtonRef} />} />
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>Archive</TooltipContent>
-    </Tooltip>
-  )
-})
 
 // Isolated Sidebar Header - contains branding, traffic lights, and close button
 interface SidebarHeaderProps {
@@ -3070,6 +3051,7 @@ export function AgentsSidebar({
   onChatSelect,
 }: AgentsSidebarProps) {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom)
+  const openChatIds = useAtomValue(openAgentChatIdsAtom)
   const [selectedChatIsRemote, setSelectedChatIsRemote] = useAtom(selectedChatIsRemoteAtom)
   const focusScopedSearchResult = useSetAtom(focusScopedSearchResultAtom)
   const previousChatId = useAtomValue(previousAgentChatIdAtom)
@@ -3080,12 +3062,16 @@ export function AgentsSidebar({
   const setDesktopView = useSetAtom(desktopViewAtom)
   const [loadingSubChats] = useAtom(loadingSubChatsAtom)
   const pendingQuestions = useAtomValue(pendingUserQuestionsAtom)
+  const betaFeatures = useBetaFeatures()
   // Use ref instead of state to avoid re-renders on hover
   const isSidebarHoveredRef = useRef(false)
   const closeButtonRef = useRef<HTMLDivElement>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [isArchiveOpen, setIsArchiveOpen] = useState(false)
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState("")
+  const [isArchiveSelectMode, setIsArchiveSelectMode] = useState(false)
+  const [selectedArchivedChatIds, setSelectedArchivedChatIds] = useState<Set<string>>(new Set())
   const [focusedChatIndex, setFocusedChatIndex] = useState<number>(-1) // -1 means no focus
   const hoveredChatIndexRef = useRef<number>(-1) // Track hovered chat for X hotkey - ref to avoid re-renders
 
@@ -3253,7 +3239,7 @@ export function AgentsSidebar({
   const { data: localChats } = trpc.chats.list.useQuery({})
   const { data: automationInbox } = trpc.automations.inbox.useQuery(
     { unreadOnly: true, limit: 1 },
-    { refetchInterval: 5_000 },
+    { refetchInterval: 5_000, enabled: betaFeatures.automations },
   )
 
   // Fetch user's teams (same as web) - always enabled to allow merged list
@@ -3442,9 +3428,6 @@ export function AgentsSidebar({
 
   // Fetch all archived chats (to get count)
   const { data: archivedChats } = trpc.chats.listArchived.useQuery({})
-  const archivedChatsCount =
-    (archivedChats?.length ?? 0) + (archivedProjects?.length ?? 0) + (archivedTasks?.length ?? 0)
-
   // Get utils outside of callbacks - hooks must be called at top level
   const utils = trpc.useUtils()
 
@@ -3479,6 +3462,20 @@ export function AgentsSidebar({
       utils.chats.list.invalidate()
     },
     onError: () => toast.error("Failed to restore task"),
+  })
+
+  const deleteArchivedChatsMutation = trpc.chats.deleteArchived.useMutation({
+    onSuccess: ({ deletedCount }) => {
+      utils.chats.list.invalidate()
+      utils.chats.listArchived.invalidate()
+      utils.chats.getFileStats.invalidate()
+      setSelectedArchivedChatIds(new Set())
+      setIsArchiveSelectMode(false)
+      toast.success(
+        deletedCount === 1 ? "Deleted 1 archived chat" : `Deleted ${deletedCount} archived chats`,
+      )
+    },
+    onError: () => toast.error("Failed to delete archived chats"),
   })
 
   const openProjectMutation = trpc.projects.openFolder.useMutation({
@@ -4449,7 +4446,7 @@ export function AgentsSidebar({
           const project = projectsMap.get(projectId)
           return {
             projectId,
-            title: project?.gitRepo || project?.name || "Project",
+            title: project?.name || project?.gitRepo || "Project",
             isPinned: Boolean(project?.pinnedAt),
             isStarred: starredProjectIds.has(projectId),
             chats: directChats,
@@ -4486,6 +4483,7 @@ export function AgentsSidebar({
         sectionDragId?: string
         hideHeader?: boolean
         projectColor?: string | null
+        showEmptyState?: boolean
       }> = []
       if (remote.length > 0)
         sections.push({
@@ -4514,6 +4512,10 @@ export function AgentsSidebar({
             isStarred: projectGroup.isStarred,
           },
           projectColor: projectColorsById[projectGroup.projectId] ?? DEFAULT_PROJECT_COLOR,
+          showEmptyState:
+            !searchQuery.trim() &&
+            projectGroup.chats.length === 0 &&
+            projectGroup.taskGroups.length === 0,
         })
         const childItems = [
           ...projectGroup.chats.map((chat) => ({
@@ -5353,6 +5355,65 @@ export function AgentsSidebar({
       return bTime - aTime
     })
   }, [archivedChats, archivedProjects, archivedTasks, projects, tasks])
+
+  const visibleArchivedLifecycleItems = useMemo(() => {
+    const query = archiveSearchQuery.trim().toLocaleLowerCase()
+    if (!query) return archivedLifecycleItems
+    return archivedLifecycleItems.filter(
+      (item) =>
+        item.title.toLocaleLowerCase().includes(query) ||
+        item.subtitle.toLocaleLowerCase().includes(query),
+    )
+  }, [archiveSearchQuery, archivedLifecycleItems])
+
+  const visibleArchivedChatIds = useMemo(
+    () =>
+      visibleArchivedLifecycleItems.filter((item) => item.type === "chat").map((item) => item.id),
+    [visibleArchivedLifecycleItems],
+  )
+  const allVisibleArchivedChatsSelected =
+    visibleArchivedChatIds.length > 0 &&
+    visibleArchivedChatIds.every((id) => selectedArchivedChatIds.has(id))
+
+  useEffect(() => {
+    const currentIds = new Set(archivedChats?.map((chat) => chat.id) ?? [])
+    setSelectedArchivedChatIds((selectedIds) => {
+      const nextIds = new Set([...selectedIds].filter((id) => currentIds.has(id)))
+      return nextIds.size === selectedIds.size ? selectedIds : nextIds
+    })
+  }, [archivedChats])
+
+  const handleToggleArchivedChatSelection = useCallback((chatId: string) => {
+    setSelectedArchivedChatIds((selectedIds) => {
+      const nextIds = new Set(selectedIds)
+      if (nextIds.has(chatId)) nextIds.delete(chatId)
+      else nextIds.add(chatId)
+      return nextIds
+    })
+  }, [])
+
+  const handleToggleSelectAllArchivedChats = useCallback(() => {
+    if (allVisibleArchivedChatsSelected) {
+      setSelectedArchivedChatIds(new Set())
+      return
+    }
+    setSelectedArchivedChatIds((selectedIds) => {
+      const nextIds = new Set(selectedIds)
+      visibleArchivedChatIds.forEach((id) => nextIds.add(id))
+      return nextIds
+    })
+  }, [allVisibleArchivedChatsSelected, visibleArchivedChatIds])
+
+  const handleDeleteArchivedChats = useCallback(() => {
+    const selectedIds = [...selectedArchivedChatIds]
+    if (selectedIds.length === 0) return
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedIds.length} selected archived ${
+        selectedIds.length === 1 ? "chat" : "chats"
+      } and any related worktrees?`,
+    )
+    if (confirmed) deleteArchivedChatsMutation.mutate({ ids: selectedIds })
+  }, [deleteArchivedChatsMutation, selectedArchivedChatIds])
 
   const handleRestoreLifecycleItem = useCallback(
     (item: (typeof archivedLifecycleItems)[number]) => {
@@ -6540,6 +6601,7 @@ export function AgentsSidebar({
     canShowPinOption,
     areAllSelectedPinned,
     showIcon: showWorkspaceIcon,
+    hasOpenChats: openChatIds.length > 0,
     moveDestinations,
     movePending: moveChatMutation.isPending,
     onChatClick: handleChatClick,
@@ -6559,6 +6621,7 @@ export function AgentsSidebar({
     onBulkUnpin: handleBulkUnpin,
     onBulkArchive: handleBulkArchive,
     onCreateTaskChat: openNewTaskChat,
+    planningEnabled: betaFeatures.planning,
     onToggleSection: handleToggleSection,
     onSelectScope: handleSelectScope,
     onDragStartItem: handleDragStartItem,
@@ -6599,6 +6662,7 @@ export function AgentsSidebar({
           parentProjectId={section.parentProjectId}
           kind={section.kind}
           projectColor={section.projectColor}
+          showEmptyState={section.showEmptyState}
           isCollapsed={collapsedSectionIds.has(section.id)}
           isDraggingSection={
             Boolean(section.sectionDragId || section.lifecycleTarget) &&
@@ -6681,13 +6745,16 @@ export function AgentsSidebar({
   }
 
   const navigationVisibilityLabels = [
-    "Automations",
-    "Inbox",
-    "Orchestration fleet",
-    ...(selectedProject ? ["Plan", "Project knowledge", "Saved workspaces"] : []),
-    "Tasks",
-    "Usage",
+    ...(betaFeatures.automations ? ["Automations", "Inbox"] : []),
+    ...(betaFeatures.orchestration ? ["Orchestration fleet"] : []),
+    ...(selectedProject && betaFeatures.planning ? ["Plan"] : []),
+    ...(selectedProject && betaFeatures.projectMemory ? ["Project knowledge"] : []),
+    ...(selectedProject && betaFeatures.savedWorkspaces ? ["Saved workspaces"] : []),
+    ...(betaFeatures.planning ? ["Tasks"] : []),
   ].sort((a, b) => a.localeCompare(b))
+  const hasVisibleNavigationItems = navigationVisibilityLabels.some(
+    (label) => !hiddenNavigationItems.has(label),
+  )
 
   const handleToggleNavigationVisibility = (label: string) => {
     setHiddenNavigationItems((current) => {
@@ -6800,104 +6867,122 @@ export function AgentsSidebar({
       {/* Navigation is sorted at render time so new destinations cannot drift out of order. */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="min-h-7 flex-shrink-0 px-2 pb-1">
+          <div
+            className={cn("flex-shrink-0 px-2", hasVisibleNavigationItems ? "min-h-7 pb-1" : "h-0")}
+          >
             {[
-              {
-                label: "Automations",
-                Icon: Workflow,
-                isActive: desktopView === "automations" || desktopView === "automations-detail",
-                onClick: () => {
-                  setSelectedChatId(null)
-                  setShowNewChatForm(false)
-                  setDesktopView("automations")
-                  setSearchQuery("")
-                },
-              },
-              {
-                label: "Inbox",
-                Icon: Inbox,
-                isActive: desktopView === "inbox",
-                ariaLabel: `Automation inbox, ${automationInbox?.unreadCount ?? 0} unread`,
-                suffix:
-                  (automationInbox?.unreadCount ?? 0) > 0 ? (
-                    <span className="ml-auto rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
-                      {automationInbox!.unreadCount}
-                    </span>
-                  ) : null,
-                onClick: () => {
-                  setSelectedChatId(null)
-                  setShowNewChatForm(false)
-                  setDesktopView("inbox")
-                  setSearchQuery("")
-                },
-              },
-              {
-                label: "Orchestration fleet",
-                Icon: Network,
-                isActive: desktopView === "orchestration-fleet",
-                onClick: () => {
-                  setSelectedChatId(null)
-                  setShowNewChatForm(false)
-                  setDesktopView("orchestration-fleet")
-                  setSearchQuery("")
-                },
-              },
-              ...(selectedProject
+              ...(betaFeatures.automations
                 ? [
                     {
-                      label: "Plan",
-                      Icon: BookOpenText,
-                      isActive: desktopView === "plan",
-                      onClick: () => {
-                        setSelectedDraftId(null)
-                        setShowNewChatForm(false)
-                        setDesktopView("plan")
-                        setSearchQuery("")
-                      },
-                    },
-                    {
-                      label: "Project knowledge",
-                      Icon: BookOpen,
-                      isActive: desktopView === "project-vault",
+                      label: "Automations",
+                      Icon: Workflow,
+                      isActive:
+                        desktopView === "automations" || desktopView === "automations-detail",
                       onClick: () => {
                         setSelectedChatId(null)
-                        setDesktopView("project-vault")
+                        setShowNewChatForm(false)
+                        setDesktopView("automations")
                         setSearchQuery("")
                       },
                     },
                     {
-                      label: "Saved workspaces",
-                      Icon: LayoutGrid,
-                      isActive: desktopView === "saved-workspaces",
+                      label: "Inbox",
+                      Icon: Inbox,
+                      isActive: desktopView === "inbox",
+                      ariaLabel: `Automation inbox, ${automationInbox?.unreadCount ?? 0} unread`,
+                      suffix:
+                        (automationInbox?.unreadCount ?? 0) > 0 ? (
+                          <span className="ml-auto rounded-full bg-blue-600 px-1.5 text-[10px] text-white">
+                            {automationInbox!.unreadCount}
+                          </span>
+                        ) : null,
                       onClick: () => {
+                        setSelectedChatId(null)
                         setShowNewChatForm(false)
-                        setDesktopView("saved-workspaces")
+                        setDesktopView("inbox")
                         setSearchQuery("")
                       },
                     },
                   ]
                 : []),
-              {
-                label: "Tasks",
-                Icon: ClipboardList,
-                isActive: desktopView === "tasks",
-                onClick: () => {
-                  setSelectedChatId(null)
-                  setSelectedDraftId(null)
-                  setShowNewChatForm(false)
-                  setDesktopView("tasks")
-                  setSearchQuery("")
-                },
-              },
-              {
-                label: "Usage",
-                Icon: Activity,
-                isActive: desktopView === "usage",
-                onClick: () => {
-                  setSettingsActiveTab("usage")
-                  setSettingsDialogOpen(true)
-                },
-              },
+              ...(betaFeatures.orchestration
+                ? [
+                    {
+                      label: "Orchestration fleet",
+                      Icon: Network,
+                      isActive: desktopView === "orchestration-fleet",
+                      onClick: () => {
+                        setSelectedChatId(null)
+                        setShowNewChatForm(false)
+                        setDesktopView("orchestration-fleet")
+                        setSearchQuery("")
+                      },
+                    },
+                  ]
+                : []),
+              ...(selectedProject
+                ? [
+                    ...(betaFeatures.planning
+                      ? [
+                          {
+                            label: "Plan",
+                            Icon: BookOpenText,
+                            isActive: desktopView === "plan",
+                            onClick: () => {
+                              setSelectedDraftId(null)
+                              setShowNewChatForm(false)
+                              setDesktopView("plan")
+                              setSearchQuery("")
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(betaFeatures.projectMemory
+                      ? [
+                          {
+                            label: "Project knowledge",
+                            Icon: BookOpen,
+                            isActive: desktopView === "project-vault",
+                            onClick: () => {
+                              setSelectedChatId(null)
+                              setDesktopView("project-vault")
+                              setSearchQuery("")
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(betaFeatures.savedWorkspaces
+                      ? [
+                          {
+                            label: "Saved workspaces",
+                            Icon: LayoutGrid,
+                            isActive: desktopView === "saved-workspaces",
+                            onClick: () => {
+                              setShowNewChatForm(false)
+                              setDesktopView("saved-workspaces")
+                              setSearchQuery("")
+                            },
+                          },
+                        ]
+                      : []),
+                  ]
+                : []),
+              ...(betaFeatures.planning
+                ? [
+                    {
+                      label: "Tasks",
+                      Icon: ClipboardList,
+                      isActive: desktopView === "tasks",
+                      onClick: () => {
+                        setSelectedChatId(null)
+                        setSelectedDraftId(null)
+                        setShowNewChatForm(false)
+                        setDesktopView("tasks")
+                        setSearchQuery("")
+                      },
+                    },
+                  ]
+                : []),
             ]
               .filter(({ label }) => !hiddenNavigationItems.has(label))
               .sort((a, b) => a.label.localeCompare(b.label))
@@ -7037,12 +7122,7 @@ export function AgentsSidebar({
 
           {/* Drafts Section - always show regardless of chat source mode */}
           {drafts.length > 0 && !searchQuery && !collapsedSectionIds.has("quick-access") && (
-            <div
-              className={cn(
-                "mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150",
-                isMultiSelectMode ? "px-0" : "-mx-1",
-              )}
-            >
+            <div className="mb-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
               <div
                 onClick={() => handleToggleSection("drafts")}
                 onKeyDown={(event) => {
@@ -7213,14 +7293,20 @@ export function AgentsSidebar({
             <div className="mb-4">
               <button
                 type="button"
-                onClick={() => setIsArchiveOpen((open) => !open)}
+                onClick={() => {
+                  if (isArchiveOpen) {
+                    setIsArchiveSelectMode(false)
+                    setSelectedArchivedChatIds(new Set())
+                  }
+                  setIsArchiveOpen((open) => !open)
+                }}
                 aria-expanded={isArchiveOpen}
                 className={cn(
                   "group/archive relative mt-[10px] flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
                   isArchiveOpen ? "mb-2" : "mb-1",
                 )}
               >
-                <ArchiveIcon className="mr-2 h-3.5 w-3.5" />
+                <DiffIcon className="mr-2 h-3.5 w-3.5" />
                 <span className="whitespace-nowrap text-xs font-medium">Archive</span>
                 <ChevronDown
                   className={cn(
@@ -7236,47 +7322,137 @@ export function AgentsSidebar({
               </button>
               {isArchiveOpen && (
                 <div className="list-none p-0 m-0 animate-in fade-in-0 slide-in-from-top-1 duration-150">
-                  {archivedLifecycleItems.map((item) => (
-                    <div
-                      key={`${item.type}-${item.id}`}
-                      className={cn(
-                        "w-full text-left py-1.5 group relative transition-colors duration-75",
-                        isMultiSelectMode ? "px-3" : "pl-2 pr-2 rounded-md",
-                        "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
-                      )}
+                  <div className="mb-1 flex items-center gap-1">
+                    <div className="relative min-w-0 flex-1">
+                      <SearchIcon className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={archiveSearchQuery}
+                        onChange={(event) => setArchiveSearchQuery(event.target.value)}
+                        placeholder="Search archive..."
+                        aria-label="Search archive"
+                        className="h-7 rounded-md bg-muted pl-7 text-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isArchiveSelectMode) setSelectedArchivedChatIds(new Set())
+                        setIsArchiveSelectMode((selecting) => !selecting)
+                      }}
+                      disabled={(archivedChats?.length ?? 0) === 0}
+                      className="flex h-7 flex-shrink-0 items-center justify-center rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                     >
-                      <div className="flex items-start gap-2.5">
-                        <div className="pt-0.5">
-                          <ArchiveIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                        </div>
-                        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1">
-                            <span className="truncate block text-sm leading-tight flex-1">
-                              {item.title}
-                            </span>
-                            <button
-                              onClick={() => handleRestoreLifecycleItem(item)}
-                              tabIndex={-1}
-                              className="flex-shrink-0 text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
-                              aria-label={`Restore archived ${item.type}`}
-                            >
-                              <UnarchiveIcon className="h-3.5 w-3.5" />
-                            </button>
+                      {isArchiveSelectMode ? "Done" : "Select"}
+                    </button>
+                  </div>
+                  {isArchiveSelectMode && (
+                    <div className="mb-1 flex h-7 items-center gap-2 rounded-md bg-foreground/5 px-2">
+                      <Checkbox
+                        checked={allVisibleArchivedChatsSelected}
+                        onCheckedChange={handleToggleSelectAllArchivedChats}
+                        aria-label={
+                          allVisibleArchivedChatsSelected
+                            ? "Unselect all archived chats"
+                            : "Select all visible archived chats"
+                        }
+                        disabled={visibleArchivedChatIds.length === 0}
+                        className="h-3.5 w-3.5"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleToggleSelectAllArchivedChats}
+                        disabled={visibleArchivedChatIds.length === 0}
+                        className="min-w-0 whitespace-nowrap text-xs text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        {allVisibleArchivedChatsSelected ? "Unselect all" : "Select all"}
+                      </button>
+                      <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground/60">
+                        {selectedArchivedChatIds.size} selected
+                      </span>
+                      <Tooltip delayDuration={500}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={handleDeleteArchivedChats}
+                            disabled={
+                              selectedArchivedChatIds.size === 0 ||
+                              deleteArchivedChatsMutation.isPending
+                            }
+                            className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-40"
+                            aria-label={`Delete ${selectedArchivedChatIds.size} selected archived chats`}
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>Delete selected chats</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )}
+                  {visibleArchivedLifecycleItems.length === 0 ? (
+                    <div className="px-2 py-4 text-center text-xs text-muted-foreground/60">
+                      No archived items found
+                    </div>
+                  ) : (
+                    visibleArchivedLifecycleItems.map((item) => (
+                      <div
+                        key={`${item.type}-${item.id}`}
+                        onClick={() => {
+                          if (isArchiveSelectMode && item.type === "chat") {
+                            handleToggleArchivedChatSelection(item.id)
+                          }
+                        }}
+                        className={cn(
+                          "w-full text-left py-1.5 group relative transition-colors duration-75",
+                          isMultiSelectMode ? "px-3" : "pl-2 pr-2 rounded-md",
+                          "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+                          isArchiveSelectMode && item.type === "chat" && "cursor-pointer",
+                        )}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className="pt-0.5">
+                            {isArchiveSelectMode && item.type === "chat" ? (
+                              <Checkbox
+                                checked={selectedArchivedChatIds.has(item.id)}
+                                onCheckedChange={() => handleToggleArchivedChatSelection(item.id)}
+                                onClick={(event) => event.stopPropagation()}
+                                aria-label={`Select archived chat ${item.title}`}
+                                className="h-4 w-4"
+                              />
+                            ) : (
+                              <ArchiveIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                            )}
                           </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[11px] text-muted-foreground/60 truncate">
-                              {item.subtitle}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">
-                              {formatTime(
-                                item.archivedAt?.toISOString() ?? new Date().toISOString(),
+                          <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="truncate block text-sm leading-tight flex-1">
+                                {item.title}
+                              </span>
+                              {(!isArchiveSelectMode || item.type !== "chat") && (
+                                <button
+                                  onClick={() => handleRestoreLifecycleItem(item)}
+                                  tabIndex={-1}
+                                  className="flex-shrink-0 text-muted-foreground hover:text-foreground active:text-foreground transition-[opacity,transform,color] duration-150 ease-out opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto active:scale-[0.97]"
+                                  aria-label={`Restore archived ${item.type}`}
+                                >
+                                  <UnarchiveIcon className="h-3.5 w-3.5" />
+                                </button>
                               )}
-                            </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] text-muted-foreground/60 truncate">
+                                {item.subtitle}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">
+                                {formatTime(
+                                  item.archivedAt?.toISOString() ?? new Date().toISOString(),
+                                )}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               )}
             </div>
@@ -7374,11 +7550,26 @@ export function AgentsSidebar({
                 </TooltipContent>
               </Tooltip>
 
+              {/* Usage Button */}
+              <Tooltip delayDuration={500}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsActiveTab("usage")
+                      setSettingsDialogOpen(true)
+                    }}
+                    className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                    aria-label="Usage"
+                  >
+                    <Activity className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Usage</TooltipContent>
+              </Tooltip>
+
               {/* Help Button - isolated component to prevent sidebar re-renders */}
               <HelpSection isMobile={isMobileFullscreen} />
-
-              {/* Archive Button - isolated component to prevent sidebar re-renders */}
-              <ArchiveSection archivedChatsCount={archivedChatsCount} />
             </div>
           </motion.div>
         )}

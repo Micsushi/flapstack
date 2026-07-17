@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -29,6 +29,10 @@ import {
 } from "../src/main/lib/worktree-resolver"
 import { createWorktree, getCurrentBranch } from "../src/main/lib/git/worktree"
 import { createWorktreeForChat } from "../src/main/lib/git"
+import {
+  assertRegisteredWorktree,
+  bindRegisteredFilesystemRoot,
+} from "../src/main/lib/git/security/path-validation"
 
 const electronState = vi.hoisted(() => ({
   userDataPath: "/tmp/flapstack-vitest-initial",
@@ -818,6 +822,7 @@ describe("Stage 1 E1 worktree resolution", () => {
     execFileSync("git", ["init", "-q", checkout])
     symlinkSync(checkout, alias, "dir")
     const project = insertProject("alias-project", { path: checkout })
+    bindRegisteredFilesystemRoot(checkout)
     const chat = insertChat({
       scope: "project",
       projectId: project.id,
@@ -937,6 +942,7 @@ describe("Stage 1 E1 worktree resolution", () => {
     const project = insertProject("repair-checkouts")
     mkdirSync(project.path, { recursive: true })
     execFileSync("git", ["init", "--quiet", project.path])
+    bindRegisteredFilesystemRoot(project.path)
     const repairedPath = realpathSync(project.path)
     vi.mocked(getCurrentBranch).mockImplementation(async (candidate) => {
       if (candidate === project.path || candidate.endsWith("/repair-checkouts")) return "main"
@@ -959,6 +965,12 @@ describe("Stage 1 E1 worktree resolution", () => {
     const conversation = getDatabase()
       .insert(subChats)
       .values({ chatId: first.id, worktreePath: stalePath })
+      .returning()
+      .get()
+    const validOverride = join(homeDir, "still-valid-worktree")
+    const overriddenConversation = getDatabase()
+      .insert(subChats)
+      .values({ chatId: first.id, worktreePath: validOverride })
       .returning()
       .get()
 
@@ -986,6 +998,9 @@ describe("Stage 1 E1 worktree resolution", () => {
     expect(
       getDatabase().select().from(subChats).where(eq(subChats.id, conversation.id)).get(),
     ).toMatchObject({ worktreePath: repairedPath })
+    expect(
+      getDatabase().select().from(subChats).where(eq(subChats.id, overriddenConversation.id)).get(),
+    ).toMatchObject({ worktreePath: validOverride })
   })
 
   it("keeps project placement and falls back to no project files when every checkout is gone", async () => {
@@ -1034,6 +1049,7 @@ describe("Stage 1 E1 worktree resolution", () => {
     const project = insertProject("repair-null-checkout")
     mkdirSync(project.path, { recursive: true })
     execFileSync("git", ["init", "--quiet", project.path])
+    bindRegisteredFilesystemRoot(project.path)
     vi.mocked(getCurrentBranch).mockResolvedValue("main")
     const first = insertChat({ scope: "project", projectId: project.id, name: "First inherited" })
     const second = insertChat({ scope: "project", projectId: project.id, name: "Second inherited" })
@@ -1049,6 +1065,41 @@ describe("Stage 1 E1 worktree resolution", () => {
     })
     expect(getDatabase().select().from(chats).where(eq(chats.id, second.id)).get()).toMatchObject({
       worktreePath: null,
+    })
+  })
+
+  it("detects a recreated checkout before send and explicitly reconnects it", async () => {
+    const project = insertProject("recreated-checkout")
+    mkdirSync(project.path, { recursive: true })
+    execFileSync("git", ["init", "--quiet", project.path])
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Recreated checkout",
+      worktreePath: project.path,
+    })
+    bindRegisteredFilesystemRoot(project.path)
+    const previous = join(homeDir, "recreated-checkout-previous")
+    renameSync(project.path, previous)
+    mkdirSync(project.path)
+    execFileSync("git", ["init", "--quiet", project.path])
+    vi.mocked(getCurrentBranch).mockResolvedValue("main")
+
+    await expect(getResolvedWorktreeStatus(chat.id)).resolves.toMatchObject({
+      status: "replaced",
+      error: expect.stringContaining("deleted and recreated or replaced"),
+    })
+    expect(() => assertRegisteredWorktree(project.path)).toThrow(/filesystem identity changed/)
+
+    await expect(
+      chatsRouter.createCaller(ctx).reconnectReplacedCheckout({
+        id: chat.id,
+        path: project.path,
+      }),
+    ).resolves.toMatchObject({ status: "reconnected", path: realpathSync(project.path) })
+    await expect(getResolvedWorktreeStatus(chat.id)).resolves.toMatchObject({ status: "ok" })
+    expect(assertRegisteredWorktree(project.path)).toMatchObject({
+      canonicalPath: realpathSync(project.path),
     })
   })
 })

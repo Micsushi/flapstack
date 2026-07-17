@@ -3,15 +3,18 @@ import { z } from "zod"
 import { CHAT_MODES } from "../../../../shared/chat-mode"
 import { openAppDatabase } from "../../db/access"
 import { getDatabasePath } from "../../db"
+import { sleep } from "../../../../shared/sleep"
 import {
   loadInteractiveRuntimeActivity,
   loadInteractiveRuntimeAssistantText,
   materializeInteractiveRuntimeRun,
   persistInteractiveRuntimeAssistantFallback,
+  prepareInteractiveRuntimeLaunch,
   resolveInteractiveRuntime,
 } from "../../agent-runtime/interactive-chat"
 import { requireRuntimeLaunchAuthority } from "../../agent-runtime/launch-access"
 import { agentInputLifecycle } from "../../agent-input/service"
+import { getResolvedWorktreeStatus } from "../../worktree-resolver"
 import { publicProcedure, router } from "../index"
 
 const harnessSchema = z.enum(["codex", "claude-code"])
@@ -67,6 +70,7 @@ type RuntimeChatEvent =
 
 export const agentRuntimeChatRouter = router({
   resolve: publicProcedure.input(resolveInputSchema).query(async ({ input }) => {
+    await assertRuntimeCheckoutReady(input.chatId)
     const path = getDatabasePath()
     const authority = requireRuntimeLaunchAuthority(path)
     const database = openAppDatabase(path, { readonly: true })
@@ -74,6 +78,28 @@ export const agentRuntimeChatRouter = router({
       const preliminary = resolveInteractiveRuntime(database, input)
       const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
       return resolveInteractiveRuntime(database, input, {
+        [preliminary.resolvedRuntime]: probe,
+      })
+    } finally {
+      database.close()
+    }
+  }),
+
+  prepare: publicProcedure.input(resolveInputSchema).mutation(async ({ input }) => {
+    await assertRuntimeCheckoutReady(input.chatId)
+    const path = getDatabasePath()
+    const authority = requireRuntimeLaunchAuthority(path)
+    const preliminaryDatabase = openAppDatabase(path, { readonly: true })
+    let preliminary
+    try {
+      preliminary = resolveInteractiveRuntime(preliminaryDatabase, input)
+    } finally {
+      preliminaryDatabase.close()
+    }
+    const probe = await authority.probe(preliminary.resolvedRuntime, input.harness)
+    const database = openAppDatabase(path)
+    try {
+      return prepareInteractiveRuntimeLaunch(database, input, {
         [preliminary.resolvedRuntime]: probe,
       })
     } finally {
@@ -89,6 +115,7 @@ export const agentRuntimeChatRouter = router({
       let finished = false
 
       void (async () => {
+        await assertRuntimeCheckoutReady(input.chatId)
         const database = openAppDatabase(path)
         let run
         try {
@@ -228,5 +255,12 @@ export const agentRuntimeChatRouter = router({
 })
 
 function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+  return sleep(milliseconds)
+}
+
+async function assertRuntimeCheckoutReady(chatId: string): Promise<void> {
+  const status = await getResolvedWorktreeStatus(chatId)
+  if (status.status === "unknown" || status.status === "replaced") {
+    throw new Error(status.error)
+  }
 }

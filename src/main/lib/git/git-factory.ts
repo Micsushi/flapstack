@@ -1,6 +1,7 @@
 import simpleGit, { SimpleGit, SimpleGitOptions } from "simple-git"
 import { stat, unlink } from "fs/promises"
 import { join } from "path"
+import { sleep } from "../../../shared/sleep"
 
 /**
  * Default timeout values for git operations (in milliseconds)
@@ -185,7 +186,7 @@ export async function withLockRetry<T>(
         await cleanStaleLockFiles(worktreePath)
 
         // Wait before retry with exponential backoff
-        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * Math.pow(2, attempt)))
+        await sleep(retryDelayMs * Math.pow(2, attempt))
       } else {
         throw error
       }

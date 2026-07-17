@@ -37,6 +37,10 @@ export class AgentRuntimeRegistry<
     Required<RuntimeRegistryEntry<TActivity>>
   >()
   private readonly adapters = new Map<ResolvedAgentRuntime, HarnessAdapter<TActivity>>()
+  private readonly probes = new Map<
+    string,
+    { expiresAt: number; value: Promise<RuntimeAdapterProbe> }
+  >()
 
   constructor(entries: ReadonlyArray<RuntimeRegistryEntry<TActivity>>) {
     for (const entry of entries) this.register(entry)
@@ -101,14 +105,33 @@ export class AgentRuntimeRegistry<
     if (!entry) throw new Error(`Runtime adapter ${runtime} is not registered.`)
     entry.enabled = enabled
     entry.disabledReason = enabled ? null : (reason ?? entry.disabledReason)
+    for (const key of this.probes.keys()) {
+      if (key.startsWith(`${runtime}\0`)) this.probes.delete(key)
+    }
   }
 
   async probe(runtime: ResolvedAgentRuntime, harness: string): Promise<RuntimeAdapterProbe> {
+    const key = `${runtime}\0${harness}`
+    const cached = this.probes.get(key)
+    if (cached && cached.expiresAt > Date.now()) return await cached.value
+    const value = (async () => {
+      try {
+        return await this.forNewLaunch(runtime, harness).probe(harness)
+      } catch (error) {
+        if (!(error instanceof RuntimeRegistryError)) throw error
+        return unavailableProbe(runtime, harness, error.reason)
+      }
+    })()
+    this.probes.set(key, { expiresAt: Number.POSITIVE_INFINITY, value })
     try {
-      return await this.forNewLaunch(runtime, harness).probe(harness)
+      const result = await value
+      if (this.probes.get(key)?.value === value) {
+        this.probes.set(key, { expiresAt: Date.now() + 2_000, value })
+      }
+      return result
     } catch (error) {
-      if (!(error instanceof RuntimeRegistryError)) throw error
-      return unavailableProbe(runtime, harness, error.reason)
+      if (this.probes.get(key)?.value === value) this.probes.delete(key)
+      throw error
     }
   }
 

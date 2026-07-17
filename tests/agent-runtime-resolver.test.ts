@@ -9,6 +9,7 @@ import type {
   ResolvedAgentRuntime,
   RuntimeAdapterProbe,
 } from "../src/shared/agent-runtime"
+import { runtimeAdapterForPreference } from "../src/shared/agent-runtime"
 
 const permission = { mode: "read-only" as const, customPermissions: null }
 const harnesses = [
@@ -21,7 +22,14 @@ const harnesses = [
   "custom",
   "generic",
 ] as const
-const preferences: AgentRuntimePreference[] = ["auto", "codex", "claude-code", "flapstack-native"]
+const preferences: AgentRuntimePreference[] = [
+  "auto",
+  "codex",
+  "codex-enhanced",
+  "claude-code",
+  "claude-code-enhanced",
+  "flapstack-native",
+]
 const scopes = ["chat", "project", "global"] as const
 
 describe("Agent Runtime resolver", () => {
@@ -36,15 +44,15 @@ describe("Agent Runtime resolver", () => {
             projectPreference: scope === "project" ? preference : null,
             globalPreference: scope === "global" ? preference : null,
           })
-          const expected = preference === "auto" ? productRuntime(harness) : preference
+          const expected = runtimeAdapterForPreference(preference) ?? productRuntime(harness)
           const compatible = allowed(harness).includes(expected)
           expect(result.ok).toBe(compatible)
           if (result.ok) {
             expect(result.launch).toMatchObject({
               harness,
-              requestedPreference: preference,
+              requestedPreference: preference === "auto" ? expected : preference,
               resolvedRuntime: expected,
-              preferenceSource: scope,
+              preferenceSource: preference === "auto" ? "product" : scope,
             })
           } else {
             expect(result.reason.code).toBe("runtime-incompatible")
@@ -76,20 +84,26 @@ describe("Agent Runtime resolver", () => {
 
   it.each([
     [
-      "chat",
+      "project",
       { chatPreference: "auto", projectPreference: "flapstack-native", globalPreference: "codex" },
+      "flapstack-native",
     ],
     [
-      "project",
+      "global",
       { chatPreference: null, projectPreference: "auto", globalPreference: "flapstack-native" },
+      "flapstack-native",
     ],
-    ["product", { chatPreference: null, projectPreference: null, globalPreference: null }],
-  ] as const)("keeps scoped auto distinct from inherit at %s", (source, inputs) => {
+    [
+      "product",
+      { chatPreference: "auto", projectPreference: "auto", globalPreference: "auto" },
+      "codex",
+    ],
+  ] as const)("treats Automatic as inheritance and resolves %s", (source, inputs, preference) => {
     const launch = assertResolvedAgentRuntime({ harness: "codex", permission, ...inputs })
     expect(launch).toMatchObject({
-      requestedPreference: "auto",
+      requestedPreference: preference,
       preferenceSource: source,
-      resolvedRuntime: "codex",
+      resolvedRuntime: runtimeAdapterForPreference(preference),
     })
   })
 
@@ -110,6 +124,21 @@ describe("Agent Runtime resolver", () => {
         adapterProbes: { codex: unavailable },
       }),
     ).toThrowError(AgentRuntimeResolutionError)
+  })
+
+  it.each([
+    ["codex-enhanced", "codex"],
+    ["claude-code-enhanced", "claude-code"],
+  ] as const)("preserves %s while resolving the shared %s adapter", (preference, runtime) => {
+    const launch = assertResolvedAgentRuntime({
+      harness: runtime,
+      chatPreference: preference,
+      permission,
+    })
+    expect(launch).toMatchObject({
+      requestedPreference: preference,
+      resolvedRuntime: runtime,
+    })
   })
 
   it("snapshots controls and unresolved versions before adapter wiring", () => {

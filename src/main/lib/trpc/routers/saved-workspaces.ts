@@ -18,7 +18,9 @@ import {
   regenerateOperationWorkspace,
   SavedWorkspaceOperationError,
 } from "../../saved-workspaces/operations"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("savedWorkspaces")
 
 const id = z.string().trim().min(1).max(200)
 const expectedVersion = z.number().int().positive()

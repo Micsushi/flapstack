@@ -5,6 +5,7 @@ import { RuntimeSelector } from "../src/renderer/features/agents/runtime-setting
 import {
   allowedRuntimePreferences,
   buildRuntimeSettingsRows,
+  resolveConfiguredRuntimePreference,
 } from "../src/renderer/features/agents/runtime-settings/runtime-settings-model"
 
 describe("Agent Runtime settings presentation", () => {
@@ -68,7 +69,72 @@ describe("Agent Runtime settings presentation", () => {
     expect(allowedRuntimePreferences("claude-code")).toEqual([
       "auto",
       "claude-code",
+      "claude-code-enhanced",
       "flapstack-native",
     ])
+  })
+
+  it("shows parity and enhanced choices over one release-gated provider adapter", () => {
+    const rows = buildRuntimeSettingsRows({
+      scope: { type: "global", id: null },
+      defaults: [],
+      releases,
+    })
+    const codex = rows.find((row) => row.harness === "codex")!
+    expect(codex.options.find((option) => option.value === "codex-enhanced")).toMatchObject({
+      compatible: true,
+      available: false,
+      reason: "Package gate open.",
+    })
+    expect(allowedRuntimePreferences("codex")).toEqual([
+      "auto",
+      "codex",
+      "codex-enhanced",
+      "flapstack-native",
+    ])
+  })
+
+  it("resolves Automatic through project, global, then provider parity defaults", () => {
+    const defaults = [
+      {
+        scope: { type: "global" as const, id: null },
+        harness: "codex",
+        preference: "codex-enhanced" as const,
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        scope: { type: "project" as const, id: "project-1" },
+        harness: "codex",
+        preference: "flapstack-native" as const,
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]
+    expect(
+      resolveConfiguredRuntimePreference({
+        harness: "codex",
+        chatPreference: "auto",
+        projectId: "project-1",
+        defaults,
+      }),
+    ).toBe("flapstack-native")
+    expect(
+      resolveConfiguredRuntimePreference({
+        harness: "codex",
+        chatPreference: "auto",
+        projectId: "project-2",
+        defaults,
+      }),
+    ).toBe("codex-enhanced")
+    expect(
+      resolveConfiguredRuntimePreference({
+        harness: "claude-code",
+        chatPreference: "auto",
+        defaults: [],
+      }),
+    ).toBe("claude-code")
   })
 })

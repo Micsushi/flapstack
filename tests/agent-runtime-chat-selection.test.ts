@@ -39,6 +39,32 @@ describe("Agent Runtime chat selection", () => {
     expect(database.prepare("SELECT count(*) count FROM agent_runs").get()).toEqual({ count: 0 })
   })
 
+  it("accepts the matching enhanced preference and rejects it for another harness", () => {
+    const codex = seedRuntimeChat(database, { chatId: "codex-enhanced" })
+    const service = createRuntimeChatLifecycleService(database)
+    expect(
+      service.setEmptyChatPreference({
+        chatId: codex.chatId,
+        preference: "codex-enhanced",
+      }),
+    ).toMatchObject({ runtimePreference: "codex-enhanced" })
+
+    const claude = seedRuntimeChat(database, {
+      chatId: "claude-enhanced",
+      harness: "claude-code",
+    })
+    expect(() =>
+      service.setEmptyChatPreference({
+        chatId: claude.chatId,
+        preference: "codex-enhanced",
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<RuntimeChatLifecycleError>>({
+        code: "runtime-incompatible",
+      }),
+    )
+  })
+
   it("blocks active and started chats and rejects incompatible choices", () => {
     const active = seedRuntimeChat(database, { chatId: "active" })
     database

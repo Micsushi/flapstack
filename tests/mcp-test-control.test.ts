@@ -39,6 +39,7 @@ import {
 } from "../src/shared/dev-renderer-control"
 import {
   cleanupAllTestRendererCaptures,
+  archiveTestTask,
   listAgentInputRequests,
   replyAgentInputRequest,
 } from "../src/main/lib/mcp-test-control/service"
@@ -131,6 +132,7 @@ describe("dev MCP test-control registry", () => {
       "archive_test_project",
       "create_test_chat",
       "open_test_chat",
+      "archive_test_task",
       "archive_test_chat",
       "mutate_project_provider_extension",
       "get_permission_state",
@@ -425,6 +427,64 @@ describe("dev renderer Settings control boundary", () => {
 })
 
 describe("dev MCP carryover controls", () => {
+  it("archives a test task and every linked idle Chat", () => {
+    const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-task-cleanup-"))
+    const previousDatabasePath = process.env.FLAPSTACK_DB_PATH
+    const databasePath = join(dir, "agents.db")
+    const sqlite = new Database(databasePath)
+    migrate(drizzle(sqlite, { schema }), { migrationsFolder: join(process.cwd(), "drizzle") })
+    sqlite.exec(`
+      INSERT INTO projects (id, name, path) VALUES ('project-1', 'Project', '/tmp/project-1');
+      INSERT INTO tasks (id, project_id, name, archived_at, updated_at)
+      VALUES ('task-1', 'project-1', 'Fixture task', 100, 100);
+      INSERT INTO chats (
+        id, name, project_id, task_id, scope, permission_mode, archived_at, updated_at
+      ) VALUES
+        ('chat-active', 'Fixture chat', 'project-1', 'task-1', 'task', 'read-only', NULL, 1784160859000),
+        ('chat-archived', 'Old fixture chat', 'project-1', 'task-1', 'task', 'read-only', 90, 90);
+    `)
+    sqlite.close()
+    closeDatabase()
+    process.env.FLAPSTACK_DB_PATH = databasePath
+
+    try {
+      expect(archiveTestTask({ taskId: "task-1" })).toMatchObject({
+        archived: true,
+        alreadyArchived: false,
+        taskId: "task-1",
+        archivedChatIds: ["chat-active"],
+      })
+      expect(archiveTestTask({ taskId: "task-1" })).toMatchObject({
+        archived: true,
+        alreadyArchived: true,
+        taskId: "task-1",
+        archivedChatIds: [],
+      })
+      const verified = new Database(databasePath, { readonly: true })
+      expect(
+        verified
+          .prepare("SELECT archived_at IS NOT NULL archived FROM tasks WHERE id = ?")
+          .get("task-1"),
+      ).toEqual({ archived: 1 })
+      expect(
+        verified
+          .prepare(
+            "SELECT id, archived_at IS NOT NULL archived FROM chats WHERE task_id = ? ORDER BY id",
+          )
+          .all("task-1"),
+      ).toEqual([
+        { id: "chat-active", archived: 1 },
+        { id: "chat-archived", archived: 1 },
+      ])
+      verified.close()
+    } finally {
+      closeDatabase()
+      if (previousDatabasePath === undefined) delete process.env.FLAPSTACK_DB_PATH
+      else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it("updates bounded Voice preferences and returns history counts without transcript content", async () => {
     const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-voice-"))
     const previousConfigDir = process.env.FLAPSTACK_CONFIG_DIR

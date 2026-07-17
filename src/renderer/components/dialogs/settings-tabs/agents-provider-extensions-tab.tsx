@@ -17,6 +17,7 @@ import type {
 } from "../../../../main/lib/extension-management"
 import type { ProviderExtensionManifest } from "../../../../main/lib/provider-extensions"
 import { selectedChatScopeAtom, selectedProjectAtom } from "../../../features/agents/atoms"
+import { useBetaFeatures } from "../../../features/settings/use-beta-features"
 import {
   createExtensionManagerState,
   createExtensionCopyFields,
@@ -204,6 +205,7 @@ export function AgentsProviderExtensionsTab({
 }: {
   initialKind?: ExtensionManagerKind
 }) {
+  const betaFeatures = useBetaFeatures()
   const selectedProject = useAtomValue(selectedProjectAtom)
   const selectedChatScope = useAtomValue(selectedChatScopeAtom)
   const [state, dispatch] = useReducer(

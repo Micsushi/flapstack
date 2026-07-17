@@ -24,6 +24,7 @@ export type OrchestrationFleetQueryOptions = {
   staleAfterMs?: number
   visibleProjectId?: string | null
   visibleTaskId?: string | null
+  includeOperationWorkspaces?: boolean
 }
 
 type Cursor = {
@@ -53,6 +54,17 @@ export function queryOrchestrationFleet(
   const cursorScope = cursor ? keysetSql(sort.expression, input.sort, cursor) : null
   const pageConditions = [...sqlScope.conditions, ...(cursorScope ? [cursorScope.condition] : [])]
   const pageParams = [...sqlScope.params, ...(cursorScope?.params ?? []), input.limit + 1]
+  const operationWorkspaceSelect =
+    options.includeOperationWorkspaces === false
+      ? "NULL operation_workspace_id"
+      : "operation_workspace.id operation_workspace_id"
+  const operationWorkspaceJoin =
+    options.includeOperationWorkspaces === false
+      ? ""
+      : `LEFT JOIN saved_workspaces operation_workspace
+           ON operation_workspace.task_id = o.task_id
+          AND operation_workspace.owner_kind = 'orchestration'
+          AND operation_workspace.archived_at IS NULL`
   const baseRows = store
     .prepare(
       `SELECT
@@ -66,15 +78,12 @@ export function queryOrchestrationFleet(
          p.archived_at project_archived_at,
          initiating.id joined_initiating_chat_id,
          initiating.archived_at initiating_chat_archived_at,
-         operation_workspace.id operation_workspace_id
+         ${operationWorkspaceSelect}
        FROM task_orchestrations o
        LEFT JOIN tasks t ON t.id = o.task_id
        LEFT JOIN projects p ON p.id = t.project_id
        LEFT JOIN chats initiating ON initiating.id = o.initiating_chat_id
-       LEFT JOIN saved_workspaces operation_workspace
-         ON operation_workspace.task_id = o.task_id
-        AND operation_workspace.owner_kind = 'orchestration'
-        AND operation_workspace.archived_at IS NULL
+       ${operationWorkspaceJoin}
        WHERE ${pageConditions.join(" AND ")}
        ORDER BY ${sort.expression} ${sort.direction}, o.task_id ASC
        LIMIT ?`,

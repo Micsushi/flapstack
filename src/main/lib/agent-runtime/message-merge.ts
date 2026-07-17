@@ -17,14 +17,19 @@ export function mergeRuntimeMessages(currentJson: string, incomingJson: string):
   }
 
   const consumed = new Set<Message>()
-  const merged = current.map((message) => {
+  const merged: Message[] = []
+  for (const message of current) {
     const byId = messageId(message) ? incomingById.get(messageId(message)!) : undefined
     const replacement =
       byId ?? (assistantRunId(message) ? incomingByRunId.get(assistantRunId(message)!) : undefined)
-    if (!replacement) return message
+    if (!replacement) {
+      merged.push(message)
+      continue
+    }
+    if (consumed.has(replacement)) continue
     consumed.add(replacement)
-    return replacement
-  })
+    merged.push(replacement)
+  }
   for (const message of incoming) {
     if (!consumed.has(message)) merged.push(message)
   }

@@ -288,6 +288,13 @@
       "when": 1784166424702,
       "tag": "0040_chat_modes",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1784228953408,
+      "tag": "0041_large_electro",
+      "breakpoints": true
     }
   ]
 }

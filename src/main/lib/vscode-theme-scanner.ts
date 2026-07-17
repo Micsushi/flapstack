@@ -123,10 +123,7 @@ async function scanExtensionsDir(
   }
 
   try {
-    // Always use execSync to get directory listing (fs.readdir has caching issues in Electron)
-    const { execSync } = require("child_process")
-    const lsOutput = execSync(`ls -1 "${extensionsDir}"`, { encoding: "utf-8" })
-    const lsEntries = lsOutput.trim().split("\n").filter(Boolean)
+    const lsEntries = await fs.readdir(extensionsDir)
 
     // Create Dirent-like objects from ls output
     const entries_final = await Promise.all(

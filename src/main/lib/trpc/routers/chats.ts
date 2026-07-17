@@ -20,7 +20,10 @@ import {
   removeWorktree,
   sanitizeProjectName,
 } from "../../git"
-import { bindFilesystemRootIdentity } from "../../git/security/path-validation"
+import {
+  bindFilesystemRootIdentity,
+  rebindRegisteredFilesystemRoot,
+} from "../../git/security/path-validation"
 import type { WorktreeSetupResult } from "../../git/worktree-config"
 import { computeContentHash, gitCache } from "../../git/cache"
 import { splitUnifiedDiffByFile } from "../../git/diff-parser"
@@ -110,7 +113,7 @@ async function persistChatCheckout(input: {
       .run()
 
     const staleSubChatPathCondition = matchingPath
-      ? or(eq(subChats.chatId, chat.id), eq(subChats.worktreePath, matchingPath))
+      ? or(isNull(subChats.worktreePath), eq(subChats.worktreePath, matchingPath))
       : isNull(subChats.worktreePath)
     tx.update(subChats)
       .set({ worktreePath: target.path, updatedAt })
@@ -431,6 +434,28 @@ export const chatsRouter = router({
         requestedPath: await ensureDetachedChatCheckout(input.id),
         repairMatchingChats: false,
       })
+    }),
+
+  reconnectReplacedCheckout: publicProcedure
+    .input(z.object({ id: z.string(), path: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const db = getDatabase()
+      const chat = db.select().from(chats).where(eq(chats.id, input.id)).get()
+      if (!chat) throw new Error("Chat not found")
+      const currentPath = chat.worktreePath ?? resolveDefaultWorktree(chat)
+      if (currentPath !== input.path) {
+        throw new Error("The Chat checkout changed before reconnect. Review it again.")
+      }
+      const status = await getResolvedWorktreeStatus(input.id, input.path)
+      if (status.status !== "replaced") {
+        throw new Error("This checkout is no longer in the replaced-folder state.")
+      }
+      const registration = rebindRegisteredFilesystemRoot(input.path)
+      return {
+        status: "reconnected" as const,
+        path: registration.canonicalPath,
+        branch: status.branch,
+      }
     }),
 
   chooseReplacementCheckout: publicProcedure
@@ -1104,47 +1129,63 @@ export const chatsRouter = router({
   }),
 
   /**
-   * Delete all archived chats permanently (with worktree cleanup).
+   * Delete selected archived chats permanently (with worktree cleanup).
+   * Omitting ids preserves the legacy "delete all archived chats" behavior.
    * Active chats are never touched.
    */
-  deleteArchived: publicProcedure.mutation(async () => {
-    const db = getDatabase()
-    const archivedChats = db.select().from(chats).where(isNotNull(chats.archivedAt)).all()
+  deleteArchived: publicProcedure
+    .input(z.object({ ids: z.array(z.string().trim().min(1).max(200)).max(1_000) }).optional())
+    .mutation(async ({ input }) => {
+      const db = getDatabase()
+      const requestedIds = input?.ids ? [...new Set(input.ids)] : null
+      if (requestedIds?.length === 0) return { deletedCount: 0 }
 
-    for (const chat of archivedChats) {
-      if (chat.worktreePath && chat.branch) {
-        const project = chat.projectId
-          ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
-          : null
-        if (project) {
-          const result = await removeWorktree(project.path, chat.worktreePath)
-          if (!result.success) {
-            console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+      const archivedCondition = requestedIds
+        ? and(isNotNull(chats.archivedAt), inArray(chats.id, requestedIds))
+        : isNotNull(chats.archivedAt)
+      const archivedChats = db.select().from(chats).where(archivedCondition).all()
+
+      for (const chat of archivedChats) {
+        if (chat.worktreePath && chat.branch) {
+          const project = chat.projectId
+            ? db.select().from(projects).where(eq(projects.id, chat.projectId)).get()
+            : null
+          if (project) {
+            const result = await removeWorktree(project.path, chat.worktreePath)
+            if (!result.success) {
+              console.warn(`[Worktree] Cleanup failed: ${result.error}`)
+            }
           }
+        }
+
+        if (chat.branch) {
+          terminalManager.killByWorkspaceId(chat.id).catch((error) => {
+            console.error(`[chats.deleteArchived] Error killing processes:`, error)
+          })
+        }
+
+        trackWorkspaceDeleted(chat.id)
+        await deleteVoiceHistoryForChat(chat.id)
+
+        if (chat.worktreePath) {
+          gitCache.invalidateStatus(chat.worktreePath)
+          gitCache.invalidateParsedDiff(chat.worktreePath)
         }
       }
 
-      if (chat.branch) {
-        terminalManager.killByWorkspaceId(chat.id).catch((error) => {
-          console.error(`[chats.deleteArchived] Error killing processes:`, error)
-        })
+      if (archivedChats.length > 0) {
+        db.delete(chats)
+          .where(
+            inArray(
+              chats.id,
+              archivedChats.map((chat) => chat.id),
+            ),
+          )
+          .run()
       }
 
-      trackWorkspaceDeleted(chat.id)
-      await deleteVoiceHistoryForChat(chat.id)
-
-      if (chat.worktreePath) {
-        gitCache.invalidateStatus(chat.worktreePath)
-        gitCache.invalidateParsedDiff(chat.worktreePath)
-      }
-    }
-
-    if (archivedChats.length > 0) {
-      db.delete(chats).where(isNotNull(chats.archivedAt)).run()
-    }
-
-    return { deletedCount: archivedChats.length }
-  }),
+      return { deletedCount: archivedChats.length }
+    }),
 
   // ============ Sub-chat procedures ============
 

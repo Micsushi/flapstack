@@ -3,6 +3,7 @@ import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import { orchestrationFleetQuerySchema } from "../../../shared/agent-orchestration"
 import { queryOrchestrationFleet } from "../agent-orchestration/fleet"
+import { isBetaFeatureEnabled } from "../beta-features/settings"
 import type { McpCallerIdentity } from "./types"
 
 const PAGE_MAX = 50
@@ -244,6 +245,7 @@ export function createMcpReadService(store: McpReadStore = openReadStore()): Mcp
               scope.taskId ??
               (scope.kind === "global" || scope.projectId ? null : "__caller-chat-only__"),
             visibleProjectId: scope.taskId ? null : scope.projectId,
+            includeOperationWorkspaces: isBetaFeatureEnabled("savedWorkspaces"),
           },
         )
       }

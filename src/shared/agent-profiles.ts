@@ -216,7 +216,7 @@ export const agentProfileLaunchPolicySchema = z
     allowedTools: z.array(idSchema).max(128).nullable(),
     allowedSkills: z.array(idSchema).max(128).nullable(),
     allowedModels: z.array(z.string().trim().min(1).max(200)).max(128).nullable(),
-    allowedRuntimes: z.array(agentRuntimePreferenceSchema).max(4).nullable(),
+    allowedRuntimes: z.array(agentRuntimePreferenceSchema).max(6).nullable(),
     maxDescendants: z.number().int().min(0).max(64),
   })
   .strict()

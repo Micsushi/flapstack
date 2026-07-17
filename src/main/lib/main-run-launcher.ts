@@ -26,6 +26,7 @@ import type {
   RuntimeAdapterSession,
   RuntimeAdapterTurn,
 } from "../../shared/agent-runtime"
+import { usesFlapstackRuntimeEnhancements } from "../../shared/agent-runtime"
 import { isAgentHarness } from "../../shared/harness-types"
 import { LEGACY_RUNTIME_CAPABILITIES } from "./agent-runtime/snapshot"
 import {
@@ -90,12 +91,14 @@ import {
   formatClaudeInputAnswers,
   normalizeClaudeInputQuestions,
 } from "./agent-input/claude-adapter"
-import { isClaudeReadOnlyToolAllowed, isCustomToolAllowed } from "./permissions"
+import { resolveClaudeRuntimeToolPermission } from "./permissions"
 import {
   buildProjectVaultRunContext,
+  emptyProjectVaultRunContext,
   persistProjectVaultContextManifest,
   ProjectVaultContextRejectedError,
 } from "./project-vaults/run-context"
+import { isBetaFeatureEnabled } from "./beta-features/settings"
 import { applyChatModeInstruction, normalizeChatMode } from "../../shared/chat-mode"
 import { buildHarnessContextBundle, buildStartupInstructions } from "./harness/launch-context"
 import {
@@ -171,13 +174,16 @@ export class MainRuntimeLaunchService {
         },
         resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
-          const config = applyCodexExtensionPolicyConfig(
-            buildManagedCodexHookConfig(authority.hooks),
-            authority.policy,
-          )
+          const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
+          const config = enhanced
+            ? applyCodexExtensionPolicyConfig(
+                buildManagedCodexHookConfig(authority.hooks),
+                authority.policy,
+              )
+            : {}
           return {
             cwd: authority.cwd,
-            ...(operation === "start" && context.instructions
+            ...(enhanced && operation === "start" && context.instructions
               ? { developerInstructions: context.instructions }
               : {}),
             ...codexPermissionOptions(context.launch.permission.mode),
@@ -387,11 +393,15 @@ export class MainRuntimeLaunchService {
           ? "File change"
           : method === "item/commandExecution/requestApproval"
             ? "Command execution"
-            : "Runtime tool"
+            : method === "item/permissions/requestApproval"
+              ? "additional Codex permissions"
+              : "Runtime tool"
     const requestId =
       typeof record.requestId === "string" && record.requestId.trim()
         ? record.requestId
-        : `${runId}:permission:${randomUUID()}`
+        : typeof record.id === "string" || typeof record.id === "number"
+          ? String(record.id)
+          : `${runId}:permission:${randomUUID()}`
     const createdAt = Date.now()
     const inputRequest: AgentInputRequest = {
       requestId,
@@ -408,7 +418,7 @@ export class MainRuntimeLaunchService {
         {
           id: "permission",
           header: "Permission",
-          question: `Allow ${toolName} for this run?`,
+          question: permissionRequestQuestion(toolName, record),
           options: [
             { id: "allow-once", label: "Allow once" },
             { id: "deny", label: "Deny" },
@@ -435,7 +445,7 @@ export class MainRuntimeLaunchService {
         : { behavior: "deny", message: "User denied the tool request." }
     }
     if (method === "item/permissions/requestApproval") {
-      return { permissions: {}, scope: "turn", strictAutoReview: true }
+      return codexPermissionProfileApproval(record, allowed)
     }
     return { decision: allowed ? "accept" : "cancel" }
   }
@@ -524,12 +534,15 @@ export class MainRuntimeLaunchService {
       },
       buildQueryOptions: async (context, _prompt, abortController) => {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
-        const sdkOptions = getClaudeExtensionSdkOptions(authority.policy)
-        const hooks = buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
-          this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
-        )
+        const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
+        const sdkOptions = enhanced ? getClaudeExtensionSdkOptions(authority.policy) : {}
+        const hooks = enhanced
+          ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
+              this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
+            )
+          : {}
         const mcpServers =
-          authority.policy.disabledMcpNames.length > 0
+          enhanced && authority.policy.disabledMcpNames.length > 0
             ? filterClaudeExtensionMcpServers(
                 await loadClaudeMcpServers(authority.cwd),
                 authority.policy,
@@ -581,29 +594,16 @@ export class MainRuntimeLaunchService {
                 },
               }
             }
-            const mode = context.launch.permission.mode
-            if (mode === "read-only") {
-              return isClaudeReadOnlyToolAllowed(toolName)
-                ? { behavior: "allow", updatedInput: toolInput }
-                : {
-                    behavior: "deny",
-                    message: `Tool "${toolName}" blocked by read-only permission mode.`,
-                  }
-            }
-            if (mode === "custom") {
-              const permissions = parseRuntimeCustomPermissions(
+            const decision = await resolveClaudeRuntimeToolPermission({
+              mode: context.launch.permission.mode,
+              customPermissions: parseRuntimeCustomPermissions(
                 this.runs.get(context.runId)?.customPermissions ?? null,
-              )
-              return isCustomToolAllowed(permissions, toolName)
-                ? { behavior: "allow", updatedInput: toolInput }
-                : {
-                    behavior: "deny",
-                    message: `Tool "${toolName}" is disabled by custom permissions.`,
-                  }
-            }
-            if (mode === "full-access" || mode === "auto-edit-project-only") {
-              return { behavior: "allow", updatedInput: toolInput }
-            }
+              ),
+              cwd: authority.cwd,
+              toolName,
+              toolInput,
+            })
+            if (decision) return decision
             return await this.requestPermissionFromProvider(context.runId, {
               provider: "claude-code",
               requestId: options.toolUseID,
@@ -615,7 +615,7 @@ export class MainRuntimeLaunchService {
           systemPrompt: {
             type: "preset" as const,
             preset: "claude_code" as const,
-            ...(context.instructions ? { append: context.instructions } : {}),
+            ...(enhanced && context.instructions ? { append: context.instructions } : {}),
           },
           ...claudePermissionOptions(context.launch.permission.mode),
           ...(context.launch.model ? { model: context.launch.model } : {}),
@@ -952,6 +952,7 @@ export class MainRuntimeLaunchService {
   private async resolveDirectRuntimeInstructions(run: QueuedAgentRun): Promise<string | null> {
     const runtime = run.runtimeLaunch?.resolvedRuntime
     if (runtime !== "codex" && runtime !== "claude-code") return null
+    if (!usesFlapstackRuntimeEnhancements(run.runtimeLaunch!.requestedPreference)) return null
 
     const sqlite = this.open()
     try {
@@ -967,21 +968,23 @@ export class MainRuntimeLaunchService {
               providerNativeInstructions: true,
             })
           : null
-      let vaultContext
-      try {
-        vaultContext = await buildProjectVaultRunContext(database, {
-          chatId: run.chatId,
-          runId: run.runId,
-          harness: runtime,
-        })
-      } catch (error) {
-        if (error instanceof ProjectVaultContextRejectedError) {
-          persistProjectVaultContextManifest(database, {
+      let vaultContext = emptyProjectVaultRunContext({ harness: runtime, runId: run.runId })
+      if (isBetaFeatureEnabled("projectMemory")) {
+        try {
+          vaultContext = await buildProjectVaultRunContext(database, {
+            chatId: run.chatId,
             runId: run.runId,
-            manifest: error.manifest,
+            harness: runtime,
           })
+        } catch (error) {
+          if (error instanceof ProjectVaultContextRejectedError) {
+            persistProjectVaultContextManifest(database, {
+              runId: run.runId,
+              manifest: error.manifest,
+            })
+          }
+          throw error
         }
-        throw error
       }
       persistProjectVaultContextManifest(database, {
         runId: run.runId,
@@ -1705,6 +1708,55 @@ function freezeStructuredRuntimeValue(value: unknown): unknown {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function codexPermissionProfileApproval(
+  request: Record<string, unknown>,
+  allowed: boolean,
+): { permissions: Record<string, unknown>; scope: "turn"; strictAutoReview: true } {
+  const params = isPlainRecord(request.params) ? request.params : request
+  const requested = isPlainRecord(params.permissions) ? params.permissions : {}
+  const permissions: Record<string, unknown> = {}
+  if (allowed) {
+    for (const key of ["network", "fileSystem"] as const) {
+      if (requested[key] !== null && requested[key] !== undefined) {
+        permissions[key] = requested[key]
+      }
+    }
+  }
+  return { permissions, scope: "turn", strictAutoReview: true }
+}
+
+function permissionRequestQuestion(toolName: string, request: Record<string, unknown>): string {
+  const params = isPlainRecord(request.params) ? request.params : request
+  const toolInput = isPlainRecord(request.toolInput) ? request.toolInput : {}
+  const detail = firstPermissionDetail(params, toolInput)
+  return detail
+    ? `Allow ${toolName} for this run?\n\n${detail.slice(0, 1_000)}`
+    : `Allow ${toolName} for this run?`
+}
+
+function firstPermissionDetail(
+  params: Record<string, unknown>,
+  toolInput: Record<string, unknown>,
+): string {
+  const command = typeof params.command === "string" ? params.command : toolInput.command
+  if (typeof command === "string" && command.trim()) return `Command: ${command.trim()}`
+  for (const [label, value] of [
+    ["Path", toolInput.file_path],
+    ["Path", toolInput.notebook_path],
+    ["Write root", params.grantRoot],
+    ["Working directory", params.cwd],
+    ["Reason", params.reason],
+  ] as const) {
+    if (typeof value === "string" && value.trim()) return `${label}: ${value.trim()}`
+  }
+  if (isPlainRecord(params.permissions)) {
+    const requestedPermissions = params.permissions
+    const requested = ["network", "fileSystem"].filter((key) => requestedPermissions[key] != null)
+    if (requested.length > 0) return `Requested: ${requested.join(", ")}`
+  }
+  return ""
 }
 
 async function* claudeQuery(input: ClaudeRuntimeQueryInput) {

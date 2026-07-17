@@ -1,4 +1,4 @@
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV } from "../../../shared/product-mcp-invalidation"
 import { getProductMcpInvalidationEndpoint } from "./invalidation-bridge"
 
@@ -72,6 +72,7 @@ export function buildMcpStdioRegistration(
       FLAPSTACK_MCP_RUN_ID: identity.runId,
       FLAPSTACK_MCP_PERMISSION_MODE: identity.permissionMode,
       FLAPSTACK_DB_PATH: runtime.databasePath,
+      FLAPSTACK_CONFIG_DIR: process.env.FLAPSTACK_CONFIG_DIR || dirname(runtime.databasePath),
       ...(invalidationEndpoint
         ? { [PRODUCT_MCP_INVALIDATION_ENDPOINT_ENV]: invalidationEndpoint }
         : {}),

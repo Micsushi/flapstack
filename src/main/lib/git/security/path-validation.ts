@@ -41,6 +41,9 @@ export type RegisteredFilesystemRoot = {
   inodeId: string | null
 }
 
+export const REPLACED_FILESYSTEM_ROOT_MESSAGE =
+  "This folder was deleted and recreated or replaced after Flapstack connected it. Review the current repository, then reconnect it before agents can access its files."
+
 /**
  * Error thrown when path validation fails.
  * Includes a code for programmatic handling.
@@ -105,6 +108,49 @@ export function bindRegisteredFilesystemRoot(workspacePath: string): RegisteredF
     )
   }
   return bindFilesystemRootIdentity(workspacePath)
+}
+
+/** Replace a stale binding only after an explicit user reconnect action. */
+export function rebindRegisteredFilesystemRoot(workspacePath: string): RegisteredFilesystemRoot {
+  const database = getDatabase()
+  return database.transaction((tx) => {
+    const registered =
+      tx
+        .select({ path: chats.worktreePath })
+        .from(chats)
+        .where(eq(chats.worktreePath, workspacePath))
+        .get() ??
+      tx
+        .select({ path: projects.path })
+        .from(projects)
+        .where(eq(projects.path, workspacePath))
+        .get()
+    if (!registered) {
+      throw new PathValidationError(
+        "Workspace path not registered in database",
+        "UNREGISTERED_WORKTREE",
+      )
+    }
+
+    const captured = captureFilesystemRoot(workspacePath)
+    const result = tx
+      .update(filesystemRootRegistrations)
+      .set({
+        canonicalPath: captured.canonicalPath,
+        deviceId: captured.deviceId,
+        inodeId: captured.inodeId,
+        boundAt: new Date(),
+      })
+      .where(eq(filesystemRootRegistrations.path, workspacePath))
+      .run()
+    if (result.changes !== 1) {
+      throw new PathValidationError(
+        "Registered root has no durable filesystem identity",
+        "UNREGISTERED_WORKTREE",
+      )
+    }
+    return assertRegisteredFilesystemRoot(workspacePath, tx)
+  })
 }
 
 export function bindFilesystemRootIdentity(

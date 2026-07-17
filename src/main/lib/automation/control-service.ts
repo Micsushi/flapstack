@@ -9,6 +9,7 @@ import {
 } from "../../../shared/automation"
 import { customPermissionCapabilityKeys } from "../../../shared/permission-capabilities"
 import { parseJsonText } from "../json"
+import { isBetaFeatureEnabled } from "../beta-features/settings"
 
 const PAGE_MAX = 100
 
@@ -49,7 +50,13 @@ export type AutomationControlRecord = {
 }
 
 export type AutomationControlErrorCode =
-  "invalid-input" | "not-found" | "out-of-scope" | "conflict" | "approval-required" | "stale-caller"
+  | "invalid-input"
+  | "not-found"
+  | "out-of-scope"
+  | "conflict"
+  | "approval-required"
+  | "stale-caller"
+  | "feature-disabled"
 
 export class AutomationControlError extends Error {
   constructor(
@@ -485,6 +492,15 @@ export function classifyAutomationImpact(
 function parseDraft(value: AutomationDraft): AutomationDraft {
   const parsed = automationDraftSchema.safeParse(value)
   if (!parsed.success) fail("invalid-input", parsed.error.issues[0]?.message ?? "Invalid draft.")
+  if (
+    (parsed.data.scope.type === "task" || parsed.data.action.type === "create-task-run") &&
+    !isBetaFeatureEnabled("planning")
+  ) {
+    fail("feature-disabled", "Enable Planning & Task Board before using task automations.")
+  }
+  if (parsed.data.action.type === "create-task-run" && !isBetaFeatureEnabled("orchestration")) {
+    fail("feature-disabled", "Enable Orchestration before using create-task automations.")
+  }
   return parsed.data
 }
 

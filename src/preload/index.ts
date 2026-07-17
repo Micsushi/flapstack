@@ -448,7 +448,9 @@ export interface DesktopApi {
       changes: Array<{ path: string; type: "add" | "change" | "unlink" }>
     }) => void,
   ) => () => void
-  subscribeToGitWatcher: (worktreePath: string) => Promise<void>
+  subscribeToGitWatcher: (
+    worktreePath: string,
+  ) => Promise<{ status: "subscribed" } | { status: "blocked"; reason: string }>
   unsubscribeFromGitWatcher: (worktreePath: string) => Promise<void>
   // VS Code theme scanning
   scanVSCodeThemes: () => Promise<DiscoveredTheme[]>

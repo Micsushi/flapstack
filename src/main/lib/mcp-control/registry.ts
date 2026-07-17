@@ -14,6 +14,11 @@ import type {
   McpControlTool,
   McpMutationService,
 } from "./types"
+import {
+  getBetaFeatureSettings,
+  isMcpInvocationBetaEnabled,
+  isMcpToolBetaEnabled,
+} from "../beta-features/settings"
 
 export type McpInvocationDependencies = {
   /** Resolves immutable launch identity against durable state on every check. */
@@ -324,8 +329,15 @@ export function getMcpControlTool(name: string): McpControlTool | null {
   return mcpControlTools.find((tool) => tool.name === name) ?? null
 }
 
-export function listImplementedMcpControlTools(): McpControlTool[] {
-  return mcpControlTools.filter((tool) => tool.status === "implemented")
+export function listImplementedMcpControlTools(
+  options: { includeDisabledBeta?: boolean } = {},
+): McpControlTool[] {
+  const betaFeatures = getBetaFeatureSettings()
+  return mcpControlTools.filter(
+    (tool) =>
+      tool.status === "implemented" &&
+      (options.includeDisabledBeta || isMcpToolBetaEnabled(tool.name, betaFeatures)),
+  )
 }
 
 export async function invokeMcpControlTool(
@@ -359,6 +371,26 @@ export async function invokeMcpControlTool(
     const response: McpControlResponse = {
       ok: false,
       error: { code: "tool-unavailable", message: `${name} is not available in this build.` },
+    }
+    audit(dependencies, {
+      invocationId,
+      startedAt,
+      status: "denied",
+      caller,
+      toolName: tool.name,
+      tier: tool.tier,
+      input,
+      result: response,
+    })
+    return response
+  }
+  if (!isMcpInvocationBetaEnabled(tool.name, input)) {
+    const response: McpControlResponse = {
+      ok: false,
+      error: {
+        code: "tool-unavailable",
+        message: `${name} is disabled. Enable its service in Settings > Beta Features.`,
+      },
     }
     audit(dependencies, {
       invocationId,
@@ -766,7 +798,11 @@ function executeImplementedTool(
   if (name === "describe") {
     return {
       ok: true,
-      data: { transport: "stdio", caller: snapshotCaller(caller), tools: mcpControlTools },
+      data: {
+        transport: "stdio",
+        caller: snapshotCaller(caller),
+        tools: listImplementedMcpControlTools(),
+      },
     }
   }
 

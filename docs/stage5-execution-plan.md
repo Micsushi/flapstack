@@ -36,7 +36,9 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 - S5-F3 reusable personalities and universal Agent Profile selection.
 - S5-F4 bridge/pairing/events before PWA/actions.
 - S5-F5 in-app capture before standalone helper.
-- S5-F6 grid layout/bindings before group controls.
+- S5-F6 full top-level Chat pane extraction and bounded group tree, then
+  directional tab drag/bindings, the main-process four-workbench-window budget,
+  floating-window transfer/restoration, and finally fleet/group controls.
 - S5-F7 exact target resolution, native authority, bidirectional
   Codex/Claude continuation and delegation, bounded task/result envelopes,
   authority/worktree controls, activity/usage, and no-replay recovery.

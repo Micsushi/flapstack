@@ -1,4 +1,9 @@
 import type { SettingsTab } from "../../lib/atoms"
+import {
+  DEFAULT_BETA_FEATURE_SETTINGS,
+  type BetaFeatureId,
+  type BetaFeatureSettings,
+} from "../../../shared/beta-features"
 
 export type SettingsTabMetadata = {
   id: SettingsTab
@@ -7,6 +12,7 @@ export type SettingsTabMetadata = {
   keywords: string[]
   section: "main" | "advanced" | "development" | "hidden"
   released: boolean
+  betaFeature?: BetaFeatureId
 }
 
 export type SettingsProviderScope =
@@ -87,6 +93,7 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
     keywords: ["orchestration", "workflow", "codex v2", "codex v1", "multi agent"],
     section: "advanced",
     released: true,
+    betaFeature: "orchestration",
   },
   {
     id: "agent-profiles",
@@ -194,11 +201,11 @@ export const SETTINGS_TAB_REGISTRY: readonly SettingsTabMetadata[] = [
   },
   {
     id: "beta",
-    label: "Legacy Beta",
-    description: "Retired beta settings",
-    keywords: [],
-    section: "hidden",
-    released: false,
+    label: "Beta Features",
+    description: "Opt in to untested advanced feature groups",
+    keywords: ["experimental", "feature flags", "early access", "preview"],
+    section: "advanced",
+    released: true,
   },
   {
     id: "future",
@@ -481,9 +488,15 @@ export const HIDDEN_SETTINGS_TABS = SETTINGS_TAB_REGISTRY.filter((entry) => !ent
 
 export function getVisibleSettingsTabs(
   section: "main" | "advanced",
-  options: { showDevelopment?: boolean } = {},
+  options: { showDevelopment?: boolean; betaFeatures?: BetaFeatureSettings } = {},
 ): SettingsTabMetadata[] {
-  const tabs = SETTINGS_TAB_REGISTRY.filter((entry) => entry.released && entry.section === section)
+  const betaFeatures = options.betaFeatures ?? DEFAULT_BETA_FEATURE_SETTINGS
+  const tabs = SETTINGS_TAB_REGISTRY.filter(
+    (entry) =>
+      entry.released &&
+      entry.section === section &&
+      (!entry.betaFeature || betaFeatures[entry.betaFeature]),
+  )
   if (section === "main" && options.showDevelopment) {
     const debug = SETTINGS_TAB_REGISTRY.find((entry) => entry.id === "debug")
     return debug ? [...tabs, debug] : tabs
@@ -493,17 +506,23 @@ export function getVisibleSettingsTabs(
 
 export function isVisibleSettingsTab(
   tab: SettingsTab,
-  options: { showDevelopment?: boolean } = {},
+  options: { showDevelopment?: boolean; betaFeatures?: BetaFeatureSettings } = {},
 ): boolean {
   const entry = SETTINGS_TAB_REGISTRY.find((candidate) => candidate.id === tab)
   if (!entry?.released) return false
+  if (
+    entry.betaFeature &&
+    !(options.betaFeatures ?? DEFAULT_BETA_FEATURE_SETTINGS)[entry.betaFeature]
+  ) {
+    return false
+  }
   if (entry.section === "development") return options.showDevelopment === true
   return entry.section !== "hidden"
 }
 
 export function normalizeVisibleSettingsTab(
   tab: SettingsTab,
-  options: { showDevelopment?: boolean } = {},
+  options: { showDevelopment?: boolean; betaFeatures?: BetaFeatureSettings } = {},
 ): SettingsTab {
   return isVisibleSettingsTab(tab, options) ? tab : "preferences"
 }
@@ -513,6 +532,7 @@ export function isVisibleSettingsControl(
   options: {
     showDevelopment?: boolean
     availableProviders?: readonly SettingsProviderScope[]
+    betaFeatures?: BetaFeatureSettings
   } = {},
 ): boolean {
   if (!isVisibleSettingsTab(control.tab, options)) return false

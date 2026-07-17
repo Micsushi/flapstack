@@ -7,6 +7,7 @@ import path from "path"
 import { z } from "zod"
 import { setConnectionMethod } from "../../analytics"
 import { agentInputLifecycle } from "../../agent-input/service"
+import { sleep } from "../../../../shared/sleep"
 import {
   formatClaudeInputAnswers,
   normalizeClaudeInputQuestions,
@@ -120,9 +121,11 @@ import {
 import { projectVaultSectionIds } from "../../project-vaults/registry"
 import {
   buildProjectVaultRunContext,
+  emptyProjectVaultRunContext,
   persistProjectVaultContextManifest,
   ProjectVaultContextRejectedError,
 } from "../../project-vaults/run-context"
+import { isBetaFeatureEnabled } from "../../beta-features/settings"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -1344,27 +1347,32 @@ export const claudeRouter = router({
               providerNativeInstructions: !isUsingOllama,
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            let vaultContext
-            try {
-              vaultContext = await buildProjectVaultRunContext(db, {
-                chatId: input.chatId,
-                runId: launchRunId,
-                harness: HARNESS,
-                ...(input.vaultContextSectionIds
-                  ? { runSectionIds: input.vaultContextSectionIds }
-                  : {}),
-              })
-            } catch (error) {
-              if (error instanceof ProjectVaultContextRejectedError) {
-                persistProjectVaultContextManifest(db, {
+            let vaultContext = emptyProjectVaultRunContext({
+              harness: HARNESS,
+              runId: launchRunId,
+            })
+            if (isBetaFeatureEnabled("projectMemory")) {
+              try {
+                vaultContext = await buildProjectVaultRunContext(db, {
+                  chatId: input.chatId,
                   runId: launchRunId,
-                  manifest: error.manifest,
+                  harness: HARNESS,
                   ...(input.vaultContextSectionIds
                     ? { runSectionIds: input.vaultContextSectionIds }
                     : {}),
                 })
+              } catch (error) {
+                if (error instanceof ProjectVaultContextRejectedError) {
+                  persistProjectVaultContextManifest(db, {
+                    runId: launchRunId,
+                    manifest: error.manifest,
+                    ...(input.vaultContextSectionIds
+                      ? { runSectionIds: input.vaultContextSectionIds }
+                      : {}),
+                  })
+                }
+                throw error
               }
-              throw error
             }
             const extensionContext = await buildExtensionRunContext(db, {
               chatId: input.chatId,
@@ -2954,7 +2962,7 @@ ${prompt}
                 console.log(
                   `[claude] Policy retry ${policyRetryCount}/${MAX_POLICY_RETRIES} - waiting ${delayMs / 1000}s`,
                 )
-                await new Promise((resolve) => setTimeout(resolve, delayMs))
+                await sleep(delayMs)
                 continue
               }
               break

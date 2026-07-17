@@ -41,6 +41,7 @@ import { trpc } from "../../../lib/trpc"
 import { cn } from "../../../lib/utils"
 import { desktopViewAtom } from "../atoms"
 import { openOperationWorkspace } from "../../saved-workspaces/operation-navigation"
+import { useBetaFeatures } from "../../settings/use-beta-features"
 import { CoordinationEngineLaunchPreviewPanel } from "./coordination-engine-launch-preview"
 import { OrchestrationLineageTree } from "./orchestration-lineage-tree"
 import { OrchestrationWorkflowPanel } from "./orchestration-workflow-panel"
@@ -248,7 +249,7 @@ export function OrchestrationOverviewCard({
     message: string | null,
   ) => void
   onStartCoordination?: () => void
-  onOpenWorkspace: () => void
+  onOpenWorkspace?: () => void
 }) {
   const { orchestration, aggregate, agents } = overview
   const cost = formatOrchestrationCost(
@@ -289,15 +290,17 @@ export function OrchestrationOverviewCard({
           </p>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6"
-            onClick={onOpenWorkspace}
-            aria-label="Open operation workspace"
-          >
-            <PanelsTopLeft className="h-3.5 w-3.5" />
-          </Button>
+          {onOpenWorkspace && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              onClick={onOpenWorkspace}
+              aria-label="Open operation workspace"
+            >
+              <PanelsTopLeft className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {canPause && (
             <Button
               size="icon"
@@ -978,16 +981,17 @@ export function OrchestrationTaskCard({
   currentChatId: string
   onNavigate: (chatId: string) => void
 }) {
+  const betaFeatures = useBetaFeatures()
   const setDesktopView = useSetAtom(desktopViewAtom)
   const utils = trpc.useUtils()
   const taskQueryId = taskId ?? ""
   const overviewQuery = trpc.spawnedAgents.getTaskOverview.useQuery(
     { taskId: taskQueryId },
-    { enabled: Boolean(taskId), refetchInterval: 1_000 },
+    { enabled: betaFeatures.orchestration && Boolean(taskId), refetchInterval: 1_000 },
   )
   const lineageQuery = trpc.spawnedAgents.getLineage.useQuery(
     { taskId: taskQueryId },
-    { enabled: Boolean(taskId), refetchInterval: 1_000 },
+    { enabled: betaFeatures.orchestration && Boolean(taskId), refetchInterval: 1_000 },
   )
   const chatLineageQuery = trpc.spawnedAgents.previewLineage.useQuery({ chatId: currentChatId })
   const [editorMode, setEditorMode] = useState<AgentEditorMode | null>(null)
@@ -1163,7 +1167,11 @@ export function OrchestrationTaskCard({
             },
           })
         }
-        onOpenWorkspace={() => void openWorkspace(overview.orchestration.taskId)}
+        onOpenWorkspace={
+          betaFeatures.savedWorkspaces
+            ? () => void openWorkspace(overview.orchestration.taskId)
+            : undefined
+        }
       />
       <div className="px-3 pb-3">
         <OrchestrationWorkflowPanel taskId={taskQueryId} />

@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
 import { resolve } from "node:path"
+import { sleep } from "../../../shared/sleep"
 import type {
   CoordinationEngineAction,
   CoordinationEngineBlockReason,
@@ -263,7 +264,7 @@ async function waitForTargets(
       throw new Error("One or more Codex worker thread states are uncertain.")
     if (states.every((state) => state.state !== "running")) return { waiting: false, states }
     if (!timeoutMs || Date.now() >= deadline) return { waiting: true, states }
-    await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, deadline - Date.now())))
+    await sleep(Math.min(POLL_MS, deadline - Date.now()))
   } while (Date.now() <= deadline)
   return { waiting: true, states: [] }
 }

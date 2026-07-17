@@ -41,6 +41,7 @@ import { OrchestrationTaskCard } from "../agents/ui/orchestration-task-card"
 import type { ParsedDiffFile } from "./types"
 import { fileViewerOpenAtomFamily, selectedAgentChatIdAtom, type AgentMode } from "../agents/atoms"
 import { agentsSettingsDialogOpenAtom, agentsSettingsDialogActiveTabAtom } from "@/lib/atoms"
+import { useBetaFeatures } from "../settings/use-beta-features"
 
 // ============================================================================
 // WidgetCard - extracted as a real component to avoid remounts
@@ -229,6 +230,7 @@ export function DetailsSidebar({
   remoteInfo,
   isRemoteChat = false,
 }: DetailsSidebarProps) {
+  const betaFeatures = useBetaFeatures()
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
   // Global sidebar open state
   const [isOpen, setIsOpen] = useAtom(detailsSidebarOpenAtom)
@@ -361,7 +363,11 @@ export function DetailsSidebar({
 
           {/* Right-side header actions */}
           {activeTab === "details" ? (
-            <WidgetSettingsPopup workspaceId={chatId} isRemoteChat={isRemoteChat} />
+            <WidgetSettingsPopup
+              workspaceId={chatId}
+              isRemoteChat={isRemoteChat}
+              orchestrationEnabled={betaFeatures.orchestration}
+            />
           ) : (
             <div className="flex items-center gap-0.5">
               <Tooltip>
@@ -411,7 +417,7 @@ export function DetailsSidebar({
 
             switch (widgetId) {
               case "orchestration":
-                if (!projectId) return null
+                if (!betaFeatures.orchestration || !projectId) return null
                 return (
                   <WidgetCard
                     key="orchestration"

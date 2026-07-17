@@ -1,7 +1,14 @@
 import { ipcMain, BrowserWindow } from "electron"
 import { gitWatcherRegistry, type GitWatchEvent } from "./git-watcher"
 import { gitCache } from "../cache"
-import { assertRegisteredWorktree } from "../security/path-validation"
+import {
+  assertRegisteredWorktree,
+  PathValidationError,
+  REPLACED_FILESYSTEM_ROOT_MESSAGE,
+} from "../security/path-validation"
+
+export type GitWatcherSubscriptionResult =
+  { status: "subscribed" } | { status: "blocked"; reason: string }
 
 /**
  * IPC Bridge for GitWatcher.
@@ -18,61 +25,81 @@ const activeSubscriptions: Map<string, { windowId: number; unsubscribe: () => vo
  */
 export function registerGitWatcherIPC(): void {
   // Handle subscription requests from renderer
-  ipcMain.handle("git:subscribe-watcher", async (event, worktreePath: string) => {
-    if (!worktreePath) return
-    const registeredRoot = assertRegisteredWorktree(worktreePath)
-    const canonicalPath = registeredRoot.canonicalPath
+  ipcMain.handle(
+    "git:subscribe-watcher",
+    async (event, worktreePath: string): Promise<GitWatcherSubscriptionResult> => {
+      if (!worktreePath) {
+        return { status: "blocked", reason: "No checkout path was provided." }
+      }
+      let registeredRoot
+      try {
+        registeredRoot = assertRegisteredWorktree(worktreePath)
+      } catch (error) {
+        const reason =
+          error instanceof PathValidationError && error.code === "SYMLINK_ESCAPE"
+            ? REPLACED_FILESYSTEM_ROOT_MESSAGE
+            : error instanceof Error
+              ? error.message
+              : "Flapstack could not verify this checkout safely."
+        console.warn(`[GitWatcher] Subscription blocked for ${worktreePath}: ${reason}`)
+        return { status: "blocked", reason }
+      }
+      const canonicalPath = registeredRoot.canonicalPath
 
-    // Already subscribed?
-    if (activeSubscriptions.has(worktreePath)) {
-      return
-    }
+      // Already subscribed?
+      if (activeSubscriptions.has(worktreePath)) {
+        return { status: "subscribed" }
+      }
 
-    // Get the window that made the subscription request
-    const subscribingWindow = BrowserWindow.fromWebContents(event.sender)
-    if (!subscribingWindow || subscribingWindow.isDestroyed()) return
+      // Get the window that made the subscription request
+      const subscribingWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!subscribingWindow || subscribingWindow.isDestroyed()) {
+        return { status: "blocked", reason: "The Flapstack window is no longer available." }
+      }
 
-    const windowId = subscribingWindow.id
+      const windowId = subscribingWindow.id
 
-    // Subscribe to file changes (await to ensure watcher is ready)
-    const unsubscribe = await gitWatcherRegistry.subscribe(
-      canonicalPath,
-      (watchEvent: GitWatchEvent) => {
-        try {
-          assertRegisteredWorktree(worktreePath)
-        } catch {
-          activeSubscriptions.get(worktreePath)?.unsubscribe()
-          activeSubscriptions.delete(worktreePath)
-          return
-        }
-        // Send to the subscribing window, not the focused window
-        const subscription = activeSubscriptions.get(worktreePath)
-        if (!subscription) return
+      // Subscribe to file changes (await to ensure watcher is ready)
+      const unsubscribe = await gitWatcherRegistry.subscribe(
+        canonicalPath,
+        (watchEvent: GitWatchEvent) => {
+          try {
+            assertRegisteredWorktree(worktreePath)
+          } catch {
+            activeSubscriptions.get(worktreePath)?.unsubscribe()
+            activeSubscriptions.delete(worktreePath)
+            return
+          }
+          // Send to the subscribing window, not the focused window
+          const subscription = activeSubscriptions.get(worktreePath)
+          if (!subscription) return
 
-        const targetWindow = BrowserWindow.fromId(subscription.windowId)
-        if (!targetWindow || targetWindow.isDestroyed()) return
+          const targetWindow = BrowserWindow.fromId(subscription.windowId)
+          if (!targetWindow || targetWindow.isDestroyed()) return
 
-        // We're watching .git/index and .git/HEAD, so any event means a git operation occurred.
-        // Invalidate status and parsedDiff caches - these are always affected by git operations.
-        // File content cache is content-addressed and will update on next request if hash changed.
-        gitCache.invalidateStatus(worktreePath)
-        gitCache.invalidateParsedDiff(worktreePath)
+          // We're watching .git/index and .git/HEAD, so any event means a git operation occurred.
+          // Invalidate status and parsedDiff caches - these are always affected by git operations.
+          // File content cache is content-addressed and will update on next request if hash changed.
+          gitCache.invalidateStatus(worktreePath)
+          gitCache.invalidateParsedDiff(worktreePath)
 
-        // Send event to renderer
-        try {
-          targetWindow.webContents.send("git:status-changed", {
-            worktreePath: watchEvent.worktreePath,
-            changes: watchEvent.changes,
-          })
-        } catch {
-          // Window may have been destroyed between check and send
-        }
-      },
-    )
+          // Send event to renderer
+          try {
+            targetWindow.webContents.send("git:status-changed", {
+              worktreePath: watchEvent.worktreePath,
+              changes: watchEvent.changes,
+            })
+          } catch {
+            // Window may have been destroyed between check and send
+          }
+        },
+      )
 
-    activeSubscriptions.set(worktreePath, { windowId, unsubscribe })
-    console.log(`[GitWatcher] Window ${windowId} subscribed to: ${worktreePath}`)
-  })
+      activeSubscriptions.set(worktreePath, { windowId, unsubscribe })
+      console.log(`[GitWatcher] Window ${windowId} subscribed to: ${worktreePath}`)
+      return { status: "subscribed" }
+    },
+  )
 
   // Handle unsubscription requests from renderer
   ipcMain.handle("git:unsubscribe-watcher", async (_event, worktreePath: string) => {

@@ -6,22 +6,30 @@ policy, dependencies, and projections. Stage 4 already supports mixed-runtime
 workers and safe cross-provider continuation by creating a new Chat with visible
 history context.
 
-The word compatible has two different meanings that must not be conflated:
+The word compatible has three different meanings that must not be conflated:
 
 1. **Native execution compatibility** means a harness can use a Runtime that
    actually implements its protocol. Codex App Server and Claude Agent SDK are
    not interchangeable.
-2. **Cross-provider composition** means independent native targets can exchange
+2. **Translated Runtime compatibility** means a versioned adapter can map one
+   provider/model into another Runtime's public behavior contract with explicit
+   capability losses. It is not native provider execution.
+3. **Cross-provider composition** means independent targets can exchange
    bounded context, delegated tasks, structured results, controls, and lineage
    through Flapstack-owned contracts.
 
-Stage 5 implements the second without pretending the first is universal.
+Stage 5 implements translated compatibility and composition without pretending
+native protocols are universal.
 
 ## Goals / Non-Goals
 
 ### Goals
 
 - Exact, previewable execution-target resolution with no silent substitution.
+- Provider-parity, provider-enhanced, translated, and Native Runtime modes with
+  exact adapter-chain and loss reporting.
+- Capability-gated Codex-contract and Claude-Code-contract adapters for other
+  providers/models where translation is safe.
 - Bidirectional Codex and Claude Code continuation and delegation.
 - One durable Chat per addressable provider thread/agent identity.
 - Versioned task/result envelopes that preserve bounded visible context,
@@ -33,13 +41,14 @@ Stage 5 implements the second without pretending the first is universal.
 
 ### Non-Goals
 
-- Making the Claude Agent SDK execute Codex/OpenAI models.
-- Making Codex App Server execute Claude/Anthropic models.
+- Claiming that Claude Agent SDK natively executes Codex/OpenAI models or Codex
+  App Server natively executes Claude/Anthropic models.
 - Sharing or converting native provider sessions between harnesses.
 - Copying private/encrypted reasoning, credentials, approval grants, raw
   provider state, or hidden tool state into another provider.
 - Treating imported history as native conversation history.
-- Prompt-only imitation of unsupported structured output or controls.
+- Prompt-only imitation of required structured output, permissions, sessions,
+  events, or controls without an enforcing adapter.
 - Silent Runtime, model, provider, account, permission, or worktree fallback.
 - A universal adapter that flattens away provider-specific semantics.
 
@@ -52,23 +61,53 @@ intent:
 
 ```text
 ExecutionTarget = {
-  harness, runtime, provider, model, account,
+  harness, runtime, runtimeMode, adapterChain,
+  provider, model, account,
   agentProfileVersion, permissionMode,
   workspace, worktree, capabilitySnapshot, adapterVersion
 }
 ```
 
+`runtimeMode` is `native`, `enhanced`, `translated`, or `flapstack-native`.
 The compatibility graph is versioned and capability-probed. Product defaults:
 
-| Harness          | Valid Runtime choices                                     | Invalid native cross-wiring  |
-| ---------------- | --------------------------------------------------------- | ---------------------------- |
-| Codex            | Codex; explicit Flapstack Native compatibility path       | Claude Code Runtime          |
-| Claude Code      | Claude Code; explicit Flapstack Native compatibility path | Codex Runtime                |
-| Generic provider | Flapstack Native                                          | Codex or Claude Code Runtime |
+| Provider/model target              | Native choices                                      | Translated choices                                                                  |
+| ---------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Codex/OpenAI through Codex         | Codex, Codex Enhanced, Flapstack Native             | Claude Code contract when the adapter satisfies requirements                        |
+| Claude through Claude Code         | Claude Code, Claude Code Enhanced, Flapstack Native | Codex contract when the adapter satisfies requirements                              |
+| Cursor, OpenRouter, local, generic | Flapstack Native                                    | Codex or Claude Code contract when an installed adapter passes its capability probe |
 
-`Automatic` resolves only within the selected harness's valid set. Explicit
+`Automatic` resolves to the provider's parity Runtime when native support exists,
+otherwise Flapstack Native. Translated choices are always explicit. An explicit
 selection that becomes unavailable blocks before mutation and offers reviewed
 repair choices; Flapstack never changes the stored preference silently.
+
+### Runtime adapter broker
+
+The broker resolves a versioned adapter chain rather than lying about native
+protocol support:
+
+```text
+provider/model -> provider client -> Runtime contract adapter -> Flapstack activity
+```
+
+An adapter declares prompt/system semantics, instruction-file mapping, tool and
+permission schemas, MCP/skill/hook support, session/resume behavior, attachments,
+reasoning/event projection, structured output, usage, cancellation, and known
+losses. Required unknown or unsupported capabilities block before provider
+intent. Prompt text alone can adapt style but cannot claim tool, permission,
+session, event, or recovery compatibility.
+
+Initial Stage 5 adapter packs:
+
+- Claude provider -> Codex-compatible contract;
+- OpenAI/Codex provider -> Claude-Code-compatible contract;
+- Cursor/OpenRouter/local/generic -> Codex-compatible or Claude-Code-compatible
+  contract where the provider client exposes the required tool loop;
+- every provider -> Flapstack Native remains the universal baseline.
+
+Native Codex and Claude adapters remain the parity reference fixtures. Each
+translated pack runs the same contract suite and publishes an exact loss matrix.
 
 ### Two cross-provider operations
 
@@ -144,16 +183,18 @@ do not open a second App Server process or own a second event stream.
 
 ### Capability negotiation and repair
 
-Capabilities are target-specific, versioned, and persisted with the run. They
+Capabilities are target-and-adapter-chain-specific, versioned, and persisted
+with the run. They
 include session start/resume/fork, structured output limits, tool input,
 attachments, cancellation, pause/resume, activity kinds, permissions, MCP,
 hooks, skills, descendants, worktrees, checkpoints, and usage detail.
 
 The UI derives choices from the graph and live probe:
 
-- compatible targets are selectable;
-- incompatible targets are absent from ordinary selection or disabled with an
-  exact reason in diagnostics/repair views;
+- native, enhanced, and translated targets are visibly distinguished;
+- compatible translated targets are selectable with their loss summary;
+- incompatible targets are disabled with an exact reason in diagnostics/repair
+  views;
 - capability drift after preview invalidates the preview and requires repair;
 - unknown execution-critical capabilities fail closed;
 - no fallback is performed after launch intent.
@@ -195,7 +236,8 @@ fact.
 
 ### User experience
 
-The Runtime selector remains harness-compatible. Cross-provider actions are
+The Runtime selector remains capability-compatible. Native/Enhanced/Translated
+badges state what will actually run. Cross-provider actions are
 separate and explicit:
 
 - `Continue with Claude Code`

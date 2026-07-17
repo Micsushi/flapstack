@@ -34,7 +34,9 @@ import type {
   CoordinationEngineContext,
   CoordinationEngineProviderIdentity,
 } from "../../../../shared/coordination-engine"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("orchestration")
 
 const service = () => createOrchestrationOperationsService(getDatabasePath())
 const activity = () => new OrchestrationActivityProjectionService(getDatabasePath())

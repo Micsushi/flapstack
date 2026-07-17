@@ -88,7 +88,7 @@
 - Acceptance: No duplicate chat control; invalid panes do not block remaining workspace; layout edits remain reversible.
 - Verification: Multi-window component/integration tests, forced restart, missing-target fixtures, 200% zoom, and live workspace walkthrough.
 - Blocked by: S5-F1-T1, S5-F1-T2
-- Blocks: S5-F1-T9, S5-F6-T2, S5-F6-T6
+- Blocks: S5-F1-T9, S5-F6-T2, S5-F6-T7, S5-F6-T8
 - Context: S4 saved workspaces, window ownership, pane adapters.
 
 ### S5-F1-T8 — Close accessibility, voice-language, and recovery-state gaps

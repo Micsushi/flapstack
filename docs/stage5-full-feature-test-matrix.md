@@ -76,16 +76,30 @@ live, usability, device, provider, package, or native-platform rows.
 - [ ] **S5-VC04** Agent capture, history/retention/export, tamper/missing state,
       and standalone helper reuse the same safety and pass platform/package proof.
 
-## Terminal-grid and swarm workspaces
+## Multi-pane Chat and swarm workspaces
 
-- [ ] **S5-TG01** Grid panes bind existing identities and exclusive chat/window
-      ownership without creating duplicate tasks, chats, agents, or terminals.
-- [ ] **S5-TG02** Layouts/templates restore crash-safely; stale panes repair
-      independently; default users are not forced into advanced mode.
-- [ ] **S5-TG03** Fleet/lineage/activity/task-path projections preserve exact
-      Runtime/provenance and never synthesize/replay/private-reasoning state.
-- [ ] **S5-TG04** Group actions preview exact selection, use shared authority,
-      report partial results, and pass keyboard/reader/scale/performance evidence.
+- [ ] **S5-TG01** One, two, three, and four visible top-level Chat panes each
+      retain an independent heading, transcript scrollbar, timeline, composer,
+      draft, focus, run/stream/error state, and simultaneous send path.
+- [ ] **S5-TG02** Tab reorder, center-to-tab, directional edge drops, every
+      preset/asymmetric layout, resize, maximize, join/close, and fifth-group
+      recovery match their previews through pointer and keyboard paths.
+- [ ] **S5-TG03** Drag-out, Move into New Window, cross-window drop, pull-back,
+      destination failure, source close/crash, and read-only copy preserve one
+      durable Chat identity and never expose two editable owners.
+- [ ] **S5-TG04** Main plus three auxiliary workbench windows is the hard app
+      maximum across every creation path; fifth-window races preserve source
+      state and offer existing-window destinations while exempt dialogs still open.
+- [ ] **S5-TG05** Window bounds/display, group trees, active tabs, drafts, split
+      sizes, responsive collapse, Saved Workspace promotion, stale panes, and
+      old or over-limit state restore crash-safely without deleting work;
+      excess saved windows remain dormant and recoverable.
+- [ ] **S5-TG06** Terminal/run/agent/worktree/diff/file/browser panes plus
+      fleet/lineage/activity/task-path projections preserve exact identity,
+      Runtime/provenance, and never synthesize/replay/private-reasoning state.
+- [ ] **S5-TG07** Group actions preview exact selection, use shared authority,
+      report partial results, and the full feature passes native macOS/Windows/
+      Linux multi-window, keyboard/reader, scale, leak, and performance evidence.
 
 ## Runtime and orchestration composition
 

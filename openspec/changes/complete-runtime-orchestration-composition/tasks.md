@@ -1,26 +1,26 @@
 # S5-F7 — Runtime and Cross-Provider Orchestration Composition
 
-### S5-F7-T1 — Freeze ownership, execution-target, and compatibility contracts
+### S5-F7-T1 — Freeze ownership, execution-target, and adapter contracts
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S5 / Feature S5-F7
-- Outcome: Every target field and request/control/activity/result field has one authoritative owner, and every valid or invalid harness/Runtime combination is deterministic.
-- Scope: F3/F11 seam audit; `ExecutionTarget` schema; harness/Runtime/provider/model/account/profile/permission/worktree compatibility graph; capability snapshot/version; precedence; target preview contract; failure/repair taxonomy; Stage 4 migration and deprecation map.
-- Out of scope: Provider implementation or universal cross-wired Runtime.
-- Acceptance: Codex cannot resolve Claude Code Runtime; Claude cannot resolve Codex Runtime; explicit Flapstack Native compatibility remains truthful; unsupported/unknown blocks before mutation; no duplicate process/parser/activity owner; Stage 4 snapshots remain readable.
+- Outcome: Every target field and request/control/activity/result field has one authoritative owner, and every native, enhanced, translated, or invalid provider/Runtime combination is deterministic.
+- Scope: F3/F11 seam audit; `ExecutionTarget` schema; Runtime mode and adapter-chain identity; provider/model/account/profile/permission/worktree capability graph; snapshot/version; precedence; target preview; loss matrix; failure/repair taxonomy; Stage 4 migration and deprecation map.
+- Out of scope: Provider adapter implementation.
+- Acceptance: Native choices remain provider truthful; translated choices identify their adapter chain and losses; Flapstack Native remains universal; unsupported/unknown blocks before mutation; no duplicate process/parser/activity owner; Stage 4 snapshots remain readable.
 - Verification: Architecture and security review; resolver/precedence/compatibility/probe-drift/migration/property tests; invalid-pair and no-silent-fallback fixtures.
 - Blocked by: fully accepted S4-F3 and S4-F11
 - Blocks: S5-F7-T2, S5-F7-T3, S5-F7-T4, S5-F7-T5
 - Context: RuntimeLaunchCoordinator, Agent Runtime resolver, coordination engines, Agent Profiles, Chat lineage, activity references.
 
-### S5-F7-T2 — Resolve exact targets through one native Runtime authority
+### S5-F7-T2 — Resolve exact targets through one Runtime adapter broker
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S5 / Feature S5-F7
-- Outcome: Direct, continuation, delegated, and workflow launches use one immutable compatible target and one F11-owned provider client/session/event source.
-- Scope: Versioned F3 consumer port; target resolution and probe; Codex V2/V1 task-path/mailbox/follow-up/interrupt routing through F11 App Server authority; Claude/native adapter routing; immutable target snapshot; request correlation; idempotent launch intent; adapter drift; diagnostics; explicit repair and retry.
-- Out of scope: Second Codex App Server client in F3, Claude-through-Codex, Codex-through-Claude, or post-intent fallback.
-- Acceptance: One process/session owner per child; exact target persists before provider intent; unsupported version/capability blocks; drift expires preview; events retain provider/run/task-path provenance; retries create explicit new attempts.
+- Outcome: Direct, continuation, delegated, and workflow launches use one immutable native or translated target and one F11-owned provider/session/event authority.
+- Scope: Versioned F3 consumer port; native and translated target resolution/probe; adapter-chain registry; Codex V2/V1 routing through F11 authority; Claude/native/translated routing; immutable target snapshot; request correlation; idempotent launch intent; drift; diagnostics; repair/retry.
+- Out of scope: Second provider client in F3, prompt-only capability claims, or post-intent fallback.
+- Acceptance: One provider/session owner per child; exact Runtime mode and adapter chain persist before provider intent; unsupported version/capability blocks; drift expires preview; events retain provider/run/task-path/adapter provenance; retries create explicit new attempts.
 - Verification: Port/version/probe/process-count/request-correlation/idempotency tests; Codex mailbox/follow-up/interrupt fixtures; Claude/native launch fixtures; cancellation/restart/drift tests; credentialed live native targets.
 - Blocked by: S5-F7-T1
 - Blocks: S5-F7-T3, S5-F7-T5, S5-F7-T6
@@ -65,14 +65,14 @@
 - Blocks: S5-F4-T4, S5-F6-T4, S5-F7-T6, S5-F7-T7
 - Context: F11 activity/usage stores, F3 workflow checkpoints/fleet, child result projector, recovery coordinator.
 
-### S5-F7-T6 — Ship truthful composition UX and prove native provider/package paths
+### S5-F7-T6 — Ship truthful composition UX and target previews
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S5 / Feature S5-F7
-- Outcome: Users can preview, continue, delegate, inspect, repair, cancel, and recover Codex/Claude compositions without interpreting Runtime compatibility themselves.
-- Scope: Harness-compatible Runtime selector; `Continue with` and `Delegate to` actions; execution-target/context/authority/worktree/budget preview; unavailable reason and repair; child Chat lineage/navigation; parent result/activity references; diagnostics; accessibility; docs; credentialed Codex-to-Claude and Claude-to-Codex paths; mixed workflow; verified Dev and macOS preview package. Windows/Linux parity is owned by S5-F10.
-- Out of scope: Cross-wired native Runtime choices, hidden fallback, provider UI cloning, or claiming unavailable provider/platform capabilities.
-- Acceptance: UI never offers Claude Runtime for Codex or Codex Runtime for Claude; both provider directions show distinct child Chats and exact provenance; context omissions/permissions/worktree/usage are visible; cancellation and forced restart recover honestly; limitations are recorded per adapter/platform; exact build/profile/version evidence exists.
+- Outcome: Users can preview, continue, delegate, inspect, repair, cancel, and recover native, enhanced, and translated Runtime compositions without interpreting adapter compatibility themselves.
+- Scope: Capability-compatible Runtime selector; Native/Enhanced/Translated badges; adapter-chain and loss preview; `Continue with` and `Delegate to`; execution-target/context/authority/worktree/budget preview; unavailable reason/repair; lineage/navigation; result/activity references; diagnostics; accessibility; docs; credentialed native and translated paths; mixed workflow; verified Dev and macOS preview package. Windows/Linux parity is owned by S5-F10.
+- Out of scope: Hidden fallback, provider UI cloning, or claiming translated/unavailable provider/platform capabilities as native.
+- Acceptance: UI distinguishes native, enhanced, and translated targets; only capability-probed translated choices are enabled; provider directions show distinct child Chats and exact provenance; losses/context/permissions/worktree/usage are visible; cancellation and forced restart recover honestly; exact build/profile/version evidence exists.
 - Verification: Component/interaction/accessibility/diagnostic tests; credentialed verified-Dev continuation/delegation/mixed-workflow/incompatible-repair/cancel/restart matrix; `npm run package:preview:mac` walkthrough and logs; native Windows/Linux composition repeated by S5-F10.
 - Blocked by: S5-F7-T2, S5-F7-T3, S5-F7-T4, S5-F7-T5, native package/host rows from S5-F10 as applicable
 - Blocks: S5-F7-T7, S5-F11-T3, S5-F11-T6
@@ -83,10 +83,23 @@
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S5 / Feature S5-F7
 - Outcome: Native Runtime boundaries and bidirectional cross-provider composition pass automated, live, restart, privacy, accessibility, and package evidence on one exact candidate.
-- Scope: Matrix S5-RO; migrations/rollback; target compatibility; ports; Codex authority; child Chats; task/result envelopes; structured output; permission/worktree/budget ceilings; controls; activity/usage; no-replay; UX; security/privacy; docs and manual test handoff.
-- Out of scope: New coordination engine, universal provider session, cross-wired Runtime, hosted relay, release publication, or unsupported platform claim.
-- Acceptance: Codex-to-Claude and Claude-to-Codex continuation and delegation complete with exact child lineage, bounded visible context, schemas, activity, usage, controls, and recovery; crash/restart never duplicates; secrets/private reasoning never cross; every ownership boundary and unsupported state remains truthful.
+- Scope: Matrix S5-RO; migrations/rollback; native/enhanced/translated target compatibility; adapter packs; ports; provider authority; child Chats; task/result envelopes; structured output; permission/worktree/budget ceilings; controls; activity/usage; no-replay; UX; security/privacy; docs and manual test handoff.
+- Out of scope: New coordination engine, universal provider session, unlabeled native cross-wiring, hosted relay, release publication, or unsupported platform claim.
+- Acceptance: Native and translated Codex/Claude plus one generic/local adapter path complete with exact child lineage, bounded visible context, schemas, activity, usage, controls, loss matrices, and recovery; crash/restart never duplicates; secrets/private reasoning never cross; every ownership boundary and unsupported state remains truthful.
 - Verification: Node 22 `npm run check`; strict OpenSpec; migration/rollback/security/privacy/accessibility/performance suites; `npm run dev` plus `npm run dev:verify`; credentialed bidirectional provider matrix; forced restart; macOS preview package; exact-SHA user manual test. Unobserved Windows/Linux rows remain open until S5-F10 evidence exists.
-- Blocked by: S5-F7-T5, S5-F7-T6
-- Blocks: S5-F4-T8, S5-F6-T8, S5-F11-T3, S5-F11-T4, S5-F11-T6
+- Blocked by: S5-F7-T5, S5-F7-T6, S5-F7-T8
+- Blocks: S5-F4-T8, S5-F6-T10, S5-F11-T3, S5-F11-T4, S5-F11-T6
 - Context: docs/stage5-full-feature-test-matrix.md and Stage 5 manual-test handoff.
+
+### S5-F7-T8 — Build and verify cross-provider Runtime adapter packs
+
+- [ ] Completion: acceptance and verification passed
+- Parent: Project Flapstack / Stage S5 / Feature S5-F7
+- Outcome: Codex, Claude Code, and Flapstack Native Runtime contracts are available to other providers/models wherever a versioned adapter can enforce the requested capabilities.
+- Scope: Provider/Runtime adapter SDK and registry; native/enhanced/translated identity; system/developer prompt and instruction-file mapping; tool/permission/MCP/skill/hook translation; session/resume/fork semantics; attachments; reasoning/activity projection; structured output; usage/cancel/recovery; loss matrices; initial Claude-to-Codex-contract, OpenAI-to-Claude-contract, and one generic/local adapter pack; contract fixtures and live proof.
+- Out of scope: Claiming translated execution is native, copying proprietary hidden prompts, credential forwarding, private reasoning conversion, prompt-only tool/session emulation, or enabling a combination whose required semantics cannot be enforced.
+- Acceptance: Every adapter advertises exact supported/unsupported/lossy capabilities; required gaps block before provider intent; native reference fixtures and translated fixtures share one contract suite; provider credentials and sessions remain isolated; no adapter creates a second activity/session authority; one Claude, one OpenAI, and one generic/local translated path pass end-to-end with truthful labels.
+- Verification: Adapter conformance/property/fuzz tests; prompt/instruction/tool/permission/session/event/output/usage/cancel/restart/privacy fixtures; credentialed translated provider matrix; verified Dev and macOS preview package; Windows/Linux rows remain open for S5-F10.
+- Blocked by: S5-F7-T1, S5-F7-T2, S5-F7-T3, S5-F7-T4
+- Blocks: S5-F7-T6, S5-F7-T7
+- Context: Runtime registry, provider clients, capability snapshots, extension management, activity envelope, structured-output bridge, Stage 4 parity/Enhanced split.

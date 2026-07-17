@@ -13,7 +13,14 @@ describe("Runtime orchestration worker boundary", () => {
     completionCriteria: "Report concrete findings.",
   } as const
 
-  it.each(["auto", "codex", "claude-code", "flapstack-native"] as const)(
+  it.each([
+    "auto",
+    "codex",
+    "codex-enhanced",
+    "claude-code",
+    "claude-code-enhanced",
+    "flapstack-native",
+  ] as const)(
     "accepts optional worker Runtime override %s without engine coupling",
     (runtimePreference) => {
       const worker = orchestrationAgentDefinitionSchema.parse({ ...base, runtimePreference })

@@ -17,8 +17,10 @@ import { detailsSidebarOpenAtom, detailsSidebarTabAtom } from "../details-sideba
 import { AUTOMATION_A11Y, formatAutomationError } from "./automation-ui-model"
 import { moveAutomationInboxFocus } from "./inbox-state"
 import { automationEvidenceRunIdAtom } from "./state"
+import { useBetaFeatures } from "../settings/use-beta-features"
 
 export function InboxView() {
+  const betaFeatures = useBetaFeatures()
   const setView = useSetAtom(desktopViewAtom)
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)

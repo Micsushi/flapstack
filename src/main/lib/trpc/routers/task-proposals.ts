@@ -7,7 +7,9 @@ import {
 import { getDatabasePath } from "../../db"
 import { TaskProposalError, TaskProposalService } from "../../task-proposals"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("planning")
 
 const user = { type: "user" as const, id: "local-user" }
 const service = () => new TaskProposalService(getDatabasePath())

@@ -1,6 +1,8 @@
 import { z } from "zod"
 import { app } from "electron"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("projectMemory")
 import { getDatabase } from "../../db"
 import {
   getOrCreateProjectVaultPolicy,

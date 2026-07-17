@@ -24,7 +24,9 @@ import { AgentsUsageTab } from "../../components/dialogs/settings-tabs/agents-us
 import { AgentsVoiceTab } from "../../components/dialogs/settings-tabs/agents-voice-tab"
 import { AgentsKeyboardTab } from "../../components/dialogs/settings-tabs/agents-keyboard-tab"
 import { AgentsPortabilityTab } from "../../components/dialogs/settings-tabs/agents-portability-tab"
+import { AgentsBetaTab } from "../../components/dialogs/settings-tabs/agents-beta-tab"
 import { normalizeVisibleSettingsTab } from "./settings-visibility"
+import { useBetaFeatures } from "./use-beta-features"
 import { revealSettingsTarget } from "./settings-target"
 
 // Check if we're in development mode
@@ -37,8 +39,10 @@ export function SettingsContent() {
   const [searchTarget, setSearchTarget] = useAtom(settingsSearchTargetAtom)
   const devToolsUnlocked = useAtomValue(devToolsUnlockedAtom)
   const showDebugTab = isDevelopment || devToolsUnlocked
+  const betaFeatures = useBetaFeatures()
   const activeTab = normalizeVisibleSettingsTab(storedActiveTab, {
     showDevelopment: showDebugTab,
+    betaFeatures,
   })
   const setDesktopView = useSetAtom(desktopViewAtom)
 
@@ -111,6 +115,8 @@ export function SettingsContent() {
         return <AgentsUsageTab />
       case "portability":
         return <AgentsPortabilityTab />
+      case "beta":
+        return <AgentsBetaTab />
       case "debug":
         return showDebugTab ? <AgentsDebugTab /> : null
       default:

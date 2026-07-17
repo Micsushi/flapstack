@@ -41,9 +41,10 @@ export const AgentToolCall = memo(
           <TooltipTrigger asChild>
             <span
               className={`text-muted-foreground/60 font-normal truncate min-w-0${clickableClass}`}
-              dangerouslySetInnerHTML={{ __html: subtitleStr }}
               onClick={onClick}
-            />
+            >
+              {subtitleStr}
+            </span>
           </TooltipTrigger>
           <TooltipContent
             side="top"
@@ -57,9 +58,10 @@ export const AgentToolCall = memo(
       ) : (
         <span
           className={`text-muted-foreground/60 font-normal truncate min-w-0${clickableClass}`}
-          dangerouslySetInnerHTML={{ __html: subtitleStr }}
           onClick={onClick}
-        />
+        >
+          {subtitleStr}
+        </span>
       )
     ) : null
 

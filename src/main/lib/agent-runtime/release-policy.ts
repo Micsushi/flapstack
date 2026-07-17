@@ -13,7 +13,7 @@ export type RuntimeReleaseStatus = {
  * environment flag without silently changing production defaults.
  */
 export function buildRuntimeReleasePolicy(
-  enableUnverifiedNativeRuntimes = process.env.NODE_ENV === "development" ||
+  enableUnverifiedNativeRuntimes = Boolean(process.env.ELECTRON_RENDERER_URL) ||
     process.env.FLAPSTACK_ENABLE_UNVERIFIED_NATIVE_RUNTIMES === "1",
 ): Record<ResolvedAgentRuntime, RuntimeReleaseStatus> {
   return {

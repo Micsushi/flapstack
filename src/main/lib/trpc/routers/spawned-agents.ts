@@ -15,9 +15,10 @@ import {
   getRegisteredCoordinationEngineProbes,
 } from "../../agent-orchestration/operations-runtime"
 import { publishLocalProductInvalidation } from "../../mcp-control/invalidation-bridge"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, publicProcedure, router } from "../index"
 
 const service = () => createAgentOrchestrationService(getDatabasePath())
+const orchestrationProcedure = betaProcedure("orchestration")
 
 function publishOrchestrationChange(taskId: string, projectId?: string): void {
   publishLocalProductInvalidation({
@@ -73,7 +74,7 @@ export const spawnedAgentsRouter = router({
     }
   }),
 
-  createOrchestration: publicProcedure
+  createOrchestration: orchestrationProcedure
     .input(createOrchestrationInputSchema)
     .mutation(async ({ input }) => {
       const result = service().create(input, undefined, {
@@ -83,25 +84,25 @@ export const spawnedAgentsRouter = router({
       return result
     }),
 
-  addAgent: publicProcedure.input(addOrchestrationAgentInputSchema).mutation(({ input }) => {
+  addAgent: orchestrationProcedure.input(addOrchestrationAgentInputSchema).mutation(({ input }) => {
     const result = service().addAgent(input)
     publishOrchestrationChange(result.taskId)
     return result
   }),
 
-  getFleet: publicProcedure
+  getFleet: orchestrationProcedure
     .input(orchestrationFleetQuerySchema)
     .query(({ input }) => service().listFleet(input)),
 
-  getTaskOverview: publicProcedure
+  getTaskOverview: orchestrationProcedure
     .input(z.object({ taskId: z.string() }))
     .query(({ input }) => service().getOverview(input.taskId)),
 
-  getLineage: publicProcedure
+  getLineage: orchestrationProcedure
     .input(z.object({ taskId: z.string() }))
     .query(({ input }) => service().getLineage(input.taskId)),
 
-  control: publicProcedure
+  control: orchestrationProcedure
     .input(z.object({ taskId: z.string(), action: orchestrationControlActionSchema }))
     .mutation(async ({ input }) => {
       const cascade = getCascadeControl(getDatabasePath())
@@ -119,7 +120,7 @@ export const spawnedAgentsRouter = router({
       return result
     }),
 
-  retryAgent: publicProcedure
+  retryAgent: orchestrationProcedure
     .input(z.object({ taskId: z.string(), agentId: z.string() }))
     .mutation(({ input }) => {
       const result = service().retryAgent(input.taskId, input.agentId)
@@ -127,7 +128,7 @@ export const spawnedAgentsRouter = router({
       return result
     }),
 
-  replaceAgent: publicProcedure
+  replaceAgent: orchestrationProcedure
     .input(
       z.object({
         taskId: z.string(),
@@ -141,7 +142,7 @@ export const spawnedAgentsRouter = router({
       return result
     }),
 
-  reportAgentProgress: publicProcedure
+  reportAgentProgress: orchestrationProcedure
     .input(orchestrationUsageUpdateSchema)
     .mutation(({ input }) => {
       const result = service().reportProgress(input)

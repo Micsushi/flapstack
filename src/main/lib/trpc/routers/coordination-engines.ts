@@ -11,7 +11,9 @@ import {
 } from "../../agent-orchestration/coordination-engine"
 import { getDatabase } from "../../db"
 import { getRegisteredCoordinationEngineProbes } from "../../agent-orchestration/operations-runtime"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("orchestration")
 
 const defaults = () => new CoordinationEngineDefaultsService(getDatabase())
 

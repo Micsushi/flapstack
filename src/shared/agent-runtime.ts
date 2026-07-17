@@ -4,13 +4,30 @@ import type { RunPermissionMode } from "./harness-types"
 export const AGENT_RUNTIME_PREFERENCES = [
   "auto",
   "codex",
+  "codex-enhanced",
   "claude-code",
+  "claude-code-enhanced",
   "flapstack-native",
 ] as const
 export type AgentRuntimePreference = (typeof AGENT_RUNTIME_PREFERENCES)[number]
 
 export const RESOLVED_AGENT_RUNTIMES = ["codex", "claude-code", "flapstack-native"] as const
 export type ResolvedAgentRuntime = (typeof RESOLVED_AGENT_RUNTIMES)[number]
+
+export function runtimeAdapterForPreference(
+  preference: AgentRuntimePreference,
+): ResolvedAgentRuntime | null {
+  if (preference === "auto") return null
+  if (preference === "codex" || preference === "codex-enhanced") return "codex"
+  if (preference === "claude-code" || preference === "claude-code-enhanced") {
+    return "claude-code"
+  }
+  return "flapstack-native"
+}
+
+export function usesFlapstackRuntimeEnhancements(preference: AgentRuntimePreference): boolean {
+  return preference === "codex-enhanced" || preference === "claude-code-enhanced"
+}
 
 export const RUNTIME_PREFERENCE_SOURCES = [
   "chat",

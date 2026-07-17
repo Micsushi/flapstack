@@ -18,6 +18,10 @@ export async function createBranchAtWorktree(input: {
   switchAfterCreate: boolean
   onSwitched?: () => void
 }): Promise<void> {
+  // Reject leading-dash values so they can't be parsed as git flags.
+  if (input.branchName.startsWith("-") || input.startPoint.startsWith("-")) {
+    throw new Error("Invalid branch name or start point")
+  }
   await input.git.branch([input.branchName, input.startPoint])
   if (!input.switchAfterCreate) return
   try {

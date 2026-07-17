@@ -81,8 +81,11 @@ export function useGitWatcher(
     // Subscribe to git watcher on main process
     const subscribe = async () => {
       try {
-        await window.desktopApi?.subscribeToGitWatcher(worktreePath)
-        isSubscribedRef.current = true
+        const result = await window.desktopApi?.subscribeToGitWatcher(worktreePath)
+        isSubscribedRef.current = result?.status === "subscribed"
+        if (result?.status === "blocked") {
+          console.warn(`[useGitWatcher] ${result.reason}`)
+        }
       } catch (error) {
         console.error("[useGitWatcher] Failed to subscribe:", error)
       }

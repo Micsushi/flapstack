@@ -5,8 +5,9 @@
 Stage 4 deliberately separates F3 coordination from F11 Agent Runtime
 authority. It also correctly treats Codex App Server and the Claude Agent SDK as
 different native harnesses with different sessions, protocols, permissions,
-events, and capabilities. A Codex model cannot truthfully run inside the Claude
-Code Runtime, and a Claude model cannot truthfully run inside the Codex Runtime.
+events, and capabilities. Stage 5 must preserve that native truth while adding
+explicit translated adapters that let other providers consume a Runtime
+contract where capabilities can be mapped honestly.
 
 Stage 5 still needs those systems to work together. Users must be able to
 continue or delegate work from a Codex Chat to a Claude Code Chat, and in the
@@ -18,9 +19,13 @@ cross-provider composition contract.
 ## What Changes
 
 - Define an exact execution target as harness, compatible Runtime, provider,
-  model, account, Agent Profile, permission mode, and workspace/worktree.
-- Enforce native compatibility: Codex never resolves the Claude Code Runtime,
-  Claude Code never resolves the Codex Runtime, and no target silently changes.
+  Runtime mode, adapter chain, model, account, Agent Profile, permission mode,
+  and workspace/worktree.
+- Distinguish `native`, `enhanced`, and `translated` execution so the UI never
+  presents a translated contract as the provider's native harness.
+- Add capability-gated Runtime adapter packs so any provider/model may request
+  Codex, Claude Code, or Flapstack Native behavior where required prompt, tool,
+  permission, session, event, and output semantics can be translated.
 - Add two explicit cross-provider operations:
   - **Continue with** creates a new child Chat/provider session with bounded,
     visible source history as imported context.
@@ -40,8 +45,9 @@ cross-provider composition contract.
 ## Impact
 
 - Affected specs: `runtime-orchestration-composition`.
-- Affected code: execution-target resolver and compatibility graph, F3 consumer
-  ports, F11 coordinator/adapters, Chat lineage and handoff services,
+- Affected code: execution-target resolver and versioned capability graph,
+  provider/Runtime adapter broker, F3 consumer ports, F11 coordinator/adapters,
+  Chat lineage and handoff services,
   structured task/result envelopes, permission and worktree policy, activity
   and usage projection, lifecycle recovery, target selectors, diagnostics,
   documentation, and tests.

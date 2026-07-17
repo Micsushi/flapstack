@@ -6,7 +6,9 @@ import { AutomationExecutionService } from "../../automation/execution"
 import { AutomationTriggerService } from "../../automation/triggers"
 import { AutomationUiService } from "../../automation/ui-service"
 import { getDatabasePath } from "../../db"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, router } from "../index"
+
+const publicProcedure = betaProcedure("automations")
 
 const user = { type: "user" as const, id: "local-user" }
 const service = () => new AutomationControlService(getDatabasePath())

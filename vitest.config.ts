@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.{ts,tsx}"],
+    setupFiles: ["tests/setup-beta-features.ts"],
     passWithNoTests: false,
   },
 })

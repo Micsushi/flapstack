@@ -23,6 +23,11 @@ import {
   type ProductMcpRendererInvalidation,
 } from "../../../shared/product-mcp-invalidation"
 import { FLAPSTACK_MCP_INSTRUCTIONS } from "./guidance"
+import {
+  betaFeatureForMcpTool,
+  getBetaFeatureSettings,
+  subscribeBetaFeatureSettings,
+} from "../beta-features/settings"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   recoverMcpDispatchClaims(getDatabase())
@@ -45,8 +50,9 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const automationControls = createMcpAutomationService()
   const taskProposalControls = createMcpTaskProposalService()
 
-  for (const tool of listImplementedMcpControlTools()) {
-    server.registerTool(
+  const betaToolRegistrations = new Map<string, { enable(): void; disable(): void }>()
+  for (const tool of listImplementedMcpControlTools({ includeDisabledBeta: true })) {
+    const registration = server.registerTool(
       tool.name,
       {
         description: tool.description,
@@ -98,10 +104,23 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
         }
       },
     )
+    const betaFeature = betaFeatureForMcpTool(tool.name)
+    if (betaFeature) {
+      betaToolRegistrations.set(tool.name, registration)
+      if (!getBetaFeatureSettings()[betaFeature]) registration.disable()
+    }
   }
+  const unsubscribeBetaFeatures = subscribeBetaFeatureSettings((settings) => {
+    for (const [name, registration] of betaToolRegistrations) {
+      const feature = betaFeatureForMcpTool(name)
+      if (feature && settings[feature]) registration.enable()
+      else registration.disable()
+    }
+  })
 
   const close = server.close.bind(server)
   server.close = async () => {
+    unsubscribeBetaFeatures()
     approvals.shutdown()
     await close()
   }

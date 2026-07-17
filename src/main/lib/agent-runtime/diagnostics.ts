@@ -1,5 +1,9 @@
 import Database from "better-sqlite3"
-import type { AgentRuntimePreference, ResolvedRuntimeLaunch } from "../../../shared/agent-runtime"
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+  type ResolvedRuntimeLaunch,
+} from "../../../shared/agent-runtime"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
 import { getRuntimeReleasePolicy } from "./release-policy"
 import { resolvedLaunchFromSnapshotRow } from "./snapshot"
@@ -64,7 +68,8 @@ export function getRuntimeDiagnostics(database: DatabaseLike, chatId: string): R
     : undefined
   const preference = String(chat.runtime_preference ?? "auto") as AgentRuntimePreference
   const harness = String(chat.harness ?? "generic")
-  const unresolvedRuntime = preference === "auto" ? productRuntimeForHarness(harness) : preference
+  const unresolvedRuntime =
+    runtimeAdapterForPreference(preference) ?? productRuntimeForHarness(harness)
   const unresolvedCompatibility = checkRuntimeCompatibility(harness, unresolvedRuntime)
   let launch: ResolvedRuntimeLaunch | null = null
   let diagnosticError: string | null = null

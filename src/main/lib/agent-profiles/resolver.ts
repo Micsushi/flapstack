@@ -2,6 +2,10 @@ import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "../agent-runtime/compatibility"
 import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+} from "../../../shared/agent-runtime"
+import {
   agentProfileResolveInputSchema,
   agentProfileVersionInputSchema,
   DEFAULT_AGENT_CAPABILITY,
@@ -402,12 +406,16 @@ function intersectPolicy(
       repair: "Choose an allowed model or update policy through its existing approval path.",
     })
   }
+  const runtimePreference = effectiveRuntimePreference(
+    capability.harness,
+    capability.runtimePreference,
+  )
   const runtime = resolvedRuntime(capability.harness, capability.runtimePreference)
-  if (policy.allowedRuntimes && !policy.allowedRuntimes.includes(runtime)) {
+  if (policy.allowedRuntimes && !policy.allowedRuntimes.includes(runtimePreference)) {
     conflicts.push({
       code: "runtime-policy-blocked",
       field: "runtimePreference",
-      message: `Runtime ${runtime} is outside the current durable Runtime policy.`,
+      message: `Runtime ${runtimePreference} is outside the current durable Runtime policy.`,
       repair: "Choose the current project/chat Runtime or confirm a newly narrowed snapshot.",
     })
   }
@@ -520,11 +528,11 @@ export function agentProfileSnapshotPolicyViolations(
   ) {
     violations.push("model")
   }
-  const runtime = resolvedRuntime(
+  const runtimePreference = effectiveRuntimePreference(
     snapshot.capability.harness,
     snapshot.capability.runtimePreference,
   )
-  if (policy.allowedRuntimes !== null && !policy.allowedRuntimes.includes(runtime)) {
+  if (policy.allowedRuntimes !== null && !policy.allowedRuntimes.includes(runtimePreference)) {
     violations.push("runtime")
   }
   if (snapshot.capability.maxDescendants > policy.maxDescendants) {
@@ -580,9 +588,16 @@ function isBuiltIn(db: Sqlite, profileId: string) {
 }
 
 function resolvedRuntime(harness: string, preference: string) {
-  return preference === "auto"
-    ? productRuntimeForHarness(harness)
-    : (preference as "codex" | "claude-code" | "flapstack-native")
+  return (
+    runtimeAdapterForPreference(preference as Parameters<typeof runtimeAdapterForPreference>[0]) ??
+    productRuntimeForHarness(harness)
+  )
+}
+
+function effectiveRuntimePreference(harness: string, preference: string) {
+  return (
+    preference === "auto" ? productRuntimeForHarness(harness) : preference
+  ) as AgentRuntimePreference
 }
 
 function source(

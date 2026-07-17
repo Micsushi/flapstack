@@ -66,6 +66,17 @@ describe("Agent Runtime registry", () => {
       ]),
     ).toThrow("already registered")
   })
+
+  it("reuses a fresh provider probe across resolution and immediate launch", async () => {
+    const value = adapter("codex")
+    value.probe = vi.fn(value.probe)
+    const registry = createAgentRuntimeRegistry([{ runtime: "codex", factory: () => value }])
+
+    await registry.probe("codex", "codex")
+    await registry.probe("codex", "codex")
+
+    expect(value.probe).toHaveBeenCalledTimes(1)
+  })
 })
 
 function adapter(runtime: ResolvedAgentRuntime): HarnessAdapter {

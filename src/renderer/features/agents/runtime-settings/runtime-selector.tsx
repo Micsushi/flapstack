@@ -19,16 +19,23 @@ export function RuntimeSelector({
   onChange,
   disabled = false,
   id,
+  automaticPreference,
 }: {
   harness: string
   value: AgentRuntimePreference
   onChange(value: AgentRuntimePreference): void
   disabled?: boolean
   id?: string
+  automaticPreference?: Exclude<AgentRuntimePreference, "auto">
 }) {
   const preferences = allowedRuntimePreferences(harness)
-  const selectedLabel = value === "auto" ? "Automatic runtime" : runtimePreferenceLabel(value)
-  const automaticRuntimeLabel = runtimePreferenceLabel(productRuntime(harness))
+  const automaticRuntimeLabel = runtimePreferenceLabel(
+    automaticPreference ?? productRuntime(harness),
+  )
+  const selectedLabel =
+    value === "auto"
+      ? `Automatic runtime (${automaticRuntimeLabel})`
+      : runtimePreferenceLabel(value)
 
   return (
     <DropdownMenu>
@@ -76,8 +83,10 @@ export function RuntimeSelector({
 function RuntimePreferenceIcon({ preference }: { preference: AgentRuntimePreference }) {
   const className = "h-3.5 w-3.5 shrink-0 text-muted-foreground"
   if (preference === "auto") return <SparklesIcon className={className} aria-hidden="true" />
-  if (preference === "codex") return <CodexIcon className={className} aria-hidden="true" />
-  if (preference === "claude-code")
+  if (preference === "codex" || preference === "codex-enhanced") {
+    return <CodexIcon className={className} aria-hidden="true" />
+  }
+  if (preference === "claude-code" || preference === "claude-code-enhanced")
     return <ClaudeCodeIcon className={className} aria-hidden="true" />
   return <AgentIcon className={className} aria-hidden="true" />
 }

@@ -30,6 +30,7 @@ import { epochSecondsToMilliseconds, nowEpochSeconds } from "../db/timestamps"
 import { AGENT_HARNESSES, type AgentHarness } from "../../../shared/harness-types"
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
 import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/operations"
+import { isBetaFeatureEnabled } from "../beta-features/settings"
 import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
@@ -160,7 +161,9 @@ export function createAgentOrchestrationService(databasePath: string) {
               now,
             })
           }
-          ensureOperationWorkspaceInTransaction(db, taskId)
+          if (isBetaFeatureEnabled("savedWorkspaces")) {
+            ensureOperationWorkspaceInTransaction(db, taskId)
+          }
         })
         create.immediate()
         if (!options.deferScheduling) safeTickTask(db, taskId)
@@ -435,7 +438,10 @@ export function createAgentOrchestrationService(databasePath: string) {
             },
           },
           input,
-          options,
+          {
+            ...options,
+            includeOperationWorkspaces: isBetaFeatureEnabled("savedWorkspaces"),
+          },
         )
       } finally {
         db.close()

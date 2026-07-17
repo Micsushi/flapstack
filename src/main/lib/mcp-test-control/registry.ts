@@ -461,6 +461,13 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     status: "implemented",
   },
   {
+    name: "archive_test_task",
+    description: "Reversibly archive one test task and every idle linked chat.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
     name: "archive_test_chat",
     description: "Reversibly archive one idle test chat without deleting its history.",
     tier: 1,
@@ -730,6 +737,7 @@ export const devMcpExposedToolNames = [
   "create_test_orchestration",
   "get_test_orchestration",
   "mutate_test_orchestration",
+  "archive_test_task",
   "archive_test_chat",
   "send_test_prompt",
   "mutate_project_provider_extension",

@@ -8,6 +8,7 @@ import {
   type RuntimeLaunchControls,
   type RuntimePermissionSnapshot,
   type RuntimePreferenceSource,
+  runtimeAdapterForPreference,
 } from "../../../shared/agent-runtime"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
 
@@ -101,17 +102,18 @@ function selectPreference(input: RuntimeResolutionInput): {
     ["global", input.globalPreference],
   ]
   for (const [source, preference] of candidates) {
-    if (preference !== null && preference !== undefined) {
+    if (preference !== null && preference !== undefined && preference !== "auto") {
       return {
         preference,
-        runtime: preference === "auto" ? productRuntimeForHarness(input.harness) : preference,
+        runtime: runtimeAdapterForPreference(preference)!,
         source,
       }
     }
   }
+  const runtime = productRuntimeForHarness(input.harness)
   return {
-    preference: "auto",
-    runtime: productRuntimeForHarness(input.harness),
+    preference: runtime,
+    runtime,
     source: "product",
   }
 }

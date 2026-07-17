@@ -1,4 +1,4 @@
-import { shell } from "electron"
+import { openExternalSafe } from "../open-external"
 import simpleGit from "simple-git"
 import { z } from "zod"
 import { publicProcedure, router } from "../trpc"
@@ -576,7 +576,7 @@ export const createGitOperationsRouter = () => {
           const repo = repoMatch[1].replace(/\.git$/, "")
           const url = `https://github.com/${repo}/compare/${branch}?expand=1`
 
-          await shell.openExternal(url)
+          await openExternalSafe(url)
           await git.fetch()
           invalidateGitStateCaches(input.worktreePath)
 

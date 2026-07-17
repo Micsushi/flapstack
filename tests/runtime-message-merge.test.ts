@@ -34,4 +34,18 @@ describe("Runtime message merge", () => {
       { id: "concurrent", role: "user", parts: [{ type: "text", text: "Next" }] },
     ])
   })
+
+  it("emits one replacement when stale messages share an id or run", () => {
+    const current = JSON.stringify([
+      { id: "fallback-1", role: "assistant", metadata: { runId: "run-1" } },
+      { id: "fallback-2", role: "assistant", metadata: { runId: "run-1" } },
+    ])
+    const incoming = JSON.stringify([
+      { id: "complete", role: "assistant", metadata: { runId: "run-1" } },
+    ])
+
+    expect(JSON.parse(mergeRuntimeMessages(current, incoming))).toEqual([
+      { id: "complete", role: "assistant", metadata: { runId: "run-1" } },
+    ])
+  })
 })

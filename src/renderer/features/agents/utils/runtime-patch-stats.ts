@@ -9,19 +9,30 @@ export function runtimePatchStats(input: {
   if (input.changeDiff) return unifiedDiffStats(input.changeDiff)
   const aggregate = input.aggregateDiff ?? ""
   if (input.changeCount <= 1) return unifiedDiffStats(aggregate)
-  const block = splitDiffBlocks(aggregate).find((candidate) =>
+  const blocks = splitDiffBlocks(aggregate).filter((candidate) =>
     candidate.paths.some((path) => sameFile(path, input.filePath)),
   )
-  return block ? unifiedDiffStats(block.diff) : { additions: 0, deletions: 0 }
+  return blocks.length === 1 ? unifiedDiffStats(blocks[0]!.diff) : { additions: 0, deletions: 0 }
 }
 
 function splitDiffBlocks(diff: string): Array<{ paths: string[]; diff: string }> {
   const lines = diff.replace(/\r\n/g, "\n").split("\n")
   const blocks: string[][] = []
   let current: string[] = []
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!
+    const standardHeaderPair =
+      line.startsWith("--- ") &&
+      Boolean(lines[index + 1]?.startsWith("+++ ")) &&
+      !current.some(
+        (candidate) =>
+          candidate.startsWith("diff --git ") ||
+          /^\*\*\* (?:Add|Update|Delete) File: /.test(candidate),
+      )
     if (
-      (line.startsWith("diff --git ") || /^\*\*\* (?:Add|Update|Delete) File: /.test(line)) &&
+      (line.startsWith("diff --git ") ||
+        /^\*\*\* (?:Add|Update|Delete) File: /.test(line) ||
+        standardHeaderPair) &&
       current.length
     ) {
       blocks.push(current)
@@ -41,7 +52,7 @@ function diffHeaderPaths(line: string): string[] {
   if (git) return [git[1]!, git[2]!]
   const file = line.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/)
   if (file) return [file[1]!]
-  const standard = line.match(/^(?:---|\+\+\+) (?:[ab]\/)?(.+)$/)
+  const standard = line.match(/^(?:---|\+\+\+) (?:[ab]\/)?([^\t]+)(?:\t.*)?$/)
   return standard && standard[1] !== "/dev/null" ? [standard[1]!] : []
 }
 

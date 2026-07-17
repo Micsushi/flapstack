@@ -10,7 +10,9 @@ import {
   permissionModes,
   type CustomPermissionToggles,
 } from "../../permissions"
-import { publicProcedure, router } from "../index"
+import { betaProcedure, publicProcedure, router } from "../index"
+
+const planningProcedure = betaProcedure("planning")
 import { TRPCError } from "@trpc/server"
 import {
   archiveTaskKanbanCard,
@@ -83,13 +85,13 @@ export async function ensureTaskPrimaryWorktree(taskId: string) {
 }
 
 export const tasksRouter = router({
-  board: publicProcedure
+  board: planningProcedure
     .input(
       z.object({ projectId: z.string().optional(), includeArchived: z.boolean().default(false) }),
     )
     .query(({ input }) => listTaskKanban(getDatabase(), input)),
 
-  moveCard: publicProcedure
+  moveCard: planningProcedure
     .input(
       z.object({
         id: z.string(),
@@ -114,7 +116,7 @@ export const tasksRouter = router({
       }
     }),
 
-  archiveCard: publicProcedure
+  archiveCard: planningProcedure
     .input(z.object({ id: z.string(), expectedVersion: z.number().int().positive() }))
     .mutation(({ input }) => {
       try {

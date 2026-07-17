@@ -66,6 +66,7 @@ export type DevMcpToolName =
   | "create_test_chat"
   | "open_test_chat"
   | "archive_test_chat"
+  | "archive_test_task"
   | "mutate_project_provider_extension"
   | "get_permission_state"
   | "set_permission_default"

@@ -1,232 +1,48 @@
-import { useAtom } from "jotai"
-import { Check, Copy } from "lucide-react"
-import { useEffect, useState } from "react"
-import {
-  autoOfflineModeAtom,
-  historyEnabledAtom,
-  selectedOllamaModelAtom,
-  showOfflineModeFeaturesAtom,
-} from "../../../lib/atoms"
+import { BETA_FEATURE_REGISTRY } from "../../../../shared/beta-features"
 import { trpc } from "../../../lib/trpc"
-import { cn } from "../../../lib/utils"
-import { ExternalLinkIcon } from "../../ui/icons"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../ui/select"
 import { Switch } from "../../ui/switch"
 
-// Hook to detect narrow screen
-function useIsNarrowScreen(): boolean {
-  const [isNarrow, setIsNarrow] = useState(false)
-
-  useEffect(() => {
-    const checkWidth = () => {
-      setIsNarrow(window.innerWidth <= 768)
-    }
-
-    checkWidth()
-    window.addEventListener("resize", checkWidth)
-    return () => window.removeEventListener("resize", checkWidth)
-  }, [])
-
-  return isNarrow
-}
-
-const MINIMUM_OLLAMA_VERSION = "0.14.2"
-const RECOMMENDED_MODEL = "qwen3-coder:30b"
-
 export function AgentsBetaTab() {
-  const isNarrowScreen = useIsNarrowScreen()
-  const [historyEnabled, setHistoryEnabled] = useAtom(historyEnabledAtom)
-  const [showOfflineFeatures, setShowOfflineFeatures] = useAtom(showOfflineModeFeaturesAtom)
-  const [autoOffline, setAutoOffline] = useAtom(autoOfflineModeAtom)
-  const [selectedOllamaModel, setSelectedOllamaModel] = useAtom(selectedOllamaModelAtom)
-  const [copied, setCopied] = useState(false)
-
-  // Get Ollama status
-  const { data: ollamaStatus } = trpc.ollama.getStatus.useQuery(undefined, {
-    refetchInterval: showOfflineFeatures ? 30000 : false, // Only poll when feature is enabled
-    enabled: showOfflineFeatures,
+  const utils = trpc.useUtils()
+  const { data: settings } = trpc.betaFeatures.get.useQuery()
+  const update = trpc.betaFeatures.set.useMutation({
+    onSuccess: (next) => utils.betaFeatures.get.setData(undefined, next),
   })
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(`ollama pull ${RECOMMENDED_MODEL}`)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
   return (
-    <div className="p-6 space-y-6">
-      {/* Header - hidden on narrow screens since it's in the navigation bar */}
-      {!isNarrowScreen && (
-        <div className="flex flex-col space-y-1.5 text-center sm:text-left">
-          <h3 className="text-sm font-semibold text-foreground">Legacy Beta Scaffolds</h3>
-          <p className="text-xs text-muted-foreground">
-            These controls expose future-stage code. They are not part of MVP1 manual acceptance
-            unless a feature is explicitly promoted.
-          </p>
-        </div>
-      )}
-
-      {/* Beta Features Section */}
-      <div className="bg-background rounded-lg border border-border overflow-hidden">
-        {/* Rollback Toggle */}
-        <div className="flex items-center justify-between p-4">
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Rollback</span>
-            <span className="text-xs text-muted-foreground">
-              Allow rolling back to previous messages and restoring files.
-            </span>
-          </div>
-          <Switch checked={historyEnabled} onCheckedChange={setHistoryEnabled} />
-        </div>
-
-        {/* Offline Mode Toggle */}
-        <div className="flex items-center justify-between p-4 border-t border-border">
-          <div className="flex flex-col space-y-1">
-            <span className="text-sm font-medium text-foreground">Offline Mode</span>
-            <span className="text-xs text-muted-foreground">
-              Enable offline mode UI and Ollama integration.
-            </span>
-          </div>
-          <Switch checked={showOfflineFeatures} onCheckedChange={setShowOfflineFeatures} />
-        </div>
+    <div className="space-y-6 p-6" data-settings-id="beta-feature-settings">
+      <div className="space-y-1.5">
+        <h3 className="text-sm font-semibold text-foreground">Beta Features</h3>
+        <p className="text-xs text-muted-foreground">
+          Advanced features stay hidden and disabled until you opt in. MCP, Usage, and sub-agents
+          are always available.
+        </p>
       </div>
 
-      {/* Offline Mode Settings - only show when feature is enabled */}
-      {showOfflineFeatures && (
-        <div className="space-y-2">
-          <div className="pb-2">
-            <h4 className="text-sm font-medium text-foreground">Offline Mode Settings</h4>
-          </div>
-
-          <div className="bg-background rounded-lg border border-border overflow-hidden">
-            <div className="p-4 space-y-4">
-              {/* Status */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <span className="text-sm font-medium text-foreground">Ollama Status</span>
-                  <p className="text-xs text-muted-foreground">
-                    {ollamaStatus?.ollama.available
-                      ? `Running - ${ollamaStatus.ollama.models.length} model${ollamaStatus.ollama.models.length !== 1 ? "s" : ""} installed`
-                      : "Not running or not installed"}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {ollamaStatus?.ollama.available ? (
-                    <>
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                      <span className="text-sm text-emerald-500">Available</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground/50" />
-                      <span className="text-sm text-muted-foreground">Unavailable</span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Model selector */}
-              {ollamaStatus?.ollama.available && ollamaStatus.ollama.models.length > 0 && (
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium text-foreground">Model</span>
-                    <p className="text-xs text-muted-foreground">
-                      Select which model to use for offline mode
-                    </p>
-                  </div>
-                  <Select
-                    value={
-                      selectedOllamaModel ||
-                      ollamaStatus.ollama.recommendedModel ||
-                      ollamaStatus.ollama.models[0]
-                    }
-                    onValueChange={(value) => setSelectedOllamaModel(value)}
-                  >
-                    <SelectTrigger className="w-auto shrink-0">
-                      <SelectValue placeholder="Select model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ollamaStatus.ollama.models.map((model) => {
-                        const isRecommended = model === ollamaStatus.ollama.recommendedModel
-                        return (
-                          <SelectItem key={model} value={model}>
-                            <span className="truncate">
-                              {model}
-                              {isRecommended && (
-                                <span className="text-muted-foreground ml-1 text-xs">
-                                  (recommended)
-                                </span>
-                              )}
-                            </span>
-                          </SelectItem>
-                        )
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {/* Auto-fallback toggle */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <span className="text-sm font-medium text-foreground">Auto Offline Mode</span>
-                  <p className="text-xs text-muted-foreground">
-                    Automatically use Ollama when internet is unavailable
-                  </p>
-                </div>
-                <Switch checked={autoOffline} onCheckedChange={setAutoOffline} />
-              </div>
-
-              {/* Installation instructions - always show */}
-              <div className="text-xs text-muted-foreground bg-muted p-3 rounded space-y-2">
-                <p className="font-medium">Setup Instructions:</p>
-                <ol className="list-decimal list-inside space-y-1 ml-2">
-                  <li>
-                    Install Ollama {MINIMUM_OLLAMA_VERSION}+ from{" "}
-                    <a
-                      href="https://ollama.com"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline inline-flex items-center gap-0.5"
-                    >
-                      ollama.com
-                      <ExternalLinkIcon className="h-3 w-3" />
-                    </a>
-                  </li>
-                  <li>
-                    Pull the recommended model:{" "}
-                    <code className="relative inline-flex items-center gap-1 bg-background pl-1.5 pr-0.5 py-0.5 rounded-md">
-                      <span>ollama pull {RECOMMENDED_MODEL}</span>
-                      <button
-                        type="button"
-                        onClick={handleCopy}
-                        className="p-1 hover:bg-muted rounded transition-colors"
-                        title={copied ? "Copied!" : "Copy command"}
-                      >
-                        <div className="relative w-3 h-3">
-                          <Copy
-                            className={cn(
-                              "absolute inset-0 w-3 h-3 text-muted-foreground transition-[opacity,transform] duration-200 ease-out hover:text-foreground",
-                              copied ? "opacity-0 scale-50" : "opacity-100 scale-100",
-                            )}
-                          />
-                          <Check
-                            className={cn(
-                              "absolute inset-0 w-3 h-3 text-muted-foreground transition-[opacity,transform] duration-200 ease-out",
-                              copied ? "opacity-100 scale-100" : "opacity-0 scale-50",
-                            )}
-                          />
-                        </div>
-                      </button>
-                    </code>
-                  </li>
-                  <li>Ollama will run automatically in the background</li>
-                </ol>
-              </div>
+      <div className="overflow-hidden rounded-lg border border-border bg-background">
+        {BETA_FEATURE_REGISTRY.map((feature, index) => (
+          <div
+            key={feature.id}
+            className={
+              index === 0
+                ? "flex items-center justify-between gap-6 p-4"
+                : "flex items-center justify-between gap-6 border-t border-border p-4"
+            }
+            data-settings-id={`beta-feature-${feature.id}`}
+          >
+            <div className="min-w-0 space-y-1">
+              <div className="text-sm font-medium text-foreground">{feature.label}</div>
+              <div className="text-xs text-muted-foreground">{feature.description}</div>
             </div>
+            <Switch
+              checked={settings?.[feature.id] ?? false}
+              disabled={update.isPending}
+              aria-label={`Enable ${feature.label}`}
+              onCheckedChange={(enabled) => update.mutate({ feature: feature.id, enabled })}
+            />
           </div>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   )
 }

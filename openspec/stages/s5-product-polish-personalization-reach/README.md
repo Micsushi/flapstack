@@ -10,7 +10,7 @@ Delivery order:
 3. [S5-F3 Agent Profiles and reusable personalities](features/s5-f3-agent-profiles-personalities/README.md)
 4. [S5-F4 Cross-agent mobile companion](features/s5-f4-mobile-companion/README.md)
 5. [S5-F5 Visual context and screenshot capture](features/s5-f5-visual-context/README.md)
-6. [S5-F6 Terminal-grid and swarm workspaces](features/s5-f6-terminal-grid-swarm/README.md)
+6. [S5-F6 Multi-pane Chat and swarm workspaces](features/s5-f6-terminal-grid-swarm/README.md)
 7. [S5-F7 Runtime/orchestration composition](features/s5-f7-runtime-orchestration-composition/README.md)
 8. [S5-F8 Organization usage APIs](features/s5-f8-organization-usage/README.md)
 9. [S5-F9 Performance and scale](features/s5-f9-performance-scale/README.md)

@@ -56,6 +56,16 @@ export function applyRuntimeMigration(database: Database.Database): void {
   transaction.immediate()
 }
 
+export function applyRuntimeModeMigration(database: Database.Database): void {
+  const migration = readFileSync(resolve(process.cwd(), "drizzle/0041_large_electro.sql"), "utf8")
+  const transaction = database.transaction(() => {
+    for (const statement of migration.split("--> statement-breakpoint")) {
+      if (statement.trim()) database.exec(statement)
+    }
+  })
+  transaction.immediate()
+}
+
 export function applyActivityMigration(database: Database.Database): void {
   const migration = readFileSync(resolve(process.cwd(), "drizzle/0035_agent_activity.sql"), "utf8")
   const transaction = database.transaction(() => {

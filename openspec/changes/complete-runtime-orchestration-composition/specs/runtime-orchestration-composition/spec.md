@@ -1,22 +1,43 @@
 ## ADDED Requirements
 
-### Requirement: Native Runtime compatibility remains truthful
+### Requirement: Runtime compatibility remains truthful
 
 Flapstack SHALL resolve and snapshot an execution target whose harness, Runtime,
-provider, model, account, Agent Profile, permission, and workspace/worktree are
-compatible, and SHALL NOT silently substitute any target field.
+Runtime mode, adapter chain, provider, model, account, Agent Profile, permission,
+and workspace/worktree are compatible, and SHALL NOT silently substitute any
+target field or label translated execution as native.
 
-#### Scenario: Codex target requests Claude Code Runtime
+#### Scenario: Codex target requests translated Claude Code behavior
 
-- **WHEN** a Codex target requests the Claude Code Runtime
-- **THEN** Flapstack blocks before Chat/run mutation, explains the incompatible
-  native protocol, and offers only reviewed compatible targets
+- **WHEN** a Codex target requests the Claude Code Runtime contract
+- **THEN** Flapstack selects only a capability-probed translated adapter, labels
+  the target translated, snapshots its loss matrix, or blocks before mutation
+  with the exact missing capability
 
 #### Scenario: Automatic Runtime resolves for Claude Code
 
 - **WHEN** a Claude Code target selects Automatic Runtime
-- **THEN** Flapstack resolves only a Runtime compatible with the Claude harness,
-  previews the exact target, and snapshots its capability and adapter versions
+- **THEN** Flapstack resolves Claude Code provider parity, previews the exact
+  target, and snapshots its capability and adapter versions
+
+### Requirement: Cross-provider Runtime adapters are capability enforced
+
+Flapstack SHALL allow providers/models to consume Codex, Claude Code, or
+Flapstack Native Runtime contracts only through versioned adapters that enforce
+required prompt, tool, permission, session, event, output, cancellation, usage,
+and recovery semantics.
+
+#### Scenario: Local model requests Codex Runtime contract
+
+- **WHEN** its provider client supports the required tool loop but lacks native
+  Codex App Server sessions
+- **THEN** Flapstack may offer a translated Codex contract with session/resume
+  marked unsupported and SHALL block any task that requires native resume
+
+#### Scenario: Adapter supplies only a Codex-like system prompt
+
+- **WHEN** required Codex tool, permission, or recovery semantics are absent
+- **THEN** Flapstack SHALL NOT treat prompt similarity as Runtime compatibility
 
 ### Requirement: Cross-provider continuation creates a child Chat
 

@@ -4,6 +4,11 @@ import { homedir } from "node:os"
 import { join, resolve, sep } from "node:path"
 import { realpathSync } from "node:fs"
 import { validateCustomWorktreePath } from "./git/validate-custom-worktree"
+import {
+  assertRegisteredFilesystemRoot,
+  PathValidationError,
+  REPLACED_FILESYSTEM_ROOT_MESSAGE,
+} from "./git/security/path-validation"
 import { DETACHED_CHAT_CHECKOUTS_DIRECTORY } from "../../shared/checkout-path"
 export {
   validateCustomWorktreePath,
@@ -21,6 +26,7 @@ export type WorktreeStatus =
   | { status: "none"; path: null; isDefault: boolean }
   | { status: "ok"; path: string; branch: string | null; isDefault: boolean }
   | { status: "detached"; path: string; branch: string | null; isDefault: false }
+  | { status: "replaced"; path: string; branch: string | null; isDefault: boolean; error: string }
   | { status: "unknown"; path: string; isDefault: boolean; error: string }
 
 export function getDetachedChatCheckoutPath(chatId: string): string {
@@ -147,6 +153,46 @@ export async function getResolvedWorktreeStatus(
       path: validation.path,
       branch: validation.branch,
       isDefault: false,
+    }
+  }
+
+  try {
+    const identityCandidates = [path]
+    if (sameCheckoutPath(path, defaultPath) && defaultPath) identityCandidates.push(defaultPath)
+    identityCandidates.push(validation.path)
+    let identityError: unknown = new PathValidationError(
+      "Registered root has no durable filesystem identity",
+      "UNREGISTERED_WORKTREE",
+    )
+    for (const candidate of new Set(identityCandidates)) {
+      try {
+        assertRegisteredFilesystemRoot(candidate)
+        identityError = null
+        break
+      } catch (error) {
+        identityError = error
+        if (!(error instanceof PathValidationError) || error.code !== "UNREGISTERED_WORKTREE") {
+          throw error
+        }
+      }
+    }
+    if (identityError) throw identityError
+  } catch (error) {
+    if (error instanceof PathValidationError && error.code === "SYMLINK_ESCAPE") {
+      return {
+        status: "replaced",
+        path: validation.path,
+        branch: validation.branch,
+        isDefault: sameCheckoutPath(path, defaultPath),
+        error: REPLACED_FILESYSTEM_ROOT_MESSAGE,
+      }
+    }
+    return {
+      status: "unknown",
+      path,
+      isDefault: sameCheckoutPath(path, defaultPath),
+      error:
+        error instanceof Error ? error.message : "Flapstack could not verify this checkout safely.",
     }
   }
 

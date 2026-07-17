@@ -9,7 +9,7 @@
 - Out of scope: Closing missing evidence by assertion.
 - Acceptance: No duplicate/orphan row; stale prior-SHA evidence rejected; all F1-F10 and F12 feature exits complete before freeze.
 - Verification: Automated ledger validator plus independent completeness review.
-- Blocked by: S5-F1-T9, S5-F2-T8, S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T8, S5-F7-T7, S5-F8-T7, S5-F9-T8, S5-F10-T8, S5-F12-T9
+- Blocked by: S5-F1-T9, S5-F2-T8, S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T10, S5-F7-T7, S5-F8-T7, S5-F9-T8, S5-F10-T8, S5-F12-T9
 - Blocks: S5-F11-T2, S5-F11-T3, S5-F11-T4, S5-F11-T5, S5-F11-T6, S5-F11-T7
 - Context: all Stage 5 tasks, docs/stage5-full-feature-test-matrix.md.
 
@@ -35,7 +35,7 @@
 - Out of scope: Inventing unavailable provider/org/mobile evidence.
 - Acceptance: One durable identity per object; exact snapshots/provenance; no duplicate/replay; hidden surfaces remain functional; restart resumes truthfully.
 - Verification: Scripted/manual exact-SHA walkthrough with screenshots/logs/DB assertions and forced restart.
-- Blocked by: S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T8, S5-F7-T7, S5-F8-T7, S5-F11-T1, S5-F11-T2
+- Blocked by: S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T10, S5-F7-T7, S5-F8-T7, S5-F11-T1, S5-F11-T2
 - Blocks: S5-F11-T4, S5-F11-T5, S5-F11-T8
 - Context: Stage 5 manual test handoff and candidate ledger.
 
@@ -61,7 +61,7 @@
 - Out of scope: Cosmetic changes without a recorded issue.
 - Acceptance: No critical accessibility/usability blocker; optional complexity remains discoverable but not forced; docs/help match UI.
 - Verification: Automated accessibility/visual tests plus observed novice/power-user/platform/device walkthroughs.
-- Blocked by: S5-F1-T9, S5-F2-T8, S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T8, S5-F11-T1, S5-F11-T3
+- Blocked by: S5-F1-T9, S5-F2-T8, S5-F3-T9, S5-F4-T8, S5-F5-T8, S5-F6-T10, S5-F11-T1, S5-F11-T3
 - Blocks: S5-F11-T8
 - Context: root ui-design.md, onboarding explanations, UX audit.
 
@@ -74,7 +74,7 @@
 - Out of scope: Cross-build substitution.
 - Acceptance: Required budgets/platform rows pass; no orphan process/listener/service; artifacts exact SHA and secure.
 - Verification: S5 performance/platform reports and independent package inspection.
-- Blocked by: S5-F6-T8, S5-F7-T6, S5-F8-T7, S5-F9-T8, S5-F10-T8, S5-F11-T1
+- Blocked by: S5-F6-T10, S5-F7-T6, S5-F8-T7, S5-F9-T8, S5-F10-T8, S5-F11-T1
 - Blocks: S5-F11-T8
 - Context: performance report, platform matrix, package manifests.
 

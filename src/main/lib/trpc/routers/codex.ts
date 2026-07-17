@@ -11,6 +11,7 @@ import { readdir, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, delimiter, dirname, join, sep } from "node:path"
 import { z } from "zod"
+import { sleep } from "../../../../shared/sleep"
 import {
   normalizeCodexAssistantMessage,
   normalizeCodexStreamChunk,
@@ -90,9 +91,11 @@ import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../../agent
 import { assertFlapstackNativeProviderRouter } from "../../agent-runtime/provider-router-guard"
 import {
   buildProjectVaultRunContext,
+  emptyProjectVaultRunContext,
   persistProjectVaultContextManifest,
   ProjectVaultContextRejectedError,
 } from "../../project-vaults/run-context"
+import { isBetaFeatureEnabled } from "../../beta-features/settings"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -489,10 +492,6 @@ async function runCodexCliChecked(
   throw new Error(message)
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
-}
-
 function toNonNegativeInt(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return undefined
@@ -709,7 +708,7 @@ async function pollCodexReasoning(sessionId: string, options?: { notBeforeTimest
     }
 
     if (attempt < CODEX_USAGE_POLL_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, CODEX_USAGE_POLL_INTERVAL_MS))
+      await sleep(CODEX_USAGE_POLL_INTERVAL_MS)
     }
   }
 
@@ -1977,27 +1976,32 @@ export const codexRouter = router({
               sessionMode: ownedSessionId ? "resumed" : "new",
               previousSourceFingerprint: getLastHarnessContextFingerprint(existingMessages),
             })
-            let vaultContext
-            try {
-              vaultContext = await buildProjectVaultRunContext(db, {
-                chatId: input.chatId,
-                runId: input.runId,
-                harness: "codex",
-                ...(input.vaultContextSectionIds
-                  ? { runSectionIds: input.vaultContextSectionIds }
-                  : {}),
-              })
-            } catch (error) {
-              if (error instanceof ProjectVaultContextRejectedError) {
-                persistProjectVaultContextManifest(db, {
+            let vaultContext = emptyProjectVaultRunContext({
+              harness: "codex",
+              runId: input.runId,
+            })
+            if (isBetaFeatureEnabled("projectMemory")) {
+              try {
+                vaultContext = await buildProjectVaultRunContext(db, {
+                  chatId: input.chatId,
                   runId: input.runId,
-                  manifest: error.manifest,
+                  harness: "codex",
                   ...(input.vaultContextSectionIds
                     ? { runSectionIds: input.vaultContextSectionIds }
                     : {}),
                 })
+              } catch (error) {
+                if (error instanceof ProjectVaultContextRejectedError) {
+                  persistProjectVaultContextManifest(db, {
+                    runId: input.runId,
+                    manifest: error.manifest,
+                    ...(input.vaultContextSectionIds
+                      ? { runSectionIds: input.vaultContextSectionIds }
+                      : {}),
+                  })
+                }
+                throw error
               }
-              throw error
             }
             const extensionContext = await buildExtensionRunContext(db, {
               chatId: input.chatId,

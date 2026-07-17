@@ -128,7 +128,7 @@ export class RuntimeLaunchCoordinator<TActivity = AgentActivityAppend> {
       request.launch.resolvedRuntime,
       request.launch.harness,
     )
-    const probe = await adapter.probe(request.launch.harness)
+    const probe = await this.registry.probe(request.launch.resolvedRuntime, request.launch.harness)
     if (!probe.available) {
       throw new RuntimeRegistryError(
         probe.reason ?? {

@@ -15,6 +15,7 @@ import {
   type ResolvedAgentProfileSnapshot,
 } from "../../../../shared/agent-profiles"
 import { disabledCustomPermissions } from "../../../../shared/permission-capabilities"
+import { runtimeAdapterForPreference } from "../../../../shared/agent-runtime"
 import { trpc, trpcClient } from "../../../lib/trpc"
 import { Button } from "../../ui/button"
 import { Input } from "../../ui/input"
@@ -638,11 +639,14 @@ export function AgentsProfilesStudioTab() {
                     evaluate.mutate({
                       profile: { profileId: selected.id, version: selected.currentVersion },
                       runtime:
-                        draft.definition.capability.runtimePreference === "auto"
-                          ? draft.definition.capability.harness === "codex"
-                            ? "codex"
-                            : "claude-code"
-                          : draft.definition.capability.runtimePreference,
+                        runtimeAdapterForPreference(
+                          draft.definition.capability.runtimePreference,
+                        ) ??
+                        (draft.definition.capability.harness === "codex"
+                          ? "codex"
+                          : draft.definition.capability.harness === "claude-code"
+                            ? "claude-code"
+                            : "flapstack-native"),
                       model: draft.definition.capability.modelPreference ?? "default-unpinned",
                       fixtures: [
                         "schema",

@@ -27,6 +27,7 @@ import {
 } from "../agents/atoms"
 import { detailsSidebarOpenAtom, detailsSidebarTabAtom } from "../details-sidebar/atoms"
 import { automationEvidenceRunIdAtom } from "./state"
+import { useBetaFeatures } from "../settings/use-beta-features"
 import {
   AUTOMATION_A11Y,
   automationUiReducer,
@@ -62,6 +63,7 @@ type PendingAction =
   | "kill"
 
 export function AutomationsDetailView() {
+  const betaFeatures = useBetaFeatures()
   const automationId = useAtomValue(automationDetailIdAtom)
   const setAutomationId = useSetAtom(automationDetailIdAtom)
   const isCreate = automationId === "new"

@@ -103,6 +103,7 @@ describe("Flapstack MCP per-chat exposure", () => {
         FLAPSTACK_MCP_RUN_ID: "run-1",
         FLAPSTACK_MCP_PERMISSION_MODE: "ask-before-edits",
         FLAPSTACK_DB_PATH: "/user/data/agents.db",
+        FLAPSTACK_CONFIG_DIR: process.env.FLAPSTACK_CONFIG_DIR!,
       },
     })
   })

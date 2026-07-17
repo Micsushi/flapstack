@@ -1,4 +1,5 @@
 import type { SettingsTab } from "../../lib/atoms"
+import type { BetaFeatureSettings } from "../../../shared/beta-features"
 import {
   isVisibleSettingsControl,
   isVisibleSettingsTab,
@@ -37,6 +38,7 @@ export function searchSettings(
   options: {
     showDevelopment: boolean
     availableProviders?: readonly SettingsProviderScope[]
+    betaFeatures?: BetaFeatureSettings
   },
 ): SettingsSearchEntry[] {
   const normalizedQuery = normalizeSettingsSearchText(query)
@@ -46,7 +48,13 @@ export function searchSettings(
 
   return SETTINGS_SEARCH_ENTRIES.filter((entry) => {
     if (!options.showDevelopment && entry.developmentOnly) return false
-    if (!isVisibleSettingsTab(entry.tab, { showDevelopment: options.showDevelopment })) return false
+    if (
+      !isVisibleSettingsTab(entry.tab, {
+        showDevelopment: options.showDevelopment,
+        betaFeatures: options.betaFeatures,
+      })
+    )
+      return false
     if (!SETTINGS_CONTROL_REGISTRY.some((control) => control.id === entry.id)) return true
     return isVisibleSettingsControl(entry, options)
   })

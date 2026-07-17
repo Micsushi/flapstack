@@ -220,7 +220,10 @@ and [execution plan](docs/stage4-execution-plan.md).
   universal new-chat/sub-agent selection, and honest effort/speed compatibility.
 - Secure cross-agent mobile companion over a default-off local PWA bridge.
 - Visual context capture, redaction, artifacts, agent context, and standalone helper.
-- Advanced terminal-grid and swarm workspaces over existing durable identities.
+- Up to four fully interactive Chat groups with VS Code-style directional tab
+  drops, resizable mixed layouts, floating-window drag-out, and the same
+  compositor extended into terminal-grid/swarm workspaces, with at most four
+  visible Flapstack workbench windows total including main.
 - Final Runtime/orchestration composition for schemas, control, activity, and recovery.
 - Optional OpenAI/Anthropic organization usage APIs with exact provenance.
 - Versioned performance budgets, scale/soak testing, and regression gates.

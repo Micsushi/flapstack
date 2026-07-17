@@ -67,6 +67,33 @@ export type ProjectVaultRunContext = {
   manifest: ProjectVaultContextManifest
 }
 
+export function emptyProjectVaultRunContext(input: {
+  harness: ProjectVaultContextHarness
+  runId?: string | null
+}): ProjectVaultRunContext {
+  return {
+    context: "",
+    manifest: {
+      schemaVersion: 1,
+      status: "empty",
+      harness: input.harness,
+      projectId: null,
+      taskId: null,
+      runId: input.runId ?? null,
+      selectionSource: "fixed-default",
+      selectedSectionIds: [],
+      budget: {
+        maxBytes: PROJECT_VAULT_CONTEXT_POLICY.maxBytes,
+        maxEstimatedTokens: PROJECT_VAULT_CONTEXT_POLICY.maxEstimatedTokens,
+        includedBytes: 0,
+        estimatedTokens: 0,
+      },
+      entries: [],
+      truncations: [],
+    },
+  }
+}
+
 export class ProjectVaultContextRejectedError extends Error {
   constructor(
     message: string,
