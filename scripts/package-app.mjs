@@ -66,6 +66,7 @@ export function resolvePackageBuild(
     ...architectures.map((architecture) => `--${architecture}`),
     ...(options.dir ? ["--dir"] : []),
     ...(channelConfig ? [`--config=${channelConfig}`] : []),
+    ...(options.channel === "release" ? ["--publish=never"] : []),
   ]
   return { platform, architectures, targets, builderArgs }
 }

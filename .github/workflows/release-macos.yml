@@ -86,6 +86,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Build application
+        run: npm run build
+
       - name: Build unsigned DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -145,5 +148,6 @@ jobs:
             release/*.dmg \
             release/SHA256SUMS.txt \
             --verify-tag \
+            --prerelease \
             --title "Flapstack ${GITHUB_REF_NAME#v}" \
             --notes-file "docs/releases/${PACKAGE_VERSION}.md"

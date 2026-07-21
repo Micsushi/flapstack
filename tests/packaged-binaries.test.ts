@@ -135,7 +135,13 @@ describe("packaged harness preparation", () => {
       }),
     ).toMatchObject({
       targets: ["darwin-arm64", "darwin-x64"],
-      builderArgs: ["--mac", "--arm64", "--x64", "--config=electron-builder.release.mac.cjs"],
+      builderArgs: [
+        "--mac",
+        "--arm64",
+        "--x64",
+        "--config=electron-builder.release.mac.cjs",
+        "--publish=never",
+      ],
     })
 
     expect(requireFromTest("../electron-builder.release.mac.cjs")).toMatchObject({
