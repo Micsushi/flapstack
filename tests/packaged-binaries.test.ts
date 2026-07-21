@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -22,6 +23,8 @@ import {
 import { resolvePackageBuild } from "../scripts/package-app.mjs"
 import { resolvePackageTargets } from "../scripts/prepare-package-resources.mjs"
 import { validateWhisperDirectory } from "../scripts/prepare-whisper-binary.mjs"
+
+const requireFromTest = createRequire(import.meta.url)
 
 function macho(arch: "arm64" | "x64") {
   const buffer = Buffer.alloc(32)
@@ -120,6 +123,29 @@ describe("packaged harness preparation", () => {
         "--dir",
         "--config=electron-builder.preview.mac.cjs",
       ]),
+    })
+  })
+
+  it("uses the explicit unsigned config for macOS beta release packages", () => {
+    expect(
+      resolvePackageBuild({
+        platform: "darwin",
+        architectures: ["arm64", "x64"],
+        channel: "release",
+      }),
+    ).toMatchObject({
+      targets: ["darwin-arm64", "darwin-x64"],
+      builderArgs: ["--mac", "--arm64", "--x64", "--config=electron-builder.release.mac.cjs"],
+    })
+
+    expect(requireFromTest("../electron-builder.release.mac.cjs")).toMatchObject({
+      forceCodeSigning: false,
+      artifactName: "${productName}-${version}-${arch}.${ext}",
+      mac: {
+        identity: null,
+        notarize: false,
+        target: [{ target: "dmg", arch: ["arm64", "x64"] }],
+      },
     })
   })
 

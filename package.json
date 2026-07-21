@@ -1,6 +1,6 @@
 {
   "name": "flapstack",
-  "version": "0.0.72",
+  "version": "0.1.0",
   "private": true,
   "description": "Flapstack - local-first workspace for multi-project, multi-agent coding work",
   "homepage": "",
@@ -21,6 +21,7 @@
     "preview": "electron-vite preview",
     "package": "node scripts/package-app.mjs --dir",
     "package:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64",
+    "package:release:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64 --channel=release",
     "package:preview:mac": "node scripts/ensure-native-abi.mjs electron && node scripts/package-app.mjs --platform=darwin --arch=arm64 --dir --channel=preview",
     "package:inspect:preview:mac": "node scripts/inspect-packaged-binaries.mjs --app='release-preview/mac-arm64/Flapstack Preview.app' --platform=darwin-arm64",
     "package:smoke:preview:mac": "node scripts/inspect-packaged-binaries.mjs --app='release-preview/mac-arm64/Flapstack Preview.app' --platform=darwin-arm64 --smoke",

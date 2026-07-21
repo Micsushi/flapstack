@@ -36,6 +36,7 @@ export function ApiKeyOnboardingPage() {
   const [baseUrl, setBaseUrl] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const setCredential = trpc.credentials.set.useMutation()
+  const utils = trpc.useUtils()
 
   const handleBack = () => {
     setBillingMethod(null)
@@ -54,6 +55,7 @@ export function ApiKeyOnboardingPage() {
         metadata: { model: defaultModel, baseUrl: defaultBaseUrl },
       })
       setApiKey("")
+      await utils.credentials.status.invalidate({ id: "claude.custom-api-token" })
       setApiKeyOnboardingCompleted(true)
       if (status.persistence === "session") {
         toast.warning("Claude API key is available for this session only", {
@@ -84,6 +86,7 @@ export function ApiKeyOnboardingPage() {
         metadata: { model: trimmedModel, baseUrl: trimmedBaseUrl },
       })
       setToken("")
+      await utils.credentials.status.invalidate({ id: "claude.custom-api-token" })
       setApiKeyOnboardingCompleted(true)
       if (status.persistence === "session") {
         toast.warning("Custom Claude credential is available for this session only", {

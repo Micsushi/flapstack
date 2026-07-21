@@ -8,10 +8,16 @@ and agent runs across tools like Codex and Claude Code.
 
 ## Current Status
 
-Stage 0 (repo adoption) and Stage 1 (MVP core) are complete. Stage 2 testing is
-closed as a separate release gate. Its unfinished implementation and evidence
-rows are migrated into Stage 3 so one integration branch owns the next runnable
-product increment. The active exit contract is the
+Flapstack `0.1.0` is the first macOS beta target. It combines the completed
+Stage 3 core with the Stage 4 feature-code pass. Advanced Stage 4 workflows are
+optional and default off under **Settings → Beta Features**. The release is not
+public until the unsigned DMG package gate and clean first-run Claude/Codex
+connection checks pass. macOS will warn because this beta is not signed or
+notarized by Apple. See the [0.1.0 beta notes](docs/releases/0.1.0.md) and
+[macOS release runbook](docs/releasing-macos.md).
+
+Stage 0 (repo adoption), Stage 1 (MVP core), and Stage 3 are complete. Historical
+Stage 2 testing is closed as a separate release gate. The historical exit contract is the
 [Stage 3 full-feature matrix](docs/stage3-full-feature-test-matrix.md); the
 [release candidate ledger](docs/stage3-release-candidate-ledger.md) and
 [integrated candidate release notes](docs/stage3-release-notes.md) record the
@@ -211,6 +217,11 @@ Its eleven OpenSpec feature boards contain 87 bounded tasks; see the
 [Stage 4 router](openspec/stages/s4-knowledge-workspaces-operations/README.md)
 and [execution plan](docs/stage4-execution-plan.md).
 
+The Stage 4 feature-code pass ships in the `0.1.0` macOS beta. Project Memory,
+Orchestration, Saved Workspaces, Automations, and Planning & Task Board remain
+explicit opt-ins. Their unfinished provider, UI, package, and platform evidence
+is beta work, not a stable-support claim.
+
 ### Stage 5: Product Polish, Personalization, and Reach
 
 - Product-wide UI/UX, navigation, Settings, accessibility, and recovery polish.
@@ -278,6 +289,7 @@ Package:
 ```bash
 npm run package:preview:mac # local packaged testing: Flapstack Preview.app
 npm run package:mac
+npm run package:release:mac # unsigned beta DMGs for Apple Silicon and Intel
 npm run package:smoke:mac
 ```
 
@@ -293,6 +305,9 @@ arm64 and x64; Windows builds x64; Linux exposes explicit x64 and arm64 commands
 Before electron-builder can rebuild shared native modules, packaging invalidates
 the ABI marker. The next dev/test command probes real SQLite and PTY loads, repairs
 the required Node/Electron ABI, verifies it, and only then writes a new marker.
+
+See [docs/releasing-macos.md](docs/releasing-macos.md) for the unsigned DMG release
+pipeline, Gatekeeper instructions, checksums, and public-release process.
 
 ## Useful Commands
 

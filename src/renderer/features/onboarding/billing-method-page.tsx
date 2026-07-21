@@ -16,6 +16,7 @@ import {
   type BillingMethod,
 } from "../../lib/atoms"
 import { cn } from "../../lib/utils"
+import { lastSelectedAgentIdAtom } from "../agents/atoms"
 
 type BillingOptionGroup = "claude-code" | "codex"
 
@@ -77,6 +78,7 @@ const billingOptions: BillingOption[] = [
 export function BillingMethodPage() {
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
+  const setLastSelectedAgentId = useSetAtom(lastSelectedAgentIdAtom)
   const [selectedGroup, setSelectedGroup] = useState<BillingOptionGroup>("claude-code")
   const [selectedOptionId, setSelectedOptionId] = useState<string>("claude-subscription")
 
@@ -97,6 +99,9 @@ export function BillingMethodPage() {
     ) {
       // Force Codex onboarding step when user explicitly chooses a Codex auth mode.
       setCodexOnboardingCompleted(false)
+      setLastSelectedAgentId("codex")
+    } else {
+      setLastSelectedAgentId("claude-code")
     }
 
     setBillingMethod(selectedOption.method)
@@ -115,7 +120,7 @@ export function BillingMethodPage() {
         <div className="text-center space-y-1">
           <h1 className="text-base font-semibold tracking-tight">Connect AI Provider</h1>
           <p className="text-sm text-muted-foreground">
-            Choose how you'd like to connect your provider.
+            Choose your first provider. You can add another later in Settings.
           </p>
         </div>
 
@@ -209,6 +214,16 @@ export function BillingMethodPage() {
           className="w-full h-8 px-3 bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] dark:shadow-[0_0_0_0.5px_rgb(23,23,23),inset_0_0_0_1px_rgba(255,255,255,0.14)] flex items-center justify-center"
         >
           Continue
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setLastSelectedAgentId("local")
+            setBillingMethod("local-only")
+          }}
+          className="w-full text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Continue without a cloud provider
         </button>
       </div>
     </div>

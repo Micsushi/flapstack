@@ -25,6 +25,7 @@ import { DevTestControlBridge } from "./features/settings/dev-test-control-bridg
 import {
   AnthropicOnboardingPage,
   ApiKeyOnboardingPage,
+  BillingMethodPage,
   CodexOnboardingPage,
   SelectRepoPage,
 } from "./features/onboarding"
@@ -72,6 +73,7 @@ function AppContent() {
   const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
   const setApiKeyOnboardingCompleted = useSetAtom(apiKeyOnboardingCompletedAtom)
   const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
+  const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
   const selectedProject = useAtomValue(selectedProjectAtom)
   const setSelectedProject = useSetAtom(selectedProjectAtom)
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom)
@@ -271,6 +273,12 @@ function AppContent() {
   // Based on PR #29 by @sa4hnd
   const { data: cliConfig, isLoading: isLoadingCliConfig } =
     trpc.claudeCode.hasExistingCliConfig.useQuery()
+  const claudeIntegration = trpc.claudeCode.getIntegration.useQuery(undefined, { retry: 1 })
+  const customClaudeCredential = trpc.credentials.status.useQuery(
+    { id: "claude.custom-api-token" },
+    { retry: 1 },
+  )
+  const codexIntegration = trpc.codex.getIntegration.useQuery(undefined, { retry: 1 })
 
   // Migration: If user already completed Anthropic onboarding but has no billing method set,
   // automatically set it to "claude-subscription" (legacy users before billing method was added)
@@ -285,10 +293,44 @@ function AppContent() {
   useEffect(() => {
     if (cliConfig?.hasConfig && !billingMethod) {
       console.log("[App] Detected existing CLI config, auto-completing onboarding")
-      setBillingMethod("api-key")
-      setApiKeyOnboardingCompleted(true)
+      if (cliConfig.hasSystemToken) {
+        setBillingMethod("claude-subscription")
+        setAnthropicOnboardingCompleted(true)
+      } else {
+        setBillingMethod("api-key")
+        setApiKeyOnboardingCompleted(true)
+      }
     }
-  }, [cliConfig?.hasConfig, billingMethod, setBillingMethod, setApiKeyOnboardingCompleted])
+  }, [
+    cliConfig?.hasConfig,
+    cliConfig?.hasSystemToken,
+    billingMethod,
+    setAnthropicOnboardingCompleted,
+    setApiKeyOnboardingCompleted,
+    setBillingMethod,
+  ])
+
+  // Completion flags are navigation hints only. Keep them aligned with actual
+  // local credentials so a removed or unreadable credential cannot masquerade
+  // as a live provider connection.
+  useEffect(() => {
+    if (!claudeIntegration.data) return
+    setAnthropicOnboardingCompleted(claudeIntegration.data.isConnected)
+  }, [claudeIntegration.data, setAnthropicOnboardingCompleted])
+
+  useEffect(() => {
+    if (!customClaudeCredential.data) return
+    setApiKeyOnboardingCompleted(customClaudeCredential.data.configured)
+  }, [customClaudeCredential.data, setApiKeyOnboardingCompleted])
+
+  useEffect(() => {
+    const state = codexIntegration.data?.state
+    if (state === "connected_chatgpt" || state === "connected_api_key") {
+      setCodexOnboardingCompleted(true)
+    } else if (state === "not_logged_in") {
+      setCodexOnboardingCompleted(false)
+    }
+  }, [codexIntegration.data?.state, setCodexOnboardingCompleted])
 
   // Fetch projects to validate selectedProject exists
   const { data: projects, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
@@ -304,24 +346,51 @@ function AppContent() {
     return exists ? selectedProject : null
   }, [selectedProject, projects, isLoadingProjects])
 
-  // Local-first startup enters the workspace/project picker without requiring
-  // hosted account, sign-in, or billing selection. Provider-specific
-  // onboarding still runs when a local billing/auth mode has already been
-  // selected and needs credentials.
-  if (billingMethod === "claude-subscription" && !anthropicOnboardingCompleted) {
+  if (!billingMethod) {
+    if (isLoadingCliConfig) return <ProviderCheckPage />
+    return <BillingMethodPage />
+  }
+
+  const claudeSubscriptionConnected = claudeIntegration.data?.isConnected === true
+  const customClaudeConnected = customClaudeCredential.data?.configured === true
+  const codexState = codexIntegration.data?.state
+  const codexMethodConnected =
+    billingMethod === "codex-subscription"
+      ? codexState === "connected_chatgpt"
+      : billingMethod === "codex-api-key"
+        ? codexState === "connected_api_key"
+        : false
+
+  const selectedProviderCheckPending =
+    (billingMethod === "claude-subscription" && claudeIntegration.isLoading) ||
+    ((billingMethod === "api-key" || billingMethod === "custom-model") &&
+      customClaudeCredential.isLoading) ||
+    ((billingMethod === "codex-subscription" || billingMethod === "codex-api-key") &&
+      codexIntegration.isLoading)
+
+  if (selectedProviderCheckPending) return <ProviderCheckPage />
+
+  const claudeStatusFallback = claudeIntegration.isError && anthropicOnboardingCompleted
+  if (
+    billingMethod === "claude-subscription" &&
+    !claudeSubscriptionConnected &&
+    !claudeStatusFallback
+  ) {
     return <AnthropicOnboardingPage />
   }
 
   if (
     (billingMethod === "codex-subscription" || billingMethod === "codex-api-key") &&
-    !codexOnboardingCompleted
+    !codexMethodConnected &&
+    !(codexIntegration.isError && codexOnboardingCompleted)
   ) {
     return <CodexOnboardingPage />
   }
 
   if (
     (billingMethod === "api-key" || billingMethod === "custom-model") &&
-    !apiKeyOnboardingCompleted
+    !customClaudeConnected &&
+    !(customClaudeCredential.isError && apiKeyOnboardingCompleted)
   ) {
     return <ApiKeyOnboardingPage />
   }
@@ -331,6 +400,14 @@ function AppContent() {
   }
 
   return <AgentsLayout />
+}
+
+function ProviderCheckPage() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">
+      Checking local provider connections…
+    </div>
+  )
 }
 
 export function App() {

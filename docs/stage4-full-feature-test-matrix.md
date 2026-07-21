@@ -3,6 +3,10 @@
 All rows remain open until observed against the stated build/profile. Headless
 tests do not substitute for live UI or packaged evidence.
 
+This matrix is the promotion gate for the Stage 4 feature-code pass included in
+the macOS-only `0.1.0` beta. Optional Beta Features default off; inclusion in the
+candidate does not close an unchecked row.
+
 ## Automated Gate
 
 - [ ] **S4-A01** All eleven Stage 4 OpenSpec changes pass strict validation.

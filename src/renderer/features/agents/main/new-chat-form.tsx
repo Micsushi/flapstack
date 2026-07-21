@@ -58,9 +58,6 @@ const selectedTeamIdAtom = atom<string | null>(null)
 import {
   agentsSettingsDialogOpenAtom,
   agentsSettingsDialogActiveTabAtom,
-  anthropicOnboardingCompletedAtom,
-  apiKeyOnboardingCompletedAtom,
-  codexOnboardingCompletedAtom,
   hiddenModelsAtom,
   selectedOllamaModelAtom,
   chatSourceModeAtom,
@@ -309,9 +306,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
   })
   const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
   // Connection status for providers
-  const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
-  const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
-  const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
   const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
     refetchInterval: (query) => (query.state.data?.isConnected ? false : 2_000),
@@ -324,11 +318,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
     onSuccess: () => toast.info("Complete Cursor login in the browser, then retry."),
     onError: (error) => toast.error(`Could not start Cursor login: ${error.message}`),
   })
-  const isClaudeConnected =
-    Boolean(claudeCodeIntegration?.isConnected) ||
-    anthropicOnboardingCompleted ||
-    apiKeyOnboardingCompleted ||
-    hasCustomClaudeConfig
+  const isClaudeConnected = Boolean(claudeCodeIntegration?.isConnected) || hasCustomClaudeConfig
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom)
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom)
   const localModelPicker = useLocalModelPickerSurface()
@@ -2266,7 +2256,7 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
                             setLastSelectedCodexFastMode(
                               selectedCodexModel.supportsFastMode ? enabled : false,
                             ),
-                          isConnected: codexIntegration?.isConnected ?? codexOnboardingCompleted,
+                          isConnected: codexIntegration?.isConnected === true,
                         }}
                         cursor={{
                           models: cursorUiModels,

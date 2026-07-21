@@ -12,7 +12,7 @@ describe("Flapstack MCP model guidance", () => {
     expect(FLAPSTACK_MCP_INSTRUCTIONS).toContain("across supported providers")
     expect(FLAPSTACK_MCP_INSTRUCTIONS).toContain("without requiring the user to say MCP")
     expect(guided).toContain("Use spawn_thread")
-    expect(guided).toContain("orchestrate_task")
+    expect(guided).toContain("Coordinated services are available only when their tools are exposed")
     expect(guided).toContain(prompt)
   })
 

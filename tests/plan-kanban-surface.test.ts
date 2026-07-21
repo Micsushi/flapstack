@@ -12,7 +12,9 @@ describe("Plan and Kanban production surface", () => {
 
     expect(atoms).toContain('| "tasks"')
     expect(content).toContain('import { KanbanView } from "../../kanban"')
-    expect(content.match(/desktopView === "tasks"/g)).toHaveLength(2)
+    expect(content.match(/effectiveDesktopView === "tasks"/g)).toHaveLength(2)
+    expect(content).toContain('(desktopView === "tasks" || desktopView === "plan")')
+    expect(content).toContain("!betaFeatures.planning")
     expect(sidebar).toContain('setDesktopView("tasks")')
     expect(sidebar).toContain('label: "Tasks"')
     expect(sidebar).toContain("<span>{label}</span>")

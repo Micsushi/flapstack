@@ -7,10 +7,12 @@ import { ClaudeLocalAuthPanel } from "../../components/claude-local-auth-panel"
 import { ClaudeCodeIcon } from "../../components/ui/icons"
 import { Logo } from "../../components/ui/logo"
 import { anthropicOnboardingCompletedAtom, billingMethodAtom } from "../../lib/atoms"
+import { trpc } from "../../lib/trpc"
 
 export function AnthropicOnboardingPage() {
   const setAnthropicOnboardingCompleted = useSetAtom(anthropicOnboardingCompletedAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
+  const utils = trpc.useUtils()
 
   const handleBack = () => {
     setBillingMethod(null)
@@ -48,7 +50,12 @@ export function AnthropicOnboardingPage() {
           </div>
         </div>
 
-        <ClaudeLocalAuthPanel onSuccess={() => setAnthropicOnboardingCompleted(true)} />
+        <ClaudeLocalAuthPanel
+          onSuccess={() => {
+            setAnthropicOnboardingCompleted(true)
+            void utils.claudeCode.getIntegration.invalidate()
+          }}
+        />
       </div>
     </div>
   )

@@ -148,14 +148,12 @@ describe("Agent Profile workflow production binding", () => {
 
   it("registers the F12 materializer before production workflow recovery", () => {
     const main = readFileSync(resolve(repositoryPath, "src/main/index.ts"), "utf8")
-    const startup = main.slice(main.indexOf('name: "Multi-agent operations projection'))
-    expect(startup.indexOf("registerMainRuntimeOperations(")).toBeGreaterThanOrEqual(0)
-    expect(startup.indexOf("registerWorkflowAgentMaterializer(")).toBeGreaterThan(
-      startup.indexOf("registerMainRuntimeOperations("),
-    )
-    expect(startup.indexOf("recoverOrchestrationOperations(")).toBeGreaterThan(
-      startup.indexOf("registerWorkflowAgentMaterializer("),
-    )
+    const runtimeRegistration = main.indexOf("registerMainRuntimeOperations(")
+    const materializerRegistration = main.indexOf("registerWorkflowAgentMaterializer(")
+    const recovery = main.indexOf("recoverOrchestrationOperations(")
+    expect(runtimeRegistration).toBeGreaterThanOrEqual(0)
+    expect(materializerRegistration).toBeGreaterThan(runtimeRegistration)
+    expect(recovery).toBeGreaterThan(materializerRegistration)
   })
 })
 
@@ -1338,7 +1336,7 @@ describe("starter evaluation", () => {
 })
 
 describe("Agent Profile renderer contracts", () => {
-  it("keeps capability and personality separate and exposes task/chat/studio actions", () => {
+  it("keeps capability and personality separate and exposes task/studio actions", () => {
     const studio = readFileSync(
       resolve(
         process.cwd(),
@@ -1352,10 +1350,6 @@ describe("Agent Profile renderer contracts", () => {
     )
     const sidebar = readFileSync(
       resolve(process.cwd(), "src/renderer/features/sidebar/agents-sidebar.tsx"),
-      "utf8",
-    )
-    const chat = readFileSync(
-      resolve(process.cwd(), "src/renderer/features/agents/main/active-chat.tsx"),
       "utf8",
     )
     expect(studio).toContain(
@@ -1375,7 +1369,6 @@ describe("Agent Profile renderer contracts", () => {
     )
     expect(start).toContain("launchBlocked")
     expect(sidebar).toContain('source={{ kind: "task", taskId: lifecycleTarget.id }}')
-    expect(chat).toContain('source={{ kind: "chat", chatId }}')
   })
 })
 

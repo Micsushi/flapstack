@@ -8,8 +8,6 @@ import {
   claudeLoginModalConfigAtom,
   codexLoginModalMethodAtom,
   codexLoginModalOpenAtom,
-  codexOnboardingAuthMethodAtom,
-  codexOnboardingCompletedAtom,
   hiddenModelsAtom,
 } from "../../../lib/atoms"
 import { enabledCursorModelsAtom } from "../../../features/agents/atoms"
@@ -269,8 +267,6 @@ export function AgentsModelsTab() {
   const { data: codexCredentialStatus } = trpc.credentials.status.useQuery({
     id: "codex.api-key",
   })
-  const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
-  const codexOnboardingAuthMethod = useAtomValue(codexOnboardingAuthMethodAtom)
   const codexLogoutMutation = trpc.codex.logout.useMutation()
   const trpcUtils = trpc.useUtils()
 
@@ -302,11 +298,7 @@ export function AgentsModelsTab() {
   }
 
   const hasAppCodexApiKey = codexCredentialStatus?.configured === true
-  const hasLocalCodexSubscription =
-    codexOnboardingCompleted && codexOnboardingAuthMethod === "chatgpt"
-  const isCodexSubscriptionConnected =
-    codexIntegration?.state === "connected_chatgpt" ||
-    (!codexIntegration && hasLocalCodexSubscription)
+  const isCodexSubscriptionConnected = codexIntegration?.state === "connected_chatgpt"
   const isCodexSubscriptionActive = isCodexSubscriptionConnected && !hasAppCodexApiKey
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom)
   const [enabledCursorModels, setEnabledCursorModels] = useAtom(enabledCursorModelsAtom)
@@ -342,7 +334,7 @@ export function AgentsModelsTab() {
       : codexIntegration?.state === "not_logged_in"
         ? "Not connected"
         : "Status unavailable"
-  const showCodexLoading = isCodexLoading && !hasAppCodexApiKey && !hasLocalCodexSubscription
+  const showCodexLoading = isCodexLoading && !hasAppCodexApiKey
 
   // All models merged into one list for the top section
   const allModels = useMemo(() => {

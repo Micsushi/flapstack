@@ -4,6 +4,16 @@ Stage 4 is the prerequisite operating-environment stage for Stage 5. Its eleven
 feature boards contain 87 independently pick-up-able tasks. This document orders those boards without
 duplicating task state; the checkbox in each OpenSpec `tasks.md` is authoritative.
 
+## `0.1.0` beta release position
+
+The Stage 4 feature-code pass is part of the macOS-only `0.1.0` beta. Project
+Memory, Orchestration, Saved Workspaces, Automations, and Planning & Task Board
+ship as optional Beta Features and remain off by default. Other exposed Stage 4
+features are beta-supported, not a stable-support or completed-evidence claim.
+The exact `0.1.0` candidate still requires the open live, provider, package, and
+OS evidence in the [Stage 4 full-feature matrix](stage4-full-feature-test-matrix.md)
+and the [macOS release runbook](releasing-macos.md).
+
 ## Baseline and entry gate
 
 - Planning branch: `codex/stage4-features`, created from `main` at `25536be`.

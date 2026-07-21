@@ -68,6 +68,22 @@ describe("Settings release visibility", () => {
     expect(claudeCodeRouter).toContain('stdio: ["pipe", "pipe", "pipe"]')
   })
 
+  it("uses live provider state after first-run setup", () => {
+    const app = readSource("src/renderer/App.tsx")
+    const billing = readSource("src/renderer/features/onboarding/billing-method-page.tsx")
+    const chatInput = readSource("src/renderer/features/agents/main/chat-input-area.tsx")
+    const newChat = readSource("src/renderer/features/agents/main/new-chat-form.tsx")
+
+    expect(app).toContain("<BillingMethodPage />")
+    expect(app).toContain("claudeCode.getIntegration.useQuery")
+    expect(app).toContain("codex.getIntegration.useQuery")
+    expect(billing).toContain('setBillingMethod("local-only")')
+    expect(chatInput).not.toContain("anthropicOnboardingCompletedAtom")
+    expect(chatInput).not.toContain("codexOnboardingCompletedAtom")
+    expect(newChat).not.toContain("anthropicOnboardingCompletedAtom")
+    expect(newChat).not.toContain("codexOnboardingCompletedAtom")
+  })
+
   it("keeps the retired quick-switch preference inert", () => {
     const preferences = readSource(
       "src/renderer/components/dialogs/settings-tabs/agents-preferences-tab.tsx",

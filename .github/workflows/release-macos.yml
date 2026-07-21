@@ -1,0 +1,149 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      package-version: ${{ steps.release.outputs.package-version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify release ref and version
+        id: release
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF_NAME" != "v${package_version}" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version v${package_version}." >&2
+            exit 1
+          fi
+          notes_file="docs/releases/${package_version}.md"
+          if [[ ! -f "$notes_file" ]]; then
+            echo "Missing release notes: $notes_file" >&2
+            exit 1
+          fi
+          git fetch origin main
+          if [[ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]]; then
+            echo "Release tags must point at the current origin/main commit." >&2
+            exit 1
+          fi
+          echo "package-version=$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run release gate
+        run: npm run check
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            app-path: release/mac-arm64/Flapstack.app
+            platform: darwin-arm64
+          - arch: x64
+            runner: macos-15-intel
+            app-path: release/mac/Flapstack.app
+            platform: darwin-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build unsigned DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          node scripts/package-app.mjs \
+            --platform=darwin \
+            --arch=${{ matrix.arch }} \
+            --channel=release
+
+      - name: Inspect and smoke-test native package
+        run: |
+          node scripts/inspect-packaged-binaries.mjs \
+            --app='${{ matrix.app-path }}' \
+            --platform=${{ matrix.platform }} \
+            --smoke
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: flapstack-${{ matrix.arch }}
+          path: release/Flapstack-${{ needs.verify.outputs.package-version }}-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v7
+
+      - name: Download DMGs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flapstack-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          dmg_count="$(find release -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          if [[ "$dmg_count" != "2" ]]; then
+            echo "Expected two DMGs, found $dmg_count." >&2
+            exit 1
+          fi
+          cd release
+          sha256sum ./*.dmg > SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ needs.verify.outputs.package-version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/*.dmg \
+            release/SHA256SUMS.txt \
+            --verify-tag \
+            --title "Flapstack ${GITHUB_REF_NAME#v}" \
+            --notes-file "docs/releases/${PACKAGE_VERSION}.md"

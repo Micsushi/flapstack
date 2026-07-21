@@ -3,6 +3,12 @@
 Stage 4 turns Flapstack's Stage 3 control primitives into a durable daily
 operating environment.
 
+Release position: the Stage 4 feature-code pass is included in the macOS-only
+`0.1.0` beta. Project Memory, Orchestration, Saved Workspaces, Automations, and
+Planning & Task Board are optional Beta Features and default off. Exposed Stage
+4 code remains beta-supported until its live, provider, package, and OS evidence
+closes; inclusion is not a stable-support claim.
+
 Delivery order:
 
 1. [S4-F1 Unified skills and hooks manager](features/s4-f1-unified-skills-hooks/README.md)

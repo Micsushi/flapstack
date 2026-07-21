@@ -35,9 +35,6 @@ import { Switch } from "../../../components/ui/switch"
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  anthropicOnboardingCompletedAtom,
-  apiKeyOnboardingCompletedAtom,
-  codexOnboardingCompletedAtom,
   hiddenModelsAtom,
   selectedOllamaModelAtom,
 } from "../../../lib/atoms"
@@ -652,9 +649,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   const enabledCursorModels = useAtomValue(enabledCursorModelsAtom)
 
   // Connection status for providers
-  const anthropicOnboardingCompleted = useAtomValue(anthropicOnboardingCompletedAtom)
-  const apiKeyOnboardingCompleted = useAtomValue(apiKeyOnboardingCompletedAtom)
-  const codexOnboardingCompleted = useAtomValue(codexOnboardingCompletedAtom)
   const { data: claudeCodeIntegration } = trpc.claudeCode.getIntegration.useQuery()
   const { data: cursorIntegration } = trpc.cursor.getIntegration.useQuery(undefined, {
     refetchInterval: (query) => (query.state.data?.isConnected ? false : 2_000),
@@ -769,11 +763,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     id: "claude.custom-api-token",
   })
   const hasCustomClaudeConfig = customClaudeCredentialStatus?.configured === true
-  const isClaudeConnected =
-    Boolean(claudeCodeIntegration?.isConnected) ||
-    anthropicOnboardingCompleted ||
-    apiKeyOnboardingCompleted ||
-    hasCustomClaudeConfig
+  const isClaudeConnected = Boolean(claudeCodeIntegration?.isConnected) || hasCustomClaudeConfig
 
   // Determine current Ollama model (selected or recommended)
   const currentOllamaModel =
@@ -2233,7 +2223,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           setSelectedSubChatCodexFastMode(nextEnabled)
                           setLastSelectedCodexFastMode(nextEnabled)
                         },
-                        isConnected: codexIntegration?.isConnected ?? codexOnboardingCompleted,
+                        isConnected: codexIntegration?.isConnected === true,
                       }}
                       cursor={{
                         models: cursorUiModels,

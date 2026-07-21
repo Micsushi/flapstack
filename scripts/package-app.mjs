@@ -9,6 +9,10 @@ import { preparePackageResources, resolvePackageTargets } from "./prepare-packag
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const platformFlags = { darwin: "--mac", win32: "--win", linux: "--linux" }
 const supportedArchitectures = new Set(["arm64", "x64"])
+const macChannelConfigs = {
+  preview: "electron-builder.preview.mac.cjs",
+  release: "electron-builder.release.mac.cjs",
+}
 const defaultNativeAbiMarker = path.join(root, "node_modules", ".native-abi")
 
 function valuesFor(args, name) {
@@ -49,13 +53,19 @@ export function resolvePackageBuild(
   const targets = resolvePackageTargets(
     architectures.map((architecture) => `${platform}-${architecture}`),
   )
+  const channelConfig = options.channel
+    ? platform === "darwin"
+      ? macChannelConfigs[options.channel]
+      : undefined
+    : undefined
+  if (options.channel && !channelConfig) {
+    throw new Error(`Unsupported ${platform} package channel: ${options.channel}`)
+  }
   const builderArgs = [
     platformFlags[platform],
     ...architectures.map((architecture) => `--${architecture}`),
     ...(options.dir ? ["--dir"] : []),
-    ...(platform === "darwin" && options.channel === "preview"
-      ? ["--config=electron-builder.preview.mac.cjs"]
-      : []),
+    ...(channelConfig ? [`--config=${channelConfig}`] : []),
   ]
   return { platform, architectures, targets, builderArgs }
 }
