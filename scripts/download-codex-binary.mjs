@@ -30,6 +30,8 @@ const BIN_DIR = outputRootArg
 const RELEASE_REPO = "openai/codex"
 const RELEASE_TAG_PREFIX = "rust-v"
 const USER_AGENT = "flapstack-desktop-codex-downloader"
+const MAX_DOWNLOAD_ATTEMPTS = 3
+const RETRYABLE_DOWNLOAD_STATUSES = new Set([403, 408, 429, 500, 502, 503, 504])
 
 const PLATFORMS = {
   "darwin-arm64": {
@@ -62,14 +64,15 @@ const PLATFORMS = {
   },
 }
 
-function getRequestHeaders() {
+function getRequestHeaders({ api = false } = {}) {
   const headers = {
     "User-Agent": USER_AGENT,
-    Accept: "application/vnd.github+json",
+    Accept: api ? "application/vnd.github+json" : "application/octet-stream",
   }
-  // Use GITHUB_TOKEN if available (avoids API rate limits in CI)
+  // Authenticate API metadata requests without forwarding repository
+  // credentials to signed release-asset redirects on another host.
   const token = process.env.GITHUB_TOKEN
-  if (token) {
+  if (api && token) {
     headers.Authorization = `Bearer ${token}`
   }
   return headers
@@ -78,7 +81,7 @@ function getRequestHeaders() {
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
     https
-      .get(url, { headers: getRequestHeaders() }, (res) => {
+      .get(url, { headers: getRequestHeaders({ api: true }) }, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           const redirectUrl = res.headers.location
           if (!redirectUrl) {
@@ -110,7 +113,7 @@ function fetchJson(url) {
 
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
-    const request = (nextUrl) => {
+    const request = (nextUrl, attempt = 1) => {
       const file = fs.createWriteStream(destPath)
 
       https
@@ -125,15 +128,27 @@ function downloadFile(url, destPath) {
 
             file.close(() => {
               fs.rmSync(destPath, { force: true })
-              request(redirectUrl)
+              request(redirectUrl, attempt)
             })
             return
           }
 
           if (res.statusCode !== 200) {
-            file.close()
-            fs.rmSync(destPath, { force: true })
-            return reject(new Error(`HTTP ${res.statusCode}`))
+            const status = res.statusCode ?? 0
+            res.resume()
+            file.close(() => {
+              fs.rmSync(destPath, { force: true })
+              if (RETRYABLE_DOWNLOAD_STATUSES.has(status) && attempt < MAX_DOWNLOAD_ATTEMPTS) {
+                const delayMs = 1000 * 2 ** (attempt - 1)
+                console.warn(
+                  `  HTTP ${status}; retrying Codex download (${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS})...`,
+                )
+                setTimeout(() => request(url, attempt + 1), delayMs)
+                return
+              }
+              reject(new Error(`HTTP ${status}`))
+            })
+            return
           }
 
           const totalSize = Number.parseInt(res.headers["content-length"] || "0", 10)

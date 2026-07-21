@@ -92,6 +92,7 @@ jobs:
       - name: Build unsigned DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           node scripts/package-app.mjs \
             --platform=darwin \
