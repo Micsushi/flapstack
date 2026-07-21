@@ -7,7 +7,17 @@ export function formatReasoningDuration(ms: number): string {
   return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`
 }
 
-export function formatReasoningStatus(isWorking: boolean, durationMs?: number): string {
+export function formatReasoningStatus(
+  isWorking: boolean,
+  durationMs?: number,
+  wasStopped = false,
+): string {
+  if (wasStopped) {
+    if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) {
+      return "You stopped"
+    }
+    return `You stopped after ${formatReasoningDuration(durationMs)}`
+  }
   const verb = isWorking ? "Working" : "Worked"
   if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return verb
   return `${verb} for ${formatReasoningDuration(durationMs)}`
@@ -38,6 +48,10 @@ export function buildReasoningTimerState(input: {
     startedAtMs: startedAtMs ?? null,
     completedAtMs: input.completedAtMs ?? null,
     durationMs: durationMs ?? null,
-    label: formatReasoningStatus(isWorking, durationMs),
+    label: formatReasoningStatus(
+      isWorking,
+      durationMs,
+      input.status === "stopped" || input.status === "cancelled",
+    ),
   }
 }

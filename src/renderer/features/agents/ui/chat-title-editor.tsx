@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback, memo } from "react"
 import { useAtomValue } from "jotai"
 import { cn } from "../../../lib/utils"
 import { TypewriterText } from "../../../components/ui/typewriter-text"
-import { CopyIcon } from "../../../components/ui/icons"
 import { justCreatedIdsAtom } from "../atoms"
 import { Folder } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
@@ -19,9 +18,7 @@ interface ChatTitleEditorProps {
   isMobile?: boolean
   disabled?: boolean
   chatId?: string
-  copyChatId?: string
   hasMessages?: boolean
-  onCopyChat?: () => void
   isSidebarOpen?: boolean
   provider?: string
   providerName?: string
@@ -30,7 +27,7 @@ interface ChatTitleEditorProps {
   projectColor?: string | null
   workspaceBranch?: string | null
   localFolderPath?: string
-  reserveRestoreSpace?: boolean
+  headerActions?: React.ReactNode
 }
 
 // Custom comparison to prevent re-renders during streaming
@@ -41,9 +38,7 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.isMobile === next.isMobile &&
     prev.disabled === next.disabled &&
     prev.chatId === next.chatId &&
-    prev.copyChatId === next.copyChatId &&
     prev.hasMessages === next.hasMessages &&
-    prev.onCopyChat === next.onCopyChat &&
     prev.isSidebarOpen === next.isSidebarOpen &&
     prev.provider === next.provider &&
     prev.providerName === next.providerName &&
@@ -52,7 +47,7 @@ function areTitlePropsEqual(prev: ChatTitleEditorProps, next: ChatTitleEditorPro
     prev.projectColor === next.projectColor &&
     prev.workspaceBranch === next.workspaceBranch &&
     prev.localFolderPath === next.localFolderPath &&
-    prev.reserveRestoreSpace === next.reserveRestoreSpace
+    prev.headerActions === next.headerActions
   )
 }
 
@@ -63,9 +58,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   isMobile = false,
   disabled = false,
   chatId,
-  copyChatId,
   hasMessages = false,
-  onCopyChat,
   isSidebarOpen = true,
   provider,
   providerName,
@@ -74,7 +67,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   projectColor,
   workspaceBranch,
   localFolderPath,
-  reserveRestoreSpace = false,
+  headerActions,
 }: ChatTitleEditorProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(name)
@@ -186,9 +179,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
       ref={containerRef}
       className={cn(
         "flex items-center gap-2",
-        isMobile
-          ? "max-w-2xl mx-auto px-4"
-          : cn("w-full", reserveRestoreSpace ? "pr-48" : "pr-20", isSidebarOpen ? "pl-5" : "pl-12"),
+        isMobile ? "max-w-2xl mx-auto px-4" : cn("w-full pr-3", isSidebarOpen ? "pl-5" : "pl-12"),
         heightClass,
       )}
     >
@@ -264,23 +255,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
             </span>
           )}
           <OpenInButton path={localFolderPath} label="Open in" />
-          {onCopyChat && (
-            <button
-              type="button"
-              onClick={onCopyChat}
-              className="relative z-30 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md p-0 text-foreground/70 transition-colors hover:bg-accent hover:text-accent-foreground"
-              style={{
-                // @ts-expect-error - WebKit-specific property for Electron window dragging
-                WebkitAppRegion: "no-drag",
-              }}
-              aria-label="Copy full chat"
-              title="Copy full chat"
-              data-dev-chat-copy-source="active-header"
-              data-chat-id={copyChatId}
-            >
-              <CopyIcon className="h-4 w-4" />
-            </button>
-          )}
+          {headerActions}
         </div>
       )}
     </div>

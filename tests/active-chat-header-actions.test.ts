@@ -12,10 +12,9 @@ const subChatSelectorSource = readFileSync(
 )
 
 describe("active chat header actions", () => {
-  it("exposes the named-agent launcher in the chat toolbar", () => {
-    expect(activeChatSource).toContain("StartAgentDialog")
-    expect(activeChatSource).toContain('source={{ kind: "chat", chatId }}')
-    expect(activeChatSource).toContain('aria-label="Start named agent from this chat"')
+  it("does not expose the named-agent launcher in the chat toolbar", () => {
+    expect(activeChatSource).not.toContain("StartAgentDialog")
+    expect(activeChatSource).not.toContain('aria-label="Start named agent from this chat"')
   })
 
   it("serializes chat-mode persistence and does not use a shared rollback slot", () => {
@@ -25,16 +24,18 @@ describe("active chat header actions", () => {
   })
 
   it("keeps full-chat copy as a compact accessible icon action", () => {
-    expect(titleEditorSource).toContain('aria-label="Copy full chat"')
-    expect(titleEditorSource).toContain('title="Copy full chat"')
-    expect(titleEditorSource).toContain('className="relative z-30 inline-flex h-7 w-7')
-    expect(titleEditorSource).toContain("rounded-md p-0 text-foreground/70")
-    expect(titleEditorSource).not.toContain(">Copy full chat</span>")
+    expect(activeChatSource).toContain('aria-label="Copy full chat"')
+    expect(activeChatSource).toContain('title="Copy full chat"')
+    expect(activeChatSource).toContain("rounded-md p-0 text-foreground/70")
+    expect(activeChatSource).toContain("headerActions={desktopHeaderActions}")
   })
 
   it("uses one size and spacing rhythm for desktop header controls", () => {
     expect(activeChatSource).toContain('headerPaddingSidebarOpen: "pt-2.5 pb-12 px-3 pl-2"')
     expect(titleEditorSource).toContain('className="ml-auto flex shrink-0 items-center gap-2"')
+    expect(titleEditorSource).toContain('<OpenInButton path={localFolderPath} label="Open in" />')
+    expect(titleEditorSource).toContain("{headerActions}")
+    expect(titleEditorSource).not.toContain("reserveRestoreSpace")
     expect(titleEditorSource).toContain("inline-flex h-7 shrink-0")
     expect(titleEditorSource).not.toContain("inline-flex h-6 shrink-0")
     expect(subChatSelectorSource).toContain(

@@ -68,6 +68,7 @@ interface IsolatedMessageGroupProps {
   sandboxSetupError?: string
   onRetrySetup?: () => void
   onRollback?: (msg: any) => void
+  onEditLatest?: (msg: any, text: string) => Promise<boolean>
   onFork?: (messageId: string) => void
   // Components passed from parent - must be stable references
   UserBubbleComponent: React.ComponentType<{
@@ -103,6 +104,7 @@ function areGroupPropsEqual(
     prev.sandboxSetupError === next.sandboxSetupError &&
     prev.onRetrySetup === next.onRetrySetup &&
     prev.onRollback === next.onRollback &&
+    prev.onEditLatest === next.onEditLatest &&
     prev.onFork === next.onFork &&
     prev.UserBubbleComponent === next.UserBubbleComponent &&
     prev.ToolCallComponent === next.ToolCallComponent &&
@@ -121,6 +123,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   sandboxSetupError,
   onRetrySetup,
   onRollback,
+  onEditLatest,
   onFork,
   UserBubbleComponent,
   ToolCallComponent,
@@ -142,6 +145,9 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
   const userMessageRef = useRef<HTMLDivElement>(null)
   const messageAnchorRef = useRef<HTMLDivElement>(null)
   const [isPinned, setIsPinned] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editValue, setEditValue] = useState("")
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
   const floatingMenuLabel = floatingUserMessages ? "Stop floating prompts" : "Make prompts float"
 
   useEffect(() => {
@@ -185,6 +191,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
 
   // Show rollback button only when this user turn has a valid rollback target.
   const canRollback = onRollback && !!rollbackTargetSdkUuid && !isStreaming
+  const canEditLatest = onEditLatest && isLastGroup && !isStreaming && !isRollingBack
   const canFork = !!onFork
 
   // Extract user message content
@@ -203,6 +210,14 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
     () => extractTextMentions(rawTextContent),
     [rawTextContent],
   )
+
+  const submitEdit = useCallback(async () => {
+    if (!onEditLatest || !userMsg || !editValue.trim()) return
+    setIsSavingEdit(true)
+    const sent = await onEditLatest(userMsg, editValue.trim())
+    setIsSavingEdit(false)
+    if (sent) setIsEditing(false)
+  }, [editValue, onEditLatest, userMsg])
 
   if (!userMsg) return null
 
@@ -289,7 +304,45 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                   <TooltipContent side="bottom">Jump to this prompt</TooltipContent>
                 </Tooltip>
               )}
-              {isAttachmentOnlyMessage && !isImageOnlyMessage ? (
+              {isEditing ? (
+                <div className="flex justify-end">
+                  <div className="w-full max-w-[85%] rounded-xl border border-border bg-input-background p-2">
+                    <textarea
+                      autoFocus
+                      value={editValue}
+                      onChange={(event) => setEditValue(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setIsEditing(false)
+                        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                          event.preventDefault()
+                          void submitEdit()
+                        }
+                      }}
+                      rows={Math.max(2, Math.min(8, editValue.split("\n").length))}
+                      className="w-full resize-none bg-transparent px-1 py-1 text-sm text-foreground outline-none"
+                      aria-label="Edit message"
+                    />
+                    <div className="mt-2 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditing(false)}
+                        disabled={isSavingEdit}
+                        className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingEdit || !editValue.trim()}
+                        onClick={() => void submitEdit()}
+                        className="rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+                      >
+                        {isSavingEdit ? "Sending…" : "Send"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : isAttachmentOnlyMessage && !isImageOnlyMessage ? (
                 <div
                   className="flex justify-end drop-shadow-[0_10px_20px_hsl(var(--background))]"
                   data-user-bubble
@@ -384,6 +437,16 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[190px]">
+                    {canEditLatest && (
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setEditValue(textContent)
+                          setIsEditing(true)
+                        }}
+                      >
+                        Edit message
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       onClick={() => setFloatingUserMessages(!floatingUserMessages)}
                     >

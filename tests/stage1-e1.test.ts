@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { execFileSync } from "node:child_process"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -16,7 +26,11 @@ import {
   subChats,
   tasks,
 } from "../src/main/lib/db"
-import { captureCheckpoint, captureRunManifest } from "../src/main/lib/checkpoints"
+import {
+  captureCheckpoint,
+  captureRunManifest,
+  restoreCheckpoint,
+} from "../src/main/lib/checkpoints"
 import { chatsRouter } from "../src/main/lib/trpc/routers/chats"
 import { permissionsRouter } from "../src/main/lib/trpc/routers/permissions"
 import { searchRouter } from "../src/main/lib/trpc/routers/search"
@@ -1426,6 +1440,57 @@ describe("Stage 1 E1 search archive and scope filters", () => {
 })
 
 describe("Stage 1 E1 checkpoint capture", () => {
+  it("restores the exact pre-run worktree and index", async () => {
+    const db = getDatabase()
+    const worktreePath = join(homeDir, "editable-repo")
+    mkdirSync(worktreePath, { recursive: true })
+    execFileSync("git", ["init"], { cwd: worktreePath })
+    execFileSync("git", ["config", "user.name", "Flapstack Test"], { cwd: worktreePath })
+    execFileSync("git", ["config", "user.email", "test@flapstack.local"], {
+      cwd: worktreePath,
+    })
+    writeFileSync(join(worktreePath, "tracked.txt"), "base\n")
+    execFileSync("git", ["add", "tracked.txt"], { cwd: worktreePath })
+    execFileSync("git", ["commit", "-m", "base"], { cwd: worktreePath })
+
+    writeFileSync(join(worktreePath, "tracked.txt"), "staged\n")
+    execFileSync("git", ["add", "tracked.txt"], { cwd: worktreePath })
+    writeFileSync(join(worktreePath, "tracked.txt"), "unstaged\n")
+    writeFileSync(join(worktreePath, "preexisting-untracked.txt"), "keep\n")
+
+    const project = insertProject("editable-project", { path: worktreePath })
+    const chat = insertChat({
+      scope: "project",
+      projectId: project.id,
+      name: "Editable chat",
+      worktreePath,
+    })
+    const run = db
+      .insert(agentRuns)
+      .values({
+        chatId: chat.id,
+        harness: "codex",
+        permissionMode: "ask-before-edits",
+        worktreePath,
+      })
+      .returning()
+      .get()
+    const checkpoint = await captureCheckpoint(run.id, worktreePath, "before")
+
+    writeFileSync(join(worktreePath, "tracked.txt"), "agent edit\n")
+    writeFileSync(join(worktreePath, "agent-created.txt"), "remove\n")
+    execFileSync("git", ["add", "-A"], { cwd: worktreePath })
+
+    await restoreCheckpoint(checkpoint.id)
+
+    expect(readFileSync(join(worktreePath, "tracked.txt"), "utf8")).toBe("unstaged\n")
+    expect(readFileSync(join(worktreePath, "preexisting-untracked.txt"), "utf8")).toBe("keep\n")
+    expect(existsSync(join(worktreePath, "agent-created.txt"))).toBe(false)
+    expect(
+      execFileSync("git", ["show", ":tracked.txt"], { cwd: worktreePath, encoding: "utf8" }),
+    ).toBe("staged\n")
+  })
+
   it("stores unavailable non-git checkpoints and creates an explicit no-change manifest", async () => {
     const db = getDatabase()
     const worktreePath = join(homeDir, "not-a-git-repo")

@@ -10,6 +10,7 @@ import {
   CollapseIcon,
   CopyIcon,
   CursorIcon,
+  DiffIcon,
   ExpandIcon,
   IconCloseSidebarRight,
   IconOpenSidebarRight,
@@ -64,14 +65,17 @@ import { stopManagedSpeech } from "../../../lib/speech-playback"
 import { cn } from "../../../lib/utils"
 import { isDesktopApp } from "../../../lib/utils/platform"
 import { ChangesPanel } from "../../changes"
-import { StartAgentDialog } from "../../agent-profiles/start-agent-dialog"
 import { useCommitActions } from "../../changes/components/commit-input"
 import { DiffCenterPeekDialog } from "../../changes/components/diff-center-peek-dialog"
 import { DiffFullPageView } from "../../changes/components/diff-full-page-view"
 import { DiffSidebarHeader } from "../../changes/components/diff-sidebar-header"
 import { usePushAction } from "../../changes/hooks/use-push-action"
 import { getStatusIndicator } from "../../changes/utils/status"
-import { detailsSidebarOpenAtom, unifiedSidebarEnabledAtom } from "../../details-sidebar/atoms"
+import {
+  detailsSidebarOpenAtom,
+  unifiedSidebarEnabledAtom,
+  widgetVisibilityAtomFamily,
+} from "../../details-sidebar/atoms"
 import { DetailsSidebar } from "../../details-sidebar/details-sidebar"
 import { FileViewerSidebar } from "../../file-viewer"
 import { FileSearchDialog } from "../../file-viewer/components/file-search-dialog"
@@ -1701,6 +1705,7 @@ const ChatViewInner = memo(function ChatViewInner({
   workspaceRepoName,
   projectId,
   localFolderPath,
+  headerActions,
 }: {
   chat: Chat<any>
   subChatId: string
@@ -1731,6 +1736,7 @@ const ChatViewInner = memo(function ChatViewInner({
   workspaceRepoName?: string | null
   projectId?: string | null
   localFolderPath?: string
+  headerActions?: React.ReactNode
 }) {
   const hasTriggeredRenameRef = useRef(false)
   const hasTriggeredAutoGenerateRef = useRef(false)
@@ -1964,9 +1970,6 @@ const ChatViewInner = memo(function ChatViewInner({
     [localUtils.chats.get, localUtils.chats.list, parentChatId, subChatId],
   )
 
-  const handleCopyFullChat = useCallback(() => {
-    void copyChat({ chatId: parentChatId, format: "handoff" })
-  }, [parentChatId])
   const projectColor = useMemo(() => {
     if (!projectId) return null
     try {
@@ -2233,6 +2236,7 @@ const ChatViewInner = memo(function ChatViewInner({
   const addToQueue = useMessageQueueStore((s) => s.addToQueue)
   const removeFromQueue = useMessageQueueStore((s) => s.removeFromQueue)
   const popItemFromQueue = useMessageQueueStore((s) => s.popItem)
+  const reorderQueueItem = useMessageQueueStore((s) => s.reorderItem)
 
   // Plan approval pending state (for tool approval loading)
   const [planApprovalPending, setPlanApprovalPending] = useState<Record<string, boolean>>({})
@@ -3242,7 +3246,11 @@ const ChatViewInner = memo(function ChatViewInner({
   // Finds the last assistant message BEFORE this user message, rolls back to it,
   // and inserts the user message text into the input for easy re-sending
   const handleRollback = useCallback(
-    async (userMsg: (typeof messages)[0]) => {
+    async (
+      userMsg: (typeof messages)[0],
+      intent: "rollback" | "edit" = "rollback",
+      editedText?: string,
+    ) => {
       if (isRollingBack) {
         toast.error("Rollback already in progress")
         return
@@ -3259,13 +3267,16 @@ const ChatViewInner = memo(function ChatViewInner({
         return
       }
 
-      const sdkUuid = findRollbackTargetSdkUuidForUserIndex(
-        userMsgIndex,
-        messages.length,
-        (index) => messages[index] as any,
-      )
+      const sdkUuid =
+        intent === "rollback"
+          ? findRollbackTargetSdkUuidForUserIndex(
+              userMsgIndex,
+              messages.length,
+              (index) => messages[index] as any,
+            )
+          : null
 
-      if (!sdkUuid) {
+      if (intent === "rollback" && !sdkUuid) {
         toast.error("Cannot rollback: this turn is not rollbackable")
         return
       }
@@ -3335,8 +3346,9 @@ const ChatViewInner = memo(function ChatViewInner({
             })
           }
           mentionsToRemove.push(match[0])
-        } else if (id.startsWith("pasted:")) {
-          const content = id.slice("pasted:".length)
+        } else if (id.startsWith("pasted:") || id.startsWith("chat-history:")) {
+          const isChatHistory = id.startsWith("chat-history:")
+          const content = id.slice(isChatHistory ? "chat-history:".length : "pasted:".length)
           const pipeIdx = content.lastIndexOf("|")
           if (pipeIdx !== -1) {
             const beforePipe = content.slice(0, pipeIdx)
@@ -3352,6 +3364,7 @@ const ChatViewInner = memo(function ChatViewInner({
                 size,
                 preview,
                 createdAt: new Date(),
+                ...(isChatHistory ? { kind: "chatHistory" as const } : {}),
               })
             }
           }
@@ -3385,15 +3398,31 @@ const ChatViewInner = memo(function ChatViewInner({
           mediaType: p.data.mediaType,
           isLoading: false,
         }))
+      const userMsgFiles = (userMsg.parts || [])
+        .filter((part: any) => part.type === "data-file" && part.data)
+        .map((part: any) => ({
+          id: crypto.randomUUID(),
+          filename: part.data.filename || "file",
+          url: part.data.url || "",
+          isLoading: false,
+          size: part.data.size,
+          type: part.data.mediaType,
+        }))
 
       setIsRollingBack(true)
 
       try {
         // Single call handles both message truncation and git rollback
-        const result = await trpcClient.chats.rollbackToMessage.mutate({
-          subChatId,
-          sdkMessageUuid: sdkUuid,
-        })
+        const result =
+          intent === "edit"
+            ? await trpcClient.chats.editLatestUserMessage.mutate({
+                subChatId,
+                userMessageId: userMsg.id,
+              })
+            : await trpcClient.chats.rollbackToMessage.mutate({
+                subChatId,
+                sdkMessageUuid: sdkUuid!,
+              })
 
         if (!result.success) {
           toast.error(`Failed to rollback: ${result.error}`)
@@ -3406,12 +3435,36 @@ const ChatViewInner = memo(function ChatViewInner({
         recomputeChangedFiles(result.messages)
         refreshDiff?.()
 
+        if (intent === "edit") {
+          const preservedParts = (userMsg.parts || []).filter((part: any) => part.type !== "text")
+          const contextPrefix = mentionsToRemove.join(" ")
+          const replacementText = [contextPrefix, editedText].filter(Boolean).join(" ")
+          if (replacementText) preservedParts.push({ type: "text", text: replacementText })
+
+          shouldAutoScrollRef.current = true
+          useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId)
+          void sendMessageRef.current({ role: "user", parts: preservedParts }).catch((error) => {
+            console.error("[handleEditLatestMessage] Error sending replacement:", error)
+            editorRef.current?.setValue(editedText || "")
+            toast.error("Failed to send edited message")
+          })
+          return true
+        }
+
         // Restore all user message content into input
+        editorRef.current?.clear()
+        clearAll()
+        clearTextContexts()
+        clearDiffTextContexts()
+        clearPastedTexts()
         if (cleanedText) {
           editorRef.current?.setValue(cleanedText)
         }
         if (userMsgImages.length > 0) {
           setImagesFromDraft(userMsgImages)
+        }
+        if (userMsgFiles.length > 0) {
+          setFilesFromDraft(userMsgFiles)
         }
         if (restoredTextContexts.length > 0) {
           setTextContextsFromDraft(restoredTextContexts)
@@ -3425,7 +3478,7 @@ const ChatViewInner = memo(function ChatViewInner({
         editorRef.current?.focus()
       } catch (error) {
         console.error("[handleRollback] Error:", error)
-        toast.error("Failed to rollback")
+        toast.error(intent === "edit" ? "Failed to edit message" : "Failed to rollback")
       } finally {
         setIsRollingBack(false)
       }
@@ -3438,11 +3491,22 @@ const ChatViewInner = memo(function ChatViewInner({
       subChatId,
       recomputeChangedFiles,
       refreshDiff,
+      clearAll,
+      clearDiffTextContexts,
+      clearPastedTexts,
+      clearTextContexts,
       setImagesFromDraft,
+      setFilesFromDraft,
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
       setPastedTextsFromDraft,
     ],
+  )
+
+  const handleEditLatestMessage = useCallback(
+    async (userMsg: (typeof messages)[0], text: string) =>
+      Boolean(await handleRollback(userMsg, "edit", text)),
+    [handleRollback],
   )
 
   // Fork handler - creates a new sidebar chat with messages up to this point
@@ -4198,6 +4262,66 @@ const ChatViewInner = memo(function ChatViewInner({
     [subChatId, removeFromQueue],
   )
 
+  const handleEditQueuedMessage = useCallback(
+    (itemId: string) => {
+      const item = popItemFromQueue(subChatId, itemId)
+      if (!item) return
+
+      editorRef.current?.setValue(item.message)
+      setImagesFromDraft(
+        (item.images || []).map((image) => ({
+          ...image,
+          filename: image.filename || "image",
+          isLoading: false,
+        })),
+      )
+      setFilesFromDraft(
+        (item.files || []).map((file) => ({
+          id: file.id,
+          filename: file.filename,
+          url: file.url,
+          isLoading: false,
+          size: file.size,
+          type: file.mediaType,
+        })),
+      )
+      setTextContextsFromDraft(
+        (item.textContexts || []).map((context) => ({
+          ...context,
+          preview: createTextPreview(context.text),
+          createdAt: new Date(),
+        })),
+      )
+      setDiffTextContextsFromDraft(
+        (item.diffTextContexts || []).map((context) => ({
+          ...context,
+          preview: createTextPreview(context.text),
+          createdAt: new Date(),
+        })),
+      )
+      setPastedTextsFromDraft(
+        (item.pastedTexts || []).map((text) => ({ ...text, createdAt: new Date() })),
+      )
+      editorRef.current?.focus()
+    },
+    [
+      popItemFromQueue,
+      setDiffTextContextsFromDraft,
+      setFilesFromDraft,
+      setImagesFromDraft,
+      setPastedTextsFromDraft,
+      setTextContextsFromDraft,
+      subChatId,
+    ],
+  )
+
+  const handleReorderQueuedMessage = useCallback(
+    (itemId: string, targetItemId: string) => {
+      reorderQueueItem(subChatId, itemId, targetItemId)
+    },
+    [reorderQueueItem, subChatId],
+  )
+
   // Force send - stop stream and send immediately, bypassing queue (Opt+Enter)
   const handleForceSend = useCallback(async () => {
     // Block sending while sandbox is still being set up
@@ -4659,9 +4783,7 @@ const ChatViewInner = memo(function ChatViewInner({
               onSave={handleRenameSubChat}
               isMobile={false}
               chatId={subChatId}
-              copyChatId={parentChatId}
               hasMessages={true} /* Always show "New Chat" placeholder when name is empty */
-              onCopyChat={handleCopyFullChat}
               isSidebarOpen={isAgentsSidebarOpen}
               provider={provider}
               providerName={providerMeta.name}
@@ -4670,7 +4792,7 @@ const ChatViewInner = memo(function ChatViewInner({
               projectColor={projectColor}
               workspaceBranch={workspaceBranch}
               localFolderPath={localFolderPath}
-              reserveRestoreSpace={isArchived}
+              headerActions={isActive ? headerActions : undefined}
             />
           </div>
         )}
@@ -4740,6 +4862,7 @@ const ChatViewInner = memo(function ChatViewInner({
                   MessageGroupWrapper={MessageGroup}
                   toolRegistry={AgentToolRegistry}
                   onRollback={handleRollback}
+                  onEditLatest={handleEditLatestMessage}
                   onFork={handleForkFromMessage}
                 />
               </>
@@ -4802,6 +4925,8 @@ const ChatViewInner = memo(function ChatViewInner({
                   queue={queue}
                   onRemoveItem={handleRemoveFromQueue}
                   onSendNow={handleSendFromQueue}
+                  onEditItem={handleEditQueuedMessage}
+                  onReorderItem={handleReorderQueuedMessage}
                   isStreaming={isStreaming}
                   hasStatusCardBelow={shouldShowStatusCard}
                 />
@@ -4985,10 +5110,16 @@ export function ChatView({
   // Details sidebar state (unified sidebar that combines all right sidebars)
   const isUnifiedSidebarEnabled = useAtomValue(unifiedSidebarEnabledAtom)
   const [isDetailsSidebarOpen, setIsDetailsSidebarOpen] = useAtom(detailsSidebarOpenAtom)
+  const headerWidgetVisibilityAtom = useMemo(() => widgetVisibilityAtomFamily(chatId), [chatId])
+  const headerWidgetVisibility = useAtomValue(headerWidgetVisibilityAtom)
+  const handleCopyFullChat = useCallback(() => {
+    void copyChat({ chatId, format: "handoff" })
+  }, [chatId])
 
   // Resolved hotkeys for tooltips
   const toggleDetailsHotkey = useResolvedHotkeyDisplay("toggle-details")
   const toggleTerminalHotkey = useResolvedHotkeyDisplay("toggle-terminal")
+  const openDiffHotkey = useResolvedHotkeyDisplay("open-diff")
 
   // Close plan sidebar when switching to a sub-chat that has no plan
   const prevSubChatIdRef = useRef(activeSubChatIdForPlan)
@@ -5467,8 +5598,6 @@ export function ChatView({
 
   // Open Locally dialog state
   const [openLocallyDialogOpen, setOpenLocallyDialogOpen] = useState(false)
-  const [startAgentDialogOpen, setStartAgentDialogOpen] = useState(false)
-
   // Auto-import hook for "Open Locally"
   const { getMatchingProjects, autoImport, isImporting } = useAutoImport()
 
@@ -7530,17 +7659,187 @@ Make sure to preserve all functionality from both branches when resolving confli
       isDiffSidebarOpen &&
       !isMobileFullscreen)
 
+  const desktopHeaderActions = !shouldHideChatHeader && !isMobileFullscreen && (
+    <>
+      {agentChat?.parentChatId && (
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-violet-300"
+              onClick={() => setSelectedChatId(agentChat.parentChatId!)}
+              aria-label="Open parent agent chat"
+            >
+              <GitFork aria-hidden="true" className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Open parent agent chat</TooltipContent>
+        </Tooltip>
+      )}
+      {showOpenLocally && (
+        <Tooltip delayDuration={500}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleOpenLocally}
+              disabled={isImporting}
+              className="h-7 gap-1.5 px-2.5 text-sm font-medium"
+            >
+              {isImporting ? (
+                <IconSpinner className="h-3 w-3 animate-spin" />
+              ) : (
+                <GitFork className="h-3 w-3" />
+              )}
+              Fork Locally
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Continue this session on your local machine</TooltipContent>
+        </Tooltip>
+      )}
+      <Tooltip delayDuration={500}>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleCopyFullChat}
+            className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground/70 transition-colors hover:bg-accent hover:text-accent-foreground"
+            aria-label="Copy full chat"
+            title="Copy full chat"
+            data-dev-chat-copy-source="active-header"
+            data-chat-id={chatId}
+          >
+            <CopyIcon className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Copy full chat</TooltipContent>
+      </Tooltip>
+      {!isPreviewSidebarOpen &&
+        sandboxId &&
+        chatSourceMode === "local" &&
+        (canOpenPreview ? (
+          <Tooltip delayDuration={500}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsPreviewSidebarOpen(true)}
+                className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-foreground/10"
+                aria-label="Open preview"
+              >
+                <IconOpenSidebarRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open preview</TooltipContent>
+          </Tooltip>
+        ) : (
+          <PreviewSetupHoverCard>
+            <span className="inline-flex">
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled
+                className="h-7 w-7 flex-shrink-0 cursor-not-allowed rounded-md p-0 text-muted-foreground pointer-events-none"
+                aria-label="Preview not available"
+              >
+                <IconOpenSidebarRight className="h-4 w-4" />
+              </Button>
+            </span>
+          </PreviewSetupHoverCard>
+        ))}
+      {canShowDiffButton &&
+        canOpenDiff &&
+        (!isUnifiedSidebarEnabled ||
+          !headerWidgetVisibility.includes("diff") ||
+          chatSourceMode === "sandbox") &&
+        !isDiffSidebarOpen && (
+          <Tooltip delayDuration={500}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsDiffSidebarOpen(true)}
+                className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                aria-label="View changes"
+              >
+                <DiffIcon className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              View changes
+              {openDiffHotkey && <Kbd>{openDiffHotkey}</Kbd>}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      {worktreePath &&
+        (!isUnifiedSidebarEnabled || !headerWidgetVisibility.includes("terminal")) &&
+        !isTerminalSidebarOpen && (
+          <Tooltip delayDuration={500}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsTerminalSidebarOpen(true)}
+                className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                aria-label="Open terminal"
+              >
+                <TerminalSquare className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Open terminal
+              {toggleTerminalHotkey && <Kbd>{toggleTerminalHotkey}</Kbd>}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      {(worktreePath || sandboxId) && isUnifiedSidebarEnabled && !isDetailsSidebarOpen && (
+        <Tooltip delayDuration={500}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsDetailsSidebarOpen(true)}
+              className="h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              aria-label="View details"
+            >
+              <IconOpenSidebarRight className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            View details
+            {toggleDetailsHotkey && <Kbd>{toggleDetailsHotkey}</Kbd>}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {isArchived && (
+        <Tooltip delayDuration={500}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              onClick={handleRestoreWorkspace}
+              disabled={restoreWorkspaceMutation.isPending}
+              className="flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-foreground/10"
+              aria-label="Restore workspace"
+            >
+              <UnarchiveIcon className="h-4 w-4" />
+              <span className="text-xs">Restore</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Restore workspace
+            <Kbd>⇧⌘E</Kbd>
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </>
+  )
+
   // No early return - let the UI render with loading state handled by activeChat check below
 
   return (
     <FileOpenProvider onOpenFile={setFileViewerPath}>
       <TextSelectionProvider>
-        <StartAgentDialog
-          open={startAgentDialogOpen}
-          onOpenChange={setStartAgentDialogOpen}
-          source={{ kind: "chat", chatId }}
-          projectId={agentChat?.projectId ?? null}
-        />
         {/* File Search Dialog (Cmd+P) */}
         {worktreePath && (
           <FileSearchDialog
@@ -7574,7 +7873,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                     <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-transparent" />
                   )}
                   <div className="pointer-events-none relative flex items-center justify-between [&_button]:pointer-events-auto">
-                    <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <div className="flex-1 min-w-0 flex items-center gap-1">
                       {/* Mobile header - simplified with chat name as trigger */}
                       {isMobileFullscreen ? (
                         <MobileChatHeader
@@ -7605,174 +7904,11 @@ Make sure to preserve all functionality from both branches when resolving confli
                             singleConversation
                             isMobile={false}
                             onBackToChats={onBackToChats}
-                            onOpenPreview={onOpenPreview}
-                            canOpenPreview={canOpenPreview}
-                            onOpenDiff={canOpenDiff ? () => setIsDiffSidebarOpen(true) : undefined}
-                            canOpenDiff={canShowDiffButton}
-                            isDiffSidebarOpen={isDiffSidebarOpen}
-                            diffStats={diffStats}
-                            onOpenTerminal={() => setIsTerminalSidebarOpen(true)}
-                            canOpenTerminal={!!worktreePath}
-                            isTerminalOpen={isTerminalSidebarOpen}
                             chatId={chatId}
                           />
-                          {agentChat?.parentChatId && (
-                            <Tooltip delayDuration={300}>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="ml-2 h-7 w-7 text-violet-300"
-                                  onClick={() => setSelectedChatId(agentChat.parentChatId!)}
-                                  aria-label="Open parent agent chat"
-                                >
-                                  <GitFork aria-hidden="true" className="h-3.5 w-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="bottom">Open parent agent chat</TooltipContent>
-                            </Tooltip>
-                          )}
-                          <Tooltip delayDuration={300}>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="ml-1 h-7 w-7"
-                                onClick={() => setStartAgentDialogOpen(true)}
-                                aria-label="Start named agent from this chat"
-                              >
-                                <AgentIcon aria-hidden="true" className="h-3.5 w-3.5" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom">Start named agent</TooltipContent>
-                          </Tooltip>
-                          {/* Open Locally button - desktop only, sandbox mode */}
-                          {showOpenLocally && (
-                            <Tooltip delayDuration={500}>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  onClick={handleOpenLocally}
-                                  disabled={isImporting}
-                                  className="ml-2 h-7 gap-1.5 px-2.5 text-sm font-medium"
-                                >
-                                  {isImporting ? (
-                                    <IconSpinner className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <GitFork className="h-3 w-3" />
-                                  )}
-                                  Fork Locally
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="bottom">
-                                Continue this session on your local machine
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
                         </>
                       )}
                     </div>
-                    {/* Open Preview Button - shows when preview is closed (desktop only, local mode only) */}
-                    {!isMobileFullscreen &&
-                      !isPreviewSidebarOpen &&
-                      sandboxId &&
-                      chatSourceMode === "local" &&
-                      (canOpenPreview ? (
-                        <Tooltip delayDuration={500}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setIsPreviewSidebarOpen(true)}
-                              className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-foreground/10"
-                              aria-label="Open preview"
-                            >
-                              <IconOpenSidebarRight className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Open preview</TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <PreviewSetupHoverCard>
-                          <span className="inline-flex ml-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              disabled
-                              className="h-7 w-7 flex-shrink-0 cursor-not-allowed rounded-md p-0 text-muted-foreground pointer-events-none"
-                              aria-label="Preview not available"
-                            >
-                              <IconOpenSidebarRight className="h-4 w-4" />
-                            </Button>
-                          </span>
-                        </PreviewSetupHoverCard>
-                      ))}
-                    {/* Overview/Terminal Button - shows when sidebar is closed and worktree/sandbox exists (desktop only) */}
-                    {!isMobileFullscreen &&
-                      (worktreePath || sandboxId) &&
-                      (isUnifiedSidebarEnabled
-                        ? // Details button for unified sidebar
-                          !isDetailsSidebarOpen && (
-                            <Tooltip delayDuration={500}>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => setIsDetailsSidebarOpen(true)}
-                                  className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                                  aria-label="View details"
-                                >
-                                  <IconOpenSidebarRight className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="bottom">
-                                View details
-                                {toggleDetailsHotkey && <Kbd>{toggleDetailsHotkey}</Kbd>}
-                              </TooltipContent>
-                            </Tooltip>
-                          )
-                        : // Terminal button for legacy sidebars
-                          !isTerminalSidebarOpen && (
-                            <Tooltip delayDuration={500}>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => setIsTerminalSidebarOpen(true)}
-                                  className="ml-2 h-7 w-7 flex-shrink-0 rounded-md p-0 text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                                  aria-label="Open terminal"
-                                >
-                                  <TerminalSquare className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="bottom">
-                                Open terminal
-                                {toggleTerminalHotkey && <Kbd>{toggleTerminalHotkey}</Kbd>}
-                              </TooltipContent>
-                            </Tooltip>
-                          ))}
-                    {/* Restore Button - shows when viewing archived workspace (desktop only) */}
-                    {!isMobileFullscreen && isArchived && (
-                      <Tooltip delayDuration={500}>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            onClick={handleRestoreWorkspace}
-                            disabled={restoreWorkspaceMutation.isPending}
-                            className="ml-2 flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-foreground/10"
-                            aria-label="Restore workspace"
-                          >
-                            <UnarchiveIcon className="h-4 w-4" />
-                            <span className="text-xs">Restore</span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">
-                          Restore workspace
-                          <Kbd>⇧⌘E</Kbd>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
                   </div>
                 </div>
               )}
@@ -7845,6 +7981,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                   }
                                   projectId={(agentChat as any)?.project?.id ?? null}
                                   localFolderPath={localFolderPath}
+                                  headerActions={desktopHeaderActions}
                                 />
                               </div>
                             ),
@@ -7903,6 +8040,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                                     }
                                     projectId={(agentChat as any)?.project?.id ?? null}
                                     localFolderPath={localFolderPath}
+                                    headerActions={desktopHeaderActions}
                                   />
                                 </div>
                               )
@@ -7975,6 +8113,7 @@ Make sure to preserve all functionality from both branches when resolving confli
                             }
                             projectId={(agentChat as any)?.project?.id ?? null}
                             localFolderPath={localFolderPath}
+                            headerActions={desktopHeaderActions}
                           />
                         </div>
                       )

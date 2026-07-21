@@ -5,11 +5,13 @@ export function directRuntimeFinishMetadata(input: {
   harness: DirectRuntimeHarness
   startedAtMs: number
   durationMs: number
+  stoppedByUser?: boolean
 }) {
   return {
     runId: input.runId,
     transport: `${input.harness}-runtime`,
     startedAt: input.startedAtMs,
     durationMs: input.durationMs,
+    ...(input.stoppedByUser ? { stoppedByUser: true } : {}),
   }
 }

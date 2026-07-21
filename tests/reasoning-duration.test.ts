@@ -23,6 +23,10 @@ describe("reasoning duration labels", () => {
     expect(formatReasoningStatus(false)).toBe("Worked")
   })
 
+  it("labels a user-stopped run without hiding its duration", () => {
+    expect(formatReasoningStatus(false, 2_900, true)).toBe("You stopped after 2s")
+  })
+
   it("clamps sub-second display to zero", () => {
     expect(formatReasoningDuration(400)).toBe("0s")
   })
@@ -62,6 +66,16 @@ describe("reasoning duration labels", () => {
         nowMs: 50_000,
       }),
     ).toMatchObject({ durationMs: 5_500, label: "Worked for 5s" })
+  })
+
+  it("uses stopped wording for a cancelled reasoning timer", () => {
+    expect(
+      buildReasoningTimerState({
+        status: "cancelled",
+        startedAtMs: 1_000,
+        completedAtMs: 3_900,
+      }),
+    ).toMatchObject({ durationMs: 2_900, label: "You stopped after 2s" })
   })
 })
 

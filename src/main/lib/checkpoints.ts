@@ -23,6 +23,7 @@ export type CheckpointStatusSnapshot = {
   status?: StatusResult
   files: Record<string, FileSnapshot>
   treeCommit?: string
+  indexTree?: string
   error?: string
 }
 
@@ -74,14 +75,19 @@ async function buildStatusSnapshot(
       }
     }
 
-    const [gitCommit, status, treeCommit] = await Promise.all([
-      git.revparse(["HEAD"]).then((value) => value.trim()),
-      git.status(),
-      captureWorktreeTree(worktreePath).catch((error) => {
-        console.warn("[checkpoints] Recoverable tree capture unavailable", error)
+    const gitCommit = (await git.revparse(["HEAD"])).trim()
+    const status = await git.status()
+    const indexTree = await git
+      .raw(["write-tree"])
+      .then((value) => value.trim())
+      .catch((error) => {
+        console.warn("[checkpoints] Recoverable index capture unavailable", error)
         return undefined
-      }),
-    ])
+      })
+    const treeCommit = await captureWorktreeTree(worktreePath).catch((error) => {
+      console.warn("[checkpoints] Recoverable tree capture unavailable", error)
+      return undefined
+    })
 
     const files: Record<string, FileSnapshot> = {}
     await Promise.all(
@@ -104,6 +110,7 @@ async function buildStatusSnapshot(
         status,
         files,
         treeCommit,
+        indexTree,
       },
     }
   } catch (error) {
@@ -158,6 +165,7 @@ function parseCheckpointSnapshot(value: string | null): CheckpointStatusSnapshot
         status: parsed.status,
         files: parsed.files,
         treeCommit: parsed.treeCommit,
+        indexTree: parsed.indexTree,
         error: parsed.error,
       }
     }
@@ -429,17 +437,46 @@ export async function captureCheckpoint(
 
   if (worktreePath && snapshot.treeCommit) {
     try {
-      await simpleGit(worktreePath).raw([
+      const git = simpleGit(worktreePath)
+      await git.raw([
         "update-ref",
         `refs/flapstack/checkpoints/${checkpoint.id}`,
         snapshot.treeCommit,
       ])
+      if (snapshot.indexTree) {
+        await git.raw([
+          "update-ref",
+          `refs/flapstack/checkpoint-indexes/${checkpoint.id}`,
+          snapshot.indexTree,
+        ])
+      }
     } catch (error) {
       console.warn("[checkpoints] Could not retain private checkpoint ref", error)
     }
   }
 
   return checkpoint
+}
+
+/** Restore the exact worktree and index captured before a run. */
+export async function restoreCheckpoint(checkpointId: string): Promise<void> {
+  const db = getDatabase()
+  const checkpoint = db.select().from(checkpoints).where(eq(checkpoints.id, checkpointId)).get()
+  if (!checkpoint) throw new Error("Checkpoint not found")
+  if (!checkpoint.worktreePath) return
+
+  const snapshot = parseCheckpointSnapshot(checkpoint.gitStatusJson)
+  if (!snapshot.available || !snapshot.treeCommit || !snapshot.indexTree) {
+    throw new Error("Checkpoint cannot safely restore the worktree and index")
+  }
+
+  const git = simpleGit(checkpoint.worktreePath)
+  const retainedRef = `refs/flapstack/checkpoints/${checkpoint.id}`
+  const retainedIndexRef = `refs/flapstack/checkpoint-indexes/${checkpoint.id}`
+  await git.raw(["read-tree", `${retainedRef}^{tree}`])
+  await git.raw(["checkout-index", "-a", "-f"])
+  await git.raw(["clean", "-fd"])
+  await git.raw(["read-tree", retainedIndexRef])
 }
 
 export async function captureRunManifest(runId: string) {

@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useState, useCallback, useEffect } from "react"
-import { ChevronDown, ArrowUp, X } from "lucide-react"
+import { ChevronDown, ArrowUp, GripVertical, Pencil, X } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../components/ui/tooltip"
 import { cn } from "../../../lib/utils"
@@ -17,11 +17,28 @@ const QueueItemRow = memo(function QueueItemRow({
   item,
   onRemove,
   onSendNow,
+  onEdit,
+  onMove,
+  isDragging,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   item: AgentQueueItem
   onRemove?: (itemId: string) => void
   onSendNow?: (itemId: string) => void
+  onEdit?: (itemId: string) => void
+  onMove?: (itemId: string, direction: -1 | 1) => void
+  isDragging?: boolean
+  isDragOver?: boolean
+  onDragStart?: (itemId: string) => void
+  onDragOver?: (itemId: string) => void
+  onDrop?: (itemId: string) => void
+  onDragEnd?: () => void
 }) {
+  const [dragEnabled, setDragEnabled] = useState(false)
   const handleRemove = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -36,6 +53,14 @@ const QueueItemRow = memo(function QueueItemRow({
       onSendNow?.(item.id)
     },
     [item.id, onSendNow],
+  )
+
+  const handleEdit = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      onEdit?.(item.id)
+    },
+    [item.id, onEdit],
   )
 
   // Build attachment summary parts by type (matching sent message bubble style)
@@ -63,7 +88,49 @@ const QueueItemRow = memo(function QueueItemRow({
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors cursor-default">
+    <div
+      draggable={dragEnabled}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.setData("text/plain", item.id)
+        onDragStart?.(item.id)
+      }}
+      onDragOver={(event) => {
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "move"
+        onDragOver?.(item.id)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        onDrop?.(item.id)
+      }}
+      onDragEnd={() => {
+        setDragEnabled(false)
+        onDragEnd?.()
+      }}
+      className={cn(
+        "flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-muted/50 transition-colors cursor-default",
+        isDragging && "opacity-50",
+        isDragOver && "bg-muted/80 ring-1 ring-inset ring-primary/40",
+      )}
+    >
+      {onMove && (
+        <button
+          type="button"
+          className="shrink-0 cursor-grab rounded p-1 text-muted-foreground/60 hover:bg-foreground/10 hover:text-foreground active:cursor-grabbing"
+          aria-label="Drag to reorder queued message"
+          onMouseDown={() => setDragEnabled(true)}
+          onMouseUp={() => setDragEnabled(false)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault()
+              onMove(item.id, event.key === "ArrowUp" ? -1 : 1)
+            }
+          }}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      )}
       {item.message ? (
         <span className="truncate flex-1 text-foreground">
           <RenderFileMentions text={item.message} />
@@ -79,6 +146,20 @@ const QueueItemRow = memo(function QueueItemRow({
         </span>
       )}
       <div className="flex items-center gap-1">
+        {onEdit && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleEdit}
+                className="flex-shrink-0 p-1 hover:bg-foreground/10 rounded text-muted-foreground hover:text-foreground transition-all"
+                aria-label="Edit queued message"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Edit</TooltipContent>
+          </Tooltip>
+        )}
         {onSendNow && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -114,6 +195,8 @@ interface AgentQueueIndicatorProps {
   queue: AgentQueueItem[]
   onRemoveItem?: (itemId: string) => void
   onSendNow?: (itemId: string) => void
+  onEditItem?: (itemId: string) => void
+  onReorderItem?: (itemId: string, targetItemId: string) => void
   isStreaming?: boolean
   /** Whether there's a status card below this one - affects border radius */
   hasStatusCardBelow?: boolean
@@ -123,6 +206,8 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
   queue,
   onRemoveItem,
   onSendNow,
+  onEditItem,
+  onReorderItem,
   isStreaming = false,
   hasStatusCardBelow = false,
 }: AgentQueueIndicatorProps) {
@@ -132,6 +217,18 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
     const saved = localStorage.getItem(getQueueExpandedKey())
     return saved !== null ? saved === "true" : true // Default to expanded
   })
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null)
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null)
+
+  const moveItem = useCallback(
+    (itemId: string, direction: -1 | 1) => {
+      const index = queue.findIndex((item) => item.id === itemId)
+      const target = queue[index + direction]
+      if (index === -1 || !target) return
+      onReorderItem?.(itemId, target.id)
+    },
+    [onReorderItem, queue],
+  )
 
   // Save expanded state to localStorage (window-scoped)
   useEffect(() => {
@@ -194,6 +291,21 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
                   item={item}
                   onRemove={onRemoveItem}
                   onSendNow={onSendNow}
+                  onEdit={onEditItem}
+                  onMove={onReorderItem ? moveItem : undefined}
+                  isDragging={draggedItemId === item.id}
+                  isDragOver={dragOverItemId === item.id && draggedItemId !== item.id}
+                  onDragStart={setDraggedItemId}
+                  onDragOver={setDragOverItemId}
+                  onDrop={(targetItemId) => {
+                    if (draggedItemId) onReorderItem?.(draggedItemId, targetItemId)
+                    setDraggedItemId(null)
+                    setDragOverItemId(null)
+                  }}
+                  onDragEnd={() => {
+                    setDraggedItemId(null)
+                    setDragOverItemId(null)
+                  }}
                 />
               ))}
             </div>

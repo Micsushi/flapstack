@@ -135,6 +135,7 @@ export const AgentReasoningOutput = memo(function AgentReasoningOutput({
   const statusLabel = formatReasoningStatus(
     isStreaming,
     isStreaming ? elapsedMs : completedDurationMs,
+    isInterrupted,
   )
 
   if (isInterrupted && !reasoningOutputText) {

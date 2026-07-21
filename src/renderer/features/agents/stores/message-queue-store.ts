@@ -18,6 +18,7 @@ interface MessageQueueState {
   // Actions
   addToQueue: (subChatId: string, item: AgentQueueItem) => void
   removeFromQueue: (subChatId: string, itemId: string) => void
+  reorderItem: (subChatId: string, itemId: string, targetItemId: string) => void
   getQueue: (subChatId: string) => AgentQueueItem[]
   getNextItem: (subChatId: string) => AgentQueueItem | null
   clearQueue: (subChatId: string) => void
@@ -52,6 +53,22 @@ export const useMessageQueueStore = create<MessageQueueState>()(
             [subChatId]: removeQueueItem(currentQueue, itemId),
           },
         }
+      })
+    },
+
+    reorderItem: (subChatId, itemId, targetItemId) => {
+      if (itemId === targetItemId) return
+      set((state) => {
+        const currentQueue = state.queues[subChatId] || []
+        const fromIndex = currentQueue.findIndex((item) => item.id === itemId)
+        const targetIndex = currentQueue.findIndex((item) => item.id === targetItemId)
+        if (fromIndex === -1 || targetIndex === -1) return state
+
+        const nextQueue = [...currentQueue]
+        const [movedItem] = nextQueue.splice(fromIndex, 1)
+        if (!movedItem) return state
+        nextQueue.splice(targetIndex, 0, movedItem)
+        return { queues: { ...state.queues, [subChatId]: nextQueue } }
       })
     },
 

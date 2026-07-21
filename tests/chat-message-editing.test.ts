@@ -1,0 +1,72 @@
+import { readFileSync } from "node:fs"
+import { beforeEach, describe, expect, it } from "vitest"
+import { createQueueItem } from "../src/renderer/features/agents/lib/queue-utils"
+import { useMessageQueueStore } from "../src/renderer/features/agents/stores/message-queue-store"
+
+const messageGroupSource = readFileSync(
+  "src/renderer/features/agents/main/isolated-message-group.tsx",
+  "utf8",
+)
+const queueSource = readFileSync(
+  "src/renderer/features/agents/ui/agent-queue-indicator.tsx",
+  "utf8",
+)
+const chatsRouterSource = readFileSync("src/main/lib/trpc/routers/chats.ts", "utf8")
+const assistantMessageSource = readFileSync(
+  "src/renderer/features/agents/main/assistant-message-item.tsx",
+  "utf8",
+)
+
+describe("stopped reasoning disclosure", () => {
+  it("keeps the stop row visible and only exposes expansion when details exist", () => {
+    expect(assistantMessageSource).toContain("|| wasStopped")
+    expect(assistantMessageSource).toContain("hasDetails={hasActivity && visibleStepsCount > 0}")
+    expect(assistantMessageSource).toContain("hasDetails && isExpanded")
+  })
+})
+
+describe("latest message editing", () => {
+  it("offers editing only on the latest non-streaming user message", () => {
+    expect(messageGroupSource).toContain("onEditLatest && isLastGroup && !isStreaming")
+    expect(messageGroupSource).toContain("Edit message")
+  })
+
+  it("removes the turn only after restoring its exact pre-run checkpoint", () => {
+    expect(chatsRouterSource).toContain("editLatestUserMessage")
+    expect(chatsRouterSource).toContain("await restoreCheckpoint(run.beforeCheckpointId)")
+    expect(chatsRouterSource).toContain("messages.slice(0, userIndex)")
+  })
+})
+
+describe("queued message editing and ordering", () => {
+  beforeEach(() => {
+    useMessageQueueStore.setState({ queues: {}, queueSentTriggers: {} })
+  })
+
+  it("exposes a left drag handle and an edit action", () => {
+    expect(queueSource).toContain('aria-label="Drag to reorder queued message"')
+    expect(queueSource).toContain('aria-label="Edit queued message"')
+  })
+
+  it("reorders queued messages without changing their contents", () => {
+    const first = createQueueItem("first", "First")
+    const second = createQueueItem("second", "Second")
+    const third = createQueueItem("third", "Third")
+    const store = useMessageQueueStore.getState()
+    store.addToQueue("chat", first)
+    store.addToQueue("chat", second)
+    store.addToQueue("chat", third)
+
+    useMessageQueueStore.getState().reorderItem("chat", "third", "first")
+
+    expect(useMessageQueueStore.getState().getQueue("chat")).toEqual([third, first, second])
+  })
+
+  it("atomically removes a queued message for composer editing", () => {
+    const item = createQueueItem("edit-me", "Revise this")
+    useMessageQueueStore.getState().addToQueue("chat", item)
+
+    expect(useMessageQueueStore.getState().popItem("chat", item.id)).toEqual(item)
+    expect(useMessageQueueStore.getState().getQueue("chat")).toEqual([])
+  })
+})

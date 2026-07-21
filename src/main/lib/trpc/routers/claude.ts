@@ -467,6 +467,7 @@ type ActiveClaudeSession = {
   runId: string
   controller: AbortController
   cancelRequested: boolean
+  cancelRequestedByUser: boolean
 }
 
 const activeSessions = new Map<string, ActiveClaudeSession>()
@@ -481,6 +482,7 @@ export function abortAllClaudeSessions(): void {
   for (const [subChatId, session] of activeSessions) {
     console.log(`[claude] Aborting session ${subChatId} before reload`)
     session.cancelRequested = true
+    session.cancelRequestedByUser = false
     session.controller.abort()
     agentInputLifecycle.cancelByChat(
       subChatId,
@@ -501,6 +503,7 @@ export function cancelActiveClaudeSession(input: { subChatId: string; runId?: st
   }
   if (session) {
     session.cancelRequested = true
+    session.cancelRequestedByUser = true
     session.controller.abort()
   }
   const cancelledQuestions = agentInputLifecycle.cancelByChat(input.subChatId, "Session cancelled.")
@@ -993,6 +996,7 @@ export const claudeRouter = router({
     .input(
       z.object({
         runId: z.string().optional(),
+        promptMessageId: z.string().optional(),
         subChatId: z.string(),
         chatId: z.string(),
         prompt: z.string(),
@@ -1017,6 +1021,7 @@ export const claudeRouter = router({
         const existingSession = activeSessions.get(input.subChatId)
         if (existingSession) {
           existingSession.cancelRequested = true
+          existingSession.cancelRequestedByUser = false
           existingSession.controller.abort()
         }
 
@@ -1035,6 +1040,7 @@ export const claudeRouter = router({
           runId: launchRunId,
           controller: abortController,
           cancelRequested: false,
+          cancelRequestedByUser: false,
         })
 
         // Stream debug logging
@@ -1218,7 +1224,7 @@ export const claudeRouter = router({
                 }
               }
               userMessage = {
-                id: queuedPromptMessageId ?? crypto.randomUUID(),
+                id: input.promptMessageId ?? queuedPromptMessageId ?? crypto.randomUUID(),
                 role: "user",
                 parts,
               }
@@ -1300,7 +1306,7 @@ export const claudeRouter = router({
             // 4. Setup accumulation state
             const parts: any[] = []
             let currentText = ""
-            let metadata: any = {}
+            let metadata: any = { startedAt: streamStart }
 
             // Capture stderr from Claude process for debugging
             const stderrLines: string[] = []
@@ -2921,6 +2927,9 @@ ${prompt}
                 if (currentText.trim()) {
                   parts.push({ type: "text", text: currentText })
                 }
+                metadata.durationMs = Date.now() - streamStart
+                metadata.stoppedByUser =
+                  activeSessions.get(input.subChatId)?.cancelRequestedByUser === true
                 if (parts.length > 0) {
                   const assistantMessage = {
                     id: crypto.randomUUID(),
@@ -2988,6 +2997,9 @@ ${prompt}
             }
 
             const savedSessionId = metadata.sessionId
+            metadata.durationMs = Date.now() - streamStart
+            metadata.stoppedByUser =
+              activeSessions.get(input.subChatId)?.cancelRequestedByUser === true
 
             if (parts.length > 0) {
               const assistantMessage = {
@@ -3026,8 +3038,7 @@ ${prompt}
                 ...pendingFinishChunk,
                 messageMetadata: {
                   ...pendingFinishChunk.messageMetadata,
-                  context: metadata.context,
-                  vaultContext: metadata.vaultContext,
+                  ...metadata,
                 },
               })
             } else {
@@ -3035,8 +3046,7 @@ ${prompt}
               safeEmit({
                 type: "finish",
                 messageMetadata: {
-                  context: metadata.context,
-                  vaultContext: metadata.vaultContext,
+                  ...metadata,
                 },
               } as UIMessageChunk)
             }

@@ -221,6 +221,7 @@ export class IPCChatTransport implements ChatTransport<UIMessage> {
             subChatId: this.config.subChatId,
             chatId: this.config.chatId,
             prompt,
+            ...(typeof lastUser?.id === "string" ? { promptMessageId: lastUser.id } : {}),
             cwd: this.config.cwd,
             projectPath: this.config.projectPath, // Original project path for MCP config lookup
             mode: currentMode,

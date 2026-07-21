@@ -12,7 +12,8 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceDeleted,
 } from "../../analytics"
-import { chats, getDatabase, projects, subChats, tasks } from "../../db"
+import { agentRuns, chats, getDatabase, projects, subChats, tasks } from "../../db"
+import { restoreCheckpoint } from "../../checkpoints"
 import {
   createWorktreeForChat,
   fetchGitHubPRStatus,
@@ -1472,6 +1473,107 @@ export const chatsRouter = router({
           .returning()
           .get()
       })
+    }),
+
+  /**
+   * Remove the latest user turn and restore the filesystem snapshot captured
+   * immediately before its run. The caller can then place that prompt back in
+   * the composer without leaving the removed response's edits behind.
+   */
+  editLatestUserMessage: publicProcedure
+    .input(z.object({ subChatId: z.string(), userMessageId: z.string() }))
+    .mutation(async ({ input }) => {
+      const db = getDatabase()
+      const subChat = db.select().from(subChats).where(eq(subChats.id, input.subChatId)).get()
+      if (!subChat) throw new TRPCError({ code: "NOT_FOUND", message: "Chat not found" })
+
+      const activeRun = db
+        .select({ id: agentRuns.id })
+        .from(agentRuns)
+        .where(
+          and(
+            eq(agentRuns.subChatId, input.subChatId),
+            inArray(agentRuns.status, ["pending", "running"]),
+          ),
+        )
+        .get()
+      if (activeRun) {
+        throw new TRPCError({ code: "CONFLICT", message: "Stop the current response first" })
+      }
+
+      const messages = JSON.parse(subChat.messages || "[]") as any[]
+      const userIndex = messages.findIndex(
+        (message) => message.id === input.userMessageId && message.role === "user",
+      )
+      let latestUserIndex = -1
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index]?.role === "user") {
+          latestUserIndex = index
+          break
+        }
+      }
+      if (userIndex === -1 || userIndex !== latestUserIndex) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Only the latest sent message can be edited",
+        })
+      }
+
+      const run = db
+        .select({ beforeCheckpointId: agentRuns.beforeCheckpointId })
+        .from(agentRuns)
+        .where(
+          and(
+            eq(agentRuns.subChatId, input.subChatId),
+            eq(agentRuns.promptMessageId, input.userMessageId),
+          ),
+        )
+        .orderBy(desc(agentRuns.startedAt))
+        .get()
+
+      const chat = db.select().from(chats).where(eq(chats.id, subChat.chatId)).get()
+      if (run?.beforeCheckpointId) {
+        await restoreCheckpoint(run.beforeCheckpointId)
+      } else if (subChat.worktreePath || chat?.worktreePath) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This older message has no safe pre-run checkpoint",
+        })
+      }
+
+      let truncatedMessages = messages.slice(0, userIndex).map((message) => {
+        const { shouldResume, shouldForkResume, ...metadata } = message.metadata || {}
+        return { ...message, metadata }
+      })
+      let previousAssistantIndex = -1
+      for (let index = truncatedMessages.length - 1; index >= 0; index -= 1) {
+        if (truncatedMessages[index]?.role === "assistant") {
+          previousAssistantIndex = index
+          break
+        }
+      }
+      if (previousAssistantIndex >= 0) {
+        const previousAssistant = truncatedMessages[previousAssistantIndex]
+        truncatedMessages[previousAssistantIndex] = {
+          ...previousAssistant,
+          metadata: { ...previousAssistant.metadata, shouldResume: true },
+        }
+      }
+
+      db.update(subChats)
+        .set({
+          messages: JSON.stringify(truncatedMessages),
+          sessionId:
+            previousAssistantIndex >= 0
+              ? (truncatedMessages[previousAssistantIndex]?.metadata?.sessionId ?? null)
+              : null,
+          streamId: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(subChats.id, input.subChatId))
+        .run()
+
+      return { success: true as const, messages: truncatedMessages }
     }),
 
   /**

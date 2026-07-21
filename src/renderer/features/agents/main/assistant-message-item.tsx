@@ -420,6 +420,8 @@ function ToolActivityGroup({ parts, isStreaming, children }: ToolActivityGroupPr
 interface ReasoningTimelineProps {
   children: React.ReactNode
   isStreaming: boolean
+  wasStopped: boolean
+  hasDetails: boolean
   durationMs?: number
   startedAt: number
 }
@@ -427,6 +429,8 @@ interface ReasoningTimelineProps {
 function ReasoningTimeline({
   children,
   isStreaming,
+  wasStopped,
+  hasDetails,
   durationMs,
   startedAt,
 }: ReasoningTimelineProps) {
@@ -450,7 +454,11 @@ function ReasoningTimeline({
     return () => clearInterval(interval)
   }, [durationMs, isStreaming, startedAt])
 
-  const label = formatReasoningStatus(isStreaming, isStreaming ? elapsedMs : durationMs)
+  const label = formatReasoningStatus(
+    isStreaming,
+    isStreaming ? elapsedMs : (durationMs ?? elapsedMs),
+    wasStopped,
+  )
 
   return (
     <div
@@ -469,8 +477,8 @@ function ReasoningTimeline({
         type="button"
         data-dev-carryover-action="toggle"
         className="group flex w-full items-center gap-2 border-b border-border/60 px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
-        onClick={() => setIsExpanded((expanded) => !expanded)}
-        aria-expanded={isExpanded}
+        onClick={() => hasDetails && setIsExpanded((expanded) => !expanded)}
+        aria-expanded={hasDetails ? isExpanded : undefined}
         aria-label={`${label}. Reasoning and tool activity`}
       >
         <span className="min-w-0 flex-1 truncate tabular-nums">
@@ -482,14 +490,16 @@ function ReasoningTimeline({
             label
           )}
         </span>
-        <ChevronRight
-          className={cn(
-            "h-4 w-4 shrink-0 transition-transform duration-200 ease-out",
-            isExpanded && "rotate-90",
-          )}
-        />
+        {hasDetails && (
+          <ChevronRight
+            className={cn(
+              "h-4 w-4 shrink-0 transition-transform duration-200 ease-out",
+              isExpanded && "rotate-90",
+            )}
+          />
+        )}
       </button>
-      {isExpanded && <div className="space-y-1.5 px-1 py-3">{children}</div>}
+      {hasDetails && isExpanded && <div className="space-y-1.5 px-1 py-3">{children}</div>}
     </div>
   )
 }
@@ -882,6 +892,13 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   )
 
   const msgMetadata = message?.metadata as AgentMessageMetadata
+  const wasStopped =
+    Boolean((msgMetadata as AgentMessageMetadata & { stoppedByUser?: boolean })?.stoppedByUser) ||
+    (isLastMessage &&
+      !isStreaming &&
+      messageParts.some((part: any) =>
+        ["call", "input-streaming", "input-available", "pending"].includes(part.state),
+      ))
   const timestamp = formatMessageTimestamp(message)
 
   const renderPart = useCallback(
@@ -1139,9 +1156,11 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
     <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
       <ProducerChips metadata={msgMetadata} />
       <div className="flex flex-col gap-1.5">
-        {hasActivity && visibleStepsCount > 0 && (
+        {((hasActivity && visibleStepsCount > 0) || wasStopped) && (
           <ReasoningTimeline
             isStreaming={isStreaming && isLastMessage}
+            wasStopped={wasStopped}
+            hasDetails={hasActivity && visibleStepsCount > 0}
             durationMs={msgMetadata?.durationMs}
             startedAt={reasoningStartedAtRef.current}
           >

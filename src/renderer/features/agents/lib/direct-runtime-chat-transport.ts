@@ -59,8 +59,22 @@ export async function createDirectRuntimeStream(input: {
         }
       }
       function abort() {
+        if (closed) return
         void trpcClient.agentRuntimeChat.cancel.mutate({ runId }).catch(() => undefined)
         subscription?.unsubscribe()
+        for (const chunk of textMapper.finish()) controller.enqueue(chunk)
+        for (const chunk of activityMapper.finish()) controller.enqueue(chunk)
+        controller.enqueue({
+          type: "message-metadata",
+          messageMetadata: directRuntimeFinishMetadata({
+            runId,
+            harness: input.harness,
+            startedAtMs,
+            durationMs: Date.now() - startedAtMs,
+            stoppedByUser: true,
+          }),
+        })
+        controller.enqueue({ type: "finish" })
         close()
       }
       cancelStream = abort
