@@ -2,19 +2,14 @@
 
 import { randomUUID } from "node:crypto"
 import { readFile, realpath } from "node:fs/promises"
-import { homedir } from "node:os"
-import { join, resolve } from "node:path"
+import { resolve } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { resolveDevMcpDescriptorPath, resolveDevMcpProfile } from "./lib/profile-paths.mjs"
 
 const checkout = await realpath(resolve(process.cwd()))
-const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
-const profile = instance
-  ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}`
-  : "Flapstack Dev"
-const descriptorPath =
-  process.env.FLAPSTACK_DEV_MCP_DESCRIPTOR ||
-  join(homedir(), "Library", "Application Support", profile, "dev-test-control-mcp.json")
+const profile = resolveDevMcpProfile()
+const descriptorPath = resolveDevMcpDescriptorPath(profile)
 const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"))
 const proofTag = `Stage3 MCP closeout ${Date.now()}`
 const secretMarker = `sk-live-${randomUUID()}-DO-NOT-STORE`

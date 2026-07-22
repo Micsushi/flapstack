@@ -3,7 +3,7 @@
 Stage 4 stores six typed Markdown sections with SQLite-owned versions, hashes,
 backups, location policy, and explicit run selection. That model is safe but not
 Obsidian-like: it has no arbitrary notes, Wikilink graph, backlinks, attachments,
-or one-click Obsidian opening. Stage 5 extends it without changing Stage 4 task
+or one-click Obsidian opening. Stage 6 extends it without changing Stage 4 task
 truth or moving default memory into a repository.
 
 ## Goals / Non-Goals
@@ -106,7 +106,7 @@ truth or moving default memory into a repository.
 - Wikilink semantics can drift from Obsidian. Mitigation: document/test the supported
   subset against real Obsidian and preserve unsupported syntax without rewriting it.
 - Graphs can overwhelm renderer/accessibility. Mitigation: local-first graph,
-  progressive whole-vault layout, filters, list fallback, and S5-F9 budgets.
+  progressive whole-vault layout, filters, list fallback, and S6-F9 budgets.
 - Frontmatter migration can create noisy diffs. Mitigation: central storage default,
   one reserved identity block, backups, byte-preserving parser, and local Git exclude.
 - Obsidian plugins can write unsafe content. Mitigation: preserve disk content but
@@ -132,7 +132,7 @@ truth or moving default memory into a repository.
   reduced motion, zoom, multi-window, and large-vault filtering.
 - Real Obsidian round trips on app-managed and project-owned vaults, including edits,
   renames, links, attachments, conflicts, restart, export/import, and package profiles.
-- Node 22 full gate, strict OpenSpec, `npm run dev:verify`, Stage 5 matrix, S5-F9
+- Node 22 full gate, strict OpenSpec, `npm run dev:verify`, Stage 6 matrix, S6-F9
   performance budgets, and native package evidence before feature exit.
 
 ## Open Questions

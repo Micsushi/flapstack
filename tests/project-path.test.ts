@@ -20,7 +20,7 @@ describe("canonical project paths", () => {
     const project = join(container, "project")
     const alias = join(container, "alias")
     mkdirSync(project)
-    symlinkSync(project, alias, "dir")
+    symlinkSync(project, alias, process.platform === "win32" ? "junction" : "dir")
 
     expect(resolveCanonicalProjectPath(alias)).toBe(realpathSync(project))
     expect(

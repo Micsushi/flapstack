@@ -17,6 +17,7 @@ import {
   unlinkPrivateSync,
 } from "../src/main/lib/portability/private-sync"
 import { tempRoot } from "./portability-test-helpers"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
 describe("private-sync", { timeout: 20_000 }, () => {
   it("fails closed when reviewed path or blob budgets are exceeded", () => {
@@ -145,16 +146,19 @@ describe("private-sync", { timeout: 20_000 }, () => {
     ).rejects.toThrow(/changed while reading/i)
   })
 
-  it("rejects a worktree leaf symlink before hashing or secret scanning", async () => {
-    const fixture = await createRemoteFixture()
-    const stateRoot = await linkFixture(fixture)
-    const configPath = join(fixture.local, "scopes/settings/config.json")
-    const outside = join(fixture.root, "outside-secret.txt")
-    await writeFile(outside, "AWS_SECRET_ACCESS_KEY=outside-secret")
-    await rm(configPath)
-    await symlink(outside, configPath)
-    await expect(previewPrivateSync(stateRoot, "commit")).rejects.toThrow(/non-symlink/i)
-  })
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects a worktree leaf symlink before hashing or secret scanning",
+    async () => {
+      const fixture = await createRemoteFixture()
+      const stateRoot = await linkFixture(fixture)
+      const configPath = join(fixture.local, "scopes/settings/config.json")
+      const outside = join(fixture.root, "outside-secret.txt")
+      await writeFile(outside, "AWS_SECRET_ACCESS_KEY=outside-secret")
+      await rm(configPath)
+      await symlink(outside, configPath)
+      await expect(previewPrivateSync(stateRoot, "commit")).rejects.toThrow(/non-symlink/i)
+    },
+  )
 
   it.each([
     ["AWS", "AKIAIOSFODNN7EXAMPLE"],

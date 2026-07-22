@@ -36,9 +36,11 @@ Stage verification: `docs/stage4-full-feature-test-matrix.md` plus Node 22
 `npm run check`, strict validation of all eleven Stage 4 OpenSpec changes, verified
 `Flapstack Dev` live walkthroughs, and packaged macOS preview smoke.
 
-Stage 5 planning lives at
-openspec/stages/s5-product-polish-personalization-reach/README.md and begins only
-after full Stage 4 acceptance.
+Stage 5 Windows planning lives at
+`openspec/stages/s5-windows-compatibility/README.md` and begins only after full
+Stage 4 acceptance. Stage 6 product-polish planning lives at
+`openspec/stages/s6-product-polish-personalization-reach/README.md` and begins
+only after full Stage 5 Windows acceptance.
 
 These files are navigation only. Task status lives only in linked OpenSpec
 `tasks.md` files.

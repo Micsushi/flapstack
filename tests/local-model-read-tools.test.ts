@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   LOCAL_MODEL_READ_TOOL_SCHEMAS,
   LocalModelToolLoopError,
@@ -63,8 +64,10 @@ describe("local model read tools", () => {
     const outside = mkdtempSync(join(tmpdir(), "flapstack-local-tool-outside-"))
     roots.push(outside)
     writeFileSync(join(outside, "secret.txt"), "outside secret")
-    symlinkSync(outside, join(root, "escape"))
-    symlinkSync(join(outside, "secret.txt"), join(root, "linked-secret.txt"))
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
+    if (fileSymlinksSupported) {
+      symlinkSync(join(outside, "secret.txt"), join(root, "linked-secret.txt"))
+    }
     const executor = createReadOnlyLocalModelToolExecutor({
       rootPath: root,
       verifyRoot: () => root,
@@ -74,12 +77,14 @@ describe("local model read tools", () => {
       ok: false,
       errorCode: "path-denied",
     })
-    await expect(
-      execute(executor, "read_file", { path: "linked-secret.txt" }),
-    ).resolves.toMatchObject({
-      ok: false,
-      errorCode: "path-denied",
-    })
+    if (fileSymlinksSupported) {
+      await expect(
+        execute(executor, "read_file", { path: "linked-secret.txt" }),
+      ).resolves.toMatchObject({
+        ok: false,
+        errorCode: "path-denied",
+      })
+    }
     await expect(execute(executor, "list_directory", { path: "escape" })).resolves.toMatchObject({
       ok: false,
       errorCode: "path-denied",

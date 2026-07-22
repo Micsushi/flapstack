@@ -9,9 +9,15 @@ import { preparePackageResources, resolvePackageTargets } from "./prepare-packag
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const platformFlags = { darwin: "--mac", win32: "--win", linux: "--linux" }
 const supportedArchitectures = new Set(["arm64", "x64"])
-const macChannelConfigs = {
-  preview: "electron-builder.preview.mac.cjs",
-  release: "electron-builder.release.mac.cjs",
+const channelConfigs = {
+  darwin: {
+    preview: "electron-builder.preview.mac.cjs",
+    release: "electron-builder.release.mac.cjs",
+  },
+  win32: {
+    preview: "electron-builder.preview.win.cjs",
+    release: "electron-builder.release.win.cjs",
+  },
 }
 const defaultNativeAbiMarker = path.join(root, "node_modules", ".native-abi")
 
@@ -53,11 +59,7 @@ export function resolvePackageBuild(
   const targets = resolvePackageTargets(
     architectures.map((architecture) => `${platform}-${architecture}`),
   )
-  const channelConfig = options.channel
-    ? platform === "darwin"
-      ? macChannelConfigs[options.channel]
-      : undefined
-    : undefined
+  const channelConfig = options.channel ? channelConfigs[platform]?.[options.channel] : undefined
   if (options.channel && !channelConfig) {
     throw new Error(`Unsupported ${platform} package channel: ${options.channel}`)
   }

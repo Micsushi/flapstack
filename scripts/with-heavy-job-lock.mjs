@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process"
 import { openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 
 const [, , label, separator, ...command] = process.argv
 
@@ -12,7 +12,20 @@ if (!label || separator !== "--" || command.length === 0) {
   process.exit(2)
 }
 
-const lockPath = join(tmpdir(), "flapstack-heavy-job.lock")
+const defaultLockPath = join(tmpdir(), "flapstack-heavy-job.lock")
+const requestedLockPath = process.env.FLAPSTACK_HEAVY_JOB_LOCK_PATH
+const lockPath = requestedLockPath ? resolve(requestedLockPath) : defaultLockPath
+if (
+  requestedLockPath &&
+  (dirname(lockPath) !== resolve(tmpdir()) ||
+    !basename(lockPath).startsWith("flapstack-heavy-job-test-") ||
+    !basename(lockPath).endsWith(".lock"))
+) {
+  console.error(
+    "FLAPSTACK_HEAVY_JOB_LOCK_PATH must be a test lock inside the system temp directory.",
+  )
+  process.exit(2)
+}
 const ownerToken = process.env.FLAPSTACK_HEAVY_JOB_LOCK_TOKEN
 
 function readLock() {
@@ -106,13 +119,26 @@ function acquireAndRun() {
 function runCommand(options = {}) {
   const cleanup = options.cleanup ?? (() => {})
 
-  const child = spawn(command[0], command.slice(1), {
-    stdio: "inherit",
-    shell: false,
-    env: {
-      ...process.env,
-      ...(options.token ? { FLAPSTACK_HEAVY_JOB_LOCK_TOKEN: options.token } : {}),
-    },
+  let child
+  try {
+    child = spawn(command[0], command.slice(1), {
+      stdio: "inherit",
+      shell: false,
+      env: {
+        ...process.env,
+        ...(options.token ? { FLAPSTACK_HEAVY_JOB_LOCK_TOKEN: options.token } : {}),
+      },
+    })
+  } catch (error) {
+    console.error(`Failed to start heavy-job command: ${error.message}`)
+    cleanup()
+    process.exit(1)
+  }
+
+  child.on("error", (error) => {
+    console.error(`Failed to start heavy-job command: ${error.message}`)
+    cleanup()
+    process.exit(1)
   })
 
   child.on("exit", (code, signal) => {

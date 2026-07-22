@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
 const assertRegisteredWorktree = vi.hoisted(() => vi.fn())
 
@@ -30,25 +31,28 @@ afterEach(() => {
 })
 
 describe("secureFs rooted writer", () => {
-  it("preserves lexical PathValidationError codes and blocks symlink targets", async () => {
-    const root = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-root-"))
-    const outside = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-outside-"))
-    roots.push(root, outside)
-    const victim = join(outside, "victim.txt")
-    writeFileSync(victim, "outside")
-    symlinkSync(victim, join(root, "linked.txt"))
+  it.skipIf(!fileSymlinksSupported)(
+    "preserves lexical PathValidationError codes and blocks symlink targets",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-root-"))
+      const outside = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-outside-"))
+      roots.push(root, outside)
+      const victim = join(outside, "victim.txt")
+      writeFileSync(victim, "outside")
+      symlinkSync(victim, join(root, "linked.txt"))
 
-    await expect(secureFs.writeFile(root, "../victim.txt", "blocked")).rejects.toMatchObject({
-      code: "PATH_TRAVERSAL",
-    })
-    await expect(secureFs.writeFile(root, victim, "blocked")).rejects.toMatchObject({
-      code: "ABSOLUTE_PATH",
-    })
-    await expect(secureFs.writeFile(root, "linked.txt", "blocked")).rejects.toMatchObject({
-      code: "SYMLINK_ESCAPE",
-    })
-    expect(readFileSync(victim, "utf8")).toBe("outside")
-  })
+      await expect(secureFs.writeFile(root, "../victim.txt", "blocked")).rejects.toMatchObject({
+        code: "PATH_TRAVERSAL",
+      })
+      await expect(secureFs.writeFile(root, victim, "blocked")).rejects.toMatchObject({
+        code: "ABSOLUTE_PATH",
+      })
+      await expect(secureFs.writeFile(root, "linked.txt", "blocked")).rejects.toMatchObject({
+        code: "SYMLINK_ESCAPE",
+      })
+      expect(readFileSync(victim, "utf8")).toBe("outside")
+    },
+  )
 
   it("fails closed when the worktree namespace changes before atomic replace", async () => {
     const container = mkdtempSync(join(tmpdir(), "flapstack-secure-fs-container-"))

@@ -1,11 +1,12 @@
 import { clipboard, shell } from "electron"
 import { openExternalSafe } from "../../open-external"
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import * as os from "node:os"
 import * as path from "node:path"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
-import { APP_META, externalAppSchema, type ExternalApp } from "../../../../shared/external-apps"
+import { externalAppSchema, type ExternalApp } from "../../../../shared/external-apps"
+import { resolveExternalAppLaunch, spawnExternalCommand } from "../../external/app-launch"
 import {
   editorCommandsForPlatform,
   editorFileArgs,
@@ -19,29 +20,17 @@ function expandTilde(filePath: string): string {
   return filePath
 }
 
-function spawnAsync(command: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore",
-    })
-    child.unref()
-    child.on("error", reject)
-    // Resolve immediately - we just need to launch the app
-    resolve()
-  })
-}
-
 function openPathInApp(app: ExternalApp, targetPath: string): Promise<void> {
   const expandedPath = expandTilde(targetPath)
-
-  if (app === "finder") {
-    shell.showItemInFolder(expandedPath)
-    return Promise.resolve()
+  const launch = resolveExternalAppLaunch(process.platform, app, expandedPath)
+  if (launch.kind === "reveal") shell.showItemInFolder(launch.path)
+  else if (launch.kind === "default") return shell.openPath(launch.path).then(() => undefined)
+  else {
+    return spawnExternalCommand(process.platform, launch.command, launch.args).catch(() =>
+      shell.openPath(expandedPath).then(() => undefined),
+    )
   }
-
-  const meta = APP_META[app]
-  return spawnAsync("open", ["-a", meta.macAppName, expandedPath])
+  return Promise.resolve()
 }
 
 /**
@@ -97,12 +86,9 @@ export const externalRouter = router({
           // Check if the command exists first
           const lookup = editorLookupCommand(process.platform, editor.cmd)
           execFileSync(lookup.command, lookup.args, { stdio: "ignore" })
-          const child = spawn(editor.cmd, editor.args, {
+          await spawnExternalCommand(process.platform, editor.cmd, editor.args, {
             cwd: cwd || undefined,
-            detached: true,
-            stdio: "ignore",
           })
-          child.unref()
           return { success: true, editor: editor.cmd }
         } catch {
           // Try next editor

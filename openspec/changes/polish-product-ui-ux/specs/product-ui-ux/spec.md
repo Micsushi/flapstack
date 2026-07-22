@@ -23,7 +23,7 @@ recovery states with reusable accessible patterns and specific next actions.
 ### Requirement: Accessible complete workflows
 
 Flapstack SHALL support keyboard, screen-reader, zoom, contrast, reduced-motion,
-and focus-safe operation for every Stage 5 primary workflow.
+and focus-safe operation for every Stage 6 primary workflow.
 
 #### Scenario: Keyboard-only user starts an agent
 

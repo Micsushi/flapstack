@@ -37,6 +37,7 @@ import { runStartupCatchUp } from "./lib/usage/catch-up"
 import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-control/server"
 import {
   isDevTestControlEnabled,
+  isPreviewExecutable,
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
 import {
@@ -116,14 +117,9 @@ let automationBetaTransition = Promise.resolve()
 
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
-const IS_MAC_PREVIEW =
-  process.platform === "darwin" && !IS_DEV && basename(process.execPath) === "Flapstack Preview"
-const PROTOCOL = IS_DEV ? "flapstack-dev" : IS_MAC_PREVIEW ? "flapstack-preview" : "flapstack"
-const APP_DISPLAY_NAME = IS_DEV
-  ? "Flapstack Dev"
-  : IS_MAC_PREVIEW
-    ? "Flapstack Preview"
-    : "Flapstack"
+const IS_PREVIEW = !IS_DEV && isPreviewExecutable()
+const PROTOCOL = IS_DEV ? "flapstack-dev" : IS_PREVIEW ? "flapstack-preview" : "flapstack"
+const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : IS_PREVIEW ? "Flapstack Preview" : "Flapstack"
 
 if (process.platform === "darwin" && IS_DEV) {
   const expectedCheckout = process.env.FLAPSTACK_DEV_CHECKOUT?.trim()
@@ -227,7 +223,7 @@ if (IS_DEV) {
   app.setPath("userData", devUserData)
   app.setName(APP_DISPLAY_NAME)
   console.log("[Dev] Using separate userData path:", devUserData)
-} else if (IS_MAC_PREVIEW) {
+} else if (IS_PREVIEW) {
   const previewUserData = join(
     app.getPath("userData"),
     "..",
@@ -653,7 +649,13 @@ if (gotTheLock) {
 
     // Set app user model ID for Windows (different in dev to avoid taskbar conflicts)
     if (process.platform === "win32") {
-      app.setAppUserModelId(IS_DEV ? "dev.flapstack.app.dev" : "dev.flapstack.app")
+      app.setAppUserModelId(
+        IS_DEV
+          ? "dev.flapstack.app.dev"
+          : IS_PREVIEW
+            ? "dev.flapstack.app.preview"
+            : "dev.flapstack.app",
+      )
     }
 
     console.log(`[App] Starting ${APP_DISPLAY_NAME}...`)
@@ -1005,7 +1007,7 @@ if (gotTheLock) {
               name: "Dev MCP server",
               run: async () => {
                 const devMcpInput = {
-                  enabled: isDevTestControlEnabled(IS_DEV, IS_MAC_PREVIEW),
+                  enabled: isDevTestControlEnabled(IS_DEV, IS_PREVIEW),
                   userDataPath: app.getPath("userData"),
                   checkout: app.getAppPath(),
                   profile: basename(app.getPath("userData")),

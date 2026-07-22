@@ -1,7 +1,7 @@
 ## Context
 
 S4-F12 stores capability and presentation together in each profile version.
-The Stage 5 model must reuse that implementation, not create profile/preset duplication.
+The Stage 6 model must reuse that implementation, not create profile/preset duplication.
 
 ## Goals / Non-Goals
 

@@ -602,6 +602,55 @@ describe("durable agent task orchestration", () => {
     })
   })
 
+  it("enforces token stops from canonical Runtime activity before completion targets", () => {
+    const service = createAgentOrchestrationService(path)
+    seedRoot("runtime-usage-root")
+    const created = service.create({
+      ...createInput({
+        count: 1,
+        stopConditions: { targetCompletedAgents: 1, maxTotalTokens: 4_000 },
+      }),
+      initiatingChatId: "runtime-usage-root",
+      task: { mode: "create" as const, name: "Runtime usage stop" },
+    })
+    const agent = created.agents[0]!
+    const run = sqlite
+      .prepare("SELECT chat_id, sub_chat_id FROM agent_runs WHERE id = ?")
+      .get(agent.runId) as { chat_id: string; sub_chat_id: string }
+    sqlite
+      .prepare(
+        `INSERT INTO agent_activity_events (
+          event_id, run_id, chat_id, sub_chat_id, runtime, harness, provider, sequence,
+          kind, phase, display_class, privacy_class, received_at, payload_json, created_at
+        ) VALUES (
+          'runtime-usage-event', ?, ?, ?, 'codex', 'codex', 'openai', 1,
+          'usage', 'snapshot', 'metadata', 'sensitive', ?, ?, ?
+        )`,
+      )
+      .run(
+        agent.runId,
+        run.chat_id,
+        run.sub_chat_id,
+        Date.now(),
+        JSON.stringify({
+          inputTokens: 17_395,
+          outputTokens: 11,
+          cachedTokens: 9_984,
+          reasoningTokens: 0,
+        }),
+        nowEpochSeconds(),
+      )
+    sqlite
+      .prepare("UPDATE agent_runs SET status = 'success', completed_at = ? WHERE id = ?")
+      .run(nowEpochSeconds(), agent.runId)
+
+    expect(service.getOverview(created.orchestration.taskId)).toMatchObject({
+      orchestration: { status: "stopped", stopReason: "token-budget" },
+      aggregate: { totalTokens: 27_390 },
+      agents: [{ status: "stopped", totalTokens: 27_390 }],
+    })
+  })
+
   it("adds and retries agents without duplicating completed work", () => {
     const service = createAgentOrchestrationService(path)
     const created = service.create(createInput({ count: 2, maxParallelAgents: 1 }))

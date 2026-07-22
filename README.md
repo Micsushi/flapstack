@@ -123,7 +123,7 @@ Voice (reuses Agent Hotline):
 - Read-aloud output: system voice plus offline Kokoro, no API key required.
 - Spoken/displayed response separation inspired by Agent Hotline.
 - Per-OS speech adapters with an offline/local path kept as a supported default.
-- Dynamic speech vocabulary is planned in Stage 5 S5-F1 as part of voice-input
+- Dynamic speech vocabulary is planned in Stage 6 S6-F1 as part of voice-input
   usability and language polish.
 
 Usage tracking (reuses onWatch):
@@ -222,7 +222,36 @@ Orchestration, Saved Workspaces, Automations, and Planning & Task Board remain
 explicit opt-ins. Their unfinished provider, UI, package, and platform evidence
 is beta work, not a stable-support claim.
 
-### Stage 5: Product Polish, Personalization, and Reach
+### Stage 5: Native Windows Compatibility
+
+- Pin and diagnose Node 22, Python 3.11, CMake, Rust/MSVC, Visual Studio 2022
+  Build Tools (including x64/x86 Spectre-mitigated libraries), and Windows SDK
+  prerequisites.
+- Make install, check, build, download, native rebuild, Dev, verify, and package
+  commands work from native PowerShell without WSL, Git Bash, or manual patches.
+- Prove clean npm install plus better-sqlite3/node-pty Node and Electron ABI repair.
+- Add Windows CI for install, check, build, native inspection, package, and smoke.
+- Verify exact-checkout Dev startup, restart, stale-process cleanup, and crash recovery.
+- Close Windows paths, Explorer/default-app opening, terminal, DPAPI, scheduled
+  tasks, protocols/deep links, process ownership, and power/network lifecycle.
+- Prove Claude and Codex download, authentication, run/resume, permissions,
+  worktrees, tools, cancellation, restart, and packaged behavior.
+- Prove microphone capture, local/cloud STT, system/offline TTS, model lifecycle,
+  credential storage, and cleanup without POSIX shell fallbacks.
+- Build and inspect native x64 Preview, NSIS, and portable artifacts; prove clean
+  install, Stage 4 upgrade, repair, rollback, and both uninstall data choices.
+- Add Authenticode-ready signing, hashes, manifests, dependency/license inventory,
+  malware/secret gates, support docs, and one exact-SHA integrated release gate.
+
+Stage 5 starts after full Stage 4 acceptance. Its nine features contain 76
+bounded tasks; see the
+[Stage 5 router](openspec/stages/s5-windows-compatibility/README.md),
+[execution plan](docs/stage5-execution-plan.md),
+[test matrix](docs/stage5-full-feature-test-matrix.md), and
+[manual test](docs/stage5-windows-manual-test.md). Native setup and packaging
+commands live in the [Windows development guide](docs/windows-development.md).
+
+### Stage 6: Product Polish, Personalization, and Reach
 
 - Product-wide UI/UX, navigation, Settings, accessibility, and recovery polish.
 - Guided first-run tutorial, work-style questions, feature explanations, and
@@ -238,16 +267,17 @@ is beta work, not a stable-support claim.
 - Final Runtime/orchestration composition for schemas, control, activity, and recovery.
 - Optional OpenAI/Anthropic organization usage APIs with exact provenance.
 - Versioned performance budgets, scale/soak testing, and regression gates.
-- Signed/notarized macOS plus native Windows/Linux public distribution.
+- Signed/notarized macOS plus public promotion of accepted Stage 5 Windows
+  artifacts and natively verified Linux distribution.
 - Obsidian-compatible project knowledge graph: six seed notes, custom Markdown
   nodes/folders, Wikilinks/backlinks, graph views, and same-folder Obsidian opening.
-- One integrated exact-SHA Stage 5 release gate.
+- One integrated exact-SHA Stage 6 release gate.
 
-Stage 5 starts only after full Stage 4 acceptance. Its twelve OpenSpec feature
+Stage 6 starts only after full Stage 5 Windows acceptance. Its twelve OpenSpec feature
 boards contain 97 pickup-ready tasks; see the
-[Stage 5 router](openspec/stages/s5-product-polish-personalization-reach/README.md),
-[execution plan](docs/stage5-execution-plan.md), and
-[test matrix](docs/stage5-full-feature-test-matrix.md).
+[Stage 6 router](openspec/stages/s6-product-polish-personalization-reach/README.md),
+[execution plan](docs/stage6-execution-plan.md), and
+[test matrix](docs/stage6-full-feature-test-matrix.md).
 
 Stage 2 owns Flapstack's in-app STT/TTS. Handy covers standalone system-wide
 dictation; no separate Flapstack voice platform is planned.
@@ -260,6 +290,8 @@ Prerequisites:
 - Python 3.11 recommended for native module rebuilds
 - Xcode Command Line Tools on macOS
 - CMake for macOS/Linux packages that build bundled whisper.cpp binaries
+- On Windows: CMake, Rust MSVC, Visual Studio 2022 Build Tools with Desktop C++
+  and x64/x86 Spectre-mitigated libraries, plus the Windows 10/11 SDK
 
 Install and run:
 

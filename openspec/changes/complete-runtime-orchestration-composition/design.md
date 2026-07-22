@@ -18,7 +18,7 @@ The word compatible has three different meanings that must not be conflated:
    bounded context, delegated tasks, structured results, controls, and lineage
    through Flapstack-owned contracts.
 
-Stage 5 implements translated compatibility and composition without pretending
+Stage 6 implements translated compatibility and composition without pretending
 native protocols are universal.
 
 ## Goals / Non-Goals
@@ -98,7 +98,7 @@ losses. Required unknown or unsupported capabilities block before provider
 intent. Prompt text alone can adapt style but cannot claim tool, permission,
 session, event, or recovery compatibility.
 
-Initial Stage 5 adapter packs:
+Initial Stage 6 adapter packs:
 
 - Claude provider -> Codex-compatible contract;
 - OpenAI/Codex provider -> Claude-Code-compatible contract;
@@ -304,4 +304,4 @@ readable. It never folds child history back into the source Chat.
   delegation, mixed workflows, cancellation, restart, incompatible repair, and
   usage attribution.
 - Verified Dev and macOS preview package are required here; Windows/Linux native
-  parity is repeated by S5-F10 before public support claims.
+  parity is repeated by S6-F10 before public support claims.

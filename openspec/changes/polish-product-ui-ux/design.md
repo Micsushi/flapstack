@@ -1,6 +1,6 @@
 ## Context
 
-Stage 4 adds many valid surfaces. Stage 5 must reduce cognitive load without
+Stage 4 adds many valid surfaces. Stage 6 must reduce cognitive load without
 removing capability truth or rebuilding product services.
 
 ## Goals / Non-Goals
@@ -13,7 +13,7 @@ removing capability truth or rebuilding product services.
 ## Decisions
 
 - Root ui-design.md remains durable visual authority; this change implements its
-  Stage 5 decisions and updates it when durable decisions change.
+  Stage 6 decisions and updates it when durable decisions change.
 - Core objects remain Project, Task, Chat, Run, and Workspace.
 - Launch-critical controls stay near the composer; secondary state stays in
   details/overflow surfaces.

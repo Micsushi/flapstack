@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { createHash, randomUUID } from "node:crypto"
-import { and, desc, eq, isNull } from "drizzle-orm"
+import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
 import { sleep } from "../../../shared/sleep"
 import {
@@ -18,6 +18,7 @@ import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import {
   agentRuns,
+  agentActivityEvents,
   chats,
   checkpoints,
   fileChangeManifests,
@@ -100,6 +101,7 @@ import { buildMcpStdioRegistration, type McpStdioRegistration } from "../mcp-con
 import { getPermissionPreferences } from "../permissions"
 import {
   appendUserMessage,
+  buildActivityAssistant,
   findLastAssistantMessage,
   getMessageText,
   parseStoredMessages,
@@ -436,9 +438,11 @@ type ProductMcpTestSession = {
   connected: Promise<void>
   release: () => void
   closed: boolean
+  closePromise?: Promise<void>
 }
 
 const productMcpTestSessions = new Map<string, ProductMcpTestSession>()
+const productMcpTestClosingSessions = new Set<Promise<void>>()
 
 function getDevRendererWindow() {
   const windows = BrowserWindow?.getAllWindows?.() ?? []
@@ -453,10 +457,13 @@ function requestDevRendererControlForWindow(
 ) {
   const requestId = randomUUID()
   return new Promise<unknown>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
-      reject(new Error("Live renderer control timed out"))
-    }, 5_000)
+    const timeout = setTimeout(
+      () => {
+        ipcMain.removeListener(DEV_RENDERER_CONTROL_RESPONSE_CHANNEL, handleResponse)
+        reject(new Error("Live renderer control timed out"))
+      },
+      process.platform === "win32" ? 15_000 : 5_000,
+    )
     const handleResponse = (event: Electron.IpcMainEvent, raw: unknown) => {
       if (event.sender.id !== window.webContents.id) return
       const response = parseDevRendererControlResponse(raw)
@@ -982,7 +989,7 @@ function getOrCreateProductMcpTestSession(
 }
 
 function closeProductMcpTestSession(session: ProductMcpTestSession, reason?: string) {
-  if (session.closed) return
+  if (session.closePromise) return session.closePromise
   session.closed = true
   if (productMcpTestSessions.get(session.key) === session) {
     productMcpTestSessions.delete(session.key)
@@ -997,7 +1004,14 @@ function closeProductMcpTestSession(session: ProductMcpTestSession, reason?: str
     }
   }
   session.release()
-  void session.client.close().catch(() => session.transport.close().catch(() => undefined))
+  session.closePromise = session.client
+    .close()
+    .catch(() => session.transport.close().catch(() => undefined))
+  productMcpTestClosingSessions.add(session.closePromise)
+  void session.closePromise.finally(() =>
+    productMcpTestClosingSessions.delete(session.closePromise!),
+  )
+  return session.closePromise
 }
 
 export function getProductMcpTestCall(input: { callId: string }) {
@@ -1309,7 +1323,7 @@ export async function resetProductMcpTestCallsForTests() {
   productMcpTestCalls.clear()
   productMcpTestSessions.clear()
   for (const session of sessions) closeProductMcpTestSession(session)
-  await Promise.all(sessions.map((session) => session.client.close().catch(() => undefined)))
+  await Promise.all([...productMcpTestClosingSessions])
 }
 
 export async function getProviderStatus() {
@@ -1549,6 +1563,23 @@ export function getRunState(input: { runId: string }) {
         .filter((message) => message.role === "assistant" && message.metadata?.runId === run.id)
         .at(-1)
     : null
+  const activityAssistant = assistant
+    ? null
+    : buildActivityAssistant(
+        db
+          .select({
+            eventId: agentActivityEvents.eventId,
+            sequence: agentActivityEvents.sequence,
+            kind: agentActivityEvents.kind,
+            phase: agentActivityEvents.phase,
+            providerMessageId: agentActivityEvents.providerMessageId,
+            payloadJson: agentActivityEvents.payloadJson,
+          })
+          .from(agentActivityEvents)
+          .where(eq(agentActivityEvents.runId, run.id))
+          .orderBy(asc(agentActivityEvents.sequence))
+          .all(),
+      )
   return {
     found: true,
     run: compactRun(run),
@@ -1558,7 +1589,7 @@ export function getRunState(input: { runId: string }) {
           text: getMessageText(assistant).slice(0, 8_000),
           metadata: safeMessageMetadata(assistant.metadata),
         }
-      : null,
+      : activityAssistant,
     pendingApprovals: listPendingOpencodeApprovals(run.id),
   }
 }

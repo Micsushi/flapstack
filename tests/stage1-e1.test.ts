@@ -834,7 +834,7 @@ describe("Stage 1 E1 worktree resolution", () => {
     const alias = join(homeDir, "checkout-alias")
     mkdirSync(checkout)
     execFileSync("git", ["init", "-q", checkout])
-    symlinkSync(checkout, alias, "dir")
+    symlinkSync(checkout, alias, process.platform === "win32" ? "junction" : "dir")
     const project = insertProject("alias-project", { path: checkout })
     bindRegisteredFilesystemRoot(checkout)
     const chat = insertChat({
@@ -1445,6 +1445,7 @@ describe("Stage 1 E1 checkpoint capture", () => {
     const worktreePath = join(homeDir, "editable-repo")
     mkdirSync(worktreePath, { recursive: true })
     execFileSync("git", ["init"], { cwd: worktreePath })
+    execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: worktreePath })
     execFileSync("git", ["config", "user.name", "Flapstack Test"], { cwd: worktreePath })
     execFileSync("git", ["config", "user.email", "test@flapstack.local"], {
       cwd: worktreePath,

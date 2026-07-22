@@ -80,5 +80,5 @@
 - Verification: Node 22 `npm run check`; strict OpenSpec; `npm run dev` and
   `npm run dev:verify`; credentialed provider matrix; macOS preview package.
 - Blocked by: S4-F11A-T3, S4-F11A-T4
-- Blocks: Stage 5 cross-provider Runtime adapters
+- Blocks: Stage 6 cross-provider Runtime adapters
 - Context: Runtime fixtures, release policy, Stage 4 matrix/manual handoff.

@@ -535,7 +535,7 @@ async function assertNoSymlinkComponents(
   sourcePath: string,
   includeFinalDirectory: boolean,
 ): Promise<void> {
-  const segments = sourcePath.split(sep)
+  const segments = sourcePath.split("/")
   const lastIndex = includeFinalDirectory ? segments.length : segments.length - 1
   let current = rootPath
   for (let index = 0; index < lastIndex; index += 1) {
@@ -564,7 +564,7 @@ function normalizeRelativeSourcePath(sourcePath: string): string {
   if (normalizedPath === "." || normalizedPath === ".." || normalizedPath.startsWith(`..${sep}`)) {
     throw new PlanSourcePathError("Plan source path escapes the registered project root")
   }
-  return normalizedPath
+  return normalizedPath.split(sep).join("/")
 }
 
 function normalizeMarkdownPaths(sourcePaths: string[]): string[] {

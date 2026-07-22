@@ -1,8 +1,3 @@
-# S5-F9 — Performance and Scale
+# Moved to S6-F9
 
-- Outcome: startup, rendering, storage, streaming, background work, and
-  concurrent-agent workflows meet explicit repeatable budgets.
-- Change: openspec/changes/harden-product-performance/
-- Tasks: openspec/changes/harden-product-performance/tasks.md
-- Task IDs: S5-F9-T1 through S5-F9-T8
-- Dependencies: accepted Stage 4 baseline; final budgets cover F1 through F8.
+Use `openspec/stages/s6-product-polish-personalization-reach/features/s6-f9-performance-scale/README.md`.

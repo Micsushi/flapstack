@@ -334,7 +334,11 @@ describe("cross-harness extension copy", () => {
     write(sourceFile, validSkill("release-check"))
     write(outsideFile, validSkill("outside"))
     mkdirSync(join(home, ".agents", "skills"), { recursive: true })
-    symlinkSync(outside, join(home, ".agents", "skills", "release-check"))
+    symlinkSync(
+      outside,
+      join(home, ".agents", "skills", "release-check"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
 
     await expect(
       previewCrossHarnessCopy(

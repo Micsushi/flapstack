@@ -1,206 +1,126 @@
-# Stage 5 Full Feature Test Matrix
+# Stage 5 Windows Compatibility Test Matrix
 
-Every row remains open until observed against the exact stated SHA/build/profile.
-Headless, prior-SHA, fixture-only, or cross-built evidence cannot close required
-live, usability, device, provider, package, or native-platform rows.
+This matrix is Stage 5 acceptance authority. Checkboxes require current evidence
+from one exact source SHA on native Windows 11 x64. Cross-built artifacts,
+headless mocks, or another operating system do not close Windows rows.
 
-## Automated and migration gate
+## Candidate and environment
 
-- [ ] **S5-A01** All twelve Stage 5 OpenSpec changes pass strict validation.
-- [ ] **S5-A02** Node 22 npm run check passes from the exact candidate.
-- [ ] **S5-A03** Clean install, final Stage 4 upgrade, interrupted migration,
-      rollback/reopen, and data-integrity fixtures pass.
-- [ ] **S5-A04** Security suites cover paths/symlinks, secrets, Markdown/profile
-      trust, mobile replay/network, visual redaction, organization credentials,
-      graph/frontmatter/Obsidian boundaries, group control, and package artifacts.
-- [ ] **S5-A05** Visual, accessibility, performance, and evidence-ledger validators pass.
+- [ ] **S5-A01** Candidate SHA, branch, checkout path, timestamp, Windows build,
+      machine/VM identity, and clean/upgrade profile identities recorded.
+- [ ] **S5-A02** Node 22, repository npm, Python 3.11, CMake, Rust MSVC, Visual
+      Studio Build Tools, Windows SDK, Git, and PowerShell versions recorded.
+- [ ] **S5-A03** Stage task/spec/router crosswalk passes strict OpenSpec validation.
+- [ ] **S5-A04** No WSL, Git Bash, Unix compatibility layer, source patch, or
+      undocumented global PATH mutation is required.
 
-## Product-wide UI/UX polish
+## S5-F1 - Supported toolchain
 
-- [ ] **S5-UX01** Navigation preserves project/task/chat/run/workspace context
-      and every destination is keyboard/search reachable.
-- [ ] **S5-UX02** Chat/composer/details expose launch-critical choices and
-      truthful recovery without crowding or duplicate controls.
-- [ ] **S5-UX03** Settings categories are alphabetically ordered and every
-      eligible control is searchable/deep-linkable.
-- [ ] **S5-UX04** Progress capsule, transcript timeline, workspaces, and
-      multi-window ownership remain accurate and responsive at supported limits.
-- [ ] **S5-UX05** Primary flows pass keyboard, screen-reader, contrast, zoom,
-      reduced-motion, responsive, dynamic-vocabulary privacy/transcript review,
-      and observed novice/power-user usability checks.
+- [ ] **S5-TC01** Prerequisite checker identifies every missing or unsupported tool.
+- [ ] **S5-TC02** Version pins reject Node 25 and Python 3.13 with useful repair text.
+- [ ] **S5-TC03** Clean bootstrap succeeds with paths containing spaces and Unicode.
+- [ ] **S5-TC04** README and Windows setup guide reproduce a clean environment.
+- [ ] **S5-TC05** Toolchain diagnostics redact usernames, tokens, and private paths.
 
-## Guided onboarding and feature visibility
+## S5-F2 - Portable scripts
 
-- [ ] **S5-ON01** Fresh Focused, Standard, Complete, skipped, interrupted, and
-      resumed onboarding paths produce reviewed deterministic visibility.
-- [ ] **S5-ON02** Existing-user upgrade preserves current visibility until opt-in.
-- [ ] **S5-ON03** Hidden features retain data, APIs/MCP, safety, background
-      behavior, Settings search, and reversible re-enable paths.
-- [ ] **S5-ON04** Feature explanations agree across tutorial, Settings, empty
-      states, and contextual help; rerun previews before applying.
+- [ ] **S5-PS01** `npm run check` works without `sh` and preserves fail-fast order.
+- [ ] **S5-PS02** Build environment variables use cross-platform process APIs.
+- [ ] **S5-PS03** npm, npx, node, Python, CMake, Cargo, and helper resolution works
+      through Windows `.cmd`/`.exe` shims with spaces in installation paths.
+- [ ] **S5-PS04** Heavy-job locks serialize lint, style, check, and build correctly.
+- [ ] **S5-PS05** Child-process quoting preserves arguments containing spaces,
+      Unicode, ampersands, parentheses, and percent signs.
+- [ ] **S5-PS06** Failure exit codes and Ctrl+C cancellation propagate correctly.
+- [ ] **S5-PS07** Shared script tests pass on both Windows and macOS.
 
-## Agent Profiles and reusable personalities
+## S5-F3 - Native dependency install
 
-- [ ] **S5-AP01** Agent Profile is the single complete configuration; no agent
-      preset entity or duplicate registry exists.
-- [ ] **S5-AP02** Multiple profiles reference one exact Markdown personality
-      version while retaining independent capabilities/authority.
-- [ ] **S5-AP03** New global/project/task chats select an exact compatible
-      profile/personality without auto-launching.
-- [ ] **S5-AP04** Direct children and workflow workers resolve stable allowed
-      profile IDs/versions and retain immutable snapshots across retry/restart.
-- [ ] **S5-AP05** Effort and speed/fast preference resolve independently; import,
-      migration, evaluation, Studio, providers, accessibility, and package pass.
+- [ ] **S5-ND01** Clean `npm ci --legacy-peer-deps` succeeds from an empty cache.
+- [ ] **S5-ND02** Postinstall ordering prepares required binaries before consumers.
+- [ ] **S5-ND03** better-sqlite3 loads under required Node and Electron ABIs.
+- [ ] **S5-ND04** node-pty starts a real PowerShell terminal under Electron.
+- [ ] **S5-ND05** ABI marker invalidation, repair, verification, and recovery pass.
+- [ ] **S5-ND06** Claude/Codex Windows binaries download, validate, and package.
+- [ ] **S5-ND07** Offline/cache-miss/partial-download failures leave repairable state.
 
-## Cross-agent mobile companion
+## S5-F4 - Windows CI and development lifecycle
 
-- [ ] **S5-MC01** Bridge is default-off, private-interface-only, authenticated,
-      rate-limited, and stops on unsafe network change.
-- [ ] **S5-MC02** QR pairing, fingerprint, device keys, sessions, expiry, replay
-      defense, rename, and immediate revoke pass.
-- [ ] **S5-MC03** Scoped snapshots/events recover gaps without stale mutation,
-      unbounded memory, unauthorized data, or completed-work replay.
-- [ ] **S5-MC04** PWA monitoring, steering, lifecycle control, approvals,
-      offline state, and notifications call shared services and remain honest.
-- [ ] **S5-MC05** Real iOS and Android-class browsers plus desktop packages pass
-      pairing/control/revoke/reconnect/security/accessibility evidence.
+- [ ] **S5-CI01** Windows CI installs, checks, tests, and builds from clean checkout.
+- [ ] **S5-CI02** Windows CI prepares and inspects Preview/package artifacts.
+- [ ] **S5-CI03** CI uploads bounded, secret-safe logs and failure evidence.
+- [ ] **S5-DV01** Root dev command starts all owned processes from one checkout.
+- [ ] **S5-DV02** `dev:verify` proves exact checkout, Dev data profile, renderer,
+      main process, helper state, and absence of conflicting package instance.
+- [ ] **S5-DV03** Restart and cleanup stop stale process trees without killing
+      unrelated Node, PowerShell, terminal, Claude, or Codex processes.
+- [ ] **S5-DV04** Crash/stale-lock recovery returns to one healthy Dev instance.
 
-## Visual context and screenshot capture
+## S5-F5 - Windows OS integration
 
-- [ ] **S5-VC01** Screen/window/region capture requires visible selection or
-      scoped approval and handles OS permissions/multiple displays truthfully.
-- [ ] **S5-VC02** Preview/crop/annotation/redaction prevents recovery of removed
-      pixels/metadata and persists the exact confirmed derivative hash.
-- [ ] **S5-VC03** Chat/task/knowledge/run artifacts preserve scope/provenance;
-      unselected visuals never enter agent context.
-- [ ] **S5-VC04** Agent capture, history/retention/export, tamper/missing state,
-      and standalone helper reuse the same safety and pass platform/package proof.
+- [ ] **S5-WI01** Open-file/open-folder/open-URL actions use Windows-native APIs.
+- [ ] **S5-WI02** PowerShell, cmd, and configured terminal profiles preserve cwd,
+      environment, resize, UTF-8, input, output, exit, and cancellation.
+- [ ] **S5-WI03** DPAPI credential create/read/update/delete/restart paths pass.
+- [ ] **S5-WI04** Scheduled/background tasks create, run, disable, repair, and remove.
+- [ ] **S5-WI05** Custom protocols and deep links route to correct Dev/Preview/product
+      instance without profile crossover or duplicate windows.
+- [ ] **S5-WI06** App-data, cache, logs, temp, exports, worktrees, and attachments use
+      correct Windows paths with long-path and Unicode coverage.
+- [ ] **S5-WI07** Sleep, wake, lock, unlock, network loss, and app restart recover.
+- [ ] **S5-WI08** Firewall, antivirus, UAC, and file-lock failures are actionable and safe.
 
-## Multi-pane Chat and swarm workspaces
+## S5-F6 - Agent harness parity
 
-- [ ] **S5-TG01** One, two, three, and four visible top-level Chat panes each
-      retain an independent heading, transcript scrollbar, timeline, composer,
-      draft, focus, run/stream/error state, and simultaneous send path.
-- [ ] **S5-TG02** Tab reorder, center-to-tab, directional edge drops, every
-      preset/asymmetric layout, resize, maximize, join/close, and fifth-group
-      recovery match their previews through pointer and keyboard paths.
-- [ ] **S5-TG03** Drag-out, Move into New Window, cross-window drop, pull-back,
-      destination failure, source close/crash, and read-only copy preserve one
-      durable Chat identity and never expose two editable owners.
-- [ ] **S5-TG04** Main plus three auxiliary workbench windows is the hard app
-      maximum across every creation path; fifth-window races preserve source
-      state and offer existing-window destinations while exempt dialogs still open.
-- [ ] **S5-TG05** Window bounds/display, group trees, active tabs, drafts, split
-      sizes, responsive collapse, Saved Workspace promotion, stale panes, and
-      old or over-limit state restore crash-safely without deleting work;
-      excess saved windows remain dormant and recoverable.
-- [ ] **S5-TG06** Terminal/run/agent/worktree/diff/file/browser panes plus
-      fleet/lineage/activity/task-path projections preserve exact identity,
-      Runtime/provenance, and never synthesize/replay/private-reasoning state.
-- [ ] **S5-TG07** Group actions preview exact selection, use shared authority,
-      report partial results, and the full feature passes native macOS/Windows/
-      Linux multi-window, keyboard/reader, scale, leak, and performance evidence.
+- [ ] **S5-AH01** Claude binary download, discovery, login/status, launch, and resume pass.
+- [ ] **S5-AH02** Codex binary download, discovery, login/status, launch, and resume pass.
+- [ ] **S5-AH03** Permission modes, approval prompts, command/path previews, and audit pass.
+- [ ] **S5-AH04** Global/project/task chats run against paths with spaces and worktrees.
+- [ ] **S5-AH05** Streaming text, reasoning, tool events, usage, cancellation, and retry pass.
+- [ ] **S5-AH06** Terminal and agent process trees stop without orphaning provider children.
+- [ ] **S5-AH07** Restart resumes supported sessions and marks unsupported recovery honestly.
 
-## Runtime and orchestration composition
+## S5-F7 - Speech and voice parity
 
-- [ ] **S5-RO01** Every launch previews and snapshots an exact compatible
-      harness/Runtime/provider/model/account/profile/permission/worktree target;
-      Codex cannot use Claude Code Runtime, Claude cannot use Codex Runtime, and
-      no unavailable choice silently falls back.
-- [ ] **S5-RO02** F3 coordination uses one F11-owned provider client/session/event
-      authority with exact capability/version; Codex V1/V2 and Claude/native
-      paths do not create duplicate protocol or activity owners.
-- [ ] **S5-RO03** Codex-to-Claude and Claude-to-Codex `Continue with` each create
-      a separately navigable child Chat/native session with immutable lineage
-      and only the previewed, labeled visible-context manifest.
-- [ ] **S5-RO04** Bidirectional `Delegate to` and mixed workflows exchange
-      versioned task/result envelopes with durable structured output, artifacts,
-      changes, limitations, terminal evidence, and child Chat/run identity.
-- [ ] **S5-RO05** Secrets, credentials, private/encrypted reasoning, provider
-      session state, hidden tool state, and unselected files never cross provider
-      context, logs, diagnostics, audit, or export boundaries.
-- [ ] **S5-RO06** Child permissions, provider account, descendants, budgets,
-      workspace/worktree, approvals, cancel/pause/resume/steer, and partial group
-      results remain capability-gated, previewed, conflict-safe, and no broader
-      than every delegation ceiling.
-- [ ] **S5-RO07** Activity, result, reservation, usage/cost references,
-      cancellation, terminal races, retry, forced crash/restart, uncertain state,
-      mixed Runtimes, packages, and platforms preserve exact provenance without
-      replay or double counting.
-- [ ] **S5-RO08** Verified Dev and macOS preview-package walkthroughs prove both
-      provider directions, incompatible-target repair, accessibility, diagnostics,
-      cancellation, and recovery; Windows/Linux rows remain open until observed
-      natively by S5-F10.
+- [ ] **S5-VO01** Windows speech prerequisites build/install from documented commands.
+- [ ] **S5-VO02** Credential lookup never invokes `/bin/zsh` or another POSIX shell.
+- [ ] **S5-VO03** Microphone permission, device selection, recording, and cancellation pass.
+- [ ] **S5-VO04** Local/offline transcription and configured cloud fallback pass.
+- [ ] **S5-VO05** System TTS and offline Kokoro playback, stop, replay, and device change pass.
+- [ ] **S5-VO06** Model download/cache verification and interrupted recovery pass.
+- [ ] **S5-VO07** Voice history, temporary files, credentials, and child processes clean safely.
 
-## Organization usage APIs
+## S5-F8 - Packaging and security
 
-- [ ] **S5-OU01** Optional OpenAI/Anthropic Admin credentials are write-only,
-      organization-bound, removable, and absent from logs/exports.
-- [ ] **S5-OU02** Pagination/cursors/rate limits/freshness and exact organization,
-      endpoint, window, currency, coverage, and truth provenance pass.
-- [ ] **S5-OU03** Organization totals remain separate from run samples; rebuild,
-      reconciliation, dashboard, budgets, and alerts never double count.
-- [ ] **S5-OU04** Low-value live credentials, closed-app daemon, revoke/failure,
-      package/platform, and sanitized evidence pass or remain explicit blockers.
+- [ ] **S5-PK01** Native Windows Preview directory package builds and launches.
+- [ ] **S5-PK02** x64 NSIS installer and portable package build from exact SHA.
+- [ ] **S5-PK03** Package inspection verifies PE architectures, ASAR/resources,
+      native modules, Claude/Codex, speech sidecars, licenses, and unexpected files.
+- [ ] **S5-PK04** Fresh install and first launch pass under standard user account.
+- [ ] **S5-PK05** Upgrade preserves database, settings, credentials, chats, worktrees,
+      profiles, scheduled tasks, and supported provider sessions.
+- [ ] **S5-PK06** Repair/reinstall and rollback recover without corrupting user data.
+- [ ] **S5-PK07** Uninstall stops owned processes/tasks and honors keep/remove-data choice.
+- [ ] **S5-PK08** SHA256 manifest, exact SHA/version, secret scan, dependency/license
+      inventory, and malware scan evidence pass.
+- [ ] **S5-PK09** Authenticode pipeline signs every required executable when credentials
+      exist, validates chain/timestamp, and fails closed without leaking secrets.
 
-## Obsidian-compatible project knowledge graph
+## S5-F9 - Integrated release
 
-- [ ] **S5-KG01** Existing Stage 4 vaults migrate the six typed sections into
-      seed/system nodes without content, version, hash, backup, selection, or rollback loss.
-- [ ] **S5-KG02** Unlimited custom notes/folders and safe attachments preserve
-      stable identity, frontmatter, aliases, tags, supported embeds, and exact conflicts.
-- [ ] **S5-KG03** Wikilinks, heading/block links, aliases, unresolved/ambiguous
-      targets, backlinks, and graph edges match the declared Obsidian-compatible subset.
-- [ ] **S5-KG04** Note tree, backlinks, local graph, whole-vault graph, filters,
-      and equivalent lists pass keyboard, reader, touch, zoom, reduced-motion,
-      multi-window, and graph/list-truth evidence.
-- [ ] **S5-KG05** Real Obsidian opens the same central and project-owned folders;
-      create/edit/link/rename/move/attachment/conflict/restart round trips preserve both tools' data.
-- [ ] **S5-KG06** App-managed memory stays outside Git; project-owned untracked
-      setup verifies a local exclude; tracking removal is separately confirmed;
-      Flapstack never stages or commits knowledge.
-- [ ] **S5-KG07** Exact node selection and explicitly bounded link expansion
-      preserve provenance/budgets; unselected links, secrets, unsafe files, and
-      out-of-scope agent operations never enter runs, previews, search, or audit content.
-- [ ] **S5-KG08** Index deletion/rebuild, watcher storms, export/import/root
-      remapping, corruption/recovery, declared-scale performance, Dev, and native
-      package profiles pass without trusting derived indexes or `.obsidian` state.
+- [ ] **S5-I01** One clean-user workflow covers project/task/chat creation, terminal,
+      Claude, Codex, permissions, attachments, worktrees, checkpoint, and restart.
+- [ ] **S5-I02** One upgrade-user workflow preserves existing Stage 4 state.
+- [ ] **S5-I03** Voice, deep link, scheduler, credential, and package lifecycle pass together.
+- [ ] **S5-I04** Full Windows CI, local `npm run check`, package smoke, and native
+      inspection pass on candidate SHA.
+- [ ] **S5-I05** macOS CI/local equivalent remains green after shared changes.
+- [ ] **S5-I06** Security, privacy, data-loss, process-ownership, and path reviews pass.
+- [ ] **S5-I07** User completes `docs/stage5-windows-manual-test.md` and accepts result.
+- [ ] **S5-I08** No P0/P1 defect, required unsupported claim, or unverified row remains.
 
-## Performance and scale
+## Evidence rule
 
-- [ ] **S5-PF01** Versioned budgets and deterministic reports record exact
-      SHA/build/platform/hardware/dataset/method/variance.
-- [ ] **S5-PF02** Cold/warm startup, first-use, renderer, long-chat, search,
-      migration, and database budgets pass without truth loss.
-- [ ] **S5-PF03** Supported agent/terminal/grid concurrency, output flood,
-      cancellation, cleanup, idle services, sleep/wake, and 24h soak pass.
-- [ ] **S5-PF04** CI/local regression gates and published support limits match
-      observed native package results.
-
-## Cross-platform public distribution
-
-- [ ] **S5-PD01** Support claims map to native observed OS/architecture/package
-      rows; no target is promoted from cross-build alone.
-- [ ] **S5-PD02** macOS public artifacts pass Developer ID signing, hardened
-      runtime/entitlements, notarization, staple, Gatekeeper, and clean lifecycle.
-- [ ] **S5-PD03** Windows package, native modules, services, secret store,
-      Runtimes, speech/capture, upgrade/uninstall, and cleanup pass natively.
-- [ ] **S5-PD04** Linux package/distro/display, native modules, services, secret
-      store fallback, Runtimes, speech/capture, upgrade/uninstall pass natively.
-- [ ] **S5-PD05** Checksums, file/architecture manifest, dependencies/SBOM,
-      secret/malware/security scans, documentation, and withdrawal recovery pass.
-
-## Integrated release
-
-- [ ] **S5-I01** Candidate ledger maps every required row to current exact-SHA evidence.
-- [ ] **S5-I02** Clean install and Stage 4 upgrade/rollback preserve all supported
-      data, identity, authority, history, and preferences.
-- [ ] **S5-I03** One project exercises onboarding, shared personality/profile,
-      mixed workflow/Reviewer child, bidirectional Codex/Claude delegation,
-      child-Chat lineage, grid, visual context, mobile, usage,
-      Obsidian knowledge graph/context round trip, restart, audit, and export
-      with matching durable state.
-- [ ] **S5-I04** Independent security/privacy, UI/accessibility/usability,
-      performance, native-platform, artifact, package, and docs reviews pass.
-- [ ] **S5-I05** Up to three review/fix rounds leave no P0/P1 or acceptance
-      blocker and produce one exact-SHA handoff; remote release actions remain separately authorized.
+Each checked row records command or walkthrough, result, date, SHA, OS build,
+artifact hash when applicable, and sanitized evidence location. If any required
+check cannot run, leave row open and report Stage 5 blocked.

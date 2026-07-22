@@ -20,6 +20,7 @@ import {
 } from "../src/main/lib/mcp-test-control/codex-status"
 import {
   appendUserMessage,
+  buildActivityAssistant,
   findLastAssistantMessage,
   getMessageText,
   parseStoredMessages,
@@ -1050,6 +1051,54 @@ describe("stored message helpers", () => {
     expect(summary.assistant).toBe(1)
     expect(summary.lastAssistantText).toBe("OK")
     expect(getMessageText(findLastAssistantMessage(parseStoredMessages(raw))!)).toBe("OK")
+  })
+
+  it("projects Runtime activity into a bounded assistant result", () => {
+    expect(
+      buildActivityAssistant([
+        {
+          eventId: "text-start",
+          sequence: 1,
+          kind: "agent-text",
+          phase: "started",
+          payloadJson: JSON.stringify({ text: "" }),
+        },
+        {
+          eventId: "text-complete",
+          sequence: 2,
+          kind: "agent-text",
+          phase: "completed",
+          providerMessageId: "message-1",
+          payloadJson: JSON.stringify({ text: "WINDOWS_READY" }),
+        },
+        {
+          eventId: "usage",
+          sequence: 3,
+          kind: "usage",
+          phase: "snapshot",
+          payloadJson: JSON.stringify({
+            inputTokens: 2,
+            outputTokens: 4,
+            cachedTokens: 8,
+            reasoningTokens: 1,
+            costUsd: 0.25,
+          }),
+        },
+      ]),
+    ).toEqual({
+      id: "message-1",
+      text: "WINDOWS_READY",
+      metadata: {
+        usage: {
+          inputTokens: 2,
+          outputTokens: 4,
+          cachedTokens: 8,
+          reasoningTokens: 1,
+          totalTokens: 15,
+          costUsd: 0.25,
+        },
+      },
+    })
   })
 })
 

@@ -397,9 +397,6 @@ function validateGitArguments(command: string, args: readonly string[]): void {
         continue
       }
       if (arg.startsWith("-")) throw new ExecArgumentsError("Git mutation flag is not allowlisted.")
-      if (resolve("/root", arg) !== "/root" && !resolve("/root", arg).startsWith("/root/")) {
-        throw new ExecArgumentsError("Git mutation path must stay relative to the project.")
-      }
     }
   }
 }
@@ -440,7 +437,12 @@ function validateShellArguments(command: string, args: readonly string[]): void 
 }
 
 function isExternalPathArgument(arg: string): boolean {
-  return arg.startsWith("/") || /^[A-Za-z]:[\\/]/.test(arg) || arg.split(/[\\/]/).includes("..")
+  return (
+    arg.startsWith("/") ||
+    /^[\\/]{2}/.test(arg) ||
+    /^[A-Za-z]:[\\/]/.test(arg) ||
+    arg.split(/[\\/]/).includes("..")
+  )
 }
 
 async function executeCommand(

@@ -141,7 +141,11 @@ describe("portable project-vault destination remapping", () => {
     ).rejects.toThrow(/project target|ENOENT/i)
 
     const symlinkTarget = join(fixture.root, "vault-link")
-    await symlink(fixture.unrelatedRoot, symlinkTarget)
+    await symlink(
+      fixture.unrelatedRoot,
+      symlinkTarget,
+      process.platform === "win32" ? "junction" : "dir",
+    )
     await expect(
       planImport(fixture, {
         projects: { "project-1": fixture.targetProjectRoot },

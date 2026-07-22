@@ -1,48 +1,11 @@
-# S5 — Product Polish, Personalization, and Reach
+# Stage 5 Product-Polish Router Moved
 
-Stage 5 turns the complete Stage 4 operating environment into an approachable,
-refined, cross-device, cross-platform product ready for wider distribution.
+Former Stage 5 product-polish, personalization, mobile, visual-context, swarm,
+performance, distribution, knowledge-graph, and integrated-release planning is
+now Stage 6.
 
-Delivery order:
+Use:
+`openspec/stages/s6-product-polish-personalization-reach/README.md`.
 
-1. [S5-F1 Product-wide UI/UX polish](features/s5-f1-product-ui-ux-polish/README.md)
-2. [S5-F2 Guided onboarding and feature visibility](features/s5-f2-guided-onboarding-visibility/README.md)
-3. [S5-F3 Agent Profiles and reusable personalities](features/s5-f3-agent-profiles-personalities/README.md)
-4. [S5-F4 Cross-agent mobile companion](features/s5-f4-mobile-companion/README.md)
-5. [S5-F5 Visual context and screenshot capture](features/s5-f5-visual-context/README.md)
-6. [S5-F6 Multi-pane Chat and swarm workspaces](features/s5-f6-terminal-grid-swarm/README.md)
-7. [S5-F7 Runtime/orchestration composition](features/s5-f7-runtime-orchestration-composition/README.md)
-8. [S5-F8 Organization usage APIs](features/s5-f8-organization-usage/README.md)
-9. [S5-F9 Performance and scale](features/s5-f9-performance-scale/README.md)
-10. [S5-F10 Cross-platform public distribution](features/s5-f10-platform-distribution/README.md)
-11. [S5-F12 Obsidian-compatible project knowledge graph](features/s5-f12-obsidian-knowledge-graph/README.md)
-12. [S5-F11 Integrated Stage 5 release](features/s5-f11-integrated-release/README.md)
-
-Entry gate: all eleven Stage 4 features and the Stage 4 integrated matrix are
-fully accepted on one exact SHA. Code-ready or partial Stage 4 packets do not
-satisfy this gate.
-
-Dependency spine:
-
-- F1 establishes shared interaction, accessibility, responsive, and visual
-  primitives consumed by F2, F3, F4, F5, and F6.
-- F2 and F3 must preserve Stage 4 safety and authority while simplifying first
-  use and agent selection.
-- F4, F5, and F6 reuse existing chats, runs, workspaces, approvals, audit, and
-  orchestration services; none creates a second control plane.
-- F7 closes known F3/F11 seams before F4/F6 and integrated mixed-agent proof.
-- F8 feeds organization-aware usage into existing Stage 4 usage surfaces.
-- F9 defines and enforces performance budgets before public distribution.
-- F10 produces real macOS, Windows, and Linux distribution evidence.
-- F12 extends the accepted S4-F2 vault and consumes F1 interaction primitives,
-  F9 budgets, and F10 native package evidence.
-- F11 begins only after F1 through F10 and F12 feature exits.
-
-Stage verification: docs/stage5-full-feature-test-matrix.md, Node 22 npm run
-check, strict validation of every Stage 5 OpenSpec change, verified Flapstack
-Dev walkthroughs, signed/notarized macOS proof, native Windows/Linux package
-proof, real mobile-device and Obsidian interoperability coverage,
-accessibility/usability review, performance budgets, and independent release review.
-
-These files are navigation only. Task status lives only in linked OpenSpec
-tasks.md files.
+Current Stage 5 Windows compatibility lives at:
+`openspec/stages/s5-windows-compatibility/README.md`.

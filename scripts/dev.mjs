@@ -22,6 +22,11 @@ import { existsSync } from "node:fs"
 import net from "node:net"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  findOwnedWindowsProcessIds,
+  queryWindowsProcesses,
+  windowsTaskkillArgs,
+} from "./lib/windows-processes.mjs"
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const LOCAL_ENV_FILE = resolve(ROOT, ".env.local")
@@ -50,6 +55,12 @@ const STALE_PATTERNS = [
 delete process.env.ELECTRON_RUN_AS_NODE
 
 function stalePids() {
+  if (IS_WIN) {
+    return findOwnedWindowsProcessIds(queryWindowsProcesses(), {
+      root: ROOT,
+      selfPid: process.pid,
+    })
+  }
   const found = new Set()
   for (const pattern of STALE_PATTERNS) {
     const res = spawnSync("pgrep", ["-f", pattern], { encoding: "utf8" })
@@ -68,13 +79,16 @@ function stalePids() {
 // outlive its vite server, keep the single-instance lock + auth port, and force
 // the new instance to quit - leaving an orphaned window running stale code.
 async function killStaleAndWait() {
-  if (IS_WIN) return // strictPort (below) still guards against conflicts on Windows
   let pids = stalePids()
   if (pids.length === 0) return
   console.log(`[dev] Stopping ${pids.length} stale Flapstack dev process(es)...`)
   for (const pid of pids) {
     try {
-      process.kill(pid, "SIGTERM")
+      if (IS_WIN) {
+        spawnSync("taskkill.exe", windowsTaskkillArgs(pid), { windowsHide: true })
+      } else {
+        process.kill(pid, "SIGTERM")
+      }
     } catch {}
   }
   const deadline = Date.now() + 3000
@@ -88,7 +102,11 @@ async function killStaleAndWait() {
   // Escalate to SIGKILL for anything that ignored SIGTERM.
   for (const pid of stalePids()) {
     try {
-      process.kill(pid, "SIGKILL")
+      if (IS_WIN) {
+        spawnSync("taskkill.exe", windowsTaskkillArgs(pid, true), { windowsHide: true })
+      } else {
+        process.kill(pid, "SIGKILL")
+      }
     } catch {}
   }
   await sleep(400)
@@ -125,7 +143,9 @@ if (!(await waitForPortFree(DEV_PORT, 4000))) {
     `\n[dev] Port ${DEV_PORT} is still in use after cleanup - refusing to start a` +
       ` second dev server on a different port.\n` +
       `[dev] Something outside this checkout is holding it. Free it and retry:\n` +
-      `[dev]   lsof -ti :${DEV_PORT} | xargs kill -9\n`,
+      (IS_WIN
+        ? `[dev]   Get-NetTCPConnection -LocalPort ${DEV_PORT} | Select-Object OwningProcess\n`
+        : `[dev]   lsof -ti :${DEV_PORT} | xargs kill -9\n`),
   )
   process.exit(1)
 }
@@ -136,6 +156,10 @@ const child = spawn(process.execPath, [bin, "dev"], {
   cwd: ROOT,
   stdio: "inherit",
   env: { ...process.env, FLAPSTACK_DEV_CHECKOUT: ROOT },
+})
+child.on("error", (error) => {
+  console.error(`[dev] Could not start electron-vite: ${error.message}`)
+  process.exit(1)
 })
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => child.kill(sig))

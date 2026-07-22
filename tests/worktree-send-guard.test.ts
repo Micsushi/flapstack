@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
+function readSource(path: string): string {
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n")
+}
+
 describe("stale worktree send guard", () => {
   it("blocks button and keyboard submission with a durable recovery message", () => {
-    const source = readFileSync("src/renderer/features/agents/main/chat-input-area.tsx", "utf8")
+    const source = readSource("src/renderer/features/agents/main/chat-input-area.tsx")
 
     expect(source).toContain(
       'worktreeWasReplaced ? "Checkout was replaced" : "Checkout unavailable"',
@@ -21,10 +25,7 @@ describe("stale worktree send guard", () => {
     expect(source).toContain('"Choose repository"')
     expect(source).toContain("No Chats were changed.")
 
-    const queueSource = readFileSync(
-      "src/renderer/features/agents/components/queue-processor.tsx",
-      "utf8",
-    )
+    const queueSource = readSource("src/renderer/features/agents/components/queue-processor.tsx")
     expect(queueSource).toContain("resolveWorktreeStatus.query")
     expect(queueSource).toContain('checkout.status === "unknown" || checkout.status === "replaced"')
     expect(queueSource).toContain("if (!parentChatId) {\n        scheduleProcessing(subChatId)")
@@ -32,17 +33,14 @@ describe("stale worktree send guard", () => {
       queueSource.indexOf("popItem"),
     )
 
-    const resolverSource = readFileSync("src/main/lib/worktree-resolver.ts", "utf8")
+    const resolverSource = readSource("src/main/lib/worktree-resolver.ts")
     expect(resolverSource).toContain("REPLACED_FILESYSTEM_ROOT_MESSAGE")
 
-    const watcherBridgeSource = readFileSync("src/main/lib/git/watcher/ipc-bridge.ts", "utf8")
+    const watcherBridgeSource = readSource("src/main/lib/git/watcher/ipc-bridge.ts")
     expect(watcherBridgeSource).toContain('return { status: "blocked", reason }')
     expect(watcherBridgeSource).toContain("REPLACED_FILESYSTEM_ROOT_MESSAGE")
 
-    const watcherHookSource = readFileSync(
-      "src/renderer/lib/hooks/use-file-change-listener.ts",
-      "utf8",
-    )
+    const watcherHookSource = readSource("src/renderer/lib/hooks/use-file-change-listener.ts")
     expect(watcherHookSource).toContain('result?.status === "blocked"')
     expect(watcherHookSource).toContain("result.reason")
   })

@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import {
   applyPortableImport as applyPortableImportUnchecked,
@@ -207,34 +208,37 @@ describe("portability-import-apply", () => {
     recovered.close()
   })
 
-  it("rejects a symlink-swapped database backup during recovery", async () => {
-    const fixture = await appliedFixture()
-    const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
-    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-      phase: string
-      databaseBackupPath: string
-    }
-    journal.phase = "database-committed"
-    await writeFile(journalPath, `${JSON.stringify(journal)}\n`)
-    const movedBackup = `${journal.databaseBackupPath}.moved`
-    const outside = join(fixture.stateRoot, "outside-database-bytes")
-    await writeFile(outside, "outside-must-never-replace-the-live-database")
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects a symlink-swapped database backup during recovery",
+    async () => {
+      const fixture = await appliedFixture()
+      const journalPath = join(fixture.stateRoot, "journals", `${fixture.operationId}.json`)
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+        phase: string
+        databaseBackupPath: string
+      }
+      journal.phase = "database-committed"
+      await writeFile(journalPath, `${JSON.stringify(journal)}\n`)
+      const movedBackup = `${journal.databaseBackupPath}.moved`
+      const outside = join(fixture.stateRoot, "outside-database-bytes")
+      await writeFile(outside, "outside-must-never-replace-the-live-database")
 
-    await expect(
-      recoverInterruptedImports(fixture.stateRoot, fixture.targetPath, {
-        beforeDatabaseRestore: async () => {
-          await rename(journal.databaseBackupPath, movedBackup)
-          await symlink(outside, journal.databaseBackupPath)
-        },
-      }),
-    ).rejects.toThrow(/non-symlink/i)
-    const database = new Database(fixture.targetPath, { readonly: true })
-    expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
-      "Incoming",
-    )
-    database.close()
-    expect(await readFile(outside, "utf8")).toBe("outside-must-never-replace-the-live-database")
-  })
+      await expect(
+        recoverInterruptedImports(fixture.stateRoot, fixture.targetPath, {
+          beforeDatabaseRestore: async () => {
+            await rename(journal.databaseBackupPath, movedBackup)
+            await symlink(outside, journal.databaseBackupPath)
+          },
+        }),
+      ).rejects.toThrow(/non-symlink/i)
+      const database = new Database(fixture.targetPath, { readonly: true })
+      expect(database.prepare("SELECT name FROM projects WHERE id = 'p1'").pluck().get()).toBe(
+        "Incoming",
+      )
+      database.close()
+      expect(await readFile(outside, "utf8")).toBe("outside-must-never-replace-the-live-database")
+    },
+  )
 
   it("rejects a regular-file replacement of the bound database backup", async () => {
     const fixture = await appliedFixture()
@@ -624,7 +628,11 @@ describe("portability-import-apply", () => {
         hooks: {
           afterRevalidation: async () => {
             await rename(fixture.targetConfig, moved)
-            await symlink(outside, fixture.targetConfig)
+            await symlink(
+              outside,
+              fixture.targetConfig,
+              process.platform === "win32" ? "junction" : "dir",
+            )
           },
         },
       }),
@@ -646,7 +654,11 @@ describe("portability-import-apply", () => {
           faultAt: "after-files",
           beforeFileRollback: async () => {
             await rename(fixture.targetConfig, moved)
-            await symlink(outside, fixture.targetConfig)
+            await symlink(
+              outside,
+              fixture.targetConfig,
+              process.platform === "win32" ? "junction" : "dir",
+            )
           },
         },
       }),
@@ -654,46 +666,52 @@ describe("portability-import-apply", () => {
     expect(await readFile(outsideFile, "utf8")).toBe("outside-safe")
   })
 
-  it("rejects a reviewed leaf swapped to a symlink before backup without reading outside", async () => {
-    const fixture = await fileApplyFixture("leaf-read-swap")
-    const targetFile = join(fixture.targetConfig, "usage-settings.json")
-    const moved = join(fixture.root, "reviewed-leaf-moved")
-    const outsideFile = join(fixture.root, "outside-secret.txt")
-    await writeFile(outsideFile, "outside-must-never-be-backed-up")
-    await expect(
-      applyPortableImport({
-        ...fixture.applyInput,
-        hooks: {
-          beforeReviewedLeafRead: async () => {
-            await rename(targetFile, moved)
-            await symlink(outsideFile, targetFile)
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects a reviewed leaf swapped to a symlink before backup without reading outside",
+    async () => {
+      const fixture = await fileApplyFixture("leaf-read-swap")
+      const targetFile = join(fixture.targetConfig, "usage-settings.json")
+      const moved = join(fixture.root, "reviewed-leaf-moved")
+      const outsideFile = join(fixture.root, "outside-secret.txt")
+      await writeFile(outsideFile, "outside-must-never-be-backed-up")
+      await expect(
+        applyPortableImport({
+          ...fixture.applyInput,
+          hooks: {
+            beforeReviewedLeafRead: async () => {
+              await rename(targetFile, moved)
+              await symlink(outsideFile, targetFile)
+            },
           },
-        },
-      }),
-    ).rejects.toThrow(/symlink|regular|identity|ELOOP/i)
-    expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-be-backed-up")
-  })
+        }),
+      ).rejects.toThrow(/symlink|regular|identity|ELOOP/i)
+      expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-be-backed-up")
+    },
+  )
 
-  it("rejects a published leaf swapped to a symlink during rollback", async () => {
-    const fixture = await fileApplyFixture("leaf-rollback-swap")
-    const targetFile = join(fixture.targetConfig, "usage-settings.json")
-    const moved = join(fixture.root, "published-leaf-moved")
-    const outsideFile = join(fixture.root, "outside-rollback.txt")
-    await writeFile(outsideFile, "outside-must-never-change")
-    await expect(
-      applyPortableImport({
-        ...fixture.applyInput,
-        hooks: {
-          faultAt: "after-files",
-          beforeFileRollback: async () => {
-            await rename(targetFile, moved)
-            await symlink(outsideFile, targetFile)
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects a published leaf swapped to a symlink during rollback",
+    async () => {
+      const fixture = await fileApplyFixture("leaf-rollback-swap")
+      const targetFile = join(fixture.targetConfig, "usage-settings.json")
+      const moved = join(fixture.root, "published-leaf-moved")
+      const outsideFile = join(fixture.root, "outside-rollback.txt")
+      await writeFile(outsideFile, "outside-must-never-change")
+      await expect(
+        applyPortableImport({
+          ...fixture.applyInput,
+          hooks: {
+            faultAt: "after-files",
+            beforeFileRollback: async () => {
+              await rename(targetFile, moved)
+              await symlink(outsideFile, targetFile)
+            },
           },
-        },
-      }),
-    ).rejects.toThrow(/leaf|symlink|unsafe/i)
-    expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-change")
-  })
+        }),
+      ).rejects.toThrow(/leaf|symlink|unsafe/i)
+      expect(await readFile(outsideFile, "utf8")).toBe("outside-must-never-change")
+    },
+  )
 
   it("binds apply to the reviewed plan targets and selected resolutions", async () => {
     const fixture = await fileApplyFixture("confirmation")

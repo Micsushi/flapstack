@@ -5,15 +5,15 @@
 Stage 4 deliberately separates F3 coordination from F11 Agent Runtime
 authority. It also correctly treats Codex App Server and the Claude Agent SDK as
 different native harnesses with different sessions, protocols, permissions,
-events, and capabilities. Stage 5 must preserve that native truth while adding
+events, and capabilities. Stage 6 must preserve that native truth while adding
 explicit translated adapters that let other providers consume a Runtime
 contract where capabilities can be mapped honestly.
 
-Stage 5 still needs those systems to work together. Users must be able to
+Stage 6 still needs those systems to work together. Users must be able to
 continue or delegate work from a Codex Chat to a Claude Code Chat, and in the
 other direction, without losing visible context, lineage, permissions, worktree
 truth, structured results, usage attribution, cancellation, or recovery. The
-current S5-F7 plan covers F3/F11 seams but does not fully specify that
+current S6-F7 plan covers F3/F11 seams but does not fully specify that
 cross-provider composition contract.
 
 ## What Changes
@@ -52,5 +52,5 @@ cross-provider composition contract.
   and usage projection, lifecycle recovery, target selectors, diagnostics,
   documentation, and tests.
 - Dependencies: fully accepted S4-F3 and S4-F11.
-- Downstream: S5 mobile, Agent Profiles, terminal-grid/swarm, performance,
+- Downstream: S6 mobile, Agent Profiles, terminal-grid/swarm, performance,
   cross-platform distribution, and integrated release consume this contract.

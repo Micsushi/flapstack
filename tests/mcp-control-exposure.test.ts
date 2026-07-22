@@ -96,7 +96,7 @@ describe("Flapstack MCP per-chat exposure", () => {
       ),
     ).toEqual({
       command: "/Flapstack",
-      args: ["/app/out/main/mcp-control-stdio.js"],
+      args: [join("/app/out/main", "mcp-control-stdio.js")],
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         FLAPSTACK_MCP_CHAT_ID: "chat-1",

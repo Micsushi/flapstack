@@ -104,8 +104,12 @@ describe("permission promotion", () => {
     roots.push(root, outside)
     await mkdir(join(root, "src"))
     await writeFile(join(root, "src", "safe.ts"), "ok")
-    await symlink(outside, join(root, "escape"))
-    await symlink(join(outside, "missing"), join(root, "dangling"))
+    await symlink(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
+    await symlink(
+      join(outside, "missing"),
+      join(root, "dangling"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
 
     await expect(isWithinProjectBoundary(root, "src/safe.ts")).resolves.toBe(true)
     await expect(isWithinProjectBoundary(root, "src/new.ts")).resolves.toBe(true)

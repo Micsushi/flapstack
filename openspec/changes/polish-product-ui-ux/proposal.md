@@ -4,7 +4,7 @@
 
 Flapstack now exposes a large local agent operating environment, but the result
 must become easier to understand, faster to navigate, and more consistent before
-wider use. Stage 5 makes product-wide polish a primary feature rather than a
+wider use. Stage 6 makes product-wide polish a primary feature rather than a
 collection of incidental fixes.
 
 ## What Changes

@@ -1135,6 +1135,12 @@ function tickTask(db: Sqlite, taskId: string): void {
   const tick = db.transaction(() => {
     let orchestration = requireOrchestration(db, taskId)
     if (Number(orchestration.engine_snapshot_version) !== 1) return
+    reconcileRuntimeActivityUsage(db, taskId)
+    const preOutcomeStop = stopDecision(db, orchestration)
+    if (preOutcomeStop) {
+      stopTask(db, taskId, preOutcomeStop.reason, preOutcomeStop.status)
+      return
+    }
     reconcileRunOutcomes(db, taskId)
     failUnrecoverableDependencies(db, taskId)
     orchestration = requireOrchestration(db, taskId)
@@ -1264,6 +1270,71 @@ function reconcileRunOutcomes(db: Sqlite, taskId: string): void {
       usage.id,
     )
   }
+}
+
+function reconcileRuntimeActivityUsage(db: Sqlite, taskId: string): void {
+  const rows = db
+    .prepare(
+      `SELECT a.id agent_id, e.payload_json
+       FROM orchestration_agents a
+       JOIN agent_activity_events e ON e.run_id = a.run_id
+       WHERE a.task_id = ? AND e.kind = 'usage' AND e.phase = 'snapshot'
+       ORDER BY a.id, e.sequence`,
+    )
+    .all(taskId) as Array<{ agent_id: string; payload_json: string }>
+  const usageByAgent = new Map<
+    string,
+    { inputTokens: number; outputTokens: number; reasoningTokens: number; totalTokens: number }
+  >()
+
+  for (const row of rows) {
+    let payload: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(row.payload_json)
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
+      payload = parsed as Record<string, unknown>
+    } catch {
+      continue
+    }
+    const inputTokens = activityUsageNumber(payload.inputTokens) ?? 0
+    const outputTokens = activityUsageNumber(payload.outputTokens) ?? 0
+    const cachedTokens = activityUsageNumber(payload.cachedTokens) ?? 0
+    const reasoningTokens = activityUsageNumber(payload.reasoningTokens) ?? 0
+    const reportedTotal = activityUsageNumber(payload.totalTokens)
+    const totalTokens = reportedTotal ?? inputTokens + outputTokens + cachedTokens + reasoningTokens
+    const current = usageByAgent.get(row.agent_id) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    usageByAgent.set(row.agent_id, {
+      inputTokens: Math.max(current.inputTokens, inputTokens),
+      outputTokens: Math.max(current.outputTokens, outputTokens),
+      reasoningTokens: Math.max(current.reasoningTokens, reasoningTokens),
+      totalTokens: Math.max(current.totalTokens, totalTokens),
+    })
+  }
+
+  for (const [agentId, usage] of usageByAgent) {
+    db.prepare(
+      `UPDATE orchestration_agents SET
+        input_tokens = MAX(input_tokens, ?), output_tokens = MAX(output_tokens, ?),
+        reasoning_tokens = MAX(reasoning_tokens, ?), total_tokens = MAX(total_tokens, ?)
+       WHERE id = ? AND task_id = ?`,
+    ).run(
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.reasoningTokens,
+      usage.totalTokens,
+      agentId,
+      taskId,
+    )
+  }
+}
+
+function activityUsageNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
 function persistMessageUsageSamples(db: Sqlite, taskId: string): void {

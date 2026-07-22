@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import {
   createPortableImportPlan,
@@ -40,7 +41,7 @@ describe("portability-import-plan", () => {
     })
   })
 
-  it("rejects a symlinked bundle metadata JSON file", async () => {
+  it.skipIf(!fileSymlinksSupported)("rejects a symlinked bundle metadata JSON file", async () => {
     const root = await tempRoot()
     const sourcePath = join(root, "source.db")
     createTestDatabase(sourcePath)
@@ -58,37 +59,40 @@ describe("portability-import-plan", () => {
     await expect(verifyPortableBundle(bundlePath)).rejects.toThrow(/non-symlink/i)
   })
 
-  it("rejects an existing target leaf symlink without reading outside content", async () => {
-    const root = await tempRoot()
-    const sourcePath = join(root, "source.db")
-    createTestDatabase(sourcePath, "Incoming")
-    const configRoot = await createConfigRoot(root, "incoming")
-    const bundlePath = join(root, "leaf-symlink.flapstack-export")
-    await createPortableExport({
-      outputPath: bundlePath,
-      databasePath: sourcePath,
-      appVersion: "1",
-      selection: [{ id: "settings" }],
-      fileSources: [{ scopeId: "settings", root: configRoot, target: { kind: "config" } }],
-    })
-    const targetPath = join(root, "target.db")
-    createTestDatabase(targetPath, "Local")
-    const targetConfig = join(root, "target-config")
-    await mkdir(targetConfig)
-    const outside = join(root, "outside-secret.txt")
-    await writeFile(outside, "outside-must-never-enter-preview")
-    await symlink(outside, join(targetConfig, "usage-settings.json"))
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects an existing target leaf symlink without reading outside content",
+    async () => {
+      const root = await tempRoot()
+      const sourcePath = join(root, "source.db")
+      createTestDatabase(sourcePath, "Incoming")
+      const configRoot = await createConfigRoot(root, "incoming")
+      const bundlePath = join(root, "leaf-symlink.flapstack-export")
+      await createPortableExport({
+        outputPath: bundlePath,
+        databasePath: sourcePath,
+        appVersion: "1",
+        selection: [{ id: "settings" }],
+        fileSources: [{ scopeId: "settings", root: configRoot, target: { kind: "config" } }],
+      })
+      const targetPath = join(root, "target.db")
+      createTestDatabase(targetPath, "Local")
+      const targetConfig = join(root, "target-config")
+      await mkdir(targetConfig)
+      const outside = join(root, "outside-secret.txt")
+      await writeFile(outside, "outside-must-never-enter-preview")
+      await symlink(outside, join(targetConfig, "usage-settings.json"))
 
-    await expect(
-      createPortableImportPlan({
-        bundlePath,
-        databasePath: targetPath,
-        stateRoot: join(root, "state"),
-        targetRoots: { config: targetConfig },
-      }),
-    ).rejects.toThrow(/leaf|symlink|regular/i)
-    expect(await readFile(outside, "utf8")).toBe("outside-must-never-enter-preview")
-  })
+      await expect(
+        createPortableImportPlan({
+          bundlePath,
+          databasePath: targetPath,
+          stateRoot: join(root, "state"),
+          targetRoots: { config: targetConfig },
+        }),
+      ).rejects.toThrow(/leaf|symlink|regular/i)
+      expect(await readFile(outside, "utf8")).toBe("outside-must-never-enter-preview")
+    },
+  )
 
   it("persists a deterministic create/update/conflict/skip dry-run without mutation", async () => {
     const root = await tempRoot()

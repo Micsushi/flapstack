@@ -1,6 +1,6 @@
 ## Context
 
-Visibility is presentation policy, not capability authority. Stage 5 needs a
+Visibility is presentation policy, not capability authority. Stage 6 needs a
 single registry so onboarding, navigation, Settings, search, and help agree.
 
 ## Goals / Non-Goals

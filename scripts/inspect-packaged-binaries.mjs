@@ -79,6 +79,115 @@ function readBundleExecutable(appPath) {
   throw new Error(`Unable to read CFBundleExecutable from ${plist}`)
 }
 
+export function readWindowsElectronVersion(appPath, runner = spawnSync) {
+  const result = runner(appPath, ["-p", "process.versions.electron"], {
+    encoding: "utf8",
+    windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  })
+  if (result.error)
+    throw new Error(`Unable to inspect Windows app version: ${result.error.message}`)
+  const version = String(result.stdout ?? "").trim()
+  if (result.status !== 0 || !version) {
+    throw new Error(`Unable to read packaged Electron version from ${appPath}`)
+  }
+  return version
+}
+
+export function inspectWindowsApp(appPath, platformKey, options = {}) {
+  if (platformKey !== "win32-x64") {
+    throw new Error(`Unsupported Windows package platform: ${platformKey}`)
+  }
+  const packageRoot = path.dirname(appPath)
+  const resources = path.join(packageRoot, "resources")
+  const bin = path.join(resources, "bin")
+  const unpacked = path.join(resources, "app.asar.unpacked", "node_modules")
+  const binaries = {
+    Flapstack: appPath,
+    Claude: path.join(bin, "claude.exe"),
+    Codex: path.join(bin, "codex.exe"),
+    Whisper: path.join(bin, "whisper-cli.exe"),
+    Parakeet: path.join(bin, "flapstack-stt-sidecar.exe"),
+    "better-sqlite3": path.join(
+      unpacked,
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.node",
+    ),
+    "node-pty": path.join(unpacked, "node-pty", "build", "Release", "pty.node"),
+    "node-pty-conpty": path.join(unpacked, "node-pty", "build", "Release", "conpty.node"),
+    "node-pty-console-list": path.join(
+      unpacked,
+      "node-pty",
+      "build",
+      "Release",
+      "conpty_console_list.node",
+    ),
+    "node-pty-winpty-agent": path.join(
+      unpacked,
+      "node-pty",
+      "build",
+      "Release",
+      "winpty-agent.exe",
+    ),
+    "node-pty-winpty-dll": path.join(unpacked, "node-pty", "build", "Release", "winpty.dll"),
+  }
+  for (const [label, binary] of Object.entries(binaries)) {
+    const inspection = assertBundledBinary(binary, platformKey)
+    console.log(`${label}: regular ${inspection.format} ${inspection.architectures.join("+")}`)
+  }
+  const asar = path.join(resources, "app.asar")
+  const asarStat = fs.lstatSync(asar)
+  if (!asarStat.isFile() || asarStat.isSymbolicLink()) {
+    throw new Error(`${asar}: expected a regular app archive`)
+  }
+  for (const license of [
+    "flapstack-stt-sidecar-LICENSE",
+    "transcribe.cpp-LICENSE",
+    "whisper.cpp-LICENSE",
+  ]) {
+    const licensePath = path.join(bin, license)
+    const stat = fs.lstatSync(licensePath)
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`${licensePath}: expected a regular license file`)
+    }
+    console.log(`${license}: regular file`)
+  }
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
+  const expectedElectronVersion = String(packageJson.devDependencies.electron).replace(
+    /^[^0-9]*/,
+    "",
+  )
+  const electronVersion = (options.readVersion ?? readWindowsElectronVersion)(appPath)
+  if (
+    !electronVersion.startsWith(`${expectedElectronVersion}.`) &&
+    electronVersion !== expectedElectronVersion
+  ) {
+    throw new Error(
+      `Electron version mismatch: expected ${expectedElectronVersion}, found ${electronVersion}`,
+    )
+  }
+  console.log(`Electron version: ${electronVersion}`)
+  if (options.smoke) {
+    runSmoke(
+      "Claude",
+      binaries.Claude,
+      ["--version"],
+      new RegExp(CLAUDE_VERSION.replaceAll(".", "\\.")),
+    )
+    runSmoke(
+      "Codex",
+      binaries.Codex,
+      ["--version"],
+      new RegExp(CODEX_VERSION.replaceAll(".", "\\.")),
+    )
+    runSmoke("Whisper", binaries.Whisper, ["--help"], /whisper|usage:/i)
+    runSidecarSmoke(binaries.Parakeet)
+  }
+  return { appPath, platformKey, electronVersion, binaries }
+}
+
 export function inspectMacApp(appPath, platformKey, options = {}) {
   if (!/^darwin-(arm64|x64)$/.test(platformKey)) {
     throw new Error(`Unsupported macOS package platform: ${platformKey}`)
@@ -166,9 +275,17 @@ function main() {
   const args = process.argv.slice(2)
   const app = readArg(args, "--app")
   const platform = readArg(args, "--platform")
-  if (!app || !platform)
-    throw new Error("Usage: --app=<Flapstack.app> --platform=darwin-arm64|darwin-x64 [--smoke]")
-  inspectMacApp(path.resolve(app), platform, { smoke: args.includes("--smoke") })
+  if (!app || !platform) {
+    throw new Error(
+      "Usage: --app=<app path> --platform=darwin-arm64|darwin-x64|win32-x64 [--smoke]",
+    )
+  }
+  const appPath = path.resolve(app)
+  if (platform === "win32-x64") {
+    inspectWindowsApp(appPath, platform, { smoke: args.includes("--smoke") })
+  } else {
+    inspectMacApp(appPath, platform, { smoke: args.includes("--smoke") })
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

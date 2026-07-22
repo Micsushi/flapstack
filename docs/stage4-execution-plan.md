@@ -1,6 +1,6 @@
 # Stage 4 Execution Plan
 
-Stage 4 is the prerequisite operating-environment stage for Stage 5. Its eleven
+Stage 4 is the prerequisite operating-environment stage for Stage 6. Its eleven
 feature boards contain 87 independently pick-up-able tasks. This document orders those boards without
 duplicating task state; the checkbox in each OpenSpec `tasks.md` is authoritative.
 
@@ -193,9 +193,13 @@ schema, or generated-file seam.
   -> Flapstack Native; chat, project-per-harness, and global-per-harness overrides
   are durable, capability-gated, and never silently downgraded.
 
-## Stage 5 boundary
+## Stage 5 and Stage 6 boundaries
+
+Native Windows development, CI, runtime parity, package lifecycle, signing
+readiness, and integrated Windows acceptance are promoted into Stage 5. They
+remain outside Stage 4 acceptance. See docs/stage5-execution-plan.md.
 
 Mobile control, screenshot/visual-context tooling, terminal-grid/swarm views,
 onboarding, reusable personalities, product polish, performance, organization
-usage, and public distribution are promoted into Stage 5. They remain outside
-Stage 4 acceptance. See docs/stage5-execution-plan.md.
+usage, and public multi-platform distribution are promoted into Stage 6. Stage
+6 starts only after Stage 5 Windows acceptance. See docs/stage6-execution-plan.md.

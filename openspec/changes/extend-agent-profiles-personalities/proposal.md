@@ -4,7 +4,7 @@
 
 Stage 4 creates named Agent Profiles, but personality is embedded inside each
 profile and profile selection is not yet the universal new-chat/sub-agent path.
-Stage 5 should keep one profile concept while making traits reusable.
+Stage 6 should keep one profile concept while making traits reusable.
 
 ## What Changes
 

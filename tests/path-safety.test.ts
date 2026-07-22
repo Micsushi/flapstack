@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   actOnPathInsideRoot,
   prepareSafeWritePath,
@@ -32,24 +33,27 @@ describe("attachment write path safety", () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
     const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
     roots.push(root, outside)
-    symlinkSync(outside, join(root, "escape"))
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
 
     expect(() => resolveInsideRoot(root, "../outside.txt")).toThrow("escapes root")
     await expect(prepareSafeWritePath(root, "escape/owned.txt")).rejects.toThrow("symbolic link")
   })
 
-  it("creates safe nested parents and rejects a symlink final target", async () => {
-    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
-    const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
-    roots.push(root, outside)
+  it.skipIf(!fileSymlinksSupported)(
+    "creates safe nested parents and rejects a symlink final target",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+      const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
+      roots.push(root, outside)
 
-    await expect(prepareSafeWritePath(root, "nested/file.txt")).resolves.toBe(
-      join(realpathSync(root), "nested", "file.txt"),
-    )
-    writeFileSync(join(outside, "target.txt"), "outside")
-    symlinkSync(join(outside, "target.txt"), join(root, "linked.txt"))
-    await expect(prepareSafeWritePath(root, "linked.txt")).rejects.toThrow("symbolic link")
-  })
+      await expect(prepareSafeWritePath(root, "nested/file.txt")).resolves.toBe(
+        join(realpathSync(root), "nested", "file.txt"),
+      )
+      writeFileSync(join(outside, "target.txt"), "outside")
+      symlinkSync(join(outside, "target.txt"), join(root, "linked.txt"))
+      await expect(prepareSafeWritePath(root, "linked.txt")).rejects.toThrow("symbolic link")
+    },
+  )
 
   it("writes and atomically replaces only within the verified root", async () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
@@ -78,7 +82,11 @@ describe("attachment write path safety", () => {
           overwrite: true,
           beforeCommit: () => {
             renameSync(join(root, "nested"), join(outside, "moved-parent"))
-            symlinkSync(outside, join(root, "nested"))
+            symlinkSync(
+              outside,
+              join(root, "nested"),
+              process.platform === "win32" ? "junction" : "dir",
+            )
           },
         },
       ),
@@ -99,31 +107,34 @@ describe("attachment write path safety", () => {
     ).toBe(false)
   })
 
-  it("aborts when the final inode is replaced by a symlink before commit", async () => {
-    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
-    const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
-    roots.push(root, outside)
-    const target = join(root, "file.txt")
-    const outsideTarget = join(outside, "victim.txt")
-    writeFileSync(target, "inside")
-    writeFileSync(outsideTarget, "outside")
+  it.skipIf(!fileSymlinksSupported)(
+    "aborts when the final inode is replaced by a symlink before commit",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+      const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
+      roots.push(root, outside)
+      const target = join(root, "file.txt")
+      const outsideTarget = join(outside, "victim.txt")
+      writeFileSync(target, "inside")
+      writeFileSync(outsideTarget, "outside")
 
-    await expect(
-      writeFileInsideRoot(
-        root,
-        "file.txt",
-        { data: "blocked" },
-        {
-          overwrite: true,
-          beforeCommit: () => {
-            rmSync(target)
-            symlinkSync(outsideTarget, target)
+      await expect(
+        writeFileInsideRoot(
+          root,
+          "file.txt",
+          { data: "blocked" },
+          {
+            overwrite: true,
+            beforeCommit: () => {
+              rmSync(target)
+              symlinkSync(outsideTarget, target)
+            },
           },
-        },
-      ),
-    ).rejects.toThrow(/target changed/)
-    expect(readFileSync(outsideTarget, "utf8")).toBe("outside")
-  })
+        ),
+      ).rejects.toThrow(/target changed/)
+      expect(readFileSync(outsideTarget, "utf8")).toBe("outside")
+    },
+  )
 
   it("aborts a write when the registered root namespace is replaced", async () => {
     const container = mkdtempSync(join(tmpdir(), "flapstack-safe-container-"))
@@ -166,46 +177,55 @@ describe("attachment write path safety", () => {
       renamePathInsideRoot(root, "nested/file.txt", "renamed.txt", {
         beforeCommit: () => {
           renameSync(join(root, "nested"), join(outside, "moved-parent"))
-          symlinkSync(outside, join(root, "nested"))
+          symlinkSync(
+            outside,
+            join(root, "nested"),
+            process.platform === "win32" ? "junction" : "dir",
+          )
         },
       }),
     ).rejects.toThrow(/parent/)
     expect(existsSync(join(outside, "renamed.txt"))).toBe(false)
 
-    rmSync(join(root, "nested"))
-    mkdirSync(join(root, "nested"))
-    writeFileSync(join(root, "nested", "trash.txt"), "inside")
-    let dispatched = false
-    await expect(
-      actOnPathInsideRoot(
-        root,
-        "nested/trash.txt",
-        async () => {
-          dispatched = true
-        },
-        {
-          beforeCommit: (targetPath) => {
-            rmSync(targetPath)
-            symlinkSync(join(outside, "victim.txt"), targetPath)
+    if (fileSymlinksSupported) {
+      rmSync(join(root, "nested"))
+      mkdirSync(join(root, "nested"))
+      writeFileSync(join(root, "nested", "trash.txt"), "inside")
+      let dispatched = false
+      await expect(
+        actOnPathInsideRoot(
+          root,
+          "nested/trash.txt",
+          async () => {
+            dispatched = true
           },
-        },
-      ),
-    ).rejects.toThrow(/inode/)
-    expect(dispatched).toBe(false)
+          {
+            beforeCommit: (targetPath) => {
+              rmSync(targetPath)
+              symlinkSync(join(outside, "victim.txt"), targetPath)
+            },
+          },
+        ),
+      ).rejects.toThrow(/inode/)
+      expect(dispatched).toBe(false)
+    }
   })
 
-  it("renames a final symlink itself without following its target", async () => {
-    const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
-    const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
-    roots.push(root, outside)
-    const victim = join(outside, "victim.txt")
-    writeFileSync(victim, "outside")
-    symlinkSync(victim, join(root, "linked.txt"))
+  it.skipIf(!fileSymlinksSupported)(
+    "renames a final symlink itself without following its target",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "flapstack-safe-root-"))
+      const outside = mkdtempSync(join(tmpdir(), "flapstack-safe-outside-"))
+      roots.push(root, outside)
+      const victim = join(outside, "victim.txt")
+      writeFileSync(victim, "outside")
+      symlinkSync(victim, join(root, "linked.txt"))
 
-    await renamePathInsideRoot(root, "linked.txt", "renamed-link.txt")
-    expect(readFileSync(victim, "utf8")).toBe("outside")
-    expect(existsSync(join(root, "linked.txt"))).toBe(false)
-  })
+      await renamePathInsideRoot(root, "linked.txt", "renamed-link.txt")
+      expect(readFileSync(victim, "utf8")).toBe("outside")
+      expect(existsSync(join(root, "linked.txt"))).toBe(false)
+    },
+  )
 
   it("shares the rooted writer across product MCP and renderer attachment paths", () => {
     for (const file of [

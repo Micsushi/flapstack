@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
 import * as schema from "../src/main/lib/db/schema"
 import { projects } from "../src/main/lib/db/schema"
@@ -277,45 +278,48 @@ describe("project vault browser services", () => {
     })
   })
 
-  it("fails search closed on escaped metadata and symlinked section files", async () => {
-    database
-      .update(schema.projectVaultSections)
-      .set({ relativePath: "../outside.md" })
-      .where(
-        and(
-          eq(schema.projectVaultSections.projectId, "project-1"),
-          eq(schema.projectVaultSections.sectionId, "index"),
-        ),
-      )
-      .run()
-    await expect(
-      searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
-    ).rejects.toThrow("escapes root")
+  it.skipIf(!fileSymlinksSupported)(
+    "fails search closed on escaped metadata and symlinked section files",
+    async () => {
+      database
+        .update(schema.projectVaultSections)
+        .set({ relativePath: "../outside.md" })
+        .where(
+          and(
+            eq(schema.projectVaultSections.projectId, "project-1"),
+            eq(schema.projectVaultSections.sectionId, "index"),
+          ),
+        )
+        .run()
+      await expect(
+        searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
+      ).rejects.toThrow("escapes root")
 
-    database
-      .update(schema.projectVaultSections)
-      .set({ relativePath: "index.md" })
-      .where(
-        and(
-          eq(schema.projectVaultSections.projectId, "project-1"),
-          eq(schema.projectVaultSections.sectionId, "index"),
-        ),
-      )
-      .run()
-    const vault = database
-      .select()
-      .from(schema.projectVaults)
-      .where(eq(schema.projectVaults.projectId, "project-1"))
-      .get()!
-    const outside = join(directory, "outside.md")
-    writeFileSync(outside, "knowledge outside the registered root")
-    rmSync(join(vault.rootPath, "index.md"))
-    symlinkSync(outside, join(vault.rootPath, "index.md"))
+      database
+        .update(schema.projectVaultSections)
+        .set({ relativePath: "index.md" })
+        .where(
+          and(
+            eq(schema.projectVaultSections.projectId, "project-1"),
+            eq(schema.projectVaultSections.sectionId, "index"),
+          ),
+        )
+        .run()
+      const vault = database
+        .select()
+        .from(schema.projectVaults)
+        .where(eq(schema.projectVaults.projectId, "project-1"))
+        .get()!
+      const outside = join(directory, "outside.md")
+      writeFileSync(outside, "knowledge outside the registered root")
+      rmSync(join(vault.rootPath, "index.md"))
+      symlinkSync(outside, join(vault.rootPath, "index.md"))
 
-    await expect(
-      searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
-    ).rejects.toThrow(/real file|symbolic link/i)
-  })
+      await expect(
+        searchProjectVault(database, { projectId: "project-1", query: "knowledge" }),
+      ).rejects.toThrow(/real file|symbolic link/i)
+    },
+  )
 
   it.skipIf(process.platform === "win32")(
     "keeps content and metadata intact when the vault root becomes read-only",

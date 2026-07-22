@@ -980,7 +980,17 @@ function resolveWorktree(source: SourceDto, snapshot: ResolvedAgentProfileSnapsh
       "Selected Agent Profile worktree could not be verified against the project repository.",
     )
   }
-  if (!registered.split("\n").some((line) => line === `worktree ${path}`)) {
+  const isRegistered = registered
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .some((line) => {
+      try {
+        return realpathSync(line.slice("worktree ".length)) === path
+      } catch {
+        return false
+      }
+    })
+  if (!isRegistered) {
     throw new StandaloneAgentLaunchError(
       "worktree-invalid",
       "Selected Agent Profile worktree is not registered with the project repository.",

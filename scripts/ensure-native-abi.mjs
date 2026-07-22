@@ -3,12 +3,13 @@
 // The marker is only a cache hint: real better-sqlite3/node-pty loads are
 // probed before a skip and after every rebuild.
 
-import { execFileSync, execSync, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { nativeAbiMarker } from "./native-abi-key.mjs"
+import { packageBinStep, runCommandSequence } from "./lib/project-command.mjs"
 
 const NATIVE_MODULES = ["better-sqlite3", "node-pty"]
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
@@ -21,7 +22,49 @@ db.prepare("select 1").get()
 db.close()
 const pty = require("node-pty")
 if (typeof pty.spawn !== "function") throw new Error("node-pty native API unavailable")
-process.stdout.write(String(process.versions.modules || "unknown"))
+const runPtyProbe = (useConpty) => new Promise((resolve, reject) => {
+  let terminal
+  const timer = setTimeout(() => {
+    try { terminal?.kill() } catch {}
+    reject(new Error("node-pty native launch timed out"))
+  }, 5_000)
+  try {
+    const windows = process.platform === "win32"
+    terminal = pty.spawn(
+      windows ? (process.env.ComSpec || "cmd.exe") : "/bin/sh",
+      windows ? ["/d", "/s", "/c", "exit", "0"] : ["-c", "exit 0"],
+      {
+        cols: 80,
+        rows: 24,
+        cwd: process.cwd(),
+        env: process.env,
+        ...(windows ? { useConpty } : {}),
+      },
+    )
+    terminal.onExit(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  } catch (error) {
+    clearTimeout(timer)
+    reject(error)
+  }
+})
+;(async () => {
+  if (process.platform === "win32") {
+    await runPtyProbe(true)
+    await runPtyProbe(false)
+  } else {
+    await runPtyProbe(undefined)
+  }
+  process.stdout.write(String(process.versions.modules || "unknown"))
+  // node-pty keeps pipe/worker handles alive after the child exits on Windows.
+  // The probe is complete at this point, so terminate the isolated runtime.
+  process.exit(0)
+})().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})
 `
 
 const packageVersion = (name) => {
@@ -86,22 +129,91 @@ function probeErrorSummary(probe) {
   )
 }
 
-function rebuildNativeModules(target, toolEnv) {
+export function nativeRebuildSteps(target, options = {}) {
+  const projectRoot = resolve(options.root ?? root)
   if (target === "electron") {
-    execFileSync(
-      join(root, "node_modules", ".bin", "electron-rebuild"),
-      ["-f", "-w", NATIVE_MODULES.join(",")],
-      { cwd: root, stdio: "inherit", env: toolEnv },
-    )
-    return
+    return [
+      packageBinStep(
+        "rebuild Electron native modules",
+        "@electron/rebuild",
+        "electron-rebuild",
+        ["-f", "-w", NATIVE_MODULES.join(",")],
+        { root: projectRoot },
+      ),
+    ]
   }
-  const env = { ...toolEnv, CXXFLAGS: "-std=c++20" }
-  execSync("npm rebuild better-sqlite3", { cwd: root, stdio: "inherit", env })
-  execFileSync(join(root, "node_modules", ".bin", "node-gyp"), ["rebuild"], {
-    cwd: join(root, "node_modules", "node-pty"),
-    stdio: "inherit",
-    env,
+  if (target !== "node") throw new Error(`Unsupported native rebuild target: ${target}`)
+  const nodeGyp = packageBinStep(
+    "build better-sqlite3 for Node",
+    "node-gyp",
+    "node-gyp",
+    ["rebuild", "--release"],
+    { root: projectRoot },
+  )
+  return [
+    {
+      ...nodeGyp,
+      cwd: join(projectRoot, "node_modules", "better-sqlite3"),
+    },
+    {
+      ...nodeGyp,
+      label: "build node-pty for Node",
+      args: [nodeGyp.args[0], "rebuild"],
+      cwd: join(projectRoot, "node_modules", "node-pty"),
+    },
+  ]
+}
+
+export function nativeElectronRecoverySteps(options = {}) {
+  const projectRoot = resolve(options.root ?? root)
+  const nodeGyp = packageBinStep(
+    "finish interrupted node-pty Electron build",
+    "node-gyp",
+    "node-gyp",
+    ["build", "--release"],
+    { root: projectRoot },
+  )
+  return [
+    {
+      ...nodeGyp,
+      cwd: join(projectRoot, "node_modules", "node-pty"),
+    },
+  ]
+}
+
+export function windowsPython311Environment(options = {}) {
+  const platform = options.platform ?? process.platform
+  if (platform !== "win32") return {}
+  const runner = options.spawn ?? spawnSync
+  const result = runner("py.exe", ["-3.11", "-c", "import sys; print(sys.executable)"], {
+    encoding: "utf8",
+    windowsHide: true,
   })
+  const executable = String(result.stdout ?? "").trim()
+  if (result.error || result.status !== 0 || !executable) {
+    throw new Error("[native-abi] Python 3.11 is required and must be available through py -3.11")
+  }
+  return {
+    NODE_GYP_FORCE_PYTHON: executable,
+    PYTHON: executable,
+    npm_config_python: executable,
+  }
+}
+
+function rebuildNativeModules(target, toolEnv) {
+  const env = {
+    ...toolEnv,
+    ...(target === "node" && process.platform !== "win32" ? { CXXFLAGS: "-std=c++20" } : {}),
+  }
+  try {
+    runCommandSequence(nativeRebuildSteps(target), { cwd: root, env })
+  } catch (error) {
+    if (target !== "electron" || process.platform !== "win32") throw error
+    console.warn(
+      `[native-abi] Electron rebuild stopped partway through node-pty; attempting one incremental completion: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    runCommandSequence(nativeElectronRecoverySteps(), { cwd: root, env })
+  }
 }
 
 export function ensureNativeAbi(target) {
@@ -136,6 +248,7 @@ export function ensureNativeAbi(target) {
 
   const toolEnv = {
     ...process.env,
+    ...windowsPython311Environment(),
     PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}`,
   }
   rmSync(nativeAbiMarkerPath, { force: true })

@@ -113,6 +113,10 @@ function AppContent() {
           return
         }
         if (payload.action === "chat-opened") {
+          await Promise.all([
+            trpcUtils.chats.list.invalidate(),
+            trpcUtils.chats.get.invalidate({ id: payload.chatId }),
+          ])
           setSelectedChatIsRemote(false)
           setSelectedDraftId(null)
           setShowNewChatForm(false)

@@ -1,29 +1,18 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises"
-import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import { resolveDevMcpDescriptorPath, resolveDevMcpProfile } from "./lib/profile-paths.mjs"
 
 const checkout = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const instance = process.env.FLAPSTACK_DEV_INSTANCE?.trim()
-const expectedUserDataProfile =
-  process.env.FLAPSTACK_DEV_MCP_PROFILE?.trim() ||
-  (instance ? `Flapstack Dev ${instance.replace(/[^a-zA-Z0-9_-]/g, "-")}` : "Flapstack Dev")
-const descriptorPath =
-  process.env.FLAPSTACK_DEV_MCP_DESCRIPTOR ||
-  join(
-    homedir(),
-    "Library",
-    "Application Support",
-    expectedUserDataProfile,
-    "dev-test-control-mcp.json",
-  )
+const expectedUserDataProfile = resolveDevMcpProfile()
+const descriptorPath = resolveDevMcpDescriptorPath(expectedUserDataProfile)
 
 let upstream = null
 

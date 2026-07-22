@@ -25,6 +25,10 @@ with documented credential ownership and recovery.
 Flapstack SHALL natively verify app, services, secret stores, sidecars, runtimes,
 speech, permissions, paths, install/upgrade/uninstall, and cleanup on promoted targets.
 
+Accepted Stage 5 Windows evidence SHALL remain baseline, while every new or
+affected Stage 6 feature and production signing/publication path is re-verified
+on native Windows before public promotion.
+
 #### Scenario: Background service remains after uninstall
 
 - **WHEN** package uninstall completes

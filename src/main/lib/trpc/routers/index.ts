@@ -54,8 +54,7 @@ import { agentProfilesRouter } from "./agent-profiles"
 import { betaFeaturesRouter } from "./beta-features"
 import { createGitRouter } from "../../git"
 import { app, BrowserWindow } from "electron"
-import { basename } from "node:path"
-import { isDevTestControlEnabled } from "../../mcp-test-control/lifecycle"
+import { isDevTestControlEnabled, isPreviewExecutable } from "../../mcp-test-control/lifecycle"
 import { isRuntimeActivityFixtureAvailable } from "../../agent-runtime/activity-fixture-settings"
 import { IS_DEV } from "../../../constants"
 
@@ -66,9 +65,7 @@ import { IS_DEV } from "../../../constants"
 export function createAppRouter(getWindow: () => BrowserWindow | null) {
   const devTestControlEnabled = isDevTestControlEnabled(
     !app.isPackaged,
-    process.platform === "darwin" &&
-      app.isPackaged &&
-      basename(process.execPath) === "Flapstack Preview",
+    app.isPackaged && isPreviewExecutable(),
   )
   const devRuntimeActivityFixturesEnabled = isRuntimeActivityFixtureAvailable(
     app.isPackaged,

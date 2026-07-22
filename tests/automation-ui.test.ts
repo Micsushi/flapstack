@@ -23,8 +23,10 @@ import {
 } from "../src/renderer/features/automations/inbox-state"
 
 const directories: string[] = []
+const databases: Database.Database[] = []
 
 afterEach(() => {
+  for (const database of databases.splice(0)) if (database.open) database.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
@@ -243,6 +245,7 @@ function database(): { path: string; sqlite: Database.Database } {
   directories.push(directory)
   const path = join(directory, "agents.db")
   const sqlite = new Database(path)
+  databases.push(sqlite)
   migrateDatabase(drizzle(sqlite, { schema }), sqlite, resolve(process.cwd(), "drizzle"))
   return { path, sqlite }
 }

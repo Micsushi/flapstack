@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { execFileSync } from "node:child_process"
 import {
   chmodSync,
   closeSync,
@@ -159,6 +160,28 @@ function defaultStorageDir(): string {
     // Tests and node-only processes may not load Electron.
   }
   return join(process.cwd(), ".flapstack", "data")
+}
+
+export function secureCredentialFile(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+  options: {
+    identity?: string
+    runner?: typeof execFileSync
+  } = {},
+): void {
+  if (platform !== "win32") {
+    chmodSync(filePath, 0o600)
+    return
+  }
+  const identity =
+    options.identity ?? [process.env.USERDOMAIN, process.env.USERNAME].filter(Boolean).join("\\")
+  if (!identity) throw new Error("Could not determine the current Windows identity")
+  const runner = options.runner ?? execFileSync
+  runner("icacls.exe", [filePath, "/inheritance:r", "/grant:r", `${identity}:(F)`], {
+    stdio: "ignore",
+    windowsHide: true,
+  })
 }
 
 function defaultEncryption(): CredentialEncryption {
@@ -473,24 +496,51 @@ export class CredentialService {
   private writeStoreAtomic(store: CredentialStoreFile): void {
     mkdirSync(this.storageDir, { recursive: true, mode: 0o700 })
     const tempPath = `${this.storePath}.${randomUUID()}.tmp`
+    const backupPath = `${this.storePath}.${randomUUID()}.bak`
     let fd: number | null = null
+    let backupMoved = false
     try {
       fd = openSync(tempPath, "wx", 0o600)
       writeFileSync(fd, `${JSON.stringify(store, null, 2)}\n`, "utf8")
       fsyncSync(fd)
       closeSync(fd)
       fd = null
-      renameSync(tempPath, this.storePath)
-      chmodSync(this.storePath, 0o600)
-      const dirFd = openSync(this.storageDir, "r")
+      if (process.platform === "win32" && existsSync(this.storePath)) {
+        renameSync(this.storePath, backupPath)
+        backupMoved = true
+      }
       try {
-        fsyncSync(dirFd)
-      } finally {
-        closeSync(dirFd)
+        renameSync(tempPath, this.storePath)
+      } catch (error) {
+        if (backupMoved && !existsSync(this.storePath)) renameSync(backupPath, this.storePath)
+        backupMoved = false
+        throw error
+      }
+      secureCredentialFile(this.storePath)
+      if (backupMoved) {
+        unlinkSync(backupPath)
+        backupMoved = false
+      }
+      if (process.platform !== "win32") {
+        const dirFd = openSync(this.storageDir, "r")
+        try {
+          fsyncSync(dirFd)
+        } finally {
+          closeSync(dirFd)
+        }
       }
     } finally {
       if (fd !== null) closeSync(fd)
       if (existsSync(tempPath)) unlinkSync(tempPath)
+      // An ACL failure after publication is a failed credential write, not partial success.
+      // Restore the previous store so callers never observe data whose Windows ACLs were
+      // not proven secure; the original icacls error still propagates to explain the rollback.
+      if (backupMoved && existsSync(backupPath)) {
+        if (existsSync(this.storePath)) unlinkSync(this.storePath)
+        renameSync(backupPath, this.storePath)
+        backupMoved = false
+      }
+      if (existsSync(backupPath)) unlinkSync(backupPath)
     }
   }
 }

@@ -161,7 +161,7 @@ describe("harness launch context", () => {
     })
 
     expect(context).toContain("Personal vault startup")
-    expect(context).toContain("Projects/projects_index.md")
+    expect(context).toContain(join("Projects", "projects_index.md"))
     expect(context).toContain("Personal project router")
     expect(context).toContain("Personal active handoff")
   })

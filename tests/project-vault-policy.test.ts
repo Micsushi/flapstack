@@ -39,7 +39,7 @@ describe("project vault location policy", () => {
 
     expect(initial).toMatchObject({
       locationMode: "app-managed",
-      vaultPath: "/app/profile-one/knowledge-vaults/project-1",
+      vaultPath: resolve("/app/profile-one", "knowledge-vaults", "project-1"),
       gitTrackingEnabled: false,
       portabilityMode: "export-required",
       worktreeMode: "shared-across-worktrees",
@@ -80,7 +80,7 @@ describe("project vault location policy", () => {
       }),
     ).toMatchObject({
       locationMode: "project-owned",
-      vaultPath: "/missing/project-root/.flapstack/knowledge",
+      vaultPath: resolve("/missing/project-root", ".flapstack", "knowledge"),
       gitTrackingEnabled: true,
       portabilityMode: "project-owned",
     })
@@ -108,7 +108,7 @@ describe("project vault location policy", () => {
       locationMode: "app-managed",
       gitTrackingEnabled: false,
     })
-    expect(central.vaultPath).toBe("/app/profile/knowledge-vaults/project-1")
+    expect(central.vaultPath).toBe(resolve("/app/profile", "knowledge-vaults", "project-1"))
     expect(central.gitTrackingEnabled).toBe(false)
   })
 

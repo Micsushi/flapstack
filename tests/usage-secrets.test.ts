@@ -53,7 +53,7 @@ describe("usage credential hardening", () => {
 
     expect(getUsageSecret("openrouter.api_key")).toBeNull()
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({})
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600)
   })
 
   it("refuses to create a plaintext fallback when secure storage is unavailable", () => {
@@ -86,7 +86,13 @@ describe("usage credential hardening", () => {
     vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: "", stderr: "" } as never)
     setUsageSecret("openrouter.api_key", "super-secret-value")
     const [, args] = vi.mocked(spawnSync).mock.calls.at(-1)!
-    expect(args).toContain("dev.flapstack.usage.usage-exit-c100")
+    if (process.platform === "win32") {
+      const encodedIndex = args.indexOf("-EncodedCommand")
+      const script = Buffer.from(args[encodedIndex + 1]!, "base64").toString("utf16le")
+      expect(script).toContain("dev.flapstack.usage.usage-exit-c100")
+    } else {
+      expect(args).toContain("dev.flapstack.usage.usage-exit-c100")
+    }
   })
 
   it("builds a Credential Manager script without embedding the plaintext value", () => {

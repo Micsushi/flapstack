@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { resolve } from "node:path"
 import { resolveCodexStdioLaunch } from "../src/main/lib/codex/mcp-stdio"
 
 describe("Codex MCP stdio launch resolution", () => {
@@ -12,9 +13,9 @@ describe("Codex MCP stdio launch resolution", () => {
     ).toEqual({
       command: "node",
       args: [
-        "/plugins/sites/1.0.0/mcp/server.mjs",
+        resolve("/plugins/sites/1.0.0", "mcp/server.mjs"),
         "--config",
-        "/plugins/sites/shared/config.json",
+        resolve("/plugins/sites/1.0.0", "../shared/config.json"),
       ],
       cwd: "/plugins/sites/1.0.0",
     })
@@ -28,7 +29,7 @@ describe("Codex MCP stdio launch resolution", () => {
         cwd: "/plugins/example",
       }),
     ).toEqual({
-      command: "/plugins/example/bin/server",
+      command: resolve("/plugins/example", "bin/server"),
       args: ["serve", "config.json"],
       cwd: "/plugins/example",
     })

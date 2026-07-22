@@ -3,6 +3,7 @@ import { renameSync, symlinkSync } from "node:fs"
 import { appendFile, mkdir, readFile, symlink, truncate, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { readPortableDatabase } from "../src/main/lib/portability/database"
 import { createPortableExport } from "../src/main/lib/portability/exporter"
 import {
@@ -16,28 +17,31 @@ import { PORTABILITY_LIMITS } from "../src/shared/portability"
 import { createTestDatabase, tempRoot } from "./portability-test-helpers"
 
 describe("portability resource bounds", () => {
-  it("rejects leaf symlinks when the platform no-follow flag is disabled", async () => {
-    const root = await tempRoot()
-    const outside = join(root, "outside.json")
-    const linked = join(root, "linked.json")
-    const copied = join(root, "copied.json")
-    await writeFile(outside, '{"outside":"must-not-be-read"}')
-    await symlink(outside, linked)
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects leaf symlinks when the platform no-follow flag is disabled",
+    async () => {
+      const root = await tempRoot()
+      const outside = join(root, "outside.json")
+      const linked = join(root, "linked.json")
+      const copied = join(root, "copied.json")
+      await writeFile(outside, '{"outside":"must-not-be-read"}')
+      await symlink(outside, linked)
 
-    await expect(
-      snapshotRegularFileNoFollow(linked, {
-        maxBytes: 1_024,
-        useNoFollowFlag: false,
-      }),
-    ).rejects.toThrow(/non-symlink/i)
-    await expect(
-      copyRegularFileNoFollow(linked, copied, undefined, { useNoFollowFlag: false }),
-    ).rejects.toThrow(/non-symlink/i)
-    await expect(readJsonFile(linked, 1_024, { useNoFollowFlag: false })).rejects.toThrow(
-      /non-symlink/i,
-    )
-    await expect(readFile(copied)).rejects.toMatchObject({ code: "ENOENT" })
-  })
+      await expect(
+        snapshotRegularFileNoFollow(linked, {
+          maxBytes: 1_024,
+          useNoFollowFlag: false,
+        }),
+      ).rejects.toThrow(/non-symlink/i)
+      await expect(
+        copyRegularFileNoFollow(linked, copied, undefined, { useNoFollowFlag: false }),
+      ).rejects.toThrow(/non-symlink/i)
+      await expect(readJsonFile(linked, 1_024, { useNoFollowFlag: false })).rejects.toThrow(
+        /non-symlink/i,
+      )
+      await expect(readFile(copied)).rejects.toMatchObject({ code: "ENOENT" })
+    },
+  )
 
   it("rejects JSON that exceeds or grows beyond its single-handle bound", async () => {
     const root = await tempRoot()
@@ -96,38 +100,44 @@ describe("portability resource bounds", () => {
     expect(() => readPortableDatabase(path)).toThrow(/size limit/i)
   })
 
-  it("rejects portable database symlinks with no platform no-follow flag", async () => {
-    const root = await tempRoot()
-    const outside = join(root, "outside.sqlite3")
-    createPortableDatabaseFixture(outside).close()
-    const linked = join(root, "linked.sqlite3")
-    await symlink(outside, linked)
-    expect(() => readPortableDatabase(linked, { useNoFollowFlag: false })).toThrow(/non-symlink/i)
-  })
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects portable database symlinks with no platform no-follow flag",
+    async () => {
+      const root = await tempRoot()
+      const outside = join(root, "outside.sqlite3")
+      createPortableDatabaseFixture(outside).close()
+      const linked = join(root, "linked.sqlite3")
+      await symlink(outside, linked)
+      expect(() => readPortableDatabase(linked, { useNoFollowFlag: false })).toThrow(/non-symlink/i)
+    },
+  )
 
-  it("rejects a portable database leaf swap before outside rows can return", async () => {
-    const root = await tempRoot()
-    const source = join(root, "source.sqlite3")
-    createPortableDatabaseFixture(source).close()
-    const outside = join(root, "outside.sqlite3")
-    const outsideDatabase = createPortableDatabaseFixture(outside)
-    outsideDatabase
-      .prepare(
-        "INSERT INTO portable_records (scope_id, table_name, identity_json, row_json) VALUES (?, ?, ?, ?)",
-      )
-      .run("settings", "settings", '{"id":"outside"}', '{"value":"outside"}')
-    outsideDatabase.close()
-    const moved = join(root, "source-moved.sqlite3")
-    expect(() =>
-      readPortableDatabase(source, {
-        useNoFollowFlag: false,
-        afterOpen: () => {
-          renameSync(source, moved)
-          symlinkSync(outside, source)
-        },
-      }),
-    ).toThrow(/non-symlink|changed while copying/i)
-  })
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects a portable database leaf swap before outside rows can return",
+    async () => {
+      const root = await tempRoot()
+      const source = join(root, "source.sqlite3")
+      createPortableDatabaseFixture(source).close()
+      const outside = join(root, "outside.sqlite3")
+      const outsideDatabase = createPortableDatabaseFixture(outside)
+      outsideDatabase
+        .prepare(
+          "INSERT INTO portable_records (scope_id, table_name, identity_json, row_json) VALUES (?, ?, ?, ?)",
+        )
+        .run("settings", "settings", '{"id":"outside"}', '{"value":"outside"}')
+      outsideDatabase.close()
+      const moved = join(root, "source-moved.sqlite3")
+      expect(() =>
+        readPortableDatabase(source, {
+          useNoFollowFlag: false,
+          afterOpen: () => {
+            renameSync(source, moved)
+            symlinkSync(outside, source)
+          },
+        }),
+      ).toThrow(/non-symlink|changed while copying/i)
+    },
+  )
 
   it("ignores portable database WAL and SHM sidecars", async () => {
     const path = join(await tempRoot(), "sidecars.sqlite3")

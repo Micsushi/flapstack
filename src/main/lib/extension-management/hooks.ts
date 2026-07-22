@@ -907,7 +907,7 @@ function tokenizeCommand(command: string): string[] {
       started = true
       continue
     }
-    if (character === "\\" && quote !== "'") {
+    if (character === "\\" && quote !== "'" && process.platform !== "win32") {
       escaped = true
       started = true
       continue

@@ -15,8 +15,10 @@ import type { QueuedAgentRun } from "../src/main/lib/run-launch-service"
 
 const migrations = resolve(process.cwd(), "drizzle")
 const directories: string[] = []
+const databases: Database.Database[] = []
 
 afterEach(() => {
+  for (const database of databases.splice(0)) if (database.open) database.close()
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -481,6 +483,7 @@ function database(name: string): {
   directories.push(directory)
   const path = join(directory, "agents.db")
   const sqlite = new Database(path)
+  databases.push(sqlite)
   sqlite.pragma("foreign_keys = ON")
   migrateDatabase(drizzle(sqlite, { schema }), sqlite, migrations)
   return { directory, path, sqlite }

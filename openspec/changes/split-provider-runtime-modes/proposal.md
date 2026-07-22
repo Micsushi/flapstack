@@ -32,6 +32,6 @@ behavior, and the provider-neutral compatibility Runtime.
 - Affected code: Runtime preference types/resolution, launch-context policy,
   Codex App Server and Claude Agent SDK launch options, Runtime defaults and
   selectors, immutable snapshots, migration constraints, diagnostics, and tests.
-- Stage 5 follow-up: `complete-runtime-orchestration-composition` will own
+- Stage 6 follow-up: `complete-runtime-orchestration-composition` will own
   capability-gated cross-provider Runtime adapters; it is not implemented by
   this change.

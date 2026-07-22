@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
 const state = vi.hoisted(() => ({
   userDataPath: "/tmp/flapstack-files-router-initial",
@@ -113,7 +114,11 @@ describe("files router mutation path safety", () => {
   it("rejects a symlinked session namespace before pasted content is written", async () => {
     const outside = mkdtempSync(join(tmpdir(), "flapstack-files-outside-"))
     roots.push(outside)
-    symlinkSync(outside, join(state.userDataPath, "claude-sessions"))
+    symlinkSync(
+      outside,
+      join(state.userDataPath, "claude-sessions"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
     state.subChatId = "sub-chat-1"
 
     await expect(
@@ -133,7 +138,7 @@ describe("files router mutation path safety", () => {
     state.registeredRoots.add(root)
     mkdirSync(join(root, "nested"))
     writeFileSync(join(root, "nested", "file.txt"), "inside")
-    symlinkSync(outside, join(root, "escape"))
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
 
     await expect(
       caller.renameFile({
@@ -157,7 +162,7 @@ describe("files router mutation path safety", () => {
     roots.push(root, outside)
     state.registeredRoots.add(root)
     writeFileSync(join(outside, "victim.txt"), "outside")
-    symlinkSync(outside, join(root, "escape"))
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
 
     await expect(
       caller.deleteFile({ worktreePath: root, relativePath: "../victim.txt" }),
@@ -194,7 +199,9 @@ describe("files router mutation path safety", () => {
     state.registeredRoots.add(root)
     writeFileSync(join(root, "safe.txt"), "inside")
     writeFileSync(join(outside, "secret.txt"), "secret")
-    symlinkSync(join(outside, "secret.txt"), join(root, "linked.txt"))
+    if (fileSymlinksSupported) {
+      symlinkSync(join(outside, "secret.txt"), join(root, "linked.txt"))
+    }
 
     await expect(caller.readFile({ rootPath: root, relativePath: "safe.txt" })).resolves.toBe(
       "inside",
@@ -205,9 +212,11 @@ describe("files router mutation path safety", () => {
     await expect(
       caller.readFile({ rootPath: root, relativePath: "../secret.txt" }),
     ).rejects.toThrow("escapes root")
-    await expect(caller.readFile({ rootPath: root, relativePath: "linked.txt" })).rejects.toThrow(
-      "real file",
-    )
+    if (fileSymlinksSupported) {
+      await expect(caller.readFile({ rootPath: root, relativePath: "linked.txt" })).rejects.toThrow(
+        "real file",
+      )
+    }
   })
 
   it("reads an absolute plan path only through its durable sub-chat namespace", async () => {

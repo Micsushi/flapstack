@@ -28,7 +28,7 @@ additions.
 - Duplicating Codex App Server or Claude Agent SDK protocol implementations.
 - Changing model weights or private reasoning.
 - Running a provider through another provider's native protocol in Stage 4.
-- Implementing Stage 5 cross-provider adapters in this change.
+- Implementing Stage 6 cross-provider adapters in this change.
 
 ## Decisions
 
@@ -94,9 +94,9 @@ Chat/session through the existing continuation flow. Comparing only
 `resolved_runtime` is insufficient; continuation checks also compare the
 immutable requested preference.
 
-### Stage 5 cross-provider adapters
+### Stage 6 cross-provider adapters
 
-Stage 5 will replace the hard harness/Runtime matrix with a versioned
+Stage 6 will replace the hard harness/Runtime matrix with a versioned
 capability graph. A cross-provider adapter may translate prompts, instruction
 files, tools, permissions, events, sessions, and structured output into another
 Runtime's contract. Every combination must advertise exact losses and block

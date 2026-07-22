@@ -15,8 +15,10 @@ import * as schema from "../src/main/lib/db/schema"
 
 const migrations = resolve(process.cwd(), "drizzle")
 const temporaryDirectories: string[] = []
+const databases: Database.Database[] = []
 
 afterEach(() => {
+  for (const database of databases.splice(0)) if (database.open) database.close()
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -236,6 +238,7 @@ function database(name: string): { path: string; sqlite: Database.Database } {
   temporaryDirectories.push(directory)
   const path = join(directory, "agents.db")
   const sqlite = new Database(path)
+  databases.push(sqlite)
   sqlite.pragma("journal_mode = WAL")
   sqlite.pragma("foreign_keys = ON")
   sqlite.pragma("busy_timeout = 5000")

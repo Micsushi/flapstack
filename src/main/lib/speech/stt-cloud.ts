@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import os from "node:os"
 import type { SttAdapter, SttInput, SttResult } from "./types"
 import { getCredentialService } from "../credential-service"
@@ -29,19 +29,24 @@ export function getOpenAIApiKey(): string | null {
   return cachedOpenAIKey
 }
 
-function readOpenAIKeyFromShell(): string | null {
+export function readOpenAIKeyFromShell(
+  platform: NodeJS.Platform = process.platform,
+  runner: typeof execFileSync = execFileSync,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (platform === "win32") return null
   try {
-    const shell = process.env.SHELL || "/bin/zsh"
-    const result = execSync(`${shell} -ilc 'echo $OPENAI_API_KEY'`, {
+    const shell = environment.SHELL || (platform === "darwin" ? "/bin/zsh" : "/bin/bash")
+    const result = runner(shell, ["-ilc", 'printf %s "$OPENAI_API_KEY"'], {
       encoding: "utf8",
       timeout: 5000,
       env: {
         HOME: os.homedir(),
         USER: os.userInfo().username,
         SHELL: shell,
-      } as unknown as NodeJS.ProcessEnv,
+      },
     })
-    const key = result.trim()
+    const key = String(result).trim()
     if (key && key !== "$OPENAI_API_KEY" && key.startsWith("sk-")) return key
   } catch (error) {
     console.error("[speech] Failed to read OPENAI_API_KEY from shell:", error)

@@ -28,4 +28,4 @@ Obsidian need one shared Markdown vault instead of a second isolated notebook.
   project-knowledge-vaults.
 - Affected code: project-vault schema/storage/parser/indexer/watcher, tRPC/MCP,
   renderer navigation/editor/graph, portability, Git policy, packages, and tests.
-- Stage placement: S5-F12. Stage 4 remains the required fixed-section foundation.
+- Stage placement: S6-F12. Stage 4 remains the required fixed-section foundation.

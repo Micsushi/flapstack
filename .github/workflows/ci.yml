@@ -27,3 +27,48 @@ jobs:
 
       - name: Check
         run: npm run check
+
+  windows-verify:
+    runs-on: windows-2022
+    env:
+      FLAPSTACK_REQUIRE_FILE_SYMLINK_TESTS: "1"
+    timeout-minutes: 60
+    concurrency:
+      group: windows-ci-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify Windows prerequisites
+        run: npm run windows:prerequisites
+
+      - name: Check
+        run: npm run check
+
+      - name: Build Windows Preview
+        run: npm run package:preview:win
+
+      - name: Inspect Windows Preview
+        run: npm run package:inspect:preview:win
+
+      - name: Upload Windows Preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: flapstack-preview-windows-${{ github.sha }}
+          path: release-preview/win-unpacked
+          if-no-files-found: error

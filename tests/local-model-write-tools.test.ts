@@ -44,7 +44,7 @@ describe("local model project-write tools", () => {
     const root = fixture()
     const outside = temporaryDirectory("flapstack-local-write-outside-")
     writeFileSync(join(outside, "secret.txt"), "outside\n")
-    symlinkSync(outside, join(root, "escape"))
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir")
 
     const readOnly = executor(root, { permissionMode: "read-only", projectWriteAllowed: false })
     await expect(
@@ -119,7 +119,9 @@ describe("local model project-write tools", () => {
       }),
     ).resolves.toMatchObject({ ok: true })
     expect(readFileSync(join(root, "README.md"), "utf8")).toBe("whole replacement\n")
-    expect(lstatSync(join(root, "README.md")).mode & 0o777).toBe(0o755)
+    if (process.platform !== "win32") {
+      expect(lstatSync(join(root, "README.md")).mode & 0o777).toBe(0o755)
+    }
   })
 
   it("blocks stale content and an in-place change immediately before commit", async () => {
@@ -154,7 +156,7 @@ describe("local model project-write tools", () => {
     const writer = executor(root, {
       beforeCommit: () => {
         rmSync(join(root, "src"), { recursive: true, force: true })
-        symlinkSync(outside, join(root, "src"))
+        symlinkSync(outside, join(root, "src"), process.platform === "win32" ? "junction" : "dir")
       },
     })
 

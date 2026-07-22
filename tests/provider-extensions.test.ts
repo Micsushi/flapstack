@@ -11,6 +11,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import matter from "gray-matter"
 import { afterEach, describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   discoverProviderExtensions,
   mutateProviderExtension,
@@ -281,7 +282,7 @@ describe("provider extension mutations", () => {
     const outside = temporaryRoot()
     const root = join(home, ".agents", "skills")
     mkdirSync(root, { recursive: true })
-    symlinkSync(outside, join(root, "escaped"))
+    symlinkSync(outside, join(root, "escaped"), process.platform === "win32" ? "junction" : "dir")
 
     await expect(
       mutateProviderExtension(
@@ -324,7 +325,7 @@ describe("provider extension mutations", () => {
           homeDir: home,
           beforeCommit: () => {
             rmSync(skillRoot, { recursive: true })
-            symlinkSync(outside, skillRoot)
+            symlinkSync(outside, skillRoot, process.platform === "win32" ? "junction" : "dir")
           },
         },
       ),
@@ -332,19 +333,24 @@ describe("provider extension mutations", () => {
     expect(readFileSync(outsideFile, "utf8")).toBe(skill("outside"))
   })
 
-  it("does not disclose content through a symlinked discovery file", async () => {
-    const home = temporaryRoot()
-    const outside = temporaryRoot()
-    const secret = "outside-secret-provider-content"
-    const skillRoot = join(home, ".agents", "skills", "linked")
-    mkdirSync(skillRoot, { recursive: true })
-    write(join(outside, "SKILL.md"), skill(secret))
-    symlinkSync(join(outside, "SKILL.md"), join(skillRoot, "SKILL.md"))
+  it.skipIf(!fileSymlinksSupported)(
+    "does not disclose content through a symlinked discovery file",
+    async () => {
+      const home = temporaryRoot()
+      const outside = temporaryRoot()
+      const secret = "outside-secret-provider-content"
+      const skillRoot = join(home, ".agents", "skills", "linked")
+      mkdirSync(skillRoot, { recursive: true })
+      write(join(outside, "SKILL.md"), skill(secret))
+      symlinkSync(join(outside, "SKILL.md"), join(skillRoot, "SKILL.md"))
 
-    const inventory = await discoverProviderExtensions({ homeDir: home })
-    expect(JSON.stringify(inventory)).not.toContain(secret)
-    expect(inventory.find((item) => item.name === "linked")?.capabilities.discovery).toBe("unknown")
-  })
+      const inventory = await discoverProviderExtensions({ homeDir: home })
+      expect(JSON.stringify(inventory)).not.toContain(secret)
+      expect(inventory.find((item) => item.name === "linked")?.capabilities.discovery).toBe(
+        "unknown",
+      )
+    },
+  )
 })
 
 function skill(name: string): string {

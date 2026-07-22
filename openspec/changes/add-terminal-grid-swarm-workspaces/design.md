@@ -179,7 +179,7 @@ presentation`. Any failure before commit rolls back the reservation and keeps
 
 ### Source-to-target component map
 
-| Current area                         | Current limitation                                 | Stage 5 ownership                                               |
+| Current area                         | Current limitation                                 | Stage 6 ownership                                               |
 | ------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------- |
 | `AgentsContent` top-level tabs       | Reorder only; one selected `ChatView`              | Thin route shell around `ChatWorkbench`                         |
 | `ActiveChat` / `ChatViewInner`       | Large route-coupled interactive Chat               | Extract reusable `InteractiveChatPane` keyed by Chat ID         |

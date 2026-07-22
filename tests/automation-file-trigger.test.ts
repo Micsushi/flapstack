@@ -160,7 +160,7 @@ describe("automation file triggers", () => {
     mkdirSync(root)
     mkdirSync(outside)
     writeFileSync(join(outside, "secret.ts"), "secret")
-    symlinkSync(outside, join(root, "linked"))
+    symlinkSync(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir")
     writeFileSync(join(root, "safe.ts"), "safe")
     const harness = watcherHarness()
     const occurrences: AutomationFileTriggerOccurrence[] = []

@@ -3,6 +3,7 @@ import { renameSync, symlinkSync, writeFileSync } from "node:fs"
 import { mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import { tempRoot } from "./portability-test-helpers"
 
 afterEach(() => {
@@ -56,20 +57,23 @@ describe("database maintenance coordinator", () => {
     await rm(ownerPath)
   })
 
-  it("canonicalizes lexical and symlink aliases into one maintenance namespace", async () => {
-    const root = await tempRoot()
-    const realRoot = join(root, "real")
-    const aliasRoot = join(root, "alias")
-    await mkdir(realRoot)
-    await symlink(realRoot, aliasRoot)
-    const access = await import("../src/main/lib/db/access")
-    const realPath = join(realRoot, "agents.db")
-    const aliasPath = join(aliasRoot, ".", "agents.db")
-    expect(access.canonicalDatabasePath(aliasPath)).toBe(access.canonicalDatabasePath(realPath))
-    const lease = access.beginDatabaseAccessMaintenance(realPath, "alias-test")
-    expect(() => access.openAppDatabase(aliasPath)).toThrow(/paused for bounded maintenance/i)
-    lease.release()
-  })
+  it.skipIf(!fileSymlinksSupported)(
+    "canonicalizes lexical and symlink aliases into one maintenance namespace",
+    async () => {
+      const root = await tempRoot()
+      const realRoot = join(root, "real")
+      const aliasRoot = join(root, "alias")
+      await mkdir(realRoot)
+      await symlink(realRoot, aliasRoot)
+      const access = await import("../src/main/lib/db/access")
+      const realPath = join(realRoot, "agents.db")
+      const aliasPath = join(aliasRoot, ".", "agents.db")
+      expect(access.canonicalDatabasePath(aliasPath)).toBe(access.canonicalDatabasePath(realPath))
+      const lease = access.beginDatabaseAccessMaintenance(realPath, "alias-test")
+      expect(() => access.openAppDatabase(aliasPath)).toThrow(/paused for bounded maintenance/i)
+      lease.release()
+    },
+  )
 
   it("does not let a stale lease release delete a replacement live owner", async () => {
     const root = await tempRoot()
@@ -143,29 +147,32 @@ describe("database maintenance coordinator", () => {
     await rm(oldMarkerPath)
   })
 
-  it("does not follow a symlink swapped at the marker quarantine boundary", async () => {
-    const root = await tempRoot()
-    const databasePath = join(root, "agents.db")
-    const access = await import("../src/main/lib/db/access")
-    const canonical = access.canonicalDatabasePath(databasePath)
-    const ownerPath = `${canonical}.flapstack-maintenance`
-    const oldOwnerPath = `${ownerPath}.old`
-    const outsidePath = join(root, "outside-marker.json")
-    await writeFile(outsidePath, '{"outside":"unchanged"}\n')
-    const lease = access.beginDatabaseAccessMaintenance(databasePath, "symlink-swap")
-    access.setDatabaseAccessTestHooks({
-      beforeMarkerQuarantine: (path, kind) => {
-        if (kind !== "owner") return
-        renameSync(path, oldOwnerPath)
-        symlinkSync(outsidePath, path)
-      },
-    })
-    expect(() => lease.release()).toThrow(/marker is invalid/i)
-    access.setDatabaseAccessTestHooks(null)
-    await expect(readFile(outsidePath, "utf8")).resolves.toBe('{"outside":"unchanged"}\n')
-    await rm(`${canonical}.flapstack-marker-quarantine`, { recursive: true })
-    await rm(oldOwnerPath)
-  })
+  it.skipIf(!fileSymlinksSupported)(
+    "does not follow a symlink swapped at the marker quarantine boundary",
+    async () => {
+      const root = await tempRoot()
+      const databasePath = join(root, "agents.db")
+      const access = await import("../src/main/lib/db/access")
+      const canonical = access.canonicalDatabasePath(databasePath)
+      const ownerPath = `${canonical}.flapstack-maintenance`
+      const oldOwnerPath = `${ownerPath}.old`
+      const outsidePath = join(root, "outside-marker.json")
+      await writeFile(outsidePath, '{"outside":"unchanged"}\n')
+      const lease = access.beginDatabaseAccessMaintenance(databasePath, "symlink-swap")
+      access.setDatabaseAccessTestHooks({
+        beforeMarkerQuarantine: (path, kind) => {
+          if (kind !== "owner") return
+          renameSync(path, oldOwnerPath)
+          symlinkSync(outsidePath, path)
+        },
+      })
+      expect(() => lease.release()).toThrow(/marker is invalid/i)
+      access.setDatabaseAccessTestHooks(null)
+      await expect(readFile(outsidePath, "utf8")).resolves.toBe('{"outside":"unchanged"}\n')
+      await rm(`${canonical}.flapstack-marker-quarantine`, { recursive: true })
+      await rm(oldOwnerPath)
+    },
+  )
 
   it("waits for a pre-admitted async singleton operation before closing the database", async () => {
     process.env.FLAPSTACK_DB_PATH = join(await tempRoot(), "agents.db")

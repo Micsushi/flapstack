@@ -18,6 +18,13 @@ const rustTargets = {
   "win32-x64": "x86_64-pc-windows-msvc",
 }
 
+export function stableRustToolchainName(platform, arch) {
+  const hostKey = `${platform}-${arch}`
+  const target = rustTargets[hostKey]
+  if (!target) throw new Error(`Unsupported Rust host: ${hostKey}`)
+  return `stable-${target}`
+}
+
 function argsValue(name) {
   const inline = process.argv.find((value) => value.startsWith(`${name}=`))
   if (inline) return inline.slice(name.length + 1)
@@ -32,7 +39,7 @@ function cargoCommand() {
   const stable = path.join(
     home,
     "toolchains",
-    `stable-${process.arch === "arm64" ? "aarch64" : "x86_64"}-apple-darwin`,
+    stableRustToolchainName(process.platform, process.arch),
     "bin",
   )
   const cargo = path.join(stable, "cargo")
@@ -72,33 +79,37 @@ function build(targetKey) {
     : path.join(crate, "target", target, "release", binaryName)
 }
 
-const targetKey = argsValue("--platform") || `${process.platform}-${process.arch}`
-const outputRoot = argsValue("--output-root")
-const binary = build(targetKey)
-if (!fs.existsSync(binary)) throw new Error(`STT sidecar binary missing: ${binary}`)
+function main() {
+  const targetKey = argsValue("--platform") || `${process.platform}-${process.arch}`
+  const outputRoot = argsValue("--output-root")
+  const binary = build(targetKey)
+  if (!fs.existsSync(binary)) throw new Error(`STT sidecar binary missing: ${binary}`)
 
-if (outputRoot) {
-  const destination = path.join(outputRoot, targetKey)
-  fs.mkdirSync(destination, { recursive: true })
-  fs.copyFileSync(binary, path.join(destination, path.basename(binary)))
-  fs.chmodSync(path.join(destination, path.basename(binary)), 0o755)
-  fs.copyFileSync(
-    path.join(crate, "LICENSE"),
-    path.join(destination, "flapstack-stt-sidecar-LICENSE"),
-  )
-  fs.copyFileSync(
-    path.join(
-      os.homedir(),
-      ".cargo",
-      "registry",
-      "src",
-      fs.readdirSync(path.join(os.homedir(), ".cargo", "registry", "src"))[0],
-      `transcribe-cpp-${TRANSCRIBE_CPP_VERSION}`,
-      "LICENSE",
-    ),
-    path.join(destination, "transcribe.cpp-LICENSE"),
-  )
-  fs.writeFileSync(path.join(destination, ".transcribe-version"), `${TRANSCRIBE_CPP_VERSION}\n`)
+  if (outputRoot) {
+    const destination = path.join(outputRoot, targetKey)
+    fs.mkdirSync(destination, { recursive: true })
+    fs.copyFileSync(binary, path.join(destination, path.basename(binary)))
+    fs.chmodSync(path.join(destination, path.basename(binary)), 0o755)
+    fs.copyFileSync(
+      path.join(crate, "LICENSE"),
+      path.join(destination, "flapstack-stt-sidecar-LICENSE"),
+    )
+    fs.copyFileSync(
+      path.join(
+        os.homedir(),
+        ".cargo",
+        "registry",
+        "src",
+        fs.readdirSync(path.join(os.homedir(), ".cargo", "registry", "src"))[0],
+        `transcribe-cpp-${TRANSCRIBE_CPP_VERSION}`,
+        "LICENSE",
+      ),
+      path.join(destination, "transcribe.cpp-LICENSE"),
+    )
+    fs.writeFileSync(path.join(destination, ".transcribe-version"), `${TRANSCRIBE_CPP_VERSION}\n`)
+  }
+
+  console.log(`Prepared streaming STT sidecar for ${targetKey}`)
 }
 
-console.log(`Prepared streaming STT sidecar for ${targetKey}`)
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

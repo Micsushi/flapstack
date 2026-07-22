@@ -1,3 +1,9 @@
+import { basename, extname } from "node:path"
+
+export function isPreviewExecutable(executablePath = process.execPath): boolean {
+  return basename(executablePath, extname(executablePath)) === "Flapstack Preview"
+}
+
 export function isDevTestControlEnabled(
   isDev: boolean,
   isPreview: boolean,

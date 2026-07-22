@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import * as schema from "../src/main/lib/db/schema"
 import {
   PlanSourcePathError,
@@ -197,30 +198,33 @@ The app SHALL stay inside the project root.
     ).toBe(true)
   })
 
-  it("rejects escaped and symlinked selected paths before reading", async () => {
-    const root = projectRoot()
-    const outside = projectRoot()
-    writeFileSync(join(outside, "secret.md"), "secret")
-    mkdirSync(join(root, "docs"))
-    symlinkSync(join(outside, "secret.md"), join(root, "docs", "linked.md"))
+  it.skipIf(!fileSymlinksSupported)(
+    "rejects escaped and symlinked selected paths before reading",
+    async () => {
+      const root = projectRoot()
+      const outside = projectRoot()
+      writeFileSync(join(outside, "secret.md"), "secret")
+      mkdirSync(join(root, "docs"))
+      symlinkSync(join(outside, "secret.md"), join(root, "docs", "linked.md"))
 
-    await expect(validateMarkdownPlanSource(root, "../secret.md")).rejects.toBeInstanceOf(
-      PlanSourcePathError,
-    )
-    await expect(validateMarkdownPlanSource(root, join(outside, "secret.md"))).rejects.toThrow(
-      "relative path",
-    )
-    await expect(validateMarkdownPlanSource(root, "docs/linked.md")).rejects.toThrow("real file")
+      await expect(validateMarkdownPlanSource(root, "../secret.md")).rejects.toBeInstanceOf(
+        PlanSourcePathError,
+      )
+      await expect(validateMarkdownPlanSource(root, join(outside, "secret.md"))).rejects.toThrow(
+        "relative path",
+      )
+      await expect(validateMarkdownPlanSource(root, "docs/linked.md")).rejects.toThrow("real file")
 
-    const snapshot = await readProjectPlanSources({
-      projectId: "project-1",
-      rootPath: root,
-      markdownPaths: ["docs/linked.md"],
-    })
-    expect(snapshot.sources[0]).toMatchObject({ status: "malformed" })
-    expect(snapshot.sources[0]!.errors[0]).toMatchObject({ code: "symlink" })
-    expect(readFileSync(join(outside, "secret.md"), "utf8")).toBe("secret")
-  })
+      const snapshot = await readProjectPlanSources({
+        projectId: "project-1",
+        rootPath: root,
+        markdownPaths: ["docs/linked.md"],
+      })
+      expect(snapshot.sources[0]).toMatchObject({ status: "malformed" })
+      expect(snapshot.sources[0]!.errors[0]).toMatchObject({ code: "symlink" })
+      expect(readFileSync(join(outside, "secret.md"), "utf8")).toBe("secret")
+    },
+  )
 
   it("preserves candidate fingerprints across a selected Markdown rename", async () => {
     const root = projectRoot()

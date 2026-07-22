@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import * as schema from "../src/main/lib/db/schema"
 import {
   filesystemRootRegistrations,
@@ -100,7 +101,11 @@ describe("typed project vault storage", () => {
   it("fails closed on traversal-like registry abuse and symlinked scaffold parents", async () => {
     const outside = join(directory, "outside")
     mkdirSync(outside)
-    symlinkSync(outside, join(appDataRoot, "knowledge-vaults"))
+    symlinkSync(
+      outside,
+      join(appDataRoot, "knowledge-vaults"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
 
     await expect(
       scaffoldProjectVault(database, {
@@ -406,26 +411,29 @@ describe("typed project vault storage", () => {
     expect(database.select().from(projectVaultPolicies).all()).toHaveLength(1)
   })
 
-  it("refuses vault deletion when the tree contains a symlink", async () => {
-    const { vault } = await scaffoldProjectVault(database, {
-      projectId: "project-1",
-      appDataRoot,
-      sections: ["index"],
-    })
-    const outside = join(directory, "outside-secret")
-    writeFileSync(outside, "keep")
-    symlinkSync(outside, join(vault.rootPath, "linked-secret"))
-    const contract = getProjectVaultDeleteContract(database, "project-1")
+  it.skipIf(!fileSymlinksSupported)(
+    "refuses vault deletion when the tree contains a symlink",
+    async () => {
+      const { vault } = await scaffoldProjectVault(database, {
+        projectId: "project-1",
+        appDataRoot,
+        sections: ["index"],
+      })
+      const outside = join(directory, "outside-secret")
+      writeFileSync(outside, "keep")
+      symlinkSync(outside, join(vault.rootPath, "linked-secret"))
+      const contract = getProjectVaultDeleteContract(database, "project-1")
 
-    await expect(
-      deleteProjectVault(database, {
-        contract,
-        confirmationPhrase: contract.requiredPhrase,
-      }),
-    ).rejects.toThrow("refuses symbolic links")
-    expect(readFileSync(outside, "utf8")).toBe("keep")
-    expect(database.select().from(projectVaults).all()).toHaveLength(1)
-  })
+      await expect(
+        deleteProjectVault(database, {
+          contract,
+          confirmationPhrase: contract.requiredPhrase,
+        }),
+      ).rejects.toThrow("refuses symbolic links")
+      expect(readFileSync(outside, "utf8")).toBe("keep")
+      expect(database.select().from(projectVaults).all()).toHaveLength(1)
+    },
+  )
 
   it("restores the vault path and metadata when recursive removal fails", async () => {
     const { vault } = await scaffoldProjectVault(database, {

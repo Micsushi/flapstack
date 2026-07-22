@@ -1,8 +1,3 @@
-# S5-F10 — Cross-Platform Public Distribution
+# Moved to S6-F10
 
-- Outcome: signed/notarized macOS and natively verified Windows/Linux packages
-  have truthful support, installation, recovery, and artifact-security evidence.
-- Change: openspec/changes/add-cross-platform-distribution/
-- Tasks: openspec/changes/add-cross-platform-distribution/tasks.md
-- Task IDs: S5-F10-T1 through S5-F10-T8
-- Dependencies: F1 through F9 release candidate and required platform credentials/hosts.
+Use `openspec/stages/s6-product-polish-personalization-reach/features/s6-f10-platform-distribution/README.md`.

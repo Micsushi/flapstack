@@ -12,6 +12,7 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   ensureRealDirectory,
   inspectBinaryArchitecture,
@@ -126,6 +127,47 @@ describe("packaged harness preparation", () => {
     })
   })
 
+  it("gives Windows preview packages a separate app, protocol, and output identity", () => {
+    expect(
+      resolvePackageBuild({
+        platform: "win32",
+        architectures: ["x64"],
+        dir: true,
+        channel: "preview",
+      }),
+    ).toMatchObject({
+      targets: ["win32-x64"],
+      builderArgs: expect.arrayContaining([
+        "--win",
+        "--x64",
+        "--dir",
+        "--config=electron-builder.preview.win.cjs",
+      ]),
+    })
+  })
+
+  it("requires Authenticode for Windows release packages", () => {
+    expect(
+      resolvePackageBuild({
+        platform: "win32",
+        architectures: ["x64"],
+        channel: "release",
+      }),
+    ).toMatchObject({
+      targets: ["win32-x64"],
+      builderArgs: expect.arrayContaining([
+        "--win",
+        "--x64",
+        "--config=electron-builder.release.win.cjs",
+        "--publish=never",
+      ]),
+    })
+    expect(requireFromTest("../electron-builder.release.win.cjs")).toMatchObject({
+      forceCodeSigning: true,
+      artifactName: "${productName}-${version}-${arch}.${ext}",
+    })
+  })
+
   it("uses the explicit unsigned config for macOS beta release packages", () => {
     expect(
       resolvePackageBuild({
@@ -171,72 +213,95 @@ describe("packaged harness preparation", () => {
     })
   })
 
-  it("rejects missing, symlinked, non-file, non-executable, and wrong-architecture CLIs", () => {
+  it("rejects invalid native CLIs using the host package format", () => {
     const dir = mkdtempSync(join(tmpdir(), "flapstack-binaries-"))
-    const valid = executable(dir, "valid", macho("arm64"))
+    const platform = process.platform === "win32" ? "win32-x64" : "darwin-arm64"
+    const valid = executable(
+      dir,
+      process.platform === "win32" ? "valid.exe" : "valid",
+      process.platform === "win32" ? pe("x64") : macho("arm64"),
+    )
     const link = join(dir, "link")
-    symlinkSync(valid, link)
     const directory = join(dir, "directory")
     mkdirSync(directory)
     const nonExecutable = join(dir, "non-executable")
     writeFileSync(nonExecutable, macho("arm64"))
-    const wrongArch = executable(dir, "wrong-arch", macho("x64"))
+    const wrongArch = executable(
+      dir,
+      "wrong-arch",
+      process.platform === "win32" ? pe("arm64") : macho("x64"),
+    )
 
-    expect(validateBundledBinary(join(dir, "missing"), "darwin-arm64").ok).toBe(false)
-    expect(validateBundledBinary(link, "darwin-arm64").errors.join(" ")).toContain("symlink")
-    expect(validateBundledBinary(directory, "darwin-arm64").errors.join(" ")).toContain(
-      "regular file",
-    )
-    expect(validateBundledBinary(nonExecutable, "darwin-arm64").errors.join(" ")).toContain(
-      "executable",
-    )
-    expect(validateBundledBinary(wrongArch, "darwin-arm64").errors.join(" ")).toContain(
+    expect(validateBundledBinary(join(dir, "missing"), platform).ok).toBe(false)
+    if (fileSymlinksSupported) {
+      symlinkSync(valid, link)
+      expect(validateBundledBinary(link, platform).errors.join(" ")).toContain("symlink")
+    }
+    expect(validateBundledBinary(directory, platform).errors.join(" ")).toContain("regular file")
+    if (process.platform !== "win32") {
+      expect(validateBundledBinary(nonExecutable, platform).errors.join(" ")).toContain(
+        "executable",
+      )
+    }
+    expect(validateBundledBinary(wrongArch, platform).errors.join(" ")).toContain(
       "wrong architecture",
     )
   })
 
   it("recomputes the cached binary digest instead of trusting its marker", async () => {
     const dir = mkdtempSync(join(tmpdir(), "flapstack-binaries-"))
-    const binary = executable(dir, "codex", macho("arm64"))
+    const platform = process.platform === "win32" ? "win32-x64" : "darwin-arm64"
+    const initial = process.platform === "win32" ? pe("x64") : macho("arm64")
+    const binary = executable(dir, "codex", initial)
     const marker = join(dir, ".codex-binary.sha256")
     writeFileSync(marker, `${await sha256File(binary)}\n`)
 
-    await expect(verifyCachedBinaryDigest(binary, "darwin-arm64", marker)).resolves.toBe(true)
-    writeFileSync(binary, Buffer.concat([macho("arm64"), Buffer.from("tampered")]))
-    await expect(verifyCachedBinaryDigest(binary, "darwin-arm64", marker)).resolves.toBe(false)
+    await expect(verifyCachedBinaryDigest(binary, platform, marker)).resolves.toBe(true)
+    writeFileSync(binary, Buffer.concat([initial, Buffer.from("tampered")]))
+    await expect(verifyCachedBinaryDigest(binary, platform, marker)).resolves.toBe(false)
   })
 
-  it("replaces stale Whisper resources without following a destination symlink", () => {
-    const parent = mkdtempSync(join(tmpdir(), "flapstack-whisper-stage-"))
-    const target = join(parent, "darwin-arm64")
-    const staging = join(parent, ".whisper-darwin-arm64-stage")
-    const outside = join(parent, "outside")
-    mkdirSync(target)
-    mkdirSync(staging)
-    writeFileSync(join(target, "stale-extra"), "must disappear")
-    writeFileSync(outside, "outside remains")
-    symlinkSync(outside, join(target, "whisper-cli"))
+  it.skipIf(!fileSymlinksSupported)(
+    "replaces stale Whisper resources without following a destination symlink",
+    () => {
+      const parent = mkdtempSync(join(tmpdir(), "flapstack-whisper-stage-"))
+      const platform = process.platform === "win32" ? "win32-x64" : "darwin-arm64"
+      const target = join(parent, platform)
+      const staging = join(parent, `.whisper-${platform}-stage`)
+      const outside = join(parent, "outside")
+      mkdirSync(target)
+      mkdirSync(staging)
+      writeFileSync(join(target, "stale-extra"), "must disappear")
+      writeFileSync(outside, "outside remains")
+      const cliName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli"
+      symlinkSync(outside, join(target, cliName))
 
-    executable(staging, "whisper-cli", macho("arm64"))
-    writeFileSync(join(staging, "whisper.cpp-LICENSE"), "license")
-    writeFileSync(join(staging, ".whisper-version"), "1.8.6-portable-v1\n")
+      executable(staging, cliName, process.platform === "win32" ? pe("x64") : macho("arm64"))
+      writeFileSync(join(staging, "whisper.cpp-LICENSE"), "license")
+      writeFileSync(join(staging, ".whisper-version"), "1.8.6-portable-v1\n")
+      if (process.platform === "win32") {
+        for (const dll of ["ggml-base.dll", "ggml-cpu.dll", "ggml.dll", "whisper.dll"]) {
+          writeFileSync(join(staging, dll), "fixture")
+        }
+      }
 
-    expect(() => validateWhisperDirectory(target, "darwin-arm64")).toThrow()
-    validateWhisperDirectory(staging, "darwin-arm64")
-    replaceDirectoryAtomically(staging, target)
-    validateWhisperDirectory(target, "darwin-arm64")
+      expect(() => validateWhisperDirectory(target, platform)).toThrow()
+      validateWhisperDirectory(staging, platform)
+      replaceDirectoryAtomically(staging, target)
+      validateWhisperDirectory(target, platform)
 
-    expect(existsSync(join(target, "stale-extra"))).toBe(false)
-    expect(lstatSync(join(target, "whisper-cli")).isSymbolicLink()).toBe(false)
-    expect(readFileSync(outside, "utf8")).toBe("outside remains")
-  })
+      expect(existsSync(join(target, "stale-extra"))).toBe(false)
+      expect(lstatSync(join(target, cliName)).isSymbolicLink()).toBe(false)
+      expect(readFileSync(outside, "utf8")).toBe("outside remains")
+    },
+  )
 
   it("rejects a symlinked CLI target directory before downloaders can write through it", () => {
     const parent = mkdtempSync(join(tmpdir(), "flapstack-cli-root-"))
     const outside = join(parent, "outside")
     const linkedTarget = join(parent, "darwin-arm64")
     mkdirSync(outside)
-    symlinkSync(outside, linkedTarget)
+    symlinkSync(outside, linkedTarget, process.platform === "win32" ? "junction" : undefined)
 
     expect(() => ensureRealDirectory(linkedTarget)).toThrow("must be a real directory")
     expect(lstatSync(linkedTarget).isSymbolicLink()).toBe(true)

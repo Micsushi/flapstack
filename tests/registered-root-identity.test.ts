@@ -104,7 +104,7 @@ describe("durable registered filesystem root identity", () => {
     bindRegisteredFilesystemRoot(root)
     const movedRoot = join(container, "moved-root")
     renameSync(root, movedRoot)
-    symlinkSync(movedRoot, root)
+    symlinkSync(movedRoot, root, process.platform === "win32" ? "junction" : "dir")
 
     expect(() => assertRegisteredWorktree(root)).toThrow(/replaced or symlinked/)
   })

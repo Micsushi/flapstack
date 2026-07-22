@@ -12,6 +12,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import matter from "gray-matter"
 import { afterEach, describe, expect, it } from "vitest"
+import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   applyNativeExtensionMutation,
   extensionCapabilityRegistry,
@@ -229,7 +230,11 @@ describe("native extension mutation safety", () => {
     const outside = temporaryRoot()
     write(join(outside, "SKILL.md"), validSkill("outside"))
     mkdirSync(join(home, ".agents", "skills"), { recursive: true })
-    symlinkSync(outside, join(home, ".agents", "skills", "linked"))
+    symlinkSync(
+      outside,
+      join(home, ".agents", "skills", "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    )
 
     await expect(
       previewNativeExtensionMutation(
@@ -244,22 +249,24 @@ describe("native extension mutation safety", () => {
     expect(readFileSync(join(outside, "SKILL.md"), "utf8")).toBe(validSkill("outside"))
     expect(existsSync(join(home, ".agents", "skills", ".flapstack-backups"))).toBe(false)
 
-    const outsideCommand = join(outside, "review.md")
-    const linkedCommand = join(home, ".cursor", "commands", "review.md")
-    write(outsideCommand, "Review outside.\n")
-    mkdirSync(dirname(linkedCommand), { recursive: true })
-    symlinkSync(outsideCommand, linkedCommand)
-    await expect(
-      previewNativeExtensionMutation(
-        {
-          operation: "update",
-          target: target("cursor-agent", "command", "project", "review", home),
-          changes: { content: "escaped" },
-        },
-        { homeDir: home },
-      ),
-    ).rejects.toThrow("symbolic link")
-    expect(readFileSync(outsideCommand, "utf8")).toBe("Review outside.\n")
+    if (fileSymlinksSupported) {
+      const outsideCommand = join(outside, "review.md")
+      const linkedCommand = join(home, ".cursor", "commands", "review.md")
+      write(outsideCommand, "Review outside.\n")
+      mkdirSync(dirname(linkedCommand), { recursive: true })
+      symlinkSync(outsideCommand, linkedCommand)
+      await expect(
+        previewNativeExtensionMutation(
+          {
+            operation: "update",
+            target: target("cursor-agent", "command", "project", "review", home),
+            changes: { content: "escaped" },
+          },
+          { homeDir: home },
+        ),
+      ).rejects.toThrow("symbolic link")
+      expect(readFileSync(outsideCommand, "utf8")).toBe("Review outside.\n")
+    }
 
     await expect(
       previewNativeExtensionMutation(

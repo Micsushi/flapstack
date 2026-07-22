@@ -91,7 +91,7 @@ describe("run change undo planning", () => {
     const root = await temporaryDirectory()
     const path = join(root, "script.sh")
     await writeUndoFileState(root, path, planned.result ?? null)
-    expect((await lstat(path)).mode & 0o777).toBe(0o755)
+    if (process.platform !== "win32") expect((await lstat(path)).mode & 0o777).toBe(0o755)
     expect(await readFile(path, "utf8")).toBe("before\n")
   })
 

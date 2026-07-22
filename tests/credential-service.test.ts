@@ -7,6 +7,7 @@ import {
   credentialFingerprint,
   resetCredentialServiceForTests,
   setCredentialServiceForTests,
+  secureCredentialFile,
   type CredentialEncryption,
 } from "../src/main/lib/credential-service"
 import { credentialsRouter } from "../src/main/lib/trpc/routers/credentials"
@@ -51,9 +52,28 @@ describe("main-process credential service", () => {
     })
     expect(raw).not.toContain(secret)
     expect(raw).not.toContain(Buffer.from(secret).toString("base64"))
-    expect(statSync(service.storePath).mode & 0o777).toBe(0o600)
+    if (process.platform !== "win32") {
+      expect(statSync(service.storePath).mode & 0o777).toBe(0o600)
+    }
     expect(service.resolve("codex.api-key")).toBe(secret)
     expect(JSON.stringify(service.status("codex.api-key"))).not.toContain(secret)
+  })
+
+  it("removes inherited Windows ACLs and grants only the current identity", () => {
+    const calls: unknown[][] = []
+    secureCredentialFile("C:\\data\\credentials.v1.json", "win32", {
+      identity: "WORKGROUP\\sushi",
+      runner: (...args: unknown[]) => {
+        calls.push(args)
+      },
+    })
+    expect(calls).toEqual([
+      [
+        "icacls.exe",
+        ["C:\\data\\credentials.v1.json", "/inheritance:r", "/grant:r", "WORKGROUP\\sushi:(F)"],
+        { stdio: "ignore", windowsHide: true },
+      ],
+    ])
   })
 
   it("reports encrypted credential status without decrypting or prompting the OS store", () => {

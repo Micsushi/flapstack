@@ -1,112 +1,145 @@
-# Stage 5 Execution Plan
+# Stage 5 Windows Compatibility Execution Plan
 
-Stage 5 begins only after one exact Stage 4 SHA has all eleven feature boards
-and the integrated Stage 4 matrix fully accepted. Stage 5 planning does not
-change the active Stage 4 stabilization goal.
+Roadmap note: former Stage 5 product-polish work moved intact to Stage 6. Stage
+5 now owns native Windows development, runtime, packaging, and acceptance.
+
+Stage 5 begins only after one exact Stage 4 SHA has all required feature boards
+and its integrated matrix accepted. Stage 6 cannot begin until Stage 5 closes.
 
 ## Outcome
 
-Deliver an approachable, polished, personalized, cross-device, performant, and
-cross-platform Flapstack release with an Obsidian-compatible project knowledge
-graph, without duplicating Stage 4 services or hiding unsupported evidence.
+Deliver Flapstack as a first-class Windows 11 x64 Electron application. A
+developer must be able to clone, install, check, run, verify, package, inspect,
+install, upgrade, repair, and uninstall from native PowerShell without WSL, Git
+Bash, or undocumented manual patches. Supported agent, terminal, credential,
+speech, deep-link, and lifecycle flows must work in both verified development
+and packaged builds.
+
+## Support contract
+
+- Required OS: supported Windows 11 x64 editions on clean native hosts or VMs.
+- Required shell: PowerShell 7 and Windows PowerShell 5.1 for documented user
+  commands; scripts must not depend on POSIX shell semantics.
+- Required toolchain: Node.js 22, repository-pinned npm, Python 3.11, CMake,
+  Rust stable with MSVC target, Visual Studio 2022 Build Tools with Desktop C++
+  workload and x64/x86 Spectre-mitigated libraries, and current Windows SDK.
+- Required artifacts: unpacked Preview build, x64 NSIS installer, and portable
+  x64 package when electron-builder config declares it.
+- Operator setup: [Windows development and packaging](windows-development.md).
+- Required native proof: better-sqlite3, node-pty, whisper.cpp/Parakeet paths,
+  bundled Claude/Codex binaries, DPAPI storage, scheduled tasks, terminal
+  process trees, protocol/deep links, and installer lifecycle.
+- Production signing credentials remain external. Stage 5 must implement and
+  verify Authenticode-ready signing, fail safely when credentials are absent,
+  and prove signature validation when authorized credentials are available.
+- Windows 10, Windows on ARM, Store/MSIX distribution, hosted services,
+  auto-update, and Linux public support remain unclaimed unless separately
+  promoted with native evidence.
+
+## Feature crosswalk
+
+| Feature                            | Tasks | Outcome                                                                      |
+| ---------------------------------- | ----: | ---------------------------------------------------------------------------- |
+| S5-F1 Supported Windows toolchain  |     7 | Reproducible prerequisites, versions, bootstrap, and diagnostics             |
+| S5-F2 Portable build scripts       |     9 | Every root npm workflow runs without POSIX-only syntax or shim failures      |
+| S5-F3 Native dependency install    |     8 | Clean npm install and Node/Electron ABI repair work natively                 |
+| S5-F4 Windows CI and dev lifecycle |     8 | Windows CI, process verification, cleanup, and exact-checkout proof          |
+| S5-F5 Windows OS integration       |     9 | Paths, terminal, DPAPI, scheduler, protocols, and lifecycle behave correctly |
+| S5-F6 Agent harness parity         |     8 | Claude, Codex, auth, resume, permissions, and tool execution pass natively   |
+| S5-F7 Speech and voice parity      |     8 | STT/TTS install, credentials, capture, playback, fallback, and cleanup pass  |
+| S5-F8 Packaging and security       |    10 | Preview, NSIS, portable, signing, integrity, upgrade, and uninstall pass     |
+| S5-F9 Integrated Windows release   |     9 | One exact SHA closes full matrix and user walkthrough                        |
+
+Task status lives only in
+`openspec/changes/enable-windows-compatibility/tasks.md`.
 
 ## Dependency waves
 
-### Wave 0 — Entry and evidence baseline
+### Wave 0 - Freeze baseline and ownership
 
-- Prove the exact accepted Stage 4 source, schema, packages, and support matrix.
-- Freeze the Stage 5 task/spec/router crosswalk.
-- Inventory the preserved mobile branch by tree equivalence; never blindly merge it.
+- S5-F1-T1 through T3: record exact failures, support matrix, and toolchain.
+- S5-F9-T1: freeze one source SHA and evidence ledger format.
+- Do not hide failures behind WSL, global PATH mutations, or manual source edits.
 
-### Wave 1 — Foundations
+### Wave 1 - Make repository commands portable
 
-- S5-F1 T1-T2: UI audit and shared interaction/design primitives.
-- S5-F7 T1: Runtime/orchestration ownership, exact execution-target, and
-  harness/Runtime compatibility contract.
-- S5-F8 T1: organization API/credential/provenance decision.
-- S5-F9 T1-T2: performance budgets and harness.
-- S5-F10 T1: platform/release matrix and credential/host inventory.
-- S5-F12 T1-T4: seed-note migration, Git-safe Obsidian opening, Markdown
-  compatibility contract, and rebuildable graph index/watcher.
+- S5-F1 closes bootstrap and prerequisite diagnostics.
+- S5-F2 replaces shell-specific environment assignment, `sh -c`, executable
+  assumptions, quoting, lock behavior, and path handling.
+- Root commands remain one-command entrypoints on every supported platform.
 
-### Wave 2 — Vertical feature implementation
+### Wave 2 - Stabilize install, native ABI, CI, and dev lifecycle
 
-- S5-F1 remaining UI/UX surfaces, including dynamic speech vocabulary.
-- S5-F2 onboarding, feature registry, explanations, and visibility.
-- S5-F3 reusable personalities and universal Agent Profile selection.
-- S5-F4 bridge/pairing/events before PWA/actions.
-- S5-F5 in-app capture before standalone helper.
-- S5-F6 full top-level Chat pane extraction and bounded group tree, then
-  directional tab drag/bindings, the main-process four-workbench-window budget,
-  floating-window transfer/restoration, and finally fleet/group controls.
-- S5-F7 exact target resolution, native authority, bidirectional
-  Codex/Claude continuation and delegation, bounded task/result envelopes,
-  authority/worktree controls, activity/usage, and no-replay recovery.
-- S5-F8 adapters, reconciliation, and dashboard.
-- S5-F9 optimizations after measurement.
-- S5-F10 native packaging lanes as hosts/credentials become available.
-- S5-F12 custom notes, attachments, graph/backlinks, agent context, and
-  portability/recovery after its storage/index foundation.
+- S5-F3 makes `npm ci --legacy-peer-deps` deterministic on a clean Windows host.
+- S5-F4 adds Windows CI for install, check, build, package, native inspection,
+  process cleanup, and exact-checkout verification.
+- macOS gates stay green after shared script changes.
 
-### Wave 3 — Cross-feature composition
+### Wave 3 - Close native product parity
 
-- F7 target preview, child-Chat lineage, Runtime controls/activity, and
-  cross-provider result contracts unblock F3 profiles, F4 mobile, and F6 swarm.
-- F1 UI primitives and Settings IA unblock F2/F3 UI closeout.
-- F9 budgets cover F1-F8 workloads.
-- F10 native hosts close F5 capture/helper and F7 Runtime platform proof.
-- F1 primitives unblock F12 graph UI; F9 budgets and F10 native packages close
-  F12 scale and real Obsidian interoperability evidence.
+- S5-F5 proves OS integration: paths, shell/terminal, DPAPI, scheduler, process
+  trees, protocols, file opening, data directories, and cleanup.
+- S5-F6 proves Claude and Codex download, login/status, run/resume, permissions,
+  cancellation, restart, and worktree behavior.
+- S5-F7 proves Windows STT/TTS dependencies, credential lookup, recording,
+  transcription, playback, fallback, and teardown.
 
-### Wave 4 — Feature exits
+### Wave 4 - Package, secure, and test lifecycle
 
-- Each feature closes its authoritative OpenSpec board and matching Stage 5 matrix rows.
-- Headless tests never substitute for required UI, provider, device, package, or platform evidence.
-- Every live claim records exact SHA, checkout, profile, versions, credentials class, OS, and device.
+- S5-F8 produces Preview, NSIS, and portable artifacts from native Windows.
+- Inspect architectures, native modules, bundled binaries, secrets, hashes,
+  version/SHA, signatures, process cleanup, data migration, and rollback.
+- Exercise clean install, upgrade, repair/reinstall, uninstall-keep-data, and
+  uninstall-remove-data paths on clean Windows VMs.
 
-### Wave 5 — S5-F11 integrated release
+### Wave 5 - Integrated exact-SHA acceptance
 
-- Freeze one candidate only after F1-F10 and F12 exit.
-- Run clean install and Stage 4 upgrade/rollback.
-- Exercise all Stage 5 features in one project.
-- Run security/privacy, UI/accessibility/usability, performance, platform/package,
-  documentation, and up to three review/fix rounds.
-- Produce an exact-SHA handoff. Merge, push, tag, publication, and archive remain
-  separate explicitly authorized actions.
+- S5-F9 runs full automated and manual matrix against one immutable candidate.
+- Run fresh-user and existing-profile workflows with credentialed Claude/Codex,
+  terminal, worktrees, voice, deep links, restart, package lifecycle, and logs.
+- Close only when no P0/P1 defect, required row, or unsupported claim remains.
 
-## Integration rules
+## Required command contract
 
-- One feature owns each schema/service/surface change; shared seams use typed ports.
-- Preserve user changes and concurrent Stage 4 work; never reset unrelated state.
-- Agent Profile remains the only complete named agent configuration. Personality
-  is reusable presentation; preset is used only for onboarding visibility.
-- Mobile, visual helper, and swarm UI reuse existing local authority and data.
-- Native Runtime compatibility is not universal: Codex never uses the Claude
-  Code Runtime and Claude Code never uses the Codex Runtime. Cross-provider work
-  creates a distinct child Chat/native session through explicit `Continue with`
-  or `Delegate to` composition.
-- Cross-provider context contains only previewed visible history and selected
-  artifact references. Credentials, private/encrypted reasoning, provider
-  session state, hidden tool state, and unselected files never cross the boundary.
-- Child permissions, descendants, budgets, account, workspace, and worktree are
-  resolved explicitly and cannot exceed the initiator's delegation ceiling.
-- Provider usage remains attributed to the actual child target and is aggregated
-  by reference without double counting.
-- The knowledge graph derives from Markdown. SQLite graph/search state is
-  rebuildable and never becomes a second knowledge source of truth.
-- App-managed knowledge remains outside Git. Project-owned untracked knowledge
-  requires a verified local Git exclusion; Flapstack never stages or commits it.
-- No hosted relay, hosted sync, hidden telemetry, arbitrary remote command, or
-  unlimited/hidden agent spawning enters Stage 5.
-- Task checkboxes live only in each OpenSpec tasks.md.
+These entrypoints must work from native PowerShell on a clean supported host:
 
-## Verification commands
+```powershell
+npm ci --legacy-peer-deps
+npm run claude:download
+npm run codex:download
+npm run check
+npm run dev
+npm run dev:verify
+npm run package:preview:win
+npm run package:inspect:preview:win
+npm run package:smoke:preview:win
+npm run package:win
+```
 
-- Node 22 npm run check.
-- Strict validation for every Stage 5 OpenSpec change.
-- npm run dev followed by npm run dev:verify for live desktop evidence.
-- Platform/package commands defined by S5-F10; macOS public artifacts require
-  signing/notarization/staple evidence.
-- Real Obsidian round trips cover central and project-owned vaults, external
-  edits/renames/links/attachments/conflicts, restart, and package profiles.
-- docs/stage5-full-feature-test-matrix.md is the integrated acceptance authority.
+Final script names may be added by S5-F2/S5-F8, but one root command must own
+each lifecycle. Users must not manually launch renderer, main process, helper,
+or packaged executable pieces to satisfy acceptance.
+
+## Stage completion gate
+
+All conditions required:
+
+1. Every S5 task checkbox complete with linked current evidence.
+2. `docs/stage5-full-feature-test-matrix.md` passes on one exact SHA.
+3. Windows CI passes install, lint, style, typecheck, unit/integration tests,
+   production build, native-module inspection, package build, and package smoke.
+4. Real Windows Dev and packaged walkthroughs pass without POSIX shell tools.
+5. Clean install, upgrade, repair, rollback, and both uninstall data choices pass.
+6. Claude, Codex, terminal, credentials, voice, deep links, and scheduled/background
+   work pass or carry explicit user-visible unsupported status.
+7. Artifact manifest, hash, architecture, secret scan, and signature policy pass.
+8. macOS regression gates pass after shared script and packaging changes.
+9. User completes `docs/stage5-windows-manual-test.md` and accepts result.
+10. Stage 6 routers and dependencies point to accepted Stage 5 baseline.
+
+## Stop/go rule
+
+Any missing native observation, clean-host failure, manual patch, secret leak,
+unsafe signing bypass, orphaned process, data-loss path, or required matrix gap
+blocks Stage 5 completion. Cross-compilation and mocks do not replace native
+Windows evidence.

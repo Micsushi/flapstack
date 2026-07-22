@@ -149,7 +149,7 @@ function stripInactiveAgentHotlineInstructions(
 
 function extractAbsoluteMarkdownPaths(content: string): string[] {
   const paths = new Set<string>()
-  const absolutePathPattern = /\/[^\s`'"<>)]+\.md/g
+  const absolutePathPattern = /(?:[A-Za-z]:[\\/]|\/)[^\s`'"<>)]+\.md/g
 
   for (const match of content.matchAll(absolutePathPattern)) {
     const path = match[0]

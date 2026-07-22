@@ -16,8 +16,10 @@ sync, auto-update, or telemetry.
 - Support is promoted per OS/architecture only after native observed matrix.
 - macOS public artifact requires Developer ID, hardened runtime where applicable,
   notarization, staple, and clean-profile Gatekeeper proof.
-- Windows and Linux require native runners/hosts for package, service, native
-  module, permissions, speech, Runtime, and uninstall evidence.
+- Windows starts from accepted Stage 5 native evidence. Stage 6 repeats affected
+  rows for new features and adds production signing/publication evidence.
+- Linux requires native runners/hosts for package, service, native module,
+  permissions, speech, Runtime, and uninstall evidence.
 - Release artifacts include checksums and generated dependency/SBOM metadata.
 - Signing credentials remain external secrets; tests use presence checks and
   sanitized evidence, never store credentials.
@@ -25,5 +27,6 @@ sync, auto-update, or telemetry.
 
 ## Migration Plan
 
-Packaging config changes are additive by platform. Preview channel remains
-available. Rollback withdraws affected artifact/support claim without touching user data.
+Packaging config changes are additive by platform. Accepted Stage 5 Windows
+Preview/install behavior remains baseline. Rollback withdraws affected artifact
+or support claim without touching user data.
