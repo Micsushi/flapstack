@@ -1,4 +1,0 @@
-export { AutomationsView } from "./automations-view"
-export { AutomationsDetailView } from "./automations-detail-view"
-export { InboxView } from "./inbox-view"
-export { useAutomationInboxNotifications } from "./use-automation-inbox-notifications"

@@ -1,1 +1,0 @@
-ALTER TABLE `agent_runs` ADD `initial_prompt` text;

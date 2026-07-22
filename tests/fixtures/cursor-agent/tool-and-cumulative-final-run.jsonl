@@ -1,8 +1,0 @@
-{"type":"system","subtype":"init","session_id":"cursor-tool-fixture","model":"Auto","cwd":"/tmp/flapstack-test"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Checking files.\n"}]},"session_id":"cursor-tool-fixture","timestamp_ms":1783920401000}
-{"type":"tool_call","subtype":"started","call_id":"tool_read_fixture","tool_call":{"readToolCall":{"args":{"path":"/tmp/flapstack-test/package.json","limit":20}},"toolCallId":"tool_read_fixture","startedAtMs":"1783920401100"},"session_id":"cursor-tool-fixture","timestamp_ms":1783920401101}
-{"type":"tool_call","subtype":"completed","call_id":"tool_read_fixture","tool_call":{"readToolCall":{"args":{"path":"/tmp/flapstack-test/package.json","limit":20},"result":{"success":{"content":"{\"name\":\"flapstack\"}","isEmpty":false}}},"toolCallId":"tool_read_fixture","startedAtMs":"1783920401100","completedAtMs":"1783920401200"},"session_id":"cursor-tool-fixture","timestamp_ms":1783920401201}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Final "}]},"session_id":"cursor-tool-fixture","timestamp_ms":1783920401300}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer."}]},"session_id":"cursor-tool-fixture","timestamp_ms":1783920401301}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Final answer."}]},"session_id":"cursor-tool-fixture"}
-{"type":"result","subtype":"success","result":"Final answer.","session_id":"cursor-tool-fixture","duration_ms":401,"usage":{"inputTokens":10,"outputTokens":4,"totalTokens":14}}

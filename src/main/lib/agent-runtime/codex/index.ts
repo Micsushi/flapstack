@@ -1,1 +1,0 @@
-export { createCodexRuntimeAdapterFactory } from "./adapter"

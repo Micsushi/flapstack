@@ -1,3 +1,0 @@
-{
-  "contracts": [{ "id": "settings", "dependencies": ["not-registered"] }]
-}
