@@ -21,9 +21,22 @@ export function createIsolatedTestGitEnvironment(options = {}) {
     }
     return String(result.stdout ?? "").trim()
   }
-  const name = runGit(["config", "--global", "--get", "user.name"])
-  const email = runGit(["config", "--global", "--get", "user.email"])
-  if (!name || !email) throw new Error("Human Git name and email are required for tests")
+  const readGlobalConfig = (key) => {
+    const result = runner("git", ["config", "--global", "--get", key], {
+      encoding: "utf8",
+      env,
+      windowsHide: true,
+    })
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+      throw new Error(`Could not prepare isolated test Git config: config --global --get ${key}`)
+    }
+    return String(result.stdout ?? "").trim()
+  }
+  const globalName = readGlobalConfig("user.name")
+  const globalEmail = readGlobalConfig("user.email")
+  const hasGlobalIdentity = Boolean(globalName && globalEmail)
+  const name = hasGlobalIdentity ? globalName : "Flapstack Test"
+  const email = hasGlobalIdentity ? globalEmail : "flapstack-test@example.invalid"
   runGit(["config", "--file", configPath, "user.name", name])
   runGit(["config", "--file", configPath, "user.email", email])
 

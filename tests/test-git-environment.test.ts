@@ -80,4 +80,49 @@ describe("isolated test Git environment", () => {
       force: true,
     })
   })
+
+  it("uses a test-only identity when the runner has no global Git identity", () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const spawn = (command: string, args: string[]) => {
+      calls.push({ command, args })
+      if (args.includes("--get")) {
+        return { status: 1, stdout: "", stderr: "" }
+      }
+      return { status: 0, stdout: "", stderr: "" }
+    }
+
+    const isolated = createIsolatedTestGitEnvironment({
+      env: { CI: "true", PATH: "tool-path" },
+      makeDirectory: () => "C:\\Temp\\flapstack-test-git",
+      remove: vi.fn(),
+      spawn,
+    })
+
+    expect(calls).toEqual([
+      { command: "git", args: ["config", "--global", "--get", "user.name"] },
+      { command: "git", args: ["config", "--global", "--get", "user.email"] },
+      {
+        command: "git",
+        args: [
+          "config",
+          "--file",
+          "C:\\Temp\\flapstack-test-git\\config",
+          "user.name",
+          "Flapstack Test",
+        ],
+      },
+      {
+        command: "git",
+        args: [
+          "config",
+          "--file",
+          "C:\\Temp\\flapstack-test-git\\config",
+          "user.email",
+          "flapstack-test@example.invalid",
+        ],
+      },
+    ])
+
+    isolated.cleanup()
+  })
 })
