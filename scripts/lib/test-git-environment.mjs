@@ -1,10 +1,22 @@
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 export function createIsolatedTestGitEnvironment(options = {}) {
   const env = options.env ?? process.env
+  const testEnv = { ...env }
+  if ((options.platform ?? process.platform) === "win32") {
+    const realpath = options.realpath ?? realpathSync.native
+    for (const key of ["TEMP", "TMP", "TMPDIR"]) {
+      if (!testEnv[key]) continue
+      try {
+        testEnv[key] = realpath(testEnv[key])
+      } catch {
+        // Keep the original path so the child command can report an invalid temp directory.
+      }
+    }
+  }
   const runner = options.spawn ?? spawnSync
   const directory = (
     options.makeDirectory ?? (() => mkdtempSync(join(tmpdir(), "flapstack-test-git-")))
@@ -13,7 +25,7 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   const runGit = (args) => {
     const result = runner("git", args, {
       encoding: "utf8",
-      env,
+      env: testEnv,
       windowsHide: true,
     })
     if (result.error || result.status !== 0) {
@@ -24,7 +36,7 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   const readGlobalConfig = (key) => {
     const result = runner("git", ["config", "--global", "--get", key], {
       encoding: "utf8",
-      env,
+      env: testEnv,
       windowsHide: true,
     })
     if (result.error || (result.status !== 0 && result.status !== 1)) {
@@ -41,7 +53,7 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   runGit(["config", "--file", configPath, "user.email", email])
 
   return {
-    env: { ...env, GIT_CONFIG_GLOBAL: configPath },
+    env: { ...testEnv, GIT_CONFIG_GLOBAL: configPath },
     cleanup: () => (options.remove ?? rmSync)(directory, { recursive: true, force: true }),
   }
 }

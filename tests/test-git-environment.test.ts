@@ -125,4 +125,35 @@ describe("isolated test Git environment", () => {
 
     isolated.cleanup()
   })
+
+  it("canonicalizes Windows temporary directories for child tests", () => {
+    const spawn = (_command: string, args: string[]) => {
+      if (args.join(" ").endsWith("user.name")) {
+        return { status: 0, stdout: "Human User\n", stderr: "" }
+      }
+      if (args.join(" ").endsWith("user.email")) {
+        return { status: 0, stdout: "human@example.com\n", stderr: "" }
+      }
+      return { status: 0, stdout: "", stderr: "" }
+    }
+
+    const isolated = createIsolatedTestGitEnvironment({
+      env: {
+        TEMP: "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp",
+        TMP: "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp",
+      },
+      makeDirectory: () => "C:\\Temp\\flapstack-test-git",
+      platform: "win32",
+      realpath: () => "C:\\Users\\runneradmin\\AppData\\Local\\Temp",
+      remove: vi.fn(),
+      spawn,
+    })
+
+    expect(isolated.env).toMatchObject({
+      TEMP: "C:\\Users\\runneradmin\\AppData\\Local\\Temp",
+      TMP: "C:\\Users\\runneradmin\\AppData\\Local\\Temp",
+    })
+
+    isolated.cleanup()
+  })
 })

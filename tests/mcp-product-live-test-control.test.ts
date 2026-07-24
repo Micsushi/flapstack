@@ -22,9 +22,9 @@ import {
 
 vi.mock("electron", () => ({
   app: {
-    getAppPath: () => "/tmp",
+    getAppPath: () => process.cwd(),
     getName: () => "Flapstack",
-    getPath: () => "/tmp",
+    getPath: () => process.cwd(),
     isPackaged: false,
   },
   BrowserWindow: { getAllWindows: () => [] },
@@ -110,8 +110,8 @@ describe("authenticated dev control for live product MCP", () => {
   })
 
   it("binds live caller worktree only to the running dev checkout", () => {
-    expect(prepareProductMcpCaller({ harness: "codex", repoPath: "/tmp" })).toMatchObject({
-      worktreePath: realpathSync("/tmp"),
+    expect(prepareProductMcpCaller({ harness: "codex", repoPath: process.cwd() })).toMatchObject({
+      worktreePath: realpathSync(process.cwd()),
     })
     expect(() => prepareProductMcpCaller({ harness: "codex", repoPath: directory })).toThrow(
       /running dev checkout/,
