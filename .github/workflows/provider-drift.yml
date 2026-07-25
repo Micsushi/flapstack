@@ -11,6 +11,7 @@ on:
       - "package-lock.json"
       - "scripts/check-codex-model-catalog.mjs"
       - "src/shared/model-catalog.ts"
+      - "tests/github-actions-runner-security.test.ts"
       - "tests/model-catalog.test.ts"
 
 permissions:
@@ -23,10 +24,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
@@ -37,14 +38,15 @@ jobs:
         run: npm run check
 
   codex-catalog:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, flapstack]
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
@@ -52,7 +54,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Static model catalog tests
-        run: npm run test:model-catalog
+        run: node scripts/run-project-bin.mjs vitest vitest -- run tests/model-catalog.test.ts tests/github-actions-runner-security.test.ts
 
       - name: Read bundled Codex model catalog
         run: npx codex debug models --bundled > codex-models-bundled.json
@@ -78,10 +80,40 @@ jobs:
 
       - name: Upload Codex catalogs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-model-catalogs
           path: |
             codex-models-bundled.json
             codex-models-live.json
+          if-no-files-found: ignore
+
+  codex-catalog-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Static model catalog and runner policy tests
+        run: node scripts/run-project-bin.mjs vitest vitest -- run tests/model-catalog.test.ts tests/github-actions-runner-security.test.ts
+
+      - name: Read bundled Codex model catalog
+        run: npx codex debug models --bundled > codex-models-bundled.json
+
+      - name: Upload bundled Codex catalog
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codex-model-catalog-pr
+          path: codex-models-bundled.json
           if-no-files-found: ignore
