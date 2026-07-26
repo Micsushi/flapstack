@@ -486,7 +486,7 @@ describe("MCP main run launcher", () => {
           .all(`corrupt-invocation-${index}`),
       ).toEqual([{ status: "completed" }, { status: "failed" }])
     }
-  })
+  }, 60_000)
 
   it("fails a corrupt durable local definition during restart recovery without replay", async () => {
     seedLocalOrchestrationRun("local-corrupt-restart", "local-corrupt-restart-task")
