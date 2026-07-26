@@ -43,23 +43,21 @@ function isSelfHosted(job: WorkflowJob): boolean {
 
 function allowsOnlyTrustedEvents(condition: string | undefined): boolean {
   if (!condition) return false
-  const clauses = condition
-    .replaceAll(/\s|\(|\)/g, "")
-    .split("||")
-    .filter(Boolean)
-
+  const compact = condition.replaceAll(/\s|\(|\)/g, "")
+  if (compact.includes("pull_request")) return false
+  if (compact.includes("workflow_dispatch")) {
+    return compact.includes("github.ref=='refs/heads/main'")
+  }
   return (
-    clauses.length > 0 &&
-    clauses.every((clause) =>
-      /^github\.event_name==['"](push|schedule|workflow_dispatch)['"]$/.test(clause),
-    )
+    compact.includes("github.event_name=='push'") ||
+    compact.includes("github.event_name=='schedule'")
   )
 }
 
 describe("GitHub Actions self-hosted runner policy", () => {
   it("keeps pull-request CI on GitHub-hosted Linux", () => {
     expect(ci).toMatch(
-      /verify:\s+if: github\.event_name == 'push'\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
+      /verify:\s+if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\s+runs-on: \[self-hosted, Linux, X64, server1, flapstack\]/,
     )
     expect(ci).toMatch(
       /verify-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
@@ -68,7 +66,7 @@ describe("GitHub Actions self-hosted runner policy", () => {
 
   it("keeps pull-request provider checks off Server1", () => {
     expect(providerDrift).toMatch(
-      /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| github\.event_name == 'workflow_dispatch'\s+runs-on: \[self-hosted, Linux, X64, flapstack\]/,
+      /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\s+runs-on: \[self-hosted, Linux, X64, server1, flapstack\]/,
     )
     expect(providerDrift).toMatch(
       /codex-catalog-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
@@ -87,8 +85,8 @@ describe("GitHub Actions self-hosted runner policy", () => {
   })
 
   it("retains the trusted Server1 label and explicit read-only permissions", () => {
-    expect(ci).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
-    expect(providerDrift).toContain("runs-on: [self-hosted, Linux, X64, flapstack]")
+    expect(ci).toContain("runs-on: [self-hosted, Linux, X64, server1, flapstack]")
+    expect(providerDrift).toContain("runs-on: [self-hosted, Linux, X64, server1, flapstack]")
     for (const workflowName of ["ci.yml", "provider-drift.yml"]) {
       const workflow = workflows.find(({ name }) => name === workflowName)?.workflow
       expect(workflow?.permissions, workflowName).toEqual({ contents: "read" })
