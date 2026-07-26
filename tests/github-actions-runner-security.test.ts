@@ -64,6 +64,23 @@ describe("GitHub Actions self-hosted runner policy", () => {
     )
   })
 
+  it("runs only the portable test suite on Server1 Linux", () => {
+    expect(ci).toMatch(
+      /runs-on: \[self-hosted, Linux, X64, server1, flapstack\][\s\S]*?run: npm run check -- --portable-linux/,
+    )
+
+    const checkScript = readFileSync(resolve(root, "scripts/check.mjs"), "utf8")
+    for (const windowsOnlyTest of [
+      "mcp-test-control-lifecycle.test.ts",
+      "profile-paths.test.ts",
+      "test-git-environment.test.ts",
+      "windows-process-inspection.test.ts",
+      "windows-toolchain.test.ts",
+    ]) {
+      expect(checkScript).toContain(windowsOnlyTest)
+    }
+  })
+
   it("keeps pull-request provider checks off Server1", () => {
     expect(providerDrift).toMatch(
       /codex-catalog:\s+if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\)\s+runs-on: \[self-hosted, Linux, X64, server1, flapstack\]/,

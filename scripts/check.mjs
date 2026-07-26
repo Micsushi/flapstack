@@ -12,6 +12,20 @@ import { runWithIsolatedTestGitEnvironment } from "./lib/test-git-environment.mj
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const node = process.execPath
+const portableLinux = process.argv.includes("--portable-linux")
+const vitestArgs = ["run"]
+
+if (portableLinux) {
+  for (const windowsOnlyTest of [
+    "tests/mcp-test-control-lifecycle.test.ts",
+    "tests/profile-paths.test.ts",
+    "tests/test-git-environment.test.ts",
+    "tests/windows-process-inspection.test.ts",
+    "tests/windows-toolchain.test.ts",
+  ]) {
+    vitestArgs.push("--exclude", windowsOnlyTest)
+  }
+}
 
 assertPortablePackageScripts(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")), [
   "build",
@@ -38,7 +52,7 @@ try {
           args: [path.join(root, "scripts", "ensure-native-abi.mjs"), "node"],
           cwd: root,
         },
-        packageBinStep("tests", "vitest", "vitest", ["run"], { root }),
+        packageBinStep("tests", "vitest", "vitest", vitestArgs, { root }),
         {
           label: "build",
           command: node,
