@@ -10,9 +10,9 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import matter from "gray-matter"
 import { afterEach, describe, expect, it } from "vitest"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
+import { parseFrontmatter } from "../src/main/lib/frontmatter"
 import {
   applyNativeExtensionMutation,
   extensionCapabilityRegistry,
@@ -42,6 +42,28 @@ afterEach(() => {
 })
 
 describe("native extension adapter parsing", () => {
+  it("rejects executable frontmatter without evaluating it", () => {
+    const marker = "__flapstack_frontmatter_execution_probe__"
+    const globalRecord = globalThis as Record<string, unknown>
+    delete globalRecord[marker]
+
+    try {
+      expect(() =>
+        parseNativeExtensionContent(
+          target("claude-code", "skill", "user", "review"),
+          `---js\n(globalThis.${marker} = true, { name: "review", description: "unsafe" })\n---\nbody\n`,
+        ),
+      ).toThrow("Only YAML frontmatter is supported")
+      expect(globalRecord[marker]).toBeUndefined()
+      expect(parseFrontmatter("\ufeff---\nname: review\n---\nbody\n")).toEqual({
+        data: { name: "review" },
+        content: "body\n",
+      })
+    } finally {
+      delete globalRecord[marker]
+    }
+  })
+
   it("covers every registry-owned mutable Markdown capability without inventing MCP adapters", () => {
     const expected = extensionCapabilityRegistry
       .filter(
@@ -186,7 +208,7 @@ describe("native extension mutation safety", () => {
       },
       { homeDir: home },
     )
-    const updated = matter(readFileSync(file, "utf8"))
+    const updated = parseFrontmatter(readFileSync(file, "utf8"))
     expect(updated.data).toMatchObject({
       description: "Review code safely",
       model: "opus",

@@ -3,7 +3,7 @@ import { router, publicProcedure } from "../index"
 import * as fs from "fs/promises"
 import * as path from "path"
 import * as os from "os"
-import matter from "gray-matter"
+import { parseFrontmatter } from "../../frontmatter"
 import { discoverInstalledPlugins, getPluginComponentPaths } from "../../plugins"
 import { resolveDirentType } from "../../fs/dirent"
 import { getEnabledPlugins } from "./claude-settings"
@@ -29,7 +29,7 @@ function parseCommandMd(content: string): {
   name?: string
 } {
   try {
-    const { data } = matter(content)
+    const { data } = parseFrontmatter(content)
     return {
       description: typeof data.description === "string" ? data.description : undefined,
       argumentHint: typeof data["argument-hint"] === "string" ? data["argument-hint"] : undefined,
@@ -95,7 +95,7 @@ async function scanCommandsDirectory(
         try {
           const rawContent = await fs.readFile(fullPath, "utf-8")
           const parsed = parseCommandMd(rawContent)
-          const { content: body } = matter(rawContent)
+          const { content: body } = parseFrontmatter(rawContent)
           const commandName = parsed.name || fallbackName
 
           // Format display path: ~/... for user, relative for project
@@ -254,7 +254,7 @@ export const commandsRouter = router({
       try {
         const absolutePath = resolveCommandPath(input.path, input.projectPath)
         const content = await fs.readFile(absolutePath, "utf-8")
-        const { content: body } = matter(content)
+        const { content: body } = parseFrontmatter(content)
         return { content: body.trim() }
       } catch (err) {
         console.error(`[commands] Failed to read command content:`, err)

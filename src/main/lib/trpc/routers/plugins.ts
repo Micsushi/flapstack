@@ -1,7 +1,7 @@
 import { router, publicProcedure } from "../index"
 import * as fs from "fs/promises"
 import * as path from "path"
-import matter from "gray-matter"
+import { parseFrontmatter } from "../../frontmatter"
 import { resolveDirentType } from "../../fs/dirent"
 import {
   discoverInstalledPlugins,
@@ -70,7 +70,7 @@ async function scanPluginCommands(dir: string): Promise<PluginComponent[]> {
       } else if (isFile && entry.name.endsWith(".md")) {
         try {
           const content = await fs.readFile(fullPath, "utf-8")
-          const { data } = matter(content)
+          const { data } = parseFrontmatter(content)
           const baseName = entry.name.replace(/\.md$/, "")
           components.push({
             name: typeof data.name === "string" ? data.name : baseName,
@@ -112,7 +112,7 @@ async function scanPluginSkills(dir: string): Promise<PluginComponent[]> {
       const skillMdPath = path.join(dir, entry.name, "SKILL.md")
       try {
         const content = await fs.readFile(skillMdPath, "utf-8")
-        const { data } = matter(content)
+        const { data } = parseFrontmatter(content)
         components.push({
           name: typeof data.name === "string" ? data.name : entry.name,
           description: typeof data.description === "string" ? data.description : undefined,
@@ -152,7 +152,7 @@ async function scanPluginAgents(dir: string): Promise<PluginComponent[]> {
       const fullPath = path.join(dir, entry.name)
       try {
         const content = await fs.readFile(fullPath, "utf-8")
-        const { data } = matter(content)
+        const { data } = parseFrontmatter(content)
         const baseName = entry.name.replace(/\.md$/, "")
         components.push({
           name: typeof data.name === "string" ? data.name : baseName,

@@ -9,8 +9,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import matter from "gray-matter"
 import { afterEach, describe, expect, it } from "vitest"
+import { parseFrontmatter } from "../src/main/lib/frontmatter"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 import {
   discoverProviderExtensions,
@@ -235,7 +235,7 @@ describe("provider extension mutations", () => {
       { homeDir: home },
     )
 
-    const updated = matter(readFileSync(agentPath, "utf8"))
+    const updated = parseFrontmatter(readFileSync(agentPath, "utf8"))
     expect(updated.data).toMatchObject({
       name: "reviewer",
       model: "opus",

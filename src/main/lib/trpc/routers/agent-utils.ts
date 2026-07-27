@@ -1,7 +1,7 @@
 import * as fs from "fs/promises"
 import * as path from "path"
 import * as os from "os"
-import matter from "gray-matter"
+import { parseFrontmatter } from "../../frontmatter"
 import { discoverInstalledPlugins, getPluginComponentPaths } from "../../plugins"
 import { resolveDirentType } from "../../fs/dirent"
 import { getEnabledPlugins } from "./claude-settings"
@@ -41,7 +41,7 @@ export interface FileAgent extends ParsedAgent {
  */
 export function parseAgentMd(content: string, filename: string): Partial<ParsedAgent> {
   try {
-    const { data, content: body } = matter(content)
+    const { data, content: body } = parseFrontmatter(content)
 
     // Parse tools - can be comma-separated string or array
     let tools: string[] | undefined
@@ -67,7 +67,9 @@ export function parseAgentMd(content: string, filename: string): Partial<ParsedA
 
     // Validate model
     const model =
-      data.model && VALID_AGENT_MODELS.includes(data.model) ? (data.model as AgentModel) : undefined
+      typeof data.model === "string" && VALID_AGENT_MODELS.includes(data.model as AgentModel)
+        ? (data.model as AgentModel)
+        : undefined
 
     return {
       name: typeof data.name === "string" ? data.name : filename.replace(".md", ""),

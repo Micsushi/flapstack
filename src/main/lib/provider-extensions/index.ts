@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
-import matter from "gray-matter"
+import { parseFrontmatter, stringifyFrontmatter } from "../frontmatter"
 import { actOnPathInsideRoot, readFileInsideRoot, writeFileInsideRoot } from "../path-safety"
 import { discoverInstalledPlugins } from "../plugins"
 import {
@@ -334,7 +334,7 @@ async function markdownManifest(
   let data: Record<string, unknown> = {}
   let content = raw
   if (path.extname(file).toLowerCase() === ".md") {
-    const parsed = matter(raw)
+    const parsed = parseFrontmatter(raw)
     data = parsed.data
     content = parsed.content.trim()
   }
@@ -619,7 +619,7 @@ export async function mutateProviderExtension(
   } else {
     let existingMetadata: Record<string, unknown> = {}
     if (input.operation === "update") {
-      existingMetadata = matter(
+      existingMetadata = parseFrontmatter(
         (
           await readFileInsideRoot(boundaryRoot, targetRelative, {
             maxBytes: MAX_EXTENSION_FILE_BYTES,
@@ -667,7 +667,7 @@ function serializeMarkdown(
     ...(kind === "skill" || kind === "custom-agent" ? { name } : {}),
     description: description.trim(),
   }
-  return matter.stringify(`${content.trim()}\n`, metadata)
+  return stringifyFrontmatter(`${content.trim()}\n`, metadata)
 }
 
 async function atomicDelete(file: string): Promise<void> {

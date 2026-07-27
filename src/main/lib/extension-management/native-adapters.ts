@@ -4,8 +4,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { Mutex } from "async-mutex"
 import { createTwoFilesPatch } from "diff"
-import matter from "gray-matter"
 import { z } from "zod"
+import { parseFrontmatter, stringifyFrontmatter } from "../frontmatter"
 import {
   actOnPathInsideRoot,
   readFileInsideRoot,
@@ -887,7 +887,7 @@ async function assertSafeProspectivePath(rootPath: string, targetRelative: strin
 
 function parseMatter(raw: string): { data: Record<string, unknown>; content: string } {
   try {
-    const parsed = matter(raw)
+    const parsed = parseFrontmatter(raw)
     if (!parsed.data || typeof parsed.data !== "object" || Array.isArray(parsed.data)) {
       throw new Error("Frontmatter must be an object")
     }
@@ -900,7 +900,7 @@ function parseMatter(raw: string): { data: Record<string, unknown>; content: str
 
 function serializeMatter(content: string, metadata: Record<string, unknown>): string {
   if (Object.keys(metadata).length === 0) return content
-  return matter.stringify(content, metadata)
+  return stringifyFrontmatter(content, metadata)
 }
 
 function nativePathTemplate(

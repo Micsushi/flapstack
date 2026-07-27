@@ -9,8 +9,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import matter from "gray-matter"
 import { afterEach, describe, expect, it } from "vitest"
+import { parseFrontmatter } from "../src/main/lib/frontmatter"
 import {
   applyCrossHarnessCopy,
   previewCrossHarnessCopy,
@@ -70,7 +70,7 @@ describe("cross-harness extension copy", () => {
 
       expect(result.sourcePreserved).toBe(true)
       expect(readFileSync(sourceFile, "utf8")).toBe(original)
-      expect(matter(readFileSync(targetFile, "utf8"))).toMatchObject({
+      expect(parseFrontmatter(readFileSync(targetFile, "utf8"))).toMatchObject({
         data: { name: "release-check", description: "release-check description" },
         content: "\nbody\n",
       })
@@ -152,7 +152,7 @@ describe("cross-harness extension copy", () => {
     expect(overwrite.targetDiff).toContain("new body")
     await applyCrossHarnessCopy(confirmed(overwrite, source, destination), { homeDir: home })
     expect(readFileSync(targetFile, "utf8")).toContain("new body")
-    expect(matter(readFileSync(targetFile, "utf8")).data).toMatchObject({
+    expect(parseFrontmatter(readFileSync(targetFile, "utf8")).data).toMatchObject({
       "x-cursor": { color: "blue" },
     })
   })
