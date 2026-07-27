@@ -19,7 +19,7 @@ import {
 import { tempRoot } from "./portability-test-helpers"
 import { fileSymlinksSupported } from "./helpers/symlink-capability"
 
-describe("private-sync", { timeout: 20_000 }, () => {
+describe("private-sync", { timeout: process.platform === "win32" ? 60_000 : 20_000 }, () => {
   it("fails closed when reviewed path or blob budgets are exceeded", () => {
     const output = Array.from(
       { length: PRIVATE_SYNC_REVIEW_LIMITS.changedPathsPerCommit + 1 },

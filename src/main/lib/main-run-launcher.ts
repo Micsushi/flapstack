@@ -1121,7 +1121,11 @@ export class MainRuntimeLaunchService {
 }
 
 function assertFrozenProfileToolPolicySupported(run: QueuedAgentRun): void {
-  if (run.profileRuntimeAuthority && run.harness === "codex") {
+  const resolvedRuntime = run.runtimeLaunch?.resolvedRuntime
+  if (
+    run.profileRuntimeAuthority &&
+    (resolvedRuntime === "codex" || (!resolvedRuntime && run.harness === "codex"))
+  ) {
     throw new Error(
       "Codex Agent Profile launch blocked: the Codex Runtime cannot prove enforcement of the frozen tool allowlist for no-approval tools.",
     )

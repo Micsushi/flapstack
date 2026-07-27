@@ -461,10 +461,11 @@ type RendererNavigationState = {
   desktopView?: unknown
 }
 
-const RENDERER_CAPTURE_PREFIX = `flapstack-renderer-evidence-${createHash("sha256")
+const RENDERER_CAPTURE_CHECKOUT_PREFIX = `flapstack-renderer-evidence-${createHash("sha256")
   .update(process.cwd())
   .digest("hex")
   .slice(0, 12)}-`
+const RENDERER_CAPTURE_PREFIX = `${RENDERER_CAPTURE_CHECKOUT_PREFIX}${process.pid}-${randomUUID()}-`
 const LEGACY_RENDERER_CAPTURE_PREFIX = "flapstack-renderer-evidence-"
 const RENDERER_CAPTURE_TTL_MS = 15 * 60_000
 const rendererCaptures = new Map<
@@ -487,9 +488,9 @@ export function cleanupAllTestRendererCaptures() {
     if (!entry.name.startsWith(LEGACY_RENDERER_CAPTURE_PREFIX)) continue
     const path = join(tmpdir(), entry.name)
     try {
-      const belongsToCheckout = entry.name.startsWith(RENDERER_CAPTURE_PREFIX)
+      const belongsToThisInstance = entry.name.startsWith(RENDERER_CAPTURE_PREFIX)
       const isExpired = Date.now() - statSync(path).mtimeMs >= RENDERER_CAPTURE_TTL_MS
-      if (belongsToCheckout || isExpired) rmSync(path, { recursive: true, force: true })
+      if (belongsToThisInstance || isExpired) rmSync(path, { recursive: true, force: true })
     } catch {
       // A concurrent cleanup can remove the directory between listing and inspection.
     }

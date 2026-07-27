@@ -733,14 +733,20 @@ describe("dev MCP carryover controls", () => {
     }
   }, 20_000)
 
-  it("sweeps checkout-scoped renderer capture directories", () => {
+  it("preserves fresh renderer captures owned by another same-checkout process", () => {
     const checkoutScope = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 12)
-    const directory = mkdtempSync(join(tmpdir(), `flapstack-renderer-evidence-${checkoutScope}-`))
+    const directory = mkdtempSync(
+      join(tmpdir(), `flapstack-renderer-evidence-${checkoutScope}-foreign-process-`),
+    )
     writeFileSync(join(directory, "capture.png"), "sanitized fixture", { mode: 0o600 })
 
-    cleanupAllTestRendererCaptures()
+    try {
+      cleanupAllTestRendererCaptures()
 
-    expect(existsSync(directory)).toBe(false)
+      expect(existsSync(directory)).toBe(true)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 
@@ -40,6 +41,57 @@ function removeLock(lockPath) {
     throw new Error(`Unsafe package lock path: ${lockPath}`)
   }
   fs.rmSync(lockPath, { recursive: true, force: true })
+}
+
+function sameOwner(left, right) {
+  if (!left || !right) return false
+  if (left.token || right.token) return left.token === right.token
+  return (
+    left.pid === right.pid &&
+    left.startedAt === right.startedAt &&
+    left.outputDirectory === right.outputDirectory
+  )
+}
+
+function reclaimStaleLock(lockPath, observedOwner) {
+  const reclaimPath = `${lockPath}.reclaim`
+  try {
+    fs.mkdirSync(reclaimPath)
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error(`Package lock reclamation is already in progress: ${lockPath}`)
+    }
+    throw error
+  }
+
+  try {
+    const currentOwner = readOwner(lockPath)
+    if (!sameOwner(currentOwner, observedOwner)) {
+      throw new Error(`Package lock ownership changed during reclamation: ${lockPath}`)
+    }
+    fs.renameSync(lockPath, path.join(reclaimPath, "stale.lock"))
+    try {
+      fs.mkdirSync(lockPath)
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        throw new Error(`Package lock was acquired during reclamation: ${lockPath}`)
+      }
+      throw error
+    }
+  } finally {
+    if (fs.existsSync(reclaimPath)) removeRealDirectory(reclaimPath, "package lock reclaim")
+  }
+}
+
+function assertLockOwner(lockPath, owner) {
+  if (!sameOwner(readOwner(lockPath), owner)) {
+    throw new Error(`Package lock ownership changed before release: ${lockPath}`)
+  }
+}
+
+function releaseLock(lockPath, owner) {
+  assertLockOwner(lockPath, owner)
+  removeLock(lockPath)
 }
 
 function assertRealDirectory(directory, label) {
@@ -94,7 +146,11 @@ export function acquirePackageOutput(options) {
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS
   const incompleteOwnerGraceMs = options.incompleteOwnerGraceMs ?? DEFAULT_INCOMPLETE_OWNER_GRACE_MS
   const isProcessAlive = options.isProcessAlive ?? processIsAlive
+  const token = options.token ?? randomUUID()
   fs.mkdirSync(locksDirectory, { recursive: true })
+  if (fs.existsSync(`${lockPath}.reclaim`)) {
+    throw new Error(`Package lock reclamation is already in progress: ${lockPath}`)
+  }
 
   try {
     fs.mkdirSync(lockPath)
@@ -113,11 +169,10 @@ export function acquirePackageOutput(options) {
         `Packaging ${outputDirectory} is already in progress under an owner that is still starting`,
       )
     }
-    removeLock(lockPath)
-    fs.mkdirSync(lockPath)
+    reclaimStaleLock(lockPath, owner)
   }
 
-  const owner = { pid, startedAt: now, outputDirectory }
+  const owner = { pid, startedAt: now, outputDirectory, token }
   fs.writeFileSync(path.join(lockPath, "owner.json"), `${JSON.stringify(owner)}\n`, {
     flag: "wx",
     mode: 0o600,
@@ -146,7 +201,9 @@ export function acquirePackageOutput(options) {
     if (!fs.existsSync(outputDirectory) && fs.existsSync(backupDirectory)) {
       fs.renameSync(backupDirectory, outputDirectory)
     }
-    removeLock(lockPath)
+    if (fs.existsSync(lockPath) && sameOwner(readOwner(lockPath), owner)) {
+      removeLock(lockPath)
+    }
     throw error
   }
   return {
@@ -160,14 +217,16 @@ export function acquirePackageOutput(options) {
 }
 
 export function completePackageOutput(handle) {
+  assertLockOwner(handle.lockPath, handle.owner)
   fs.rmSync(handle.incompleteMarkerPath, { force: true })
   if (fs.existsSync(handle.backupDirectory)) {
     removeRealDirectory(handle.backupDirectory, "previous package output backup directory")
   }
-  if (fs.existsSync(handle.lockPath)) removeLock(handle.lockPath)
+  releaseLock(handle.lockPath, handle.owner)
 }
 
 export function failPackageOutput(handle) {
+  assertLockOwner(handle.lockPath, handle.owner)
   fs.mkdirSync(handle.outputDirectory, { recursive: true })
   if (!fs.existsSync(handle.incompleteMarkerPath)) {
     fs.writeFileSync(handle.incompleteMarkerPath, `${JSON.stringify(handle.owner)}\n`, {
@@ -175,5 +234,5 @@ export function failPackageOutput(handle) {
       mode: 0o600,
     })
   }
-  if (fs.existsSync(handle.lockPath)) removeLock(handle.lockPath)
+  releaseLock(handle.lockPath, handle.owner)
 }

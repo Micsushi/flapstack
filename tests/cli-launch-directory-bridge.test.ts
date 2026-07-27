@@ -1,7 +1,7 @@
-import { mkdtempSync, realpathSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   clearPendingLaunchDirectoriesForTests,
   dispatchSecondInstanceLaunch,
@@ -11,11 +11,22 @@ import {
 import { subscribeCliLaunchDirectories } from "../src/renderer/lib/cli-launch-directory"
 import { CLI_OPEN_DIRECTORY_CHANNEL } from "../src/shared/cli-launch"
 
+const directories: string[] = []
+
+function temporaryDirectory(prefix: string) {
+  const directory = mkdtempSync(join(tmpdir(), prefix))
+  directories.push(directory)
+  return directory
+}
+
 describe("CLI launch-directory renderer bridge", () => {
   beforeEach(() => clearPendingLaunchDirectoriesForTests())
+  afterEach(() => {
+    while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true })
+  })
 
   it("drains a cold launch after the renderer subscribes", async () => {
-    const projectPath = mkdtempSync(join(tmpdir(), "flapstack-cli-cold-bridge-"))
+    const projectPath = temporaryDirectory("flapstack-cli-cold-bridge-")
     queueLaunchDirectoryFromArgv(["Flapstack.exe", projectPath], { defaultApp: false })
     const opened: string[] = []
 
@@ -36,7 +47,7 @@ describe("CLI launch-directory renderer bridge", () => {
   })
 
   it("delivers a warm background launch from main into renderer project navigation", async () => {
-    const projectPath = mkdtempSync(join(tmpdir(), "flapstack-cli-bridge-"))
+    const projectPath = temporaryDirectory("flapstack-cli-bridge-")
     let signal: (() => void) | null = null
     const opened: string[] = []
     const unsubscribe = subscribeCliLaunchDirectories({
@@ -78,8 +89,8 @@ describe("CLI launch-directory renderer bridge", () => {
   })
 
   it("continues draining queued directories after one project fails to open", async () => {
-    const firstPath = mkdtempSync(join(tmpdir(), "flapstack-cli-bridge-failed-"))
-    const secondPath = mkdtempSync(join(tmpdir(), "flapstack-cli-bridge-next-"))
+    const firstPath = temporaryDirectory("flapstack-cli-bridge-failed-")
+    const secondPath = temporaryDirectory("flapstack-cli-bridge-next-")
     const queue = [{ path: firstPath }, { path: secondPath }]
     const opened: string[] = []
     const onError = vi.fn()

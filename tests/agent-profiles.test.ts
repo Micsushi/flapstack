@@ -749,6 +749,34 @@ describe("workflow and standalone Agent Profile launches", () => {
     ).toEqual({ snapshot_id: null })
   })
 
+  it("allows a Codex harness when Flapstack Native owns tool enforcement", () => {
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Native Codex profile",
+        definition({
+          harness: "codex",
+          runtimePreference: "flapstack-native",
+          tools: ["shell"],
+        }),
+      ),
+    )
+    const preview = new StandaloneAgentLaunchService(databasePath).preview({
+      requestId: "native-codex-profile",
+      source: { kind: "studio", projectId: "project-1" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    })
+
+    expect(preview.runtimeResolution.resolvedRuntime).toBe("flapstack-native")
+    expect(preview.conflicts.map((conflict) => conflict.code)).not.toContain(
+      "runtime-tool-policy-unsupported",
+    )
+  })
+
   it("lets auto Runtime profiles inherit a narrowed durable project default", () => {
     sqlite
       .prepare(
@@ -1279,7 +1307,14 @@ describe("workflow and standalone Agent Profile launches", () => {
     const service = createAgentProfileService(sqlite)
     const planner = approvedCreate(
       service,
-      profileInput("Codex planner", launchableDefinition({ permissionMode: "full-access" })),
+      profileInput(
+        "Codex planner",
+        definition({
+          harness: "codex",
+          runtimePreference: "flapstack-native",
+          permissionMode: "full-access",
+        }),
+      ),
     )
     const implementer = approvedCreate(
       service,
@@ -1314,7 +1349,7 @@ describe("workflow and standalone Agent Profile launches", () => {
     const plan = workflow.confirm("workflow-mixed", "plan", 1)
     const implementation = workflow.confirm("workflow-mixed", "implement", 1)
     expect([plan.snapshot.evaluation.runtime, implementation.snapshot.evaluation.runtime]).toEqual([
-      "claude-code",
+      "flapstack-native",
       "claude-code",
     ])
     expect([plan.definition.name, implementation.definition.name]).toEqual([

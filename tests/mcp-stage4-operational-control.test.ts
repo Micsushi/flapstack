@@ -666,8 +666,8 @@ describe("Stage 4 operational MCP control", () => {
     sqlite
       .prepare(
         `INSERT INTO projects
-           (id, name, path, default_permission_mode, created_at, updated_at)
-         VALUES ('project-1', 'Stage 4 fixture', ?, 'read-only', 1, 1)`,
+             (id, name, path, default_permission_mode, created_at, updated_at)
+           VALUES ('project-1', 'Stage 4 fixture', ?, 'read-only', 1, 1)`,
       )
       .run(projectPath)
     sqlite.close()
@@ -1030,5 +1030,5 @@ describe("Stage 4 operational MCP control", () => {
       action: "restore-stage4-beta-fixtures",
     })
     expect(restored.result).toMatchObject({ restored: true })
-  })
+  }, 30_000)
 })

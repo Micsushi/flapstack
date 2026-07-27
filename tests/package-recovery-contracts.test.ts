@@ -101,6 +101,43 @@ function peX64(payload = "") {
   return buffer
 }
 
+function deferred() {
+  let resolvePromise!: () => void
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
+
+async function runConcurrentDownloads(
+  download: (downloadFile: (_url: string, destination: string) => Promise<void>) => Promise<void>,
+  payload: Buffer,
+) {
+  const firstWritten = deferred()
+  const secondWritten = deferred()
+  const releaseSecond = deferred()
+  let call = 0
+  const downloadFile = async (_url: string, destination: string) => {
+    call += 1
+    writeFileSync(destination, payload)
+    if (call === 1) {
+      firstWritten.resolve()
+      await secondWritten.promise
+      return
+    }
+    secondWritten.resolve()
+    await releaseSecond.promise
+  }
+
+  const first = download(downloadFile)
+  await firstWritten.promise
+  const second = download(downloadFile)
+  await secondWritten.promise
+  await first
+  releaseSecond.resolve()
+  await second
+}
+
 describe("binary download recovery", () => {
   it("routes both pinned native downloaders through the shared retry contract", () => {
     for (const script of ["download-claude-binary.mjs", "download-codex-binary.mjs"]) {
@@ -289,6 +326,49 @@ describe("binary download recovery", () => {
     expect(existsSync(`${target}.candidate`)).toBe(false)
   })
 
+  it.each(["claude", "codex"] as const)(
+    "isolates concurrent %s binary download staging",
+    async (runtime) => {
+      const binDirectory = temporaryDirectory()
+      const replacement = peX64("concurrent")
+      const checksum = createHash("sha256").update(replacement).digest("hex")
+      const download =
+        runtime === "claude"
+          ? (downloadFile: (_url: string, destination: string) => Promise<void>) =>
+              downloadClaudePlatform(
+                "2.1.207",
+                "win32-x64",
+                { platforms: { "win32-x64": { checksum, size: replacement.length } } },
+                { binDirectory, downloadFile },
+              )
+          : (downloadFile: (_url: string, destination: string) => Promise<void>) =>
+              downloadCodexPlatform(
+                "0.144.1",
+                "win32-x64",
+                {
+                  assets: [
+                    {
+                      name: "codex-x86_64-pc-windows-msvc.exe",
+                      digest: `sha256:${checksum}`,
+                      browser_download_url:
+                        "https://github.com/openai/codex/releases/download/rust-v0.144.1/codex-x86_64-pc-windows-msvc.exe",
+                      size: replacement.length,
+                    },
+                  ],
+                },
+                { binDirectory, downloadFile },
+              )
+
+      await runConcurrentDownloads(download, replacement)
+
+      expect(
+        readFileSync(
+          join(binDirectory, "win32-x64", runtime === "claude" ? "claude.exe" : "codex.exe"),
+        ),
+      ).toEqual(replacement)
+    },
+  )
+
   it("restores a verified target left in the deterministic replacement backup", () => {
     const directory = temporaryDirectory()
     const target = join(directory, "claude.exe")
@@ -357,6 +437,19 @@ describe("package output recovery", () => {
     expect(readFileSync(join(output, "current-build.txt"), "utf8")).toBe("keep")
 
     completePackageOutput(first)
+  })
+
+  it("does not release a package lock after its owner identity changes", () => {
+    const root = temporaryDirectory()
+    const output = join(root, "release-preview")
+    const first = acquirePackageOutput({ root, outputDirectory: output, pid: 123 })
+    writeFileSync(
+      join(first.lockPath, "owner.json"),
+      `${JSON.stringify({ ...first.owner, pid: 456, token: "replacement-owner" })}\n`,
+    )
+
+    expect(() => completePackageOutput(first)).toThrow(/ownership changed/i)
+    expect(existsSync(first.lockPath)).toBe(true)
   })
 
   it("serializes different outputs that share package resources and native ABI", () => {

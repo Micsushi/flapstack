@@ -262,12 +262,10 @@ export async function downloadPlatform(version, platformKey, release, options = 
     }
   }
 
-  const downloadPath = path.join(targetDir, `${platform.assetName}.download`)
-  const candidatePath = `${targetPath}.candidate`
-  const extractDir = path.join(targetDir, ".extract")
-  fs.rmSync(downloadPath, { force: true })
-  fs.rmSync(candidatePath, { force: true })
-  fs.rmSync(extractDir, { recursive: true, force: true })
+  const stagingDirectory = fs.mkdtempSync(path.join(targetDir, ".codex-download-"))
+  const downloadPath = path.join(stagingDirectory, platform.assetName)
+  const candidatePath = path.join(stagingDirectory, platform.outputBinaryName)
+  const extractDir = path.join(stagingDirectory, "extract")
   try {
     await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
       headersForUrl: () => getRequestHeaders(),
@@ -310,9 +308,7 @@ export async function downloadPlatform(version, platformKey, release, options = 
     console.log(`  Saved to: ${targetPath}`)
     return true
   } finally {
-    fs.rmSync(downloadPath, { force: true })
-    fs.rmSync(candidatePath, { force: true })
-    fs.rmSync(extractDir, { recursive: true, force: true })
+    fs.rmSync(stagingDirectory, { recursive: true, force: true })
   }
 }
 

@@ -457,7 +457,7 @@ function intersectPolicy(
       repair: compatibility.reason.repair,
     })
   }
-  if (capability.harness === "codex") {
+  if (runtimeResolution.resolvedRuntime === "codex") {
     conflicts.push({
       code: "runtime-tool-policy-unsupported",
       field: "tools",

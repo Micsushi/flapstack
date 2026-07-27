@@ -17,9 +17,6 @@ const vitestArgs = ["run"]
 
 if (portableLinux) {
   for (const windowsOnlyTest of [
-    "tests/mcp-test-control-lifecycle.test.ts",
-    "tests/profile-paths.test.ts",
-    "tests/test-git-environment.test.ts",
     "tests/windows-process-inspection.test.ts",
     "tests/windows-toolchain.test.ts",
   ]) {

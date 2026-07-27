@@ -1,7 +1,13 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync as createTempDirectory,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   buildSingleInstanceLaunchData,
   clearPendingLaunchDirectoriesForTests,
@@ -12,8 +18,19 @@ import {
 } from "../src/main/lib/cli-launch"
 import { CLI_OPEN_DIRECTORY_CHANNEL } from "../src/shared/cli-launch"
 
+const directories: string[] = []
+
+function mkdtempSync(prefix: string) {
+  const directory = createTempDirectory(prefix)
+  directories.push(directory)
+  return directory
+}
+
 describe("CLI launch-directory handling", () => {
   beforeEach(() => clearPendingLaunchDirectoriesForTests())
+  afterEach(() => {
+    while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true })
+  })
 
   it("canonicalizes cold packaged and development argv with spaces and Unicode", () => {
     const root = mkdtempSync(join(tmpdir(), "flapstack CLI launch "))

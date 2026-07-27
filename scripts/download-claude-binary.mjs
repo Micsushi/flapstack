@@ -148,8 +148,8 @@ export async function downloadPlatform(version, platformKey, manifest, options =
     }
   }
 
-  const downloadPath = `${targetPath}.download`
-  fs.rmSync(downloadPath, { recursive: true, force: true })
+  const stagingDirectory = fs.mkdtempSync(path.join(targetDir, ".claude-download-"))
+  const downloadPath = path.join(stagingDirectory, platform.binary)
   try {
     await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
       label: `Claude ${platformKey}`,
@@ -173,7 +173,7 @@ export async function downloadPlatform(version, platformKey, manifest, options =
     console.log(`  Saved to: ${targetPath}`)
     return true
   } finally {
-    fs.rmSync(downloadPath, { recursive: true, force: true })
+    fs.rmSync(stagingDirectory, { recursive: true, force: true })
   }
 }
 

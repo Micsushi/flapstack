@@ -1,9 +1,24 @@
 import Database from "better-sqlite3"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { readDurableAgentProfileRuntimeAuthority } from "../src/main/lib/agent-profiles/runtime-authority"
 import { DEFAULT_AGENT_CAPABILITY } from "../src/shared/agent-profiles"
 
 describe("durable Agent Profile runtime authority", () => {
+  it("keeps the named-agent active-run check inside the immediate follow-up transaction", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/main/lib/agent-profiles/standalone-launch.ts"),
+      "utf8",
+    )
+    const followUp = source.slice(source.indexOf("async followUp("), source.indexOf("async retry("))
+    const transaction = followUp.indexOf("db.transaction(() => {")
+    const activeRunCheck = followUp.indexOf("SELECT id FROM agent_runs WHERE chat_id")
+
+    expect(transaction).toBeGreaterThanOrEqual(0)
+    expect(activeRunCheck).toBeGreaterThan(transaction)
+  })
+
   let db: Database.Database
 
   beforeEach(() => {

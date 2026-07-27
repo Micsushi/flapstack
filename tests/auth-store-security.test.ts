@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   available: false,
@@ -37,6 +37,13 @@ const authData: AuthData = {
     username: "user",
   },
 }
+const directories: string[] = []
+
+function temporaryDirectory() {
+  const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+  directories.push(directory)
+  return directory
+}
 
 describe("desktop auth storage security", () => {
   beforeEach(() => {
@@ -45,9 +52,12 @@ describe("desktop auth storage security", () => {
     mocks.encryptString.mockClear()
     mocks.decryptString.mockClear()
   })
+  afterEach(() => {
+    while (directories.length > 0) rmSync(directories.pop()!, { recursive: true, force: true })
+  })
 
   it("fails closed instead of persisting plaintext when OS encryption is unavailable", () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+    const directory = temporaryDirectory()
     const store = new AuthStore(directory)
 
     expect(() => store.save(authData)).toThrow(/secure.*encryption.*unavailable/i)
@@ -56,7 +66,7 @@ describe("desktop auth storage security", () => {
   })
 
   it("fails closed when encryption reports Chromium basic_text", () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+    const directory = temporaryDirectory()
     const store = new AuthStore(directory)
     mocks.available = true
     mocks.backend = "basic_text"
@@ -69,7 +79,7 @@ describe("desktop auth storage security", () => {
   })
 
   it("does not consume a legacy plaintext token until it can migrate it to encryption", () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+    const directory = temporaryDirectory()
     const fallback = join(directory, "auth.dat.json")
     writeFileSync(fallback, JSON.stringify(authData))
     const store = new AuthStore(directory)
@@ -86,7 +96,7 @@ describe("desktop auth storage security", () => {
   it.each(["auth.dat.json", "auth.json"])(
     "retries failed %s cleanup before returning encrypted credentials",
     (legacyFileName) => {
-      const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+      const directory = temporaryDirectory()
       const legacyPath = join(directory, legacyFileName)
       writeFileSync(legacyPath, JSON.stringify(authData))
       mocks.available = true
@@ -127,7 +137,7 @@ describe("desktop auth storage security", () => {
   )
 
   it("attempts every credential deletion and reports a partial logout failure", () => {
-    const directory = mkdtempSync(join(tmpdir(), "flapstack-auth-store-"))
+    const directory = temporaryDirectory()
     const encrypted = join(directory, "auth.dat")
     const fallback = join(directory, "auth.dat.json")
     const legacy = join(directory, "auth.json")

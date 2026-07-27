@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path"
 
@@ -29,6 +38,7 @@ if (
 }
 const ownerToken = process.env.FLAPSTACK_HEAVY_JOB_LOCK_TOKEN
 const incompleteLockGraceMs = 5_000
+const reclaimPath = `${lockPath}.reclaim`
 
 function readLock() {
   try {
@@ -64,6 +74,30 @@ function describeLock(lock) {
   return `${lock.label ?? "heavy job"}${cwd} (pid ${lock.pid ?? "unknown"})`
 }
 
+function quarantineStaleLock(observedLock) {
+  if (!observedLock?.token) return null
+  try {
+    mkdirSync(reclaimPath)
+  } catch (error) {
+    if (error?.code === "EEXIST") return null
+    throw error
+  }
+
+  try {
+    const currentLock = readLock()
+    if (currentLock?.token !== observedLock.token) return null
+    renameSync(lockPath, join(reclaimPath, "stale.lock"))
+    try {
+      return openSync(lockPath, "wx")
+    } catch (error) {
+      if (error?.code === "EEXIST") return null
+      throw error
+    }
+  } finally {
+    rmSync(reclaimPath, { recursive: true, force: true })
+  }
+}
+
 const existingLock = readLock()
 
 if (ownerToken && existingLock?.token === ownerToken) {
@@ -77,6 +111,10 @@ function acquireAndRun() {
   let fd
 
   while (true) {
+    if (existsSync(reclaimPath)) {
+      console.error("Another Flapstack process is reclaiming the heavy-job lock.")
+      process.exit(75)
+    }
     try {
       fd = openSync(lockPath, "wx")
       break
@@ -91,8 +129,18 @@ function acquireAndRun() {
         )
         process.exit(75)
       }
+      if (!lock?.token) {
+        console.error(
+          `The stale heavy-job lock at ${lockPath} has no owner token and cannot be reclaimed safely.`,
+        )
+        process.exit(75)
+      }
 
-      rmSync(lockPath, { force: true })
+      const reclaimed = quarantineStaleLock(lock)
+      if (reclaimed !== null) {
+        fd = reclaimed
+        break
+      }
     }
   }
 

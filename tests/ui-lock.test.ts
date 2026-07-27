@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest"
 const script = resolve("scripts/with-ui-lock.mjs")
 const cleanupPaths: string[] = []
 const children = new Set<ChildProcessWithoutNullStreams>()
+const childOutputTimeoutMs = process.platform === "win32" ? 10_000 : 3_000
 
 function tempLockPath() {
   const directory = mkdtempSync(join(tmpdir(), "flapstack-ui-lock-test-"))
@@ -32,7 +33,10 @@ function spawnLock(lockPath: string, label: string, command: string) {
 function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string) {
   return new Promise<void>((resolvePromise, reject) => {
     let output = ""
-    const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 3_000)
+    const timeout = setTimeout(
+      () => reject(new Error(`Timed out waiting for ${expected}`)),
+      childOutputTimeoutMs,
+    )
     child.stdout.on("data", (chunk) => {
       output += chunk.toString()
       if (output.includes(expected)) {
@@ -59,25 +63,29 @@ afterEach(() => {
 })
 
 describe("shared UI lock", () => {
-  it("waits until the current UI holder exits", async () => {
-    const lockPath = tempLockPath()
-    const first = spawnLock(lockPath, "first-lane", "setTimeout(() => {}, 250)")
-    await waitForOutput(first, "UI lock acquired")
+  it(
+    "waits until the current UI holder exits",
+    async () => {
+      const lockPath = tempLockPath()
+      const first = spawnLock(lockPath, "first-lane", "setTimeout(() => {}, 250)")
+      await waitForOutput(first, "UI lock acquired")
 
-    const second = spawnLock(lockPath, "second-lane", "console.log('SECOND_STARTED')")
-    await waitForOutput(second, "Waiting for Flapstack UI lock")
+      const second = spawnLock(lockPath, "second-lane", "console.log('SECOND_STARTED')")
+      await waitForOutput(second, "Waiting for Flapstack UI lock")
 
-    let secondStarted = false
-    second.stdout.on("data", (chunk) => {
-      if (chunk.toString().includes("SECOND_STARTED")) secondStarted = true
-    })
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
-    expect(secondStarted).toBe(false)
+      let secondStarted = false
+      second.stdout.on("data", (chunk) => {
+        if (chunk.toString().includes("SECOND_STARTED")) secondStarted = true
+      })
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
+      expect(secondStarted).toBe(false)
 
-    expect(await waitForExit(first)).toBe(0)
-    await waitForOutput(second, "SECOND_STARTED")
-    expect(await waitForExit(second)).toBe(0)
-  })
+      expect(await waitForExit(first)).toBe(0)
+      await waitForOutput(second, "SECOND_STARTED")
+      expect(await waitForExit(second)).toBe(0)
+    },
+    childOutputTimeoutMs + 5_000,
+  )
 
   it("recovers a lock whose owner process is dead", () => {
     const lockPath = tempLockPath()

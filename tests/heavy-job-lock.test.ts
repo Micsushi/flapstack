@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -46,6 +46,17 @@ function pidIsAlive(pid: number) {
 }
 
 describe("shared heavy-job lock", () => {
+  it("never unlinks the shared lock path from a stale-owner observation", () => {
+    const source = readFileSync(script, "utf8")
+    const staleBranch = source.slice(
+      source.indexOf("const lock = readLock()"),
+      source.indexOf("const lock = {"),
+    )
+
+    expect(staleBranch).toContain("quarantineStaleLock")
+    expect(staleBranch).not.toContain("rmSync(lockPath")
+  })
+
   it("reports a spawn failure and removes the exact acquired lock", () => {
     const missingCommand = resolve("tests", "fixtures", "missing-command.cmd")
     const lockPath = testLock("spawn-failure")
@@ -94,6 +105,24 @@ describe("shared heavy-job lock", () => {
     )
     expect(recovered.status, recovered.stderr).toBe(0)
     expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it("fails closed instead of spinning on an expired malformed lock", () => {
+    const lockPath = testLock("malformed-stale")
+    writeFileSync(lockPath, "not-json", "utf8")
+    const old = new Date(Date.now() - 10_000)
+    utimesSync(lockPath, old, old)
+
+    const contender = spawnSync(
+      process.execPath,
+      [script, "contender", "--", process.execPath, "-e", "process.exit(0)"],
+      { encoding: "utf8", env: testEnvironment(lockPath), timeout: 2_000 },
+    )
+
+    expect(contender.status).toBe(75)
+    expect(contender.stderr).toContain("cannot be reclaimed safely")
+    expect(existsSync(lockPath)).toBe(true)
+    rmSync(lockPath, { force: true })
   })
 
   it.runIf(process.platform === "win32")(

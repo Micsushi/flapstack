@@ -377,17 +377,21 @@ export class StandaloneAgentLaunchService {
           `Frozen Agent Profile snapshot exceeds current ${violations.join(", ")} policy. Continue with a newly confirmed profile snapshot.`,
         )
       }
-      const active = db
-        .prepare(
-          "SELECT id FROM agent_runs WHERE chat_id = ? AND status IN ('pending','running') LIMIT 1",
-        )
-        .get(prior.chatId)
-      if (active)
-        throw new StandaloneAgentLaunchError("run-active", "Named agent already has an active run.")
       const id = randomUUID()
       const runId = randomUUID()
       const now = epoch()
       db.transaction(() => {
+        const active = db
+          .prepare(
+            "SELECT id FROM agent_runs WHERE chat_id = ? AND status IN ('pending','running') LIMIT 1",
+          )
+          .get(prior.chatId)
+        if (active) {
+          throw new StandaloneAgentLaunchError(
+            "run-active",
+            "Named agent already has an active run.",
+          )
+        }
         db.prepare(
           `INSERT INTO agent_runs (
              id, chat_id, sub_chat_id, harness, model, permission_mode, custom_permissions,

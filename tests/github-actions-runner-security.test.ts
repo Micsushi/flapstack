@@ -76,10 +76,14 @@ describe("GitHub Actions self-hosted runner policy", () => {
     )
 
     const checkScript = readFileSync(resolve(root, "scripts/check.mjs"), "utf8")
-    for (const windowsOnlyTest of [
+    for (const portableTest of [
       "mcp-test-control-lifecycle.test.ts",
       "profile-paths.test.ts",
       "test-git-environment.test.ts",
+    ]) {
+      expect(checkScript).not.toContain(portableTest)
+    }
+    for (const windowsOnlyTest of [
       "windows-process-inspection.test.ts",
       "windows-toolchain.test.ts",
     ]) {
