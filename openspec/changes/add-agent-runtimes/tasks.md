@@ -5,6 +5,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T1 — Freeze the Stage 3 runtime baseline
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Baseline research and fixture inventory; documentation/test data only.
@@ -31,14 +32,19 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
   - `npm test -- tests/reasoning-output-contract.test.ts tests/codex-transport-decision.test.ts tests/codex-reasoning-output-normalizer.test.ts tests/claude-transform-reasoning-output.test.ts tests/chat-handoff.test.ts tests/stage3-migration-rebase.test.ts` passes on the synchronized baseline.
   - Package versions match `package-lock.json`; every baseline link resolves; strict OpenSpec validation passes.
 - Automated evidence: immutable `git archive a674784` replay passed 6 files/70 tests; descendant `99181e8` passed the same 6 files/73 tests, with only three added migration cases. Node 22 TypeScript, full lint, full formatting, production build, 93/93 baseline links, and strict authoritative OpenSpec passed.
-- Manual verification remaining: no fresh credentialed provider, live UI, packaged app, Windows, or Linux evidence is claimed by this headless baseline task.
-- Handoff evidence: Baseline commit, package/version table, schema/run-creation map, Codex loss matrix, Claude loss matrix, fixture inventory, focused test output, and explicit live/manual gaps.
+- Tier 2 live verification remaining: no fresh credentialed provider, live UI,
+  packaged app, Windows, or Linux evidence is claimed by this headless baseline
+  task.
+- Handoff evidence: Baseline commit, package/version table, schema/run-creation
+  map, Codex loss matrix, Claude loss matrix, fixture inventory, focused test
+  output, and explicit live Tier 2 gaps.
 - Blocked by: Stage 3 `stage3-final` tag `a674784` available to Stage 4 integration
 - Blocks: S4-F11-T2, S4-F12-T1
 - Context: `implementation-context.md`; `src/shared/harness-types.ts`; `src/main/lib/db/schema/index.ts`; provider routers; reasoning fixtures; Stage 3 matrix and release notes.
 
 ### S4-F11-T2 — Add Runtime contracts, compatibility, resolution, and migrations
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Shared Runtime contract and database authority.
@@ -76,6 +82,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T3 — Add durable ordered Runtime activity
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Provider-neutral activity persistence and replay.
@@ -110,6 +117,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T4 — Implement the direct Codex Runtime adapter
 
+- Evidence class: `T2-capability:codex-runtime`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Codex Runtime only.
@@ -147,6 +155,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T5 — Implement the native Claude Code Runtime adapter
 
+- Evidence class: `T2-capability:claude-runtime`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Claude Code Runtime only.
@@ -182,6 +191,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T6 — Implement Flapstack Native compatibility
 
+- Evidence class: `T2-capability:flapstack-native-runtime`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Legacy/generic Runtime compatibility only.
@@ -215,6 +225,7 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 
 ### S4-F11-T7 — Build the shared Runtime activity timeline
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Transcript rendering and Runtime activity controls only.
@@ -245,14 +256,25 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
   - Prove the chosen `.test.tsx` files are actually collected by Vitest; update test configuration if required.
   - Run focused UI tests, `npm run ts:check`, `npm run lint`, and live Codex/Claude comparison when UI/provider access exists.
 - Automated evidence: Node 22 formatter/order/pagination/filter/copy/export/privacy/component/accessibility/performance coverage passed 6 files/17 tests before production wiring and passed again inside the 37-file/316-test integrated Runtime run. The `.test.tsx` suites were collected. The 10,000-event projection/filter/export/virtualization fixture completed in 244 ms against a 1,500 ms budget. Full lint, repository Prettier, TypeScript, 206 files/1,611 tests with 3 skips, and the production build passed. Production chat wiring queries durable activity, preserves the pure legacy projection when no activity exists, paginates backward in 500-row pages, polls live rows, exposes diagnostics, and keeps error/loading/stale/empty/live states accessible.
-- Manual verification remaining: the UI lease was acquired, `npm run dev` migrated and launched the exact checkout, and `npm run dev:verify` passed against the isolated `Flapstack Dev` profile. The Mac session was locked, so the accessibility-tree/visual comparison and screenshots remain open. Preview-package binary inspection/smoke passed for bundled Codex `0.144.1`, Claude `2.1.207`, Electron `39.8.10`, and the native speech sidecars. No credentialed provider, Windows, or Linux evidence is claimed; direct Codex live use is also blocked by the installed `0.144.2` versus pinned `0.144.1` protocol gate.
+- Tier 2 live verification remaining: the UI lease was acquired, `npm run dev`
+  migrated and launched the exact checkout, and `npm run dev:verify` passed
+  against the isolated `Flapstack Dev` profile. The Mac session was locked, so
+  the accessibility-tree/visual comparison and screenshots remain open.
+  Preview-package binary inspection/smoke passed for bundled Codex `0.144.1`,
+  Claude `2.1.207`, Electron `39.8.10`, and the native speech sidecars. No
+  credentialed provider, Windows, or Linux evidence is claimed; direct Codex
+  live use is also blocked by the installed `0.144.2` versus pinned `0.144.1`
+  protocol gate.
 - Handoff evidence: Component/formatter map, screenshots or fixture snapshots, accessibility results, control matrix, performance numbers, search/copy/export privacy proof, test collection proof, and live gaps.
-- Blocked by: S4-F11-T3, S4-F11-T4, S4-F11-T5, S4-F11-T6
+- Blocked by for `T2-core`: S4-F11-T3 and the implemented adapter contracts
+  exercised through deterministic fixtures. Provider capability certification
+  remains in S4-F11-T4 through S4-F11-T6.
 - Blocks: S4-F11-T8, S4-F11-T10, S4-F3-T9
 - Context: `implementation-context.md`; root `ui-design.md`; transcript/reasoning components; renderer atoms; Settings/search architecture.
 
 ### S4-F11-T8 — Add Runtime Settings, chat selection, and safe continuation
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: User configuration and chat lifecycle UX.
@@ -284,13 +306,17 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 - Automated evidence so far: Node 22 Settings/search/selection/continuation coverage passed 5 files/26 tests, including inherited/project state, release reasons, compatible options, empty-chat identity preservation, active/started/incompatible blocking, atomic exact-once continuation, multi-conversation visible-history context, hidden file exclusion, retry identity, undo, and no copied provider identity. These suites also passed in the full 206-file gate. Production Settings, New Chat, active-chat selector/dialog, diagnostics, release-gate alerts, and fail-closed Native-router guard compile and build.
 - Remaining acceptance: `npm run dev` and exact-checkout/profile verification passed under the acquired UI lease, but the Mac session was locked. Live Settings/New Chat/continue/reopen/multi-window inspection and the first-turn fresh provider-session walkthrough therefore remain open. Direct Codex/Claude choices remain disabled pending credentialed live gates; their pinned preview-package binaries passed inspection/smoke.
 - Handoff evidence: Settings/selector screenshots or fixtures, precedence UI matrix, continuation transaction diagram, race/restart results, audit example with redaction, focused command output, and live proof or blocker.
-- Blocked by: S4-F11-T2, S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T7
+- Blocked by for `T2-core`: S4-F11-T2 and S4-F11-T7. Provider-specific
+  continuation certification remains in S4-F11-T4 through S4-F11-T6.
 - Blocks: S4-F11-T9, S4-F11-T10, S4-F12-T6
 - Context: `implementation-context.md`; Settings shell/search; new-chat/input controls; chats router; chat handoff/export; active run status; product invalidation.
 
 ### S4-F11-T9 — Integrate the Runtime registry and orchestration-worker launch seam
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core` for registry/resolution authority;
+  `T2-capability:mixed-runtime-providers` for real mixed-provider launch.
+- [ ] Completion: registry and resolution authority acceptance passed
+- Separate certification: Real mixed-provider launch remains with S4-AR09.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Central launch integration; sole owner of the adapter registry and Runtime/orchestration boundary.
 - Outcome: Every direct, MCP, retry, and multi-agent worker launch uses one registered adapter selected from one persisted Runtime snapshot, while coordination remains provider-neutral.
@@ -321,23 +347,36 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
 - Automated evidence so far: The post-review Node 22 Runtime/main/recovery/privacy correction gate passed 39 files/356 tests. The bounded re-review gate now passes 6 main/coordinator/recovery files and 69 tests. Production now owns one database-profile Runtime launch service and reuses its registry/coordinator for queued MCP, automation/retry, orchestration-worker launch, startup reconciliation, cancellation, provider input/permission callbacks, and diagnostics. The service registers concrete Codex, Claude Code, and Native factories while truthfully disabling new direct launches; disabled direct factories remain usable for recovery. Adapters are the single authoritative activity persistence layer; coordinator orchestration callbacks only reference already-persisted events. Codex-shaped events without dedup/provider event identity store exactly once and carry one orchestration identity. Active/starting reconciliation consults coordinator state without a second provider authority; persisted reconcile/cancel operations serialize per run; durable success/cancelled/failure project as known terminal without provider access across service recreation; terminal lifecycle and outer recovery projection use transition-wins-only compare-and-set semantics, so stale callbacks cannot alter run, subchat, or activity truth. Recovery terminal CAS plus subchat projection is one immediate transaction and selects a newer same-subchat pending/running run; completed, cancelled, and failed race fixtures all preserve the claimed successor. Tests also cover durable intent before provider calls, transactional session/turn/activity/lifecycle identity, crash windows, direct restart no-replay, corrupt-snapshot isolation, cleanup-failure non-acknowledgement, unacknowledged uncertain cancellation, sanitizer/privacy/export, mixed worker preferences, permission/worktree/budget preservation, and authoritative activity references. The earlier full Node 22 206-file/1,611-test gate remains the feature baseline; it was not repeated for focused corrections. The T9 contract checkpoint remains: F3 owns provider-neutral lifecycle/activity consumption; T9 owns preference resolution, immutable snapshots, registry selection, dispatch, reconciliation, and authoritative cancellation.
 - Remaining acceptance: T9 stays open. Credentialed UI direct/continue/restart/mixed-worker dispatch remains unobserved, so release-gated Codex/Claude new launches remain disabled. Stage 3 provider routers fail closed if handed a direct Runtime snapshot instead of silently acting as Native.
 - Handoff evidence: Registry table, launch sequence, every dispatch call site, orchestration DTO change, permission/budget intersection proof, mixed-worker fixture, restart results, and focused command output.
-- Blocked by: S4-F11-T2, S4-F11-T3, S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T8, S4-F3-T6
+- Blocked by for `T2-core`: S4-F11-T2, S4-F11-T3, S4-F11-T8, and
+  S4-F3-T6.
+- Separate provider-dispatch certification depends on S4-F11-T4 through
+  S4-F11-T6.
 - Blocks: S4-F11-T10, S4-F3-T7, S4-F3-T8, S4-F12-T5
 - Context: `implementation-context.md`; `src/main/lib/main-run-launcher.ts`; `src/main/lib/run-launch-service.ts`; `src/main/lib/mcp-control/mutation-service.ts`; `src/main/lib/agent-orchestration/service.ts`; S4-F3 design/tasks.
 
 ### S4-F11-T10 — Close Agent Runtime acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core` for S4-AR01, S4-AR02, S4-AR06, S4-AR08, and
+  S4-AR10; `T2-capability:codex-runtime`, `T2-capability:claude-runtime`,
+  `T2-capability:flapstack-native-runtime`, and
+  `T2-capability:mixed-runtime-providers` for the remaining rows.
+- [ ] Completion: S4-AR01, S4-AR02, S4-AR06, S4-AR08, and S4-AR10 are accepted
+- Separate certifications: Provider-specific rows retain independent
+  capability status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F11
 - Owner lane: Feature integration, evidence, diagnostics, documentation, and release gate.
 - Outcome: All three Runtimes pass migration, provider fidelity, recovery, UI, mixed-worker, performance, accessibility, and package evidence with truthful limitations.
-- Required inputs: Completed T4-T9 code and handoffs; Stage 4 matrix rows S4-AR01 through S4-AR10; Stage 3 migration fixtures; supported Codex/Claude credentials; diagnostics and manual test guide.
+- Required inputs: Completed T4-T9 code and handoffs; Stage 4 matrix rows S4-AR01
+  through S4-AR10; Stage 3 migration fixtures; supported Codex/Claude
+  credentials; diagnostics and the Tier 2 acceptance walkthrough.
 - Deliverables:
   - Reconcile all task handoffs and close unexplained contract/event/fixture gaps without absorbing unrelated F3/F12 scope.
   - Add one automated Runtime feature suite covering resolver, migration, activity, adapters, Native regression, UI, continuation, launch registry, mixed workers, restart, privacy, and rollback.
   - Add Runtime diagnostics showing selected preference/source, resolved Runtime, compatibility, adapter/protocol versions, controls, session identity class, activity counts, and sanitized last error.
   - Complete user/developer docs for Runtime selection, compatibility, Continue with Runtime, privacy limits, rollback, troubleshooting, and fixture capture/redaction.
-  - Execute matrix S4-AR01 through S4-AR10 and record automated, live, provider, performance, accessibility, restart, and package evidence separately.
+  - Execute matrix S4-AR01 through S4-AR10 and record core,
+    provider-capability, performance, semantic/accessibility, restart, and
+    package-release evidence separately.
   - Enable `auto` native defaults for new Codex/Claude chats only after their capability, fixture, restart, live, and package gates pass; otherwise keep that native default disabled with visible reason.
 - Owned seams: Runtime acceptance tests, diagnostics, docs, matrix evidence, and only integration fixes required to satisfy already-defined contracts.
 - Parallel boundary: Final task. New architecture or feature scope discovered here returns to the owning task/change instead of being hidden inside closeout.
@@ -355,12 +394,20 @@ that file plus `proposal.md`, `design.md`, and the delta spec before editing.
   - Node 22 `npm run check`.
   - `npx --yes @fission-ai/openspec@latest validate add-agent-runtimes --strict --no-interactive`.
   - Migration/fixture/privacy/performance/accessibility suites and exact test-collection proof.
-  - `npm run dev`, then `npm run dev:verify`, followed by real supported Codex and Claude direct/continue/restart/mixed-worker walkthroughs.
-  - `npm run package:preview:mac` plus packaged Runtime smoke. Windows/Linux/provider/device rows remain open until observed.
+  - `npm run dev`, then `npm run dev:verify`, followed by production-path
+    core Runtime resolution/continuation/restart evidence.
+  - Real supported Codex/Claude and mixed-worker walkthroughs retain their
+    named capability status. `npm run package:preview:mac` plus packaged
+    Runtime smoke remains the S4-I03 release gate.
 - Automated evidence so far: Node 22 `npm run check` passed full lint, full Prettier, TypeScript, 206 test files/1,611 tests with 3 skips, and production main/preload/renderer builds before the production-seam review. The first post-review focused correction gate passed 39 Runtime/main/recovery/privacy files and 356 tests. The bounded re-review gate now passes 6 main/coordinator/recovery files and 69 tests, adding single-write Codex activity/orchestration-link proof, active/starting and persisted reconcile/cancel races, durable five-state terminal reconciliation, process-recreation proof, terminal compare-and-set callback races, and atomic recovery projection with a claimed same-subchat successor. Together they cover restarted run-id reconcile/cancel, exact-once cancel races, cleanup-failure non-acknowledgement, uncertain-no-replay, stable run/subchat/activity terminal truth, durable identity/activity, corrupt-snapshot isolation, bounded sanitization, accessibility, and 10,000-event performance. Strict `add-agent-runtimes` OpenSpec validation and diff checks pass. The full repo/build/package/UI gates were intentionally not repeated for the corrections.
 - Closeout evidence: the UI lease was acquired; `npm run dev` completed migrations and launched; `npm run dev:verify` identified this exact checkout and the isolated `Flapstack Dev` profile. The Mac session was locked, so no visual walkthrough is claimed. Under the free heavy-job lease, `npm run package:preview:mac`, packaged binary inspection, and packaged smoke passed for arm64 Flapstack/Electron/Codex/Claude/Whisper/Parakeet/better-sqlite3; bundled Codex reported `0.144.1`, Claude `2.1.207`, and Electron `39.8.10`.
 - Remaining acceptance: T10 stays open. Credentialed direct Codex/Claude and live continue/restart/mixed-worker UI walkthroughs remain open because the Mac session was locked; Windows/Linux/provider/device evidence also remains open. The direct release policy stays disabled. Preview-package smoke passed, but Codex also remains blocked by installed `0.144.2` versus pinned `0.144.1`.
 - Handoff evidence: Final matrix, commands/log summaries, Runtime diagnostics capture, live/provider/package evidence, unresolved external blockers, migration/rollback result, and links to user/developer docs.
-- Blocked by: S4-F11-T4, S4-F11-T5, S4-F11-T6, S4-F11-T7, S4-F11-T8, S4-F11-T9
+- Blocked by for `T2-core`: S4-F11-T7, S4-F11-T8, and the `T2-core`
+  scope of S4-F11-T9.
+- Separate provider and mixed-runtime certifications depend on S4-F11-T4
+  through S4-F11-T6 and the matching capability scope of S4-F11-T9.
 - Blocks: S4-F3-T10, Stage S4 integrated exit
-- Context: `implementation-context.md`; `docs/stage4-full-feature-test-matrix.md`; Runtime diagnostics; Stage 3 provider/reasoning evidence; package/manual test guidance.
+- Context: `implementation-context.md`;
+  `docs/stage4-full-feature-test-matrix.md`; Runtime diagnostics; Stage 3
+  provider/reasoning evidence; package and acceptance guidance.

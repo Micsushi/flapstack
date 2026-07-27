@@ -151,7 +151,52 @@ describe("bounded automation execution", () => {
         .prepare("SELECT COUNT(*) count FROM orchestration_agents WHERE run_id = ?")
         .get(result.runId),
     ).toEqual({ count: 1 })
+    expect(
+      fixture.sqlite
+        .prepare(
+          "SELECT harness, mcp_exposure_enabled FROM chats WHERE name = 'Automation: Review'",
+        )
+        .get(),
+    ).toEqual({ harness: "codex", mcp_exposure_enabled: 1 })
   })
+
+  it.each([
+    ["codex", null],
+    ["claude-code", null],
+    ["cursor-agent", null],
+    ["openrouter", "openai/gpt-5"],
+    ["nanogpt", "openai/gpt-5"],
+  ] as const)(
+    "persists product MCP exposure for automation-created %s chats",
+    async (harness, model) => {
+      const fixture = database(`create-chat-${harness}`)
+      const occurrence = seedRunnable(fixture.sqlite, fixture.directory)
+      fixture.sqlite
+        .prepare(
+          `UPDATE automations SET
+             scope_type = 'project', project_id = 'project-1', chat_id = NULL,
+             action_type = 'create-chat-run',
+             action_config = '{"type":"create-chat-run","chatName":"Automated review"}',
+             harness = ?, model = ?
+           WHERE id = 'automation-1'`,
+        )
+        .run(harness, model)
+
+      const result = await execution(fixture.path, {
+        launch: vi.fn(async () => undefined),
+        now: () => 1_000,
+      }).execute(occurrence)
+
+      expect(result.state, JSON.stringify(result)).toBe("succeeded")
+      expect(
+        fixture.sqlite
+          .prepare(
+            "SELECT harness, mcp_exposure_enabled FROM chats WHERE name = 'Automated review'",
+          )
+          .get(),
+      ).toEqual({ harness, mcp_exposure_enabled: 1 })
+    },
+  )
 
   it("records a denied terminal result when approval is no longer runnable", async () => {
     const fixture = database("deny")

@@ -8,7 +8,8 @@ export function createRuntimeChatLifecycleDatabase(): Database.Database {
       permission_mode text, custom_permissions text, harness text, model text,
       runtime_preference text, parent_chat_id text, initiator_chat_id text,
       parent_run_id text, ancestor_chat_ids text, worktree_path text, branch text,
-      base_branch text, created_at integer, updated_at integer, archived_at integer
+      base_branch text, mcp_exposure_enabled integer NOT NULL DEFAULT 0,
+      created_at integer, updated_at integer, archived_at integer
     );
     CREATE TABLE sub_chats (
       id text PRIMARY KEY, chat_id text NOT NULL, name text, session_id text,

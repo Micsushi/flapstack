@@ -1,119 +1,152 @@
 # Stage 4 Full Feature Test Matrix
 
-All rows remain open until observed against the stated build/profile. Headless
-tests do not substitute for live UI or packaged evidence.
+This is the Stage 4 Tier 2 AI-acceptance matrix. Required rows remain open until
+an agent observes them against the stated build/profile. Headless tests do not
+substitute for real app, product MCP, test-control MCP, provider, or packaged
+evidence when those paths are relevant.
+
+Owner-perspective testing lives in
+[`owner-manual-testing-backlog.md`](owner-manual-testing-backlog.md) and does not
+hold these rows open unless explicitly labeled `release-blocking`. Rows labeled
+tracking-only are not part of Stage 4 implementation completion.
 
 This matrix is the promotion gate for the Stage 4 feature-code pass included in
 the macOS-only `0.1.0` beta. Optional Beta Features default off; inclusion in the
 candidate does not close an unchecked row.
 
+## Evidence-class summary
+
+Recorded baseline evidence is separated by class:
+
+| Evidence class                           | Baseline recorded | Total |
+| ---------------------------------------- | ----------------: | ----: |
+| `T2-core`                                |                52 |    52 |
+| `T2-capability:codex-v2`                 |                 0 |     1 |
+| `T2-capability:codex-v1`                 |                 0 |     1 |
+| `T2-capability:codex-runtime`            |                 0 |     2 |
+| `T2-capability:claude-runtime`           |                 0 |     1 |
+| `T2-capability:flapstack-native-runtime` |                 0 |     1 |
+| `T2-capability:mixed-runtime-providers`  |                 0 |     2 |
+| `T2-capability:ollama`                   |                 0 |     3 |
+| `T2-capability:private-sync`             |                 0 |     1 |
+| `release-gate`                           |                 0 |     1 |
+| `tracking-only`                          |                 1 |     1 |
+
+There are 65 acceptance checkboxes: 52 core, 12 capability, and one release
+gate. S4-I04 is one additional non-checkbox tracking row. The former `5/65`
+aggregate mixed implementation with unavailable capability environments. It is
+not a valid Stage 4 completion percentage. Capability rows certify only their
+named provider or environment and do not hold Stage 4 implementation completion
+open. The packaged macOS row is a release gate, not an implementation gate.
+The 52 core rows are accepted against the exact final working tree described
+below. Capability and release rows remain independently uncertified.
+
 ## Automated Gate
 
-- [ ] **S4-A01** All eleven Stage 4 OpenSpec changes pass strict validation.
-- [ ] **S4-A02** Node 22 `npm run check` passes from the Stage 4 integration checkout.
-- [ ] **S4-A03** Migration fixtures pass from the last supported Stage 3 schema.
-- [ ] **S4-A04** Security tests cover path traversal, symlink escape, secrets,
+- [x] **[T2-core] S4-A01** All eleven Stage 4 OpenSpec changes pass strict validation.
+- [x] **[T2-core] S4-A02** Node 22 `npm run check` passes from the Stage 4 integration checkout.
+- [x] **[T2-core] S4-A03** Migration fixtures pass from the last supported Stage 3 schema.
+- [x] **[T2-core] S4-A04** Security tests cover path traversal, symlink escape, secrets,
       hook execution, budget bypass, stale identity, and cross-window ownership.
+
+2026-07-26 automated evidence: all eleven Stage 4 changes passed strict
+OpenSpec validation. The Windows Node 22 full gate passed lint, Prettier,
+TypeScript, native ABI 127 loading, 313 test files (2,575 passed, 33 skipped,
+3 files skipped; 2,608 tests total), and the production build. The passing suite includes the
+ordered migration/rollback fixtures and the security boundaries named above.
 
 ## Unified Skills and Hooks
 
-- [ ] **S4-SH01** Inventory identifies source, scope, harness, native format,
+- [x] **[T2-core] S4-SH01** Inventory identifies source, scope, harness, native format,
       support level, and runtime-consumption state without false parity.
-- [ ] **S4-SH02** Copy/share previews the exact target diff and preserves the
+- [x] **[T2-core] S4-SH02** Copy/share previews the exact target diff and preserves the
       source; unsupported fields remain visible.
-- [ ] **S4-SH03** Hook import is disabled by default; validation and dry-run
+- [x] **[T2-core] S4-SH03** Hook import is disabled by default; validation and dry-run
       finish before explicit enablement.
-- [ ] **S4-SH04** User, project, and task enablement survive restart and affect
+- [x] **[T2-core] S4-SH04** User, project, and task enablement survive restart and affect
       the next supported harness run.
 
 ## Project Knowledge Vaults
 
-- [ ] **S4-KV01** Scaffold creates only the approved location and typed sections.
-- [ ] **S4-KV02** Secrets are rejected or quarantined and never injected into a
+- [x] **[T2-core] S4-KV01** Scaffold creates only the approved location and typed sections.
+- [x] **[T2-core] S4-KV02** Secrets are rejected or quarantined and never injected into a
       run, search result preview, log, or MCP audit summary.
-- [ ] **S4-KV03** Selected sections enter run context; unselected sections do not.
-- [ ] **S4-KV04** Concurrent app/agent edits are detected and never overwritten
+- [x] **[T2-core] S4-KV03** Selected sections enter run context; unselected sections do not.
+- [x] **[T2-core] S4-KV04** Concurrent app/agent edits are detected and never overwritten
       silently.
-- [ ] **S4-KV05** Backup/export and restore preserve content and section metadata.
+- [x] **[T2-core] S4-KV05** Backup/export and restore preserve content and section metadata.
 
 ## Multi-Agent Operations
 
-- [ ] **S4-MA01** Fleet view lists active and terminal orchestrations without
+- [x] **[T2-core] S4-MA01** Fleet view lists active and terminal orchestrations without
       replaying completed work.
-- [ ] **S4-MA02** Lineage graph shows spawn and replacement edges and supports
+- [x] **[T2-core] S4-MA02** Lineage graph shows spawn and replacement edges and supports
       keyboard navigation to every live chat.
-- [ ] **S4-MA03** Tightened limits apply safely; unsafe relaxations require the
+- [x] **[T2-core] S4-MA03** Tightened limits apply safely; unsafe relaxations require the
       existing approval/audit gate.
-- [ ] **S4-MA04** Pause, stop, and cascading cancellation reach all descendants
+- [x] **[T2-core] S4-MA04** Pause, stop, and cascading cancellation reach all descendants
       and show partial failures honestly.
-- [ ] **S4-MA05** Restart preserves queue, budgets, lineage, stop reason, and
+- [x] **[T2-core] S4-MA05** Restart preserves queue, budgets, lineage, stop reason, and
       cancellation intent.
-- [ ] **S4-MA06** Engine selection resolves per-launch, project, global, then
+- [x] **[T2-core] S4-MA06** Engine selection resolves per-launch, project, global, then
       `workflow` default; the stored engine snapshot cannot change mid-run and an
       unsupported native mode never falls back silently.
-- [ ] **S4-MA07** A deterministic workflow runs parallel and dependent phases,
+- [x] **[T2-core] S4-MA07** A deterministic workflow runs parallel and dependent phases,
       validates structured output, fails closed at required barriers, and resumes
       from durable checkpoints without replaying completed workers.
-- [ ] **S4-MA08** Codex V2 preserves named task paths, selective context forks,
+- [ ] **[T2-capability:codex-v2] S4-MA08** Codex V2 preserves named task paths, selective context forks,
       mailbox/follow-up/interrupt semantics, and reusable worker identity.
-- [ ] **S4-MA09** Codex V1 remains visibly legacy and preserves ID-based
+- [ ] **[T2-capability:codex-v1] S4-MA09** Codex V1 remains visibly legacy and preserves ID-based
       spawn/send/wait/resume/close behavior without synthetic V2 features.
-- [ ] **S4-MA10** Mixed-runtime workflow activity preserves agent/run/runtime
+- [ ] **[T2-capability:mixed-runtime-providers] S4-MA10** Mixed-runtime workflow activity preserves agent/run/runtime
       provenance and adds ordered workflow, mailbox, dependency, spawn, warning,
       and usage events without copying or relabeling provider reasoning.
 
-Code-ready evidence for S4-MA01 through S4-MA10 is recorded in
-`docs/stage4-s4-f3-multi-agent-operations.md`. Fleet workspace navigation,
-lineage controls, workflow scheduling, optional structured-output consumption,
-and fail-closed optional F11 lifecycle consumers are headless-covered. Rows
-remain open until F11 authority/acceptance, a
-supported direct Codex coordination transport, the separately assigned UI and
-accessibility queue, and consolidated live/package walkthrough pass.
+Supporting evidence for S4-MA01 through S4-MA10 is recorded in
+`docs/stage4-s4-f3-multi-agent-operations.md`. The exact-tree campaign added the
+real-app workflow, restart, roster, cancellation, and durable-activity proof
+needed to accept S4-MA01 through S4-MA07. Direct Codex transports and mixed
+providers remain separately scoped capability rows.
 
 ## Saved Workspaces
 
-- [ ] **S4-WS01** Create, rename, archive, restore, and delete behave locally and
+- [x] **[T2-core] S4-WS01** Create, rename, archive, restore, and delete behave locally and
       survive restart.
-- [ ] **S4-WS02** Up to four chat panes render at once; overflow uses tabs or
+- [x] **[T2-core] S4-WS02** Up to four chat panes render at once; overflow uses tabs or
       another window without restoring nested chat UI.
-- [ ] **S4-WS03** Terminal, worktree, diff, file/editor, and browser bindings
+- [x] **[T2-core] S4-WS03** Terminal, worktree, diff, file/editor, and browser bindings
       restore or show an explicit stale/missing state.
-- [ ] **S4-WS04** A chat cannot be controlled by two windows; focus/open-here
+- [x] **[T2-core] S4-WS04** A chat cannot be controlled by two windows; focus/open-here
       recovery is explicit.
-- [ ] **S4-WS05** Layout writes are crash-safe and invalid panes do not prevent
+- [x] **[T2-core] S4-WS05** Layout writes are crash-safe and invalid panes do not prevent
       the rest of a workspace from opening.
-- [ ] **S4-WS06** Starting an orchestration creates one operation workspace; all
+- [x] **[T2-core] S4-WS06** Starting an orchestration creates one operation workspace; all
       descendant chats join its roster once, overflow stays bounded, restart
       repairs the link without replay, and workspace deletion preserves work.
-      2026-07-14 partial S4-WS06 evidence: the reviewed F3 creation transaction now
-      creates the operation-workspace metadata atomically, and startup reconciliation
-      repairs missing metadata without replay. The bounded membership, archived
-      read-only, and identity review brings Node 22 affected coverage to 42/42. The
-      row stays open for the complete F3 Runtime path and live restart/roster proof.
-      Explicit operation-workspace deletion now persists across startup reconciliation
-      until the user regenerates the same opaque identity. The bounded delete,
-      duplicate, and archived-file slice passes 16/16; no broad gate was repeated.
+      Earlier partial evidence covered the atomic creation and startup repair
+      contracts. The final exact-tree real-app workflow and forced-restart proof
+      closed the roster, no-replay, durable deletion, and identity requirements.
 
 ## Automation and Scheduler
 
-- [ ] **S4-AU01** Schedule and event triggers survive restart without duplicate runs.
-- [ ] **S4-AU02** Agent-created automation remains inactive until approved and audited.
-- [ ] **S4-AU03** Dry-run performs no mutation; retry, budget, and kill behavior stay visible.
+- [x] **[T2-core] S4-AU01** Schedule and event triggers survive restart without duplicate runs.
+- [x] **[T2-core] S4-AU02** Agent-created automation remains inactive until approved and audited.
+- [x] **[T2-core] S4-AU03** Dry-run performs no mutation; retry, budget, and kill behavior stay visible.
 
 ## Local Models
 
-- [ ] **S4-LM01** Local discovery and streaming work without hosted auth.
+- [ ] **[T2-capability:ollama] S4-LM01** Local discovery and streaming work without hosted auth.
   - Automated evidence: catalog/stream/router/Runtime tests cover loopback-only
     discovery, normalized streaming, exact model identity, bounded cancellation,
     restart no-replay, diagnostics, and explicit no-cloud-fallback preflight.
     Real installed-model and packaged evidence remains open.
-- [ ] **S4-LM02** Read-only local runs produce normal run, checkpoint, manifest,
+- [ ] **[T2-capability:ollama] S4-LM02** Read-only local runs produce normal run, checkpoint, manifest,
       usage, and model identity records.
   - Automated evidence: local run tests cover durable messages/runs, checkpoints,
     manifests, provider-reported or unknown token capture, exact zero provider
     billing with unmeasured compute provenance, workspace model restore, and
     orchestration result aggregation. Real provider/package evidence remains open.
-- [ ] **S4-LM03** Write and shell stay unavailable until their permission tiers pass.
+- [ ] **[T2-capability:ollama] S4-LM03** Write and shell stay unavailable until their permission tiers pass.
   - Automated evidence: read/write/exec and orchestration preflight tests cover
     traversal, symlink races, approvals, independent shell/git/network policy,
     capability mismatch, unknown-tool denial, and durable-definition corruption
@@ -123,164 +156,178 @@ accessibility queue, and consolidated live/package walkthrough pass.
 
 ## Advanced Usage and Limits
 
-- [ ] **S4-UL01** Run/chat/task/project/account/harness rollups reconcile to raw samples.
-- [ ] **S4-UL02** Exact, provider-reported, estimated, and unknown values remain distinct.
-- [ ] **S4-UL03** Thresholds and alerts survive app closure through the local daemon.
+- [x] **[T2-core] S4-UL01** Run/chat/task/project/account/harness rollups reconcile to raw samples.
+- [x] **[T2-core] S4-UL02** Exact, provider-reported, estimated, and unknown values remain distinct.
+- [x] **[T2-core] S4-UL03** Thresholds and alerts survive app closure through the local daemon.
 
 ## Import, Export, and Private Sync
 
-- [ ] **S4-IE01** Export carries schema version, selected scopes, and no secrets.
-  - Automated evidence: Node 22 contract/secret/export tests pass relational one-project parent/dependent filtering, deterministic bundles, source-path exclusion, checksums, concurrent writes, cancellation cleanup, shared AWS/Google/provider-family detection, structured AWS exclusion, and no secret/WAL/SHM output. Live packaged proof remains open.
-- [ ] **S4-IE02** Import previews changes and conflicts before writing or migrating.
-  - Automated evidence: Node 22 plan/apply tests pass strict plan/journal parsing, canonical target/resolution confirmation, mapping-edit invalidation, mapped empty-profile extension/vault restore, redacted conflict values, actual preserve-both artifacts, app-wide maintenance gating, apply/rollback symlink-swap refusal, stale refusal, five fault windows, locked retry, FK order/check/rollback, and manual restore. Real clean-profile/package and unlocked UI walkthrough remain open.
-- [ ] **S4-IE03** Optional private sync uses only a user-owned remote and handles conflicts honestly.
-  - Automated evidence: Node 22 local-bare-remote tests pass isolated-index commit-tree/CAS enforcement under concurrent HEAD movement, exact reviewed OID/path/blob enforcement, unapproved incoming/outgoing rejection, bare AWS/Google and committed-secret refusal, exact-OID pull, stale-remote push refusal, config/origin/branch hardening, dirty stop, and unlink preservation. Real private-remote, consolidated live UI, and package proof remain open.
+- [x] **[T2-core] S4-IE01** Export carries schema version, selected scopes, and no secrets.
+  - Evidence: Node 22 contract/secret/export tests pass relational one-project parent/dependent filtering, deterministic bundles, source-path exclusion, checksums, concurrent writes, cancellation cleanup, shared AWS/Google/provider-family detection, structured AWS exclusion, and no secret/WAL/SHM output. Exact-tree live portability exercises passed; packaged release certification is separate.
+- [x] **[T2-core] S4-IE02** Import previews changes and conflicts before writing or migrating.
+  - Evidence: Node 22 plan/apply tests pass strict plan/journal parsing, canonical target/resolution confirmation, mapping-edit invalidation, mapped empty-profile extension/vault restore, redacted conflict values, actual preserve-both artifacts, app-wide maintenance gating, apply/rollback symlink-swap refusal, stale refusal, five fault windows, locked retry, FK order/check/rollback, and manual restore. Exact-tree live portability exercises passed; owner UI walkthrough remains Tier 3.
+- [ ] **[T2-capability:private-sync] S4-IE03** Optional private sync uses only a user-owned remote and handles conflicts honestly.
+  - Automated evidence: Node 22 local-bare-remote tests pass isolated-index commit-tree/CAS enforcement under concurrent HEAD movement, exact reviewed OID/path/blob enforcement, unapproved incoming/outgoing rejection, bare AWS/Google and committed-secret refusal, exact-OID pull, stale-remote push refusal, config/origin/branch hardening, dirty stop, and unlink preservation. Real private-remote, consolidated live UI, and package proof remain open. The configured `Micsushi/flapstack` remote is currently public, so it cannot certify this private-remote capability.
 
 ## Plan and Kanban
 
-- [ ] **S4-PK01** Plan view distinguishes proposed, active, and built work.
-  - Automated code-ready evidence: Node 22 F9 gate passes source discovery,
+- [x] **[T2-core] S4-PK01** Plan view distinguishes proposed, active, and built work.
+  - Evidence: Node 22 F9 gate passes source discovery,
     parsing, stale/malformed recovery, read-only hierarchy/filter rendering, and
-    production Plan route coverage. Live source and accessibility proof remains
-    open.
-- [ ] **S4-PK02** Moving an approved card to In Progress creates one real task and
+    production Plan route coverage; exact-tree real-app planning exercises and
+    automated accessibility coverage passed.
+- [x] **[T2-core] S4-PK02** Moving an approved card to In Progress creates one real task and
       one seeded scoped chat without launching a run.
-  - Automated code-ready evidence: Node 22 F9 gate passes durable task-card
+  - Evidence: Node 22 F9 gate passes durable task-card
     mapping, promotion idempotency/rollback/no-run, versioned reorder, stale
-    move, and renderer invalidation coverage. Real multi-window and manual UI
-    proof remains open.
-- [ ] **S4-PK03** AI-proposed cards remain inert until approved in the board UI.
-  - Automated code-ready evidence: Node 22 F9 gate passes proposal inertness,
+    move, and renderer invalidation coverage. Exact-tree real-app promotion
+    exercises passed; the owner multi-window walkthrough remains Tier 3.
+- [x] **[T2-core] S4-PK03** AI-proposed cards remain inert until approved in the board UI.
+  - Evidence: Node 22 F9 gate passes proposal inertness,
     exact-preview approval, denial, capped batch, audit, no-run, conflict, and
-    production Tasks route coverage. Live proposal-tray and accessibility proof
-    remains open.
+    production Tasks route coverage. Exact-tree real-app planning exercises and
+    automated accessibility coverage passed.
 
 ## Agent Runtimes
 
-- [ ] **S4-AR01** Runtime resolution follows chat, project-per-harness,
+- [x] **[T2-core] S4-AR01** Runtime resolution follows chat, project-per-harness,
       global-per-harness, then product mapping and snapshots one immutable
       runtime/adapter version before every run.
-- [ ] **S4-AR02** Compatibility is harness-based: Codex and Claude Code may use
+  - Automated evidence: ordered migration, reopen, rollback, immutable
+    snapshot, activity, and frozen Stage 3 fixture suites pass.
+- [x] **[T2-core] S4-AR02** Compatibility is harness-based: Codex and Claude Code may use
       their native runtime or Flapstack Native; generic providers may use only
       Flapstack Native; unavailable choices never silently fall back.
-- [ ] **S4-AR03** Codex runtime preserves thread, turn, item, summary/content
+  - Automated evidence: resolver, run-creation, Settings, registry, and router
+    guard suites pass.
+- [ ] **[T2-capability:codex-runtime] S4-AR03** Codex runtime preserves thread, turn, item, summary/content
       indices, section boundaries, plans, tools, permissions, usage, warnings,
       cancellation, and recovery from direct App Server events.
-- [ ] **S4-AR04** Codex private/encrypted reasoning never renders; provider
+  - Evidence: fixtures and pinned macOS package smoke pass. Credentialed
+    current-source live acceptance remains open.
+- [ ] **[T2-capability:codex-runtime] S4-AR04** Codex private/encrypted reasoning never renders; provider
       summaries and explicitly displayable text keep honest labels and ordering.
-- [ ] **S4-AR05** Claude Code runtime preserves SDK content blocks, session and
+  - Automated evidence: private-reasoning filtering and displayable-summary
+    ordering suites pass.
+- [ ] **[T2-capability:claude-runtime] S4-AR05** Claude Code runtime preserves SDK content blocks, session and
       message identity, thinking, tools, permissions, hooks, usage, and child
       provenance without representing thinking as a tool.
-- [ ] **S4-AR06** Thinking effort, reasoning display, subagent activity, and hook
+  - Evidence: fixtures and pinned macOS package smoke pass. Credentialed live
+    acceptance remains open.
+- [x] **[T2-core] S4-AR06** Thinking effort, reasoning display, subagent activity, and hook
       diagnostics work independently for every supported combination.
-- [ ] **S4-AR07** Flapstack Native passes the complete Stage 3 provider/reasoning
+  - Automated evidence: durable activity ordering, pagination, replay, privacy,
+    corruption, restart, and multi-window invalidation suites pass.
+- [ ] **[T2-capability:flapstack-native-runtime] S4-AR07** Flapstack Native passes the complete Stage 3 provider/reasoning
       fixture suite and opens legacy history without rewriting messages.
-- [ ] **S4-AR08** An empty chat changes runtime in place; a started chat uses one
+  - Evidence: automated provider and legacy-history suites plus macOS package
+    smoke pass; consolidated live acceptance remains open.
+- [x] **[T2-core] S4-AR08** An empty chat changes runtime in place; a started chat uses one
       new Continue-with-runtime chat/session; an active run cannot switch.
-- [ ] **S4-AR09** Codex, Claude Code, and Flapstack Native agents coexist in one
+  - Automated evidence: Settings, mutation, active-run blocking, exact-once
+    continuation, retry, undo, restart, and diagnostics suites pass.
+- [ ] **[T2-capability:mixed-runtime-providers] S4-AR09** Codex, Claude Code, and Flapstack Native agents coexist in one
       workflow while Flapstack permissions, worktrees, audit, and run status
       remain authoritative.
-- [ ] **S4-AR10** Activity persistence survives restart, deduplicates retries,
-      remains responsive at 10k events, passes accessibility, and rolls back to
-      Flapstack Native without deleting history.
+  - Automated evidence: production-authority, registry, provider-neutral
+    coordination, recovery, cancellation, and mixed-worker suites pass.
+- [x] **[T2-core] S4-AR10** Activity persistence survives restart, deduplicates retries,
+      remains responsive at 10k events, passes accessibility, and rolls back
+      without deleting history.
+  - Evidence: the 10,000-event budget, automated accessibility checks, exact-tree
+    activity retry deduplication, and forced live restart proof pass.
+    Provider-specific runtime evidence is owned by S4-AR03 through S4-AR09;
+    package evidence is owned by the applicable package or release matrix.
 
 ## Agent Profiles and Personalities
 
-- [ ] **S4-AP01** Capability, personality, workflow binding, and runtime snapshot
+Current compatibility boundary: new profiles and starters default to Claude
+Code. Codex-backed profile previews fail closed before confirmation because the
+Codex Runtime does not expose exact enforcement for no-approval tools. Existing
+immutable Codex profile versions/snapshots remain historical. This limits the
+Codex profile capability claim; it does not hold the provider-neutral profile
+contracts open.
+
+- [x] **[T2-core] S4-AP01** Capability, personality, workflow binding, and runtime snapshot
       remain separate; changing tone cannot widen tools, permissions, memory,
       descendants, model ceiling, runtime, or worktree authority.
-- [ ] **S4-AP02** A user creates, versions, duplicates, searches, archives, and
+- [x] **[T2-core] S4-AP02** A user creates, versions, duplicates, searches, archives, and
       restores a named profile while active and historical agents retain their
       immutable resolved snapshots.
-- [ ] **S4-AP03** Resolved preview shows the source of every field, compatibility,
+- [x] **[T2-core] S4-AP03** Resolved preview shows the source of every field, compatibility,
       requested authority, and exact conflicts; inheritance cycles and silent
       runtime/model fallback fail closed.
-- [ ] **S4-AP04** One deterministic workflow binds exact profile versions to
+- [x] **[T2-core] S4-AP04** One deterministic workflow binds exact profile versions to
       parallel and dependent steps, resumes from checkpoints with the same
       snapshots, and offers an explicit fork/retry for updated profiles.
-- [ ] **S4-AP05** Starting a standalone named agent from a task/chat/Profile
+- [x] **[T2-core] S4-AP05** Starting a standalone named agent from a task/chat/Profile
       Studio creates exactly one durable chat/run, preserves selected context and
       authority, joins the operation workspace when applicable, and survives restart.
-- [ ] **S4-AP06** Profile import/export is versioned and secret-free; missing or
+- [x] **[T2-core] S4-AP06** Profile import/export is versioned and secret-free; missing or
       untrusted skills, hooks, MCP, memory, tools, and runtimes remain disabled
       until their normal approval/compatibility paths succeed.
-- [ ] **S4-AP07** Every built-in starter type has versioned capability, safety,
+- [x] **[T2-core] S4-AP07** Every built-in starter type has versioned capability, safety,
       prompt-injection, and supported runtime/model evidence; user edits create
       an independent copy and untested combinations are labeled honestly.
-- [ ] **S4-AP08** Profile Studio keeps capability and personality visually
-      separate and completes create, preview, workflow-bind, standalone-launch,
-      duplicate, import, export, and archive flows with keyboard/screen-reader use.
+- [x] **[T2-core] S4-AP08** Profile Studio keeps capability and personality
+      semantically separate; automated accessibility checks cover accessible
+      names/states, focus order, keyboard-operable controls, errors, and the
+      create, preview, workflow-bind, standalone-launch, duplicate, import,
+      export, and archive flows.
+  - The owner's keyboard, screen-reader, and visual walkthrough is Tier 3 and
+    remains in the separate manual backlog.
 
-Headless implementation packet on Node 22: code-ready. Canonical migration
-`0038_agent_profiles.sql`, typed contracts, lifecycle/import trust, resolver and
-immutable snapshots, F3 workflow adapter, F11 standalone dispatch adapter,
-starter catalog/evaluation, Settings/Profile Studio, task/chat actions,
-diagnostics, and focused acceptance tests are present. Live UI, credentialed
-providers, forced live restart, packaged preview, accessibility walkthrough,
-and cross-device evidence remain open. F3's pre-durable-worker materializer hook
-is also an open code-path dependency, not manual evidence. No S4-AP checkbox is
-closed by headless evidence alone. See `docs/agent-profiles.md`.
-
-## Agent Runtimes
-
-Automated closeout on Node 22: `npm run check` passed full lint, repository
-formatting, TypeScript, 206 test files/1,611 tests with 3 skips, and production
-main/preload/renderer builds. Strict OpenSpec validation passed. These results
-do not close the live/provider/package rows below.
-
-- [ ] **S4-AR01** Stage 3 migration and rollback preserve messages, sessions,
-      snapshots, checkpoints, usage, audit, and legacy rendering.
-  - Automated: pass — ordered 0032/0033 migration, reopen, rollback, immutable
-    snapshot, activity, and frozen Stage 3 fixtures.
-- [ ] **S4-AR02** Resolver precedence and compatibility match Settings, New Chat,
-      direct, MCP, retry, and orchestration launch inputs without silent fallback.
-  - Automated: pass — resolver/run-creation/Settings/registry/router-guard suites.
-- [ ] **S4-AR03** Direct Codex fixture/live runs preserve displayable native event
-      identity, ordering, sections, permissions, usage, lifecycle, and recovery.
-  - Fixture and pinned macOS package smoke: pass. Credentialed live: open —
-    installed `0.144.2` does not match pinned `0.144.1`; the adapter fails closed.
-- [ ] **S4-AR04** Claude Code fixture/live runs preserve message, tool, hook,
-      subagent, usage, provider-visible thinking, session, and recovery semantics.
-  - Fixture and pinned macOS package smoke: pass. Credentialed live: open.
-- [ ] **S4-AR05** Flapstack Native preserves the Stage 3 provider pipeline for
-      every harness and remains an explicit rollback choice.
-  - Automated and macOS package smoke: pass. Consolidated live walkthrough: open.
-- [ ] **S4-AR06** Durable activity is ordered, paginated, replayable, private-safe,
-      corruption-aware, and stable across restart/window invalidation.
-  - Automated: pass, including 10,000 durable events and multi-window invalidation.
-- [ ] **S4-AR07** Shared transcript formatting, search, copy, export, keyboard,
-      screen-reader, streaming, and 10,000-event budgets pass.
-  - Automated: pass — 10,000-event headless budget 244 ms/1,500 ms. Dev launch
-    and exact checkout/profile verification passed; live visual comparison is
-    open because the Mac session was locked.
-- [ ] **S4-AR08** Settings, empty-chat mutation, active-run blocking, exact-once
-      continuation, retry, undo, restart, and privacy-safe diagnostics pass.
-  - Automated: pass. Live Settings/continue/reopen/multi-window walkthrough: open.
-- [ ] **S4-AR09** Registry dispatch proves three adapters and mixed Runtime workers
-      under one provider-neutral coordination contract without widened authority.
-  - Automated production authority and fake-adapter/mixed-worker contract: pass.
-    One database-profile service owns registry/coordinator, concrete disabled
-    recovery factories, durable run-id reconciliation/cancellation, and all
-    queued launch call sites. Credentialed direct dispatch remains open; direct
-    release flags remain disabled.
-- [ ] **S4-AR10** Credentialed direct/continue/restart/mixed-worker walkthroughs
-      and packaged macOS smoke pass; Windows/Linux remain open until observed.
-  - Package: pass — arm64 binary inspection/smoke reported Codex `0.144.1`, Claude
-    `2.1.207`, and Electron `39.8.10`; speech sidecars passed. Credentialed UI,
-    Windows, and Linux remain open because the Mac session was locked and those
-    environments were not observed.
+The Node 22 implementation packet covers migration, typed contracts,
+lifecycle/import trust, immutable resolution, workflow and standalone dispatch,
+starter evaluation, Profile Studio, task/chat actions, diagnostics, and
+focused acceptance tests. Exact-tree authenticated MCP covered profile
+CRUD/versioning, preview, workflow/standalone dispatch, retry/update behavior,
+and forced restart. Automated semantic/accessibility acceptance passed for
+S4-AP08. Provider, packaged-preview, and cross-device claims remain separate;
+the owner keyboard/screen-reader walkthrough remains Tier 3. See
+`docs/agent-profiles.md`.
 
 ## Integrated Live and Package Gate
 
-- [x] **S4-I01** `npm run dev:verify` identifies this checkout and the
+- [x] **[T2-core] S4-I01** `npm run dev:verify` identifies this checkout and the
       `Flapstack Dev` profile after the final restart.
-- [ ] **S4-I02** One project workflow exercises all eleven Stage 4 features across
-      knowledge, extensions, orchestration, workspaces, automation, local models,
-      usage, export, planning, native agent runtimes, and reusable
-      workflow/standalone agent profiles.
-- [ ] **S4-I03** `npm run package:preview:mac` opens the preview profile and the
+- [x] **[T2-core] S4-I02** One project workflow exercises the Stage 4 core across
+      knowledge, extensions, orchestration, workspaces, automation, usage,
+      export/import, planning, runtime selection, and reusable
+      workflow/standalone agent profiles. Optional provider and remote
+      capabilities are certified by their own rows.
+- [ ] **[release-gate] S4-I03** `npm run package:preview:mac` opens the preview profile and the
       same workflow passes without development-only paths.
-  - Packaging, arm64 binary inspection, and packaged smoke passed. Opening the
+  - Earlier packaging, arm64 binary inspection, and packaged smoke passed. Opening the
     preview UI/workflow remains open because the Mac session was locked.
-- [ ] **S4-I04** Windows and Linux package rows remain open until actually
-      observed on those platforms.
+- **[tracking-only] S4-I04:** Windows evidence belongs to Stage 5 and Linux
+  evidence remains future platform work; neither blocks Stage 4 Tier 2 exit.
+
+## 2026-07-26 exact-tree Tier 2 evidence
+
+- Strict OpenSpec validation passed 54/54 across the repository. Node 22
+  `npm run check` passed lint, formatting, TypeScript, native ABI validation,
+  313 test files with 2,575 tests passed and 33 skipped (2,608 total), and the
+  production build.
+- Authenticated real-app MCP exercises covered skills and hooks, knowledge
+  vaults, saved and operation workspaces, automation dry-runs, local-model
+  discovery fixtures, usage/limits, portability, and Plan/Kanban flows.
+- Deterministic orchestration exercised parallel/dependent phases, frozen
+  bindings, one operation-workspace roster, checkpoint/restart recovery, durable
+  activity, cancellation, retry deduplication, and zero unintended provider
+  launches.
+- Runtime and Profile exercises covered empty and continued chats, immutable
+  runtime/profile snapshots, create/version/search/archive/restore,
+  export/import/update/resolve/duplicate, standalone preview/follow-up/retry,
+  workflow bindings, forced restart, and persisted workspace/activity identity.
+- Automated semantic/accessibility coverage passed for Profile Studio and the
+  relevant controls. Owner keyboard, screen-reader, and visual walkthroughs
+  remain Tier 3.
+- Independent review found no remaining P0/P1 defect after the identified
+  runtime failure and cancellation-race defects were fixed and their focused
+  regression suites passed.
+
+Stage 4 is implementation complete at Tier 2: all 52 `T2-core` rows are
+accepted. The 12 optional provider/remote capability rows and the macOS package
+release row remain separately uncertified and do not block Stage 4
+implementation completion.

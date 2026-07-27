@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { redactUsageDiagnostic } from "../src/main/lib/usage/diagnostics"
 import { createDaemonSignalGate } from "../src/main/lib/usage-daemon"
 import { acquireDaemonInstanceLock } from "../src/main/lib/usage-daemon/instance-lock"
+import {
+  consumeUsageDaemonStopRequest,
+  requestUsageDaemonStop,
+  watchUsageDaemonStopRequests,
+} from "../src/main/lib/usage-daemon/stop-request"
 
 const dirs: string[] = []
 
@@ -73,5 +78,18 @@ describe("usage daemon lifecycle", () => {
     expect(diagnostic).not.toContain("tokenvalue")
     expect(diagnostic).not.toContain("/123/")
     expect(diagnostic).toContain("[redacted]")
+  })
+
+  it("atomically requests, consumes, and watches graceful daemon shutdown", async () => {
+    const dir = tempDir()
+    requestUsageDaemonStop(dir)
+    expect(consumeUsageDaemonStopRequest(dir)).toBe(true)
+    expect(consumeUsageDaemonStopRequest(dir)).toBe(false)
+
+    const stopped = vi.fn()
+    const close = watchUsageDaemonStopRequests(dir, stopped, 25)
+    requestUsageDaemonStop(dir)
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1))
+    close()
   })
 })

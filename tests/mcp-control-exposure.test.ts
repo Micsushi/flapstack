@@ -15,6 +15,7 @@ import {
 } from "../src/main/lib/mcp-control/registration"
 import {
   getChatMcpExposureStatus,
+  isProductMcpEnabledByDefault,
   registerActiveProductMcpSession,
   resetActiveProductMcpSessionsForTests,
   revokeActiveProductMcpSessions,
@@ -39,6 +40,20 @@ afterEach(() => {
 })
 
 describe("Flapstack MCP per-chat exposure", () => {
+  it.each([
+    ["codex", true],
+    ["claude", true],
+    ["claude-code", true],
+    ["cursor-agent", true],
+    ["openrouter", true],
+    ["nanogpt", true],
+    ["local", false],
+    ["custom", false],
+    [null, false],
+  ] as const)("defaults product MCP exposure for %s to %s", (harness, expected) => {
+    expect(isProductMcpEnabledByDefault(harness)).toBe(expected)
+  })
+
   it("preserves existing exposure choices during the default-on migration", () => {
     const originalProviders = readFileSync(
       resolve(process.cwd(), "drizzle/0024_mcp_exposure_default_on.sql"),

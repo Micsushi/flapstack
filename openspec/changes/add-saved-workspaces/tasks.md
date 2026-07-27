@@ -2,6 +2,7 @@
 
 ### S4-F4-T1 — Define and migrate the saved workspace model
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Versioned project/task workspace records reference existing objects safely.
@@ -22,6 +23,7 @@
 
 ### S4-F4-T2 — Add crash-safe workspace lifecycle
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Users create, rename, duplicate, archive, restore, and delete saved workspaces without deleting referenced work.
@@ -42,6 +44,7 @@
 
 ### S4-F4-T3 — Build the bounded layout shell
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: A saved workspace renders versioned rows, columns, pane groups, and tabs.
@@ -66,6 +69,7 @@
 
 ### S4-F4-T4 — Bind chat, terminal, file, diff, and browser panes
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Existing working surfaces can be added, removed, and restored in workspace panes.
@@ -80,6 +84,7 @@
 
 ### S4-F4-T5 — Add pop-outs and exclusive window ownership
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Workspaces span windows without duplicate live chat control.
@@ -104,6 +109,7 @@
 
 ### S4-F4-T6 — Add orchestration-owned operation workspaces
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
 - Outcome: Starting multi-agent work opens one durable workspace containing the lead and every descendant agent chat.
@@ -139,13 +145,19 @@
 
 ### S4-F4-T7 — Close saved workspace acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F4
-- Outcome: A real project/task operating surface restores safely in Dev and packaged preview.
-- Scope: Full gate, matrix S4-WS01 through S4-WS06, manual and operation workspaces, six-chat overflow, multi-window, stale worktree/file, crash recovery, docs and package preview.
+- Outcome: A real project/task operating surface restores safely in verified
+  Dev.
+- Scope: Full gate, matrix S4-WS01 through S4-WS06, manual and operation
+  workspaces, six-chat overflow, multi-window, stale worktree/file, crash
+  recovery, and docs.
 - Out of scope: Remote synchronization.
 - Acceptance: Manual and operation workspaces survive restart and one forced recovery; descendant rosters reconcile; referenced work remains intact; ownership and stale states stay honest.
-- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, live multi-window walkthrough, and packaged preview evidence.
+- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and
+  agent-operated MCP/live multi-window and recovery evidence. Packaged macOS
+  evidence remains the separate S4-I03 release gate.
 - Code-ready progress (2026-07-14): Added the missing real-surface lifecycle
   controls for rename, archived-list selection, archive, restore, metadata-only
   delete, exact impact review, active-operation confirmation, and read-only
@@ -154,8 +166,9 @@
   binding and startup repair have focused headless proof only. Explicit delete
   now survives startup reconciliation until the user regenerates from lineage;
   operation duplication fails instead of creating stale manual panes. Live Dev,
-  forced recovery, the feature-wide gate, and package preview remain open until
-  T6 dependencies resolve and the consolidated closeout is eligible.
+  forced recovery, and the feature-wide gate remain open until T6 dependencies
+  resolve and the consolidated closeout is eligible. Packaged-preview
+  certification remains the separate S4-I03 release gate.
 - Blocked by: S4-F4-T2, S4-F4-T3, S4-F4-T4, S4-F4-T5, S4-F4-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

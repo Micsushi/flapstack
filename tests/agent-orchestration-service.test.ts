@@ -16,6 +16,7 @@ import { McpApprovalLifecycle } from "../src/main/lib/mcp-control/approval-lifec
 import { createMcpMutationService } from "../src/main/lib/mcp-control/mutation-service"
 import { invokeMcpControlTool } from "../src/main/lib/mcp-control/registry"
 import * as schema from "../src/main/lib/db/schema"
+import { DEFAULT_AGENT_CAPABILITY, DEFAULT_AGENT_PRESENTATION } from "../src/shared/agent-profiles"
 
 let directory = ""
 let path = ""
@@ -793,6 +794,96 @@ describe("durable agent task orchestration", () => {
     ).toEqual({ count: 0 })
   })
 
+  it("enforces each frozen Agent Profile descendant ceiling below the task-wide depth", () => {
+    const service = createAgentOrchestrationService(path)
+    const authority = seedProfileAuthority({
+      profileId: "profile-root",
+      snapshotId: "snapshot-root",
+      digest: "a".repeat(64),
+      maxDescendants: 0,
+    })
+    const created = service.create({
+      ...createInput({ count: 0 }),
+      maxDepth: 4,
+      agents: [
+        definition("profile-root", {
+          profileRuntimeAuthority: authority,
+        }),
+      ],
+    })
+
+    expect(() =>
+      service.addAgent({
+        taskId: created.orchestration.taskId,
+        parentAgentId: created.agents[0]!.id,
+        agent: definition("blocked-child"),
+      }),
+    ).toThrow(/profile descendant/i)
+  })
+
+  it("enforces each frozen Agent Profile descendant-profile allowlist", () => {
+    const service = createAgentOrchestrationService(path)
+    const authority = seedProfileAuthority({
+      profileId: "profile-root",
+      snapshotId: "snapshot-root",
+      digest: "a".repeat(64),
+      allowedDescendantProfileIds: [],
+      maxDescendants: 2,
+    })
+    const childAuthority = seedProfileAuthority({
+      profileId: "profile-child",
+      snapshotId: "snapshot-child",
+      digest: "b".repeat(64),
+      maxDescendants: 0,
+    })
+    const created = service.create({
+      ...createInput({ count: 0 }),
+      maxDepth: 4,
+      agents: [definition("profile-root", { profileRuntimeAuthority: authority })],
+    })
+
+    expect(() =>
+      service.addAgent({
+        taskId: created.orchestration.taskId,
+        parentAgentId: created.agents[0]!.id,
+        agent: definition("blocked-unprofiled-child"),
+      }),
+    ).toThrow(/descendant allowlist/i)
+    expect(() =>
+      service.addAgent({
+        taskId: created.orchestration.taskId,
+        parentAgentId: created.agents[0]!.id,
+        agent: definition("blocked-profile-child", {
+          profileRuntimeAuthority: childAuthority,
+        }),
+      }),
+    ).toThrow(/descendant allowlist/i)
+  })
+
+  it("rejects forged Agent Profile Runtime authority at orchestration ingress", () => {
+    const service = createAgentOrchestrationService(path)
+
+    expect(() =>
+      service.create({
+        ...createInput({ count: 0 }),
+        agents: [
+          definition("forged-profile", {
+            profileRuntimeAuthority: {
+              snapshotId: "missing-snapshot",
+              snapshotDigest: "a".repeat(64),
+              profile: { profileId: "profile-root", version: 1 },
+              allowedTools: [],
+              allowedSkills: [],
+              memoryPolicy: { mode: "none" },
+              allowedDescendantProfileIds: [],
+              maxDescendants: 0,
+            },
+          }),
+        ],
+      }),
+    ).toThrow(/missing or does not match/i)
+  })
+
   it("requires inherited and attached-branch worktrees to match Git's registry", () => {
     const service = createAgentOrchestrationService(path)
     seedRoot("bad-branch-root")
@@ -830,7 +921,7 @@ describe("durable agent task orchestration", () => {
     ).toEqual({ worktree_path: realpathSync(featurePath) })
   })
 
-  it("requires approval for full-access MCP orchestration with audit and trusted caller identity", async () => {
+  it("auto-approves full-access MCP orchestration with audit and trusted caller identity", async () => {
     const approvals = new McpApprovalLifecycle()
     const statuses: string[] = []
     const resultPromise = invokeMcpControlTool(
@@ -845,14 +936,12 @@ describe("durable agent task orchestration", () => {
         audit: { append: (record) => statuses.push(record.status) },
       },
     )
-    expect(approvals.listPending()).toHaveLength(1)
-    approvals.approve("orchestration-approval")
     await expect(resultPromise).resolves.toMatchObject({
       ok: true,
       data: { aggregate: { active: 2 } },
     })
     expect(approvals.listPending()).toEqual([])
-    expect(statuses).toEqual(["approval-required", "allowed", "dispatch-started", "completed"])
+    expect(statuses).toEqual(["allowed", "dispatch-started", "completed"])
 
     sqlite
       .prepare(
@@ -902,6 +991,64 @@ function seedRoot(id: string): void {
         ?, 'main', ?, '[]')`,
     )
     .run(id, id, projectPath, id)
+}
+
+function seedProfileAuthority(input: {
+  profileId: string
+  snapshotId: string
+  digest: string
+  allowedDescendantProfileIds?: string[]
+  maxDescendants: number
+}) {
+  const capability = {
+    ...DEFAULT_AGENT_CAPABILITY,
+    allowedDescendantProfileIds: input.allowedDescendantProfileIds ?? [],
+    maxDescendants: input.maxDescendants,
+  }
+  sqlite
+    .prepare(
+      `INSERT INTO agent_profiles
+       (id, name, description, category, scope_type, project_id, source,
+        current_version, created_at, updated_at, archived_at)
+       VALUES (?, ?, '', 'test', 'user', NULL, 'user', 1, 1, 1, NULL)`,
+    )
+    .run(input.profileId, input.profileId)
+  sqlite
+    .prepare(
+      `INSERT INTO agent_profile_versions
+       (profile_id, version, base_profile_id, base_profile_version, capability_json,
+        presentation_json, provenance_json, created_at)
+       VALUES (?, 1, NULL, NULL, ?, ?, '{}', 1)`,
+    )
+    .run(input.profileId, JSON.stringify(capability), JSON.stringify(DEFAULT_AGENT_PRESENTATION))
+  sqlite
+    .prepare(
+      `INSERT INTO agent_profile_snapshots
+       (id, profile_id, profile_version, resolved_json, digest, created_at)
+       VALUES (?, ?, 1, ?, ?, 1)`,
+    )
+    .run(
+      input.snapshotId,
+      input.profileId,
+      JSON.stringify({
+        schemaVersion: 1,
+        snapshotId: input.snapshotId,
+        profile: { profileId: input.profileId, version: 1 },
+        capability,
+        digest: input.digest,
+      }),
+      input.digest,
+    )
+  return {
+    snapshotId: input.snapshotId,
+    snapshotDigest: input.digest,
+    profile: { profileId: input.profileId, version: 1 },
+    allowedTools: capability.tools,
+    allowedSkills: capability.skills,
+    memoryPolicy: capability.memoryPolicy,
+    allowedDescendantProfileIds: capability.allowedDescendantProfileIds,
+    maxDescendants: capability.maxDescendants,
+  }
 }
 
 function definition(role: string, overrides: Partial<ReturnType<typeof definitionBase>> = {}) {

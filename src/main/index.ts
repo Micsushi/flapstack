@@ -38,6 +38,7 @@ import { startDevMcpServer, type DevMcpServerHandle } from "./lib/mcp-test-contr
 import {
   isDevTestControlEnabled,
   isPreviewExecutable,
+  resolveFlapstackProtocol,
   resolvePreviewUserDataName,
 } from "./lib/mcp-test-control/lifecycle"
 import {
@@ -57,13 +58,13 @@ import {
   recordRunningRunUsageBudgetStop,
   stopRunningRunsOverUsageBudget,
 } from "./lib/usage/budgets"
+import { isCliInstalled, installCli, uninstallCli, parseLaunchDirectory } from "./lib/cli"
+import { buildSingleInstanceLaunchData, dispatchSecondInstanceLaunch } from "./lib/cli-launch"
 import {
-  getLaunchDirectory,
-  isCliInstalled,
-  installCli,
-  uninstallCli,
-  parseLaunchDirectory,
-} from "./lib/cli"
+  recordProtocolReceipt,
+  recordProtocolDispatch,
+  type ProtocolReceiptSource,
+} from "./lib/protocol-receipt"
 import { cleanupGitWatchers } from "./lib/git/watcher"
 import { recoverInterruptedImports } from "./lib/portability/importer"
 import { beginExclusivePortabilityOperation } from "./lib/portability/operations"
@@ -118,7 +119,7 @@ let automationBetaTransition = Promise.resolve()
 // Deep link protocol (must match package.json build.protocols.schemes)
 // Use different protocol in dev to avoid conflicts with production app
 const IS_PREVIEW = !IS_DEV && isPreviewExecutable()
-const PROTOCOL = IS_DEV ? "flapstack-dev" : IS_PREVIEW ? "flapstack-preview" : "flapstack"
+const PROTOCOL = resolveFlapstackProtocol(IS_DEV, IS_PREVIEW)
 const APP_DISPLAY_NAME = IS_DEV ? "Flapstack Dev" : IS_PREVIEW ? "Flapstack Preview" : "Flapstack"
 
 if (process.platform === "darwin" && IS_DEV) {
@@ -285,7 +286,12 @@ export async function handleAuthCode(code: string): Promise<void> {
 }
 
 // Handle deep link
-function handleDeepLink(url: string): void {
+function handleDeepLink(url: string, source: ProtocolReceiptSource): void {
+  const receipt = recordProtocolReceipt(url, PROTOCOL, source)
+  if (!receipt.accepted) {
+    console.warn("[DeepLink] Rejected protocol callback:", receipt.protocol ?? "invalid")
+    return
+  }
   try {
     const parsed = new URL(url)
     console.log("[DeepLink] Received protocol callback:", parsed.host || parsed.pathname)
@@ -596,14 +602,16 @@ function cleanupStaleLocks(): boolean {
   return false
 }
 
-// Prevent multiple instances
-let gotTheLock = app.requestSingleInstanceLock()
+// Prevent multiple instances. Automation launch metadata must come from the
+// incoming process because its environment is not visible to the primary app.
+const singleInstanceLaunchData = buildSingleInstanceLaunchData(process.argv, process.env)
+let gotTheLock = app.requestSingleInstanceLock(singleInstanceLaunchData)
 
 if (!gotTheLock) {
   // Maybe stale lock - try cleanup and retry once
   const cleaned = cleanupStaleLocks()
   if (cleaned) {
-    gotTheLock = app.requestSingleInstanceLock()
+    gotTheLock = app.requestSingleInstanceLock(singleInstanceLaunchData)
   }
   if (!gotTheLock) {
     app.quit()
@@ -611,24 +619,32 @@ if (!gotTheLock) {
 }
 
 if (gotTheLock) {
+  // Queue a cold-start directory before any renderer can ask to consume it.
+  parseLaunchDirectory()
+
   // Handle second instance launch (also handles deep links on Windows/Linux)
-  app.on("second-instance", (_event, commandLine) => {
+  app.on("second-instance", (_event, commandLine, workingDirectory, additionalData) => {
     // Check for deep link in command line args
     const url = commandLine.find((arg) => arg.startsWith(`${PROTOCOL}://`))
     if (url) {
-      handleDeepLink(url)
+      handleDeepLink(url, "second-instance")
     }
 
-    // Focus on the first available window
-    const windows = getAllWindows()
-    if (windows.length > 0) {
-      const window = windows[0]!
-      if (window.isMinimized()) window.restore()
-      window.focus()
-    } else {
-      // No windows open, create a new one
-      createMainWindow()
-    }
+    const dispatch = dispatchSecondInstanceLaunch({
+      commandLine,
+      defaultApp: Boolean(process.defaultApp),
+      workingDirectory,
+      additionalData:
+        typeof additionalData === "object" &&
+        additionalData !== null &&
+        "flapstackNoFocus" in additionalData &&
+        additionalData.flapstackNoFocus === true
+          ? { flapstackNoFocus: true }
+          : {},
+      windows: getAllWindows(),
+      createWindow: createMainWindow,
+    })
+    if (url) recordProtocolDispatch(dispatch.activated, getAllWindows().length)
   })
 
   // App ready
@@ -644,7 +660,7 @@ if (gotTheLock) {
     app.on("open-url", (event, url) => {
       console.log("[Protocol] open-url event received:", url)
       event.preventDefault()
-      handleDeepLink(url)
+      handleDeepLink(url, "open-url")
     })
 
     // Set app user model ID for Windows (different in dev to avoid taskbar conflicts)
@@ -725,42 +741,53 @@ if (gotTheLock) {
                 }
               },
             },
-            { type: "separator" },
-            {
-              label: isCliInstalled()
-                ? "Uninstall 'flapstack' Command..."
-                : "Install 'flapstack' Command in PATH...",
-              ...(terminalMenuIcon && { icon: terminalMenuIcon }),
-              click: async () => {
-                const { dialog } = await import("electron")
-                if (isCliInstalled()) {
-                  const result = await uninstallCli()
-                  if (result.success) {
-                    dialog.showMessageBox({
-                      type: "info",
-                      message: "CLI command uninstalled",
-                      detail: "The 'flapstack' command has been removed from your PATH.",
-                    })
-                    buildMenu()
-                  } else {
-                    dialog.showErrorBox("Uninstallation Failed", result.error || "Unknown error")
-                  }
-                } else {
-                  const result = await installCli()
-                  if (result.success) {
-                    dialog.showMessageBox({
-                      type: "info",
-                      message: "CLI command installed",
-                      detail:
-                        "You can now use 'flapstack .' in any terminal to open Flapstack in that directory.",
-                    })
-                    buildMenu()
-                  } else {
-                    dialog.showErrorBox("Installation Failed", result.error || "Unknown error")
-                  }
-                }
-              },
-            },
+            ...(!IS_PREVIEW
+              ? ([
+                  { type: "separator" },
+                  {
+                    label: isCliInstalled()
+                      ? "Uninstall 'flapstack' Command..."
+                      : "Install 'flapstack' Command in PATH...",
+                    ...(terminalMenuIcon && { icon: terminalMenuIcon }),
+                    click: async () => {
+                      const { dialog } = await import("electron")
+                      if (isCliInstalled()) {
+                        const result = await uninstallCli()
+                        if (result.success) {
+                          dialog.showMessageBox({
+                            type: "info",
+                            message: "CLI command uninstalled",
+                            detail:
+                              "The 'flapstack' command was removed. Any PATH entry that existed before installation was preserved.",
+                          })
+                          buildMenu()
+                        } else {
+                          dialog.showErrorBox(
+                            "Uninstallation Failed",
+                            result.error || "Unknown error",
+                          )
+                        }
+                      } else {
+                        const result = await installCli()
+                        if (result.success) {
+                          dialog.showMessageBox({
+                            type: "info",
+                            message: "CLI command installed",
+                            detail:
+                              "Open a new terminal, then use 'flapstack .' to open Flapstack in that directory.",
+                          })
+                          buildMenu()
+                        } else {
+                          dialog.showErrorBox(
+                            "Installation Failed",
+                            result.error || "Unknown error",
+                          )
+                        }
+                      }
+                    },
+                  },
+                ] satisfies Electron.MenuItemConstructorOptions[])
+              : []),
             { type: "separator" },
             { role: "services" },
             { type: "separator" },
@@ -1011,6 +1038,7 @@ if (gotTheLock) {
                   userDataPath: app.getPath("userData"),
                   checkout: app.getAppPath(),
                   profile: basename(app.getPath("userData")),
+                  rendererUrl: process.env.ELECTRON_RENDERER_URL,
                 }
                 devMcpServer = await startDevMcpServer(devMcpInput)
                 registerDatabaseMaintenanceParticipant("dev-mcp-server", {
@@ -1191,13 +1219,10 @@ if (gotTheLock) {
       }
     }, 3000)
 
-    // Handle directory argument from CLI (e.g., `flapstack /path/to/project`)
-    parseLaunchDirectory()
-
     // Handle deep link from app launch (Windows/Linux)
     const deepLinkUrl = process.argv.find((arg) => arg.startsWith(`${PROTOCOL}://`))
     if (deepLinkUrl) {
-      handleDeepLink(deepLinkUrl)
+      handleDeepLink(deepLinkUrl, "initial-argv")
     }
 
     // macOS: Re-create window when dock icon is clicked

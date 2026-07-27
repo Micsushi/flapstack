@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "appPublisher": {
+    "subject": "CN=Flapstack LLC",
+    "thumbprints": []
+  },
+  "executableSigning": {
+    "coveredExtensions": [".exe"],
+    "appOwned": "valid timestamped signature from the pinned Flapstack publisher",
+    "vendorOwned": "valid timestamped signature with recorded non-empty publisher identity"
+  },
+  "releaseBlockedUntilThumbprintPinned": true
+}

@@ -7,19 +7,28 @@ import { extractSpokenSection, filterSpeakableText } from "../src/main/lib/speec
 import { createFallbackSpokenSummary } from "../src/main/lib/speech/spoken-summary"
 
 describe("future stage scaffolds", () => {
-  it("publishes a capability record for each planned feature family", () => {
+  it("publishes truthful capability records for delivered feature families", () => {
     const capabilities = listFutureStageCapabilities()
 
     expect(capabilities.map((capability) => capability.id)).toContain("stage2-voice")
     expect(capabilities.map((capability) => capability.id)).toContain("stage3-mcp-control")
     expect(capabilities.map((capability) => capability.id)).toContain("automation")
     expect(capabilities.every((capability) => capability.gate.length > 0)).toBe(true)
+    expect(
+      capabilities
+        .filter((capability) => capability.id !== "stage2-voice")
+        .every((capability) => !["planned", "scaffolded"].includes(capability.status)),
+    ).toBe(true)
+    expect(capabilities.find((capability) => capability.id === "automation")).toMatchObject({
+      stage: "Stage 4",
+      status: "experimental",
+    })
   })
 
-  it("requires explicit MCP Tier 3 approval for full access", () => {
+  it("auto-approves MCP Tier 3 for full access", () => {
     expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" })).toMatchObject({
-      decision: "approval-required",
-      requiresApproval: true,
+      decision: "allowed",
+      requiresApproval: false,
     })
   })
 

@@ -5,8 +5,18 @@ import { rmSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { preparePackageResources, resolvePackageTargets } from "./prepare-package-resources.mjs"
+import { writePackageProvenance } from "./lib/package-provenance.mjs"
+import { prepareDependencyLicenseNotices } from "./lib/dependency-license-notices.mjs"
+import { ensureNativeAbi } from "./ensure-native-abi.mjs"
+import {
+  acquirePackageOutput,
+  completePackageOutput,
+  failPackageOutput,
+} from "./lib/package-output-lock.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const scriptPath = fileURLToPath(import.meta.url)
+const heavyJobLockScript = path.join(root, "scripts", "with-heavy-job-lock.mjs")
 const platformFlags = { darwin: "--mac", win32: "--win", linux: "--linux" }
 const supportedArchitectures = new Set(["arm64", "x64"])
 const channelConfigs = {
@@ -70,7 +80,14 @@ export function resolvePackageBuild(
     ...(channelConfig ? [`--config=${channelConfig}`] : []),
     ...(options.channel === "release" ? ["--publish=never"] : []),
   ]
-  return { platform, architectures, targets, builderArgs }
+  return {
+    platform,
+    architectures,
+    targets,
+    builderArgs,
+    channel: options.channel ?? "development",
+    outputDirectory: path.join(root, options.channel === "preview" ? "release-preview" : "release"),
+  }
 }
 
 function parseBuild(args) {
@@ -107,14 +124,56 @@ export function runBuilder(args, options = {}) {
   }
 }
 
-async function main() {
-  const build = parseBuild(process.argv.slice(2))
-  console.log(`Packaging exact targets: ${build.targets.join(", ")}`)
-  await preparePackageResources(build.targets)
-  runBuilder(build.builderArgs)
+export async function executePackageBuild(build, options = {}) {
+  const rootDirectory = options.root ?? root
+  const writeProvenance = options.writeProvenance ?? writePackageProvenance
+  const prepareNotices = options.prepareNotices ?? prepareDependencyLicenseNotices
+  const prepareResources = options.prepareResources ?? preparePackageResources
+  const builder = options.builder ?? runBuilder
+  // Capture the source before the output transaction moves a previous package
+  // into its temporary backup. The backup is build state, not source input.
+  writeProvenance(build, {
+    root: rootDirectory,
+    productName: build.channel === "preview" ? "Flapstack Preview" : undefined,
+  })
+  const handle = acquirePackageOutput({
+    root: rootDirectory,
+    outputDirectory: build.outputDirectory,
+  })
+  try {
+    prepareNotices({ root: rootDirectory })
+    await prepareResources(build.targets)
+    builder(build.builderArgs)
+    completePackageOutput(handle)
+  } catch (error) {
+    failPackageOutput(handle)
+    throw error
+  }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+async function main() {
+  const args = process.argv.slice(2)
+  if (!process.env.FLAPSTACK_HEAVY_JOB_LOCK_TOKEN) {
+    const result = spawnSync(
+      process.execPath,
+      [heavyJobLockScript, "package", "--", process.execPath, scriptPath, ...args],
+      { cwd: root, stdio: "inherit" },
+    )
+    if (result.error) throw result.error
+    if (result.signal) throw new Error(`Package coordinator terminated by ${result.signal}`)
+    if (result.status !== 0) {
+      throw new Error(`Package coordinator failed with exit code ${result.status}`)
+    }
+    return
+  }
+  const ensureElectronAbi = args.includes("--ensure-native-abi")
+  const build = parseBuild(args.filter((argument) => argument !== "--ensure-native-abi"))
+  if (ensureElectronAbi) ensureNativeAbi("electron")
+  console.log(`Packaging exact targets: ${build.targets.join(", ")}`)
+  await executePackageBuild(build)
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)

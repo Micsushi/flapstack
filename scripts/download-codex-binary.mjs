@@ -19,6 +19,11 @@ import {
   sha256File,
   verifyCachedBinaryDigest,
 } from "./lib/packaged-binary.mjs"
+import {
+  downloadFileWithRetry,
+  recoverInterruptedFileReplacement,
+  replaceFileAtomically,
+} from "./lib/download-recovery.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.join(__dirname, "..")
@@ -26,12 +31,12 @@ const outputRootArg = process.argv.find((argument) => argument.startsWith("--out
 const BIN_DIR = outputRootArg
   ? path.resolve(outputRootArg.slice("--output-root=".length))
   : path.join(ROOT_DIR, "resources", "bin")
-
 const RELEASE_REPO = "openai/codex"
 const RELEASE_TAG_PREFIX = "rust-v"
 const USER_AGENT = "flapstack-desktop-codex-downloader"
-const MAX_DOWNLOAD_ATTEMPTS = 3
-const RETRYABLE_DOWNLOAD_STATUSES = new Set([403, 408, 429, 500, 502, 503, 504])
+const GITHUB_API_ORIGIN = "https://api.github.com"
+const GITHUB_RELEASE_ORIGIN = "https://github.com"
+const MAX_API_REDIRECTS = 5
 
 const PLATFORMS = {
   "darwin-arm64": {
@@ -64,7 +69,7 @@ const PLATFORMS = {
   },
 }
 
-function getRequestHeaders({ api = false } = {}) {
+function getRequestHeaders({ api = false, url } = {}) {
   const headers = {
     "User-Agent": USER_AGENT,
     Accept: api ? "application/vnd.github+json" : "application/octet-stream",
@@ -72,22 +77,59 @@ function getRequestHeaders({ api = false } = {}) {
   // Authenticate API metadata requests without forwarding repository
   // credentials to signed release-asset redirects on another host.
   const token = process.env.GITHUB_TOKEN
-  if (api && token) {
+  if (api && token && url && new URL(url).origin === GITHUB_API_ORIGIN) {
     headers.Authorization = `Bearer ${token}`
   }
   return headers
 }
 
-function fetchJson(url) {
+export function requireCodexApiUrl(rawUrl) {
+  const url = new URL(rawUrl)
+  if (url.origin !== GITHUB_API_ORIGIN || url.username || url.password) {
+    throw new Error(`Refusing Codex metadata outside ${GITHUB_API_ORIGIN}`)
+  }
+  return url
+}
+
+export function requireCodexReleaseAssetUrl(version, assetName, rawUrl) {
+  const url = new URL(rawUrl)
+  const expectedPath = `/${RELEASE_REPO}/releases/download/${RELEASE_TAG_PREFIX}${version}/${assetName}`
+  if (
+    url.origin !== GITHUB_RELEASE_ORIGIN ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== expectedPath
+  ) {
+    throw new Error(
+      `Refusing Codex asset URL that does not match ${RELEASE_REPO} ${RELEASE_TAG_PREFIX}${version} ${assetName}`,
+    )
+  }
+  return url.toString()
+}
+
+function fetchJson(rawUrl, redirectCount = 0) {
+  const url = requireCodexApiUrl(rawUrl)
   return new Promise((resolve, reject) => {
     https
-      .get(url, { headers: getRequestHeaders({ api: true }) }, (res) => {
+      .get(url, { headers: getRequestHeaders({ api: true, url }) }, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           const redirectUrl = res.headers.location
           if (!redirectUrl) {
             return reject(new Error("Missing redirect location"))
           }
-          return fetchJson(redirectUrl).then(resolve).catch(reject)
+          if (redirectCount >= MAX_API_REDIRECTS) {
+            return reject(new Error(`More than ${MAX_API_REDIRECTS} Codex API redirects`))
+          }
+          try {
+            const nextUrl = requireCodexApiUrl(new URL(redirectUrl, url).toString())
+            return fetchJson(nextUrl, redirectCount + 1)
+              .then(resolve)
+              .catch(reject)
+          } catch (error) {
+            return reject(error)
+          }
         }
 
         if (res.statusCode !== 200) {
@@ -108,88 +150,6 @@ function fetchJson(url) {
         res.on("error", reject)
       })
       .on("error", reject)
-  })
-}
-
-function downloadFile(url, destPath) {
-  return new Promise((resolve, reject) => {
-    const request = (nextUrl, attempt = 1) => {
-      const file = fs.createWriteStream(destPath)
-
-      https
-        .get(nextUrl, { headers: getRequestHeaders() }, (res) => {
-          if (res.statusCode === 301 || res.statusCode === 302) {
-            const redirectUrl = res.headers.location
-            if (!redirectUrl) {
-              file.close()
-              fs.rmSync(destPath, { force: true })
-              return reject(new Error("Missing redirect location"))
-            }
-
-            file.close(() => {
-              fs.rmSync(destPath, { force: true })
-              request(redirectUrl, attempt)
-            })
-            return
-          }
-
-          if (res.statusCode !== 200) {
-            const status = res.statusCode ?? 0
-            res.resume()
-            file.close(() => {
-              fs.rmSync(destPath, { force: true })
-              if (RETRYABLE_DOWNLOAD_STATUSES.has(status) && attempt < MAX_DOWNLOAD_ATTEMPTS) {
-                const delayMs = 1000 * 2 ** (attempt - 1)
-                console.warn(
-                  `  HTTP ${status}; retrying Codex download (${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS})...`,
-                )
-                setTimeout(() => request(url, attempt + 1), delayMs)
-                return
-              }
-              reject(new Error(`HTTP ${status}`))
-            })
-            return
-          }
-
-          const totalSize = Number.parseInt(res.headers["content-length"] || "0", 10)
-          let downloaded = 0
-          let lastPrintedPercent = -1
-
-          res.on("data", (chunk) => {
-            downloaded += chunk.length
-            if (totalSize <= 0) return
-
-            const percent = Math.floor((downloaded / totalSize) * 100)
-            if (percent !== lastPrintedPercent && percent % 10 === 0) {
-              process.stdout.write(`\r  Progress: ${percent}%`)
-              lastPrintedPercent = percent
-            }
-          })
-
-          res.pipe(file)
-
-          file.on("finish", () => {
-            file.close()
-            if (totalSize > 0) {
-              process.stdout.write("\r  Progress: 100%\n")
-            }
-            resolve()
-          })
-
-          res.on("error", (error) => {
-            file.close()
-            fs.rmSync(destPath, { force: true })
-            reject(error)
-          })
-        })
-        .on("error", (error) => {
-          file.close()
-          fs.rmSync(destPath, { force: true })
-          reject(error)
-        })
-    }
-
-    request(url)
   })
 }
 
@@ -236,31 +196,27 @@ async function getLatestVersion() {
   throw new Error(`Unexpected latest release tag: ${tagName || "<empty>"}`)
 }
 
-async function fetchRelease(version) {
-  return await fetchJson(
-    `https://api.github.com/repos/${RELEASE_REPO}/releases/tags/${RELEASE_TAG_PREFIX}${version}`,
-  )
-}
-
 function findAsset(release, assetName) {
   const assets = Array.isArray(release?.assets) ? release.assets : []
   return assets.find((asset) => asset?.name === assetName)
 }
 
-async function downloadPlatform(version, platformKey, release) {
+export async function downloadPlatform(version, platformKey, release, options = {}) {
   const platform = PLATFORMS[platformKey]
   if (!platform) {
     console.error(`Unknown platform: ${platformKey}`)
     return false
   }
 
-  const targetDir = path.join(BIN_DIR, platformKey)
+  const binDirectory = options.binDirectory ?? BIN_DIR
+  const targetDir = path.join(binDirectory, platformKey)
   const targetPath = path.join(targetDir, platform.outputBinaryName)
   const assetHashMarkerPath = path.join(targetDir, ".codex-asset.sha256")
   const binaryHashMarkerPath = path.join(targetDir, ".codex-binary.sha256")
 
-  ensureRealDirectory(BIN_DIR)
+  ensureRealDirectory(binDirectory)
   ensureRealDirectory(targetDir)
+  recoverInterruptedFileReplacement(targetPath)
 
   const asset = findAsset(release, platform.assetName)
   if (!asset) {
@@ -269,15 +225,20 @@ async function downloadPlatform(version, platformKey, release) {
   }
 
   const expectedHash = parseSha256Digest(asset.digest)
-  const downloadUrl = asset.browser_download_url
-
-  if (!expectedHash) {
-    console.error(`Missing SHA256 digest for pinned Codex asset ${platform.assetName}`)
+  let downloadUrl
+  try {
+    downloadUrl = requireCodexReleaseAssetUrl(
+      version,
+      platform.assetName,
+      asset.browser_download_url,
+    )
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
     return false
   }
 
-  if (!downloadUrl) {
-    console.error(`Missing download URL for ${platform.assetName}`)
+  if (!expectedHash) {
+    console.error(`Missing SHA256 digest for pinned Codex asset ${platform.assetName}`)
     return false
   }
 
@@ -302,57 +263,57 @@ async function downloadPlatform(version, platformKey, release) {
   }
 
   const downloadPath = path.join(targetDir, `${platform.assetName}.download`)
+  const candidatePath = `${targetPath}.candidate`
+  const extractDir = path.join(targetDir, ".extract")
   fs.rmSync(downloadPath, { force: true })
+  fs.rmSync(candidatePath, { force: true })
+  fs.rmSync(extractDir, { recursive: true, force: true })
+  try {
+    await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
+      headersForUrl: () => getRequestHeaders(),
+      label: `Codex ${platformKey}`,
+      onRetry: ({ attempt, attempts, error }) =>
+        console.warn(`  ${error.message}; retrying Codex download (${attempt}/${attempts})...`),
+    })
 
-  await downloadFile(downloadUrl, downloadPath)
-
-  if (expectedHash) {
     const actualHash = await sha256File(downloadPath)
     if (actualHash !== expectedHash) {
       console.error("  Hash mismatch!")
       console.error(`    Expected: ${expectedHash}`)
       console.error(`    Actual:   ${actualHash}`)
-      fs.rmSync(downloadPath, { force: true })
       return false
     }
     console.log(`  Verified SHA256: ${actualHash.slice(0, 16)}...`)
-  }
 
-  if (platform.assetName.endsWith(".tar.gz")) {
-    const extractDir = path.join(targetDir, ".extract")
-    fs.rmSync(extractDir, { recursive: true, force: true })
-    fs.mkdirSync(extractDir, { recursive: true })
+    if (platform.assetName.endsWith(".tar.gz")) {
+      fs.mkdirSync(extractDir)
 
-    extractTarGz(downloadPath, extractDir)
+      extractTarGz(downloadPath, extractDir)
 
-    const extractedPath = path.join(extractDir, platform.extractedBinaryName)
-    if (!fs.existsSync(extractedPath)) {
-      fs.rmSync(downloadPath, { force: true })
-      fs.rmSync(extractDir, { recursive: true, force: true })
-      throw new Error(`Extracted binary not found: ${extractedPath}`)
+      const extractedPath = path.join(extractDir, platform.extractedBinaryName)
+      if (!fs.existsSync(extractedPath)) {
+        throw new Error(`Extracted binary not found: ${extractedPath}`)
+      }
+      fs.copyFileSync(extractedPath, candidatePath)
+    } else {
+      fs.copyFileSync(downloadPath, candidatePath)
     }
 
-    fs.rmSync(targetPath, { recursive: true, force: true })
-    fs.copyFileSync(extractedPath, targetPath)
+    if (!platformKey.startsWith("win32")) fs.chmodSync(candidatePath, 0o755)
+
+    assertBundledBinary(candidatePath, platformKey)
+    const binaryHash = await sha256File(candidatePath)
+    replaceFileAtomically(candidatePath, targetPath)
+    fs.writeFileSync(assetHashMarkerPath, `${expectedHash}\n`)
+    fs.writeFileSync(binaryHashMarkerPath, `${binaryHash}\n`)
+
+    console.log(`  Saved to: ${targetPath}`)
+    return true
+  } finally {
+    fs.rmSync(downloadPath, { force: true })
+    fs.rmSync(candidatePath, { force: true })
     fs.rmSync(extractDir, { recursive: true, force: true })
-  } else {
-    fs.rmSync(targetPath, { recursive: true, force: true })
-    fs.copyFileSync(downloadPath, targetPath)
   }
-
-  fs.rmSync(downloadPath, { force: true })
-
-  if (!platformKey.startsWith("win32")) {
-    fs.chmodSync(targetPath, 0o755)
-  }
-
-  assertBundledBinary(targetPath, platformKey)
-  const binaryHash = await sha256File(targetPath)
-  fs.writeFileSync(assetHashMarkerPath, `${expectedHash}\n`)
-  fs.writeFileSync(binaryHashMarkerPath, `${binaryHash}\n`)
-
-  console.log(`  Saved to: ${targetPath}`)
-  return true
 }
 
 async function main() {
@@ -372,7 +333,10 @@ async function main() {
   const version = specifiedVersion || (await getLatestVersion())
   console.log(`Version: ${version}`)
 
-  const release = await fetchRelease(version)
+  const releaseUrl = `https://api.github.com/repos/${RELEASE_REPO}/releases/tags/${RELEASE_TAG_PREFIX}${version}`
+  // Codex release metadata is part of the binary trust root. Never let an
+  // ignored, mutable local cache supply both an asset digest and its URL.
+  const release = await fetchJson(releaseUrl)
 
   let platformsToDownload
   if (downloadAll) {
@@ -415,7 +379,9 @@ async function main() {
   console.log("\n✓ All downloads completed successfully!")
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error)
-  process.exit(1)
-})
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error:", error)
+    process.exit(1)
+  })
+}

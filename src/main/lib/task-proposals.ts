@@ -476,8 +476,8 @@ function approveOne(
     .prepare(
       `INSERT INTO chats (
          id, name, project_id, task_id, scope, permission_mode, custom_permissions,
-         worktree_path, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?)`,
+         mcp_exposure_enabled, worktree_path, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'task', ?, ?, 1, ?, ?, ?)`,
     )
     .run(
       chatId,

@@ -139,6 +139,7 @@ describe("plan task promotion", () => {
     const { database, sqlite } = testDatabase("duplicate")
     try {
       const first = promotePlanCandidate(database, snapshot(), confirmInput())
+      sqlite.prepare("UPDATE chats SET mcp_exposure_enabled = 0 WHERE id = ?").run(first.chat.id)
       const duplicate = promotePlanCandidate(
         database,
         snapshot(),
@@ -152,6 +153,9 @@ describe("plan task promotion", () => {
       expect(sqlite.prepare("SELECT count(*) AS count FROM tasks").get()).toEqual({ count: 1 })
       expect(sqlite.prepare("SELECT count(*) AS count FROM chats").get()).toEqual({ count: 1 })
       expect(sqlite.prepare("SELECT count(*) AS count FROM sub_chats").get()).toEqual({ count: 1 })
+      expect(
+        sqlite.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?").get(first.chat.id),
+      ).toEqual({ mcp_exposure_enabled: 0 })
     } finally {
       sqlite.close()
     }
@@ -211,6 +215,7 @@ describe("plan task promotion", () => {
       expect(result.chat).toMatchObject({
         scope: "task",
         permissionMode: "custom",
+        mcpExposureEnabled: true,
         worktreePath: "/projects/target",
       })
       expect(result.subChat.runStatus).toBeNull()

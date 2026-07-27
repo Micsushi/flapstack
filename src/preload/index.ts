@@ -21,6 +21,7 @@ import {
   DEV_TEST_CONTROL_VIEW_CHANNEL,
   type DevTestControlViewPayload,
 } from "../shared/dev-test-control"
+import { CLI_OPEN_DIRECTORY_CHANNEL } from "../shared/cli-launch"
 import type {
   WorkspaceOwnershipInvalidation,
   WorkspacePaneClaimResult,
@@ -201,6 +202,11 @@ contextBridge.exposeInMainWorld("desktopApi", {
     const handler = () => callback()
     ipcRenderer.on("shortcut:open-settings", handler)
     return () => ipcRenderer.removeListener("shortcut:open-settings", handler)
+  },
+  onCliOpenDirectory: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on(CLI_OPEN_DIRECTORY_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(CLI_OPEN_DIRECTORY_CHANNEL, handler)
   },
   onDevMcpViewChanged: (callback: (payload: DevTestControlViewPayload) => void) => {
     const handler = (_event: unknown, payload: DevTestControlViewPayload) => callback(payload)
@@ -427,6 +433,7 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onCliOpenDirectory: (callback: () => void) => () => void
   onDevRendererControlRequest: (
     callback: (payload: DevRendererControlRequest) => void,
   ) => () => void

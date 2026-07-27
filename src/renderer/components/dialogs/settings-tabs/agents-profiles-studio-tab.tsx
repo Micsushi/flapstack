@@ -401,6 +401,10 @@ export function AgentsProfilesStudioTab() {
           <p className="text-sm text-muted-foreground">
             Capability controls authority. Personality controls presentation only.
           </p>
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" role="status">
+            New profiles default to Claude Code. Codex-backed Agent Profiles cannot launch until
+            Codex provides exact enforcement for every frozen tool, including no-approval tools.
+          </p>
         </header>
 
         <div className="space-y-5">

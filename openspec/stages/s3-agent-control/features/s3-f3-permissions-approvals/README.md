@@ -1,7 +1,8 @@
 # S3-F3 — Permissions and Approvals
 
 - Outcome: every product MCP invocation uses trusted caller state, one combined
-  provider/product decision, self-reference safety, and mandatory Tier 3 approval.
+  provider/product decision, self-reference safety, full-access auto-approval,
+  and fresh Tier 3 approval in every other writable mode.
 - Change: `openspec/changes/add-stage3-mcp-control/`
 - Related provider mapping: `openspec/changes/sync-provider-permissions-globally/`
 - Tasks: `openspec/changes/add-stage3-mcp-control/tasks.md`

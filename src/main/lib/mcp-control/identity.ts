@@ -3,6 +3,7 @@ import { openAppDatabase } from "../db/access"
 import { z } from "zod"
 import { parseCustomPermissionToggles, parsePermissionMode } from "../permissions"
 import type { McpCallerIdentity, McpCallerStore } from "./types"
+import { readDurableAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
 
 const callerEnvironmentSchema = z.object({
   FLAPSTACK_MCP_CHAT_ID: z.string().trim().min(1),
@@ -54,12 +55,18 @@ export function resolveTrustedMcpCaller(
   if (mode === "custom" && !customPermissions) {
     throw new Error("MCP custom caller is missing stored capability toggles.")
   }
+  if (run?.profileRuntimeAuthority === "invalid") {
+    throw new Error("MCP caller has invalid frozen Agent Profile provenance.")
+  }
 
   return {
     chatId: chat.id,
     runId: run?.id,
     permissionMode: mode,
     customPermissions: customPermissions ?? undefined,
+    ...(run?.profileRuntimeAuthority
+      ? { profileRuntimeAuthority: run.profileRuntimeAuthority }
+      : {}),
   }
 }
 
@@ -103,14 +110,25 @@ export function createSqliteMcpCallerStore(
         "SELECT id, chat_id, permission_mode, status FROM agent_runs WHERE id = ?",
         [runId],
       )
-      return row
-        ? {
-            id: String(row.id),
-            chatId: String(row.chat_id),
-            permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
-            active: row.status === "running",
-          }
-        : null
+      if (!row) return null
+      const db = openAppDatabase(databasePath, { readonly: true, fileMustExist: true })
+      try {
+        db.pragma("query_only = ON")
+        const profile = readDurableAgentProfileRuntimeAuthority(db, runId)
+        return {
+          id: String(row.id),
+          chatId: String(row.chat_id),
+          permissionMode: typeof row.permission_mode === "string" ? row.permission_mode : null,
+          active: row.status === "running",
+          ...(profile.kind === "authority"
+            ? { profileRuntimeAuthority: profile.authority }
+            : profile.kind === "invalid"
+              ? { profileRuntimeAuthority: "invalid" as const }
+              : {}),
+        }
+      } finally {
+        db.close()
+      }
     },
     findCustomPermissions(chatId, runId) {
       const row = runId

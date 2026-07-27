@@ -94,7 +94,7 @@ export function redactShellResult(result: ShellResult): ShellResult {
 
 export function redactSecretLikeText(value: string): string {
   return value
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-[redacted]")
+    .replace(/(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]{8,}/g, "sk-[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
     .replace(/oauth[_-]?token["':=\s]+[A-Za-z0-9._-]+/gi, "oauth_token=[redacted]")
 }

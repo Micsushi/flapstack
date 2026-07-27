@@ -260,8 +260,6 @@ export async function createCarryoverRunFixture(input: {
   let projectId: string | undefined
   try {
     await git.init()
-    await git.addConfig("user.name", "Flapstack Dev Fixture")
-    await git.addConfig("user.email", "dev-fixture@flapstack.local")
     await writeFile(join(root, "alpha.txt"), "alpha before\nmanual anchor\nomega before\n")
     await writeFile(join(root, "beta.txt"), "beta before\n")
     await git.add(["alpha.txt", "beta.txt"])

@@ -12,4 +12,8 @@ if not exist "%ABS_DIR%\" (
   exit /b 1
 )
 
-start "" "Flapstack" "%ABS_DIR%"
+set "FLAPSTACK_CLI_DIRECTORY=%ABS_DIR%"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -EncodedCommand __FLAPSTACK_ENCODED_COMMAND__
+set "FLAPSTACK_CLI_EXIT=%ERRORLEVEL%"
+set "FLAPSTACK_CLI_DIRECTORY="
+exit /b %FLAPSTACK_CLI_EXIT%

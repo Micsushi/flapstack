@@ -96,6 +96,7 @@ import {
   ProjectVaultContextRejectedError,
 } from "../../project-vaults/run-context"
 import { isBetaFeatureEnabled } from "../../beta-features/settings"
+import { readDurableAgentProfileRuntimeAuthority } from "../../agent-profiles/runtime-authority"
 
 const imageAttachmentSchema = z.object({
   base64Data: z.string(),
@@ -1980,7 +1981,17 @@ export const codexRouter = router({
               harness: "codex",
               runId: input.runId,
             })
-            if (isBetaFeatureEnabled("projectMemory")) {
+            const profileAuthority = readDurableAgentProfileRuntimeAuthority(db, input.runId)
+            if (profileAuthority.kind === "invalid") {
+              throw new Error("Run has invalid frozen Agent Profile provenance.")
+            }
+            if (
+              isBetaFeatureEnabled("projectMemory") &&
+              !(
+                profileAuthority.kind === "authority" &&
+                profileAuthority.authority.memoryPolicy.mode === "none"
+              )
+            ) {
               try {
                 vaultContext = await buildProjectVaultRunContext(db, {
                   chatId: input.chatId,
@@ -2007,6 +2018,9 @@ export const codexRouter = router({
               chatId: input.chatId,
               harness: "codex",
               cwd: input.cwd,
+              ...(profileAuthority.kind === "authority"
+                ? { profileRuntimeAuthority: profileAuthority.authority }
+                : {}),
             })
             const runContextMetadata = {
               ...contextBundle.metadata,

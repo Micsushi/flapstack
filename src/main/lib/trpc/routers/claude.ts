@@ -22,7 +22,7 @@ import {
   type UIMessageChunk,
 } from "../../claude"
 import { getExistingClaudeToken } from "../../claude-token"
-import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
+import { decryptClaudeCredential } from "../../claude-credential-storage"
 import {
   clearClaudeStreamIfOwned,
   persistClaudeMessagesForStream,
@@ -126,6 +126,10 @@ import {
   ProjectVaultContextRejectedError,
 } from "../../project-vaults/run-context"
 import { isBetaFeatureEnabled } from "../../beta-features/settings"
+import {
+  isFrozenAgentProfileToolAllowed,
+  readDurableAgentProfileRuntimeAuthority,
+} from "../../agent-profiles/runtime-authority"
 
 type RunCompletionStatus = "success" | "failure" | "cancelled"
 const HARNESS = "claude-code" as const
@@ -237,12 +241,8 @@ function parseMentions(prompt: string): {
 /**
  * Decrypt token using Electron's safeStorage
  */
-function decryptToken(encrypted: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return decodePlaintextClaudeToken(encrypted)
-  }
-  const buffer = Buffer.from(encrypted, "base64")
-  return safeStorage.decryptString(buffer)
+function decryptToken(encrypted: string, migrateLegacy: (encrypted: string) => void): string {
+  return decryptClaudeCredential(encrypted, safeStorage, migrateLegacy)
 }
 
 function resolveClaudeRunPermission(chatId: string): PermissionMode {
@@ -403,7 +403,12 @@ function getClaudeCodeToken(): string | null {
           "[claude-auth] Using multi-account system, activeAccountId:",
           settings.activeAccountId,
         )
-        const decrypted = decryptToken(account.oauthToken)
+        const decrypted = decryptToken(account.oauthToken, (oauthToken) => {
+          db.update(anthropicAccounts)
+            .set({ oauthToken })
+            .where(eq(anthropicAccounts.id, account.id))
+            .run()
+        })
         console.log("[claude-auth] Token decrypted successfully")
         console.log("[claude-auth] ============================================")
         return decrypted
@@ -434,7 +439,12 @@ function getClaudeCodeToken(): string | null {
       return null
     }
 
-    const decrypted = decryptToken(cred.oauthToken)
+    const decrypted = decryptToken(cred.oauthToken, (oauthToken) => {
+      db.update(claudeCodeCredentials)
+        .set({ oauthToken })
+        .where(eq(claudeCodeCredentials.id, "default"))
+        .run()
+    })
     console.log("[claude-auth] Token decrypted successfully (legacy)")
     console.log("[claude-auth] ============================================")
 
@@ -1357,7 +1367,17 @@ export const claudeRouter = router({
               harness: HARNESS,
               runId: launchRunId,
             })
-            if (isBetaFeatureEnabled("projectMemory")) {
+            const profileAuthority = readDurableAgentProfileRuntimeAuthority(db, launchRunId)
+            if (profileAuthority.kind === "invalid") {
+              throw new Error("Run has invalid frozen Agent Profile provenance.")
+            }
+            if (
+              isBetaFeatureEnabled("projectMemory") &&
+              !(
+                profileAuthority.kind === "authority" &&
+                profileAuthority.authority.memoryPolicy.mode === "none"
+              )
+            ) {
               try {
                 vaultContext = await buildProjectVaultRunContext(db, {
                   chatId: input.chatId,
@@ -1384,6 +1404,9 @@ export const claudeRouter = router({
               chatId: input.chatId,
               harness: HARNESS,
               cwd: input.cwd,
+              ...(profileAuthority.kind === "authority"
+                ? { profileRuntimeAuthority: profileAuthority.authority }
+                : {}),
             })
             metadata.context = contextBundle.metadata
             metadata.vaultContext = vaultContext.manifest
@@ -2101,6 +2124,15 @@ ${prompt}
                   toolInput: Record<string, unknown>,
                   options: { toolUseID: string },
                 ) => {
+                  if (
+                    profileAuthority.kind === "authority" &&
+                    !isFrozenAgentProfileToolAllowed(profileAuthority.authority, toolName)
+                  ) {
+                    return {
+                      behavior: "deny",
+                      message: `Tool ${toolName} is outside the frozen Agent Profile allowlist.`,
+                    }
+                  }
                   // Fix common parameter mistakes from Ollama models
                   // Local models often use slightly wrong parameter names
                   if (isUsingOllama) {

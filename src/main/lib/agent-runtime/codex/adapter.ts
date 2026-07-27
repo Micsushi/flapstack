@@ -37,6 +37,7 @@ type CodexRunState = {
   sessionId: string | null
   turnId: string | null
   terminal: boolean
+  terminalFailure: string | null
   uncertain: boolean
   streaming: boolean
   abortListener: (() => void) | null
@@ -258,6 +259,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       throw error
     }
     state.terminal = false
+    state.terminalFailure = null
     state.abortListener = () => void this.cancel(context, "Flapstack run aborted")
     context.signal.addEventListener("abort", state.abortListener, { once: true })
     if (context.signal.aborted) state.abortListener()
@@ -287,8 +289,13 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
           notification.method === "turn/completed" &&
           notificationTurnId(notification.params) === state.turnId
         ) {
+          const turn = record(notification.params.turn)
           state.terminal = true
           state.turnId = null
+          if (turn.status === "failed") {
+            state.terminalFailure = codexTurnFailureMessage(turn.error)
+            throw new Error(state.terminalFailure)
+          }
           return
         }
       }
@@ -370,6 +377,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
 
   async complete(context: RuntimeAdapterContext): Promise<void> {
     const state = this.requiredState(context.runId)
+    if (state.terminalFailure) throw new Error(state.terminalFailure)
     if (!state.terminal || state.uncertain) {
       throw new Error("[codex-runtime] Cannot complete before a certain terminal turn event.")
     }
@@ -379,6 +387,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
     const existing = this.states.get(context.runId)
     if (existing) {
       if (existing.uncertain) return "uncertain"
+      if (existing.terminalFailure) return "uncertain"
       if (existing.terminal) return "completed"
       if (existing.client.isAlive() && existing.turnId) return "running"
     }
@@ -429,6 +438,7 @@ class DirectCodexRuntimeAdapter implements CodexRuntimeHarnessAdapter {
       sessionId: null,
       turnId: null,
       terminal: false,
+      terminalFailure: null,
       uncertain: false,
       streaming: false,
       abortListener: null,
@@ -705,12 +715,27 @@ function reconcileThread(thread: Record<string, unknown>): "running" | "complete
   const turns = array(thread.turns)
   const last = record(turns.at(-1))
   if (last.status === "inProgress") return "running"
-  if (["completed", "interrupted", "failed"].includes(String(last.status))) return "completed"
+  if (["completed", "interrupted"].includes(String(last.status))) return "completed"
+  if (last.status === "failed") return "uncertain"
   return "uncertain"
 }
 
 function notificationTurnId(params: Record<string, unknown>): string | null {
   return string(params.turnId) ?? string(record(params.turn).id)
+}
+
+function codexTurnFailureMessage(value: unknown): string {
+  const error = record(value)
+  const detail =
+    string(error.message) ??
+    string(error.code) ??
+    string(error.type) ??
+    string(value) ??
+    "App Server turn failed."
+  return `[codex-runtime] ${sanitizeRuntimeText(detail, {
+    maxLength: 500,
+    mode: "diagnostic",
+  })}`
 }
 
 function isPermissionMethod(method: string): boolean {

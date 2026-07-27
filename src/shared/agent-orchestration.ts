@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { agentProfileRuntimeAuthoritySchema } from "./agent-profiles"
 import {
   customPermissionCapabilitiesSchema,
   refineCustomPermissionMode,
@@ -135,6 +136,7 @@ export const orchestrationAgentDefinitionSchema = z
     runtimePreference: agentRuntimePreferenceSchema.optional(),
     requiredLocalToolTiers: z.array(orchestrationLocalToolTierSchema).max(5).optional(),
     reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+    profileRuntimeAuthority: agentProfileRuntimeAuthoritySchema.optional(),
     permissionMode: orchestrationPermissionModeSchema,
     customPermissions: customPermissionCapabilitiesSchema.optional(),
     worktreeStrategy: orchestrationWorktreeStrategySchema,

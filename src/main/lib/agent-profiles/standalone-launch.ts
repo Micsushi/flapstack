@@ -11,17 +11,26 @@ import {
   type ResolvedAgentProfileSnapshot,
 } from "../../../shared/agent-profiles"
 import {
-  constructRuntimeSnapshot,
   resolvedLaunchFromSnapshotRow,
   runtimePermissionSnapshot,
+  runtimeSnapshotColumns,
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
+import { assertResolvedAgentRuntime } from "../agent-runtime/resolver"
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+} from "../../../shared/agent-runtime"
+import { productRuntimeForHarness } from "../agent-runtime/compatibility"
 import type { QueuedAgentRun } from "../run-launch-service"
 import { normalizeChatMode } from "../../../shared/chat-mode"
 import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/operations"
+import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 import {
   AgentProfileResolver,
+  type AgentProfileRuntimeResolution,
   agentProfileSnapshotPolicyViolations,
+  frozenAgentProfileRuntimeAuthority,
   intersectAgentProfilePermissions,
 } from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
@@ -60,12 +69,29 @@ export class StandaloneAgentLaunchService {
     const db = this.open()
     try {
       const source = this.resolveSource(db, input.source)
-      const launchPolicy = this.currentPolicy(db, source, input.orchestrationTaskId)
-      return new AgentProfileResolver(db).preview({
+      const resolver = new AgentProfileResolver(db)
+      const draftPolicy = this.currentPolicy(db, source, input.orchestrationTaskId, null)
+      const draft = resolver.preview({
         profile: input.profile,
         overrides: input.overrides,
-        policy: launchPolicy,
+        policy: draftPolicy,
       })
+      const runtimeResolution = currentRuntimeResolution(db, source, draft.capability.harness)
+      const launchPolicy = this.currentPolicy(
+        db,
+        source,
+        input.orchestrationTaskId,
+        draft.capability.harness,
+      )
+      return resolver.preview(
+        {
+          profile: input.profile,
+          overrides: input.overrides,
+          policy: launchPolicy,
+        },
+        "launch",
+        runtimeResolution,
+      )
     } finally {
       db.close()
     }
@@ -81,11 +107,25 @@ export class StandaloneAgentLaunchService {
       const existing = this.existingRequest(db, input)
       if (existing) return existing
       const source = this.resolveSource(db, input.source)
-      const launchPolicy = this.currentPolicy(db, source, input.orchestrationTaskId)
-      const snapshot = new AgentProfileResolver(db).snapshot(
+      const resolver = new AgentProfileResolver(db)
+      const draft = resolver.preview({
+        profile: input.profile,
+        overrides: input.overrides,
+        policy: this.currentPolicy(db, source, input.orchestrationTaskId, null),
+      })
+      const runtimeResolution = currentRuntimeResolution(db, source, draft.capability.harness)
+      const launchPolicy = this.currentPolicy(
+        db,
+        source,
+        input.orchestrationTaskId,
+        draft.capability.harness,
+      )
+      const snapshot = resolver.snapshot(
         input.profile,
         input.overrides,
         launchPolicy,
+        "launch",
+        runtimeResolution,
       )
       if (snapshot.digest !== input.confirmedSnapshotDigest) {
         throw new StandaloneAgentLaunchError(
@@ -104,6 +144,7 @@ export class StandaloneAgentLaunchService {
       const context = buildContext(db, source, input.context)
       const prompt = profilePrompt(snapshot, context)
       const worktree = resolveWorktree(source, snapshot)
+      const launchTaskId = input.orchestrationTaskId ?? source.taskId
       const now = epoch()
       db.transaction(() => {
         if (input.orchestrationTaskId) {
@@ -113,20 +154,21 @@ export class StandaloneAgentLaunchService {
         db.prepare(
           `INSERT INTO chats (
              id, name, project_id, task_id, scope, permission_mode, custom_permissions,
-             harness, model, runtime_preference,
+             mcp_exposure_enabled, harness, model, runtime_preference,
              parent_chat_id, initiator_chat_id, parent_run_id, ancestor_chat_ids,
              worktree_path, branch, base_branch, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           ids.chatId,
           snapshot.displayName,
           source.projectId,
-          source.taskId,
-          source.taskId ? "task" : "project",
+          launchTaskId,
+          launchTaskId ? "task" : "project",
           snapshot.capability.permissionMode,
           snapshot.capability.customPermissions
             ? JSON.stringify(snapshot.capability.customPermissions)
             : null,
+          isProductMcpEnabledByDefault(snapshot.capability.harness) ? 1 : 0,
           snapshot.capability.harness,
           snapshot.capability.modelPreference,
           snapshot.capability.runtimePreference,
@@ -140,16 +182,31 @@ export class StandaloneAgentLaunchService {
           now,
           now,
         )
-        const runtimeSnapshot = constructRuntimeSnapshot(db, {
-          chatId: ids.chatId,
-          harness: snapshot.capability.harness,
-          model: snapshot.capability.modelPreference,
-          permission: runtimePermissionSnapshot(
-            snapshot.capability.permissionMode,
-            snapshot.capability.customPermissions,
-          ),
-          controls: { modelEffort: snapshot.capability.reasoningEffort },
-        })
+        // The profile can remain "auto" on the new chat, but this run must use
+        // the effective Runtime confirmed in the preview. Re-resolving from
+        // the new chat would lose an explicit source-chat preference.
+        const runtimeSnapshot = runtimeSnapshotColumns(
+          assertResolvedAgentRuntime({
+            harness: snapshot.capability.harness,
+            model: snapshot.capability.modelPreference,
+            chatPreference: snapshot.runtimeResolution.preference,
+            permission: runtimePermissionSnapshot(
+              snapshot.capability.permissionMode,
+              snapshot.capability.customPermissions,
+            ),
+            controls: { modelEffort: snapshot.capability.reasoningEffort },
+          }),
+        )
+        if (runtimeSnapshot.resolvedRuntime !== snapshot.runtimeResolution.resolvedRuntime) {
+          throw new StandaloneAgentLaunchError(
+            "launch-blocked",
+            "Confirmed Agent Profile Runtime no longer resolves to the reviewed adapter.",
+          )
+        }
+        runtimeSnapshot.runtimePreferenceSource =
+          snapshot.runtimeResolution.source === "profile"
+            ? "chat"
+            : snapshot.runtimeResolution.source
         db.prepare(
           `INSERT INTO sub_chats
            (id, chat_id, name, mode, harness, model, permission_mode, worktree_path,
@@ -200,8 +257,9 @@ export class StandaloneAgentLaunchService {
             prompt: snapshot.capability.instructions,
             harness: snapshot.capability.harness,
             model: snapshot.capability.modelPreference ?? undefined,
-            runtimePreference: snapshot.capability.runtimePreference,
+            runtimePreference: snapshot.runtimeResolution.preference,
             reasoningEffort: snapshot.capability.reasoningEffort ?? undefined,
+            profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(snapshot),
             permissionMode: snapshot.capability.permissionMode,
             customPermissions: snapshot.capability.customPermissions ?? undefined,
             worktreeStrategy: snapshot.capability.worktreeStrategy,
@@ -307,9 +365,11 @@ export class StandaloneAgentLaunchService {
       }
       const source = this.resolveSource(db, { kind: "chat", chatId: prior.chatId })
       const snapshot = new AgentProfileResolver(db).getSnapshot(prior.snapshotId)
+      const priorRun = db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(prior.runId) as Row
       const violations = agentProfileSnapshotPolicyViolations(
         snapshot,
-        this.currentPolicy(db, source, prior.orchestrationTaskId),
+        this.currentPolicy(db, source, prior.orchestrationTaskId, snapshot.capability.harness),
+        priorRun.runtime_preference as AgentRuntimePreference,
       )
       if (violations.length > 0) {
         throw new StandaloneAgentLaunchError(
@@ -324,7 +384,6 @@ export class StandaloneAgentLaunchService {
         .get(prior.chatId)
       if (active)
         throw new StandaloneAgentLaunchError("run-active", "Named agent already has an active run.")
-      const priorRun = db.prepare("SELECT * FROM agent_runs WHERE id = ?").get(prior.runId) as Row
       const id = randomUUID()
       const runId = randomUUID()
       const now = epoch()
@@ -424,10 +483,25 @@ export class StandaloneAgentLaunchService {
   async continueWithUpdatedProfile(launchId: string, inputValue: unknown, dispatch = true) {
     const prior = this.get(launchId)
     const input = standaloneAgentLaunchInputSchema.parse(inputValue)
+    if (["pending", "running"].includes(prior.runStatus)) {
+      throw new StandaloneAgentLaunchError(
+        "run-active",
+        "Stop the active named-agent run before continuing with an updated profile.",
+      )
+    }
     if (input.source.kind !== "chat" || input.source.chatId !== prior.chatId) {
       throw new StandaloneAgentLaunchError(
         "launch-blocked",
         "Continue with updated profile must start from the named agent's chat.",
+      )
+    }
+    if (
+      input.profile.profileId === prior.profile.profileId &&
+      input.profile.version === prior.profile.version
+    ) {
+      throw new StandaloneAgentLaunchError(
+        "launch-blocked",
+        "Continue with updated profile requires a different profile or newer profile version.",
       )
     }
     return await this.launch(input, dispatch)
@@ -489,12 +563,14 @@ export class StandaloneAgentLaunchService {
         .get(launchId) as Row | undefined
       if (!row)
         throw new StandaloneAgentLaunchError("source-missing", "Named-agent launch is missing.")
+      const snapshotId = String(row.snapshot_id)
       return {
         id: String(row.id),
         requestId: String(row.request_id),
         source: { kind: String(row.source_kind), id: String(row.source_id) },
         profile: { profileId: String(row.profile_id), version: Number(row.profile_version) },
-        snapshotId: String(row.snapshot_id),
+        snapshotId,
+        snapshot: new AgentProfileResolver(db).getSnapshot(snapshotId),
         chatId: String(row.chat_id),
         subChatId: String(row.sub_chat_id),
         runId: String(row.run_id),
@@ -678,6 +754,7 @@ export class StandaloneAgentLaunchService {
     db: Database.Database,
     source: SourceDto,
     orchestrationTaskId: string | null,
+    harness: string | null,
   ): AgentProfileLaunchPolicy {
     let permission = parseDurablePermission(
       source.projectPermissionMode,
@@ -704,15 +781,44 @@ export class StandaloneAgentLaunchService {
     let maxDescendants = 0
     if (orchestrationTaskId) {
       this.assertOrchestrationMembership(db, orchestrationTaskId, source)
+      if (orchestrationTaskId !== source.taskId) {
+        const task = db
+          .prepare(
+            `SELECT default_permission_mode, default_custom_permissions
+             FROM tasks WHERE id = ? AND project_id = ?`,
+          )
+          .get(orchestrationTaskId, source.projectId) as
+          | {
+              default_permission_mode: string
+              default_custom_permissions: string | null
+            }
+          | undefined
+        if (!task) {
+          throw new StandaloneAgentLaunchError(
+            "launch-blocked",
+            "Operation workspace task permission policy is missing.",
+          )
+        }
+        const taskPermission = parseDurablePermission(
+          task.default_permission_mode,
+          parseObject(task.default_custom_permissions),
+        )
+        permission = intersectAgentProfilePermissions(
+          permission.mode,
+          permission.custom,
+          taskPermission.mode,
+          taskPermission.custom,
+        )
+      }
       maxDescendants = currentOrchestrationMaxDepth(db, orchestrationTaskId)
     }
     return agentProfileLaunchPolicySchema.parse({
       permissionMode: permission.mode,
       customPermissions: permission.custom,
-      allowedTools: [],
-      allowedSkills: [],
+      allowedTools: null,
+      allowedSkills: null,
       allowedModels: source.chatModel ? [source.chatModel] : null,
-      allowedRuntimes: currentRuntimeCeiling(db, source),
+      allowedRuntimes: harness ? currentRuntimeCeiling(db, source, harness) : null,
       maxDescendants,
     })
   }
@@ -768,7 +874,9 @@ function sourceDto(
     sourceId,
     projectId: String(row.project_id ?? row.id),
     projectPath: String(row.project_path),
-    taskId: stringOrNull(row.task_id ?? (row.project_id ? row.id : null)),
+    taskId: chatSource
+      ? stringOrNull(row.task_id)
+      : stringOrNull(row.task_id ?? (row.project_id ? row.id : null)),
     taskName: stringOrNull(row.task_id ? row.task_name : row.name),
     taskDescription: stringOrNull(row.task_description ?? row.description),
     primaryWorktreePath: stringOrNull(row.primary_worktree_path),
@@ -811,23 +919,84 @@ function parseDurablePermission(mode: string | null, custom: unknown) {
     : { mode: "read-only" as const, custom: null }
 }
 
-function currentRuntimeCeiling(db: Database.Database, source: SourceDto) {
+function currentRuntimeResolution(
+  db: Database.Database,
+  source: SourceDto,
+  harness: string,
+): AgentProfileRuntimeResolution {
   if (source.chatRuntimePreference && source.chatRuntimePreference !== "auto") {
-    return [source.chatRuntimePreference]
+    const preference = source.chatRuntimePreference as AgentRuntimePreference
+    const resolvedRuntime = runtimeAdapterForPreference(preference)
+    if (!resolvedRuntime) {
+      throw new StandaloneAgentLaunchError(
+        "launch-blocked",
+        "Current chat Runtime preference is invalid.",
+      )
+    }
+    return {
+      preference: preference as Exclude<AgentRuntimePreference, "auto">,
+      source: "chat",
+      defaultVersion: null,
+      resolvedRuntime,
+    }
   }
-  const rows = db
+  const row = db
     .prepare(
-      `SELECT DISTINCT d.preference FROM agent_runtime_defaults d
-       WHERE d.preference <> 'auto' AND (
-         (d.scope_type = 'project' AND d.scope_id = ?) OR
-         (d.scope_type = 'global' AND NOT EXISTS (
-           SELECT 1 FROM agent_runtime_defaults p
-           WHERE p.scope_type = 'project' AND p.scope_id = ? AND p.harness = d.harness
-         ))
-       )`,
+      `SELECT d.scope_type, d.preference, d.version
+       FROM agent_runtime_defaults d
+       WHERE d.harness = ? AND d.preference <> 'auto' AND (
+         (d.scope_type = 'project' AND d.scope_id = ?) OR d.scope_type = 'global'
+       )
+       ORDER BY CASE d.scope_type WHEN 'project' THEN 0 ELSE 1 END
+       LIMIT 1`,
     )
-    .all(source.projectId, source.projectId) as Array<{ preference: string }>
-  return rows.length ? rows.map((row) => row.preference) : null
+    .get(harness, source.projectId) as
+    | { scope_type: "project" | "global"; preference: AgentRuntimePreference; version: number }
+    | undefined
+  if (row) {
+    const resolvedRuntime = runtimeAdapterForPreference(row.preference)
+    if (!resolvedRuntime) {
+      throw new StandaloneAgentLaunchError(
+        "launch-blocked",
+        "Current durable Runtime default is invalid.",
+      )
+    }
+    return {
+      preference: row.preference as Exclude<AgentRuntimePreference, "auto">,
+      source: row.scope_type,
+      defaultVersion: row.version,
+      resolvedRuntime,
+    }
+  }
+  const productRuntime = productRuntimeForHarness(harness)
+  return {
+    preference: productRuntime,
+    source: "product",
+    defaultVersion: null,
+    resolvedRuntime: productRuntime,
+  }
+}
+
+function currentRuntimeCeiling(
+  db: Database.Database,
+  source: SourceDto,
+  harness: string,
+): AgentRuntimePreference[] | null {
+  if (source.chatRuntimePreference && source.chatRuntimePreference !== "auto") {
+    return [source.chatRuntimePreference as AgentRuntimePreference]
+  }
+  const row = db
+    .prepare(
+      `SELECT d.preference
+       FROM agent_runtime_defaults d
+       WHERE d.harness = ? AND d.preference <> 'auto' AND (
+         (d.scope_type = 'project' AND d.scope_id = ?) OR d.scope_type = 'global'
+       )
+       ORDER BY CASE d.scope_type WHEN 'project' THEN 0 ELSE 1 END
+       LIMIT 1`,
+    )
+    .get(harness, source.projectId) as { preference: AgentRuntimePreference } | undefined
+  return row ? [row.preference] : null
 }
 
 function currentOrchestrationMaxDepth(db: Database.Database, taskId: string) {
@@ -1002,9 +1171,11 @@ function resolveWorktree(source: SourceDto, snapshot: ResolvedAgentProfileSnapsh
 function queuedRun(db: Database.Database, runId: string): QueuedAgentRun {
   const row = db
     .prepare(
-      `SELECT r.*, s.mode chat_mode, p.path project_path FROM agent_runs r
+      `SELECT r.*, s.mode chat_mode, p.path project_path, l.snapshot_id profile_snapshot_id
+       FROM agent_runs r
        JOIN chats c ON c.id = r.chat_id JOIN sub_chats s ON s.id = r.sub_chat_id
        LEFT JOIN projects p ON p.id = c.project_id
+       LEFT JOIN agent_profile_standalone_launches l ON l.run_id = r.id
        WHERE r.id = ?`,
     )
     .get(runId) as Row
@@ -1021,6 +1192,13 @@ function queuedRun(db: Database.Database, runId: string): QueuedAgentRun {
     customPermissions: stringOrNull(row.custom_permissions),
     worktreePath: stringOrNull(row.worktree_path),
     projectPath: stringOrNull(row.project_path),
+    ...(row.profile_snapshot_id
+      ? {
+          profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(
+            new AgentProfileResolver(db).getSnapshot(String(row.profile_snapshot_id)),
+          ),
+        }
+      : {}),
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
   }
 }

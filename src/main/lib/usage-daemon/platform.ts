@@ -4,10 +4,11 @@
 // and systemd user services on Linux. All run the same standalone daemon bundle.
 
 import { homedir, platform } from "node:os"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { execFileSync } from "node:child_process"
 import { sleep } from "../../../shared/sleep"
+import { clearUsageDaemonStopRequest, requestUsageDaemonStop } from "./stop-request"
 
 export type DaemonPlatform = "darwin" | "win32" | "linux" | "unsupported"
 
@@ -34,6 +35,21 @@ export interface DaemonInstallParams {
 export type DaemonCommandRunner = (command: string, args: string[]) => string
 const runDaemonCommand: DaemonCommandRunner = (command, args) =>
   execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+
+function commandExitStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object" || !("status" in error)) return null
+  const status = (error as { status?: unknown }).status
+  return typeof status === "number" ? status : null
+}
+
+function isLaunchctlServiceNotFound(error: unknown): boolean {
+  return commandExitStatus(error) === 113
+}
+
+function isSystemdUnitInactive(error: unknown): boolean {
+  const status = commandExitStatus(error)
+  return status === 3 || status === 4
+}
 
 function sanitizeServiceId(value: string): string {
   return value
@@ -165,25 +181,84 @@ export function installMacLaunchAgent(params: DaemonInstallParams): void {
 }
 
 export function windowsDaemonScriptPath(configDir: string): string {
-  return join(configDir, "usage-daemon.cmd")
+  return join(configDir, "usage-daemon.ps1")
 }
 
 export function buildWindowsDaemonScript(params: DaemonInstallParams): string {
-  const set = (key: string, value: string | number) =>
-    `set "${key}=${String(value).replace(/%/g, "%%").replace(/\r?\n/g, "")}"`
-  const quote = (value: string) => `"${value.replace(/"/g, '""')}"`
+  const literal = (value: string | number) =>
+    `'${String(value).replace(/\r?\n/g, "").replace(/'/g, "''")}'`
   return [
-    "@echo off",
-    set("FLAPSTACK_DB_PATH", params.dbPath),
-    set("FLAPSTACK_CONFIG_DIR", params.configDir),
-    set("FLAPSTACK_USAGE_CADENCE_SECONDS", params.cadenceSeconds),
-    set("ELECTRON_RUN_AS_NODE", "1"),
+    "$ErrorActionPreference = 'Stop'",
+    `$env:FLAPSTACK_DB_PATH = ${literal(params.dbPath)}`,
+    `$env:FLAPSTACK_CONFIG_DIR = ${literal(params.configDir)}`,
+    `$env:FLAPSTACK_USAGE_CADENCE_SECONDS = ${literal(params.cadenceSeconds)}`,
+    "$env:ELECTRON_RUN_AS_NODE = '1'",
     ...(params.secretNamespace
-      ? [set("FLAPSTACK_USAGE_SECRET_NAMESPACE", params.secretNamespace)]
+      ? [`$env:FLAPSTACK_USAGE_SECRET_NAMESPACE = ${literal(params.secretNamespace)}`]
       : []),
-    `${quote(params.nodePath)} ${quote(params.daemonEntryPath)}`,
+    `& ${literal(params.nodePath)} ${literal(params.daemonEntryPath)}`,
+    "exit $LASTEXITCODE",
     "",
   ].join("\r\n")
+}
+
+function windowsPowerShellPath(): string {
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT
+  if (!systemRoot) throw new Error("Windows usage daemon install requires SystemRoot")
+  const shell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+  if (!existsSync(shell)) throw new Error(`Windows PowerShell was not found at ${shell}`)
+  return shell
+}
+
+function powerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function registerWindowsTaskScript(taskName: string, scriptPath: string): string {
+  const shell = windowsPowerShellPath()
+  const actionArguments = `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$action = New-ScheduledTaskAction -Execute ${powerShellLiteral(shell)} -Argument ${powerShellLiteral(actionArguments)}`,
+    "$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)",
+    "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Days 3)",
+    `Register-ScheduledTask -TaskName ${powerShellLiteral(taskName)} -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
+    `Start-ScheduledTask -TaskName ${powerShellLiteral(taskName)}`,
+  ].join("; ")
+}
+
+const WINDOWS_TASK_STATE_RUNNING = 4
+const WINDOWS_TASK_NOT_FOUND = "not-found" as const
+type WindowsTaskState = number | typeof WINDOWS_TASK_NOT_FOUND
+
+function queryWindowsTaskState(taskName: string, run: DaemonCommandRunner): WindowsTaskState {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$service = New-Object -ComObject 'Schedule.Service'",
+    "$service.Connect()",
+    "$folder = $service.GetFolder('\\')",
+    "try {",
+    `  $task = $folder.GetTask(${powerShellLiteral(taskName)})`,
+    "} catch {",
+    "  if ($_.Exception.HResult -eq -2147024894) {",
+    `    [Console]::Out.Write('${WINDOWS_TASK_NOT_FOUND}')`,
+    "    exit 0",
+    "  }",
+    "  throw",
+    "}",
+    "[Console]::Out.Write([int]$task.State)",
+  ].join("; ")
+  const encoded = Buffer.from(script, "utf16le").toString("base64")
+  const output = run(windowsPowerShellPath(), [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+    encoded,
+  ]).trim()
+  if (output === WINDOWS_TASK_NOT_FOUND) return WINDOWS_TASK_NOT_FOUND
+  if (!/^\d+$/.test(output)) throw new Error("Task Scheduler returned an invalid task state")
+  return Number.parseInt(output, 10)
 }
 
 export function installWindowsScheduledTask(params: DaemonInstallParams): void {
@@ -192,35 +267,58 @@ export function installWindowsScheduledTask(params: DaemonInstallParams): void {
   mkdirSync(params.configDir, { recursive: true })
   const scriptPath = windowsDaemonScriptPath(params.configDir)
   const taskName = windowsTaskName(params.serviceId ?? daemonServiceIdForConfig(params.configDir))
-  writeFileSync(scriptPath, buildWindowsDaemonScript(params), { mode: 0o600 })
-  execFileSync("schtasks.exe", [
-    "/Create",
-    "/TN",
-    taskName,
-    "/SC",
-    "ONLOGON",
-    "/RL",
-    "LIMITED",
-    "/TR",
-    scriptPath,
-    "/F",
-  ])
-  execFileSync("schtasks.exe", ["/Run", "/TN", taskName])
+  // Windows PowerShell 5.1 treats BOM-less scripts as the active ANSI code page.
+  // The UTF-8 BOM preserves Unicode profile and database paths without requiring
+  // a machine-global code-page change.
+  writeFileSync(scriptPath, `\uFEFF${buildWindowsDaemonScript(params)}`, {
+    mode: 0o600,
+  })
+  const registration = registerWindowsTaskScript(taskName, scriptPath)
+  const encoded = Buffer.from(registration, "utf16le").toString("base64")
+  execFileSync(
+    windowsPowerShellPath(),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+    { stdio: "ignore", windowsHide: true },
+  )
+  rmSync(join(params.configDir, "usage-daemon.cmd"), { force: true })
 }
 
-export function uninstallWindowsScheduledTask(configDir: string): void {
+export function uninstallWindowsScheduledTask(
+  configDir: string,
+  run: DaemonCommandRunner = runDaemonCommand,
+): void {
   if (currentDaemonPlatform() !== "win32")
     throw new Error("Windows usage daemon uninstall requires Windows")
   const taskName = windowsTaskName(daemonServiceIdForConfig(configDir))
-  try {
-    execFileSync("schtasks.exe", ["/End", "/TN", taskName], { stdio: "ignore" })
-  } catch {}
-  try {
-    execFileSync("schtasks.exe", ["/Delete", "/TN", taskName, "/F"], {
-      stdio: "ignore",
-    })
-  } catch {}
+  let state = queryWindowsTaskState(taskName, run)
+  if (state === WINDOWS_TASK_STATE_RUNNING) {
+    let endError: unknown
+    try {
+      run("schtasks.exe", ["/End", "/TN", taskName])
+    } catch (error) {
+      endError = error
+    }
+    state = queryWindowsTaskState(taskName, run)
+    if (state === WINDOWS_TASK_STATE_RUNNING) {
+      if (endError) throw endError
+      throw new Error(`Scheduled Task did not stop: ${taskName}`)
+    }
+  }
+  if (state !== WINDOWS_TASK_NOT_FOUND) {
+    let deleteError: unknown
+    try {
+      run("schtasks.exe", ["/Delete", "/TN", taskName, "/F"])
+    } catch (error) {
+      deleteError = error
+    }
+    state = queryWindowsTaskState(taskName, run)
+    if (state !== WINDOWS_TASK_NOT_FOUND) {
+      if (deleteError) throw deleteError
+      throw new Error(`Scheduled Task was not deleted: ${taskName}`)
+    }
+  }
   rmSync(windowsDaemonScriptPath(configDir), { force: true })
+  rmSync(join(configDir, "usage-daemon.cmd"), { force: true })
 }
 
 export function systemdUserUnitPath(serviceId?: string | null): string {
@@ -262,18 +360,38 @@ export function installLinuxSystemdUserService(params: DaemonInstallParams): voi
   execFileSync("systemctl", ["--user", "enable", "--now", unitName])
 }
 
-export function uninstallLinuxSystemdUserService(configDir: string): void {
-  if (currentDaemonPlatform() !== "linux")
-    throw new Error("Linux usage daemon uninstall requires Linux")
+export function uninstallLinuxSystemdUserServiceWithRunner(
+  configDir: string,
+  run: DaemonCommandRunner,
+  remove: (path: string) => void = (path) => rmSync(path, { force: true }),
+): void {
   const serviceId = daemonServiceIdForConfig(configDir)
   const unitName = systemdUnitName(serviceId)
   try {
-    execFileSync("systemctl", ["--user", "disable", "--now", unitName], {
-      stdio: "ignore",
-    })
-  } catch {}
-  rmSync(systemdUserUnitPath(serviceId), { force: true })
-  execFileSync("systemctl", ["--user", "daemon-reload"])
+    run("systemctl", ["--user", "disable", "--now", unitName])
+  } catch (error) {
+    // An inactive unit can still be enabled for the next login. Preserve the
+    // unit file unless disable itself succeeded, so repair remains possible.
+    throw error
+  }
+  try {
+    run("systemctl", ["--user", "is-active", "--quiet", unitName])
+  } catch (error) {
+    if (!isSystemdUnitInactive(error)) throw error
+    remove(systemdUserUnitPath(serviceId))
+    run("systemctl", ["--user", "daemon-reload"])
+    return
+  }
+  throw new Error(`systemd user service is still active: ${unitName}`)
+}
+
+export function uninstallLinuxSystemdUserService(
+  configDir: string,
+  run: DaemonCommandRunner = runDaemonCommand,
+): void {
+  if (currentDaemonPlatform() !== "linux")
+    throw new Error("Linux usage daemon uninstall requires Linux")
+  uninstallLinuxSystemdUserServiceWithRunner(configDir, run)
 }
 
 export function installUsageDaemon(params: DaemonInstallParams): void {
@@ -311,9 +429,24 @@ export function startInstalledUsageDaemon(
     case "darwin":
       run("launchctl", ["bootstrap", launchctlDomain(), launchAgentPlistPath(serviceId)])
       return
-    case "win32":
-      run("schtasks.exe", ["/Run", "/TN", windowsTaskName(serviceId)])
+    case "win32": {
+      const taskName = windowsTaskName(serviceId)
+      run("schtasks.exe", ["/Change", "/TN", taskName, "/ENABLE"])
+      try {
+        run("schtasks.exe", ["/Run", "/TN", taskName])
+      } catch (startError) {
+        try {
+          run("schtasks.exe", ["/Change", "/TN", taskName, "/DISABLE"])
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [startError, rollbackError],
+            `Failed to start and re-disable Windows scheduled task "${taskName}"`,
+          )
+        }
+        throw startError
+      }
       return
+    }
     case "linux":
       run("systemctl", ["--user", "start", systemdUnitName(serviceId)])
       return
@@ -330,66 +463,93 @@ export async function stopInstalledUsageDaemon(
   switch (currentDaemonPlatform()) {
     case "darwin": {
       const target = `${launchctlDomain()}/${serviceLabel(LAUNCH_AGENT_LABEL, serviceId)}`
-      let description: string
-      try {
-        description = run("launchctl", ["print", target])
-      } catch {
-        return false
-      }
-      if (!/(?:state\s*=\s*running|pid\s*=\s*\d+)/.test(description)) return false
-      run("launchctl", ["bootout", launchctlDomain(), launchAgentPlistPath(serviceId)])
-      await waitUntilStopped(() => {
-        try {
-          run("launchctl", ["print", target])
-          return false
-        } catch {
-          return true
-        }
-      })
-      return true
+      return stopLaunchAgent(target, launchctlDomain(), launchAgentPlistPath(serviceId), run)
     }
     case "win32": {
       const taskName = windowsTaskName(serviceId)
-      let description: string
+      const initialState = queryWindowsTaskState(taskName, run)
+      if (initialState === WINDOWS_TASK_NOT_FOUND) return false
+      run("schtasks.exe", ["/Change", "/TN", taskName, "/DISABLE"])
+      if (queryWindowsTaskState(taskName, run) !== WINDOWS_TASK_STATE_RUNNING) return true
+      const stopped = () => queryWindowsTaskState(taskName, run) !== WINDOWS_TASK_STATE_RUNNING
+      requestUsageDaemonStop(configDir)
       try {
-        description = run("schtasks.exe", ["/Query", "/TN", taskName, "/FO", "LIST", "/V"])
-      } catch {
-        return false
-      }
-      if (!/^Status:\s+Running\s*$/im.test(description)) return false
-      run("schtasks.exe", ["/End", "/TN", taskName])
-      await waitUntilStopped(() => {
         try {
-          return !/^Status:\s+Running\s*$/im.test(
-            run("schtasks.exe", ["/Query", "/TN", taskName, "/FO", "LIST", "/V"]),
-          )
+          await waitUntilStopped(stopped)
         } catch {
-          return true
+          run("schtasks.exe", ["/End", "/TN", taskName])
+          await waitUntilStopped(stopped)
         }
-      })
+      } finally {
+        // A forced fallback can terminate the daemon before it consumes the
+        // sentinel. Never let that stale request stop the next launch.
+        clearUsageDaemonStopRequest(configDir)
+      }
       return true
     }
     case "linux": {
-      const unitName = systemdUnitName(serviceId)
-      try {
-        run("systemctl", ["--user", "is-active", "--quiet", unitName])
-      } catch {
-        return false
-      }
-      run("systemctl", ["--user", "stop", unitName])
-      await waitUntilStopped(() => {
-        try {
-          run("systemctl", ["--user", "is-active", "--quiet", unitName])
-          return false
-        } catch {
-          return true
-        }
-      })
-      return true
+      return stopLinuxSystemdUserService(
+        systemdUnitName(serviceId),
+        run,
+        systemdUserUnitPath(serviceId),
+      )
     }
     default:
       return false
   }
+}
+
+export async function stopLaunchAgent(
+  target: string,
+  domain: string,
+  path: string,
+  run: DaemonCommandRunner,
+): Promise<boolean> {
+  let description: string
+  try {
+    description = run("launchctl", ["print", target])
+  } catch (error) {
+    if (isLaunchctlServiceNotFound(error)) return false
+    throw error
+  }
+  if (!/(?:state\s*=\s*running|pid\s*=\s*\d+)/.test(description)) return false
+  run("launchctl", ["bootout", domain, path])
+  await waitUntilStopped(() => {
+    try {
+      run("launchctl", ["print", target])
+      return false
+    } catch (error) {
+      if (isLaunchctlServiceNotFound(error)) return true
+      throw error
+    }
+  })
+  return true
+}
+
+export async function stopLinuxSystemdUserService(
+  unitName: string,
+  run: DaemonCommandRunner,
+  unitPath?: string,
+  pathExists: (path: string) => boolean = existsSync,
+): Promise<boolean> {
+  if (unitPath && !pathExists(unitPath)) return false
+  try {
+    run("systemctl", ["--user", "is-active", "--quiet", unitName])
+  } catch (error) {
+    if (isSystemdUnitInactive(error)) return false
+    throw error
+  }
+  run("systemctl", ["--user", "stop", unitName])
+  await waitUntilStopped(() => {
+    try {
+      run("systemctl", ["--user", "is-active", "--quiet", unitName])
+      return false
+    } catch (error) {
+      if (isSystemdUnitInactive(error)) return true
+      throw error
+    }
+  })
+  return true
 }
 
 async function waitUntilStopped(probe: () => boolean): Promise<void> {
@@ -427,7 +587,8 @@ export function uninstallLaunchAgent(params: {
   } catch (bootoutError) {
     try {
       params.run(["print", serviceTarget], { stdio: "ignore" })
-    } catch {
+    } catch (printError) {
+      if (!isLaunchctlServiceNotFound(printError)) throw printError
       // launchctl confirms that no job remains loaded. A bootout error is
       // expected when the plist exists but was already stopped.
       params.remove(params.path)
@@ -442,7 +603,8 @@ export function uninstallLaunchAgent(params: {
 
   try {
     params.run(["print", serviceTarget], { stdio: "ignore" })
-  } catch {
+  } catch (error) {
+    if (!isLaunchctlServiceNotFound(error)) throw error
     params.remove(params.path)
     return
   }

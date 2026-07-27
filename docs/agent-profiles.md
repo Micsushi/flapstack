@@ -16,6 +16,10 @@ Presentation never grants capability. Every workflow or standalone launch stores
 - Hosted/community marketplace, remote publishing, remote updates, and arbitrary executable profile code are disabled.
 - Voice labels are display metadata. Audio voice remains owned by Voice settings.
 - Runtime or model incompatibility blocks launch with a repair message. There is no silent fallback.
+- New profiles and built-in starters default to the Claude Code harness and Runtime. Codex-backed
+  profiles are previewed as unavailable and cannot be confirmed or launched because the current
+  Codex Runtime cannot enforce an exact frozen allowlist for no-approval tools. Existing immutable
+  Codex profile versions and snapshots remain historical records; they are not rewritten.
 - Presentation-only edits and capability narrowing save normally. Capability widening is classified field-by-field and requires one exact Tier-3 approval that is revalidated and consumed inside the version write.
 
 ## Profile Studio
@@ -47,7 +51,7 @@ Workflow template export contains only the exact profile reference, role, schema
 
 Profile instructions cannot change workflow topology, dependencies, budgets, gates, or permissions. F3 remains the scheduling authority. F11 remains the Runtime selection and dispatch authority.
 
-### F3 integration dependency
+### F3 integration
 
 F12 exports `AgentProfileWorkflowMaterializerPort` and `createAgentProfileWorkflowMaterializerPort`. The exact hook is:
 
@@ -76,11 +80,25 @@ materialize(request: {
 
 `attemptCount` is the same positive checkpoint-attempt identity F3 passes to F11 ownership: `priorAttempts + 1`.
 
-The integrated F3 public surface still lacks the required pre-durable-worker hook. F3 must call this port after checkpoint eligibility, dependency, concurrency, budget, and retry checks, but before creating the worker's `chats`, `sub_chats`, `orchestration_agents`, or `agent_runs` rows. F3 must persist the returned `agentDefinition` as the durable orchestration definition, then pass that same definition to `RuntimeLaunchCoordinatorPort.reserve` and `launch`. Calling the hook from `WorkflowEngine.launchWorker` is too late because its current `launches` input already refers to durable rows and F11's public reserve seam rejects a definition mismatch.
+Production initialization registers the lazy profile materializer with the F3
+operations runtime. `WorkflowEngine` calls it after checkpoint eligibility,
+dependency, concurrency, budget, retry, permission, and worktree checks, then
+persists the returned `agentDefinition` and snapshot provenance before creating
+worker rows or calling the F11 reserve/launch seam. The same materialized
+definition is used for durable ownership and launch, so F11's definition
+equality check remains fail closed.
 
 Fail-closed behavior is exact: no binding returns the original embedded definition; a bound but unconfirmed binding throws `binding-unconfirmed`; missing/invalid durable policy, profile, evaluation, runtime, model, or authority resolution blocks confirmation; task/run/step/definition identity mismatch throws `f3-contract-conflict`; no case falls back from a broken bound profile to the embedded definition. Before every attempt, F12 compares the frozen snapshot capability directly with the current permission, model, Runtime, tool, skill, and descendant ceiling. A narrowed current ceiling blocks and requires fork/reconfirmation. This check never re-reads or re-resolves the source profile, so later profile edits or archival do not invalidate a safe confirmed snapshot. F12 preserves F3 `agentId`, `definitionId`, and dependency identity. F3 must create no worker rows when the hook throws and must leave the checkpoint blocked with repair text.
 
-F3 headless acceptance must prove: the hook runs before any durable worker insert; returned definition and snapshot provenance are persisted; F11 reserve accepts exact durable/request definition equality; unbound steps pass through; unconfirmed or invalid bindings create zero worker rows; retry/resume reuse one snapshot and one checkpoint attempt identity; a crash after confirmation but before worker creation resumes without a second snapshot or duplicate worker; fork plus a new profile confirms a new snapshot. This missing F3 code path is an integration dependency, not manual evidence. F12 must not patch F3 scheduling or F11 dispatch to bypass it.
+F3 headless acceptance must prove: the hook runs before any durable worker
+insert; returned definition and snapshot provenance are persisted; F11 reserve
+accepts exact durable/request definition equality; unbound steps pass through;
+unconfirmed or invalid bindings create zero worker rows; retry/resume reuse one
+snapshot and one checkpoint attempt identity; a crash after confirmation but
+before worker creation resumes without a second snapshot or duplicate worker;
+fork plus a new profile confirms a new snapshot. This is implemented production
+integration and remains subject to the normal Tier 2 core evidence gate, not a
+missing-code or owner-manual dependency.
 
 ## Import and export trust
 
@@ -92,14 +110,21 @@ Profile Studio diagnostics show profile/version, snapshot/launch, and local/supp
 
 On restart, standalone launch state is projected from the authoritative durable F11 run state. Pending stays pending, running stays running, and completed, cancelled, or failed are never invented from a cancel return value or thrown dispatch error. Unknown durable state becomes `uncertain`; it is never replayed automatically. Immutable snapshot, version, and evaluation triggers prevent historical mutation.
 
-## Manual evidence still required
+## Separate capability, release, and owner evidence
 
-The following are separate release evidence and must not be inferred from headless tests:
+The following do not all share one completion class:
 
-- Profile Studio keyboard, screen-reader, and visual walkthrough.
-- Credentialed Codex and Claude Code workflow/standalone launches.
-- Forced live-app restart and multi-window walkthrough.
-- Packaged macOS preview.
-- Windows/Linux and device-specific evidence when scheduled.
+- Automated semantic structure, accessible-name/state, focus-order, and
+  keyboard-operation checks can satisfy the Profile Studio Tier 2 accessibility
+  contract. The owner's keyboard, screen-reader, and visual walkthrough remains
+  Tier 3 in `owner-manual-testing-backlog.md`.
+- Credentialed Claude Code workflow/standalone launches are provider-capability
+  evidence. Codex profile capability certification remains open until exact
+  upstream tool enforcement exists.
+- Forced live-app restart and multi-window profile behavior remains
+  `T2-core`.
+- Packaged macOS preview is a release gate.
+- Windows/Linux and device-specific evidence is capability or release evidence
+  as labeled in the owning matrix.
 
 Use only `npm run dev`, then prove the running checkout with `npm run dev:verify`. Never test against a production Flapstack app.

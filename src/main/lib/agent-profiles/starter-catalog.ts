@@ -29,7 +29,8 @@ function starter(
     description: `${name} starter with bounded ${permissionMode} authority.`,
     category: role,
     owner: "Flapstack",
-    updateNotes: "Stage 4 v1 baseline; provider/model support requires separate live evidence.",
+    updateNotes:
+      "Stage 4 v1 Claude Code baseline; Codex-backed profiles await exact upstream tool enforcement.",
     supportedCombinations: [],
     definition: {
       base: null,
@@ -37,6 +38,8 @@ function starter(
       inheritPresentationFields: [],
       capability: {
         ...structuredClone(DEFAULT_AGENT_CAPABILITY),
+        harness: "claude-code",
+        runtimePreference: "claude-code",
         role,
         instructions,
         permissionMode,

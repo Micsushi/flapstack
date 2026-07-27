@@ -641,11 +641,16 @@ describe("workflow review invariants", () => {
     )
     const db = new Database(databasePath, { readonly: true })
     const rows = db
-      .prepare("SELECT definition FROM orchestration_agents WHERE task_id = 'task-1'")
-      .all() as Array<{ definition: string }>
+      .prepare(
+        `SELECT a.definition, c.mcp_exposure_enabled
+         FROM orchestration_agents a JOIN chats c ON c.id = a.chat_id
+         WHERE a.task_id = 'task-1'`,
+      )
+      .all() as Array<{ definition: string; mcp_exposure_enabled: number }>
     db.close()
     expect(rows).toHaveLength(1)
     expect(JSON.parse(rows[0]!.definition)).toEqual(returnedDefinition)
+    expect(rows[0]!.mcp_exposure_enabled).toBe(1)
     expect(engine.get(run.id).checkpoints[0]?.output).toMatchObject({
       materialization: {
         state: "materialized",
@@ -655,6 +660,31 @@ describe("workflow review invariants", () => {
         bindingVersion: 7,
       },
     })
+  })
+
+  it("keeps product MCP disabled for unsupported local workflow workers", async () => {
+    const definition = baseDefinition([step("worker", "agent")])
+    definition.agents[0] = {
+      ...definition.agents[0]!,
+      harness: "local",
+      provider: "local",
+      model: "local-test-model",
+      runtimePreference: "flapstack-native",
+    }
+    const engine = new WorkflowEngine(databasePath, runtime())
+    const run = engine.start("task-1", definition)
+
+    await expect(engine.advance(run.id)).resolves.toMatchObject({ status: "completed" })
+    const db = new Database(databasePath, { readonly: true })
+    const created = db
+      .prepare(
+        `SELECT c.harness, c.mcp_exposure_enabled
+         FROM chats c JOIN orchestration_agents a ON a.chat_id = c.id
+         WHERE a.task_id = 'task-1'`,
+      )
+      .get()
+    db.close()
+    expect(created).toEqual({ harness: "local", mcp_exposure_enabled: 0 })
   })
 
   it("blocks safely with zero worker rows when pre-durable materialization fails", async () => {

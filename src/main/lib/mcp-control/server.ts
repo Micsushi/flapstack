@@ -28,6 +28,7 @@ import {
   getBetaFeatureSettings,
   subscribeBetaFeatureSettings,
 } from "../beta-features/settings"
+import { isFrozenAgentProfileToolAllowed } from "../agent-profiles/runtime-authority"
 
 export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   recoverMcpDispatchClaims(getDatabase())
@@ -49,9 +50,15 @@ export function createMcpControlServer(caller: McpCallerIdentity): McpServer {
   const projectVaults = createMcpProjectVaultService()
   const automationControls = createMcpAutomationService()
   const taskProposalControls = createMcpTaskProposalService()
+  const startupCaller = resolveTrustedMcpCaller(caller, callerStore)
+  const startupProfileAuthority = startupCaller.profileRuntimeAuthority ?? null
 
   const betaToolRegistrations = new Map<string, { enable(): void; disable(): void }>()
-  for (const tool of listImplementedMcpControlTools({ includeDisabledBeta: true })) {
+  for (const tool of listImplementedMcpControlTools({ includeDisabledBeta: true }).filter(
+    (candidate) =>
+      !startupProfileAuthority ||
+      isFrozenAgentProfileToolAllowed(startupProfileAuthority, candidate.name),
+  )) {
     const registration = server.registerTool(
       tool.name,
       {

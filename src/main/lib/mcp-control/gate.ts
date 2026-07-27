@@ -4,6 +4,7 @@ import {
   type PermissionMode,
 } from "../permissions"
 import type { McpCapability, McpControlTool, McpGateResult, McpRiskTier } from "./types"
+import { isFrozenAgentProfileToolAllowed } from "../agent-profiles/runtime-authority"
 
 export function evaluateMcpGate(input: {
   tier: McpRiskTier
@@ -40,9 +41,12 @@ export function evaluateMcpGate(input: {
   }
 
   if (input.tier === 3) {
+    if (mode === "full-access") {
+      return allowed("Full-access mode auto-approves Tier 3 app-control tools.")
+    }
     return input.approved
       ? allowed("Tier 3 operation was explicitly approved.")
-      : approvalRequired("Tier 3 app-control tools always require explicit approval.")
+      : approvalRequired("Tier 3 app-control tools require approval outside full-access mode.")
   }
 
   if (mode === "ask-before-edits") {
@@ -59,9 +63,28 @@ export function evaluateMcpToolGate(input: {
   caller: {
     permissionMode?: PermissionMode
     customPermissions?: CustomPermissionToggles
+    profileRuntimeAuthority?: import("../../../shared/agent-profiles").AgentProfileRuntimeAuthority
   }
   approved?: boolean
 }): McpGateResult {
+  if (
+    input.caller.profileRuntimeAuthority &&
+    !isFrozenAgentProfileToolAllowed(input.caller.profileRuntimeAuthority, input.tool.name)
+  ) {
+    return denied(
+      `Tool ${input.tool.name} is outside the frozen Agent Profile product-tool allowlist.`,
+    )
+  }
+  if (
+    input.caller.profileRuntimeAuthority &&
+    input.tool.requiredCapabilities.includes("subagents")
+  ) {
+    return denied(
+      input.caller.profileRuntimeAuthority.maxDescendants === 0
+        ? "Frozen Agent Profile descendant ceiling forbids spawning or launching agents."
+        : "Frozen Agent Profile product-MCP descendants are disabled because exact descendant profile provenance is unavailable.",
+    )
+  }
   return evaluateMcpGate({
     tier: input.tool.tier,
     permissionMode: input.caller.permissionMode,

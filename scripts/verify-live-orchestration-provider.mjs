@@ -73,8 +73,6 @@ try {
   testProject = await call("ensure_test_project")
 
   fixture = await call("create_test_orchestration_fixture", {
-    projectPath: checkout,
-    projectName: "Flapstack provider orchestration proof",
     chatName: `Provider orchestration parent ${Date.now()}`,
     harness: "codex",
   })

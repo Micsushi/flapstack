@@ -7,6 +7,8 @@ import {
   findProjectByCanonicalPath,
   resolveCanonicalProjectPath,
 } from "../src/main/lib/projects/project-path"
+// @ts-expect-error JavaScript test helper intentionally has no declaration file.
+import { createIsolatedTestGitEnvironment } from "../scripts/lib/test-git-environment.mjs"
 
 const directories: string[] = []
 
@@ -36,15 +38,12 @@ describe("canonical project paths", () => {
     git(project, ["init"])
     writeFileSync(join(project, "README.md"), "project\n")
     git(project, ["add", "README.md"])
-    git(project, [
-      "-c",
-      "user.name=Flapstack Test",
-      "-c",
-      "user.email=test@flapstack.local",
-      "commit",
-      "-m",
-      "init",
-    ])
+    const isolatedGit = createIsolatedTestGitEnvironment()
+    try {
+      git(project, ["commit", "-m", "init"], isolatedGit.env)
+    } finally {
+      isolatedGit.cleanup()
+    }
     git(project, ["worktree", "add", "--detach", worktree])
 
     expect(resolveCanonicalProjectPath(project)).toBe(realpathSync(project))
@@ -83,6 +82,6 @@ function temporaryDirectory(): string {
   return directory
 }
 
-function git(cwd: string, args: string[]): void {
-  execFileSync("git", args, { cwd, stdio: "ignore" })
+function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): void {
+  execFileSync("git", args, { cwd, env, stdio: "ignore" })
 }

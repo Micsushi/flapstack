@@ -2,6 +2,7 @@ import { execFile as execFileCallback, type ChildProcess } from "node:child_proc
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { assertSpeechTextWithinLimit } from "./speech-text"
 import type { SpeechAdapterAvailability, TtsAdapter, TtsInput, TtsResult, TtsVoice } from "./types"
 
 function execFileAsync(
@@ -39,7 +40,13 @@ export const nativeTtsAdapter: TtsAdapter = {
   async isAvailable(): Promise<SpeechAdapterAvailability> {
     if (process.platform === "darwin")
       return { available: commandExists("/usr/bin/say"), status: "available" }
-    if (process.platform === "win32") return { available: true, status: "available" }
+    if (process.platform === "win32") {
+      const available = commandExists(resolveWindowsPowerShellPath())
+      return {
+        available,
+        status: available ? "available" : "unavailable",
+      }
+    }
     return {
       available: false,
       status: "unavailable",
@@ -78,6 +85,7 @@ function commandExists(command: string) {
 async function speakMacos(input: TtsInput): Promise<TtsResult> {
   const text = normalizeText(input.text)
   if (!text) throw new Error("Text is required for speech.")
+  assertSpeechTextWithinLimit(text)
 
   const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-tts-"))
   const aiffPath = path.join(dir, "speech.aiff")
@@ -120,24 +128,21 @@ export function buildMacosSayArgs(
 async function speakWindows(input: TtsInput): Promise<TtsResult> {
   const text = normalizeText(input.text)
   if (!text) throw new Error("Text is required for speech.")
+  assertSpeechTextWithinLimit(text)
 
   const dir = mkdtempSync(path.join(os.tmpdir(), "flapstack-tts-"))
   const wavPath = path.join(dir, "speech.wav")
-  const ps = [
-    "Add-Type -AssemblyName System.Speech;",
-    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;",
-    `$s.Rate = ${Math.round((clamp(input.rate ?? 1, 0.5, 2) - 1) * 5)};`,
-    input.voiceId ? `$s.SelectVoice('${input.voiceId.replace(/'/g, "''")}');` : "",
-    `$s.SetOutputToWaveFile('${wavPath.replace(/'/g, "''")}');`,
-    `$s.Speak('${text.replace(/'/g, "''")}');`,
-    "$s.Dispose();",
-  ].join(" ")
+  const ps = buildWindowsSpeechScript(
+    input.voiceId ?? undefined,
+    Math.round((clamp(input.rate ?? 1, 0.5, 2) - 1) * 5),
+    wavPath,
+  )
 
   try {
     await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-Command", ps],
-      { timeout: 120000 },
+      resolveWindowsPowerShellPath(),
+      ["-NoProfile", "-NonInteractive", "-Command", ps],
+      { timeout: 120000, input: text },
       input.requestScopeId,
     )
     return {
@@ -149,6 +154,50 @@ async function speakWindows(input: TtsInput): Promise<TtsResult> {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+export function resolveWindowsPowerShellPath(
+  input: {
+    systemRoot?: string
+    processArch?: NodeJS.Architecture
+    nativeArchitecture?: string
+  } = {},
+): string {
+  const systemRoot =
+    input.systemRoot ?? process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows"
+  if (!/^[a-z]:[\\/]/i.test(systemRoot) || !path.win32.isAbsolute(systemRoot)) {
+    throw new Error("Windows TTS requires an absolute Windows system root.")
+  }
+  const processArch = input.processArch ?? process.arch
+  const nativeArchitecture = input.nativeArchitecture ?? process.env.PROCESSOR_ARCHITEW6432
+  const systemDirectory =
+    processArch === "ia32" && /^(amd64|arm64)$/i.test(nativeArchitecture ?? "")
+      ? "Sysnative"
+      : "System32"
+  return path.win32.join(
+    path.win32.normalize(systemRoot),
+    systemDirectory,
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  )
+}
+
+export function buildWindowsSpeechScript(
+  voiceId: string | undefined,
+  rate: number,
+  outputPath: string,
+): string {
+  return [
+    "Add-Type -AssemblyName System.Speech;",
+    "$text = [Console]::In.ReadToEnd();",
+    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;",
+    `$s.Rate = ${rate};`,
+    voiceId ? `$s.SelectVoice('${voiceId.replace(/'/g, "''")}');` : "",
+    `$s.SetOutputToWaveFile('${outputPath.replace(/'/g, "''")}');`,
+    "$s.Speak($text);",
+    "$s.Dispose();",
+  ].join(" ")
 }
 
 function parseMacosVoices(stdout: string): TtsVoice[] {
@@ -173,9 +222,13 @@ async function listWindowsVoices(): Promise<TtsVoice[]> {
     "$s.Dispose();",
     "$voices | ConvertTo-Json -Compress;",
   ].join(" ")
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
-    timeout: 5000,
-  })
+  const { stdout } = await execFileAsync(
+    resolveWindowsPowerShellPath(),
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      timeout: 5000,
+    },
+  )
   return parseWindowsVoices(stdout)
 }
 

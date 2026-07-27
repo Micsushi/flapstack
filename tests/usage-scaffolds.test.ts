@@ -33,6 +33,10 @@ import type { UsageEngine } from "../src/main/lib/usage/engine"
 import { pollCodexPersonal } from "../src/main/lib/usage/providers/codex-personal"
 import { pollAnthropicPersonal } from "../src/main/lib/usage/providers/anthropic-personal"
 
+function commandError(message: string, status: number): Error & { status: number } {
+  return Object.assign(new Error(message), { status })
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -825,9 +829,9 @@ describe("usage Track B scaffolds", () => {
       dbPath: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack\\agents.db",
       configDir: "C:\\Users\\Test User\\AppData\\Roaming\\Flapstack",
     })
-    expect(windows).toContain('set "ELECTRON_RUN_AS_NODE=1"')
-    expect(windows).toContain('set "FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
-    expect(windows).toContain('"C:\\Program Files\\Flapstack\\Flapstack.exe"')
+    expect(windows).toContain("$env:ELECTRON_RUN_AS_NODE = '1'")
+    expect(windows).toContain("$env:FLAPSTACK_USAGE_SECRET_NAMESPACE = 'flapstack-preview'")
+    expect(windows).toContain("& 'C:\\Program Files\\Flapstack\\Flapstack.exe'")
     const systemd = buildSystemdUserUnit(params)
     expect(systemd).toContain('Environment="FLAPSTACK_DB_PATH=/tmp/data/agents.db"')
     expect(systemd).toContain('Environment="FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')
@@ -860,10 +864,21 @@ describe("usage Track B scaffolds", () => {
   it("removes a stale daemon plist only after launchctl confirms no job is loaded", () => {
     const remove = vi.fn()
     const run = vi.fn(() => {
-      throw new Error("not loaded")
+      throw commandError("not loaded", 113)
     })
     uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove })
     expect(remove).toHaveBeenCalledWith("/tmp/test.plist")
+  })
+
+  it("retains a daemon plist when launchctl cannot verify service absence", () => {
+    const remove = vi.fn()
+    const run = vi.fn(() => {
+      throw commandError("permission denied", 1)
+    })
+    expect(() =>
+      uninstallLaunchAgent({ path: "/tmp/test.plist", domain: "gui/501", run, remove }),
+    ).toThrow(/permission denied/)
+    expect(remove).not.toHaveBeenCalled()
   })
 
   it("uses elapsed time for in-progress spend windows", () => {

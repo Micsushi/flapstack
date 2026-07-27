@@ -1,18 +1,18 @@
 import { and, desc, eq } from "drizzle-orm"
 import { app } from "electron"
-import { realpathSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { z } from "zod"
 import { attachments, chats, getDatabase, projects, tasks } from "../../db"
-import { readFileInsideRoot, writeFileInsideRoot } from "../../path-safety"
+import { readFileInsideRoot, removeFileInsideRoot, writeFileInsideRoot } from "../../path-safety"
 import { publicProcedure, router } from "../index"
 import { assertRegisteredWorktree } from "../../git/security/path-validation"
+import { attachmentRelativeStoragePath, attachmentRootForUserData } from "../../attachments/paths"
 
 const attachmentKindSchema = z.enum(["file", "image", "pasted-text", "chat-history", "text"])
 
 function attachmentRoot() {
-  return join(app.getPath("userData"), "attachments")
+  return attachmentRootForUserData(app.getPath("userData"))
 }
 
 function cleanName(name: string) {
@@ -89,7 +89,7 @@ export const attachmentsRouter = router({
       await mkdir(attachmentRoot(), { recursive: true })
       const { targetPath: storedPath } = await writeFileInsideRoot(
         attachmentRoot(),
-        join(attachment.id, attachment.name),
+        attachmentRelativeStoragePath(attachment.id, attachment.name),
         { data },
       )
 
@@ -222,8 +222,20 @@ export const attachmentsRouter = router({
 
   delete: publicProcedure
     .input(z.object({ id: z.string(), chatId: z.string() }))
-    .mutation(({ input }) => {
+    .mutation(async ({ input }) => {
       const db = getDatabase()
+      const attachment = db
+        .select()
+        .from(attachments)
+        .where(and(eq(attachments.id, input.id), eq(attachments.chatId, input.chatId)))
+        .get()
+      if (!attachment) return undefined
+      if (attachment.storedPath) {
+        const target = storedAttachmentTarget(attachment.storedPath)
+        await removeFileInsideRoot(target.rootPath, target.relativePath, {
+          removeEmptyParent: true,
+        })
+      }
       return db
         .delete(attachments)
         .where(and(eq(attachments.id, input.id), eq(attachments.chatId, input.chatId)))
@@ -233,7 +245,7 @@ export const attachmentsRouter = router({
 })
 
 function storedAttachmentTarget(storedPath: string): { rootPath: string; relativePath: string } {
-  const rootPath = realpathSync(attachmentRoot())
+  const rootPath = resolve(attachmentRoot())
   const absolutePath = resolve(storedPath)
   const relativePath = relative(rootPath, absolutePath)
   if (

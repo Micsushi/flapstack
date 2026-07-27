@@ -21,6 +21,7 @@
     "ui:lock:status": "node scripts/with-ui-lock.mjs --status",
     "dev:verify-orchestration": "node scripts/verify-live-orchestration.mjs",
     "dev:verify-orchestration-provider": "node scripts/verify-live-orchestration-provider.mjs",
+    "dev:verify-runtime-profiles": "node scripts/verify-live-runtime-profiles.mjs",
     "dev:verify-mcp-management": "node scripts/verify-live-mcp-management.mjs",
     "dev:verify-mcp-restart": "node scripts/verify-live-mcp-restart.mjs",
     "build": "node scripts/with-heavy-job-lock.mjs build -- node scripts/build.mjs",
@@ -28,14 +29,18 @@
     "package": "node scripts/package-app.mjs --dir",
     "package:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64",
     "package:release:mac": "node scripts/package-app.mjs --platform=darwin --arch=arm64 --arch=x64 --channel=release",
-    "package:preview:mac": "node scripts/ensure-native-abi.mjs electron && node scripts/package-app.mjs --platform=darwin --arch=arm64 --dir --channel=preview",
+    "package:preview:mac": "node scripts/package-app.mjs --ensure-native-abi --platform=darwin --arch=arm64 --dir --channel=preview",
     "package:inspect:preview:mac": "node scripts/inspect-packaged-binaries.mjs --app='release-preview/mac-arm64/Flapstack Preview.app' --platform=darwin-arm64",
     "package:smoke:preview:mac": "node scripts/inspect-packaged-binaries.mjs --app='release-preview/mac-arm64/Flapstack Preview.app' --platform=darwin-arm64 --smoke",
     "package:smoke:usage-daemon:preview:mac": "node scripts/smoke-packaged-usage-daemon-macos.mjs --app='release-preview/mac-arm64/Flapstack Preview.app'",
-    "package:preview:win": "node scripts/ensure-native-abi.mjs electron && node scripts/package-app.mjs --platform=win32 --arch=x64 --dir --channel=preview",
+    "package:preview:win": "node scripts/package-app.mjs --ensure-native-abi --platform=win32 --arch=x64 --dir --channel=preview",
     "package:release:win": "node scripts/package-app.mjs --platform=win32 --arch=x64 --channel=release",
     "package:inspect:preview:win": "node scripts/inspect-packaged-binaries.mjs --app=\"release-preview/win-unpacked/Flapstack Preview.exe\" --platform=win32-x64",
     "package:smoke:preview:win": "node scripts/inspect-packaged-binaries.mjs --app=\"release-preview/win-unpacked/Flapstack Preview.exe\" --platform=win32-x64 --smoke",
+    "package:inspect:release:win": "node scripts/inspect-packaged-binaries.mjs --app=\"release/win-unpacked/Flapstack.exe\" --platform=win32-x64",
+    "package:smoke:release:win": "node scripts/inspect-packaged-binaries.mjs --app=\"release/win-unpacked/Flapstack.exe\" --platform=win32-x64 --smoke",
+    "package:audit:preview:win": "node scripts/audit-windows-package.mjs --app=\"release-preview/win-unpacked/Flapstack Preview.exe\" --channel=preview --output=\"release-preview/windows-security-report.json\"",
+    "package:audit:release:win": "node scripts/audit-windows-package.mjs --app=\"release/win-unpacked/Flapstack.exe\" --channel=release --malware-scan --output=\"release/windows-security-report.json\"",
     "package:win": "node scripts/package-app.mjs --platform=win32 --arch=x64",
     "package:linux": "node scripts/package-app.mjs --platform=linux --arch=x64",
     "package:linux:arm64": "node scripts/package-app.mjs --platform=linux --arch=arm64",
@@ -199,7 +204,13 @@
       "output": "release"
     },
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "!node_modules/node-pty/prebuilds/**/*",
+      "!node_modules/node-pty/third_party/**/*",
+      "!node_modules/better-sqlite3/build/Release/test_extension.node",
+      "!node_modules/**/{test,tests,__tests__}/**/*",
+      "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
+      "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}"
     ],
     "extraResources": [
       {
@@ -223,6 +234,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "build/generated/package-provenance.json",
+        "to": "package-provenance.json"
+      },
+      {
+        "from": "build/generated/dependency-licenses",
+        "to": "dependency-licenses"
       }
     ],
     "asar": true,
@@ -236,6 +255,18 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "files": [
+        "out/**/*",
+        "!node_modules/node-pty/prebuilds/**/*",
+        "!node_modules/node-pty/third_party/**/*",
+        "!node_modules/better-sqlite3/build/Release/test_extension.node",
+        "!node_modules/**/{test,tests,__tests__}/**/*",
+        "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
+        "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
+        "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/darwin/!(${arch})/**/*"
+      ],
       "target": [
         {
           "target": "dmg",
@@ -282,6 +313,18 @@
       "iconSize": 80
     },
     "win": {
+      "files": [
+        "out/**/*",
+        "!node_modules/node-pty/prebuilds/**/*",
+        "!node_modules/node-pty/third_party/**/*",
+        "!node_modules/better-sqlite3/build/Release/test_extension.node",
+        "!node_modules/**/{test,tests,__tests__}/**/*",
+        "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
+        "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
+        "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/win32/!(${arch})/**/*"
+      ],
       "target": [
         {
           "target": "nsis",
@@ -299,6 +342,18 @@
       "icon": "build/icon.ico"
     },
     "linux": {
+      "files": [
+        "out/**/*",
+        "!node_modules/node-pty/prebuilds/**/*",
+        "!node_modules/node-pty/third_party/**/*",
+        "!node_modules/better-sqlite3/build/Release/test_extension.node",
+        "!node_modules/**/{test,tests,__tests__}/**/*",
+        "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
+        "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
+        "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
+        "!node_modules/onnxruntime-node/bin/napi-v3/linux/!(${arch})/**/*"
+      ],
       "target": [
         "AppImage",
         "deb"
@@ -314,9 +369,13 @@
     }
   },
   "overrides": {
+    "dompurify": "3.4.12",
+    "fast-uri": "3.1.4",
     "monaco-editor": {
       "dompurify": "3.4.12"
-    }
+    },
+    "sharp": "0.35.3",
+    "tar": "7.5.22"
   },
   "pnpm": {
     "overrides": {

@@ -24,6 +24,7 @@ describe("Windows prerequisite contract", () => {
       evaluateWindowsToolchain({
         platform: "win32",
         arch: "x64",
+        osRelease: "10.0.22631",
         node: "22.14.0",
         tools: completeTools,
       }),
@@ -34,6 +35,7 @@ describe("Windows prerequisite contract", () => {
     const result = evaluateWindowsToolchain({
       platform: "win32",
       arch: "x64",
+      osRelease: "10.0.22631",
       node: "25.6.1",
       tools: { ...completeTools, python: "3.13.1" },
     })
@@ -47,6 +49,7 @@ describe("Windows prerequisite contract", () => {
     const result = evaluateWindowsToolchain({
       platform: "win32",
       arch: "x64",
+      osRelease: "10.0.22631",
       node: "22.14.0",
       tools: { npm: "10.9.2", python: "3.11.9" },
     })
@@ -70,6 +73,7 @@ describe("Windows prerequisite contract", () => {
       evaluateWindowsToolchain({
         platform: "darwin",
         arch: "arm64",
+        osRelease: "24.6.0",
         node: "22.14.0",
         tools: completeTools,
       }).errors,
@@ -79,6 +83,48 @@ describe("Windows prerequisite contract", () => {
         expect.stringContaining("Windows x64"),
       ]),
     )
+  })
+
+  it("rejects Windows 10, npm 11, and PowerShell 5.0", () => {
+    const result = evaluateWindowsToolchain({
+      platform: "win32",
+      arch: "x64",
+      osRelease: "10.0.19045",
+      node: "22.14.0",
+      tools: {
+        ...completeTools,
+        npm: "11.5.1",
+        powershell: "5.0.10586.0",
+      },
+    })
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Windows 11"),
+        expect.stringContaining("npm 10 is required"),
+        expect.stringContaining("PowerShell 5.1"),
+      ]),
+    )
+  })
+
+  it("allows Windows Server 2022 only as an explicit CI build host", () => {
+    const input = {
+      platform: "win32",
+      arch: "x64",
+      osRelease: "10.0.20348",
+      node: "22.14.0",
+      tools: completeTools,
+    }
+
+    expect(evaluateWindowsToolchain(input).errors).toContainEqual(
+      expect.stringContaining("Windows 11"),
+    )
+    expect(
+      evaluateWindowsToolchain({
+        ...input,
+        allowWindowsServer2022BuildHost: true,
+      }),
+    ).toMatchObject({ ok: true, errors: [] })
   })
 
   it("redacts user-profile paths in diagnostics", () => {

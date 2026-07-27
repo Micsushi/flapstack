@@ -27,20 +27,33 @@ All eleven features are promoted into authoritative OpenSpec changes containing
 87 bounded tasks. Dependency waves and pickup rules live in
 `docs/stage4-execution-plan.md`.
 
-Entry gate: Agent Runtime planning targets clean Stage 3 `stage3-final` at
-`a674784`. Stage 4 must sync that baseline and must not claim an integrated
-start until remaining Stage 3 live/provider/package evidence is closed or
-recorded as an explicit blocker.
+Completion model: `docs/completion-tiers.md`. A task checkbox closes at Tier 2
+AI acceptance of its `T2-core` scope. Optional provider/remote capabilities and
+packaged-release certification remain separate matrix rows and do not hold the
+implementation checkbox open. Owner testing is tracked separately in
+`docs/owner-manual-testing-backlog.md` and does not block implementation
+completion unless explicitly labeled `release-blocking`.
+The 87-task inventory contains 68 core-only tasks, five mixed tasks whose
+checkbox closes on their core portion, and 14 capability-only tasks. Thus 73
+task checkboxes gate implementation. Pure capability tasks retain their own
+certification status and are excluded from the implementation-exit count; the
+packaged macOS release gate lives only in the matrix.
+
+Historical entry gate: Agent Runtime planning targeted clean Stage 3
+`stage3-final` at `a674784`. Stage 3's accepted release ledger owns that
+baseline; stale historical matrix rows must be reconciled as documentation, not
+treated as missing Stage 4 code.
 
 Stage verification: `docs/stage4-full-feature-test-matrix.md` plus Node 22
 `npm run check`, strict validation of all eleven Stage 4 OpenSpec changes, verified
-`Flapstack Dev` live walkthroughs, and packaged macOS preview smoke.
+`Flapstack Dev` live walkthroughs. The matrix separately owns optional provider
+and private-sync capabilities and packaged macOS release certification.
 
 Stage 5 Windows planning lives at
-`openspec/stages/s5-windows-compatibility/README.md` and begins only after full
-Stage 4 acceptance. Stage 6 product-polish planning lives at
+`openspec/stages/s5-windows-compatibility/README.md` and begins only after Stage
+4 implementation acceptance. Stage 6 product-polish planning lives at
 `openspec/stages/s6-product-polish-personalization-reach/README.md` and begins
-only after full Stage 5 Windows acceptance.
+only after Stage 5 implementation acceptance.
 
 These files are navigation only. Task status lives only in linked OpenSpec
 `tasks.md` files.

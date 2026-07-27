@@ -1,5 +1,6 @@
 import os from "node:os"
 import path from "node:path"
+import { assertSpeechTextWithinLimit } from "./speech-text"
 import type { SpeechAdapterAvailability, TtsAdapter, TtsInput, TtsResult, TtsVoice } from "./types"
 
 // Offline Kokoro neural TTS (S2.0: default TTS, system voice is the fallback).
@@ -69,6 +70,7 @@ export const kokoroTtsAdapter: TtsAdapter = {
       .replace(/\s+/g, " ")
       .trim()
     if (!text) throw new Error("Text is required for speech.")
+    assertSpeechTextWithinLimit(text)
 
     const model = await loadModel()
     const voices = model.voices ? Object.keys(model.voices) : []

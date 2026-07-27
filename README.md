@@ -16,8 +16,8 @@ connection checks pass. macOS will warn because this beta is not signed or
 notarized by Apple. See the [0.1.0 beta notes](docs/releases/0.1.0.md) and
 [macOS release runbook](docs/releasing-macos.md).
 
-Stage 0 (repo adoption), Stage 1 (MVP core), and Stage 3 are complete. Historical
-Stage 2 testing is closed as a separate release gate. The historical exit contract is the
+Stages 0 through 3 are implementation-complete under the three-tier completion
+model. The historical exit contract is the
 [Stage 3 full-feature matrix](docs/stage3-full-feature-test-matrix.md); the
 [release candidate ledger](docs/stage3-release-candidate-ledger.md) and
 [integrated candidate release notes](docs/stage3-release-notes.md) record the
@@ -187,8 +187,9 @@ the [Stage 3 execution plan](docs/stage3-execution-plan.md).
   limits, and swarm controls remain later work.
 - User approval before agent-created automations become active.
 - User-facing MCP exposure, approval, connection status, and audit controls.
-- Default-off exposure, self-reference guards, worktree write safety, launch
-  loop protection, and no background focus theft.
+- Default-on exposure for new supported chats with durable per-chat disablement,
+  preserved upgrade choices, self-reference guards, worktree write safety,
+  launch loop protection, and no background focus theft.
 - Repair and verify Settings surfaces for honest visibility, shortcuts, voice,
   credentials, provider extensions, permission modes, copy, and search.
 - Finish Parakeet-first dictation, Voice History, usage/daemon evidence, Cursor/

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs"
 import { join, dirname } from "path"
 import { safeStorage } from "electron"
+import { inspectSafeStorageBackend } from "./lib/safe-storage-backend"
 
 export interface AuthUser {
   id: string
@@ -20,7 +21,8 @@ export interface AuthData {
 /**
  * Storage for desktop authentication tokens
  * Uses Electron's safeStorage API to encrypt sensitive data using OS keychain
- * Falls back to plaintext only if encryption is unavailable (rare edge case)
+ * Fails closed when encryption is unavailable; desktop tokens are never
+ * persisted or consumed from plaintext storage.
  */
 export class AuthStore {
   private filePath: string
@@ -33,11 +35,11 @@ export class AuthStore {
    * Check if encryption is available on this system
    */
   private isEncryptionAvailable(): boolean {
-    return safeStorage.isEncryptionAvailable()
+    return inspectSafeStorageBackend(safeStorage).available
   }
 
   /**
-   * Save authentication data (encrypted if possible)
+   * Save authentication data using the OS credential backend.
    */
   save(data: AuthData): void {
     try {
@@ -53,9 +55,7 @@ export class AuthStore {
         const encrypted = safeStorage.encryptString(jsonData)
         writeFileSync(this.filePath, encrypted)
       } else {
-        // Fallback: store with warning (should rarely happen)
-        console.warn("safeStorage not available - storing auth data without encryption")
-        writeFileSync(this.filePath + ".json", jsonData, "utf-8")
+        throw new Error("Secure OS encryption is unavailable; authentication data was not saved")
       }
     } catch (error) {
       console.error("Failed to save auth data:", error)
@@ -72,20 +72,25 @@ export class AuthStore {
       if (existsSync(this.filePath) && this.isEncryptionAvailable()) {
         const encrypted = readFileSync(this.filePath)
         const decrypted = safeStorage.decryptString(encrypted)
-        return JSON.parse(decrypted)
+        const data = JSON.parse(decrypted) as AuthData
+        this.removeLegacyPlaintextFiles()
+        return data
       }
 
       // Fallback: try unencrypted file (for migration or when encryption unavailable)
       const fallbackPath = this.filePath + ".json"
       if (existsSync(fallbackPath)) {
+        if (!this.isEncryptionAvailable()) {
+          console.warn(
+            "Legacy plaintext authentication data is present but secure OS encryption is unavailable",
+          )
+          return null
+        }
         const content = readFileSync(fallbackPath, "utf-8")
         const data = JSON.parse(content)
 
-        // Migrate to encrypted storage if now available
-        if (this.isEncryptionAvailable()) {
-          this.save(data)
-          unlinkSync(fallbackPath) // Remove unencrypted file after migration
-        }
+        this.save(data)
+        this.removeLegacyPlaintextFiles()
 
         return data
       }
@@ -93,21 +98,52 @@ export class AuthStore {
       // Legacy: check for old auth.json file and migrate
       const legacyPath = join(dirname(this.filePath), "auth.json")
       if (existsSync(legacyPath)) {
+        if (!this.isEncryptionAvailable()) {
+          console.warn(
+            "Legacy plaintext authentication data is present but secure OS encryption is unavailable",
+          )
+          return null
+        }
         const content = readFileSync(legacyPath, "utf-8")
         const data = JSON.parse(content)
 
         // Migrate to encrypted storage
         this.save(data)
-        unlinkSync(legacyPath) // Remove legacy unencrypted file
+        this.removeLegacyPlaintextFiles()
         console.log("Migrated auth data from plaintext to encrypted storage")
 
         return data
       }
 
       return null
-    } catch {
-      console.error("Failed to load auth data")
+    } catch (error) {
+      console.error("Failed to load auth data:", error)
       return null
+    }
+  }
+
+  private removeLegacyPlaintextFiles(): void {
+    const failures: Error[] = []
+    for (const credentialPath of [
+      this.filePath + ".json",
+      join(dirname(this.filePath), "auth.json"),
+    ]) {
+      try {
+        this.removeCredentialFile(credentialPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue
+        failures.push(
+          new Error(`Could not remove legacy plaintext credential file ${credentialPath}`, {
+            cause: error,
+          }),
+        )
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        "Encrypted authentication data is available, but legacy plaintext cleanup failed",
+      )
     }
   }
 
@@ -115,24 +151,33 @@ export class AuthStore {
    * Clear all stored authentication data (both encrypted and fallback files)
    */
   clear(): void {
-    try {
-      // Remove encrypted file
-      if (existsSync(this.filePath)) {
-        unlinkSync(this.filePath)
+    const paths = [
+      this.filePath,
+      this.filePath + ".json",
+      join(dirname(this.filePath), "auth.json"),
+    ]
+    const failures: Error[] = []
+    for (const credentialPath of paths) {
+      try {
+        this.removeCredentialFile(credentialPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue
+        failures.push(
+          new Error(`Could not remove ${credentialPath}`, {
+            cause: error,
+          }),
+        )
       }
-      // Remove fallback unencrypted file if exists
-      const fallbackPath = this.filePath + ".json"
-      if (existsSync(fallbackPath)) {
-        unlinkSync(fallbackPath)
-      }
-      // Remove legacy file if exists
-      const legacyPath = join(dirname(this.filePath), "auth.json")
-      if (existsSync(legacyPath)) {
-        unlinkSync(legacyPath)
-      }
-    } catch (error) {
-      console.error("Failed to clear auth data:", error)
     }
+    if (failures.length > 0) {
+      const error = new AggregateError(failures, "Failed to clear all stored authentication data")
+      console.error("Failed to clear auth data:", error)
+      throw error
+    }
+  }
+
+  protected removeCredentialFile(credentialPath: string): void {
+    unlinkSync(credentialPath)
   }
 
   /**

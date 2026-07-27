@@ -32,7 +32,12 @@ import {
   getDevMcpTool,
 } from "../src/main/lib/mcp-test-control/registry"
 import { redactSecretLikeText, resolveCommandPath } from "../src/main/lib/mcp-test-control/shell"
-import { hasValidBearerToken, startDevMcpServer } from "../src/main/lib/mcp-test-control/server"
+import {
+  hasValidBearerToken,
+  stage4Failure,
+  stage4OperationalFailure,
+  startDevMcpServer,
+} from "../src/main/lib/mcp-test-control/server"
 import { buildVisibleCopySearchState } from "../src/main/lib/mcp-test-control/settings"
 import {
   parseDevMcpSettingsInvalidation,
@@ -44,6 +49,16 @@ import {
   listAgentInputRequests,
   replyAgentInputRequest,
 } from "../src/main/lib/mcp-test-control/service"
+import { STAGE4_OPERATIONAL_ACTIONS } from "../src/main/lib/mcp-test-control/stage4-operations"
+import {
+  STAGE4_PROFILE_MUTATION_ACTIONS,
+  STAGE4_PROFILE_READ_ACTIONS,
+  STAGE4_RUNTIME_MUTATION_ACTIONS,
+} from "../src/main/lib/mcp-test-control/stage4-runtime-profiles"
+import {
+  configureStage4OwnershipJournal,
+  resetStage4OwnershipForTests,
+} from "../src/main/lib/mcp-test-control/stage4-ownership"
 import { agentInputLifecycle } from "../src/main/lib/agent-input/service"
 import {
   listDevAgentInputRendererStates,
@@ -67,6 +82,31 @@ import {
 } from "../src/main/lib/mcp-test-control/carryover-controls"
 
 describe("dev MCP test-control registry", () => {
+  it("serializes Stage 4 failures without raw path-bearing messages", () => {
+    const response = stage4Failure(
+      new Error(
+        "Could not open C:\\Users\\sushi\\private\\repo or /home/sushi/private/repo with Bearer abcdefghijklmnop",
+      ),
+    )
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain("C:\\Users\\sushi")
+    expect(serialized).not.toContain("/home/sushi")
+    expect(serialized).not.toContain("abcdefghijklmnop")
+    expect(serialized).toContain("[path:")
+  })
+
+  it("redacts operational Stage 4 failures at the server boundary", () => {
+    const response = stage4OperationalFailure(
+      new Error(
+        "Failed at C:\\Users\\sushi\\private\\repo with Bearer abc.def and sk-secret123456",
+      ),
+    )
+    const serialized = JSON.stringify(response)
+    expect(serialized).not.toContain("C:\\Users\\sushi")
+    expect(serialized).not.toContain("abc.def")
+    expect(serialized).not.toContain("sk-secret")
+  })
+
   it("defines the today-sized testing tool surface", () => {
     expect(devMcpTestControlTools.map((tool) => tool.name)).toEqual([
       "get_test_environment",
@@ -161,6 +201,13 @@ describe("dev MCP test-control registry", () => {
       "create_test_orchestration",
       "get_test_orchestration",
       "mutate_test_orchestration",
+      "get_stage4_operational_state",
+      "mutate_stage4_operational_state",
+      "cleanup_stage4_owned_runtime_profiles",
+      "get_stage4_runtime_state",
+      "mutate_stage4_runtime",
+      "get_stage4_profile_state",
+      "mutate_stage4_profile",
     ])
     expect(getDevMcpTool("get_harness_status")?.tier).toBe(0)
     expect(getDevMcpTool("run_project_check")?.tier).toBe(2)
@@ -610,7 +657,7 @@ describe("dev MCP carryover controls", () => {
       else process.env.FLAPSTACK_DB_PATH = previousDatabasePath
       rmSync(dir, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 60_000)
 
   it("creates and cleans bounded Usage UI evidence rows", async () => {
     const dir = mkdtempSync(join(tmpdir(), "flapstack-dev-mcp-usage-ui-"))
@@ -722,11 +769,13 @@ describe("dev MCP transport", () => {
       userDataPath: dir,
       checkout: "/repo",
       profile: "Flapstack Dev Test",
+      rendererUrl: "http://127.0.0.1:5173",
       pid: 123,
     })
     expect(handle).not.toBeNull()
     try {
       expect(handle!.descriptor.userDataPath).toBe(dir)
+      expect(handle!.descriptor.rendererUrl).toBe("http://127.0.0.1:5173")
       const unauthorized = await fetch(handle!.descriptor.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -743,6 +792,36 @@ describe("dev MCP transport", () => {
       await client.connect(transport)
       const tools = await client.listTools()
       expect(tools.tools.map((tool) => tool.name)).toEqual(devMcpExposedToolNames)
+      const recoveredOwnership = await client.callTool({
+        name: "cleanup_stage4_owned_runtime_profiles",
+        arguments: {},
+      })
+      expect(recoveredOwnership, JSON.stringify(recoveredOwnership.content)).not.toMatchObject({
+        isError: true,
+      })
+      expect((recoveredOwnership.structuredContent as { result: any }).result).toMatchObject({
+        inspectedFixtures: 0,
+        cleanedFixtures: 0,
+        remainingFixtures: 0,
+      })
+      expect(
+        (
+          tools.tools.find((tool) => tool.name === "mutate_stage4_operational_state")
+            ?.inputSchema as any
+        ).properties.action.enum,
+      ).toEqual(STAGE4_OPERATIONAL_ACTIONS)
+      expect(
+        (tools.tools.find((tool) => tool.name === "mutate_stage4_runtime")?.inputSchema as any)
+          .properties.action.enum,
+      ).toEqual(STAGE4_RUNTIME_MUTATION_ACTIONS)
+      expect(
+        (tools.tools.find((tool) => tool.name === "get_stage4_profile_state")?.inputSchema as any)
+          .properties.action.enum,
+      ).toEqual(STAGE4_PROFILE_READ_ACTIONS)
+      expect(
+        (tools.tools.find((tool) => tool.name === "mutate_stage4_profile")?.inputSchema as any)
+          .properties.action.enum,
+      ).toEqual(STAGE4_PROFILE_MUTATION_ACTIONS)
       const settings = await client.callTool({
         name: "get_settings_state",
         arguments: { query: "default permission", availableProviders: [] },
@@ -796,17 +875,201 @@ describe("dev MCP transport", () => {
     })
     try {
       await client.connect(transport)
-      const fixture = await client.callTool({
+      const arbitraryFixture = await client.callTool({
         name: "create_test_orchestration_fixture",
         arguments: {
           projectPath: dir,
-          projectName: "Project",
+          projectName: "Existing user project",
+          chatName: "Rejected",
+          harness: "codex",
+        },
+      })
+      expect(arbitraryFixture.isError).toBe(true)
+      expect(JSON.stringify(arbitraryFixture)).toMatch(/projectPath|derived|ensure_test_project/i)
+
+      const ensured = await client.callTool({
+        name: "ensure_test_project",
+        arguments: { name: "Stage 4 owned fixture project" },
+      })
+      expect(ensured, JSON.stringify(ensured.content)).not.toMatchObject({ isError: true })
+      expect((ensured.structuredContent as { result: any }).result.created).toBe(true)
+
+      resetStage4OwnershipForTests()
+      configureStage4OwnershipJournal(dir)
+      const reEnsured = await client.callTool({
+        name: "ensure_test_project",
+        arguments: { name: "Stage 4 owned fixture project" },
+      })
+      expect(reEnsured, JSON.stringify(reEnsured.content)).not.toMatchObject({ isError: true })
+      expect((reEnsured.structuredContent as { result: any }).result.created).toBe(false)
+
+      const fixture = await client.callTool({
+        name: "create_test_orchestration_fixture",
+        arguments: {
           chatName: "Root",
           harness: "codex",
         },
       })
       expect(fixture, JSON.stringify(fixture.content)).not.toMatchObject({ isError: true })
       const fixtureResult = (fixture.structuredContent as { result: any }).result
+      const stage4FixtureHandle = fixtureResult.stage4FixtureHandle
+      expect(stage4FixtureHandle).toEqual(expect.any(String))
+      const existingTaskAttach = await client.callTool({
+        name: "create_test_orchestration",
+        arguments: {
+          deferScheduling: true,
+          stage4FixtureHandle,
+          request: {
+            projectId: fixtureResult.projectId,
+            task: { mode: "existing", taskId: "real-user-task" },
+            initiatingChatId: fixtureResult.chatId,
+            maxParallelAgents: 1,
+            maxDepth: 4,
+            stopConditions: { maxTotalTokens: 10_000 },
+            agents: [],
+          },
+        },
+      })
+      expect(existingTaskAttach.isError).toBe(true)
+      expect(JSON.stringify(existingTaskAttach)).toMatch(/create a new fixture task/i)
+      const runtimeRead = await client.callTool({
+        name: "get_stage4_runtime_state",
+        arguments: { fixtureHandle: stage4FixtureHandle },
+      })
+      expect(runtimeRead, JSON.stringify(runtimeRead.content)).not.toMatchObject({ isError: true })
+      expect((runtimeRead.structuredContent as { result: any }).result).toMatchObject({
+        diagnostics: { chatId: fixtureResult.chatId },
+      })
+      const runtimeMutation = await client.callTool({
+        name: "mutate_stage4_runtime",
+        arguments: {
+          action: "set-empty-chat",
+          payload: { fixtureHandle: stage4FixtureHandle, preference: "codex" },
+        },
+      })
+      expect(runtimeMutation, JSON.stringify(runtimeMutation.content)).not.toMatchObject({
+        isError: true,
+      })
+      const profileMutation = await client.callTool({
+        name: "mutate_stage4_profile",
+        arguments: {
+          action: "ensure-starters",
+          payload: { fixtureHandle: stage4FixtureHandle },
+        },
+      })
+      expect(profileMutation, JSON.stringify(profileMutation.content)).not.toMatchObject({
+        isError: true,
+      })
+      const profileRead = await client.callTool({
+        name: "get_stage4_profile_state",
+        arguments: {
+          action: "list",
+          payload: { fixtureHandle: stage4FixtureHandle },
+        },
+      })
+      expect(profileRead, JSON.stringify(profileRead.content)).not.toMatchObject({ isError: true })
+      expect((profileRead.structuredContent as { result: any }).result).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "builtin.planner" })]),
+      )
+      const plannerProfile = (profileRead.structuredContent as { result: any }).result.find(
+        (profile: any) => profile.id === "builtin.planner",
+      )
+      const starterProfile = await client.callTool({
+        name: "get_stage4_profile_state",
+        arguments: {
+          action: "get",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            profileHandle: plannerProfile.profileHandle,
+          },
+        },
+      })
+      const starterDefinition = structuredClone(
+        (starterProfile.structuredContent as { result: any }).result.version.definition,
+      )
+      starterDefinition.capability.instructions =
+        "Review C:\\Users\\sushi\\private\\profile.md and /home/sushi/private/profile.md."
+      const pathBearingMutation = await client.callTool({
+        name: "mutate_stage4_profile",
+        arguments: {
+          action: "create",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            name: "Boundary redaction profile",
+            description: "Authenticated dispatch proof",
+            category: "test",
+            definition: starterDefinition,
+          },
+        },
+      })
+      expect(pathBearingMutation, JSON.stringify(pathBearingMutation.content)).not.toMatchObject({
+        isError: true,
+      })
+      const serializedMutation = JSON.stringify(pathBearingMutation)
+      expect(serializedMutation).not.toContain("C:\\Users\\sushi")
+      expect(serializedMutation).not.toContain("/home/sushi")
+      expect(serializedMutation).toContain("[path:")
+      await client.callTool({
+        name: "mutate_stage4_profile",
+        arguments: {
+          action: "archive",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            profileHandle: (pathBearingMutation.structuredContent as { result: any }).result
+              .profileHandle,
+          },
+        },
+      })
+      const rejectedRawRuntimeId = await client.callTool({
+        name: "mutate_stage4_runtime",
+        arguments: {
+          action: "set-empty-chat",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            chatId: fixtureResult.chatId,
+            preference: "codex",
+          },
+        },
+      })
+      expect(rejectedRawRuntimeId.isError).toBe(true)
+      expect(JSON.stringify(rejectedRawRuntimeId)).toContain("rejects raw chatId")
+      const rejectedRawProfileId = await client.callTool({
+        name: "mutate_stage4_profile",
+        arguments: {
+          action: "archive",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            profileId: "builtin.planner",
+            expectedVersion: 1,
+          },
+        },
+      })
+      expect(rejectedRawProfileId.isError).toBe(true)
+      expect(JSON.stringify(rejectedRawProfileId)).toContain("rejects raw profileId")
+      const rejectedRawWorkflowId = await client.callTool({
+        name: "mutate_stage4_profile",
+        arguments: {
+          action: "workflow-bind",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            workflowRunId: "real-workflow",
+            stepId: "implement",
+            profileId: "builtin.planner",
+          },
+        },
+      })
+      expect(rejectedRawWorkflowId.isError).toBe(true)
+      const rejectedRawLaunchId = await client.callTool({
+        name: "get_stage4_profile_state",
+        arguments: {
+          action: "standalone-get",
+          payload: {
+            fixtureHandle: stage4FixtureHandle,
+            launchId: "real-launch",
+          },
+        },
+      })
+      expect(rejectedRawLaunchId.isError).toBe(true)
       const inheritedCustomPermissions = {
         schemaVersion: 1,
         projectWrite: true,
@@ -866,6 +1129,7 @@ describe("dev MCP transport", () => {
         name: "create_test_orchestration",
         arguments: {
           deferScheduling: true,
+          stage4FixtureHandle,
           request: {
             projectId: fixtureResult.projectId,
             task: { mode: "create", name: "Live API orchestration" },
@@ -892,6 +1156,16 @@ describe("dev MCP transport", () => {
       expect(createdResult).toMatchObject({
         orchestration: { status: "paused" },
         aggregate: { active: 0, queued: 1 },
+        stage4WorkflowHandles: [
+          {
+            workflowHandle: expect.stringMatching(/^s4_workflow_/),
+            stepIds: [expect.stringMatching(/^stage4-profile-step-/)],
+          },
+        ],
+        operationWorkspace: {
+          id: expect.any(String),
+          state: "live",
+        },
       })
 
       const read = await client.callTool({
@@ -899,7 +1173,11 @@ describe("dev MCP transport", () => {
         arguments: { taskId },
       })
       expect((read.structuredContent as { result: any }).result).toMatchObject({
-        overview: { orchestration: { taskId, status: "paused" } },
+        overview: {
+          orchestration: { taskId, status: "paused" },
+          operationWorkspace: { id: createdResult.operationWorkspace.id, state: "live" },
+          initiatingChat: { id: fixtureResult.chatId, state: "live" },
+        },
         lineage: { taskId },
       })
 

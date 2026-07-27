@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import {
   closeSync,
   createReadStream,
@@ -24,6 +24,7 @@ const ELF_MACHINE_TYPES = new Map([
 ])
 
 const PE_MACHINE_TYPES = new Map([
+  [0x014c, "x86"],
   [0x8664, "x64"],
   [0xaa64, "arm64"],
 ])
@@ -43,6 +44,17 @@ function readPrefix(filePath, size = 4096) {
   try {
     const buffer = Buffer.alloc(size)
     const bytesRead = readSync(fd, buffer, 0, size, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function readAt(filePath, position, size) {
+  const fd = openSync(filePath, "r")
+  try {
+    const buffer = Buffer.alloc(size)
+    const bytesRead = readSync(fd, buffer, 0, size, position)
     return buffer.subarray(0, bytesRead)
   } finally {
     closeSync(fd)
@@ -88,18 +100,17 @@ function inspectElf(buffer) {
   return { format: "elf", architectures: [ELF_MACHINE_TYPES.get(machine)].filter(Boolean) }
 }
 
-function inspectPe(buffer) {
-  if (buffer.length < 64 || buffer[0] !== 0x4d || buffer[1] !== 0x5a) return null
-  const peOffset = buffer.readUInt32LE(0x3c)
-  if (
-    peOffset + 6 > buffer.length ||
-    buffer.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0"
-  ) {
-    return null
-  }
+function inspectPeFile(filePath, prefix) {
+  if (prefix.length < 64 || prefix[0] !== 0x4d || prefix[1] !== 0x5a) return null
+  const peOffset = prefix.readUInt32LE(0x3c)
+  const header =
+    peOffset + 6 <= prefix.length
+      ? prefix.subarray(peOffset, peOffset + 6)
+      : readAt(filePath, peOffset, 6)
+  if (header.length < 6 || header.toString("ascii", 0, 4) !== "PE\0\0") return null
   return {
     format: "pe",
-    architectures: [PE_MACHINE_TYPES.get(buffer.readUInt16LE(peOffset + 4))].filter(Boolean),
+    architectures: [PE_MACHINE_TYPES.get(header.readUInt16LE(4))].filter(Boolean),
   }
 }
 
@@ -108,7 +119,7 @@ export function inspectBinaryArchitecture(filePath) {
   return (
     inspectMachO(buffer) ??
     inspectElf(buffer) ??
-    inspectPe(buffer) ?? {
+    inspectPeFile(filePath, buffer) ?? {
       format: "unknown",
       architectures: [],
     }
@@ -238,10 +249,14 @@ export function replaceDirectoryAtomically(stagingDirectory, targetDirectory) {
     throw new Error("Staging directory must be beside its target for an atomic rename")
   }
   ensureRealDirectory(parent)
-  const backup = path.join(parent, `.${path.basename(targetDirectory)}.backup-${randomUUID()}`)
+  recoverInterruptedDirectoryReplacement(targetDirectory)
+  const backup = directoryReplacementBackup(targetDirectory)
   let previousMoved = false
   try {
-    lstatSync(targetDirectory)
+    const targetStat = lstatSync(targetDirectory)
+    if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+      throw new Error(`${targetDirectory}: target path must be a real directory`)
+    }
     renameSync(targetDirectory, backup)
     previousMoved = true
   } catch (error) {
@@ -254,4 +269,44 @@ export function replaceDirectoryAtomically(stagingDirectory, targetDirectory) {
     throw error
   }
   if (previousMoved) rmSync(backup, { recursive: true, force: true })
+}
+
+function directoryReplacementBackup(targetDirectory) {
+  return path.join(
+    path.dirname(targetDirectory),
+    `.${path.basename(targetDirectory)}.replacement-backup`,
+  )
+}
+
+export function recoverInterruptedDirectoryReplacement(targetDirectory) {
+  const backup = directoryReplacementBackup(targetDirectory)
+  let targetExists = false
+  try {
+    const targetStat = lstatSync(targetDirectory)
+    if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+      throw new Error(`${targetDirectory}: target path must be a real directory`)
+    }
+    targetExists = true
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error
+  }
+
+  let backupExists = false
+  try {
+    const backupStat = lstatSync(backup)
+    if (backupStat.isSymbolicLink() || !backupStat.isDirectory()) {
+      throw new Error(`${backup}: replacement backup must be a real directory`)
+    }
+    backupExists = true
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error
+  }
+
+  if (!backupExists) return { recovered: false }
+  if (!targetExists) {
+    renameSync(backup, targetDirectory)
+    return { recovered: true, restored: true }
+  }
+  rmSync(backup, { recursive: true, force: true })
+  return { recovered: true, restored: false }
 }

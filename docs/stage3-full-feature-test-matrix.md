@@ -24,13 +24,13 @@ notarization, and provider Admin usage APIs are future considerations.
 
 ## 1. Production MCP control (S3-F2 through S3-F6)
 
-- [ ] **S3-M01** per-chat exposure is on by default for supported providers,
+- [x] **S3-M01** per-chat exposure is on by default for supported providers,
       remains user-disableable, and only enabled chats receive the production stdio server.
 - [x] **S3-M02** Tier 0 reads are paginated, scoped, redacted, and reachable in
       read-only Claude and Codex without allowing arbitrary third-party MCP tools.
 - [x] **S3-M03** mutations enforce caller identity, permission mode, worktree
       boundary, self-reference rules, and exactly one user approval where required.
-- [ ] **S3-M04** full-access Tier 3 launch/spawn auto-approves; guarded modes
+- [x] **S3-M04** full-access Tier 3 launch/spawn auto-approves; guarded modes
       require fresh approval; denial, timeout, success, and failure remain fully audited.
 - [x] **S3-M05** queued Claude/Codex launches reuse one run ID, survive restart
       according to policy, and cannot drain unrelated pending runs.
@@ -54,6 +54,16 @@ notarization, and provider Admin usage APIs are future considerations.
       states, usage/cost provenance, dependencies, lineage, results, controls,
       audit, and post-commit renderer invalidation; loop, depth,
       duplicate-ancestor, stale-identity, permission, and audit attacks fail closed.
+
+2026-07-26 Windows closeout evidence: the authenticated live-management driver
+ran real Codex and Claude child calls and verified that supported spawned chats
+default product MCP exposure on. Its isolated root callers deliberately began
+disabled only to prove disable/reconnect behavior. The same run passed guarded
+approve/deny/timeout, session grants, full-access Tier 3 auto-approval, renderer
+refresh, audit paging/redaction, and self-reference guards. A controlled restart
+then proved exposure/audit persistence, session-grant expiry, and fresh approval.
+`dev:verify` identified the exact checkout and isolated
+`Flapstack Dev windows-ai-acceptance` profile before and after restart.
 
 2026-07-13 security repair evidence: fresh per-call invocation UUIDs and
 context-bound durable approvals reject replay; product-MCP disable atomically

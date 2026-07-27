@@ -12,13 +12,22 @@ import {
 import { normalizeVoiceSettings } from "../src/main/lib/speech/settings"
 import { extractSpokenSection, filterSpeakableText } from "../src/main/lib/speech/speakable-filter"
 import { createFallbackSpokenSummary } from "../src/main/lib/speech/spoken-summary"
-import { resolveSpeechText } from "../src/main/lib/speech/speech-text"
+import {
+  assertSpeechTextWithinLimit,
+  MAX_SPEECH_TEXT_CHARACTERS,
+  resolveSpeechText,
+} from "../src/main/lib/speech/speech-text"
 import {
   encodeWav,
   getKokoroChunks,
   synthesizeKokoroChunks,
 } from "../src/main/lib/speech/tts-kokoro"
-import { buildMacosSayArgs, parseWindowsVoices } from "../src/main/lib/speech/tts-native"
+import {
+  buildMacosSayArgs,
+  buildWindowsSpeechScript,
+  parseWindowsVoices,
+  resolveWindowsPowerShellPath,
+} from "../src/main/lib/speech/tts-native"
 import {
   getWhisperModelDescriptor,
   raceAbort,
@@ -221,6 +230,44 @@ describe("voice settings normalization", () => {
 })
 
 describe("native voice helpers", () => {
+  it("resolves Windows PowerShell from the system directory without PATH search", () => {
+    expect(
+      resolveWindowsPowerShellPath({
+        systemRoot: "D:\\Windows",
+        processArch: "x64",
+        nativeArchitecture: undefined,
+      }),
+    ).toBe("D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+    expect(
+      resolveWindowsPowerShellPath({
+        systemRoot: "C:\\Windows",
+        processArch: "ia32",
+        nativeArchitecture: "AMD64",
+      }),
+    ).toBe("C:\\Windows\\Sysnative\\WindowsPowerShell\\v1.0\\powershell.exe")
+  })
+
+  it("rejects untrusted relative Windows system roots", () => {
+    expect(() =>
+      resolveWindowsPowerShellPath({
+        systemRoot: "Windows",
+        processArch: "x64",
+        nativeArchitecture: undefined,
+      }),
+    ).toThrow(/absolute Windows system root/i)
+  })
+
+  it("keeps Windows speech text out of the PowerShell command line", () => {
+    const secretLikeText = "Speak sk-private-token without exposing it"
+    const script = buildWindowsSpeechScript("Voice ' One", 2, "C:\\Audio's\\speech.wav")
+
+    expect(script).toContain("[Console]::In.ReadToEnd()")
+    expect(script).toContain("$s.Speak($text)")
+    expect(script).not.toContain(secretLikeText)
+    expect(script).toContain("Voice '' One")
+    expect(script).toContain("C:\\Audio''s\\speech.wav")
+  })
+
   it("parses the Windows SAPI voice list", () => {
     expect(
       parseWindowsVoices('[{"id":"Microsoft Ava","label":"Microsoft Ava","language":"en-US"}]'),
@@ -231,6 +278,18 @@ describe("native voice helpers", () => {
     expect(parseWindowsVoices("not-json")).toEqual([
       { id: "default", label: "Windows default voice" },
     ])
+  })
+})
+
+describe("speech synthesis limits", () => {
+  it("accepts the maximum bounded speech text and rejects one character more", () => {
+    expect(() => assertSpeechTextWithinLimit("a".repeat(MAX_SPEECH_TEXT_CHARACTERS))).not.toThrow()
+    expect(() => assertSpeechTextWithinLimit("a".repeat(MAX_SPEECH_TEXT_CHARACTERS + 1))).toThrow(
+      `Speech text exceeds the ${MAX_SPEECH_TEXT_CHARACTERS} character limit.`,
+    )
+    expect(() => resolveSpeechText("", "a".repeat(MAX_SPEECH_TEXT_CHARACTERS + 1))).toThrow(
+      `Speech text exceeds the ${MAX_SPEECH_TEXT_CHARACTERS} character limit.`,
+    )
   })
 })
 

@@ -141,7 +141,7 @@ describe("MCP caller-by-tier gate matrix", () => {
     "read-only": ["allowed", "denied", "denied", "denied"],
     "ask-before-edits": ["allowed", "approval-required", "approval-required", "approval-required"],
     "auto-edit-project-only": ["allowed", "allowed", "allowed", "approval-required"],
-    "full-access": ["allowed", "allowed", "allowed", "approval-required"],
+    "full-access": ["allowed", "allowed", "allowed", "allowed"],
     custom: ["allowed", "allowed", "allowed", "approval-required"],
   }
 
@@ -168,13 +168,8 @@ describe("MCP caller-by-tier gate matrix", () => {
     )
   })
 
-  it("requires explicit Tier 3 approval in every writable mode", () => {
-    expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" }).decision).toBe(
-      "approval-required",
-    )
-    expect(
-      evaluateMcpGate({ tier: 3, permissionMode: "full-access", approved: true }).decision,
-    ).toBe("allowed")
+  it("auto-approves Tier 3 in full-access and keeps other modes guarded", () => {
+    expect(evaluateMcpGate({ tier: 3, permissionMode: "full-access" }).decision).toBe("allowed")
     expect(evaluateMcpGate({ tier: 3, permissionMode: "ask-before-edits" }).decision).toBe(
       "approval-required",
     )
@@ -195,6 +190,119 @@ describe("MCP caller-by-tier gate matrix", () => {
         },
       }),
     ).toMatchObject({ decision: "denied", reason: expect.stringContaining("projectWrite") })
+  })
+
+  it("propagates verified frozen profile authority and rejects missing provenance", () => {
+    const authority = {
+      snapshotId: "snapshot-1",
+      snapshotDigest: "a".repeat(64),
+      profile: { profileId: "profile-1", version: 1 },
+      allowedTools: ["describe"],
+      allowedSkills: [],
+      memoryPolicy: { mode: "none" as const },
+      allowedDescendantProfileIds: [],
+      maxDescendants: 0,
+    }
+    expect(
+      resolveTrustedMcpCaller(
+        { chatId: "chat-1", runId: "run-1" },
+        createStore({
+          run: {
+            id: "run-1",
+            chatId: "chat-1",
+            permissionMode: "full-access",
+            active: true,
+            profileRuntimeAuthority: authority,
+          },
+        }),
+      ),
+    ).toMatchObject({ profileRuntimeAuthority: authority })
+    expect(() =>
+      resolveTrustedMcpCaller(
+        { chatId: "chat-1", runId: "run-1" },
+        createStore({
+          run: {
+            id: "run-1",
+            chatId: "chat-1",
+            permissionMode: "full-access",
+            active: true,
+            profileRuntimeAuthority: "invalid",
+          },
+        }),
+      ),
+    ).toThrow(/frozen Agent Profile provenance/)
+  })
+
+  it("enforces the frozen Agent Profile product-tool allowlist before permission tiers", () => {
+    const describe = getMcpControlTool("describe")!
+    const launch = getMcpControlTool("launch_run")!
+    const authority = {
+      snapshotId: "snapshot-1",
+      snapshotDigest: "a".repeat(64),
+      profile: { profileId: "profile-1", version: 1 },
+      allowedTools: ["describe"],
+      allowedSkills: [],
+      memoryPolicy: { mode: "none" as const },
+      allowedDescendantProfileIds: [],
+      maxDescendants: 0,
+    }
+
+    expect(
+      evaluateMcpToolGate({
+        tool: describe,
+        caller: { permissionMode: "full-access", profileRuntimeAuthority: authority },
+      }),
+    ).toMatchObject({ decision: "allowed" })
+    expect(
+      evaluateMcpToolGate({
+        tool: launch,
+        caller: { permissionMode: "full-access", profileRuntimeAuthority: authority },
+      }),
+    ).toMatchObject({
+      decision: "denied",
+      reason: expect.stringContaining("frozen Agent Profile"),
+    })
+    expect(
+      evaluateMcpToolGate({
+        tool: describe,
+        caller: {
+          permissionMode: "full-access",
+          profileRuntimeAuthority: { ...authority, allowedTools: [] },
+        },
+      }),
+    ).toMatchObject({ decision: "denied" })
+    expect(
+      evaluateMcpToolGate({
+        tool: launch,
+        caller: {
+          permissionMode: "full-access",
+          profileRuntimeAuthority: {
+            ...authority,
+            allowedTools: ["launch_run"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      decision: "denied",
+      reason: expect.stringContaining("descendant ceiling"),
+    })
+    expect(
+      evaluateMcpToolGate({
+        tool: launch,
+        caller: {
+          permissionMode: "full-access",
+          profileRuntimeAuthority: {
+            ...authority,
+            allowedTools: ["launch_run"],
+            allowedDescendantProfileIds: ["profile-child"],
+            maxDescendants: 1,
+          },
+        },
+      }),
+    ).toMatchObject({
+      decision: "denied",
+      reason: expect.stringMatching(/profile provenance/i),
+    })
   })
 
   it("assigns a tier and capability boundary to every registry tool", () => {

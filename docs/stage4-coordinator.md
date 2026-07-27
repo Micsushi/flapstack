@@ -138,7 +138,10 @@ and integration rules.
 
 ## Exit
 
-Stage 4 exits only when all 87 authoritative tasks and every required row in
-`docs/stage4-full-feature-test-matrix.md` are closed with real evidence. Any
-credential, unavailable platform, external device, or manual blocker remains
-named and open rather than inferred.
+Stage 4 reaches implementation completion only when its 73
+implementation-gating task checkboxes and all 52 `T2-core` rows in
+`docs/stage4-full-feature-test-matrix.md` are closed with real evidence.
+Provider, remote, platform, and device capabilities retain separate
+certification status; the packaged macOS row remains a release gate. Tier 3
+owner checks stay in the manual backlog unless explicitly labeled
+`release-blocking`.

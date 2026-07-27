@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
-import { dirname, join } from "node:path"
+import { dirname, join, toNamespacedPath } from "node:path"
 import { mkdir, rm } from "node:fs/promises"
 import {
   closeSync,
@@ -37,6 +37,10 @@ export type PortableDatabaseRecord = {
 export type PortableDatabaseExport = {
   recordCount: number
   exclusions: PortableExclusionEntry[]
+}
+
+function sqliteFilesystemPath(path: string): string {
+  return process.platform === "win32" ? toNamespacedPath(path) : path
 }
 
 const NEVER_EXPORT_TABLES = new Set([
@@ -86,16 +90,22 @@ export async function createPortableDatabase(input: {
 }): Promise<PortableDatabaseExport> {
   await mkdir(dirname(input.destinationPath), { recursive: true, mode: 0o700 })
   const snapshotPath = join(dirname(input.destinationPath), `.source-${randomUUID()}.sqlite3`)
-  const source = new Database(input.sourcePath, { readonly: true, fileMustExist: true })
+  const source = new Database(sqliteFilesystemPath(input.sourcePath), {
+    readonly: true,
+    fileMustExist: true,
+  })
   source.pragma("busy_timeout = 5000")
   try {
-    await source.backup(snapshotPath)
+    await source.backup(sqliteFilesystemPath(snapshotPath))
   } finally {
     source.close()
   }
 
-  const snapshot = new Database(snapshotPath, { readonly: true, fileMustExist: true })
-  const portable = new Database(input.destinationPath)
+  const snapshot = new Database(sqliteFilesystemPath(snapshotPath), {
+    readonly: true,
+    fileMustExist: true,
+  })
+  const portable = new Database(sqliteFilesystemPath(input.destinationPath))
   const exclusions: PortableExclusionEntry[] = []
   let recordCount = 0
   let recordJsonBytes = 0
@@ -372,7 +382,10 @@ export function readPortableDatabase(
   const snapshot = createPortableDatabaseSnapshot(path, options)
   let database: Database.Database | undefined
   try {
-    database = new Database(snapshot.path, { readonly: true, fileMustExist: true })
+    database = new Database(sqliteFilesystemPath(snapshot.path), {
+      readonly: true,
+      fileMustExist: true,
+    })
     const version = database
       .prepare("SELECT value FROM portable_metadata WHERE key = 'schema_version'")
       .pluck()

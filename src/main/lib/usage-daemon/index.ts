@@ -17,6 +17,7 @@ import { updateDaemonStatus } from "../usage/store"
 import { redactUsageDiagnostic } from "../usage/diagnostics"
 import { openDaemonDb } from "./db"
 import { acquireDaemonInstanceLock } from "./instance-lock"
+import { watchUsageDaemonStopRequests } from "./stop-request"
 
 const HEARTBEAT_INTERVAL_MS = 60_000
 
@@ -92,9 +93,12 @@ export async function runDaemon(): Promise<void> {
 
   let shuttingDown = false
   let finishShutdown: (() => void) | null = null
+  let stopRequestWatcher: (() => void) | null = null
   const shutdown = (error?: unknown) => {
     if (shuttingDown) return
     shuttingDown = true
+    stopRequestWatcher?.()
+    stopRequestWatcher = null
     if (heartbeat) clearInterval(heartbeat)
     void scheduler
       .stopAndWait()
@@ -117,6 +121,10 @@ export async function runDaemon(): Promise<void> {
       })
   }
   const signalGate = createDaemonSignalGate(shutdown)
+  stopRequestWatcher = watchUsageDaemonStopRequests(
+    process.env.FLAPSTACK_CONFIG_DIR,
+    signalGate.onSignal,
+  )
   process.on("SIGTERM", signalGate.onSignal)
   process.on("SIGINT", signalGate.onSignal)
 

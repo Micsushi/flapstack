@@ -40,6 +40,11 @@ const LINUX_COMMANDS: Partial<Record<ExternalApp, string>> = {
 
 type SpawnProcess = typeof spawn
 
+export function assertOpenPathSucceeded(result: string, targetPath: string): void {
+  const error = result.trim()
+  if (error) throw new Error(`${error}: ${targetPath}`)
+}
+
 function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`
 }

@@ -88,6 +88,7 @@ describe("authenticated dev control for live product MCP", () => {
     expect(await waitForCall(started.id)).toMatchObject({ status: "completed" })
     const child = getProductMcpState({ chatId: caller.chatId }).children[0]!
     const run = child.runs[0]!
+    expect(child.mcpExposureEnabled).toBe(true)
 
     expect(
       await cancelProductMcpChildRun({
@@ -107,7 +108,7 @@ describe("authenticated dev control for live product MCP", () => {
       }),
     ).rejects.toThrow(/does not belong/)
     cleanupProductMcpCaller({ chatId: caller.chatId })
-  })
+  }, 45_000)
 
   it("binds live caller worktree only to the running dev checkout", () => {
     expect(prepareProductMcpCaller({ harness: "codex", repoPath: process.cwd() })).toMatchObject({
@@ -184,7 +185,7 @@ describe("authenticated dev control for live product MCP", () => {
       }),
     ).toThrow(/must not be after/)
     expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({ archived: true })
-  })
+  }, 45_000)
 
   it("keeps one caller session alive so a Tier 1 session grant is reusable", async () => {
     const caller = prepareProductMcpCaller({
@@ -223,9 +224,9 @@ describe("authenticated dev control for live product MCP", () => {
     )
     expect(await waitForCall(second.id)).toMatchObject({ status: "completed" })
     expect(getProductMcpState({ chatId: caller.chatId }).pendingApprovals).toEqual([])
-  })
+  }, 45_000)
 
-  it("requires approval for a full-access Tier 3 spawn through the real stdio child", async () => {
+  it("auto-approves a full-access Tier 3 spawn through the real stdio child", async () => {
     const caller = prepareProductMcpCaller({ harness: "codex", permissionMode: "full-access" })
     setProductMcpTestExposure({ chatId: caller.chatId, enabled: true })
     const started = startProductMcpTestCall(
@@ -243,21 +244,18 @@ describe("authenticated dev control for live product MCP", () => {
       { registration: sourceRegistration(caller.chatId, caller.runId) },
     )
 
-    const approval = await waitForApproval(caller.chatId)
-    expect(replyProductMcpApproval({ approvalId: approval.id, decision: "approve" })).toEqual({
-      resolved: true,
-    })
     expect(await waitForCall(started.id)).toMatchObject({ status: "completed" })
     const state = getProductMcpState({ chatId: caller.chatId, toolName: "spawn_thread" })
     expect(state.pendingApprovals).toEqual([])
     expect(state.audit.entries.map((entry) => entry.decision)).toEqual(
-      expect.arrayContaining(["approval-required", "allowed", "dispatch-started", "completed"]),
+      expect.arrayContaining(["allowed", "dispatch-started", "completed"]),
     )
+    expect(state.audit.entries.map((entry) => entry.decision)).not.toContain("approval-required")
     expect(cleanupProductMcpCaller({ chatId: caller.chatId })).toMatchObject({
       archived: true,
       archivedChildren: [expect.any(String)],
     })
-  })
+  }, 45_000)
 
   it.each([
     ["codex", "claude-code"],
@@ -300,7 +298,7 @@ describe("authenticated dev control for live product MCP", () => {
       )
       cleanupProductMcpCaller({ chatId: caller.chatId })
     },
-    30_000,
+    45_000,
   )
 
   it("stops an approval-waiting child, cancels its caller, and clears the pending decision", async () => {
@@ -333,7 +331,7 @@ describe("authenticated dev control for live product MCP", () => {
     expect(state.runs[0]?.status).toBe("cancelled")
     expect(state.children).toEqual([])
     cleanupProductMcpCaller({ chatId: caller.chatId })
-  })
+  }, 45_000)
 })
 
 function sourceRegistration(chatId: string, runId: string, permissionMode = "full-access") {
@@ -368,7 +366,7 @@ async function waitForCall(callId: string) {
       call = getProductMcpTestCall({ callId })
       expect(call.status).not.toBe("running")
     },
-    { timeout: 10_000, interval: 25 },
+    { timeout: 25_000, interval: 25 },
   )
   return call
 }
@@ -380,7 +378,7 @@ async function waitForApproval(chatId: string) {
       approval = getProductMcpState({ chatId }).pendingApprovals[0]
       expect(approval).toBeDefined()
     },
-    { timeout: 10_000, interval: 25 },
+    { timeout: 25_000, interval: 25 },
   )
   return approval!
 }

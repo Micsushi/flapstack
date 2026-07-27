@@ -334,7 +334,7 @@ describe("automation CRUD control", () => {
 describe("automation MCP management", () => {
   const caller = { chatId: "caller", runId: "run-1", permissionMode: "full-access" as const }
 
-  it("registers scoped reads, inert creation, and approval-gated update and enable tools", async () => {
+  it("registers scoped reads and lets full-access callers use Tier 3 automation tools", async () => {
     expect(getMcpControlTool("list_automations")).toMatchObject({ tier: 0, status: "implemented" })
     expect(getMcpControlTool("read_automation")).toMatchObject({ tier: 0, status: "implemented" })
     expect(getMcpControlTool("create_automation_draft")).toMatchObject({
@@ -363,9 +363,35 @@ describe("automation MCP management", () => {
         audit: auditWriter(),
       }),
     ).resolves.toMatchObject({ ok: true, data: { id: automationId, version: 1 } })
+    await expect(
+      invokeMcpControlTool(
+        "update_automation",
+        caller,
+        {
+          automationId,
+          expectedVersion: 1,
+          draft: taskDraft({ prompt: "Full-access update." }),
+        },
+        undefined,
+        { automationControls: controls, audit: auditWriter() },
+      ),
+    ).resolves.toMatchObject({ ok: true, data: { changed: true, record: { version: 2 } } })
+    await expect(
+      invokeMcpControlTool(
+        "enable_automation",
+        caller,
+        { automationId, expectedVersion: 2, enabled: true },
+        undefined,
+        { automationControls: controls, audit: auditWriter() },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { changed: true, record: { version: 3, enabled: true } },
+    })
   })
 
   it("executes no update on deny or timeout, then revalidates and applies an approved exact version", async () => {
+    const approvalCaller = { ...caller, permissionMode: "ask-before-edits" as const }
     const record = service.createDraft(
       { type: "agent", chatId: "caller", runId: "run-1" },
       { idempotencyKey: "approval-target", draft: taskDraft() },
@@ -374,7 +400,7 @@ describe("automation MCP management", () => {
     const approvals = new McpApprovalLifecycle()
     const denied = invokeMcpControlTool(
       "update_automation",
-      caller,
+      approvalCaller,
       { automationId: record.id, expectedVersion: 1, draft: taskDraft({ prompt: "Denied." }) },
       undefined,
       {
@@ -395,7 +421,7 @@ describe("automation MCP management", () => {
     vi.useFakeTimers()
     const timedOut = invokeMcpControlTool(
       "update_automation",
-      caller,
+      approvalCaller,
       { automationId: record.id, expectedVersion: 1, draft: taskDraft({ prompt: "Timeout." }) },
       undefined,
       {
@@ -416,7 +442,7 @@ describe("automation MCP management", () => {
 
     const approved = invokeMcpControlTool(
       "update_automation",
-      caller,
+      approvalCaller,
       { automationId: record.id, expectedVersion: 1, draft: taskDraft({ prompt: "Approved." }) },
       undefined,
       {
@@ -435,7 +461,7 @@ describe("automation MCP management", () => {
 
     const enabled = invokeMcpControlTool(
       "enable_automation",
-      caller,
+      approvalCaller,
       { automationId: record.id, expectedVersion: 2, enabled: true },
       undefined,
       {
@@ -454,7 +480,7 @@ describe("automation MCP management", () => {
 
     const disabled = invokeMcpControlTool(
       "enable_automation",
-      caller,
+      approvalCaller,
       { automationId: record.id, expectedVersion: 3, enabled: false },
       undefined,
       {

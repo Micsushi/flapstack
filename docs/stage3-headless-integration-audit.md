@@ -9,6 +9,11 @@ lifted on 2026-07-13; current work may use the verified `Flapstack Dev` app and
 UI. The active integrated exit ledger is
 `docs/stage3-full-feature-test-matrix.md`.
 
+Supersession note (2026-07-26): default-off and open-live-row statements below
+describe this historical audit only. The current specification defaults new
+supported chats on while preserving existing upgrade choices, and the active
+matrix records the completed Windows live-management and restart evidence.
+
 ## Verified headless baseline
 
 - Node 22.23.1 and npm 10.9.8.
@@ -27,23 +32,23 @@ UI. The active integrated exit ledger is
 - Per-chat custom capability toggles now persist in SQLite, reload after a
   database restart, and are revalidated on every call. Missing, malformed,
   partial, extra-key, stale, and unsupported permission state fails closed;
-  launcher permission claims cannot override stored state, and Tier 3 still
-  requires fresh approval.
+  launcher permission claims cannot override stored state; full-access Tier 3
+  auto-approves, while every other writable mode still requires fresh approval.
 
 ## Requirement audit
 
-| Area                              | Headless result                                                                                                     | Closeout state                                                      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Transport                         | Real stdio SDK child passes; no loopback port                                                                       | Ready                                                               |
-| Caller identity                   | Launch identity, permission mode, and strict custom capability toggles are revalidated against SQLite for each call | Ready                                                               |
-| Exposure and harness registration | Default-off migration and Codex/Claude per-run registration exist                                                   | Automated ready; restart/reconnect manual row open                  |
-| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                                      | Ready                                                               |
-| Mutations                         | Structured handlers, idempotent `launch_run`, approval, and DB-backed error tests pass                              | Headless ready; live approval evidence remains in the manual matrix |
-| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                                                | Core gate ready                                                     |
-| Approvals                         | Durable coordinator, app decision bridge, lifecycle, timeout, grant, and concurrency tests pass                     | Automated ready; active/background/timeout manual rows open         |
-| Audit                             | SQLite, redaction, filtering, paging, correlation, invocations, decisions, and grants pass                          | Automated ready; live decision/history manual rows open             |
-| Cross-agent spawn                 | Durable creation, lineage, both directions, launch consumption, restart recovery, and failure pass                  | Automated ready; real Codex and Claude evidence remains in S3-F5-T3 |
-| Safety UI                         | Exposure, approval, badge, and audit viewer model/component tests pass                                              | Code ready; manual UI rows open                                     |
+| Area                              | Headless result                                                                                                     | Closeout state                                                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Transport                         | Real stdio SDK child passes; no loopback port                                                                       | Ready                                                                                |
+| Caller identity                   | Launch identity, permission mode, and strict custom capability toggles are revalidated against SQLite for each call | Ready                                                                                |
+| Exposure and harness registration | Historical default-off migration and Codex/Claude per-run registration exist                                        | Superseded by the current default-on supported-chat policy and live restart evidence |
+| Tier 0 reads                      | Bounded project, task, chat, run, worktree, artifact, and search handlers pass                                      | Ready                                                                                |
+| Mutations                         | Structured handlers, idempotent `launch_run`, approval, and DB-backed error tests pass                              | Headless ready; live approval evidence remains in the manual matrix                  |
+| Permissions and self-reference    | Tier matrix and exhaustive self-reference tests pass                                                                | Core gate ready                                                                      |
+| Approvals                         | Durable coordinator, app decision bridge, lifecycle, timeout, grant, and concurrency tests pass                     | Automated ready; active/background/timeout manual rows open                          |
+| Audit                             | SQLite, redaction, filtering, paging, correlation, invocations, decisions, and grants pass                          | Automated ready; live decision/history manual rows open                              |
+| Cross-agent spawn                 | Durable creation, lineage, both directions, launch consumption, restart recovery, and failure pass                  | Automated ready; real Codex and Claude evidence remains in S3-F5-T3                  |
+| Safety UI                         | Exposure, approval, badge, and audit viewer model/component tests pass                                              | Code ready; manual UI rows open                                                      |
 
 ## Corrected task state
 

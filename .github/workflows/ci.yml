@@ -92,9 +92,25 @@ jobs:
       - name: Inspect Windows Preview
         run: npm run package:inspect:preview:win
 
+      - name: Audit Windows Preview
+        run: npm run package:audit:preview:win
+
+      - name: Rehash Windows Preview audit
+        shell: pwsh
+        run: |
+          $report = "release-preview/windows-security-report.json"
+          $expected = ((Get-Content "$report.sha256" -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $report -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Windows Preview security report changed after audit."
+          }
+
       - name: Upload Windows Preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: flapstack-preview-windows-${{ github.sha }}
-          path: release-preview/win-unpacked
+          path: |
+            release-preview/win-unpacked
+            release-preview/windows-security-report.json
+            release-preview/windows-security-report.json.sha256
           if-no-files-found: error

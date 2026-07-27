@@ -6,28 +6,20 @@ import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabas
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
 import { clearClaudeCaches } from "./claude"
-import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
+import { decryptClaudeCredential, encryptClaudeCredential } from "../../claude-credential-storage"
 
 /**
  * Encrypt token using Electron's safeStorage
  */
 function encryptToken(token: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    console.warn("[AnthropicAccounts] Encryption not available, storing as base64")
-    return Buffer.from(token).toString("base64")
-  }
-  return safeStorage.encryptString(token).toString("base64")
+  return encryptClaudeCredential(token, safeStorage)
 }
 
 /**
  * Decrypt token using Electron's safeStorage
  */
-function decryptToken(encrypted: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return decodePlaintextClaudeToken(encrypted)
-  }
-  const buffer = Buffer.from(encrypted, "base64")
-  return safeStorage.decryptString(buffer)
+function decryptToken(encrypted: string, migrateLegacy: (encrypted: string) => void): string {
+  return decryptClaudeCredential(encrypted, safeStorage, migrateLegacy)
 }
 
 /**
@@ -176,7 +168,12 @@ export const anthropicAccountsRouter = router({
     }
 
     try {
-      const token = decryptToken(account.oauthToken)
+      const token = decryptToken(account.oauthToken, (oauthToken) => {
+        db.update(anthropicAccounts)
+          .set({ oauthToken })
+          .where(eq(anthropicAccounts.id, account.id))
+          .run()
+      })
       return { token, error: null }
     } catch (error) {
       console.error("[AnthropicAccounts] Decrypt error:", error)
@@ -200,6 +197,15 @@ export const anthropicAccountsRouter = router({
     if (!account) {
       throw new Error("Account not found")
     }
+
+    let encryptedToken = account.oauthToken
+    decryptToken(account.oauthToken, (oauthToken) => {
+      db.update(anthropicAccounts)
+        .set({ oauthToken })
+        .where(eq(anthropicAccounts.id, account.id))
+        .run()
+      encryptedToken = oauthToken
+    })
 
     // Update or insert settings
     db.insert(anthropicSettings)
@@ -229,7 +235,7 @@ export const anthropicAccountsRouter = router({
     db.insert(claudeCodeCredentials)
       .values({
         id: "default",
-        oauthToken: account.oauthToken,
+        oauthToken: encryptedToken,
         connectedAt: new Date(),
       })
       .run()
@@ -412,13 +418,21 @@ export const anthropicAccountsRouter = router({
       return { migrated: false, reason: "no_legacy" }
     }
 
+    let encryptedToken = legacyCred.oauthToken
+    decryptToken(legacyCred.oauthToken, (oauthToken) => {
+      db.update(claudeCodeCredentials)
+        .set({ oauthToken })
+        .where(eq(claudeCodeCredentials.id, "default"))
+        .run()
+      encryptedToken = oauthToken
+    })
     const newId = createId()
 
     // Insert into new table
     db.insert(anthropicAccounts)
       .values({
         id: newId,
-        oauthToken: legacyCred.oauthToken,
+        oauthToken: encryptedToken,
         displayName: "Anthropic Account",
         connectedAt: legacyCred.connectedAt,
         desktopUserId: legacyCred.userId,

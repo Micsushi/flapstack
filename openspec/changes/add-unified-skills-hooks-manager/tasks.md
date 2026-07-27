@@ -2,6 +2,7 @@
 
 ### S4-F1-T1 — Reconcile the Stage 3 extension baseline
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: One tested capability registry describes every currently supported extension surface.
@@ -27,6 +28,7 @@
 
 ### S4-F1-T2 — Add safe native extension adapters
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Native extension files can be read and changed without escaping allowed roots or losing data.
@@ -53,6 +55,7 @@
 
 ### S4-F1-T3 — Add project and task enablement policy
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Runs resolve extension policy from user default through project and task scope.
@@ -81,6 +84,7 @@
 
 ### S4-F1-T4 — Add explicit cross-harness copy and sharing
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Users copy supported extensions between harnesses with an exact preview.
@@ -107,6 +111,7 @@
 
 ### S4-F1-T5 — Build the unified manager UI
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: One Settings surface filters and manages extensions by harness, kind, source, and scope.
@@ -133,11 +138,12 @@
   project enables an exact, review-gated policy preview; the preview was
   cancelled without mutation. Completion remains unchecked because applied
   user/project/task mutation, Dev restart/runtime proof, screen-reader
-  observation, and packaged UI evidence remain manual verification remaining;
+  observation, and packaged UI evidence remain Tier 2 live verification;
   see `docs/stage4-s4-f1-t5-unified-manager.md`.
 
 ### S4-F1-T6 — Add hook validation, dry-run, and enablement
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
 - Outcome: Supported hooks can be inspected and tested without silent execution.
@@ -163,13 +169,16 @@
 
 ### S4-F1-T7 — Close unified extension acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F1
-- Outcome: Supported extension management works after restart in Dev and packaged preview.
+- Outcome: Supported extension management works after restart in verified Dev.
 - Scope: Run focused tests, Node 22 full gate, matrix S4-SH01 through S4-SH04, docs, and limitation review.
 - Out of scope: Unsupported provider parity.
 - Acceptance: One user and one project extension are exercised per supported harness; hook safety rows pass; limitations are visible.
-- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and packaged preview matrix evidence.
+- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and
+  production-path extension MCP/live evidence. Packaged macOS evidence remains
+  the separate S4-I03 release gate.
 - Blocked by: S4-F1-T3, S4-F1-T4, S4-F1-T5, S4-F1-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

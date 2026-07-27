@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { execFile, spawn, spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { basename, dirname, join } from "node:path"
+import { inspectSafeStorageBackend } from "../safe-storage-backend"
 
 const require = createRequire(import.meta.url)
 const secretsFileName = "usage-secrets.json"
@@ -48,6 +49,7 @@ function credentialService(): string {
 
 type SafeStorage = {
   isEncryptionAvailable(): boolean
+  getSelectedStorageBackend?(): string
   encryptString(plain: string): Buffer
   decryptString(encrypted: Buffer): string
 }
@@ -136,43 +138,64 @@ export function setUsageSecret(key: string, value: string | null): void {
   throw new Error("Secure credential storage is unavailable; the credential was not stored")
 }
 
+function decodeLegacyRawSecret(stored: string): string | null {
+  if (stored.startsWith("plain:")) {
+    const plaintext = stored.slice("plain:".length)
+    return plaintext && !/[\x00-\x1f\x7f]/.test(plaintext) ? plaintext : null
+  }
+  if (!stored.startsWith("enc:")) return null
+
+  const safe = getSafeStorage()
+  if (!safe || !inspectSafeStorageBackend(safe).available) return null
+  try {
+    const plaintext = safe.decryptString(Buffer.from(stored.slice("enc:".length), "base64"))
+    return plaintext && !/[\x00-\x1f\x7f]/.test(plaintext) ? plaintext : null
+  } catch {
+    return null
+  }
+}
+
+function setNativeUsageSecret(key: string, value: string): boolean {
+  if (process.platform === "darwin") return setKeychainSecret(key, value)
+  if (process.platform === "win32") return setWindowsCredential(key, value)
+  if (process.platform === "linux") return setLinuxSecret(key, value)
+  return false
+}
+
 /** Read a secret by key, decrypting as needed. Returns null when unset. */
 export function getUsageSecret(key: string): string | null {
   if (process.platform === "darwin") {
     const keychainValue = getKeychainSecret(key)
-    if (keychainValue != null) return keychainValue
+    if (keychainValue != null) {
+      clearRawSecret(key)
+      return keychainValue
+    }
   }
   if (process.platform === "win32") {
     const value = getWindowsCredential(key)
-    if (value != null) return value
+    if (value != null) {
+      clearRawSecret(key)
+      return value
+    }
   }
   if (process.platform === "linux") {
     const value = getLinuxSecret(key)
-    if (value != null) return value
+    if (value != null) {
+      clearRawSecret(key)
+      return value
+    }
   }
   const stored = readRaw()[key]
   if (!stored) return null
-  if (stored.startsWith("plain:")) return stored.slice("plain:".length)
-  if (stored.startsWith("enc:")) {
-    const safe = getSafeStorage()
-    if (!safe?.isEncryptionAvailable()) return null
-    try {
-      return safe.decryptString(Buffer.from(stored.slice("enc:".length), "base64"))
-    } catch {
-      return null
-    }
-  }
-  return null
+  const legacyValue = decodeLegacyRawSecret(stored)
+  if (legacyValue == null || !setNativeUsageSecret(key, legacyValue)) return null
+  clearRawSecret(key)
+  return legacyValue
 }
 
 /** True when a secret is present (used by settings UI without exposing value). */
 export function hasUsageSecret(key: string): boolean {
-  if (process.platform === "darwin")
-    return getKeychainSecret(key) != null || Boolean(readRaw()[key])
-  if (process.platform === "win32")
-    return getWindowsCredential(key) != null || Boolean(readRaw()[key])
-  if (process.platform === "linux") return getLinuxSecret(key) != null || Boolean(readRaw()[key])
-  return Boolean(readRaw()[key])
+  return getUsageSecret(key) != null
 }
 
 /** macOS Keychain is readable by the app and its user LaunchAgent daemon,
@@ -220,7 +243,10 @@ export function getUsageSecretAsync(key: string): Promise<string | null> {
       "/usr/bin/security",
       ["find-generic-password", "-s", credentialService(), "-a", keychainAccount(key), "-w"],
       { encoding: "utf8", timeout: 10_000 },
-      (error, stdout) => resolve(error ? null : stdout.trim() || null),
+      (error, stdout) => {
+        const value = error ? null : stdout.trim() || null
+        resolve(value ?? getUsageSecret(key))
+      },
     )
   })
 }

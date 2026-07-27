@@ -1,8 +1,15 @@
 # Stage 4 Execution Plan
 
-Stage 4 is the prerequisite operating-environment stage for Stage 6. Its eleven
-feature boards contain 87 independently pick-up-able tasks. This document orders those boards without
-duplicating task state; the checkbox in each OpenSpec `tasks.md` is authoritative.
+Stage 4 is the prerequisite operating-environment stage for Stage 5 Windows,
+which in turn is the prerequisite for Stage 6. Its eleven feature boards contain
+87 independently pick-up-able work records. Of those, 68 are core-only, five
+are mixed records whose checkbox closes on their core scope, and 14 are
+capability-only. Thus 73 task checkboxes gate Stage 4 implementation
+completion. This document orders those boards without duplicating task state;
+the checkbox in each OpenSpec `tasks.md` is authoritative.
+Checkboxes use the Tier 2 definition in
+[`completion-tiers.md`](completion-tiers.md). Owner testing lives separately in
+[`owner-manual-testing-backlog.md`](owner-manual-testing-backlog.md).
 
 ## `0.1.0` beta release position
 
@@ -50,11 +57,10 @@ During and after work:
 3. Run the smallest relevant checks during implementation, then one broad
    feature gate after the feature code path is complete. Leave live, package,
    provider, and OS evidence open until observed.
-4. Update authoritative task checkboxes and evidence only after their acceptance
-   is real.
-5. Release the feature owner after code/headless acceptance. UI-only evidence
-   remains named and unchecked for the consolidated Stage 4 UI sweep instead of
-   holding the worker slot.
+4. Update authoritative task checkboxes only after Tier 2 acceptance is real.
+5. A code/headless packet may reach Tier 1 and release its implementation slot,
+   but required app, MCP, UI, provider, or package evidence stays open for the
+   consolidated Tier 2 sweep.
 
 Suggested branch names use `codex/s4-fN-feature-name`. One feature branch should
 contain one reviewable feature outcome with small internal checkpoint commits.
@@ -143,27 +149,36 @@ schema, or generated-file seam.
 - S4-F12-T7 promotes only starter agent types that pass the approved capability,
   safety, prompt-injection, and cross-runtime evaluation gates.
 
-### Wave 6 — Close each feature's code and headless acceptance
+### Wave 6 — Reach Tier 1 code completion for each feature
 
 - S4-F1-T7, S4-F2-T6, S4-F3-T10, S4-F4-T7, S4-F5-T8, S4-F6-T8,
   S4-F7-T7, S4-F8-T8, S4-F9-T8, S4-F11-T10, and S4-F12-T8.
-- A feature's code packet can close when focused tests, documentation, recovery
-  or rollback, and headless evidence pass. Required visual or interactive rows
-  remain named and unchecked for Wave 7.
+- A feature's code packet reaches Tier 1 when focused tests, documentation,
+  recovery or rollback, and headless evidence pass. Its authoritative
+  completion checkbox remains open until required Tier 2 evidence passes.
 
-### Wave 7 — Integrated Stage 4 exit
+### Wave 7 — Integrated Tier 2 Stage 4 exit
 
 - Exercise all eleven features in one project using
   `docs/stage4-full-feature-test-matrix.md`.
-- Run one consolidated unlocked-Mac UI, accessibility, multi-window, and direct
-  interaction sweep for every deferred visual row.
+- Run automated semantic/accessibility checks and the authorized real-app,
+  product-MCP, test-control-MCP, restart, and multi-window checks required by
+  the 52 `T2-core` rows.
 - Run Node 22 `npm run check` and strict validation for all eleven OpenSpec changes.
 - Start live development only with `npm run dev`; run `npm run dev:verify`
   before claiming the Stage 4 checkout and `Flapstack Dev` profile are running.
-- Use `npm run package:preview:mac` for packaged macOS proof. Keep Windows,
-  Linux, credentialed-provider, and unavailable-device rows open until observed.
+- Use `npm run package:preview:mac` for the separate packaged macOS release
+  gate. Keep credentialed-provider, remote, platform, and unavailable-device
+  capability rows open until observed.
 - Perform final security, migration, accessibility, recovery, and documentation
-  review. Stage 4 exits only when all 87 tasks and the integrated matrix are closed.
+  review. Stage 4 becomes implementation-complete when all 73
+  implementation-gating task checkboxes and all 52 integrated `T2-core` matrix
+  rows are closed.
+- Add remaining owner-perspective checks to the Tier 3 backlog. They do not
+  block implementation completion unless explicitly labeled `release-blocking`.
+- Capability rows certify only their named provider or remote. The packaged
+  macOS row remains a release gate. Neither enters the Stage 4 implementation
+  denominator.
 
 ## Fixed product decisions
 
@@ -202,4 +217,5 @@ remain outside Stage 4 acceptance. See docs/stage5-execution-plan.md.
 Mobile control, screenshot/visual-context tooling, terminal-grid/swarm views,
 onboarding, reusable personalities, product polish, performance, organization
 usage, and public multi-platform distribution are promoted into Stage 6. Stage
-6 starts only after Stage 5 Windows acceptance. See docs/stage6-execution-plan.md.
+6 starts only after Stage 5 `T2-core` implementation acceptance. See
+docs/stage6-execution-plan.md.

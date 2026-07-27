@@ -42,12 +42,13 @@ function elf(arch: "arm64" | "x64") {
   return buffer
 }
 
-function pe(arch: "arm64" | "x64") {
-  const buffer = Buffer.alloc(256)
+function pe(arch: "arm64" | "x64" | "x86", peOffset = 128) {
+  const buffer = Buffer.alloc(peOffset + 8)
   buffer.write("MZ", 0, "ascii")
-  buffer.writeUInt32LE(128, 0x3c)
-  buffer.write("PE\0\0", 128, "ascii")
-  buffer.writeUInt16LE(arch === "arm64" ? 0xaa64 : 0x8664, 132)
+  buffer.writeUInt32LE(peOffset, 0x3c)
+  buffer.write("PE\0\0", peOffset, "ascii")
+  const machine = arch === "arm64" ? 0xaa64 : arch === "x86" ? 0x014c : 0x8664
+  buffer.writeUInt16LE(machine, peOffset + 4)
   return buffer
 }
 
@@ -118,6 +119,7 @@ describe("packaged harness preparation", () => {
       }),
     ).toMatchObject({
       targets: ["darwin-arm64"],
+      channel: "preview",
       builderArgs: expect.arrayContaining([
         "--mac",
         "--arm64",
@@ -137,6 +139,7 @@ describe("packaged harness preparation", () => {
       }),
     ).toMatchObject({
       targets: ["win32-x64"],
+      channel: "preview",
       builderArgs: expect.arrayContaining([
         "--win",
         "--x64",
@@ -155,6 +158,7 @@ describe("packaged harness preparation", () => {
       }),
     ).toMatchObject({
       targets: ["win32-x64"],
+      channel: "release",
       builderArgs: expect.arrayContaining([
         "--win",
         "--x64",
@@ -162,10 +166,123 @@ describe("packaged harness preparation", () => {
         "--publish=never",
       ]),
     })
-    expect(requireFromTest("../electron-builder.release.win.cjs")).toMatchObject({
+    const releaseConfig = requireFromTest("../electron-builder.release.win.cjs")
+    expect(releaseConfig).toMatchObject({
       forceCodeSigning: true,
-      artifactName: "${productName}-${version}-${arch}.${ext}",
+      nsis: {
+        artifactName: "${productName}-Setup-${version}-${arch}.${ext}",
+      },
+      portable: {
+        artifactName: "${productName}-Portable-${version}-${arch}.${ext}",
+      },
     })
+    expect(releaseConfig.artifactName).toBeUndefined()
+  })
+
+  it("keeps ONNX Runtime payload filtering target- and architecture-specific", () => {
+    const packageJson = requireFromTest("../package.json")
+    expect(packageJson.build.files).toEqual(
+      expect.arrayContaining([
+        "!node_modules/node-pty/prebuilds/**/*",
+        "!node_modules/node-pty/third_party/**/*",
+        "!node_modules/better-sqlite3/build/Release/test_extension.node",
+        "!node_modules/**/{test,tests,__tests__}/**/*",
+        "!node_modules/**/*.test.{js,cjs,mjs,ts,tsx}",
+        "!**/*.{obj,pdb,lib,exp,iobj,ipdb,ilk}",
+      ]),
+    )
+    expect(packageJson.build.files).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^!node_modules\/onnxruntime-node\/bin\/napi-v3\/(?:darwin|linux|win32)\//,
+        ),
+      ]),
+    )
+
+    expect(packageJson.build.win.files).toEqual([
+      ...packageJson.build.files,
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/win32/!(${arch})/**/*",
+    ])
+    expect(packageJson.build.mac.files).toEqual([
+      ...packageJson.build.files,
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/!(${arch})/**/*",
+    ])
+    expect(packageJson.build.linux.files).toEqual([
+      ...packageJson.build.files,
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/!(${arch})/**/*",
+    ])
+
+    expect(requireFromTest("../electron-builder.preview.win.cjs").win.files).toEqual(
+      packageJson.build.win.files,
+    )
+    expect(requireFromTest("../electron-builder.release.win.cjs").win.files).toEqual(
+      packageJson.build.win.files,
+    )
+    expect(requireFromTest("../electron-builder.preview.mac.cjs").mac.files).toEqual(
+      packageJson.build.mac.files,
+    )
+    expect(requireFromTest("../electron-builder.release.mac.cjs").mac.files).toEqual(
+      packageJson.build.mac.files,
+    )
+
+    const { FileMatcher } = requireFromTest("app-builder-lib/out/fileMatcher.js")
+    const targets = [
+      ["win", "win32", "x64"],
+      ["mac", "darwin", "x64"],
+      ["mac", "darwin", "arm64"],
+      ["linux", "linux", "x64"],
+      ["linux", "linux", "arm64"],
+    ] as const
+    for (const [configKey, platform, architecture] of targets) {
+      const appMatcher = new FileMatcher(
+        process.cwd(),
+        process.cwd(),
+        (pattern: string) => pattern.replaceAll("${arch}", architecture),
+        packageJson.build[configKey].files,
+      )
+      const appFilter = appMatcher.createFilter()
+      expect(
+        appFilter(
+          join(process.cwd(), "native", "stt-sidecar", "target", "release", "build.exe"),
+          lstatSync(process.cwd()),
+        ),
+      ).toBe(false)
+      expect(
+        appFilter(join(process.cwd(), "out", "main", "index.js"), lstatSync(process.cwd())),
+      ).toBe(true)
+
+      const matcher = new FileMatcher(
+        process.cwd(),
+        process.cwd(),
+        (pattern: string) => pattern.replaceAll("${arch}", architecture),
+        ["**/*", ...packageJson.build[configKey].files],
+      )
+      const filter = matcher.createFilter()
+      const keptBindings = ["win32", "darwin", "linux"].flatMap((candidatePlatform) =>
+        ["x64", "arm64"]
+          .filter((candidateArchitecture) => {
+            const binding = join(
+              process.cwd(),
+              "node_modules",
+              "onnxruntime-node",
+              "bin",
+              "napi-v3",
+              candidatePlatform,
+              candidateArchitecture,
+              "onnxruntime_binding.node",
+            )
+            return filter(binding, lstatSync(binding))
+          })
+          .map((candidateArchitecture) => `${candidatePlatform}-${candidateArchitecture}`),
+      )
+      expect(keptBindings).toEqual([`${platform}-${architecture}`])
+    }
   })
 
   it("uses the explicit unsigned config for macOS beta release packages", () => {
@@ -208,6 +325,18 @@ describe("packaged harness preparation", () => {
       architectures: ["x64"],
     })
     expect(inspectBinaryArchitecture(executable(dir, "windows.exe", pe("x64")))).toMatchObject({
+      format: "pe",
+      architectures: ["x64"],
+    })
+    expect(
+      inspectBinaryArchitecture(executable(dir, "windows-elevate.exe", pe("x86"))),
+    ).toMatchObject({
+      format: "pe",
+      architectures: ["x86"],
+    })
+    expect(
+      inspectBinaryArchitecture(executable(dir, "renamed.data", pe("x64", 8192))),
+    ).toMatchObject({
       format: "pe",
       architectures: ["x64"],
     })

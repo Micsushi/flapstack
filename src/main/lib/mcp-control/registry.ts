@@ -19,6 +19,7 @@ import {
   isMcpInvocationBetaEnabled,
   isMcpToolBetaEnabled,
 } from "../beta-features/settings"
+import { isFrozenAgentProfileToolAllowed } from "../agent-profiles/runtime-authority"
 
 export type McpInvocationDependencies = {
   /** Resolves immutable launch identity against durable state on every check. */
@@ -636,7 +637,7 @@ export async function invokeMcpControlTool(
     dependencies,
     invocationId,
     startedAt,
-    false,
+    tool.tier === 3 && trustedCaller.caller.permissionMode === "full-access",
   )
 }
 
@@ -801,7 +802,11 @@ function executeImplementedTool(
       data: {
         transport: "stdio",
         caller: snapshotCaller(caller),
-        tools: listImplementedMcpControlTools(),
+        tools: listImplementedMcpControlTools().filter(
+          (tool) =>
+            !caller.profileRuntimeAuthority ||
+            isFrozenAgentProfileToolAllowed(caller.profileRuntimeAuthority, tool.name),
+        ),
       },
     }
   }

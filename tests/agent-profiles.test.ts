@@ -30,6 +30,7 @@ import {
   agentProfileApprovalContextHash,
 } from "../src/main/lib/agent-profiles/approval-authority"
 import { StandaloneAgentLaunchService } from "../src/main/lib/agent-profiles/standalone-launch"
+import { readDurableAgentProfileRuntimeAuthority } from "../src/main/lib/agent-profiles/runtime-authority"
 import {
   AgentProfileWorkflowBindingService,
   createAgentProfileWorkflowMaterializerPort,
@@ -118,6 +119,155 @@ describe("0038 Agent Profile migration", () => {
   })
 })
 
+describe("0043 Agent Profile snapshot migration", () => {
+  it("upgrades referenced snapshots without losing rows or foreign-key constraints", () => {
+    const journal = JSON.parse(readFileSync(resolve(migrations, "meta/_journal.json"), "utf8")) as {
+      entries: Array<{ idx: number; tag: string }>
+    }
+    const pre0043Directory = join(directory, "migrations-through-0042")
+    cpSync(migrations, pre0043Directory, { recursive: true })
+    writeFileSync(
+      resolve(pre0043Directory, "meta/_journal.json"),
+      JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.idx <= 42) }),
+    )
+
+    const upgrade = new Database(join(directory, "referenced-snapshot-upgrade.db"))
+    try {
+      upgrade.pragma("foreign_keys = ON")
+      migrate(drizzle(upgrade, { schema }), { migrationsFolder: pre0043Directory })
+      seedProject(upgrade)
+      seedWorkflow(upgrade)
+      upgrade
+        .prepare(
+          `INSERT INTO agent_profiles
+           (id, name, category, scope_type, source, current_version, created_at, updated_at)
+           VALUES ('upgrade-profile', 'Upgrade profile', 'custom', 'user', 'user', 1, 1, 1)`,
+        )
+        .run()
+      upgrade
+        .prepare(
+          `INSERT INTO agent_profile_versions
+           (profile_id, version, capability_json, presentation_json, provenance_json, created_at)
+           VALUES ('upgrade-profile', 1, '{"schemaVersion":1}', '{"schemaVersion":1}', '{}', 1)`,
+        )
+        .run()
+      upgrade
+        .prepare(
+          `INSERT INTO agent_profile_snapshots
+           (id, profile_id, profile_version, resolved_json, digest, created_at)
+           VALUES ('upgrade-snapshot', 'upgrade-profile', 1, '{"schemaVersion":1}', ?, 1)`,
+        )
+        .run("a".repeat(64))
+      upgrade
+        .prepare(
+          `INSERT INTO agent_profile_workflow_bindings
+           (workflow_run_id, step_id, profile_id, profile_version, binding_json, snapshot_id,
+            version, created_at, updated_at)
+           VALUES
+           ('workflow-1', 'implement', 'upgrade-profile', 1, '{"schemaVersion":1}',
+            'upgrade-snapshot', 1, 1, 1)`,
+        )
+        .run()
+      upgrade
+        .prepare(
+          `INSERT INTO agent_profile_standalone_launches
+           (id, request_id, request_fingerprint, source_kind, source_id, snapshot_id, chat_id,
+            sub_chat_id, run_id, state, created_at, updated_at)
+           VALUES
+           ('upgrade-launch', 'upgrade-request', 'upgrade-fingerprint', 'task', 'task-1',
+            'upgrade-snapshot', 'workflow-chat', 'workflow-chat', 'upgrade-run', 'running', 1, 1)`,
+        )
+        .run()
+
+      migrate(drizzle(upgrade, { schema }), { migrationsFolder: migrations })
+
+      expect(
+        upgrade
+          .prepare(
+            `SELECT id, profile_id, profile_version, resolved_json, digest
+             FROM agent_profile_snapshots WHERE id = 'upgrade-snapshot'`,
+          )
+          .get(),
+      ).toEqual({
+        id: "upgrade-snapshot",
+        profile_id: "upgrade-profile",
+        profile_version: 1,
+        resolved_json: '{"schemaVersion":1}',
+        digest: "a".repeat(64),
+      })
+      expect(
+        upgrade
+          .prepare(
+            `SELECT snapshot_id FROM agent_profile_workflow_bindings
+             WHERE workflow_run_id = 'workflow-1' AND step_id = 'implement'`,
+          )
+          .get(),
+      ).toEqual({ snapshot_id: "upgrade-snapshot" })
+      expect(
+        upgrade
+          .prepare(
+            "SELECT snapshot_id FROM agent_profile_standalone_launches WHERE id = 'upgrade-launch'",
+          )
+          .get(),
+      ).toEqual({ snapshot_id: "upgrade-snapshot" })
+      expect(upgrade.pragma("foreign_key_check")).toEqual([])
+
+      for (const table of [
+        "agent_profile_workflow_bindings",
+        "agent_profile_standalone_launches",
+      ]) {
+        expect(
+          (
+            upgrade.pragma(`foreign_key_list(${table})`) as Array<{
+              table: string
+              from: string
+              on_delete: string
+            }>
+          ).find((foreignKey) => foreignKey.from === "snapshot_id"),
+        ).toEqual(
+          expect.objectContaining({ table: "agent_profile_snapshots", on_delete: "RESTRICT" }),
+        )
+      }
+
+      expect(() =>
+        upgrade
+          .prepare(
+            `INSERT INTO agent_profile_snapshots
+             (id, profile_id, profile_version, resolved_json, digest, created_at)
+             VALUES ('schema-2-snapshot', 'upgrade-profile', 1, '{"schemaVersion":2}', ?, 2)`,
+          )
+          .run("b".repeat(64)),
+      ).not.toThrow()
+      expect(() =>
+        upgrade
+          .prepare(
+            `INSERT INTO agent_profile_snapshots
+             (id, profile_id, profile_version, resolved_json, digest, created_at)
+             VALUES ('schema-3-snapshot', 'upgrade-profile', 1, '{"schemaVersion":3}', ?, 3)`,
+          )
+          .run("c".repeat(64)),
+      ).toThrow(/CHECK constraint failed/)
+      expect(() =>
+        upgrade.prepare("DELETE FROM agent_profile_snapshots WHERE id = 'upgrade-snapshot'").run(),
+      ).toThrow(/agent profile snapshots are immutable/)
+      expect(() =>
+        upgrade
+          .prepare(
+            `INSERT INTO agent_profile_standalone_launches
+             (id, request_id, request_fingerprint, source_kind, source_id, snapshot_id, chat_id,
+              sub_chat_id, run_id, state, created_at, updated_at)
+             VALUES
+             ('missing-launch', 'missing-request', 'missing-fingerprint', 'task', 'task-1',
+              'missing-snapshot', 'workflow-chat', 'workflow-chat', 'missing-run', 'running', 1, 1)`,
+          )
+          .run(),
+      ).toThrow(/FOREIGN KEY constraint failed/)
+    } finally {
+      upgrade.close()
+    }
+  })
+})
+
 describe("Agent Profile workflow production binding", () => {
   it("resolves the current database for every materialization", async () => {
     seedWorkflow(sqlite)
@@ -184,6 +334,10 @@ describe("Agent Profile lifecycle and resolution", () => {
     )
     expect(starterCopy.profile.id).not.toBe("builtin.planner")
     expect(starterCopy.version.definition.base).toBeNull()
+    expect(starterCopy.version.definition.capability).toMatchObject({
+      harness: "claude-code",
+      runtimePreference: "claude-code",
+    })
 
     const base = approvedCreate(
       service,
@@ -509,6 +663,245 @@ describe("Agent Profile capability approvals", () => {
 })
 
 describe("workflow and standalone Agent Profile launches", () => {
+  it("blocks unsupported Codex tool policy before standalone or workflow confirmation", async () => {
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Blocked Codex profile",
+        definition({
+          harness: "codex",
+          runtimePreference: "codex",
+          tools: ["shell"],
+        }),
+      ),
+    )
+    const launches = new StandaloneAgentLaunchService(databasePath)
+    const request = {
+      requestId: "blocked-codex-profile",
+      source: { kind: "studio" as const, projectId: "project-1" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    }
+    const beforeStandalone = sqlite
+      .prepare(
+        `SELECT
+           (SELECT count(*) FROM chats) chats,
+           (SELECT count(*) FROM agent_runs) runs,
+           (SELECT count(*) FROM agent_profile_standalone_launches) launches`,
+      )
+      .get()
+    const preview = launches.preview(request)
+    expect(preview.conflicts).toContainEqual(
+      expect.objectContaining({
+        code: "runtime-tool-policy-unsupported",
+        message: expect.stringMatching(/cannot prove enforcement.*frozen tool allowlist/i),
+      }),
+    )
+    await expect(
+      launches.launch({ ...request, confirmedSnapshotDigest: preview.digest }, false),
+    ).rejects.toMatchObject({ code: "launch-blocked" })
+    expect(
+      sqlite
+        .prepare(
+          `SELECT
+             (SELECT count(*) FROM chats) chats,
+             (SELECT count(*) FROM agent_runs) runs,
+             (SELECT count(*) FROM agent_profile_standalone_launches) launches`,
+        )
+        .get(),
+    ).toEqual(beforeStandalone)
+
+    seedWorkflow(sqlite)
+    const workflows = new AgentProfileWorkflowBindingService(sqlite)
+    workflows.bind(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-1",
+        stepId: "implement",
+        profile: { profileId: profile.profile.id, version: 1 },
+        workflowRole: "blocked-codex-worker",
+        inputSchema: null,
+        outputSchema: null,
+        overrides: null,
+      },
+      0,
+    )
+    const beforeWorkflow = sqlite.prepare("SELECT count(*) chats FROM chats").get()
+    const workflowPreview = workflows.previewForConfirmation("workflow-1", "implement")
+    expect(workflowPreview.conflicts.map((conflict) => conflict.code)).toContain(
+      "runtime-tool-policy-unsupported",
+    )
+    expect(() => workflows.confirm("workflow-1", "implement", 1)).toThrowError(
+      expect.objectContaining({ code: "launch-blocked" }),
+    )
+    expect(sqlite.prepare("SELECT count(*) chats FROM chats").get()).toEqual(beforeWorkflow)
+    expect(
+      sqlite
+        .prepare(
+          `SELECT snapshot_id
+           FROM agent_profile_workflow_bindings
+           WHERE workflow_run_id = 'workflow-1' AND step_id = 'implement'`,
+        )
+        .get(),
+    ).toEqual({ snapshot_id: null })
+  })
+
+  it("lets auto Runtime profiles inherit a narrowed durable project default", () => {
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runtime_defaults
+         (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
+         VALUES ('runtime-default', 'project', 'project-1', 'codex', 'codex-enhanced', 1, 1, 1)`,
+      )
+      .run()
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Default Runtime profile",
+        definition({ harness: "codex", runtimePreference: "auto" }),
+      ),
+    )
+    const preview = new StandaloneAgentLaunchService(databasePath).preview({
+      requestId: "auto-runtime-preview",
+      source: { kind: "studio", projectId: "project-1" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    })
+    expect(preview.capability.runtimePreference).toBe("auto")
+    expect(preview.runtimeResolution).toEqual({
+      preference: "codex-enhanced",
+      source: "project",
+      defaultVersion: 1,
+      resolvedRuntime: "codex",
+    })
+    expect(preview.evaluation.runtime).toBe("codex-enhanced")
+    expect(preview.conflicts.map((conflict) => conflict.code)).not.toContain(
+      "runtime-policy-blocked",
+    )
+  })
+
+  it("binds starter evaluation and launch to the exact enforceable Runtime", async () => {
+    const profileService = createAgentProfileService(sqlite)
+    profileService.ensureStarterCatalog()
+    const evaluator = new AgentProfileEvaluationService(sqlite)
+    evaluator.run({
+      profile: { profileId: "builtin.planner", version: 1 },
+      runtime: "claude-code",
+      model: "default-unpinned",
+      fixtures: AGENT_PROFILE_REQUIRED_EVALUATION_FIXTURES,
+    })
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runtime_defaults
+         (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
+         VALUES ('project:project-1:claude-code', 'project', 'project-1', 'claude-code',
+          'claude-code', 1, 1, 1)`,
+      )
+      .run()
+    const launches = new StandaloneAgentLaunchService(databasePath)
+    const request = {
+      requestId: "enhanced-runtime-launch",
+      source: { kind: "studio" as const, projectId: "project-1" },
+      profile: { profileId: "builtin.planner", version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    }
+    const blocked = launches.preview(request)
+    expect(blocked.runtimeResolution).toEqual({
+      preference: "claude-code",
+      source: "profile",
+      defaultVersion: null,
+      resolvedRuntime: "claude-code",
+    })
+    expect(blocked.evaluation.runtime).toBe("claude-code")
+    expect(blocked.conflicts.map((conflict) => conflict.code)).not.toContain("evaluation-required")
+
+    evaluator.run({
+      profile: { profileId: "builtin.planner", version: 1 },
+      runtime: "claude-code",
+      model: "default-unpinned",
+      fixtures: AGENT_PROFILE_REQUIRED_EVALUATION_FIXTURES,
+    })
+    const confirmed = launches.preview(request)
+    expect(confirmed.conflicts.map((conflict) => conflict.code)).not.toContain(
+      "evaluation-required",
+    )
+    expect(confirmed.conflicts.map((conflict) => conflict.code)).not.toContain(
+      "runtime-tool-policy-unsupported",
+    )
+    const launched = await launches.launch(
+      { ...request, confirmedSnapshotDigest: confirmed.digest },
+      false,
+    )
+    expect(
+      sqlite
+        .prepare(
+          `SELECT runtime_preference, runtime_preference_source, resolved_runtime
+           FROM agent_runs WHERE id = ?`,
+        )
+        .get(launched.runId),
+    ).toEqual({
+      runtime_preference: "claude-code",
+      runtime_preference_source: "chat",
+      resolved_runtime: "claude-code",
+    })
+  })
+
+  it("freezes an auto profile to the explicit source-chat Runtime", async () => {
+    seedWorkflow(sqlite)
+    sqlite
+      .prepare("UPDATE chats SET runtime_preference = 'codex-enhanced' WHERE id = 'workflow-chat'")
+      .run()
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runtime_defaults
+         (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
+         VALUES ('conflicting-project-runtime', 'project', 'project-1', 'codex',
+           'flapstack-native', 1, 1, 1)`,
+      )
+      .run()
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Source-chat Runtime profile",
+        definition({ harness: "codex", runtimePreference: "auto" }),
+      ),
+    )
+    const launches = new StandaloneAgentLaunchService(databasePath)
+    const request = {
+      requestId: "source-chat-runtime-launch",
+      source: { kind: "chat" as const, chatId: "workflow-chat" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    }
+    const preview = launches.preview(request)
+    expect(preview.capability.runtimePreference).toBe("auto")
+    expect(preview.runtimeResolution).toEqual({
+      preference: "codex-enhanced",
+      source: "chat",
+      defaultVersion: null,
+      resolvedRuntime: "codex",
+    })
+
+    expect(preview.conflicts.map((conflict) => conflict.code)).toContain(
+      "runtime-tool-policy-unsupported",
+    )
+    await expect(
+      launches.launch({ ...request, confirmedSnapshotDigest: preview.digest }, false),
+    ).rejects.toMatchObject({ code: "launch-blocked" })
+  })
+
   it("derives standalone authority in main and rejects hostile renderer ceilings", () => {
     seedWorkflow(sqlite)
     sqlite
@@ -564,8 +957,8 @@ describe("workflow and standalone Agent Profile launches", () => {
       ).toThrow(/Unrecognized key|unrecognized/i)
       const preview = launches.preview(request)
       expect(preview.capability.permissionMode).not.toBe("full-access")
-      expect(preview.capability.tools).toEqual([])
-      expect(preview.capability.skills).toEqual([])
+      expect(preview.capability.tools).toEqual(["shell"])
+      expect(preview.capability.skills).toEqual(["review"])
       expect(preview.capability.maxDescendants).toBe(0)
       if (source.kind === "chat") {
         expect(preview.conflicts.map((conflict) => conflict.code)).toContain("model-blocked")
@@ -582,6 +975,149 @@ describe("workflow and standalone Agent Profile launches", () => {
         confirmedSnapshotDigest: "0".repeat(64),
       }),
     ).toThrowError(expect.objectContaining({ code: "launch-blocked" }))
+  })
+
+  it("freezes workflow auto profiles to the exact harness-scoped Runtime default", async () => {
+    seedWorkflow(sqlite)
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runtime_defaults
+         (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
+         VALUES
+           ('project:project-1:codex', 'project', 'project-1', 'codex',
+            'codex-enhanced', 1, 1, 1),
+           ('global:global:claude-code', 'global', NULL, 'claude-code',
+            'claude-code-enhanced', 1, 1, 1)`,
+      )
+      .run()
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Workflow auto Runtime",
+        definition({ harness: "codex", runtimePreference: "auto" }),
+      ),
+    )
+    const workflows = new AgentProfileWorkflowBindingService(sqlite)
+    workflows.bind(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-1",
+        stepId: "implement",
+        profile: { profileId: profile.profile.id, version: 1 },
+        workflowRole: "runtime-worker",
+        inputSchema: null,
+        outputSchema: null,
+        overrides: null,
+      },
+      0,
+    )
+    const preview = workflows.previewForConfirmation("workflow-1", "implement")
+    expect(preview.runtimeResolution).toEqual({
+      preference: "codex-enhanced",
+      source: "project",
+      defaultVersion: 1,
+      resolvedRuntime: "codex",
+    })
+    expect(preview.conflicts.map((conflict) => conflict.code)).not.toContain(
+      "runtime-policy-blocked",
+    )
+    expect(() => workflows.confirm("workflow-1", "implement", 1)).toThrowError(
+      expect.objectContaining({ code: "launch-blocked" }),
+    )
+
+    sqlite
+      .prepare(
+        `UPDATE agent_runtime_defaults
+         SET preference = 'codex', version = 2
+         WHERE id = 'project:project-1:codex'`,
+      )
+      .run()
+    await expect(
+      createAgentProfileWorkflowMaterializerPort(sqlite).materialize({
+        workflowRunId: "workflow-1",
+        taskId: "task-1",
+        stepId: "implement",
+        attemptCount: 1,
+        agentDefinition: workflowAgentDefinition(sqlite, "workflow-1", "implement"),
+      }),
+    ).rejects.toMatchObject({ code: "binding-unconfirmed" })
+  })
+
+  it("materializes a pre-upgrade workflow snapshot from its frozen Runtime evidence", async () => {
+    seedWorkflow(sqlite)
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput("Legacy workflow Runtime", definition()),
+    )
+    const workflows = new AgentProfileWorkflowBindingService(sqlite)
+    workflows.bind(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-1",
+        stepId: "implement",
+        profile: { profileId: profile.profile.id, version: 1 },
+        workflowRole: "legacy-runtime-worker",
+        inputSchema: null,
+        outputSchema: null,
+        overrides: null,
+      },
+      0,
+    )
+    const current = workflows.previewForConfirmation("workflow-1", "implement")
+    const legacySnapshot = {
+      ...current,
+      schemaVersion: 1,
+      snapshotId: randomUUID(),
+      digest: "b".repeat(64),
+    } as Record<string, unknown>
+    delete legacySnapshot.runtimeResolution
+    sqlite
+      .prepare(
+        `INSERT INTO agent_profile_snapshots
+         (id, profile_id, profile_version, resolved_json, digest, created_at)
+         VALUES (?, ?, 1, ?, ?, 1)`,
+      )
+      .run(
+        legacySnapshot.snapshotId,
+        profile.profile.id,
+        JSON.stringify(legacySnapshot),
+        legacySnapshot.digest,
+      )
+    sqlite
+      .prepare(
+        `UPDATE agent_profile_workflow_bindings
+         SET snapshot_id = ?, version = 2
+         WHERE workflow_run_id = 'workflow-1' AND step_id = 'implement'`,
+      )
+      .run(legacySnapshot.snapshotId)
+
+    const materialized = await createAgentProfileWorkflowMaterializerPort(sqlite).materialize({
+      workflowRunId: "workflow-1",
+      taskId: "task-1",
+      stepId: "implement",
+      attemptCount: 1,
+      agentDefinition: workflowAgentDefinition(sqlite, "workflow-1", "implement"),
+    })
+    expect(materialized.kind).toBe("bound")
+    expect(materialized.agentDefinition.runtimePreference).toBe(current.evaluation.runtime)
+
+    sqlite
+      .prepare(
+        `INSERT INTO agent_runtime_defaults
+         (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
+         VALUES ('project:project-1:claude-code', 'project', 'project-1', 'claude-code',
+                 'claude-code-enhanced', 1, 2, 2)`,
+      )
+      .run()
+    await expect(
+      createAgentProfileWorkflowMaterializerPort(sqlite).materialize({
+        workflowRunId: "workflow-1",
+        taskId: "task-1",
+        stepId: "implement",
+        attemptCount: 2,
+        agentDefinition: workflowAgentDefinition(sqlite, "workflow-1", "implement"),
+      }),
+    ).rejects.toMatchObject({ code: "binding-unconfirmed" })
   })
 
   it("exposes a fail-closed F3 pre-durable-worker materializer contract", async () => {
@@ -607,7 +1143,7 @@ describe("workflow and standalone Agent Profile launches", () => {
 
     const profile = approvedCreate(
       createAgentProfileService(sqlite),
-      profileInput("F3 bound worker", definition({ permissionMode: "full-access" })),
+      profileInput("F3 bound worker", launchableDefinition({ permissionMode: "full-access" })),
     )
     new AgentProfileWorkflowBindingService(sqlite).bind(
       {
@@ -673,6 +1209,16 @@ describe("workflow and standalone Agent Profile launches", () => {
         definitionId: embedded.definitionId,
         dependencyAgentIds: embedded.dependencyAgentIds,
         permissionMode: confirmation.snapshot.capability.permissionMode,
+        profileRuntimeAuthority: {
+          snapshotId: confirmation.snapshot.snapshotId,
+          snapshotDigest: confirmation.snapshot.digest,
+          profile: confirmation.snapshot.profile,
+          allowedTools: confirmation.snapshot.capability.tools,
+          allowedSkills: confirmation.snapshot.capability.skills,
+          memoryPolicy: confirmation.snapshot.capability.memoryPolicy,
+          allowedDescendantProfileIds: confirmation.snapshot.capability.allowedDescendantProfileIds,
+          maxDescendants: confirmation.snapshot.capability.maxDescendants,
+        },
       }),
     )
     const resumed = await materializer.materialize({
@@ -733,7 +1279,7 @@ describe("workflow and standalone Agent Profile launches", () => {
     const service = createAgentProfileService(sqlite)
     const planner = approvedCreate(
       service,
-      profileInput("Codex planner", definition({ permissionMode: "full-access" })),
+      profileInput("Codex planner", launchableDefinition({ permissionMode: "full-access" })),
     )
     const implementer = approvedCreate(
       service,
@@ -768,7 +1314,7 @@ describe("workflow and standalone Agent Profile launches", () => {
     const plan = workflow.confirm("workflow-mixed", "plan", 1)
     const implementation = workflow.confirm("workflow-mixed", "implement", 1)
     expect([plan.snapshot.evaluation.runtime, implementation.snapshot.evaluation.runtime]).toEqual([
-      "codex",
+      "claude-code",
       "claude-code",
     ])
     expect([plan.definition.name, implementation.definition.name]).toEqual([
@@ -783,13 +1329,14 @@ describe("workflow and standalone Agent Profile launches", () => {
 
   it("keeps an archived confirmed snapshot but blocks later authority narrowing", async () => {
     seedWorkflow(sqlite)
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'full-access'").run()
     sqlite
       .prepare("UPDATE tasks SET default_permission_mode = 'full-access' WHERE id = 'task-1'")
       .run()
     const profiles = createAgentProfileService(sqlite)
     const profile = approvedCreate(
       profiles,
-      profileInput("Frozen worker", definition({ permissionMode: "full-access" })),
+      profileInput("Frozen worker", launchableDefinition({ permissionMode: "full-access" })),
     )
     const workflow = new AgentProfileWorkflowBindingService(sqlite)
     workflow.bind(
@@ -819,13 +1366,21 @@ describe("workflow and standalone Agent Profile launches", () => {
       createAgentProfileWorkflowMaterializerPort(sqlite).materialize(request),
     ).resolves.toMatchObject({ kind: "bound", profileSnapshotId: confirmation.snapshot.snapshotId })
 
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'read-only'").run()
+    await expect(
+      createAgentProfileWorkflowMaterializerPort(sqlite).materialize({
+        ...request,
+        attemptCount: 2,
+      }),
+    ).rejects.toMatchObject({ code: "binding-unconfirmed" })
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'full-access'").run()
     sqlite
       .prepare("UPDATE tasks SET default_permission_mode = 'read-only' WHERE id = 'task-1'")
       .run()
     await expect(
       createAgentProfileWorkflowMaterializerPort(sqlite).materialize({
         ...request,
-        attemptCount: 2,
+        attemptCount: 3,
       }),
     ).rejects.toMatchObject({ code: "binding-unconfirmed" })
   })
@@ -838,7 +1393,7 @@ describe("workflow and standalone Agent Profile launches", () => {
     seedWorkflowRun(sqlite, "workflow-secret", ["implement"])
     const profile = approvedCreate(
       createAgentProfileService(sqlite),
-      profileInput("Worker", definition()),
+      profileInput("Worker", launchableDefinition()),
     )
     const profiles = createAgentProfileService(sqlite)
     const workflow = new AgentProfileWorkflowBindingService(sqlite)
@@ -877,7 +1432,7 @@ describe("workflow and standalone Agent Profile launches", () => {
     ).toEqual(binding.profile)
     const replacement = approvedCreate(
       profiles,
-      profileInput("Replacement worker", definition({ role: "replacement" })),
+      profileInput("Replacement worker", launchableDefinition({ role: "replacement" })),
     )
     expect(
       workflow.fork("workflow-2", "implement", "workflow-3", "implement", {
@@ -892,7 +1447,7 @@ describe("workflow and standalone Agent Profile launches", () => {
       profileId: profile.profile.id,
       expectedVersion: 1,
       identity: { name: "Renamed worker" },
-      definition: definition({ role: "updated-worker" }),
+      definition: launchableDefinition({ role: "updated-worker" }),
     })
     profiles.archive({ profileId: profile.profile.id, expectedVersion: 2 })
     const resumed = workflow.materializeForF3({
@@ -921,7 +1476,10 @@ describe("workflow and standalone Agent Profile launches", () => {
       createAgentProfileService(sqlite),
       profileInput(
         "Standalone",
-        definition({ runtimePreference: "flapstack-native", permissionMode: "full-access" }),
+        launchableDefinition({
+          runtimePreference: "flapstack-native",
+          permissionMode: "full-access",
+        }),
       ),
     )
     const launches = new StandaloneAgentLaunchService(databasePath)
@@ -982,6 +1540,11 @@ describe("workflow and standalone Agent Profile launches", () => {
       launches.launch({ ...base, confirmedSnapshotDigest: "f".repeat(64) }, false),
     ).rejects.toMatchObject({ code: "request-conflict" })
     expect(first.profile).toEqual({ profileId: profile.profile.id, version: 1 })
+    expect(first.snapshot).toMatchObject({
+      snapshotId: first.snapshotId,
+      profile: { profileId: profile.profile.id, version: 1 },
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
     expect(
       sqlite.prepare("SELECT count(*) count FROM agent_profile_standalone_launches").get(),
     ).toEqual({ count: 2 })
@@ -998,6 +1561,9 @@ describe("workflow and standalone Agent Profile launches", () => {
     expect(
       sqlite.prepare("SELECT permission_mode FROM agent_runs WHERE id = ?").get(first.runId),
     ).not.toEqual({ permission_mode: "full-access" })
+    expect(
+      sqlite.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?").get(first.chatId),
+    ).toEqual({ mcp_exposure_enabled: 1 })
 
     sqlite.prepare("UPDATE agent_runs SET status = 'failure' WHERE id = ?").run(first.runId)
     const followUp = await launches.followUp(
@@ -1025,7 +1591,10 @@ describe("workflow and standalone Agent Profile launches", () => {
     const newer = createAgentProfileService(sqlite).update({
       profileId: profile.profile.id,
       expectedVersion: 1,
-      definition: definition({ role: "updated-specialist", runtimePreference: "flapstack-native" }),
+      definition: launchableDefinition({
+        role: "updated-specialist",
+        runtimePreference: "flapstack-native",
+      }),
     })
     sqlite.prepare("UPDATE sub_chats SET messages = ? WHERE id = ?").run(
       JSON.stringify([
@@ -1063,6 +1632,11 @@ describe("workflow and standalone Agent Profile launches", () => {
     )
     expect(continuation.snapshotId).not.toBe(first.snapshotId)
     expect(continuation.chatId).not.toBe(first.chatId)
+    expect(
+      sqlite
+        .prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?")
+        .get(continuation.chatId),
+    ).toEqual({ mcp_exposure_enabled: 1 })
     const continuationPrompt = sqlite
       .prepare("SELECT initial_prompt FROM agent_runs WHERE id = ?")
       .get(continuation.runId) as { initial_prompt: string }
@@ -1101,7 +1675,12 @@ describe("workflow and standalone Agent Profile launches", () => {
       profiles,
       profileInput(
         "Frozen standalone",
-        definition({ permissionMode: "full-access", maxDescendants: 4 }),
+        definition({
+          harness: "claude-code",
+          runtimePreference: "auto",
+          permissionMode: "full-access",
+          maxDescendants: 4,
+        }),
       ),
     )
     const launches = new StandaloneAgentLaunchService(databasePath)
@@ -1144,7 +1723,7 @@ describe("workflow and standalone Agent Profile launches", () => {
       .prepare(
         `INSERT INTO agent_runtime_defaults
          (id, scope_type, scope_id, harness, preference, version, created_at, updated_at)
-         VALUES ('project-runtime-codex', 'project', 'project-1', 'codex', 'claude-code', 1, 1, 1)`,
+         VALUES ('project-runtime-codex', 'project', 'project-1', 'claude-code', 'codex', 1, 1, 1)`,
       )
       .run()
     await expect(
@@ -1162,10 +1741,96 @@ describe("workflow and standalone Agent Profile launches", () => {
     })
   })
 
+  it("fails closed when a profile run loses its frozen snapshot provenance", async () => {
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'full-access'").run()
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput(
+        "Runtime authority",
+        launchableDefinition({ permissionMode: "full-access", tools: ["describe"] }),
+      ),
+    )
+    const launches = new StandaloneAgentLaunchService(databasePath)
+    const request = {
+      requestId: "runtime-authority-provenance",
+      source: { kind: "studio" as const, projectId: "project-1" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: null,
+      confirmedSnapshotDigest: "0".repeat(64),
+    }
+    const preview = launches.preview(request)
+    expect(preview.capability.tools).toEqual(["describe"])
+    const launched = await launches.launch(
+      { ...request, confirmedSnapshotDigest: preview.digest },
+      false,
+    )
+    expect(readDurableAgentProfileRuntimeAuthority(sqlite, launched.runId)).toMatchObject({
+      kind: "authority",
+      authority: {
+        snapshotId: launched.snapshotId,
+        allowedTools: ["describe"],
+        memoryPolicy: { mode: "none" },
+      },
+    })
+
+    sqlite
+      .prepare("DELETE FROM agent_profile_standalone_launches WHERE run_id = ?")
+      .run(launched.runId)
+    expect(readDurableAgentProfileRuntimeAuthority(sqlite, launched.runId)).toEqual({
+      kind: "invalid",
+    })
+  })
+
+  it("applies both project and orchestration-task ceilings to Studio launches", async () => {
+    seedWorkflow(sqlite)
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'full-access'").run()
+    const profile = approvedCreate(
+      createAgentProfileService(sqlite),
+      profileInput("Studio orchestration", launchableDefinition({ permissionMode: "full-access" })),
+    )
+    const launches = new StandaloneAgentLaunchService(databasePath)
+    const request = {
+      requestId: "studio-orchestration-task-ceiling",
+      source: { kind: "studio" as const, projectId: "project-1" },
+      profile: { profileId: profile.profile.id, version: 1 },
+      context: { includeTask: false, includeParentChat: false },
+      overrides: null,
+      orchestrationTaskId: "task-1",
+      confirmedSnapshotDigest: "0".repeat(64),
+    }
+    const taskCeilingPreview = launches.preview(request)
+    expect(taskCeilingPreview.capability.permissionMode).not.toBe("full-access")
+    const launched = await launches.launch(
+      { ...request, confirmedSnapshotDigest: taskCeilingPreview.digest },
+      false,
+    )
+    expect(
+      sqlite
+        .prepare("SELECT task_id, scope, permission_mode FROM chats WHERE id = ?")
+        .get(launched.chatId),
+    ).toEqual({
+      task_id: "task-1",
+      scope: "task",
+      permission_mode: taskCeilingPreview.capability.permissionMode,
+    })
+
+    sqlite.prepare("UPDATE projects SET default_permission_mode = 'read-only'").run()
+    sqlite
+      .prepare("UPDATE tasks SET default_permission_mode = 'full-access' WHERE id = 'task-1'")
+      .run()
+    const projectCeilingPreview = launches.preview({
+      ...request,
+      requestId: "studio-orchestration-project-ceiling",
+    })
+    expect(projectCeilingPreview.capability.permissionMode).not.toBe("full-access")
+  })
+
   it("projects stop, callback, race, and reconciliation from durable F11 run truth", async () => {
     const profile = approvedCreate(
       createAgentProfileService(sqlite),
-      profileInput("Terminal truth", definition()),
+      profileInput("Terminal truth", launchableDefinition()),
     )
     const launches = new StandaloneAgentLaunchService(databasePath)
     const request = {
@@ -1224,7 +1889,7 @@ describe("starter evaluation", () => {
     expect(() =>
       new AgentProfileEvaluationService(sqlite).run({
         profile: { profileId: "builtin.planner", version: 1 },
-        runtime: "codex",
+        runtime: "claude-code",
         model: "default-unpinned",
         fixtures: ["schema"],
       }),
@@ -1232,7 +1897,7 @@ describe("starter evaluation", () => {
     expect(() =>
       new AgentProfileEvaluationService(sqlite).run({
         profile: { profileId: "builtin.planner", version: 1 },
-        runtime: "codex",
+        runtime: "claude-code",
         model: "default-unpinned",
         fixtures: [
           "schema",
@@ -1256,7 +1921,7 @@ describe("starter evaluation", () => {
     expect(
       new AgentProfileEvaluationService(sqlite).run({
         profile: { profileId: "builtin.planner", version: 1 },
-        runtime: "codex",
+        runtime: "claude-code",
         model: "different-model",
         fixtures: fixtureSet,
       }).state,
@@ -1277,7 +1942,7 @@ describe("starter evaluation", () => {
     expect(
       new AgentProfileEvaluationService(sqlite).run({
         profile: { profileId: failing.profile.id, version: 1 },
-        runtime: "codex",
+        runtime: "claude-code",
         model: "default-unpinned",
         fixtures: fixtureSet,
       }).state,
@@ -1285,7 +1950,7 @@ describe("starter evaluation", () => {
     const evaluations = ["planner", "implementer", "reviewer", "verifier"].map((id) =>
       new AgentProfileEvaluationService(sqlite).run({
         profile: { profileId: `builtin.${id}`, version: 1 },
-        runtime: "codex",
+        runtime: "claude-code",
         model: "default-unpinned",
         fixtures: fixtureSet,
       }),
@@ -1355,6 +2020,7 @@ describe("Agent Profile renderer contracts", () => {
     expect(studio).toContain(
       "Capability controls authority. Personality controls presentation only.",
     )
+    expect(studio).toContain("New profiles default to Claude Code")
     expect(studio).toContain("None — persistent profile memory disabled")
     expect(studio).toContain("Display label only. Audio voice stays in Voice settings.")
     expect(studio).toContain("Preview Start Agent")
@@ -1368,6 +2034,7 @@ describe("Agent Profile renderer contracts", () => {
       "Include visible parent-chat messages; provider-private state stays excluded",
     )
     expect(start).toContain("launchBlocked")
+    expect(start).toContain("Agent Profile launch limitations")
     expect(sidebar).toContain('source={{ kind: "task", taskId: lifecycleTarget.id }}')
   })
 })
@@ -1387,6 +2054,16 @@ function definition(
     },
     presentation: structuredClone(DEFAULT_AGENT_PRESENTATION),
   }
+}
+
+function launchableDefinition(
+  capability: Partial<typeof DEFAULT_AGENT_CAPABILITY> = {},
+): AgentProfileVersionInput {
+  return definition({
+    harness: "claude-code",
+    runtimePreference: "claude-code",
+    ...capability,
+  })
 }
 
 function profileInput(name: string, profileDefinition: AgentProfileVersionInput) {

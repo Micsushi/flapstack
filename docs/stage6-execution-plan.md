@@ -1,9 +1,10 @@
 # Stage 6 Execution Plan
 
-Stage 6 begins only after one exact Stage 5 SHA has native Windows development,
-runtime, package lifecycle, and the integrated Stage 5 matrix fully accepted.
-That Stage 5 baseline already inherits accepted Stage 4 behavior. Stage 6
-planning does not weaken either prerequisite.
+Stage 6 begins after one exact Stage 5 source state has all 50
+implementation-gating task checkboxes and all 40 `T2-core` matrix rows
+accepted. That Stage 5 baseline already inherits accepted Stage 4 behavior.
+Uncertified provider/device capabilities and distributable-release gates remain
+visible constraints, but they do not block Stage 6 entry.
 
 ## Outcome
 
@@ -15,7 +16,10 @@ graph, without duplicating Stage 4 services or hiding unsupported evidence.
 
 ### Wave 0 — Entry and evidence baseline
 
-- Prove the exact accepted Stage 5 source, schema, Windows packages, and support matrix.
+- Prove the exact accepted Stage 5 source, schema, 50-task core gate, and
+  40-row `T2-core` matrix.
+- Import open Stage 5 capability and release certifications as explicit
+  constraints for the Stage 6 features that consume them.
 - Freeze the Stage 6 task/spec/router crosswalk.
 - Inventory the preserved mobile branch by tree equivalence; never blindly merge it.
 

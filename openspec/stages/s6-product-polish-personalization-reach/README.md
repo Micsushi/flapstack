@@ -1,7 +1,7 @@
 # S6 — Product Polish, Personalization, and Reach
 
-Stage 6 turns the complete Stage 5 Windows-compatible operating environment
-into an approachable, refined, cross-device, cross-platform product ready for
+Stage 6 builds on the Stage 5 Windows `T2-core` implementation baseline to
+create an approachable, refined, cross-device, cross-platform product ready for
 wider distribution.
 
 Delivery order:
@@ -19,9 +19,12 @@ Delivery order:
 11. [S6-F12 Obsidian-compatible project knowledge graph](features/s6-f12-obsidian-knowledge-graph/README.md)
 12. [S6-F11 Integrated Stage 6 release](features/s6-f11-integrated-release/README.md)
 
-Entry gate: Stage 5 native Windows compatibility and its integrated matrix are
-fully accepted on one exact SHA. That baseline includes accepted Stage 4
-behavior. Code-ready or partial Stage 5 packets do not satisfy this gate.
+Entry gate: all 50 Stage 5 implementation-gating task checkboxes and all 40
+Stage 5 `T2-core` matrix rows are accepted on one exact source state. That
+baseline includes accepted Stage 4 behavior. Open provider/device capability
+and distributable-release rows do not block Stage 6 entry; downstream Stage 6
+features must preserve them as explicit dependencies when they consume those
+capabilities or artifacts.
 
 Dependency spine:
 

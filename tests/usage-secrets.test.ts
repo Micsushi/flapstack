@@ -10,6 +10,7 @@ import {
   buildWindowsCredentialScript,
   getUsageCredentialNamespace,
   getUsageSecret,
+  hasUsageSecret,
   setUsageSecret,
 } from "../src/main/lib/usage/secrets"
 import { getAppUsageSecret } from "../src/main/lib/usage/app-secrets"
@@ -63,6 +64,41 @@ describe("usage credential hardening", () => {
     )
     const path = join(temp, "usage-secrets.json")
     expect(() => readFileSync(path, "utf8")).toThrow()
+  })
+
+  it("fails closed on a legacy raw value when the native credential store is unavailable", () => {
+    const path = join(temp, "usage-secrets.json")
+    writeFileSync(path, JSON.stringify({ "openrouter.api_key": "plain:legacy-secret" }))
+    vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: "", stderr: "" } as never)
+
+    expect(getUsageSecret("openrouter.api_key")).toBeNull()
+    expect(hasUsageSecret("openrouter.api_key")).toBe(false)
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      "openrouter.api_key": "plain:legacy-secret",
+    })
+  })
+
+  it("moves a recognized legacy raw value into the native credential store before using it", () => {
+    const path = join(temp, "usage-secrets.json")
+    writeFileSync(path, JSON.stringify({ "openrouter.api_key": "plain:legacy-secret" }))
+    vi.mocked(spawnSync).mockImplementation((_command, args) => {
+      const joined = (args as string[]).join(" ")
+      const isRead =
+        joined.includes("find-generic-password") ||
+        (args as string[])[0] === "lookup" ||
+        (joined.includes("-EncodedCommand") &&
+          Buffer.from((args as string[]).at(-1)!, "base64")
+            .toString("utf16le")
+            .includes("CredRead($target"))
+      return {
+        status: isRead ? 1 : 0,
+        stdout: "",
+        stderr: "",
+      } as never
+    })
+
+    expect(getUsageSecret("openrouter.api_key")).toBe("legacy-secret")
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({})
   })
 
   it("passes a secure-store secret through stdin instead of process arguments", () => {

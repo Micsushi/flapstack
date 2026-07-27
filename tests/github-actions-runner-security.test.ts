@@ -9,6 +9,10 @@ const require = createRequire(import.meta.url)
 const { load } = require("js-yaml") as { load: (source: string) => unknown }
 const ci = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8")
 const providerDrift = readFileSync(resolve(root, ".github/workflows/provider-drift.yml"), "utf8")
+const windowsRelease = readFileSync(
+  resolve(root, ".github/workflows/release-windows.yml"),
+  "utf8",
+).replaceAll("\r\n", "\n")
 
 type WorkflowJob = {
   if?: string
@@ -62,6 +66,8 @@ describe("GitHub Actions self-hosted runner policy", () => {
     expect(ci).toMatch(
       /verify-pr:\s+if: github\.event_name == 'pull_request'\s+runs-on: ubuntu-latest/,
     )
+    expect(ci).toContain("release-preview/windows-security-report.json.sha256")
+    expect(ci).toContain("Windows Preview security report changed after audit")
   })
 
   it("runs only the portable test suite on Server1 Linux", () => {
@@ -128,5 +134,19 @@ describe("GitHub Actions self-hosted runner policy", () => {
     )
 
     expect(unpinnedActions).toEqual([])
+  })
+
+  it("builds, audits, rehashes, and uploads Windows releases only from exact version tags", () => {
+    expect(windowsRelease).toContain('tags:\n      - "v*.*.*"')
+    expect(windowsRelease).toContain("runs-on: windows-2022")
+    expect(windowsRelease).toContain("npm run package:release:win")
+    expect(windowsRelease).toContain("npm run package:audit:release:win")
+    expect(windowsRelease).toContain("npm audit --omit=dev --audit-level=high")
+    expect(windowsRelease).toContain("windows-security-report.json.sha256")
+    expect(windowsRelease).toContain("scripts/verify-windows-security-report.mjs")
+    expect(windowsRelease).not.toContain("release/Flapstack-Setup-*.exe")
+    expect(windowsRelease).not.toContain("release/Flapstack-Portable-*.exe")
+    expect(windowsRelease).toContain("git rev-parse origin/main")
+    expect(windowsRelease).toContain("if-no-files-found: error")
   })
 })

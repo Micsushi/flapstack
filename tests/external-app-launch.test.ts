@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
-import { resolveExternalAppLaunch, spawnExternalCommand } from "../src/main/lib/external/app-launch"
+import {
+  assertOpenPathSucceeded,
+  resolveExternalAppLaunch,
+  spawnExternalCommand,
+} from "../src/main/lib/external/app-launch"
 
 describe("external app launch", () => {
   it("uses native Windows commands without macOS open", () => {
@@ -35,6 +39,13 @@ describe("external app launch", () => {
       kind: "default",
       path: "C:\\work\\repo",
     })
+  })
+
+  it("rejects Electron openPath false-success results", () => {
+    expect(() => assertOpenPathSucceeded("", "C:\\work\\repo")).not.toThrow()
+    expect(() => assertOpenPathSucceeded("Failed to open path", "C:\\work\\missing.txt")).toThrow(
+      /Failed to open path.*missing\.txt/i,
+    )
   })
 
   it.runIf(process.platform === "win32")(

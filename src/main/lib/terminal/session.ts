@@ -18,6 +18,27 @@ function getShellArgs(shell: string): string[] {
   return []
 }
 
+export function formatInitialCommands(shell: string, commands: string[]): string {
+  // Shell paths describe the child shell, not necessarily the current host.
+  // win32.basename accepts both slash styles, so Windows shell paths are
+  // recognized when this code is tested or orchestrated from Linux/macOS.
+  const shellName = path.win32.basename(shell).toLowerCase()
+  if (shellName === "powershell.exe" || shellName === "pwsh.exe") {
+    let chain = commands.at(-1) ?? ""
+    for (let index = commands.length - 2; index >= 0; index -= 1) {
+      chain = `${commands[index]}; if ($?) { ${chain} }`
+    }
+    return `${chain}\n`
+  }
+  return `${commands.join(" && ")}\n`
+}
+
+export function terminalPtyPlatformOptions(
+  platform: NodeJS.Platform = os.platform(),
+): Pick<pty.IWindowsPtyForkOptions, "useConpty"> {
+  return platform === "win32" ? { useConpty: false } : {}
+}
+
 /**
  * Validate and resolve cwd path (Windows compatibility)
  * Falls back to home directory if path doesn't exist
@@ -99,6 +120,11 @@ function spawnPty(params: {
       rows,
       cwd: resolvedCwd,
       env,
+      // node-pty's default ConPTY cancellation helper can fail AttachConsole
+      // under a GUI-subsystem Electron parent and emit noisy child errors even
+      // though the terminal closes. The bundled winpty path terminates the
+      // complete console process list without that helper.
+      ...terminalPtyPlatformOptions(),
     })
   } catch (error) {
     console.error(`[Terminal] Failed to spawn PTY with ${resolvedShell}:`, error)
@@ -110,6 +136,7 @@ function spawnPty(params: {
       rows,
       cwd: resolvedCwd,
       env,
+      ...terminalPtyPlatformOptions(),
     })
   }
 }
@@ -188,7 +215,7 @@ export function setupInitialCommands(
     return
   }
 
-  const initialCommandString = `${initialCommands.join(" && ")}\n`
+  const initialCommandString = formatInitialCommands(session.shell, initialCommands)
 
   const dataHandler = session.pty.onData(() => {
     dataHandler.dispose()

@@ -79,6 +79,36 @@ describe("attachment durable path contracts", () => {
     expect(readFileSync(join(worktreePath, "copied.txt"), "utf8")).toBe("inside attachment")
   })
 
+  it("deletes imported bytes and their now-empty attachment directory", async () => {
+    const attachment = await caller.importFile({
+      chatId: "chat-1",
+      name: "proof.txt",
+      dataBase64: Buffer.from("inside attachment").toString("base64"),
+    })
+    expect(existsSync(attachment.storedPath!)).toBe(true)
+
+    await expect(caller.delete({ id: attachment.id, chatId: "chat-1" })).resolves.toMatchObject({
+      id: attachment.id,
+    })
+
+    expect(existsSync(attachment.storedPath!)).toBe(false)
+    expect(existsSync(resolve(attachment.storedPath!, ".."))).toBe(false)
+    await expect(caller.get({ id: attachment.id })).resolves.toBeUndefined()
+  })
+
+  it("deletes inline-only attachments without touching the durable file namespace", async () => {
+    const attachment = await caller.createText({
+      chatId: "chat-1",
+      name: "inline.txt",
+      contentText: "inline only",
+    })
+
+    await expect(caller.delete({ id: attachment.id, chatId: "chat-1" })).resolves.toMatchObject({
+      id: attachment.id,
+    })
+    await expect(caller.get({ id: attachment.id })).resolves.toBeUndefined()
+  })
+
   it("rejects a tampered durable source path before reading or writing outside content", async () => {
     const attachment = await caller.importFile({
       chatId: "chat-1",
@@ -101,7 +131,12 @@ describe("attachment durable path contracts", () => {
         targetRelativePath: "stolen.txt",
       }),
     ).rejects.toThrow("outside the durable attachment namespace")
+    await expect(caller.delete({ id: attachment.id, chatId: "chat-1" })).rejects.toThrow(
+      "outside the durable attachment namespace",
+    )
     expect(existsSync(join(worktreePath, "stolen.txt"))).toBe(false)
+    expect(readFileSync(outsidePath, "utf8")).toBe("outside secret")
+    await expect(caller.get({ id: attachment.id })).resolves.toMatchObject({ id: attachment.id })
   })
 
   it("rejects a replaced registered root before attachment write", async () => {

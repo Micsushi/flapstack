@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { randomUUID } from "node:crypto"
 import { AGENT_HARNESSES, type AgentHarness } from "../../shared/harness-types"
 import type { ResolvedRuntimeLaunch } from "../../shared/agent-runtime"
+import type { AgentProfileRuntimeAuthority } from "../../shared/agent-profiles"
 import { resolvedLaunchFromSnapshotRow } from "./agent-runtime/snapshot"
 import { redactMcpAuditSummary } from "./mcp-control/audit-storage"
 import { nowEpochSeconds } from "./db/timestamps"
@@ -19,6 +20,9 @@ import {
 import { parseCustomPermissionCapabilities } from "../../shared/permission-capabilities"
 import { normalizeChatMode, type ChatMode } from "../../shared/chat-mode"
 import { resolveAgentHotlineEnabled } from "../../shared/agent-hotline"
+import { readDurableAgentProfileRuntimeAuthority } from "./agent-profiles/runtime-authority"
+import { canonicalJson } from "./agent-profiles/values"
+import { parseDurableOrchestrationAgentDefinition } from "./agent-orchestration/durable-definition"
 
 export type QueuedAgentRun = {
   runId: string
@@ -38,6 +42,7 @@ export type QueuedAgentRun = {
   localEndpoint?: string
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   runtimeLaunch?: ResolvedRuntimeLaunch
+  profileRuntimeAuthority?: AgentProfileRuntimeAuthority
 }
 
 export type AgentRunLauncher = (run: QueuedAgentRun) => Promise<void>
@@ -94,7 +99,7 @@ export function loadRunningAgentRun(databasePath: string, runId: string): Queued
          WHERE r.id = ? AND r.status = 'running' AND r.completed_at IS NULL`,
       )
       .get(runId) as Row | undefined
-    return row ? queuedRun(row) : null
+    return row ? queuedRun(db, row) : null
   } finally {
     db.close()
   }
@@ -144,7 +149,7 @@ export async function recoverInterruptedMcpRuns(
           )
         } else if (runtime === "codex" || runtime === "claude-code") {
           try {
-            const queued = queuedRun(run)
+            const queued = queuedRun(db, run)
             if (!queued) throw new Error("Interrupted direct Runtime has no durable prompt.")
             direct.push(queued)
           } catch {
@@ -249,7 +254,7 @@ export async function drainPendingMcpRuns(
     for (const row of pending) {
       let run: QueuedAgentRun | null = null
       try {
-        run = queuedRun(row)
+        run = queuedRun(db, row)
       } catch (error) {
         markFailed(db, String(row.id), String(row.sub_chat_id))
         appendCorruptLaunchAudit(db, row, error)
@@ -396,13 +401,25 @@ function findLaunchAuditSource(db: Database.Database, runId: string): Row | unde
     .get(createHash("sha256").update(runId).digest("hex"), runId) as Row | undefined
 }
 
-function queuedRun(row: Row): QueuedAgentRun | null {
+function queuedRun(db: Database.Database, row: Row): QueuedAgentRun | null {
   if (!AGENT_HARNESSES.includes(row.harness as AgentHarness)) return null
   const prompt =
     (typeof row.initial_prompt === "string" ? row.initial_prompt.trim() : "") ||
     findPrompt(row.messages, row.prompt_message_id)
   if (!prompt) return null
   const durableDefinition = parseDurableOrchestrationDefinition(row.orchestration_definition)
+  const profileAuthority = readDurableAgentProfileRuntimeAuthority(db, String(row.id))
+  if (profileAuthority.kind === "invalid") {
+    throw new Error("Durable run has invalid frozen Agent Profile provenance.")
+  }
+  if (
+    durableDefinition?.profileRuntimeAuthority &&
+    (profileAuthority.kind !== "authority" ||
+      canonicalJson(profileAuthority.authority) !==
+        canonicalJson(durableDefinition.profileRuntimeAuthority))
+  ) {
+    throw new Error("Durable run Agent Profile authority does not match its frozen snapshot.")
+  }
   const localInputs = validateDurableLocalLaunchInputs(row, durableDefinition)
   return {
     runId: String(row.id),
@@ -421,6 +438,9 @@ function queuedRun(row: Row): QueuedAgentRun | null {
     worktreePath: typeof row.worktree_path === "string" ? row.worktree_path : null,
     projectPath: typeof row.project_path === "string" ? row.project_path : null,
     ...localInputs,
+    ...(profileAuthority.kind === "authority"
+      ? { profileRuntimeAuthority: profileAuthority.authority }
+      : {}),
     runtimeLaunch: resolvedLaunchFromSnapshotRow(row),
   }
 }
@@ -439,15 +459,7 @@ function parseDurableOrchestrationDefinition(value: unknown): OrchestrationAgent
   if (value === null || value === undefined) return null
   try {
     if (typeof value !== "string") throw new Error("definition is not text")
-    const parsed = JSON.parse(value) as unknown
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("definition is not an object")
-    }
-    const normalized = { ...(parsed as Record<string, unknown>) }
-    if (normalized.requiredLocalToolTiers === null) {
-      delete normalized.requiredLocalToolTiers
-    }
-    return orchestrationAgentDefinitionSchema.parse(normalized)
+    return parseDurableOrchestrationAgentDefinition(value)
   } catch {
     throw new Error("Durable orchestration agent definition is malformed.")
   }

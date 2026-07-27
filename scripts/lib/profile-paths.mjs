@@ -1,17 +1,25 @@
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { posix, win32 } from "node:path"
+
+function pathForPlatform(platform) {
+  return platform === "win32" ? win32 : posix
+}
 
 export function electronAppDataRoot(options = {}) {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
-  if (platform === "win32") return env.APPDATA || join(home, "AppData", "Roaming")
-  if (platform === "darwin") return join(home, "Library", "Application Support")
-  return env.XDG_CONFIG_HOME || join(home, ".config")
+  const paths = pathForPlatform(platform)
+  if (platform === "win32") return env.APPDATA || paths.join(home, "AppData", "Roaming")
+  if (platform === "darwin") return paths.join(home, "Library", "Application Support")
+  return env.XDG_CONFIG_HOME || paths.join(home, ".config")
 }
 
 export function flapstackProfilePath(profile, options = {}) {
-  return join(electronAppDataRoot(options), profile)
+  return pathForPlatform(options.platform ?? process.platform).join(
+    electronAppDataRoot(options),
+    profile,
+  )
 }
 
 export function resolveDevMcpProfile(env = process.env) {
@@ -25,6 +33,9 @@ export function resolveDevMcpDescriptorPath(profile, options = {}) {
   const env = options.env ?? process.env
   return (
     env.FLAPSTACK_DEV_MCP_DESCRIPTOR ||
-    join(flapstackProfilePath(profile, options), "dev-test-control-mcp.json")
+    pathForPlatform(options.platform ?? process.platform).join(
+      flapstackProfilePath(profile, options),
+      "dev-test-control-mcp.json",
+    )
   )
 }

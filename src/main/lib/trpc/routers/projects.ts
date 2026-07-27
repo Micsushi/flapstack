@@ -35,13 +35,69 @@ const customPermissionsSchema = z.custom<CustomPermissionToggles>(
   "Expected complete versioned custom permission capabilities",
 )
 
+async function openProjectDirectory(path: string) {
+  const folderPath = resolveCanonicalProjectPath(path)
+  const gitInfo = await getGitRemoteInfo(folderPath)
+  const db = getDatabase()
+  const permissionPreferences = getPermissionPreferences()
+  const existing = findProjectByCanonicalPath(db.select().from(projects).all(), folderPath)
+
+  if (existing) {
+    bindRegisteredFilesystemRoot(folderPath)
+    const updatedProject = db
+      .update(projects)
+      .set({
+        updatedAt: new Date(),
+        gitRemoteUrl: gitInfo.remoteUrl,
+        gitProvider: gitInfo.provider,
+        gitOwner: gitInfo.owner,
+        gitRepo: gitInfo.repo,
+      })
+      .where(eq(projects.id, existing.id))
+      .returning()
+      .get()
+
+    trackProjectOpened({
+      id: updatedProject!.id,
+      hasGitRemote: !!gitInfo.remoteUrl,
+    })
+    return updatedProject
+  }
+
+  bindFilesystemRootIdentity(folderPath)
+  const newProject = db
+    .insert(projects)
+    .values({
+      name: basename(folderPath),
+      path: folderPath,
+      gitRemoteUrl: gitInfo.remoteUrl,
+      gitProvider: gitInfo.provider,
+      gitOwner: gitInfo.owner,
+      gitRepo: gitInfo.repo,
+      defaultPermissionMode: permissionPreferences.globalDefault,
+      defaultCustomPermissions:
+        permissionPreferences.globalDefault === "custom"
+          ? JSON.stringify(permissionPreferences.globalCustomPermissions)
+          : null,
+    })
+    .returning()
+    .get()
+
+  trackProjectOpened({
+    id: newProject!.id,
+    hasGitRemote: !!gitInfo.remoteUrl,
+  })
+  return newProject
+}
+
 export const projectsRouter = router({
   /**
-   * Get launch directory from CLI args (consumed once)
-   * Based on PR #16 by @caffeinum
+   * Consume the next CLI launch directory and open it through the same
+   * registration path as the folder picker.
    */
-  getLaunchDirectory: publicProcedure.query(() => {
-    return getLaunchDirectory()
+  openLaunchDirectory: publicProcedure.mutation(async () => {
+    const launchDirectory = getLaunchDirectory()
+    return launchDirectory ? openProjectDirectory(launchDirectory) : null
   }),
 
   /**
@@ -104,72 +160,7 @@ export const projectsRouter = router({
       return null
     }
 
-    const folderPath = resolveCanonicalProjectPath(result.filePaths[0]!)
-    const folderName = basename(folderPath)
-
-    // Get git remote info
-    const gitInfo = await getGitRemoteInfo(folderPath)
-
-    const db = getDatabase()
-    const permissionPreferences = getPermissionPreferences()
-
-    // Check if project already exists
-    const existing = findProjectByCanonicalPath(db.select().from(projects).all(), folderPath)
-
-    if (existing) {
-      bindRegisteredFilesystemRoot(folderPath)
-      // Update the updatedAt timestamp and git info (in case remote changed)
-      const updatedProject = db
-        .update(projects)
-        .set({
-          updatedAt: new Date(),
-          gitRemoteUrl: gitInfo.remoteUrl,
-          gitProvider: gitInfo.provider,
-          gitOwner: gitInfo.owner,
-          gitRepo: gitInfo.repo,
-        })
-        .where(eq(projects.id, existing.id))
-        .returning()
-        .get()
-
-      // Track project opened
-      trackProjectOpened({
-        id: updatedProject!.id,
-        hasGitRemote: !!gitInfo.remoteUrl,
-      })
-
-      return updatedProject
-    }
-
-    // Capture identity before pathname persistence so replacement can never be
-    // blessed by first use.
-    bindFilesystemRootIdentity(folderPath)
-    // Create new project with git info
-    const newProject = db
-      .insert(projects)
-      .values({
-        name: folderName,
-        path: folderPath,
-        gitRemoteUrl: gitInfo.remoteUrl,
-        gitProvider: gitInfo.provider,
-        gitOwner: gitInfo.owner,
-        gitRepo: gitInfo.repo,
-        defaultPermissionMode: permissionPreferences.globalDefault,
-        defaultCustomPermissions:
-          permissionPreferences.globalDefault === "custom"
-            ? JSON.stringify(permissionPreferences.globalCustomPermissions)
-            : null,
-      })
-      .returning()
-      .get()
-
-    // Track project opened
-    trackProjectOpened({
-      id: newProject!.id,
-      hasGitRemote: !!gitInfo.remoteUrl,
-    })
-
-    return newProject
+    return openProjectDirectory(result.filePaths[0]!)
   }),
 
   /**

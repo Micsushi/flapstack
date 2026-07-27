@@ -2,6 +2,7 @@
 
 ### S4-F9-T1 — Add task workflow and proposal contracts
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Evidence: Node 22 `npm test -- plan-kanban-schema` (4 tests) and `npm test -- stage3-migration-rebase` (7 tests) pass; `npm run ts:check` and focused ESLint pass; strict OpenSpec validation passes.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
@@ -16,6 +17,7 @@
 
 ### S4-F9-T2 — Implement plan source discovery and parsing
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Evidence: Node 22 focused plan-source, plan-kanban, project-vault, and Stage 3 migration suites pass 33 tests across 5 files; `npm run ts:check`, focused ESLint/Prettier, and strict OpenSpec validation pass.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
@@ -30,8 +32,9 @@
 
 ### S4-F9-T3 — Build the read-only Plan view
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. The production Plan route and read-only
+- Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. The production Plan route and read-only
   renderer remain wired; the Node 22 F9 headless gate passes source, selector/reducer/service,
   renderer, stale, and malformed-state coverage. The live OpenSpec/Markdown and accessibility
   walkthrough remains unverified, so completion stays open.
@@ -47,6 +50,7 @@
 
 ### S4-F9-T4 — Replace chat-derived Kanban with real task cards
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Evidence (code-ready; UI proof pending): Node 22
   `npx vitest run tests/task-kanban.test.ts tests/plan-kanban-schema.test.ts` passes 10 focused
@@ -71,8 +75,9 @@
 
 ### S4-F9-T5 — Add idempotent plan-candidate promotion
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. Node 22 focused
+- Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 focused
   `plan-task-promotion`, schema, source-reader, Plan-view, and task-Kanban tests pass 29 cases;
   focused ESLint, Prettier, full strict TypeScript, and strict OpenSpec validation pass. Live UI
   confirmation, navigation, accessibility, and stale-error walkthroughs remain prohibited and
@@ -89,8 +94,9 @@
 
 ### S4-F9-T6 — Add approval-gated AI task proposals
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. Node 22 focused
+- Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 focused
   `ai-task-proposals`, task/plan Kanban, MCP gate/audit/transport, and invalidation suites pass
   72 tests across 12 files; repo-wide ESLint, Prettier check, and strict TypeScript pass;
   `npm run build` and strict OpenSpec validation pass. Live proposal-tray review, exact-preview,
@@ -108,8 +114,9 @@
 
 ### S4-F9-T7 — Add provenance, divergence, and cross-window consistency
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. Node 22 full headless F9 regression passes
+- Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. Node 22 full headless F9 regression passes
   101 tests across 16 suites, including source edits and recovery, linked task/proposal
   comparisons, stale two-window moves, promotion deduplication, proposal decision races,
   versioned rebalance, production route wiring, audit, and renderer invalidation.
@@ -128,21 +135,27 @@
 
 ### S4-F9-T8 — Close Plan and Kanban acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
-- Evidence: Code-ready/manual-verification-remaining. The Node 22 feature-wide F9 headless gate
+- Evidence: Tier 1 code-ready/Tier 2 live-verification-remaining. The Node 22 feature-wide F9 headless gate
   passes 101 tests across 16 suites. Production Tasks routing, serialized source recovery,
   versioned reorder conflicts, and operator docs are covered. Full ESLint, strict TypeScript,
   touched Prettier, production build, strict OpenSpec, and diff checks pass. The canonical
   `npm run check` stops at four untouched baseline Drizzle snapshots
-  (`0031_snapshot.json`-`0034_snapshot.json`) that fail repository Prettier. Live Plan/Kanban UI,
-  accessibility, real multi-window, `npm run dev:verify`, and packaged preview evidence remains
-  open, so completion and S4-PK01-S4-PK03 stay open.
+  (`0031_snapshot.json`-`0034_snapshot.json`) that fail repository Prettier.
+  Live Plan/Kanban UI, automated semantic/accessibility checks, real
+  multi-window, and `npm run dev:verify` remain open, so completion and
+  S4-PK01-S4-PK03 stay open. Packaged-preview certification remains the
+  separate S4-I03 release gate.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F9
 - Outcome: Plan browsing, real-task Kanban, promotion, AI approval, and divergence pass integrated evidence.
-- Scope: Full gate; matrix S4-PK01–S4-PK03; migrations; two-window races; OpenSpec/Markdown; proposal approve/deny; no auto-run; docs; package preview.
+- Scope: Full gate; matrix S4-PK01–S4-PK03; migrations; two-window races;
+  OpenSpec/Markdown; proposal approve/deny; no auto-run; and docs.
 - Out of scope: Editable plan files and configurable columns.
 - Acceptance: One candidate and one AI proposal each produce exactly one reviewed task/chat; all cards are tasks; stale/conflict cases remain honest.
-- Verification: Node 22 `npm run check`, strict OpenSpec, `npm run dev:verify`, live matrix, and packaged preview.
+- Verification: Node 22 `npm run check`, strict OpenSpec,
+  `npm run dev:verify`, and production-path Plan/Kanban MCP/live matrix
+  evidence. Packaged macOS evidence remains the separate S4-I03 release gate.
 - Blocked by: S4-F9-T3, S4-F9-T4, S4-F9-T5, S4-F9-T6, S4-F9-T7
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md` and Stage 4 execution plan.

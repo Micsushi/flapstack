@@ -41,6 +41,7 @@ describe("isolated test Git environment", () => {
     const isolated = createIsolatedTestGitEnvironment({
       env: { PATH: "tool-path" },
       makeDirectory: () => "C:\\Temp\\flapstack-test-git",
+      platform: "win32",
       remove,
       spawn,
     })
@@ -94,6 +95,7 @@ describe("isolated test Git environment", () => {
     const isolated = createIsolatedTestGitEnvironment({
       env: { CI: "true", PATH: "tool-path" },
       makeDirectory: () => "C:\\Temp\\flapstack-test-git",
+      platform: "win32",
       remove: vi.fn(),
       spawn,
     })

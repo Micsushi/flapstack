@@ -1,5 +1,10 @@
 import { z } from "zod"
-import { agentRuntimePreferenceSchema } from "./agent-runtime"
+import {
+  agentRuntimePreferenceSchema,
+  type AgentRuntimePreference,
+  type ResolvedAgentRuntime,
+  type RuntimePreferenceSource,
+} from "./agent-runtime"
 import {
   customPermissionCapabilitiesSchema,
   refineCustomPermissionMode,
@@ -14,6 +19,7 @@ export const AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES = [
   "runtime-policy-blocked",
   "runtime-incompatible",
   "runtime-unavailable",
+  "runtime-tool-policy-unsupported",
   "adapter-disabled",
   "evaluation-required",
   "evaluation-failed",
@@ -221,6 +227,19 @@ export const agentProfileLaunchPolicySchema = z
   })
   .strict()
 
+export const agentProfileRuntimeAuthoritySchema = z
+  .object({
+    snapshotId: idSchema,
+    snapshotDigest: z.string().regex(/^[0-9a-f]{64}$/),
+    profile: agentProfileVersionRefSchema,
+    allowedTools: z.array(idSchema).max(128),
+    allowedSkills: z.array(idSchema).max(128),
+    memoryPolicy: z.object({ mode: z.literal("none") }).strict(),
+    allowedDescendantProfileIds: z.array(idSchema).max(64),
+    maxDescendants: z.number().int().min(0).max(64),
+  })
+  .strict()
+
 export const agentProfileResolveInputSchema = z
   .object({
     profile: agentProfileVersionRefSchema,
@@ -313,7 +332,13 @@ export const AGENT_PROFILE_REQUIRED_EVALUATION_FIXTURES = [
 export const agentProfileEvaluationInputSchema = z
   .object({
     profile: agentProfileVersionRefSchema,
-    runtime: z.enum(["codex", "claude-code", "flapstack-native"]),
+    runtime: z.enum([
+      "codex",
+      "codex-enhanced",
+      "claude-code",
+      "claude-code-enhanced",
+      "flapstack-native",
+    ]),
     model: z.string().trim().min(1).max(200),
     fixtures: z
       .array(z.enum(AGENT_PROFILE_REQUIRED_EVALUATION_FIXTURES))
@@ -341,6 +366,7 @@ export type AgentProfileVersionInput = z.infer<typeof agentProfileVersionInputSc
 export type AgentProfileScope = z.infer<typeof agentProfileScopeSchema>
 export type AgentProfileBoundedOverride = z.infer<typeof agentProfileBoundedOverrideSchema>
 export type AgentProfileLaunchPolicy = z.infer<typeof agentProfileLaunchPolicySchema>
+export type AgentProfileRuntimeAuthority = z.infer<typeof agentProfileRuntimeAuthoritySchema>
 export type AgentProfileWorkflowBinding = z.infer<typeof agentProfileWorkflowBindingSchema>
 export type AgentProfileWorkflowTemplateReference = z.infer<
   typeof agentProfileWorkflowTemplateReferenceSchema
@@ -381,8 +407,14 @@ export type AgentProfileResolvedFieldSource = {
   note: string
 }
 
-export type ResolvedAgentProfileSnapshot = {
-  schemaVersion: 1
+export type AgentProfileSnapshotRuntimeResolution = {
+  preference: Exclude<AgentRuntimePreference, "auto">
+  source: RuntimePreferenceSource | "profile"
+  defaultVersion: number | null
+  resolvedRuntime: ResolvedAgentRuntime
+}
+
+type ResolvedAgentProfileSnapshotBody = {
   snapshotId: string
   profile: AgentProfileVersionRef
   displayName: string
@@ -401,12 +433,25 @@ export type ResolvedAgentProfileSnapshot = {
   digest: string
 }
 
+export type ResolvedAgentProfileSnapshot = ResolvedAgentProfileSnapshotBody & {
+  schemaVersion: 2
+  runtimeResolution: AgentProfileSnapshotRuntimeResolution
+}
+
+export type LegacyResolvedAgentProfileSnapshot = ResolvedAgentProfileSnapshotBody & {
+  schemaVersion: 1
+  runtimeResolution?: never
+}
+
+export type StoredResolvedAgentProfileSnapshot =
+  ResolvedAgentProfileSnapshot | LegacyResolvedAgentProfileSnapshot
+
 export const DEFAULT_AGENT_CAPABILITY: AgentCapabilityProfile = {
   schemaVersion: 1,
   role: "specialist",
   instructions: "Complete the assigned task and report concrete evidence.",
-  harness: "codex",
-  runtimePreference: "auto",
+  harness: "claude-code",
+  runtimePreference: "claude-code",
   modelPreference: null,
   reasoningEffort: null,
   tools: [],

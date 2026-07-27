@@ -318,6 +318,7 @@ export function promotePlanCandidate(
         scope: "task",
         permissionMode: input.permissionMode,
         customPermissions: customPermissions ? JSON.stringify(customPermissions) : null,
+        mcpExposureEnabled: true,
         worktreePath: selectedWorktreePath,
         createdAt: now,
         updatedAt: now,

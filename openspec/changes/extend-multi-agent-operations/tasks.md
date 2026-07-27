@@ -2,6 +2,7 @@
 
 ### S4-F3-T1 — Reconcile the Stage 3 orchestration baseline
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Stage 4 has an exact delta from the shipped Stage 3 scheduler, task controls, and the S4-F11 Agent Runtime boundary.
@@ -16,6 +17,7 @@
 
 ### S4-F3-T2 — Add the orchestration fleet query and view
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users supervise orchestrations across tasks and projects from one local view.
@@ -30,6 +32,7 @@
 
 ### S4-F3-T3 — Add rich lineage, messaging, and navigation
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Spawn/replacement history, workflow phases, Codex task paths, and supported agent messages are understandable and navigable.
@@ -44,6 +47,7 @@
 
 ### S4-F3-T4 — Add versioned policy and workflow templates
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users safely reuse and change bounded worker, workflow, and policy definitions.
@@ -58,6 +62,7 @@
 
 ### S4-F3-T5 — Harden cascading control and recovery
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Pause/stop/cancel state remains truthful across workflow steps, provider descendants, failures, and restart.
@@ -65,13 +70,15 @@
 - Out of scope: OS process control outside Flapstack-owned runs.
 - Acceptance: No descendant launches after stop intent; restart resumes cancellation only; uncertain provider actions are reconciled rather than replayed; failures and orphans remain visible.
 - Verification: Concurrent cascade, crash/restart, stale lease, partial signal, uncertain spawn, orphan, and forbidden-scope tests for every engine.
-- Blocked by: S4-F3-T1, S4-F3-T4, S4-F3-T7, S4-F3-T8
+- Blocked by for `T2-core`: S4-F3-T1, S4-F3-T4, S4-F3-T7.
+- Separate Codex-engine cancellation certification depends on S4-F3-T8.
 - Blocks: S4-F3-T10
 - Context: scheduler tick, cancellation requests, engine adapters, run adapters, lineage rows.
-- Code-ready evidence: Cascade request re-queries and materializes descendants under one immediate transaction, rejects stale fingerprints, and records durable stop intent before the concrete F11 provider-neutral cancel call. F3 pause/resume consumers call optional provider-neutral F11 authority first and mutate task/workflow truth only after every target acknowledges; absent authority and partial failures fail closed. A materializer racing pause/stop persists its exact snapshot but creates no worker rows, and resume reuses that attempt/snapshot once. This packet does not implement F11 singleton lifecycle or provider dispatch. Per-target claims, restart retry, orphan/stale-lease truth, partial failures, and bounded redacted provider errors are focused-tested. F11 pause/resume authority, real provider cancellation semantics, and live restart proof remain open with F11-T10.
+- Code-ready evidence: Cascade request re-queries and materializes descendants under one immediate transaction, rejects stale fingerprints, and records durable stop intent before the concrete F11 provider-neutral cancel call. F3 pause/resume consumers call optional provider-neutral F11 authority first and mutate task/workflow truth only after every target acknowledges; absent authority and partial failures fail closed. A materializer racing pause/stop persists its exact snapshot but creates no worker rows, and resume reuses that attempt/snapshot once. The production F11 singleton owns provider dispatch and now supplies truthful active-run activity-delivery pause/resume without claiming provider-process suspension. Per-target claims, restart retry, orphan/stale-lease truth, partial failures, and bounded redacted provider errors are focused-tested. Real provider cancellation semantics and live restart proof remain open with F11-T10.
 
 ### S4-F3-T6 — Define coordination engines, settings, and profile boundaries
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: `workflow`, `codex-v2`, and `codex-v1` have one typed lifecycle contract and predictable user selection.
@@ -86,6 +93,7 @@
 
 ### S4-F3-T7 — Implement the deterministic workflow engine
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: The default engine runs inspectable, restart-safe multi-agent workflows without putting orchestration state in the lead model context.
@@ -96,10 +104,11 @@
 - Blocked by: S4-F3-T4, S4-F3-T6, S4-F11-T9
 - Blocks: S4-F3-T5, S4-F3-T9, S4-F3-T10, S4-F4-T6, S4-F12-T5
 - Context: Stage 3 scheduler/service, Anthropic dynamic-workflow behavior reference, ECC `orch-review.workflow.js` research pattern.
-- Code-ready evidence: Run plus initial checkpoints commit atomically. The restricted graph validates IDs/dependencies/cycles, stable unique agent-definition references, and truthful branch/loop/parallel/pipeline/barrier/human-gate definitions; enforces spawn, parallel/total-agent, token/cost, retry, timeout, output-schema, and stop limits; reuses completed checkpoints; and never replays uncertain launches. After dependency, retry, concurrency, budget, permission, worktree, and eligibility checks, one renewable checkpoint claim invokes the injectable pre-durable materializer. Its exact returned definition and optional snapshot metadata persist before any chat/subchat/agent/run or F11 reserve/launch effect; failures create zero worker rows, and concurrent pause/resume reuses one attempt/snapshot. Generic pending-run drain excludes workflow-owned reservations, while a dedicated startup scheduler advances durable runs. Ready worker waves launch concurrently within policy caps; dependent phases advance after the wave. F3 passes the step output schema through the typed F11 consumer request and validates the immutable final activity projection without parsing provider streams. Pause/resume consumers fail closed without optional F11 authority. F11 output-schema forwarding and pause/resume implementation, assigned live UI, and live mixed-worker proof remain open.
+- Code-ready evidence: Run plus initial checkpoints commit atomically. The restricted graph validates IDs/dependencies/cycles, stable unique agent-definition references, and truthful branch/loop/parallel/pipeline/barrier/human-gate definitions; enforces spawn, parallel/total-agent, token/cost, retry, timeout, output-schema, and stop limits; reuses completed checkpoints; and never replays uncertain launches. After dependency, retry, concurrency, budget, permission, worktree, and eligibility checks, one renewable checkpoint claim invokes the production-registered pre-durable profile materializer. Its exact returned definition and optional snapshot metadata persist before any chat/subchat/agent/run or F11 reserve/launch effect; failures create zero worker rows, and concurrent pause/resume reuses one attempt/snapshot. Generic pending-run drain excludes workflow-owned reservations, while a dedicated startup scheduler advances durable runs. Ready worker waves launch concurrently within policy caps; dependent phases advance after the wave. F3 passes the step output schema through the typed F11 consumer request and validates the immutable final activity projection without parsing provider streams. F11 now supplies the authoritative structured-output reader and truthful activity-delivery pause/resume authority; consumers still fail closed when either capability is unavailable. Assigned live UI and live mixed-worker proof remain open.
 
 ### S4-F3-T8 — Implement Codex V2 and V1 engine adapters
 
+- Evidence classes: `T2-capability:codex-v2` and `T2-capability:codex-v1`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users can choose native Codex task-tree behavior or explicit legacy compatibility while Flapstack keeps durable ownership.
@@ -114,6 +123,7 @@
 
 ### S4-F3-T9 — Aggregate multi-agent runtime activity
 
+- Evidence class: `T2-capability:mixed-runtime-providers`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Users understand workflow and coordination progress across every worker without duplicating or relabeling runtime-native activity.
@@ -128,14 +138,29 @@
 
 ### S4-F3-T10 — Close multi-agent operations acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core` for S4-MA01 through S4-MA07;
+  `T2-capability:codex-v2`, `T2-capability:codex-v1`, and
+  `T2-capability:mixed-runtime-providers` for S4-MA08 through S4-MA10.
+- [ ] Completion: S4-MA01 through S4-MA07 are accepted
+- Separate certifications: S4-MA08 through S4-MA10 retain independent
+  capability status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F3
 - Outcome: Engines, fleet, graph, policy, templates, workspaces, runtime activity, and cascading control pass with real supported harnesses.
-- Scope: Full gate, matrix S4-MA01 through S4-MA10, workflow and both Codex modes, heterogeneous orchestration, operation workspace, runtime-activity aggregation, restart, docs, and package preview.
+- Scope: The `T2-core` closeout covers S4-MA01 through S4-MA07,
+  deterministic workflow orchestration, operation workspaces, restart, and
+  docs. S4-MA08 through S4-MA10 retain their named provider capability status;
+  packaged macOS evidence remains S4-I03.
 - Out of scope: Hosted swarm control, S4-F12 agent profiles/personalities, and a hosted profile marketplace.
 - Acceptance: One workflow orchestration and supported Codex modes are supervised, messaged, stopped/resumed/recovered, and inspected with matching UI, database, workspace, run, activity, usage, approval, and audit state.
-- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, live orchestration verification, real supported Codex/Claude walkthroughs, and packaged preview evidence.
-- Blocked by: S4-F3-T2, S4-F3-T3, S4-F3-T4, S4-F3-T5, S4-F3-T7, S4-F3-T8, S4-F3-T9, S4-F4-T6, S4-F11-T10
+- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and
+  production-path deterministic orchestration MCP/live evidence. Real
+  Codex/Claude and packaged-preview evidence stays in the separately labeled
+  capability and release rows.
+- Blocked by for `T2-core`: S4-F3-T2, S4-F3-T3, S4-F3-T4,
+  S4-F3-T5, S4-F3-T7, S4-F4-T6, and the `T2-core` scope of
+  S4-F11-T10.
+- Separate capability certifications depend on S4-F3-T8, S4-F3-T9, and
+  the matching capability scopes of S4-F11-T10.
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.
 - Review evidence: `docs/stage4-s4-f3-multi-agent-operations.md`. S4-MA01 through S4-MA10 remain open pending F11-T10 composition of the typed Codex request/output-schema/pause-resume surfaces, real harness walkthroughs, the separately assigned live UI/accessibility/multi-window queue, restart/cancellation inspection, and packaged preview evidence.

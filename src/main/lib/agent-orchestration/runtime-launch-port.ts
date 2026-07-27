@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
 import type { ResolvedRuntimeLaunch } from "../../../shared/agent-runtime"
+import type { AgentProfileRuntimeAuthority } from "../../../shared/agent-profiles"
 import {
   orchestrationAgentDefinitionSchema,
   type OrchestrationAgentDefinition,
@@ -9,6 +10,8 @@ import { resolvedLaunchFromSnapshotRow } from "../agent-runtime/snapshot"
 import { claimPendingRunWithinUsageBudget } from "../usage/budgets"
 import { recordOrchestrationTransition } from "./activity-projection"
 import type { CodexAppServerCoordinationTransportPort } from "./codex-app-server-coordination"
+import { readDurableAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
+import { parseDurableOrchestrationAgentDefinition } from "./durable-definition"
 
 type Row = Record<string, unknown>
 
@@ -63,6 +66,7 @@ export type MainRuntimeQueuedRun = {
   worktreePath: string | null
   projectPath: string | null
   runtimeLaunch: ResolvedRuntimeLaunch
+  profileRuntimeAuthority?: AgentProfileRuntimeAuthority
   localEndpoint?: string
   requiredLocalToolTiers?: Array<"read" | "project-write" | "shell" | "git" | "network">
   /** Consumer seam for F11. F3 never selects or parses a provider adapter. */
@@ -191,9 +195,17 @@ function loadDurableRun(
   )
     throw new Error("Runtime launch durable run/chat/subchat identity mismatch.")
   const expectedDefinition = orchestrationAgentDefinitionSchema.parse(request.agentDefinition)
-  const durableDefinition = orchestrationAgentDefinitionSchema.parse(
-    JSON.parse(String(row.orchestration_definition)),
-  )
+  const durableDefinition = parseDurableOrchestrationAgentDefinition(row.orchestration_definition)
+  const profileAuthority = readDurableAgentProfileRuntimeAuthority(db, request.runId)
+  if (
+    profileAuthority.kind === "invalid" ||
+    (durableDefinition.profileRuntimeAuthority &&
+      (profileAuthority.kind !== "authority" ||
+        canonicalJson(profileAuthority.authority) !==
+          canonicalJson(durableDefinition.profileRuntimeAuthority)))
+  ) {
+    throw new Error("Runtime launch frozen Agent Profile provenance is invalid.")
+  }
   if (
     !request.agentDefinitionId ||
     expectedDefinition.definitionId !== request.agentDefinitionId ||
@@ -243,6 +255,9 @@ function loadDurableRun(
         ? { localEndpoint: durableDefinition.localEndpoint }
         : {}),
       requiredLocalToolTiers: durableDefinition.requiredLocalToolTiers ?? [],
+      ...(profileAuthority.kind === "authority"
+        ? { profileRuntimeAuthority: profileAuthority.authority }
+        : {}),
       outputSchema: request.outputSchema,
     },
     binding: {

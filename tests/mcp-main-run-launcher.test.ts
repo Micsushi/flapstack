@@ -43,7 +43,7 @@ vi.mock("../src/main/lib/trpc/routers", () => ({
   }),
 }))
 
-import { createMainRunLauncher } from "../src/main/lib/main-run-launcher"
+import { createMainRunLauncher, MainRuntimeLaunchService } from "../src/main/lib/main-run-launcher"
 
 let directory = ""
 let path = ""
@@ -80,6 +80,21 @@ describe("MCP main run launcher", () => {
     expect(harnessMocks.claude).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "queued-claude", chatId: "chat", subChatId: "sub-chat" }),
     )
+  })
+
+  it("cancels a claimed run that starts during persisted cancellation serialization", async () => {
+    const run = queuedRun("cancel-claim-race", "codex")
+    const service = new MainRuntimeLaunchService({ databasePath: path })
+
+    const cancellation = service.cancel(run.runId, "cancel-before-provider-start")
+    const launch = service.launch(run)
+
+    await expect(cancellation).resolves.toBe(true)
+    await expect(launch).rejects.toMatchObject({ name: "RuntimeLaunchCancelledError" })
+    expect(harnessMocks.codex).not.toHaveBeenCalled()
+    expect(sqlite.prepare("SELECT status FROM agent_runs WHERE id = ?").get(run.runId)).toEqual({
+      status: "cancelled",
+    })
   })
 
   it("launches eligible local workers and fails tool mismatch before provider work", async () => {

@@ -2,6 +2,7 @@
 
 ### S4-F7-T1 — Add attribution and budget contracts
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Usage facts can retain product-scope attribution and budgets have one typed policy model.
@@ -15,6 +16,7 @@
 
 ### S4-F7-T2 — Capture and backfill durable attribution
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: New run samples snapshot all known scopes and old samples recover safe dimensions.
@@ -28,6 +30,7 @@
 
 ### S4-F7-T3 — Implement reconciled multi-scope rollups
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: One query engine returns trustworthy totals and series for every supported scope.
@@ -41,6 +44,7 @@
 
 ### S4-F7-T4 — Add headroom, forecast, and anomaly calculations
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Users receive bounded decision support with visible confidence and provenance.
@@ -54,6 +58,7 @@
 
 ### S4-F7-T5 — Enforce scoped budgets and advanced alerts
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Soft alerts and hard stops apply consistently to user and automated runs.
@@ -67,6 +72,7 @@
 
 ### S4-F7-T6 — Build advanced explorer and redacted export
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Users filter, compare, drill down, configure budgets, and export normalized usage.
@@ -82,13 +88,17 @@
 
 ### S4-F7-T7 — Close advanced usage acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F7
 - Outcome: Attribution, rollups, budgets, forecasts, alerts, and export pass integrated evidence.
-- Scope: Full gate; matrix S4-UL01–S4-UL03; backfill/restart; UI-closed daemon; automation/orchestration hard stop; exact/estimated/unknown; docs; package preview.
+- Scope: Full gate; matrix S4-UL01–S4-UL03; backfill/restart; UI-closed
+  daemon; automation/orchestration hard stop; exact/estimated/unknown; and docs.
 - Out of scope: Provider data unavailable in real accounts or unobserved platforms.
 - Acceptance: Raw facts reconcile to every tested rollup; budget behavior matches run state; provenance remains truthful.
-- Verification: Node 22 `npm run check`, strict OpenSpec, `npm run dev:verify`, daemon/live matrix, and packaged preview.
+- Verification: Node 22 `npm run check`, strict OpenSpec,
+  `npm run dev:verify`, and daemon/MCP/live matrix evidence. Packaged macOS
+  evidence remains the separate S4-I03 release gate.
 - Blocked by: S4-F7-T5, S4-F7-T6
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md` and Stage 4 execution plan.

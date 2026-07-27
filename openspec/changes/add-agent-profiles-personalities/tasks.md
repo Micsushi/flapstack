@@ -1,15 +1,17 @@
 # S4-F12 — Agent Profiles and Personalities
 
-Implementation status: code-ready/headless-feature-verified. The 0/8
-completion board remains intentionally open until F3 integrates the required
-pre-durable-worker materializer hook and the serialized UI, credentialed
-provider, forced live-restart, accessibility, and packaged-preview evidence
-owned by the coordinator is observed. The F3 dependency is a remaining code
-path, not manual evidence. Headless code and accepted tests must not be
-discarded while those rows remain open.
+Implementation status: Tier 1 code-ready/headless-feature-verified. The 0/8
+Tier 2 completion board remains intentionally open until the serialized UI,
+credentialed provider, forced live-restart, accessibility, and
+packaged-preview evidence owned by the coordinator is observed. The required
+F3 pre-durable-worker materializer is registered in production before workflow
+recovery; exact snapshot reuse, standalone dispatch, and supported-harness
+product-MCP defaults have focused Node 22 coverage. Headless code and accepted
+tests must not be discarded while the Tier 2 rows remain open.
 
 ### S4-F12-T1 — Resolve the agent-profile product contract
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: The unpolished agent-personality idea becomes a reviewed product contract with no hidden implementation guesses.
@@ -23,6 +25,7 @@ discarded while those rows remain open.
 
 ### S4-F12-T2 — Add profile, personality, and snapshot contracts
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Capability, personality, workflow binding, and runtime resolution have one typed, versioned, safe composition contract.
@@ -36,6 +39,7 @@ discarded while those rows remain open.
 
 ### S4-F12-T3 — Add local profile lifecycle, trust, and portability
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users safely manage reusable profiles and exchange them without secrets or inherited authority.
@@ -49,19 +53,29 @@ discarded while those rows remain open.
 
 ### S4-F12-T4 — Build Profile Studio and resolved preview
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users create and understand named agents without editing raw provider files or confusing personality with permission.
 - Scope: Profile list/search/filter, create blank/duplicate/compose, identity/type/description, capability editor, personality/style editor, base selection, model/runtime/skill/tool/memory/worktree/descendant controls, instruction editor, field-source diff, compatibility/evaluation state, resolved launch preview, test-without-authority-increase flow, accessibility, and multi-window invalidation.
 - Out of scope: Workflow graph editing, launching without confirmation, prompt marketplace browsing, or exposing hidden provider prompts/reasoning.
-- Acceptance: Capability and personality are visually separate; every inherited/overridden field is inspectable; invalid combinations cannot save or launch; changes are versioned; keyboard/screen-reader users can complete create, preview, duplicate, and archive flows.
-- Verification: Reducer/form validation, component/accessibility, settings search, inheritance/source display, compatibility states, optimistic conflict, multi-window, visual/manual Profile Studio walkthrough, and restart tests.
+- Acceptance: Capability and personality are semantically and visually
+  separate; every inherited/overridden field is inspectable; invalid
+  combinations cannot save or launch; changes are versioned; automated
+  accessibility checks cover accessible names/states, focus order,
+  keyboard-operable controls, errors, and the create, preview, duplicate, and
+  archive flows. The owner's keyboard/screen-reader walkthrough remains Tier 3.
+- Verification: Reducer/form validation, component/accessibility, settings
+  search, inheritance/source display, compatibility states, optimistic conflict,
+  multi-window, agent-operated visual/live Profile Studio walkthrough, and
+  restart tests.
 - Blocked by: S4-F12-T1, S4-F12-T2, S4-F12-T3
 - Blocks: S4-F12-T5, S4-F12-T6, S4-F12-T7, S4-F12-T8
 - Context: Settings shell/search, Stage 3 Custom Agents provider inventory distinction, model/runtime selectors, permission and memory controls, root `ui-design.md`.
 
 ### S4-F12-T5 — Bind named profiles to deterministic workflows
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Workflow authors can assign reusable named specialists and personalities to steps with reproducible execution.
@@ -75,6 +89,7 @@ discarded while those rows remain open.
 
 ### S4-F12-T6 — Launch standalone named agents
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Users can spin out a named specialist/personality outside a predefined workflow and continue working with it safely.
@@ -88,26 +103,37 @@ discarded while those rows remain open.
 
 ### S4-F12-T7 — Add starter types and profile evaluation
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Flapstack ships a small trustworthy starter set and honest compatibility evidence instead of a sprawling prompt catalog.
 - Scope: Implement only T1-approved starter roles, read-only versioning, user-copy flow, behavior/capability/safety/prompt-injection fixtures, task-quality scorecard, cross-model/runtime compatibility runs, untested/tested labels, regression thresholds, update notes, and profile test runner/history.
 - Out of scope: Universal quality claims, automatic model routing solely from personality, leaderboard marketing, or importing the full OMO/ECC catalog.
 - Acceptance: Every built-in has purpose, bounded capability, supported combinations, evidence, and owner; failed safety/capability gates block promotion; untested combinations are labeled honestly; copying a starter creates an independent user version.
-- Verification: Schema and golden fixtures, prompt-injection/adversarial suite, permission invariants, supported runtime/model matrix, scorecard reproducibility, update regression, copy/version tests, and manual catalog discovery walkthrough.
+- Verification: Schema and golden fixtures, prompt-injection/adversarial suite,
+  permission invariants, supported runtime/model matrix, scorecard
+  reproducibility, update regression, copy/version tests, and agent-operated live
+  catalog discovery walkthrough.
 - Blocked by: S4-F12-T1, S4-F12-T2, S4-F12-T3, S4-F12-T4, S4-F12-T5, S4-F12-T6
 - Blocks: S4-F12-T8
 - Context: OMO category/model-fit research, ECC role/workflow separation, provider/runtime capability fixtures, evaluation harness, Profile Studio.
 
 ### S4-F12-T8 — Close agent-profile and personality acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F12
 - Outcome: Custom, workflow-bound, standalone, imported, and starter agents work reproducibly with safe authority and truthful compatibility.
-- Scope: Matrix S4-AP01 through S4-AP08, full automated gate, migration, custom profile lifecycle, personality/capability separation, workflow and standalone launches, runtime compatibility, import/export trust, starter evaluations, restart, accessibility, docs, and packaged preview.
+- Scope: Matrix S4-AP01 through S4-AP08, full automated gate, migration, custom profile lifecycle, personality/capability separation, workflow and standalone launches, runtime compatibility, import/export trust, starter evaluations, restart, automated semantic/accessibility checks, and docs.
 - Out of scope: Hosted/community marketplace, autonomous remote profile updates, or private chain-of-thought display.
 - Acceptance: A user creates one named profile/personality, uses it in a deterministic workflow, spins it out standalone, resumes both after restart, exports/reimports it without secrets, and observes matching snapshot, runtime, permission, workspace, lineage, activity, usage, and audit state; every profile-related authority increase remains approval-gated.
-- Verification: Node 22 `npm run check`, strict OpenSpec, profile/evaluation suites, migration fixtures, `npm run dev:verify`, real supported Codex/Claude workflow and standalone walkthroughs, forced restart, accessibility pass, and `npm run package:preview:mac` evidence.
+- Verification: Node 22 `npm run check`, strict OpenSpec, profile/evaluation
+  suites, migration fixtures, automated semantic/accessibility checks,
+  `npm run dev:verify`, production-path workflow and standalone exercises, and
+  forced restart. Credentialed provider and packaged-preview certifications
+  remain in their separately labeled matrix rows; Codex profile capability
+  certification stays open until exact upstream tool enforcement exists.
 - Blocked by: S4-F12-T3, S4-F12-T4, S4-F12-T5, S4-F12-T6, S4-F12-T7
 - Blocks: Stage S4 integrated exit
-- Context: `docs/stage4-full-feature-test-matrix.md`, S4-F3/F4/F11 acceptance, profile diagnostics and manual test guide.
+- Context: `docs/stage4-full-feature-test-matrix.md`, S4-F3/F4/F11 acceptance,
+  profile diagnostics, and Tier 2 acceptance guidance.

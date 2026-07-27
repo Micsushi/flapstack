@@ -2,6 +2,7 @@
 
 ### S4-F5-T1 — Add automation contracts and durable schema
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Typed local automation, trigger, occurrence, execution, lease, retry, budget, and inbox records exist.
@@ -15,6 +16,7 @@
 
 ### S4-F5-T2 — Implement the leased main-process scheduler
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Due occurrences are leased and dispatched once with startup recovery.
@@ -28,6 +30,7 @@
 
 ### S4-F5-T3 — Add manual, schedule, and run-complete triggers
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Three deterministic trigger sources create deduplicated occurrences.
@@ -41,6 +44,7 @@
 
 ### S4-F5-T4 — Add scoped file-change triggers
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Registered project/worktree changes create bounded coalesced occurrences.
@@ -54,6 +58,7 @@
 
 ### S4-F5-T5 — Add approval-gated CRUD and MCP management
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Users and authorized agents manage automations without bypassing approval or scope.
@@ -67,6 +72,7 @@
 
 ### S4-F5-T6 — Execute bounded runs with retry, budgets, and kill
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: A leased occurrence launches one normal Flapstack run and reaches a truthful terminal state.
@@ -80,6 +86,7 @@
 
 ### S4-F5-T7 — Build local automation management, history, and inbox UI
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
 - Outcome: Users create, review, dry-run, enable, pause, kill, and inspect local automations.
@@ -93,13 +100,19 @@
 
 ### S4-F5-T8 — Close automation acceptance
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F5
-- Outcome: Local automation passes automated, restart, live, and packaged evidence.
-- Scope: Full gate; Stage 4 matrix S4-AU01–S4-AU03; schedule/manual/run/file triggers; approval/deny; dry-run; retry/budget/kill; restart; docs; package preview.
+- Outcome: Local automation passes automated, restart, and verified-Dev
+  production-path evidence.
+- Scope: Full gate; Stage 4 matrix S4-AU01–S4-AU03;
+  schedule/manual/run/file triggers; approval/deny; dry-run; retry/budget/kill;
+  restart; and docs.
 - Out of scope: Running while the app is closed or hosted scheduling.
 - Acceptance: One approved automation completes with full evidence; unsafe and closed-app cases remain explicit; no duplicate execution occurs.
-- Verification: Node 22 `npm run check`, strict OpenSpec, `npm run dev:verify`, live matrix, and `npm run package:preview:mac`.
+- Verification: Node 22 `npm run check`, strict OpenSpec,
+  `npm run dev:verify`, and automation MCP/live matrix evidence. Packaged macOS
+  evidence remains the separate S4-I03 release gate.
 - Blocked by: S4-F5-T3, S4-F5-T4, S4-F5-T5, S4-F5-T6, S4-F5-T7
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md` and Stage 4 execution plan.

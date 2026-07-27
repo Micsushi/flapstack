@@ -662,6 +662,61 @@ export const devMcpTestControlTools: DevMcpToolDefinition[] = [
     mutates: true,
     status: "implemented",
   },
+  {
+    name: "get_stage4_operational_state",
+    description:
+      "Inspect redacted production state for Stage 4 skills, vaults, workspaces, automations, local models, usage limits, portability, or planning.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "mutate_stage4_operational_state",
+    description:
+      "Exercise one bounded Stage 4 production mutation through a strict action allowlist.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "cleanup_stage4_owned_runtime_profiles",
+    description: "Recover and clean persisted Runtime/Profile fixtures owned by this Dev profile.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "get_stage4_runtime_state",
+    description:
+      "Inspect production Runtime defaults, chat resolution diagnostics, and durable activity.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "mutate_stage4_runtime",
+    description:
+      "Exercise bounded production Runtime defaults, chat lifecycle, and activity fixtures.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
+  {
+    name: "get_stage4_profile_state",
+    description:
+      "Inspect production Agent Profiles, resolution, workflow bindings, and standalone previews.",
+    tier: 0,
+    mutates: false,
+    status: "implemented",
+  },
+  {
+    name: "mutate_stage4_profile",
+    description:
+      "Exercise bounded production Agent Profile lifecycle, portability, binding, and launch paths.",
+    tier: 1,
+    mutates: true,
+    status: "implemented",
+  },
 ]
 
 export function getDevMcpTool(name: string): DevMcpToolDefinition | null {
@@ -737,6 +792,13 @@ export const devMcpExposedToolNames = [
   "create_test_orchestration",
   "get_test_orchestration",
   "mutate_test_orchestration",
+  "get_stage4_operational_state",
+  "mutate_stage4_operational_state",
+  "cleanup_stage4_owned_runtime_profiles",
+  "get_stage4_runtime_state",
+  "mutate_stage4_runtime",
+  "get_stage4_profile_state",
+  "mutate_stage4_profile",
   "archive_test_task",
   "archive_test_chat",
   "send_test_prompt",

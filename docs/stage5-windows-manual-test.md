@@ -1,4 +1,9 @@
-# Stage 5 Windows Manual Test
+# Stage 5 Windows Owner Walkthrough
+
+This is the expanded Tier 3 guide. Track owner status in
+[`owner-manual-testing-backlog.md`](owner-manual-testing-backlog.md). Running
+this guide does not hold Tier 2 implementation checkboxes open unless a check is
+explicitly labeled `release-blocking`.
 
 Use one accepted Stage 5 candidate on a clean Windows 11 x64 VM and one upgrade
 VM containing preserved Stage 4 user data. Record SHA, artifact hashes, Windows
@@ -42,7 +47,8 @@ build, install type, and failures in Stage 5 evidence ledger.
 
 1. Build and inspect Preview, NSIS, and portable artifacts.
    Expected: exact SHA/version, x64 architecture, required binaries/modules, hashes,
-   licenses, and secret scan pass.
+   licenses, and secret scan pass. Run `npm run package:audit:preview:win` for
+   Preview and `npm run package:audit:release:win` for the signed candidate.
 2. Install NSIS artifact as standard user and launch from Start menu/protocol.
    Expected: expected UAC/security prompts only; one product instance and correct data path.
 3. Repeat core project, terminal, Claude, Codex, credentials, voice, and deep-link flows.
@@ -54,9 +60,18 @@ build, install type, and failures in Stage 5 evidence ledger.
 6. Uninstall while keeping data, reinstall, and verify restoration.
    Expected: owned processes/tasks removed; user data returns after reinstall.
 7. Uninstall while removing data.
-   Expected: owned app data, tasks, protocols, and processes removed; unrelated data untouched.
+   Run the installed `Uninstall Flapstack.exe` with `--delete-app-data`.
+   Expected: owned app data, tasks, protocols, and processes removed; unrelated
+   data untouched. A normal uninstall without this flag remains the keep-data path.
 8. When signing credentials are authorized, inspect Authenticode chain and timestamp.
-   Expected: every required executable validates; credentials never appear in repo/logs.
+   Confirm the real certificate subject and SHA-1 thumbprint match the checked-in
+   `build/windows-release-security-policy.json`, clear its explicit release
+   block, and run the signed release audit.
+   Expected: Flapstack-owned executables and both release artifacts validate as
+   the pinned publisher; every vendor executable has a valid timestamped
+   signature and recorded publisher; DLLs and Node native modules match their
+   report inventory; credentials never appear in repo/logs; and Defender
+   evidence is bound to the unchanged package hash.
 
 ## Edge cases
 

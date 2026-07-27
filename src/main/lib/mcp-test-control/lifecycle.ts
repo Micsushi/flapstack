@@ -1,7 +1,11 @@
-import { basename, extname } from "node:path"
+import { win32 } from "node:path"
 
 export function isPreviewExecutable(executablePath = process.execPath): boolean {
-  return basename(executablePath, extname(executablePath)) === "Flapstack Preview"
+  return win32.basename(executablePath, win32.extname(executablePath)) === "Flapstack Preview"
+}
+
+export function resolveFlapstackProtocol(isDev: boolean, isPreview: boolean): string {
+  return isDev ? "flapstack-dev" : isPreview ? "flapstack-preview" : "flapstack"
 }
 
 export function isDevTestControlEnabled(

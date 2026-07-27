@@ -9,7 +9,7 @@ import { getAuthManager } from "../../../index"
 import { getBundledClaudeBinaryPath, getClaudeShellEnvironment } from "../../claude"
 import { parseClaudeAuthOutput } from "../../claude/local-auth-output"
 import { getExistingClaudeToken } from "../../claude-token"
-import { decodePlaintextClaudeToken } from "../../claude-credential-storage"
+import { decryptClaudeCredential, encryptClaudeCredential } from "../../claude-credential-storage"
 import { anthropicAccounts, anthropicSettings, claudeCodeCredentials, getDatabase } from "../../db"
 import { createId } from "../../db/utils"
 import { publicProcedure, router } from "../index"
@@ -21,22 +21,14 @@ const execFileAsync = promisify(execFile)
  * Encrypt token using Electron's safeStorage
  */
 function encryptToken(token: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    console.warn("[ClaudeCode] Encryption not available, storing as base64")
-    return Buffer.from(token).toString("base64")
-  }
-  return safeStorage.encryptString(token).toString("base64")
+  return encryptClaudeCredential(token, safeStorage)
 }
 
 /**
  * Decrypt token using Electron's safeStorage
  */
-function decryptToken(encrypted: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    return decodePlaintextClaudeToken(encrypted)
-  }
-  const buffer = Buffer.from(encrypted, "base64")
-  return safeStorage.decryptString(buffer)
+function decryptToken(encrypted: string, migrateLegacy: (encrypted: string) => void): string {
+  return decryptClaudeCredential(encrypted, safeStorage, migrateLegacy)
 }
 
 /**
@@ -350,7 +342,14 @@ export const claudeCodeRouter = router({
 
       if (account) {
         try {
-          if (decryptToken(account.oauthToken).trim()) {
+          if (
+            decryptToken(account.oauthToken, (oauthToken) => {
+              db.update(anthropicAccounts)
+                .set({ oauthToken })
+                .where(eq(anthropicAccounts.id, account.id))
+                .run()
+            }).trim()
+          ) {
             return {
               isConnected: true,
               connectedAt: account.connectedAt?.toISOString() ?? null,
@@ -374,7 +373,14 @@ export const claudeCodeRouter = router({
     let hasUsableStoredToken = Boolean(systemToken)
     if (cred?.oauthToken) {
       try {
-        hasUsableStoredToken = Boolean(decryptToken(cred.oauthToken).trim())
+        hasUsableStoredToken = Boolean(
+          decryptToken(cred.oauthToken, (oauthToken) => {
+            db.update(claudeCodeCredentials)
+              .set({ oauthToken })
+              .where(eq(claudeCodeCredentials.id, "default"))
+              .run()
+          }).trim(),
+        )
       } catch {
         hasUsableStoredToken = false
       }
@@ -564,7 +570,12 @@ export const claudeCodeRouter = router({
 
       if (account) {
         try {
-          const token = decryptToken(account.oauthToken)
+          const token = decryptToken(account.oauthToken, (oauthToken) => {
+            db.update(anthropicAccounts)
+              .set({ oauthToken })
+              .where(eq(anthropicAccounts.id, account.id))
+              .run()
+          })
           return { token, error: null }
         } catch (error) {
           console.error("[ClaudeCode] Decrypt error:", error)
@@ -585,7 +596,12 @@ export const claudeCodeRouter = router({
     }
 
     try {
-      const token = decryptToken(cred.oauthToken)
+      const token = decryptToken(cred.oauthToken, (oauthToken) => {
+        db.update(claudeCodeCredentials)
+          .set({ oauthToken })
+          .where(eq(claudeCodeCredentials.id, "default"))
+          .run()
+      })
       return { token, error: null }
     } catch (error) {
       console.error("[ClaudeCode] Decrypt error:", error)

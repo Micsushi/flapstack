@@ -774,7 +774,7 @@ export const agentProfileSnapshots = sqliteTable(
     check("agent_profile_snapshots_digest_check", sql`length(${table.digest}) = 64`),
     check(
       "agent_profile_snapshots_json_check",
-      sql`json_valid(${table.resolvedJson}) = 1 and json_extract(${table.resolvedJson}, '$.schemaVersion') = 1 and length(cast(${table.resolvedJson} as blob)) <= 1048576`,
+      sql`json_valid(${table.resolvedJson}) = 1 and json_extract(${table.resolvedJson}, '$.schemaVersion') in (1, 2) and length(cast(${table.resolvedJson} as blob)) <= 1048576`,
     ),
   ],
 )
@@ -866,7 +866,7 @@ export const agentProfileEvaluations = sqliteTable(
     ),
     check(
       "agent_profile_evaluations_runtime_check",
-      sql`${table.runtime} in ('codex','claude-code','flapstack-native')`,
+      sql`${table.runtime} in ('codex','codex-enhanced','claude-code','claude-code-enhanced','flapstack-native')`,
     ),
     check(
       "agent_profile_evaluations_state_check",

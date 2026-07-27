@@ -9,6 +9,8 @@
 - Change: openspec/changes/complete-runtime-orchestration-composition/
 - Tasks: openspec/changes/complete-runtime-orchestration-composition/tasks.md
 - Task IDs: S6-F7-T1 through S6-F7-T8
-- Dependencies: fully accepted S4-F3 and S4-F11.
+- Dependencies: S4-F3 and S4-F11 `T2-core` implementation acceptance.
+  Provider-specific Stage 4 certifications remain dependencies only for the
+  matching Stage 6 provider claim.
 - Blocks: S6 Agent Profiles, mobile controls, terminal-grid/swarm controls,
   platform Runtime proof, and integrated mixed-provider release acceptance.

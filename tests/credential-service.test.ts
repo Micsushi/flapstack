@@ -10,6 +10,7 @@ import {
   secureCredentialFile,
   type CredentialEncryption,
 } from "../src/main/lib/credential-service"
+import { inspectSafeStorageBackend } from "../src/main/lib/safe-storage-backend"
 import { credentialsRouter } from "../src/main/lib/trpc/routers/credentials"
 
 const encryptedBackend: CredentialEncryption = {
@@ -195,6 +196,36 @@ describe("main-process credential service", () => {
 
     expect(result).toMatchObject({ acknowledged: false, persistence: "session" })
     expect(() => readFileSync(service.storePath)).toThrow()
+  })
+
+  it("keeps Claude custom tokens session-only on Chromium basic_text", () => {
+    const dir = tempDir()
+    let encryptCalled = false
+    const service = new CredentialService({
+      storageDir: dir,
+      encryption: {
+        inspect: () =>
+          inspectSafeStorageBackend({
+            isEncryptionAvailable: () => true,
+            getSelectedStorageBackend: () => "basic_text",
+          }),
+        encrypt: () => {
+          encryptCalled = true
+          throw new Error("weak encryption must not run")
+        },
+        decrypt: encryptedBackend.decrypt,
+      },
+    })
+
+    expect(service.set("claude.custom-api-token", "sk-ant-api03-session")).toMatchObject({
+      acknowledged: false,
+      persistence: "session",
+    })
+    expect(service.resolve("claude.custom-api-token")).toBe("sk-ant-api03-session")
+    expect(encryptCalled).toBe(false)
+    const raw = readFileSync(service.storePath, "utf8")
+    expect(raw).not.toContain("sk-ant-api03-session")
+    expect(JSON.parse(raw).credentials).toEqual({})
   })
 
   it("retires the old durable value before Settings accepts session-only replacement", async () => {

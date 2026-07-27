@@ -31,6 +31,8 @@ import { AGENT_HARNESSES, type AgentHarness } from "../../../shared/harness-type
 import { resolveUsageAttributionFromSqlite } from "../usage/attribution"
 import { ensureOperationWorkspaceInTransaction } from "../saved-workspaces/operations"
 import { isBetaFeatureEnabled } from "../beta-features/settings"
+import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
+import { verifyFrozenAgentProfileRuntimeAuthority } from "../agent-profiles/runtime-authority"
 import * as dbSchema from "../db/schema"
 import {
   UsageBudgetExceededError,
@@ -109,6 +111,9 @@ export function createAgentOrchestrationService(databasePath: string) {
       validateDefinitions(input.agents)
       const db = open()
       try {
+        for (const definition of input.agents) {
+          assertFrozenProfileAuthority(db, definition)
+        }
         const engineSnapshot = constructCoordinationEngineSnapshot(db, {
           projectId: input.projectId,
           perLaunchEngine: input.coordinationEngine,
@@ -237,6 +242,7 @@ export function createAgentOrchestrationService(databasePath: string) {
             const agentId = workflowAgentId(input.workflowRunId, input.stepId, input.attemptCount)
             const definition = orchestrationAgentDefinitionSchema.parse(input.agentDefinition)
             validateDefinitionPermissions(definition)
+            assertFrozenProfileAuthority(db, definition)
             insertAgent(db, {
               id: agentId,
               taskId: input.taskId,
@@ -953,6 +959,7 @@ function addAgent(
   allowTerminalRecovery = false,
 ): OrchestrationAgentDto {
   validateDefinitionPermissions(input.agent)
+  assertFrozenProfileAuthority(db, input.agent)
   const orchestration = requireOrchestration(db, input.taskId)
   assertVersionedOrchestration(orchestration)
   if (
@@ -977,6 +984,27 @@ function addAgent(
   if (depth > Number(orchestration.max_depth)) {
     throw new AgentOrchestrationError("forbidden-loop", "Maximum orchestration depth exceeded.")
   }
+  for (const ancestorId of ancestors) {
+    const ancestor = requireAgent(db, input.taskId, ancestorId)
+    const authority = parseDefinition(ancestor.definition).profileRuntimeAuthority
+    if (authority && depth - Number(ancestor.depth) > authority.maxDescendants) {
+      throw new AgentOrchestrationError(
+        "permission-denied",
+        "Frozen Agent Profile descendant ceiling exceeded.",
+      )
+    }
+    const descendantAuthority = input.agent.profileRuntimeAuthority
+    if (
+      authority &&
+      (!descendantAuthority ||
+        !authority.allowedDescendantProfileIds.includes(descendantAuthority.profile.profileId))
+    ) {
+      throw new AgentOrchestrationError(
+        "permission-denied",
+        "Frozen Agent Profile descendant allowlist denied the selected profile.",
+      )
+    }
+  }
   const id = input.agent.agentId ?? randomUUID()
   if (ancestors.includes(id) || dependencies.includes(id)) {
     throw new AgentOrchestrationError("forbidden-loop", "Agent lineage would contain itself.")
@@ -993,6 +1021,18 @@ function addAgent(
     now,
   })
   return toAgentDto(requireAgent(db, input.taskId, id))
+}
+
+function assertFrozenProfileAuthority(db: Sqlite, definition: OrchestrationAgentDefinition): void {
+  if (
+    definition.profileRuntimeAuthority &&
+    !verifyFrozenAgentProfileRuntimeAuthority(db, definition.profileRuntimeAuthority)
+  ) {
+    throw new AgentOrchestrationError(
+      "permission-denied",
+      "Agent Profile Runtime authority is missing or does not match its frozen snapshot.",
+    )
+  }
 }
 
 function workflowAgentId(workflowRunId: string, stepId: string, attemptCount: number): string {
@@ -1812,7 +1852,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
       runtime_preference, mcp_exposure_enabled,
       parent_chat_id, initiator_chat_id, parent_run_id, ancestor_chat_ids,
       worktree_path, branch, base_branch, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, 'task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     chatId,
     definition.name ?? definition.role,
@@ -1823,6 +1863,7 @@ function materializeAgent(db: Sqlite, orchestration: Row, agent: Row): void {
     definition.harness,
     definition.model ?? null,
     definition.runtimePreference ?? null,
+    isProductMcpEnabledByDefault(definition.harness) ? 1 : 0,
     parentChatId,
     orchestration.initiating_chat_id,
     parentAgent?.run_id ?? null,

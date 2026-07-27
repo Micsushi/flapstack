@@ -47,12 +47,17 @@ import {
   controlRendererVoiceUi,
   captureTestRenderer,
   cleanupAllTestRendererCaptures,
+  cleanupOwnedStage4RuntimeProfiles,
   cleanupTestRendererCapture,
   listProviderExtensions,
   getReasoningTimerState,
   getRunState,
   getTestEnvironment,
   getTestOrchestration,
+  getStage4OperationalState,
+  getStage4ProfileState,
+  getStage4RuntimeState,
+  STAGE4_OPERATIONAL_ACTIONS,
   launchTestRun,
   launchHarnessTestRun,
   injectAgentInputRequest,
@@ -63,7 +68,11 @@ import {
   mutateProjectProviderExtension,
   manageProductMcpRecovery,
   prepareProductMcpCaller,
+  redactStage4ErrorMessage,
   mutateTestOrchestration,
+  mutateStage4OperationalState,
+  mutateStage4Profile,
+  mutateStage4Runtime,
   replyApproval,
   replyCodexPermissionRequest,
   replyProductMcpApproval,
@@ -103,6 +112,13 @@ import {
   refreshUsageState,
   undoRunChange,
 } from "./carryover-controls"
+import { sanitizeStage4ControlError } from "./stage4-boundary"
+import { configureStage4OwnershipJournal } from "./stage4-ownership"
+import {
+  STAGE4_PROFILE_MUTATION_ACTIONS,
+  STAGE4_PROFILE_READ_ACTIONS,
+  STAGE4_RUNTIME_MUTATION_ACTIONS,
+} from "./stage4-runtime-profiles"
 
 export const DEV_MCP_DESCRIPTOR_FILENAME = "dev-test-control-mcp.json"
 
@@ -113,6 +129,7 @@ export type DevMcpDescriptor = {
   checkout: string
   profile: string
   userDataPath: string
+  rendererUrl?: string
   startedAt: string
 }
 
@@ -176,6 +193,14 @@ function failure(error: unknown) {
       },
     ],
   }
+}
+
+export function stage4Failure(error: unknown) {
+  return failure(sanitizeStage4ControlError(error))
+}
+
+export function stage4OperationalFailure(error: unknown) {
+  return failure(new Error(redactStage4ErrorMessage(error)))
 }
 
 const credentialIdSchema = z.enum(CREDENTIAL_IDS)
@@ -1279,8 +1304,9 @@ function registerTools(server: McpServer): void {
       description:
         "Create a read-only Codex or Claude project-chat fixture for orchestration testing.",
       inputSchema: {
-        projectPath: z.string().min(1),
-        projectName: z.string().min(1).max(200).optional(),
+        projectPath: z.never().optional(),
+        projectId: z.never().optional(),
+        projectName: z.never().optional(),
         chatName: z.string().min(1).max(200).optional(),
         harness: z.enum(["codex", "claude-code"]).optional(),
       },
@@ -1301,12 +1327,13 @@ function registerTools(server: McpServer): void {
       inputSchema: {
         request: z.record(z.string(), z.unknown()),
         deferScheduling: z.boolean().optional(),
+        stage4FixtureHandle: z.string().min(1).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async ({ request, deferScheduling }) => {
+    async ({ request, deferScheduling, stage4FixtureHandle }) => {
       try {
-        return result(createTestOrchestration(request, { deferScheduling }))
+        return result(createTestOrchestration(request, { deferScheduling, stage4FixtureHandle }))
       } catch (error) {
         return failure(error)
       }
@@ -1354,6 +1381,144 @@ function registerTools(server: McpServer): void {
         return result(mutateTestOrchestration(input))
       } catch (error) {
         return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_stage4_operational_state",
+    {
+      description: "Inspect redacted production state for one Stage 4 operational feature family.",
+      inputSchema: {
+        domain: z.enum([
+          "skills-hooks",
+          "project-vaults",
+          "saved-workspaces",
+          "automations",
+          "local-models",
+          "usage-limits",
+          "portability",
+          "planning",
+        ]),
+        projectId: z.string().min(1).max(200).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await getStage4OperationalState(input))
+      } catch (error) {
+        return stage4OperationalFailure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_stage4_operational_state",
+    {
+      description:
+        "Exercise one bounded Stage 4 production mutation through a strict action allowlist.",
+      inputSchema: {
+        action: z.enum(STAGE4_OPERATIONAL_ACTIONS),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await mutateStage4OperationalState(input))
+      } catch (error) {
+        return stage4OperationalFailure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "cleanup_stage4_owned_runtime_profiles",
+    {
+      description:
+        "Recover and clean every persisted Runtime/Profile test fixture owned by this Dev profile without accepting raw IDs.",
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return result(await cleanupOwnedStage4RuntimeProfiles())
+      } catch (error) {
+        return stage4Failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_stage4_runtime_state",
+    {
+      description:
+        "Inspect production Runtime defaults, chat resolution diagnostics, and durable activity.",
+      inputSchema: {
+        fixtureHandle: z.string().trim().min(1).max(200),
+        activityRunHandle: z.string().trim().min(1).max(200).optional(),
+        activityLimit: z.number().int().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getStage4RuntimeState(input))
+      } catch (error) {
+        return stage4Failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_stage4_runtime",
+    {
+      description:
+        "Exercise production Runtime defaults, chat lifecycle, and deterministic activity fixtures.",
+      inputSchema: {
+        action: z.enum(STAGE4_RUNTIME_MUTATION_ACTIONS),
+        payload: z.record(z.string(), z.unknown()),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(mutateStage4Runtime(input))
+      } catch (error) {
+        return stage4Failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "get_stage4_profile_state",
+    {
+      description:
+        "Inspect production Agent Profiles, resolution, workflow bindings, and standalone previews.",
+      inputSchema: {
+        action: z.enum(STAGE4_PROFILE_READ_ACTIONS),
+        payload: z.record(z.string(), z.unknown()),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(getStage4ProfileState(input))
+      } catch (error) {
+        return stage4Failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    "mutate_stage4_profile",
+    {
+      description:
+        "Exercise bounded production Agent Profile lifecycle, portability, binding, and launch paths.",
+      inputSchema: {
+        action: z.enum(STAGE4_PROFILE_MUTATION_ACTIONS),
+        payload: z.record(z.string(), z.unknown()),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        return result(await mutateStage4Profile(input))
+      } catch (error) {
+        return stage4Failure(error)
       }
     },
   )
@@ -1763,10 +1928,12 @@ export async function startDevMcpServer(input: {
   userDataPath: string
   checkout: string
   profile: string
+  rendererUrl?: string
   pid?: number
 }): Promise<DevMcpServerHandle | null> {
   if (!input.enabled) return null
 
+  configureStage4OwnershipJournal(input.userDataPath)
   cleanupAllTestRendererCaptures()
 
   const token = randomBytes(32).toString("base64url")
@@ -1825,6 +1992,7 @@ export async function startDevMcpServer(input: {
     checkout: input.checkout,
     profile: input.profile,
     userDataPath: input.userDataPath,
+    ...(input.rendererUrl ? { rendererUrl: input.rendererUrl } : {}),
     startedAt: new Date().toISOString(),
   }
   const descriptorPath = join(input.userDataPath, DEV_MCP_DESCRIPTOR_FILENAME)

@@ -7,6 +7,7 @@ import {
   clipboard,
   nativeImage,
   dialog,
+  screen,
 } from "electron"
 import { sleep } from "../../shared/sleep"
 import { join } from "path"
@@ -30,9 +31,11 @@ import {
   stableWorkspaceWindowId,
   windowManager,
 } from "./window-manager"
+import { createInitialLaunchPresentationResolver } from "./launch-presentation"
 
 // Flag to bypass close confirmation when app.quit() has already been confirmed
 let isQuitting = false
+const resolveInitialLaunchPresentation = createInitialLaunchPresentationResolver()
 
 function hasActiveAgentSessions(): boolean {
   return (
@@ -52,10 +55,6 @@ function abortAllAgentSessions(): void {
 
 export function setIsQuitting(value: boolean): void {
   isQuitting = value
-}
-
-function shouldShowInactive(): boolean {
-  return process.env.FLAPSTACK_NO_FOCUS === "1" || process.argv.includes("--no-focus")
 }
 
 // Helper to get window from IPC event
@@ -626,6 +625,7 @@ export type CreateWindowOptions = {
   paneId?: string
   skipPaneId?: string
   stableWindowId?: string
+  applyInitialLaunchPresentation?: boolean
 }
 
 export function createWindow(options?: CreateWindowOptions): BrowserWindow {
@@ -634,10 +634,22 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
 
   // Read Windows frame preference
   const useNativeFrame = getUseNativeFramePreference()
+  const launchPresentation = resolveInitialLaunchPresentation(
+    {
+      env: process.env,
+      argv: process.argv,
+      displays: screen.getAllDisplays(),
+      primaryDisplayId: screen.getPrimaryDisplay().id,
+    },
+    options?.applyInitialLaunchPresentation === true,
+  )
 
   const window = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: launchPresentation.bounds?.width ?? 1400,
+    height: launchPresentation.bounds?.height ?? 900,
+    ...(launchPresentation.bounds
+      ? { x: launchPresentation.bounds.x, y: launchPresentation.bounds.y }
+      : {}),
     minWidth: 500, // Allow narrow mobile-like mode
     minHeight: 600,
     show: false,
@@ -659,6 +671,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
       sandbox: false, // Required for electron-trpc
       webSecurity: true,
       partition: "persist:main", // Use persistent session for cookies
+      ...(launchPresentation.keepRendererActive ? { backgroundThrottling: false } : {}),
     },
   })
 
@@ -691,10 +704,17 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
     if (process.platform === "darwin") {
       window.setWindowButtonVisibility(false)
     }
-    if (shouldShowInactive()) {
+    if (launchPresentation.showInactive) {
       window.showInactive()
     } else {
       window.show()
+    }
+    if (launchPresentation.startMinimized) {
+      window.minimize()
+      console.log(
+        `[Main] Window ${window.id} started minimized` +
+          (launchPresentation.bounds ? " on a secondary display" : ""),
+      )
     }
   })
 
@@ -848,7 +868,7 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
  * Create the main application window (alias for createWindow for backwards compatibility)
  */
 export function createMainWindow(): BrowserWindow {
-  return createWindow()
+  return createWindow({ applyInitialLaunchPresentation: true })
 }
 
 function validWorkspacePaneTarget(value: unknown): WorkspacePaneWindowTarget | null {

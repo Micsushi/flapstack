@@ -3,8 +3,15 @@
 Roadmap note: former Stage 5 product-polish work moved intact to Stage 6. Stage
 5 now owns native Windows development, runtime, packaging, and acceptance.
 
-Stage 5 begins only after one exact Stage 4 SHA has all required feature boards
-and its integrated matrix accepted. Stage 6 cannot begin until Stage 5 closes.
+Stage 5 begins only after one exact Stage 4 source state has all 73
+implementation-gating task checkboxes and all 52 `T2-core` matrix rows
+accepted. Stage 6 cannot begin until Stage 5 reaches `T2-core` implementation
+completion.
+
+Task and stage completion use
+[`completion-tiers.md`](completion-tiers.md). Owner testing is tracked
+separately in
+[`owner-manual-testing-backlog.md`](owner-manual-testing-backlog.md).
 
 ## Outcome
 
@@ -48,7 +55,7 @@ and packaged builds.
 | S5-F6 Agent harness parity         |     8 | Claude, Codex, auth, resume, permissions, and tool execution pass natively   |
 | S5-F7 Speech and voice parity      |     8 | STT/TTS install, credentials, capture, playback, fallback, and cleanup pass  |
 | S5-F8 Packaging and security       |    10 | Preview, NSIS, portable, signing, integrity, upgrade, and uninstall pass     |
-| S5-F9 Integrated Windows release   |     9 | One exact SHA closes full matrix and user walkthrough                        |
+| S5-F9 Integrated Windows release   |     9 | One exact SHA closes the Tier 2 matrix and prepares the owner walkthrough    |
 
 Task status lives only in
 `openspec/changes/enable-windows-compatibility/tasks.md`.
@@ -92,12 +99,14 @@ Task status lives only in
 - Exercise clean install, upgrade, repair/reinstall, uninstall-keep-data, and
   uninstall-remove-data paths on clean Windows VMs.
 
-### Wave 5 - Integrated exact-SHA acceptance
+### Wave 5 - Integrated exact-SHA Tier 2 acceptance
 
-- S5-F9 runs full automated and manual matrix against one immutable candidate.
+- S5-F9 runs the full agent-operated matrix against one immutable candidate.
 - Run fresh-user and existing-profile workflows with credentialed Claude/Codex,
   terminal, worktrees, voice, deep links, restart, package lifecycle, and logs.
 - Close only when no P0/P1 defect, required row, or unsupported claim remains.
+- Prepare the separate Tier 3 owner backlog without holding Tier 2 checkboxes
+  open.
 
 ## Required command contract
 
@@ -120,26 +129,40 @@ Final script names may be added by S5-F2/S5-F8, but one root command must own
 each lifecycle. Users must not manually launch renderer, main process, helper,
 or packaged executable pieces to satisfy acceptance.
 
-## Stage completion gate
+## Tier 2 implementation completion gate
 
 All conditions required:
 
-1. Every S5 task checkbox complete with linked current evidence.
-2. `docs/stage5-full-feature-test-matrix.md` passes on one exact SHA.
-3. Windows CI passes install, lint, style, typecheck, unit/integration tests,
-   production build, native-module inspection, package build, and package smoke.
-4. Real Windows Dev and packaged walkthroughs pass without POSIX shell tools.
-5. Clean install, upgrade, repair, rollback, and both uninstall data choices pass.
-6. Claude, Codex, terminal, credentials, voice, deep links, and scheduled/background
-   work pass or carry explicit user-visible unsupported status.
-7. Artifact manifest, hash, architecture, secret scan, and signature policy pass.
-8. macOS regression gates pass after shared script and packaging changes.
-9. User completes `docs/stage5-windows-manual-test.md` and accepts result.
-10. Stage 6 routers and dependencies point to accepted Stage 5 baseline.
+1. All 50 implementation-gating task checkboxes close with linked current
+   evidence. The complete 76-record ledger keeps capability, release, and
+   tracking work visible without adding it to this denominator.
+2. All 40 `T2-core` rows in
+   `docs/stage5-full-feature-test-matrix.md` pass on one exact source state.
+3. The exact-source local Windows CI-equivalent gate passes install, lint,
+   style, typecheck, unit/integration tests, production build, native-module
+   inspection, unpacked Preview build, inspection, and smoke.
+4. Real Windows Dev and unpacked Preview core walkthroughs pass without POSIX
+   shell tools.
+5. Security, privacy, path, data-loss, recovery, and owned-process core reviews
+   pass without a required manual patch.
+6. The owner walkthrough and hierarchical Tier 3 backlog are accurate and
+   ready; owner execution is tracked separately.
+7. Stage 6 routers and dependencies point to the accepted Stage 5 `T2-core`
+   baseline.
+
+Provider, terminal-device, speech-device, hardware/OS-environment, and macOS
+rows remain separate `T2-capability:*` certifications. Hosted CI retention,
+installer/portable lifecycle, signing, malware scanning, clean-VM
+install/upgrade/rollback/uninstall, and other distributable-artifact checks
+remain `release-gate` work. They block only their named capability or
+`release ready` claim.
 
 ## Stop/go rule
 
-Any missing native observation, clean-host failure, manual patch, secret leak,
-unsafe signing bypass, orphaned process, data-loss path, or required matrix gap
-blocks Stage 5 completion. Cross-compilation and mocks do not replace native
-Windows evidence.
+Any missing `T2-core` native observation, manual patch, secret leak, orphaned
+owned process, data-loss path, or required core-matrix gap blocks Stage 5
+implementation completion. Cross-compilation and mocks do not replace required
+native Windows core evidence. An uncertified capability blocks only that
+capability claim. A clean-host package failure or unsafe signing bypass blocks
+`release ready`, not implementation completion. Unlabeled Tier 3 owner checks
+do not block either state.

@@ -143,6 +143,7 @@ export interface DesktopApi {
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void
   onShortcutOpenSettings: (callback: () => void) => () => void
+  onCliOpenDirectory: (callback: () => void) => () => void
   onDevRendererControlRequest: (
     callback: (payload: DevRendererControlRequest) => void,
   ) => () => void

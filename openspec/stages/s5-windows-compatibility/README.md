@@ -16,9 +16,23 @@ Delivery order:
 8. [S5-F8 Windows packaging and security](features/s5-f8-windows-packaging-security/README.md)
 9. [S5-F9 Integrated Windows release](features/s5-f9-integrated-windows-release/README.md)
 
-Entry gate: Stage 4 accepted on one exact SHA. Exit gate: all 76 tasks and
-`docs/stage5-full-feature-test-matrix.md` accepted against one native Windows
-candidate, including clean install, upgrade, rollback, and uninstall evidence.
+Completion model: `docs/completion-tiers.md`. A task checkbox closes at Tier 2
+AI acceptance of its `T2-core` scope, including native app/MCP interaction.
+Optional provider/device/environment capabilities and distributable-release
+certification remain separate matrix rows. Owner testing is tracked separately
+in `docs/owner-manual-testing-backlog.md`.
+
+Entry gate: Stage 4 implementation-complete on one exact SHA. Tier 2
+implementation exit requires every `T2-core` task scope and every `T2-core` row
+in `docs/stage5-full-feature-test-matrix.md` against one native Windows
+candidate. The 76-task board remains the complete work ledger, not 76 core
+implementation blockers. It contains 37 core-only tasks, 13 mixed tasks whose
+checkbox closes on their core portion, 14 capability-only tasks, one
+capability-plus-release task, 10 release-only tasks, and one tracking-only task.
+Thus 50 task checkboxes gate implementation. Clean install, upgrade, rollback,
+uninstall, signing, approved malware scanning, and hosted-CI retention are
+separate release gates. Tier 3 owner checks do not block this exit unless
+explicitly labeled `release-blocking`.
 
 Authoritative task board:
 `openspec/changes/enable-windows-compatibility/tasks.md`.

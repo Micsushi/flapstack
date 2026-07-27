@@ -44,6 +44,7 @@ import {
   runtimeSnapshotSqlValues,
 } from "../agent-runtime/snapshot"
 import { isBetaFeatureEnabled } from "../beta-features/settings"
+import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 
 type Sqlite = Database.Database
 type Row = Record<string, unknown>
@@ -694,8 +695,8 @@ export class AutomationExecutionService {
         .prepare(
           `INSERT INTO chats (
              id, name, project_id, scope, permission_mode, custom_permissions, harness, model,
-             worktree_path, ancestor_chat_ids, created_at, updated_at
-           ) VALUES (?, ?, ?, 'project', ?, ?, ?, ?, ?, '[]', ?, ?)`,
+             mcp_exposure_enabled, worktree_path, ancestor_chat_ids, created_at, updated_at
+           ) VALUES (?, ?, ?, 'project', ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
         )
         .run(
           id,
@@ -707,6 +708,7 @@ export class AutomationExecutionService {
             : null,
           prepared.plan.run.harness,
           prepared.plan.run.model ?? null,
+          isProductMcpEnabledByDefault(prepared.plan.run.harness) ? 1 : 0,
           prepared.preview.worktreeSnapshot.path,
           now,
           now,
@@ -1239,8 +1241,8 @@ function createChatTarget(
     .prepare(
       `INSERT INTO chats (
          id, name, project_id, task_id, scope, permission_mode, custom_permissions, harness,
-         model, worktree_path, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         model, mcp_exposure_enabled, worktree_path, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       chatId,
@@ -1254,6 +1256,7 @@ function createChatTarget(
         : null,
       prepared.plan.run.harness,
       prepared.plan.run.model ?? null,
+      isProductMcpEnabledByDefault(prepared.plan.run.harness) ? 1 : 0,
       worktreePath,
       now,
       now,

@@ -93,6 +93,13 @@ export type DevMcpToolName =
   | "create_test_orchestration_fixture"
   | "get_test_orchestration"
   | "mutate_test_orchestration"
+  | "get_stage4_operational_state"
+  | "mutate_stage4_operational_state"
+  | "cleanup_stage4_owned_runtime_profiles"
+  | "get_stage4_runtime_state"
+  | "mutate_stage4_runtime"
+  | "get_stage4_profile_state"
+  | "mutate_stage4_profile"
 
 export type DevMcpToolDefinition = {
   name: DevMcpToolName

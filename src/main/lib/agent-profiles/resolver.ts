@@ -4,6 +4,8 @@ import { checkRuntimeCompatibility, productRuntimeForHarness } from "../agent-ru
 import {
   runtimeAdapterForPreference,
   type AgentRuntimePreference,
+  type ResolvedAgentRuntime,
+  type RuntimePreferenceSource,
 } from "../../../shared/agent-runtime"
 import {
   agentProfileResolveInputSchema,
@@ -14,10 +16,12 @@ import {
   type AgentPresentationStyle,
   type AgentProfileBoundedOverride,
   type AgentProfileLaunchPolicy,
+  type AgentProfileRuntimeAuthority,
   type AgentProfileResolvedFieldSource,
   type AgentProfileVersionInput,
   type AgentProfileVersionRef,
   type ResolvedAgentProfileSnapshot,
+  type StoredResolvedAgentProfileSnapshot,
 } from "../../../shared/agent-profiles"
 import {
   customPermissionCapabilityKeys,
@@ -34,6 +38,13 @@ import {
 type Sqlite = Database.Database
 type DatabaseLike = Sqlite | object
 type Row = Record<string, unknown>
+
+export type AgentProfileRuntimeResolution = {
+  preference: Exclude<AgentRuntimePreference, "auto">
+  source: RuntimePreferenceSource | "profile"
+  defaultVersion: number | null
+  resolvedRuntime: ResolvedAgentRuntime
+}
 
 export class AgentProfileResolutionError extends Error {
   constructor(
@@ -90,9 +101,20 @@ export class AgentProfileResolver {
     this.sqlite = rawClient(database)
   }
 
-  preview(inputValue: unknown, overrideLayer: "launch" | "workflow" = "launch") {
+  preview(
+    inputValue: unknown,
+    overrideLayer: "launch" | "workflow" = "launch",
+    runtimeResolution?: AgentProfileRuntimeResolution,
+  ) {
     const input = agentProfileResolveInputSchema.parse(inputValue)
-    return this.resolve(input.profile, input.overrides, input.policy, overrideLayer, false)
+    return this.resolve(
+      input.profile,
+      input.overrides,
+      input.policy,
+      overrideLayer,
+      false,
+      runtimeResolution,
+    )
   }
 
   snapshot(
@@ -100,17 +122,18 @@ export class AgentProfileResolver {
     overrides: AgentProfileBoundedOverride | null,
     policy: AgentProfileLaunchPolicy,
     overrideLayer: "launch" | "workflow" = "launch",
+    runtimeResolution?: AgentProfileRuntimeResolution,
   ): ResolvedAgentProfileSnapshot {
-    return this.resolve(profile, overrides, policy, overrideLayer, true)
+    return this.resolve(profile, overrides, policy, overrideLayer, true, runtimeResolution)
   }
 
-  getSnapshot(snapshotId: string): ResolvedAgentProfileSnapshot {
+  getSnapshot(snapshotId: string): StoredResolvedAgentProfileSnapshot {
     const row = this.sqlite
       .prepare("SELECT resolved_json FROM agent_profile_snapshots WHERE id = ?")
       .get(snapshotId) as { resolved_json: string } | undefined
     if (!row)
       throw new AgentProfileResolutionError("profile-missing", "Profile snapshot is missing.")
-    return JSON.parse(row.resolved_json) as ResolvedAgentProfileSnapshot
+    return JSON.parse(row.resolved_json) as StoredResolvedAgentProfileSnapshot
   }
 
   private resolve(
@@ -119,15 +142,21 @@ export class AgentProfileResolver {
     policy: AgentProfileLaunchPolicy,
     overrideLayer: "launch" | "workflow",
     persist: boolean,
+    runtimeResolutionInput?: AgentProfileRuntimeResolution,
   ): ResolvedAgentProfileSnapshot {
     const displayName = this.profileDisplayName(profile.profileId)
     const composed = this.compose(profile, [], null)
     applyOverrides(composed, overrides, overrideLayer, profile)
-    const conflicts = intersectPolicy(composed, policy, profile)
+    const runtimeResolution = resolvedProfileRuntime(
+      composed.capability.harness,
+      composed.capability.runtimePreference,
+      runtimeResolutionInput,
+    )
+    const conflicts = intersectPolicy(composed, policy, profile, runtimeResolution)
     const evaluation = latestEvaluation(
       this.sqlite,
       profile,
-      resolvedRuntime(composed.capability.harness, composed.capability.runtimePreference),
+      runtimeResolution.preference,
       composed.capability.modelPreference,
     )
     if (isBuiltIn(this.sqlite, profile.profileId) && evaluation.state === "untested") {
@@ -150,7 +179,7 @@ export class AgentProfileResolver {
       })
     }
     const body = {
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       profile,
       displayName,
       capability: composed.capability,
@@ -158,6 +187,7 @@ export class AgentProfileResolver {
       sources: composed.sources,
       conflicts,
       unresolvedRequirements: composed.unresolvedRequirements,
+      runtimeResolution,
       evaluation,
     }
     const digest = sha256(canonicalJson(body))
@@ -369,6 +399,7 @@ function intersectPolicy(
   composed: Composed,
   policy: AgentProfileLaunchPolicy,
   profile: AgentProfileVersionRef,
+  runtimeResolution: AgentProfileRuntimeResolution,
 ) {
   const conflicts: ResolvedAgentProfileSnapshot["conflicts"] = []
   const capability = composed.capability
@@ -406,26 +437,34 @@ function intersectPolicy(
       repair: "Choose an allowed model or update policy through its existing approval path.",
     })
   }
-  const runtimePreference = effectiveRuntimePreference(
-    capability.harness,
-    capability.runtimePreference,
-  )
-  const runtime = resolvedRuntime(capability.harness, capability.runtimePreference)
-  if (policy.allowedRuntimes && !policy.allowedRuntimes.includes(runtimePreference)) {
+  if (policy.allowedRuntimes && !policy.allowedRuntimes.includes(runtimeResolution.preference)) {
     conflicts.push({
       code: "runtime-policy-blocked",
       field: "runtimePreference",
-      message: `Runtime ${runtimePreference} is outside the current durable Runtime policy.`,
+      message: `Runtime ${runtimeResolution.preference} is outside the current durable Runtime policy.`,
       repair: "Choose the current project/chat Runtime or confirm a newly narrowed snapshot.",
     })
   }
-  const compatibility = checkRuntimeCompatibility(capability.harness, runtime)
+  const compatibility = checkRuntimeCompatibility(
+    capability.harness,
+    runtimeResolution.resolvedRuntime,
+  )
   if (!compatibility.compatible) {
     conflicts.push({
       code: compatibility.reason.code,
       field: "runtimePreference",
       message: compatibility.reason.message,
       repair: compatibility.reason.repair,
+    })
+  }
+  if (capability.harness === "codex") {
+    conflicts.push({
+      code: "runtime-tool-policy-unsupported",
+      field: "tools",
+      message:
+        "Codex Agent Profile launch is unavailable because the Codex Runtime cannot prove enforcement of the frozen tool allowlist for no-approval tools.",
+      repair:
+        "Create a new Agent Profile version using the Claude Code harness, or wait for a Codex Runtime with complete per-tool enforcement.",
     })
   }
   const permission = intersectAgentProfilePermissions(
@@ -493,8 +532,9 @@ export function intersectAgentProfilePermissions(
 }
 
 export function agentProfileSnapshotPolicyViolations(
-  snapshot: ResolvedAgentProfileSnapshot,
+  snapshot: StoredResolvedAgentProfileSnapshot,
   policy: AgentProfileLaunchPolicy,
+  frozenRuntimePreference: AgentRuntimePreference | null = null,
 ) {
   const violations: string[] = []
   const permission = intersectAgentProfilePermissions(
@@ -528,10 +568,8 @@ export function agentProfileSnapshotPolicyViolations(
   ) {
     violations.push("model")
   }
-  const runtimePreference = effectiveRuntimePreference(
-    snapshot.capability.harness,
-    snapshot.capability.runtimePreference,
-  )
+  const runtimePreference =
+    frozenRuntimePreference ?? frozenAgentProfileRuntimeResolution(snapshot).preference
   if (policy.allowedRuntimes !== null && !policy.allowedRuntimes.includes(runtimePreference)) {
     violations.push("runtime")
   }
@@ -587,17 +625,71 @@ function isBuiltIn(db: Sqlite, profileId: string) {
   return row?.source === "built-in"
 }
 
-function resolvedRuntime(harness: string, preference: string) {
-  return (
-    runtimeAdapterForPreference(preference as Parameters<typeof runtimeAdapterForPreference>[0]) ??
-    productRuntimeForHarness(harness)
-  )
+export function frozenAgentProfileRuntimeResolution(
+  snapshot: StoredResolvedAgentProfileSnapshot,
+): AgentProfileRuntimeResolution {
+  if (snapshot.runtimeResolution) return snapshot.runtimeResolution
+  const preference =
+    snapshot.capability.runtimePreference === "auto"
+      ? (snapshot.evaluation.runtime as AgentRuntimePreference)
+      : snapshot.capability.runtimePreference
+  const resolvedRuntime = runtimeAdapterForPreference(preference)
+  if (!resolvedRuntime || preference === "auto") {
+    throw new AgentProfileResolutionError(
+      "profile-corrupt",
+      "Legacy Agent Profile snapshot has no valid frozen Runtime evidence.",
+    )
+  }
+  return {
+    preference,
+    source: snapshot.capability.runtimePreference === "auto" ? "product" : "profile",
+    defaultVersion: null,
+    resolvedRuntime,
+  }
 }
 
-function effectiveRuntimePreference(harness: string, preference: string) {
-  return (
-    preference === "auto" ? productRuntimeForHarness(harness) : preference
-  ) as AgentRuntimePreference
+export function frozenAgentProfileRuntimeAuthority(
+  snapshot: StoredResolvedAgentProfileSnapshot,
+): AgentProfileRuntimeAuthority {
+  return {
+    snapshotId: snapshot.snapshotId,
+    snapshotDigest: snapshot.digest,
+    profile: structuredClone(snapshot.profile),
+    allowedTools: [...snapshot.capability.tools],
+    allowedSkills: [...snapshot.capability.skills],
+    memoryPolicy: structuredClone(snapshot.capability.memoryPolicy),
+    allowedDescendantProfileIds: [...snapshot.capability.allowedDescendantProfileIds],
+    maxDescendants: snapshot.capability.maxDescendants,
+  }
+}
+
+function resolvedProfileRuntime(
+  harness: string,
+  preference: AgentRuntimePreference,
+  supplied?: AgentProfileRuntimeResolution,
+): AgentProfileRuntimeResolution {
+  if (preference !== "auto") {
+    return {
+      preference,
+      source: "profile",
+      defaultVersion: null,
+      resolvedRuntime: runtimeAdapterForPreference(preference)!,
+    }
+  }
+  if (supplied) {
+    const expectedRuntime = runtimeAdapterForPreference(supplied.preference)
+    if (expectedRuntime !== supplied.resolvedRuntime) {
+      throw new Error("Resolved Agent Profile Runtime binding is inconsistent.")
+    }
+    return supplied
+  }
+  const productRuntime = productRuntimeForHarness(harness)
+  return {
+    preference: productRuntime,
+    source: "product",
+    defaultVersion: null,
+    resolvedRuntime: productRuntime,
+  }
 }
 
 function source(

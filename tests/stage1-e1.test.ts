@@ -47,6 +47,8 @@ import {
   assertRegisteredWorktree,
   bindRegisteredFilesystemRoot,
 } from "../src/main/lib/git/security/path-validation"
+// @ts-expect-error JavaScript test helper intentionally has no declaration file.
+import { createIsolatedTestGitEnvironment } from "../scripts/lib/test-git-environment.mjs"
 
 const electronState = vi.hoisted(() => ({
   userDataPath: "/tmp/flapstack-vitest-initial",
@@ -1446,13 +1448,17 @@ describe("Stage 1 E1 checkpoint capture", () => {
     mkdirSync(worktreePath, { recursive: true })
     execFileSync("git", ["init"], { cwd: worktreePath })
     execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: worktreePath })
-    execFileSync("git", ["config", "user.name", "Flapstack Test"], { cwd: worktreePath })
-    execFileSync("git", ["config", "user.email", "test@flapstack.local"], {
-      cwd: worktreePath,
-    })
     writeFileSync(join(worktreePath, "tracked.txt"), "base\n")
     execFileSync("git", ["add", "tracked.txt"], { cwd: worktreePath })
-    execFileSync("git", ["commit", "-m", "base"], { cwd: worktreePath })
+    const isolatedGit = createIsolatedTestGitEnvironment()
+    try {
+      execFileSync("git", ["commit", "-m", "base"], {
+        cwd: worktreePath,
+        env: isolatedGit.env,
+      })
+    } finally {
+      isolatedGit.cleanup()
+    }
 
     writeFileSync(join(worktreePath, "tracked.txt"), "staged\n")
     execFileSync("git", ["add", "tracked.txt"], { cwd: worktreePath })

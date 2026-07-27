@@ -1,12 +1,14 @@
 import { spawnSync } from "node:child_process"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { posix, win32 } from "node:path"
 
 export function createIsolatedTestGitEnvironment(options = {}) {
   const env = options.env ?? process.env
   const testEnv = { ...env }
-  if ((options.platform ?? process.platform) === "win32") {
+  const platform = options.platform ?? process.platform
+  const paths = platform === "win32" ? win32 : posix
+  if (platform === "win32") {
     const realpath = options.realpath ?? realpathSync.native
     for (const key of ["TEMP", "TMP", "TMPDIR"]) {
       if (!testEnv[key]) continue
@@ -19,9 +21,9 @@ export function createIsolatedTestGitEnvironment(options = {}) {
   }
   const runner = options.spawn ?? spawnSync
   const directory = (
-    options.makeDirectory ?? (() => mkdtempSync(join(tmpdir(), "flapstack-test-git-")))
+    options.makeDirectory ?? (() => mkdtempSync(paths.join(tmpdir(), "flapstack-test-git-")))
   )()
-  const configPath = join(directory, "config")
+  const configPath = paths.join(directory, "config")
   const runGit = (args) => {
     const result = runner("git", args, {
       encoding: "utf8",

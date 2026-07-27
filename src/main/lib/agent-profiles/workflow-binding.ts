@@ -14,10 +14,22 @@ import {
 } from "../../../shared/agent-orchestration"
 import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestration-operations"
 import { parseCustomPermissionCapabilities } from "../../../shared/permission-capabilities"
-import { AgentProfileResolver, agentProfileSnapshotPolicyViolations } from "./resolver"
+import {
+  AgentProfileResolver,
+  type AgentProfileRuntimeResolution,
+  agentProfileSnapshotPolicyViolations,
+  frozenAgentProfileRuntimeResolution,
+  frozenAgentProfileRuntimeAuthority,
+  intersectAgentProfilePermissions,
+} from "./resolver"
 import { assertAgentProfileSecretFree } from "./service"
 import { canonicalJson, epochSeconds as epoch } from "./values"
 import type { WorkflowAgentMaterializerPort } from "../agent-orchestration/worker-materializer-port"
+import {
+  runtimeAdapterForPreference,
+  type AgentRuntimePreference,
+} from "../../../shared/agent-runtime"
+import { productRuntimeForHarness } from "../agent-runtime/compatibility"
 
 type DatabaseLike = Database.Database | object
 type Row = Record<string, unknown>
@@ -146,14 +158,39 @@ export class AgentProfileWorkflowBindingService {
 
   preview(workflowRunId: string, stepId: string, policy: AgentProfileLaunchPolicy) {
     const binding = this.get(workflowRunId, stepId)
-    return new AgentProfileResolver(this.sqlite).preview(
+    const resolver = new AgentProfileResolver(this.sqlite)
+    const draft = resolver.preview(
       { profile: binding.binding.profile, overrides: binding.binding.overrides, policy },
       "workflow",
+    )
+    return resolver.preview(
+      { profile: binding.binding.profile, overrides: binding.binding.overrides, policy },
+      "workflow",
+      this.requireRuntimeResolution(workflowRunId, draft.capability.harness),
     )
   }
 
   previewForConfirmation(workflowRunId: string, stepId: string) {
-    return this.preview(workflowRunId, stepId, this.requireCurrentLaunchPolicy(workflowRunId))
+    const binding = this.get(workflowRunId, stepId)
+    const resolver = new AgentProfileResolver(this.sqlite)
+    const draft = resolver.preview(
+      {
+        profile: binding.binding.profile,
+        overrides: binding.binding.overrides,
+        policy: this.requireCurrentLaunchPolicy(workflowRunId, null),
+      },
+      "workflow",
+    )
+    const runtimeResolution = this.requireRuntimeResolution(workflowRunId, draft.capability.harness)
+    return resolver.preview(
+      {
+        profile: binding.binding.profile,
+        overrides: binding.binding.overrides,
+        policy: this.requireCurrentLaunchPolicy(workflowRunId, draft.capability.harness),
+      },
+      "workflow",
+      runtimeResolution,
+    )
   }
 
   confirm(workflowRunId: string, stepId: string, expectedVersion: number) {
@@ -169,12 +206,26 @@ export class AgentProfileWorkflowBindingService {
           )
         }
         this.requireActiveProfile(current.binding.profile)
-        const policy = this.requireCurrentLaunchPolicy(workflowRunId)
-        const snapshot = new AgentProfileResolver(this.sqlite).snapshot(
+        const resolver = new AgentProfileResolver(this.sqlite)
+        const draft = resolver.preview(
+          {
+            profile: current.binding.profile,
+            overrides: current.binding.overrides,
+            policy: this.requireCurrentLaunchPolicy(workflowRunId, null),
+          },
+          "workflow",
+        )
+        const runtimeResolution = this.requireRuntimeResolution(
+          workflowRunId,
+          draft.capability.harness,
+        )
+        const policy = this.requireCurrentLaunchPolicy(workflowRunId, draft.capability.harness)
+        const snapshot = resolver.snapshot(
           current.binding.profile,
           current.binding.overrides,
           policy,
           "workflow",
+          runtimeResolution,
         )
         const hardConflicts = snapshot.conflicts.filter((conflict) =>
           AGENT_PROFILE_LAUNCH_BLOCKING_CONFLICT_CODES.some((code) => code === conflict.code),
@@ -251,7 +302,7 @@ export class AgentProfileWorkflowBindingService {
     const snapshot = resolver.getSnapshot(binding.snapshot_id)
     this.assertSnapshotWithinCurrentPolicy(
       snapshot,
-      this.requireCurrentLaunchPolicy(request.workflowRunId),
+      this.requireCurrentLaunchPolicy(request.workflowRunId, snapshot.capability.harness),
     )
     const definition = this.definitionFromSnapshot(workflowStep, current.binding, snapshot)
     assertStableF3Identity(requestedDefinition, definition)
@@ -413,8 +464,9 @@ export class AgentProfileWorkflowBindingService {
       prompt: snapshot.capability.instructions,
       harness: snapshot.capability.harness,
       model: snapshot.capability.modelPreference ?? undefined,
-      runtimePreference: snapshot.capability.runtimePreference,
+      runtimePreference: frozenAgentProfileRuntimeResolution(snapshot).preference,
       reasoningEffort: snapshot.capability.reasoningEffort ?? undefined,
+      profileRuntimeAuthority: frozenAgentProfileRuntimeAuthority(snapshot),
       permissionMode: snapshot.capability.permissionMode,
       customPermissions: snapshot.capability.customPermissions ?? undefined,
       worktreeStrategy: snapshot.capability.worktreeStrategy,
@@ -425,19 +477,31 @@ export class AgentProfileWorkflowBindingService {
     })
   }
 
-  private requireCurrentLaunchPolicy(workflowRunId: string): AgentProfileLaunchPolicy {
+  private requireCurrentLaunchPolicy(
+    workflowRunId: string,
+    harness: string | null,
+  ): AgentProfileLaunchPolicy {
     const row = this.sqlite
       .prepare(
-        `SELECT t.default_permission_mode, t.default_custom_permissions, o.max_depth, t.project_id
+        `SELECT
+           t.default_permission_mode AS task_permission_mode,
+           t.default_custom_permissions AS task_custom_permissions,
+           p.default_permission_mode AS project_permission_mode,
+           p.default_custom_permissions AS project_custom_permissions,
+           o.max_depth,
+           t.project_id
          FROM orchestration_workflow_runs wr
          JOIN tasks t ON t.id = wr.task_id
+         JOIN projects p ON p.id = t.project_id
          JOIN task_orchestrations o ON o.task_id = wr.task_id
          WHERE wr.id = ?`,
       )
       .get(workflowRunId) as
       | {
-          default_permission_mode: string
-          default_custom_permissions: string | null
+          task_permission_mode: string
+          task_custom_permissions: string | null
+          project_permission_mode: string
+          project_custom_permissions: string | null
           max_depth: number
           project_id: string
         }
@@ -448,48 +512,41 @@ export class AgentProfileWorkflowBindingService {
         "Workflow task or orchestration launch policy is missing.",
       )
     }
-    const permissionMode = agentProfilePermissionModeSchema.safeParse(row.default_permission_mode)
-    if (!permissionMode.success) {
-      throw new AgentProfileWorkflowBindingError(
-        "launch-blocked",
-        "Workflow task permission policy is invalid.",
-      )
-    }
-    let customPermissions = null
-    if (permissionMode.data === "custom") {
-      try {
-        customPermissions = parseCustomPermissionCapabilities(
-          JSON.parse(row.default_custom_permissions ?? "null"),
-        )
-      } catch {
-        customPermissions = null
-      }
-      if (!customPermissions) {
-        throw new AgentProfileWorkflowBindingError(
-          "launch-blocked",
-          "Workflow custom permission policy is missing or invalid.",
-        )
-      }
-    }
-    const runtimeRows = this.sqlite
-      .prepare(
-        `SELECT DISTINCT d.preference FROM agent_runtime_defaults d
-         WHERE d.preference <> 'auto' AND (
-           (d.scope_type = 'project' AND d.scope_id = ?) OR
-           (d.scope_type = 'global' AND NOT EXISTS (
-             SELECT 1 FROM agent_runtime_defaults p
-             WHERE p.scope_type = 'project' AND p.scope_id = ? AND p.harness = d.harness
-           ))
-         )`,
-      )
-      .all(row.project_id, row.project_id) as Array<{ preference: string }>
+    const projectPermission = parseWorkflowPermission(
+      row.project_permission_mode,
+      row.project_custom_permissions,
+      "project",
+    )
+    const taskPermission = parseWorkflowPermission(
+      row.task_permission_mode,
+      row.task_custom_permissions,
+      "task",
+    )
+    const permission = intersectAgentProfilePermissions(
+      projectPermission.mode,
+      projectPermission.custom,
+      taskPermission.mode,
+      taskPermission.custom,
+    )
+    const runtimeRow = harness
+      ? (this.sqlite
+          .prepare(
+            `SELECT d.preference FROM agent_runtime_defaults d
+             WHERE d.harness = ? AND d.preference <> 'auto' AND (
+               (d.scope_type = 'project' AND d.scope_id = ?) OR d.scope_type = 'global'
+             )
+             ORDER BY CASE d.scope_type WHEN 'project' THEN 0 ELSE 1 END
+             LIMIT 1`,
+          )
+          .get(harness, row.project_id) as { preference: string } | undefined)
+      : undefined
     const parsed = agentProfileLaunchPolicySchema.safeParse({
-      permissionMode: permissionMode.data,
-      customPermissions,
+      permissionMode: permission.mode,
+      customPermissions: permission.custom,
       allowedTools: null,
       allowedSkills: null,
       allowedModels: null,
-      allowedRuntimes: runtimeRows.length ? runtimeRows.map((runtime) => runtime.preference) : null,
+      allowedRuntimes: runtimeRow ? [runtimeRow.preference] : null,
       maxDescendants: row.max_depth,
     })
     if (!parsed.success) {
@@ -499,6 +556,63 @@ export class AgentProfileWorkflowBindingService {
       )
     }
     return parsed.data
+  }
+
+  private requireRuntimeResolution(
+    workflowRunId: string,
+    harness: string,
+  ): AgentProfileRuntimeResolution {
+    const workflow = this.sqlite
+      .prepare(
+        `SELECT t.project_id FROM orchestration_workflow_runs wr
+         JOIN tasks t ON t.id = wr.task_id WHERE wr.id = ?`,
+      )
+      .get(workflowRunId) as { project_id: string } | undefined
+    if (!workflow) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        "Workflow task Runtime scope is missing.",
+      )
+    }
+    const row = this.sqlite
+      .prepare(
+        `SELECT d.scope_type, d.preference, d.version
+         FROM agent_runtime_defaults d
+         WHERE d.harness = ? AND d.preference <> 'auto' AND (
+           (d.scope_type = 'project' AND d.scope_id = ?) OR d.scope_type = 'global'
+         )
+         ORDER BY CASE d.scope_type WHEN 'project' THEN 0 ELSE 1 END
+         LIMIT 1`,
+      )
+      .get(harness, workflow.project_id) as
+      | {
+          scope_type: "project" | "global"
+          preference: AgentRuntimePreference
+          version: number
+        }
+      | undefined
+    if (row) {
+      const resolvedRuntime = runtimeAdapterForPreference(row.preference)
+      if (!resolvedRuntime) {
+        throw new AgentProfileWorkflowBindingError(
+          "launch-blocked",
+          "Workflow Runtime default is invalid.",
+        )
+      }
+      return {
+        preference: row.preference as Exclude<AgentRuntimePreference, "auto">,
+        source: row.scope_type,
+        defaultVersion: row.version,
+        resolvedRuntime,
+      }
+    }
+    const productRuntime = productRuntimeForHarness(harness)
+    return {
+      preference: productRuntime,
+      source: "product",
+      defaultVersion: null,
+      resolvedRuntime: productRuntime,
+    }
   }
 
   private assertSnapshotWithinCurrentPolicy(
@@ -534,6 +648,35 @@ export class AgentProfileWorkflowBindingService {
       )
     }
   }
+}
+
+function parseWorkflowPermission(
+  modeValue: string,
+  customValue: string | null,
+  scope: "project" | "task",
+) {
+  const mode = agentProfilePermissionModeSchema.safeParse(modeValue)
+  if (!mode.success) {
+    throw new AgentProfileWorkflowBindingError(
+      "launch-blocked",
+      `Workflow ${scope} permission policy is invalid.`,
+    )
+  }
+  let custom = null
+  if (mode.data === "custom") {
+    try {
+      custom = parseCustomPermissionCapabilities(JSON.parse(customValue ?? "null"))
+    } catch {
+      custom = null
+    }
+    if (!custom) {
+      throw new AgentProfileWorkflowBindingError(
+        "launch-blocked",
+        `Workflow ${scope} custom permission policy is missing or invalid.`,
+      )
+    }
+  }
+  return { mode: mode.data, custom }
 }
 
 export function createAgentProfileWorkflowMaterializerPort(

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import path from "node:path"
+import { win32 as windowsPath } from "node:path"
 
 const PROCESS_QUERY =
   "$utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
@@ -42,7 +42,7 @@ export function queryWindowsProcesses(options = {}) {
 }
 
 export function findOwnedWindowsProcessIds(processes, options) {
-  const root = `${normalized(path.resolve(options.root))}\\`
+  const root = `${normalized(windowsPath.resolve(options.root))}\\`
   const selfPid = Number(options.selfPid ?? process.pid)
   const owned = new Set()
   const ownershipSegments = [
@@ -100,7 +100,7 @@ export function windowsTaskkillArgs(pid, force = false) {
 }
 
 export function classifyWindowsFlapstackProcesses(processes, options) {
-  const root = normalized(path.resolve(options.root))
+  const root = normalized(windowsPath.resolve(options.root))
   const electronRoot = `${root}\\node_modules\\electron\\dist\\`
   const profile = normalized(options.profilePath)
   let mainPid = null

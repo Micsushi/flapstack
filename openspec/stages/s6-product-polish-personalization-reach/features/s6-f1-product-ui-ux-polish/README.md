@@ -6,4 +6,5 @@
 - Change: openspec/changes/polish-product-ui-ux/
 - Tasks: openspec/changes/polish-product-ui-ux/tasks.md
 - Task IDs: S6-F1-T1 through S6-F1-T9
-- Dependencies: fully accepted Stage 4 and root ui-design.md.
+- Dependencies: Stage 4 `T2-core` implementation acceptance and root
+  `ui-design.md`.

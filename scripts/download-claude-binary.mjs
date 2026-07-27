@@ -14,6 +14,13 @@ import path from "node:path"
 import https from "node:https"
 import { fileURLToPath } from "node:url"
 import { assertBundledBinary, ensureRealDirectory, sha256File } from "./lib/packaged-binary.mjs"
+import {
+  downloadFileWithRetry,
+  fetchJsonWithCache,
+  metadataCachePath,
+  recoverInterruptedFileReplacement,
+  replaceFileAtomically,
+} from "./lib/download-recovery.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.join(__dirname, "..")
@@ -21,6 +28,9 @@ const outputRootArg = process.argv.find((argument) => argument.startsWith("--out
 const BIN_DIR = outputRootArg
   ? path.resolve(outputRootArg.slice("--output-root=".length))
   : path.join(ROOT_DIR, "resources", "bin")
+const metadataCacheRoot = process.env.FLAPSTACK_BINARY_METADATA_CACHE
+  ? path.resolve(process.env.FLAPSTACK_BINARY_METADATA_CACHE)
+  : path.join(ROOT_DIR, "resources", "bin", ".metadata")
 
 // Claude Code distribution base URL
 const DIST_BASE =
@@ -44,85 +54,26 @@ function fetchJson(url) {
     https
       .get(url, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) {
-          return fetchJson(res.headers.location).then(resolve).catch(reject)
+          const redirectUrl = res.headers.location
+          if (!redirectUrl) return reject(new Error("Missing redirect location"))
+          return fetchJson(redirectUrl).then(resolve).catch(reject)
         }
         if (res.statusCode !== 200) {
+          res.resume()
           return reject(new Error(`HTTP ${res.statusCode}`))
         }
         let data = ""
         res.on("data", (chunk) => (data += chunk))
-        res.on("end", () => resolve(JSON.parse(data)))
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data))
+          } catch (error) {
+            reject(error)
+          }
+        })
         res.on("error", reject)
       })
       .on("error", reject)
-  })
-}
-
-/**
- * Download file with progress
- */
-function downloadFile(url, destPath) {
-  return new Promise((resolve, reject) => {
-    const request = (nextUrl) => {
-      const file = fs.createWriteStream(destPath)
-      https
-        .get(nextUrl, (res) => {
-          if (res.statusCode === 301 || res.statusCode === 302) {
-            const redirectUrl = res.headers.location
-            if (!redirectUrl) {
-              file.close()
-              fs.rmSync(destPath, { force: true })
-              return reject(new Error("Missing redirect location"))
-            }
-            file.close(() => {
-              fs.rmSync(destPath, { force: true })
-              request(redirectUrl)
-            })
-            return
-          }
-
-          if (res.statusCode !== 200) {
-            file.close()
-            fs.rmSync(destPath, { force: true })
-            return reject(new Error(`HTTP ${res.statusCode}`))
-          }
-
-          const totalSize = Number.parseInt(res.headers["content-length"] || "0", 10)
-          let downloaded = 0
-          let lastPercent = 0
-
-          res.on("data", (chunk) => {
-            downloaded += chunk.length
-            if (totalSize <= 0) return
-            const percent = Math.floor((downloaded / totalSize) * 100)
-            if (percent !== lastPercent && percent % 10 === 0) {
-              process.stdout.write(`\r  Progress: ${percent}%`)
-              lastPercent = percent
-            }
-          })
-
-          res.pipe(file)
-
-          file.on("finish", () => {
-            file.close()
-            if (totalSize > 0) process.stdout.write("\r  Progress: 100%\n")
-            resolve()
-          })
-
-          res.on("error", (err) => {
-            file.close()
-            fs.rmSync(destPath, { force: true })
-            reject(err)
-          })
-        })
-        .on("error", (err) => {
-          file.close()
-          fs.rmSync(destPath, { force: true })
-          reject(err)
-        })
-    }
-
-    request(url)
   })
 }
 
@@ -152,19 +103,21 @@ async function getLatestVersion() {
 /**
  * Download binary for a specific platform
  */
-async function downloadPlatform(version, platformKey, manifest) {
+export async function downloadPlatform(version, platformKey, manifest, options = {}) {
   const platform = PLATFORMS[platformKey]
   if (!platform) {
     console.error(`Unknown platform: ${platformKey}`)
     return false
   }
 
-  const targetDir = path.join(BIN_DIR, platformKey)
+  const binDirectory = options.binDirectory ?? BIN_DIR
+  const targetDir = path.join(binDirectory, platformKey)
   const targetPath = path.join(targetDir, platform.binary)
 
   // Create directory
-  ensureRealDirectory(BIN_DIR)
+  ensureRealDirectory(binDirectory)
   ensureRealDirectory(targetDir)
+  recoverInterruptedFileReplacement(targetPath)
 
   // Get expected hash from manifest
   const platformManifest = manifest.platforms[platform.dir]
@@ -197,29 +150,31 @@ async function downloadPlatform(version, platformKey, manifest) {
 
   const downloadPath = `${targetPath}.download`
   fs.rmSync(downloadPath, { recursive: true, force: true })
-  await downloadFile(downloadUrl, downloadPath)
+  try {
+    await (options.downloadFile ?? downloadFileWithRetry)(downloadUrl, downloadPath, {
+      label: `Claude ${platformKey}`,
+      onRetry: ({ attempt, attempts, error }) =>
+        console.warn(`  ${error.message}; retrying Claude download (${attempt}/${attempts})...`),
+    })
 
-  // Verify hash
-  const actualHash = await sha256File(downloadPath)
-  if (actualHash !== expectedHash) {
-    console.error(`  Hash mismatch!`)
-    console.error(`    Expected: ${expectedHash}`)
-    console.error(`    Actual:   ${actualHash}`)
-    fs.rmSync(downloadPath, { force: true })
-    return false
+    const actualHash = await sha256File(downloadPath)
+    if (actualHash !== expectedHash) {
+      console.error(`  Hash mismatch!`)
+      console.error(`    Expected: ${expectedHash}`)
+      console.error(`    Actual:   ${actualHash}`)
+      return false
+    }
+    console.log(`  Verified SHA256: ${actualHash.substring(0, 16)}...`)
+
+    if (!platformKey.startsWith("win32")) fs.chmodSync(downloadPath, 0o755)
+    assertBundledBinary(downloadPath, platformKey)
+    replaceFileAtomically(downloadPath, targetPath)
+
+    console.log(`  Saved to: ${targetPath}`)
+    return true
+  } finally {
+    fs.rmSync(downloadPath, { recursive: true, force: true })
   }
-  console.log(`  Verified SHA256: ${actualHash.substring(0, 16)}...`)
-
-  // Make executable (Unix)
-  fs.rmSync(targetPath, { recursive: true, force: true })
-  fs.renameSync(downloadPath, targetPath)
-  if (!platformKey.startsWith("win32")) {
-    fs.chmodSync(targetPath, 0o755)
-  }
-  assertBundledBinary(targetPath, platformKey)
-
-  console.log(`  Saved to: ${targetPath}`)
-  return true
 }
 
 /**
@@ -250,7 +205,16 @@ async function main() {
 
   let manifest
   try {
-    manifest = await fetchJson(manifestUrl)
+    manifest = await fetchJsonWithCache(
+      manifestUrl,
+      metadataCachePath(metadataCacheRoot, "claude", version),
+      fetchJson,
+      {
+        label: `Claude ${version} manifest`,
+        onCacheFallback: (error) =>
+          console.warn(`Using cached Claude manifest after network failure: ${error.message}`),
+      },
+    )
   } catch (error) {
     console.error(`Failed to fetch manifest: ${error.message}`)
     process.exit(1)
@@ -285,9 +249,6 @@ async function main() {
   // Create bin directory
   ensureRealDirectory(BIN_DIR)
 
-  // Write version file
-  fs.writeFileSync(path.join(BIN_DIR, "VERSION"), `${version}\n${new Date().toISOString()}\n`)
-
   // Download each platform
   let success = true
   for (const platform of platformsToDownload) {
@@ -296,6 +257,7 @@ async function main() {
   }
 
   if (success) {
+    fs.writeFileSync(path.join(BIN_DIR, "VERSION"), `${version}\n${new Date().toISOString()}\n`)
     console.log("\n✓ All downloads completed successfully!")
   } else {
     console.error("\n✗ Some downloads failed")
@@ -303,7 +265,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error)
-  process.exit(1)
-})
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error:", error)
+    process.exit(1)
+  })
+}

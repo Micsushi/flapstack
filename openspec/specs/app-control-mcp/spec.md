@@ -22,9 +22,15 @@ chats, allow per-chat disablement, and stop it cleanly with the application.
 
 #### Scenario: Supported chat defaults to enabled
 
-- **WHEN** a supported chat is created or upgraded to this release
+- **WHEN** a new supported chat is created
 - **THEN** its harness can list and call tools through authenticated local transport
 - **AND** the user can disable exposure for that chat
+
+#### Scenario: Existing chat is upgraded
+
+- **WHEN** an existing chat is upgraded to this release
+- **THEN** its persisted exposure choice is preserved
+- **AND** an existing opt-out is not silently re-enabled
 
 #### Scenario: Third-party server uses the reserved product name
 

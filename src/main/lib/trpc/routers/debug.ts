@@ -9,10 +9,11 @@ import {
   isRuntimeActivityFixtureAvailable,
   setRuntimeActivityFixtureSettings,
 } from "../../agent-runtime/activity-fixture-settings"
+import { isPreviewExecutable, resolveFlapstackProtocol } from "../../mcp-test-control/lifecycle"
 
 // Protocol constant (must match main/index.ts)
 const IS_DEV = !!process.env.ELECTRON_RENDERER_URL
-const PROTOCOL = IS_DEV ? "flapstack-dev" : "flapstack"
+const PROTOCOL = resolveFlapstackProtocol(IS_DEV, !IS_DEV && isPreviewExecutable())
 
 // Global flag for simulating offline mode (for testing)
 let simulateOfflineMode = false

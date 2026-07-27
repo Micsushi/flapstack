@@ -1,4 +1,5 @@
 import type { CustomPermissionToggles, PermissionMode } from "../permissions"
+import type { AgentProfileRuntimeAuthority } from "../../../shared/agent-profiles"
 
 export type McpRiskTier = 0 | 1 | 2 | 3
 export type McpGateDecision = "allowed" | "denied" | "approval-required"
@@ -17,6 +18,7 @@ export type McpCallerIdentity = {
   runId?: string
   permissionMode?: PermissionMode
   customPermissions?: CustomPermissionToggles
+  profileRuntimeAuthority?: AgentProfileRuntimeAuthority
 }
 
 export type McpCallerRecord = {
@@ -31,6 +33,7 @@ export type McpRunRecord = {
   chatId: string
   permissionMode: string | null
   active: boolean
+  profileRuntimeAuthority?: AgentProfileRuntimeAuthority | "invalid"
 }
 
 export type McpCallerStore = {

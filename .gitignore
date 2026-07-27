@@ -6,6 +6,9 @@ dist/
 release/
 release-*/
 out/
+/.release*.package-backup/
+/.release*.package-staging/
+/resources/.bin-stage-*/
 
 # IDE
 .idea/

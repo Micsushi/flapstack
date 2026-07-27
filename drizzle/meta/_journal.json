@@ -295,6 +295,20 @@
       "when": 1784228953408,
       "tag": "0041_large_electro",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1785083997349,
+      "tag": "0042_numerous_doctor_octopus",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1785084475757,
+      "tag": "0043_lovely_mauler",
+      "breakpoints": true
     }
   ]
 }

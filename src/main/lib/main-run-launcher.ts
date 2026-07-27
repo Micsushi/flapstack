@@ -105,6 +105,7 @@ import {
   registerRuntimeLaunchAuthority,
   resetRuntimeLaunchAuthoritiesForTests,
 } from "./agent-runtime/launch-access"
+import { isFrozenAgentProfileToolAllowed } from "./agent-profiles/runtime-authority"
 
 export type MainRunLauncherOptions = {
   databasePath?: string
@@ -175,9 +176,11 @@ export class MainRuntimeLaunchService {
         resolveThreadParams: async (context, operation) => {
           const authority = await this.resolveExtensionAuthority(context, "codex")
           const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-          const config = enhanced
+          const enforceExtensionPolicy =
+            enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
+          const config = enforceExtensionPolicy
             ? applyCodexExtensionPolicyConfig(
-                buildManagedCodexHookConfig(authority.hooks),
+                enhanced ? buildManagedCodexHookConfig(authority.hooks) : {},
                 authority.policy,
               )
             : {}
@@ -234,6 +237,7 @@ export class MainRuntimeLaunchService {
     }
     this.runs.set(run.runId, run)
     try {
+      assertFrozenProfileToolPolicySupported(run)
       const instructions = await this.resolveDirectRuntimeInstructions(run)
       if (this.prelaunchCancellations.has(run.runId)) {
         throw new RuntimeLaunchCancelledError(run.runId)
@@ -249,7 +253,10 @@ export class MainRuntimeLaunchService {
         persistedSession: await this.loadPersistedSession(run.runId),
       })
     } catch (error) {
-      if (!(error instanceof RuntimeLaunchCancelledError)) {
+      const cancelled =
+        error instanceof RuntimeLaunchCancelledError ||
+        loadAgentRunReconciliationState(this.databasePath, run.runId) === "cancelled"
+      if (!cancelled) {
         const message = sanitizeRuntimeText(
           error instanceof Error ? error.message : String(error),
           { maxLength: 2_048, mode: "diagnostic" },
@@ -257,7 +264,9 @@ export class MainRuntimeLaunchService {
         await this.persistLifecycle(run.runId, "failed", message)
         throw new Error(message)
       }
-      throw error
+      throw error instanceof RuntimeLaunchCancelledError
+        ? error
+        : new RuntimeLaunchCancelledError(run.runId)
     } finally {
       this.prelaunchCancellations.delete(run.runId)
       this.runs.delete(run.runId)
@@ -456,16 +465,41 @@ export class MainRuntimeLaunchService {
   }
 
   private async cancelPersisted(runId: string, reason: string): Promise<boolean> {
+    if (this.coordinator.runState(runId)) {
+      return await this.coordinator.cancel(runId, reason)
+    }
+    const prelaunchCancellation = await this.cancelPrelaunchIfOwned(runId, reason)
+    if (prelaunchCancellation !== null) return prelaunchCancellation
+    if (this.persistPendingCancellation(runId, reason)) return true
+    if (this.coordinator.runState(runId)) {
+      return await this.coordinator.cancel(runId, reason)
+    }
+    const racedPrelaunchCancellation = await this.cancelPrelaunchIfOwned(runId, reason)
+    if (racedPrelaunchCancellation !== null) return racedPrelaunchCancellation
+
     const run = loadRunningAgentRun(this.databasePath, runId)
     if (!run) return false
     const persistedSession = await this.loadPersistedSession(runId, false)
     if (!persistedSession?.providerSessionId && !persistedSession?.providerThreadId) {
-      await this.persistLifecycle(
-        runId,
-        "uncertain",
-        "Persisted Runtime cancellation has no provider identity.",
-      )
+      this.prelaunchCancellations.add(runId)
+      if (this.coordinator.runState(runId)) {
+        return await this.coordinator.cancel(runId, reason)
+      }
+      const latePrelaunchCancellation = await this.cancelPrelaunchIfOwned(runId, reason)
+      if (latePrelaunchCancellation !== null) return latePrelaunchCancellation
+      try {
+        await this.persistLifecycle(
+          runId,
+          "uncertain",
+          "Persisted Runtime cancellation has no provider identity.",
+        )
+      } finally {
+        this.prelaunchCancellations.delete(runId)
+      }
       return false
+    }
+    if (this.coordinator.runState(runId)) {
+      return await this.coordinator.cancel(runId, reason)
     }
     return await this.coordinator.cancelPersisted(
       {
@@ -478,6 +512,54 @@ export class MainRuntimeLaunchService {
       },
       reason,
     )
+  }
+
+  private async cancelPrelaunchIfOwned(runId: string, reason: string): Promise<boolean | null> {
+    if (!this.runs.has(runId)) return null
+    if (!loadRunningAgentRun(this.databasePath, runId)) return false
+    this.prelaunchCancellations.add(runId)
+    if (this.coordinator.runState(runId)) {
+      return await this.coordinator.cancel(runId, reason)
+    }
+    await this.persistLifecycle(runId, "cancelled", reason)
+    return loadAgentRunReconciliationState(this.databasePath, runId) === "cancelled"
+  }
+
+  private persistPendingCancellation(runId: string, reason: string): boolean {
+    const db = this.open()
+    try {
+      return db
+        .transaction(() => {
+          const run = db.prepare("SELECT sub_chat_id FROM agent_runs WHERE id = ?").get(runId) as
+            { sub_chat_id: string | null } | undefined
+          if (!run) return false
+          const now = nowEpochSeconds()
+          const transition = db
+            .prepare(
+              `UPDATE agent_runs SET status = 'cancelled', completed_at = ?
+               WHERE id = ? AND status = 'pending' AND completed_at IS NULL`,
+            )
+            .run(now, runId)
+          if (transition.changes === 0) return false
+          if (run.sub_chat_id) {
+            db.prepare(
+              `UPDATE sub_chats SET run_status = COALESCE((
+                 SELECT status FROM agent_runs
+                 WHERE sub_chat_id = ? AND id <> ? AND status IN ('pending','running')
+                 ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at, id
+                 LIMIT 1
+               ), 'cancelled'), updated_at = ? WHERE id = ?`,
+            ).run(run.sub_chat_id, runId, now, run.sub_chat_id)
+          }
+          this.appendActivityWithDatabase(db, runId, [
+            lifecycleActivity("cancelled", "lifecycle:cancelled", undefined, undefined, reason),
+          ])
+          return true
+        })
+        .immediate()
+    } finally {
+      db.close()
+    }
   }
 
   private activeReconciliationState(runId: string): AgentRunReconciliationState | null {
@@ -535,14 +617,18 @@ export class MainRuntimeLaunchService {
       buildQueryOptions: async (context, _prompt, abortController) => {
         const authority = await this.resolveExtensionAuthority(context, "claude-code")
         const enhanced = usesFlapstackRuntimeEnhancements(context.launch.requestedPreference)
-        const sdkOptions = enhanced ? getClaudeExtensionSdkOptions(authority.policy) : {}
+        const enforceExtensionPolicy =
+          enhanced || Boolean(this.runs.get(context.runId)?.profileRuntimeAuthority)
+        const sdkOptions = enforceExtensionPolicy
+          ? getClaudeExtensionSdkOptions(authority.policy)
+          : {}
         const hooks = enhanced
           ? buildManagedClaudeHookOptions(authority.hooks, (record, input, signal) =>
               this.hookRuntimeExecutor.execute(record, input, signal, authority.cwd),
             )
           : {}
         const mcpServers =
-          enhanced && authority.policy.disabledMcpNames.length > 0
+          enforceExtensionPolicy && authority.policy.disabledMcpNames.length > 0
             ? filterClaudeExtensionMcpServers(
                 await loadClaudeMcpServers(authority.cwd),
                 authority.policy,
@@ -558,6 +644,13 @@ export class MainRuntimeLaunchService {
             toolInput: Record<string, unknown>,
             options: { toolUseID: string },
           ) => {
+            const profileAuthority = this.runs.get(context.runId)?.profileRuntimeAuthority
+            if (profileAuthority && !isFrozenAgentProfileToolAllowed(profileAuthority, toolName)) {
+              return {
+                behavior: "deny",
+                message: `Tool ${toolName} is outside the frozen Agent Profile allowlist.`,
+              }
+            }
             if (toolName === "AskUserQuestion") {
               const questions = normalizeClaudeInputQuestions(toolInput.questions)
               if (questions.length === 0) {
@@ -936,6 +1029,11 @@ export class MainRuntimeLaunchService {
         chatId: context.chatId,
         harness,
         cwd,
+        ...(this.runs.get(context.runId)?.profileRuntimeAuthority
+          ? {
+              profileRuntimeAuthority: this.runs.get(context.runId)!.profileRuntimeAuthority!,
+            }
+          : {}),
       })
       const hooks = resolveEnabledManagedHooks({
         store: this.hookStore,
@@ -969,7 +1067,10 @@ export class MainRuntimeLaunchService {
             })
           : null
       let vaultContext = emptyProjectVaultRunContext({ harness: runtime, runId: run.runId })
-      if (isBetaFeatureEnabled("projectMemory")) {
+      if (
+        isBetaFeatureEnabled("projectMemory") &&
+        run.profileRuntimeAuthority?.memoryPolicy.mode !== "none"
+      ) {
         try {
           vaultContext = await buildProjectVaultRunContext(database, {
             chatId: run.chatId,
@@ -1016,6 +1117,14 @@ export class MainRuntimeLaunchService {
     db.pragma("foreign_keys = ON")
     db.pragma("busy_timeout = 5000")
     return db
+  }
+}
+
+function assertFrozenProfileToolPolicySupported(run: QueuedAgentRun): void {
+  if (run.profileRuntimeAuthority && run.harness === "codex") {
+    throw new Error(
+      "Codex Agent Profile launch blocked: the Codex Runtime cannot prove enforcement of the frozen tool allowlist for no-approval tools.",
+    )
   }
 }
 

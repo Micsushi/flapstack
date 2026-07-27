@@ -8,6 +8,7 @@ import {
 } from "../../../shared/agent-profiles"
 import { createAgentProfileService } from "./service"
 import { canonicalJson, epochSeconds as epoch, sha256Text as sha256 } from "./values"
+import { runtimeAdapterForPreference } from "../../../shared/agent-runtime"
 
 type DatabaseLike = Database.Database | object
 
@@ -67,7 +68,10 @@ export class AgentProfileEvaluationService {
           )
       }
     })
-    const runtime = checkRuntimeCompatibility(capability.harness, input.runtime)
+    const runtime = checkRuntimeCompatibility(
+      capability.harness,
+      runtimeAdapterForPreference(input.runtime)!,
+    )
     results.push(
       result(
         "runtime-compatibility",

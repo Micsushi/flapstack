@@ -10,6 +10,19 @@ type ActiveProductMcpSession = {
 
 const activeProductMcpSessions = new Map<string, ActiveProductMcpSession>()
 
+const PRODUCT_MCP_DEFAULT_HARNESSES = new Set([
+  "codex",
+  "claude",
+  "claude-code",
+  "cursor-agent",
+  "openrouter",
+  "nanogpt",
+])
+
+export function isProductMcpEnabledByDefault(harness: unknown): boolean {
+  return typeof harness === "string" && PRODUCT_MCP_DEFAULT_HARNESSES.has(harness)
+}
+
 export type McpExposureConnection = "disabled" | "next-run" | "connected" | "unsupported"
 
 export type McpExposureStatus = {
@@ -34,9 +47,7 @@ export function getChatMcpExposureStatus(chatId: string): McpExposureStatus {
   const harness: AgentHarness | null =
     chat.harness === "claude"
       ? "claude-code"
-      : ["codex", "claude-code", "cursor-agent", "openrouter", "nanogpt"].includes(
-            chat.harness ?? "",
-          )
+      : isProductMcpEnabledByDefault(chat.harness)
         ? (chat.harness as AgentHarness)
         : null
   const supported = harness !== null

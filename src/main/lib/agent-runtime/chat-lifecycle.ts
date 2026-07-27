@@ -6,6 +6,7 @@ import {
 } from "../../../shared/agent-runtime"
 import { formatChatHandoff, type HandoffMessage } from "../chat-handoff"
 import { millisecondsToEpochSeconds } from "../db/timestamps"
+import { isProductMcpEnabledByDefault } from "../mcp-control/exposure"
 import { checkRuntimeCompatibility, productRuntimeForHarness } from "./compatibility"
 
 type Sqlite = Database.Database
@@ -143,10 +144,10 @@ export class RuntimeChatLifecycleService {
           .prepare(
             `INSERT INTO chats (
             id, name, project_id, task_id, scope, permission_mode, custom_permissions,
-            harness, model, runtime_preference, parent_chat_id, initiator_chat_id,
+            mcp_exposure_enabled, harness, model, runtime_preference, parent_chat_id, initiator_chat_id,
             parent_run_id, ancestor_chat_ids, worktree_path, branch, base_branch,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             ids.chatId,
@@ -156,6 +157,7 @@ export class RuntimeChatLifecycleService {
             source.scope,
             source.permission_mode,
             source.custom_permissions ?? null,
+            isProductMcpEnabledByDefault(source.harness) ? 1 : 0,
             source.harness ?? null,
             source.model ?? null,
             input.preference,

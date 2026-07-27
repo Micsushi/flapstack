@@ -72,9 +72,15 @@ describe("Agent Runtime continuation", () => {
     expect(database.prepare("SELECT count(*) count FROM chats").get()).toEqual({ count: 2 })
     expect(database.prepare("SELECT count(*) count FROM sub_chats").get()).toEqual({ count: 3 })
     const target = database
-      .prepare("SELECT parent_chat_id, runtime_preference FROM chats WHERE id = ?")
+      .prepare(
+        "SELECT parent_chat_id, runtime_preference, mcp_exposure_enabled FROM chats WHERE id = ?",
+      )
       .get(first.chatId)
-    expect(target).toEqual({ parent_chat_id: chatId, runtime_preference: "flapstack-native" })
+    expect(target).toEqual({
+      parent_chat_id: chatId,
+      runtime_preference: "flapstack-native",
+      mcp_exposure_enabled: 1,
+    })
     const conversation = database
       .prepare("SELECT session_id, messages FROM sub_chats WHERE id = ?")
       .get(first.subChatId) as { session_id: string | null; messages: string }
@@ -123,5 +129,21 @@ describe("Agent Runtime continuation", () => {
     ).toEqual({
       archived_at: expect.any(Number),
     })
+  })
+
+  it("keeps product MCP disabled for unsupported continuation harnesses", () => {
+    const { chatId } = seedRuntimeChat(database, {
+      harness: "local",
+      sessionId: "local-source-session",
+    })
+    const continued = createRuntimeChatLifecycleService(database).continueWithRuntime({
+      sourceChatId: chatId,
+      preference: "flapstack-native",
+      requestId: "local-continuation",
+    })
+
+    expect(
+      database.prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?").get(continued.chatId),
+    ).toEqual({ mcp_exposure_enabled: 0 })
   })
 })

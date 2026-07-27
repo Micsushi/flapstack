@@ -268,7 +268,11 @@ describe("approval-gated AI task proposals", () => {
         description: "Exact reviewed body",
         status: "planned",
       },
-      chat: { name: "Exact reviewed task", scope: "task" },
+      chat: {
+        name: "Exact reviewed task",
+        scope: "task",
+        mcp_exposure_enabled: 1,
+      },
     })
     expect(JSON.parse(String(approved.item.subChat.messages))[0].parts[0].text).toBe(
       "Exact reviewed seed",
@@ -279,6 +283,9 @@ describe("approval-gated AI task proposals", () => {
         .get(approved.item.chat.id),
     ).toEqual({ count: 0 })
 
+    sqlite
+      .prepare("UPDATE chats SET mcp_exposure_enabled = 0 WHERE id = ?")
+      .run(approved.item.chat.id)
     const replay = service.approve(user, {
       proposalId: proposalRecord.id,
       expectedVersion: 1,
@@ -290,6 +297,11 @@ describe("approval-gated AI task proposals", () => {
       },
     })
     expect(replay.item.created).toBe(false)
+    expect(
+      sqlite
+        .prepare("SELECT mcp_exposure_enabled FROM chats WHERE id = ?")
+        .get(approved.item.chat.id),
+    ).toEqual({ mcp_exposure_enabled: 0 })
     expect(count("tasks")).toBe(2)
     expect(count("chats")).toBe(3)
     expect(

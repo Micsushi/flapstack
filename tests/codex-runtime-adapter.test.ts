@@ -208,6 +208,71 @@ describe("direct Codex Runtime adapter", () => {
     expect(permission).toEqual({ decision: "accept" })
     expect(activity.flat().filter((event) => event.kind === "permission")).toHaveLength(2)
   })
+
+  it("rejects a terminal failed turn instead of projecting provider failure as success", async () => {
+    const client = new FakeCodexProtocolClient()
+    const activity = collectActivity()
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: activity.append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+    const context = runtimeContext()
+    const session = await adapter.startSession(context)
+    const turn = await adapter.startTurn(context, session, "PROMPT_A")
+    client.queue.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "failed",
+          error: { message: "Provider usage limit reached." },
+        },
+      },
+    })
+
+    const stream = async () => {
+      for await (const _event of adapter.streamActivity(context, session, turn)) {
+        // Drain until the certain terminal provider failure is received.
+      }
+    }
+    await expect(stream()).rejects.toThrow("Provider usage limit reached")
+    await expect(adapter.complete(context)).rejects.toThrow("Provider usage limit reached")
+    await expect(adapter.reconcile(context)).resolves.toBe("uncertain")
+    expect(activity.flat()).toContainEqual(
+      expect.objectContaining({
+        kind: "lifecycle",
+        phase: "failed",
+        payload: expect.objectContaining({ state: "turn-failed" }),
+      }),
+    )
+  })
+
+  it("never reconciles a persisted failed turn as completed", async () => {
+    const client = new FakeCodexProtocolClient()
+    client.responses.set("thread/read", {
+      thread: {
+        status: { type: "idle" },
+        turns: [{ id: "turn-failed", status: "failed" }],
+      },
+    })
+    const adapter = createCodexRuntimeAdapterFactory({
+      appendActivity: collectActivity().append,
+      resolveThreadParams: () => ({ cwd: "/worktree" }),
+      resolvePersistedSession: () => ({
+        providerSessionId: "session-1",
+        providerThreadId: "thread-1",
+      }),
+      resolveCommand: () => "/fake/codex",
+      getBinaryVersion: async () => "0.144.1",
+      createClient: () => client,
+    })()
+
+    await expect(adapter.reconcile(runtimeContext())).resolves.toBe("uncertain")
+  })
 })
 
 describe("Codex App Server JSON-RPC transport bounds", () => {

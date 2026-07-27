@@ -6,7 +6,11 @@ import * as path from "node:path"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
 import { externalAppSchema, type ExternalApp } from "../../../../shared/external-apps"
-import { resolveExternalAppLaunch, spawnExternalCommand } from "../../external/app-launch"
+import {
+  assertOpenPathSucceeded,
+  resolveExternalAppLaunch,
+  spawnExternalCommand,
+} from "../../external/app-launch"
 import {
   editorCommandsForPlatform,
   editorFileArgs,
@@ -24,10 +28,13 @@ function openPathInApp(app: ExternalApp, targetPath: string): Promise<void> {
   const expandedPath = expandTilde(targetPath)
   const launch = resolveExternalAppLaunch(process.platform, app, expandedPath)
   if (launch.kind === "reveal") shell.showItemInFolder(launch.path)
-  else if (launch.kind === "default") return shell.openPath(launch.path).then(() => undefined)
+  else if (launch.kind === "default")
+    return shell
+      .openPath(launch.path)
+      .then((result) => assertOpenPathSucceeded(result, launch.path))
   else {
     return spawnExternalCommand(process.platform, launch.command, launch.args).catch(() =>
-      shell.openPath(expandedPath).then(() => undefined),
+      shell.openPath(expandedPath).then((result) => assertOpenPathSucceeded(result, expandedPath)),
     )
   }
   return Promise.resolve()
@@ -97,7 +104,7 @@ export const externalRouter = router({
       }
 
       // Fallback: use shell.openPath which opens with default app
-      await shell.openPath(filePath)
+      assertOpenPathSucceeded(await shell.openPath(filePath), filePath)
       return { success: true, editor: "default" }
     }),
 

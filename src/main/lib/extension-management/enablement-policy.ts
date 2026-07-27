@@ -15,10 +15,12 @@ import {
 } from "./capability-registry"
 import {
   buildExtensionLaunchPolicy,
+  ExtensionPolicyRunBlockedError,
   getExtensionRuntimeEnforcementSupport,
   type ExtensionLaunchPolicy,
   type ExtensionRuntimeEnforcement,
 } from "./runtime-enforcement"
+import type { AgentProfileRuntimeAuthority } from "../../../shared/agent-profiles"
 
 type Database = ReturnType<typeof getDatabase>
 
@@ -381,6 +383,7 @@ export async function buildExtensionRunContext(
     harness: ExtensionHarness
     cwd?: string
     homeDir?: string
+    profileRuntimeAuthority?: AgentProfileRuntimeAuthority
   },
 ): Promise<{
   context: string
@@ -406,13 +409,42 @@ export async function buildExtensionRunContext(
     .get()
   if (!chat) throw new Error("Chat not found")
   const context = validateContext(database, chat.projectId ?? undefined, chat.taskId ?? undefined)
-  const state = await resolveExtensionInventoryState(database, {
+  let state = await resolveExtensionInventoryState(database, {
     cwd: input.cwd,
     homeDir: input.homeDir,
     harness: input.harness,
     ...(context.projectId ? { projectId: context.projectId } : {}),
     ...(context.taskId ? { taskId: context.taskId } : {}),
   })
+  if (input.profileRuntimeAuthority) {
+    const allowed = new Set(input.profileRuntimeAuthority.allowedSkills)
+    const skills = state.filter((entry) => entry.resolved.target.kind === "skill")
+    const installedIds = new Set(skills.map((entry) => entry.extension.id))
+    const unavailable = [...allowed].filter((id) => !installedIds.has(id))
+    const denied = skills
+      .filter((entry) => allowed.has(entry.extension.id))
+      .filter((entry) => entry.resolved.support !== "supported" || !entry.resolved.enabled)
+      .map((entry) => entry.extension.id)
+    const blocked = [...new Set([...unavailable, ...denied])].sort()
+    if (blocked.length > 0) {
+      throw new ExtensionPolicyRunBlockedError(
+        input.harness,
+        blocked,
+        `Run blocked: frozen Agent Profile skills are missing, unsupported, or disabled: ${blocked.join(", ")}.`,
+      )
+    }
+    state = state.map((entry) =>
+      entry.resolved.target.kind === "skill" && !allowed.has(entry.extension.id)
+        ? {
+            ...entry,
+            resolved: {
+              ...entry.resolved,
+              enabled: false,
+            },
+          }
+        : entry,
+    )
+  }
   const entries = state
     .filter((entry) => entry.resolved.support === "supported")
     .map((entry) => ({

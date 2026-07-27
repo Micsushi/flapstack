@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 // @ts-expect-error JavaScript build-script helper intentionally has no declaration file.
 import {
@@ -61,6 +62,43 @@ describe("portable project commands", () => {
     expect(resolvePackageBin("fixture-package", "fixture", { root })).toBe(
       join(root, "node_modules", "fixture-package", "bin", "cli.mjs"),
     )
+  })
+
+  it("runs a project bin from a spaces-and-Unicode root without changing arguments", () => {
+    const temp = mkdtempSync(join(tmpdir(), "flapstack-root-test-"))
+    const root = join(temp, "repo space 雪 & (safe) 100%")
+    const runner = join(root, "scripts", "run-project-bin.mjs")
+    const helper = join(root, "scripts", "lib", "project-command.mjs")
+    const packageDirectory = join(root, "node_modules", "fixture-package")
+    const fixtureBin = join(packageDirectory, "bin", "fixture.mjs")
+    const output = join(root, "argument proof.json")
+    const expected = ["space value", "Unicode 雪", "ampersand &", "parentheses (safe)", "100%"]
+
+    mkdirSync(dirname(helper), { recursive: true })
+    mkdirSync(dirname(fixtureBin), { recursive: true })
+    copyFileSync(resolve("scripts/run-project-bin.mjs"), runner)
+    copyFileSync(resolve("scripts/lib/project-command.mjs"), helper)
+    writeFileSync(
+      join(packageDirectory, "package.json"),
+      JSON.stringify({ name: "fixture-package", bin: { fixture: "bin/fixture.mjs" } }),
+    )
+    writeFileSync(
+      fixtureBin,
+      [
+        'import { writeFileSync } from "node:fs"',
+        "const [, , output, ...args] = process.argv",
+        'writeFileSync(output, JSON.stringify(args), "utf8")',
+      ].join("\n"),
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      [runner, "fixture-package", "fixture", "--", output, ...expected],
+      { cwd: temp, encoding: "utf8" },
+    )
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(JSON.parse(readFileSync(output, "utf8"))).toEqual(expected)
   })
 
   it("rejects a missing or escaping package bin", () => {

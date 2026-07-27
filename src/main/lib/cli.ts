@@ -8,19 +8,14 @@
 
 import { app } from "electron"
 import { join } from "path"
-import { existsSync, lstatSync } from "fs"
 import { platform } from "./platform"
-
-// Launch directory from CLI (e.g., `flapstack /path/to/project`)
-let launchDirectory: string | null = null
+import { queueLaunchDirectoryFromArgv, takePendingLaunchDirectory } from "./cli-launch"
 
 /**
  * Get the launch directory passed via CLI args (consumed once)
  */
 export function getLaunchDirectory(): string | null {
-  const dir = launchDirectory
-  launchDirectory = null // consume once
-  return dir
+  return takePendingLaunchDirectory()
 }
 
 /**
@@ -28,28 +23,10 @@ export function getLaunchDirectory(): string | null {
  * Called on app startup to handle `flapstack .` or `flapstack /path/to/project`
  */
 export function parseLaunchDirectory(): void {
-  // Look for a directory argument in argv
-  // Skip electron executable and script path
-  const args = process.argv.slice(process.defaultApp ? 2 : 1)
-
-  for (const arg of args) {
-    // Skip flags and protocol URLs
-    if (arg.startsWith("-") || arg.includes("://")) continue
-
-    // Check if it's a valid directory
-    if (existsSync(arg)) {
-      try {
-        const stat = lstatSync(arg)
-        if (stat.isDirectory()) {
-          console.log("[CLI] Launch directory:", arg)
-          launchDirectory = arg
-          return
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }
+  const directory = queueLaunchDirectoryFromArgv(process.argv, {
+    defaultApp: Boolean(process.defaultApp),
+  })
+  if (directory) console.log("[CLI] Launch directory:", directory)
 }
 
 /**

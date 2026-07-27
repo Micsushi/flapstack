@@ -63,16 +63,29 @@ async function waitForApproval(chatId, timeoutMs = 15_000) {
   throw new Error(`Timed out waiting for approval on ${chatId}`)
 }
 
-async function waitForRenderer(chatId, predicate, timeoutMs = 15_000) {
+async function waitForRenderer(
+  chatId,
+  predicate,
+  timeoutMs = process.platform === "win32" ? 45_000 : 15_000,
+) {
   const deadline = Date.now() + timeoutMs
   let lastState
+  let lastError
   while (Date.now() < deadline) {
-    const state = await call("get_product_mcp_renderer_state", { chatId })
-    lastState = state
-    if (predicate(state)) return state
+    try {
+      const state = await call("get_product_mcp_renderer_state", { chatId })
+      lastState = state
+      lastError = undefined
+      if (predicate(state)) return state
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
     await delay(200)
   }
-  throw new Error(`Renderer state did not settle for ${chatId}: ${JSON.stringify(lastState)}`)
+  throw new Error(
+    `Renderer state did not settle for ${chatId}: ${JSON.stringify(lastState)}` +
+      (lastError ? `; last control error: ${lastError}` : ""),
+  )
 }
 
 async function startCall(caller, toolName, args = {}) {
@@ -103,6 +116,7 @@ async function waitForChild(caller, harness, token) {
     child = state.children.find((candidate) => candidate.harness === harness)
     const runId = child?.runs[0]?.id
     if (runId) {
+      assert(child.mcpExposureEnabled === true, `${harness} child did not default MCP exposure on`)
       const runState = await call("get_run_state", { runId })
       if (["success", "failure", "cancelled"].includes(runState.run?.status)) {
         assert(runState.run.status === "success", `${harness} child failed: ${runState.run.status}`)
@@ -152,8 +166,16 @@ try {
     permissionMode: "ask-before-edits",
   })
   callers.push(claude.chatId)
+  const fullAccess = await call("prepare_product_mcp_caller", {
+    harness: "codex",
+    name: `${proofTag} full access`,
+    repoPath: checkout,
+    permissionMode: "full-access",
+  })
+  callers.push(fullAccess.chatId)
   assert(codex.exposure.connection === "disabled", "Codex exposure was not default-off")
   assert(claude.exposure.connection === "disabled", "Claude exposure was not default-off")
+  assert(fullAccess.exposure.connection === "disabled", "Full-access exposure was not default-off")
 
   await call("open_test_chat", { chatId: codex.chatId })
   await call("set_product_mcp_exposure", { chatId: codex.chatId, enabled: true })
@@ -197,6 +219,32 @@ try {
   assert(
     (await waitForProductCall((await startCall(claude, "describe")).id)).status === "completed",
     "Claude reconnect failed",
+  )
+
+  await call("set_product_mcp_exposure", { chatId: fullAccess.chatId, enabled: true })
+  const autoApprovedTier3 = await startCall(fullAccess, "spawn_thread", {
+    targetHarness: "claude-code",
+    scope: { kind: "global" },
+    permission: { mode: "read-only" },
+    worktree: { strategy: "none" },
+  })
+  assert(
+    (await waitForProductCall(autoApprovedTier3.id)).status === "completed",
+    "Full-access Tier 3 call failed",
+  )
+  const fullAccessState = await call("get_product_mcp_state", {
+    chatId: fullAccess.chatId,
+    toolName: "spawn_thread",
+    limit: 100,
+  })
+  assert(fullAccessState.pendingApprovals.length === 0, "Full-access Tier 3 call prompted")
+  const fullAccessDecisions = fullAccessState.audit.entries.map((entry) => entry.decision)
+  for (const decision of ["allowed", "dispatch-started", "completed"]) {
+    assert(fullAccessDecisions.includes(decision), `Full-access Tier 3 audit missed ${decision}`)
+  }
+  assert(
+    !fullAccessDecisions.includes("approval-required"),
+    "Full-access Tier 3 audit recorded an approval prompt",
   )
 
   await call("open_test_chat", { chatId: codex.chatId })
@@ -264,11 +312,7 @@ try {
   await waitForRenderer(claude.chatId, (state) => state.backgroundApprovalVisible)
   const timedOut = await waitForProductCall(timeoutStarted.id, 75_000)
   assert(timedOut.status === "failed", "Timed-out approval did not fail")
-  assert(
-    !(await call("get_product_mcp_renderer_state", { chatId: claude.chatId }))
-      .backgroundApprovalVisible,
-    "Timed-out background approval remained visible",
-  )
+  await waitForRenderer(claude.chatId, (state) => !state.backgroundApprovalVisible)
 
   const codexToClaude = await decideCall(
     codex,
@@ -358,8 +402,14 @@ try {
           timeout: true,
           sessionGrant: true,
           tier3FreshApproval: true,
+          fullAccessTier3AutoApproved: true,
         },
-        exposure: { defaultOff: true, codexReconnect: true, claudeReconnect: true },
+        exposure: {
+          fixtureStartsDisabled: true,
+          spawnedSupportedChildrenDefaultOn: true,
+          codexReconnect: true,
+          claudeReconnect: true,
+        },
         audit: {
           paging: true,
           redaction: true,

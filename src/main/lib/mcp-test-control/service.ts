@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { app, BrowserWindow, ipcMain } from "electron"
 import { sleep } from "../../../shared/sleep"
+import { orchestrationTemplateDefinitionSchema } from "../../../shared/orchestration-operations"
 import {
   existsSync,
   mkdtempSync,
@@ -19,17 +20,24 @@ import { basename, join, resolve } from "node:path"
 import {
   agentRuns,
   agentActivityEvents,
+  agentProfiles,
+  agentProfileStandaloneLaunches,
   chats,
   checkpoints,
   fileChangeManifests,
   getDatabase,
   getDatabasePath,
+  orchestrationWorkflowRuns,
   projects,
+  savedWorkspaces,
   subChats,
+  taskOrchestrations,
   tasks,
 } from "../db"
 import { createAgentOrchestrationService } from "../agent-orchestration/service"
+import { getAgentActivityStore } from "../agent-runtime/activity-service"
 import { constructRuntimeSnapshot, runtimePermissionSnapshot } from "../agent-runtime/snapshot"
+import { isPreviewExecutable, resolveFlapstackProtocol } from "./lifecycle"
 import { DEFAULT_CLAUDE_MODEL_ID, normalizeOpencodeModelId } from "../../../shared/model-catalog"
 import {
   OPENCODE_HARNESSES,
@@ -82,6 +90,7 @@ import { devMcpExposedTools } from "./registry"
 import { getHarnessStatus } from "./harness-status"
 import { requireVoiceUiFixture } from "./carryover-controls"
 import { listDevAgentInputRendererStates } from "./renderer-state"
+import { getLastProtocolReceipt } from "../protocol-receipt"
 import { resolveCanonicalProjectPath } from "../projects/project-path"
 import {
   authorizeMcpDispatchRetry,
@@ -99,6 +108,7 @@ import {
 import { decideMcpApproval, listPendingMcpApprovals } from "../mcp-control/approval-coordinator"
 import { buildMcpStdioRegistration, type McpStdioRegistration } from "../mcp-control/registration"
 import { getPermissionPreferences } from "../permissions"
+import { ensureOperationWorkspace } from "../saved-workspaces/operations"
 import {
   appendUserMessage,
   buildActivityAssistant,
@@ -114,7 +124,233 @@ import {
   runShellCommand,
   withRecommendedNodePath,
 } from "./shell"
+import {
+  getStage4ProfileState as getStage4ProfileStateForDatabase,
+  getStage4RuntimeState as getStage4RuntimeStateForDatabase,
+  mutateStage4Profile as mutateStage4ProfileForDatabase,
+  mutateStage4Runtime as mutateStage4RuntimeForDatabase,
+  type Stage4ProfileMutationInput,
+  type Stage4ProfileReadInput,
+  type Stage4RuntimeControlInput,
+} from "./stage4-runtime-profiles"
+import { sanitizeStage4ControlBoundary } from "./stage4-boundary"
+import {
+  assertStage4FixtureProject,
+  cleanupPersistedStage4Ownership,
+  getOwnedStage4ProfileState,
+  getOwnedStage4RuntimeState,
+  mutateOwnedStage4Profile,
+  mutateOwnedStage4Runtime,
+  registerStage4Fixture,
+  registerStage4FixtureProject,
+  registerStage4FixtureWorkflows,
+  stage4FixtureIdentity,
+} from "./stage4-ownership"
 export { getSettingsState, getVisibleCopySearchState } from "./settings"
+export {
+  getStage4OperationalState,
+  mutateStage4OperationalState,
+  redactStage4ErrorMessage,
+  STAGE4_OPERATIONAL_ACTIONS,
+} from "./stage4-operations"
+import { registerStage4TestProject } from "./stage4-operations"
+
+export function getStage4RuntimeState(input: {
+  fixtureHandle: string
+  activityRunHandle?: string
+  activityLimit?: number
+}) {
+  return sanitizeStage4ControlBoundary(
+    getOwnedStage4RuntimeState(input, (ownedInput) =>
+      getStage4RuntimeStateForDatabase(getDatabase(), ownedInput, getAgentActivityStore()),
+    ),
+  )
+}
+
+export function mutateStage4Runtime(input: Stage4RuntimeControlInput) {
+  return sanitizeStage4ControlBoundary(
+    mutateOwnedStage4Runtime(
+      input,
+      (ownedInput) =>
+        mutateStage4RuntimeForDatabase(
+          getDatabase(),
+          ownedInput as Stage4RuntimeControlInput,
+          getAgentActivityStore(),
+        ),
+      (ownedInput) =>
+        getStage4RuntimeStateForDatabase(getDatabase(), ownedInput, getAgentActivityStore()),
+    ),
+  )
+}
+
+export function getStage4ProfileState(input: Stage4ProfileReadInput) {
+  return sanitizeStage4ControlBoundary(
+    getOwnedStage4ProfileState(input, (ownedInput) =>
+      getStage4ProfileStateForDatabase(
+        getDatabase(),
+        getDatabasePath(),
+        ownedInput as Stage4ProfileReadInput,
+      ),
+    ),
+  )
+}
+
+export async function mutateStage4Profile(input: Stage4ProfileMutationInput) {
+  return sanitizeStage4ControlBoundary(
+    await mutateOwnedStage4Profile(
+      input,
+      (ownedInput) =>
+        mutateStage4ProfileForDatabase(
+          getDatabase(),
+          getDatabasePath(),
+          ownedInput as Stage4ProfileMutationInput,
+        ),
+      (ownedInput) =>
+        getStage4ProfileStateForDatabase(
+          getDatabase(),
+          getDatabasePath(),
+          ownedInput as Stage4ProfileReadInput,
+        ),
+    ),
+  )
+}
+
+export async function cleanupOwnedStage4RuntimeProfiles() {
+  const database = () => getDatabase()
+  return sanitizeStage4ControlBoundary(
+    await cleanupPersistedStage4Ownership({
+      mutateRuntime: (input) =>
+        mutateStage4RuntimeForDatabase(
+          database(),
+          input as Stage4RuntimeControlInput,
+          getAgentActivityStore(),
+        ),
+      readRuntime: (input) =>
+        getStage4RuntimeStateForDatabase(database(), input, getAgentActivityStore()),
+      mutateProfile: (input) =>
+        mutateStage4ProfileForDatabase(
+          database(),
+          getDatabasePath(),
+          input as Stage4ProfileMutationInput,
+        ),
+      profileStatus: (profileId) => {
+        const profile = database()
+          .select({
+            currentVersion: agentProfiles.currentVersion,
+            archivedAt: agentProfiles.archivedAt,
+            projectId: agentProfiles.projectId,
+          })
+          .from(agentProfiles)
+          .where(eq(agentProfiles.id, profileId))
+          .get()
+        return {
+          missing: !profile,
+          archived: Boolean(profile?.archivedAt),
+          currentVersion: profile?.currentVersion ?? null,
+          projectId: profile?.projectId ?? null,
+        }
+      },
+      fixtureRelationshipValid: ({ projectId, chatId, subChatId }) => {
+        const chat = database()
+          .select({ projectId: chats.projectId })
+          .from(chats)
+          .where(eq(chats.id, chatId))
+          .get()
+        const subChat = database()
+          .select({ chatId: subChats.chatId })
+          .from(subChats)
+          .where(eq(subChats.id, subChatId))
+          .get()
+        return chat?.projectId === projectId && subChat?.chatId === chatId
+      },
+      continuationRelationshipValid: ({ projectId, sourceChatId, targetChatId }) => {
+        const source = database()
+          .select({ projectId: chats.projectId })
+          .from(chats)
+          .where(eq(chats.id, sourceChatId))
+          .get()
+        const target = database()
+          .select({ projectId: chats.projectId, parentChatId: chats.parentChatId })
+          .from(chats)
+          .where(eq(chats.id, targetChatId))
+          .get()
+        return (
+          source?.projectId === projectId &&
+          target?.projectId === projectId &&
+          target?.parentChatId === sourceChatId
+        )
+      },
+      standaloneRelationshipValid: ({ projectId, launchId, chatId }) => {
+        const launch = database()
+          .select({
+            chatId: agentProfileStandaloneLaunches.chatId,
+            sourceKind: agentProfileStandaloneLaunches.sourceKind,
+            sourceId: agentProfileStandaloneLaunches.sourceId,
+          })
+          .from(agentProfileStandaloneLaunches)
+          .where(eq(agentProfileStandaloneLaunches.id, launchId))
+          .get()
+        const chat = database()
+          .select({ projectId: chats.projectId })
+          .from(chats)
+          .where(eq(chats.id, chatId))
+          .get()
+        return (
+          launch?.chatId === chatId &&
+          launch?.sourceKind === "studio" &&
+          launch?.sourceId === projectId &&
+          chat?.projectId === projectId
+        )
+      },
+      workflowRelationshipValid: ({ projectId, initiatingChatId, taskId, workflowRunId }) => {
+        const workflow = database()
+          .select({ taskId: orchestrationWorkflowRuns.taskId })
+          .from(orchestrationWorkflowRuns)
+          .where(eq(orchestrationWorkflowRuns.id, workflowRunId))
+          .get()
+        const task = database()
+          .select({ projectId: tasks.projectId })
+          .from(tasks)
+          .where(eq(tasks.id, taskId))
+          .get()
+        const orchestration = database()
+          .select({ initiatingChatId: taskOrchestrations.initiatingChatId })
+          .from(taskOrchestrations)
+          .where(eq(taskOrchestrations.taskId, taskId))
+          .get()
+        return (
+          workflow?.taskId === taskId &&
+          task?.projectId === projectId &&
+          orchestration?.initiatingChatId === initiatingChatId
+        )
+      },
+      launchMissing: (launchId) =>
+        !database()
+          .select({ id: agentProfileStandaloneLaunches.id })
+          .from(agentProfileStandaloneLaunches)
+          .where(eq(agentProfileStandaloneLaunches.id, launchId))
+          .get(),
+      chatMissingOrArchived: (chatId) => {
+        const chat = database()
+          .select({ archivedAt: chats.archivedAt })
+          .from(chats)
+          .where(eq(chats.id, chatId))
+          .get()
+        return !chat || Boolean(chat.archivedAt)
+      },
+      taskMissingOrArchived: (taskId) => {
+        const task = database()
+          .select({ archivedAt: tasks.archivedAt })
+          .from(tasks)
+          .where(eq(tasks.id, taskId))
+          .get()
+        return !task || Boolean(task.archivedAt)
+      },
+      archiveChat: (chatId) => archiveTestChat({ chatId }),
+      archiveTask: (taskId) => archiveTestTask({ taskId }),
+    }),
+  )
+}
 
 function notifyTestControlView(payload: DevTestControlViewPayload) {
   if (!BrowserWindow || typeof BrowserWindow.getAllWindows !== "function") return
@@ -564,14 +800,131 @@ export async function controlSettings(input: {
 
 export function createTestOrchestration(
   input: unknown,
-  options: { deferScheduling?: boolean } = {},
+  options: { deferScheduling?: boolean; stage4FixtureHandle?: string } = {},
 ) {
+  if (options.stage4FixtureHandle) {
+    const fixture = stage4FixtureIdentity(options.stage4FixtureHandle)
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error("Owned orchestration request must be an object")
+    }
+    const request = input as {
+      projectId?: unknown
+      initiatingChatId?: unknown
+      task?: unknown
+    }
+    if (request.projectId !== fixture.projectId || request.initiatingChatId !== fixture.chatId) {
+      throw new Error("Owned orchestration must use its fixture project and initiating chat")
+    }
+    if (
+      !request.task ||
+      typeof request.task !== "object" ||
+      Array.isArray(request.task) ||
+      (request.task as { mode?: unknown }).mode !== "create" ||
+      "taskId" in request.task
+    ) {
+      throw new Error("Owned orchestration must create a new fixture task")
+    }
+  }
   const service = createAgentOrchestrationService(getDatabasePath())
   // deferScheduling persists paused in the same transaction as task creation.
   // The independent scheduler can never observe this fixture as launchable.
   const created = service.create(input, undefined, options)
   notifyTestOrchestrationChanged(created.orchestration.taskId)
-  return created
+  if (!options.stage4FixtureHandle) return created
+  const operationWorkspaceResult = ensureOperationWorkspace(
+    getDatabasePath(),
+    created.orchestration.taskId,
+  )
+  const operationWorkspace = {
+    id: operationWorkspaceResult.workspaceId,
+    state: "live" as const,
+    created: operationWorkspaceResult.created,
+  }
+  let workflowRows = getDatabase()
+    .select({
+      workflowRunId: orchestrationWorkflowRuns.id,
+      definitionJson: orchestrationWorkflowRuns.definitionJson,
+    })
+    .from(orchestrationWorkflowRuns)
+    .where(eq(orchestrationWorkflowRuns.taskId, created.orchestration.taskId))
+    .all()
+  if (workflowRows.length === 0) {
+    const sourceAgent = created.agents[0]?.definition
+    if (!sourceAgent) throw new Error("Owned orchestration did not create a fixture agent")
+    const workflowRunId = randomUUID()
+    const stepId = `stage4-profile-step-${randomUUID()}`
+    const definitionId = sourceAgent.definitionId ?? `stage4-profile-agent-${randomUUID()}`
+    const definition = orchestrationTemplateDefinitionSchema.parse({
+      schemaVersion: 1,
+      engine: "workflow",
+      agents: [
+        {
+          ...sourceAgent,
+          definitionId,
+        },
+      ],
+      policy: {
+        maxParallelAgents: created.orchestration.maxParallelAgents,
+        maxDepth: created.orchestration.maxDepth,
+        maxTotalAgents: Math.max(1, created.agents.length),
+        maxTotalTokens: null,
+        maxCostUsdMicros: null,
+        allowSpawn: false,
+      },
+      workflow: {
+        schemaVersion: 1,
+        steps: [
+          {
+            id: stepId,
+            kind: "agent",
+            agentDefinitionId: definitionId,
+            dependsOn: [],
+            childStepIds: [],
+            condition: null,
+            thenStepIds: [],
+            elseStepIds: [],
+            bodyStepIds: [],
+            maxIterations: 1,
+            timeoutMs: null,
+            maxRetries: 0,
+            outputSchema: null,
+          },
+        ],
+      },
+      presentationStyle: null,
+    })
+    const now = Math.floor(Date.now() / 1_000)
+    getDatabase()
+      .insert(orchestrationWorkflowRuns)
+      .values({
+        id: workflowRunId,
+        taskId: created.orchestration.taskId,
+        status: "paused",
+        definitionJson: JSON.stringify(definition),
+        approvalAuditId: null,
+        stopIntent: false,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run()
+    workflowRows = [{ workflowRunId, definitionJson: JSON.stringify(definition) }]
+  }
+  const stage4WorkflowHandles = registerStage4FixtureWorkflows(
+    options.stage4FixtureHandle,
+    workflowRows.map((row) => {
+      const parsed = JSON.parse(row.definitionJson) as {
+        workflow?: { steps?: Array<{ id?: unknown }> }
+      }
+      return {
+        workflowRunId: row.workflowRunId,
+        taskId: created.orchestration.taskId,
+        stepIds: (parsed.workflow?.steps ?? [])
+          .map((step) => step.id)
+          .filter((stepId): stepId is string => typeof stepId === "string"),
+      }
+    }),
+  )
+  return { ...created, stage4WorkflowHandles, operationWorkspace }
 }
 
 function notifyTestOrchestrationChanged(taskId: string) {
@@ -586,32 +939,24 @@ function notifyTestOrchestrationChanged(taskId: string) {
 }
 
 export function createTestOrchestrationFixture(input: {
-  projectPath: string
-  projectName?: string
   chatName?: string
   harness?: "codex" | "claude-code"
 }) {
-  const requestedPath = resolve(input.projectPath)
-  if (!existsSync(requestedPath) || !statSync(requestedPath).isDirectory()) {
-    throw new Error("Orchestration fixture project path must be an existing directory")
+  if ("projectPath" in input || "projectId" in input || "projectName" in input) {
+    throw new Error("Stage 4 fixture project identity is derived from ensure_test_project")
   }
-  const projectPath = resolveCanonicalProjectPath(requestedPath)
+  const projectPath = resolveCanonicalProjectPath(resolve(process.cwd()))
   const db = getDatabase()
   const existingProject = db.select().from(projects).where(eq(projects.path, projectPath)).get()
+  if (!existingProject) {
+    throw new Error("Run ensure_test_project before creating a Stage 4 fixture")
+  }
   if (existingProject?.archivedAt) throw new Error("Orchestration fixture project is archived")
+  assertStage4FixtureProject({ projectId: existingProject.id, projectPath })
   const harness = input.harness ?? "codex"
   const permissionMode = "read-only"
   const created = db.transaction((tx) => {
-    const project =
-      existingProject ??
-      tx
-        .insert(projects)
-        .values({
-          name: input.projectName?.trim() || "Orchestration MCP fixture",
-          path: projectPath,
-        })
-        .returning()
-        .get()
+    const project = existingProject
     const chat = tx
       .insert(chats)
       .values({
@@ -642,21 +987,64 @@ export function createTestOrchestrationFixture(input: {
     return { project, chat, subChat }
   })
   notifyTestControlView({ action: "chat-created", chatId: created.chat.id })
+  const stage4FixtureHandle = registerStage4Fixture({
+    projectId: created.project.id,
+    chatId: created.chat.id,
+    subChatId: created.subChat.id,
+    harness,
+  })
   return {
     projectId: created.project.id,
-    projectCreated: !existingProject,
+    projectCreated: false,
     chatId: created.chat.id,
     subChatId: created.subChat.id,
     projectPath,
     harness,
     permissionMode,
+    stage4FixtureHandle,
   }
 }
 
 export function getTestOrchestration(input: { taskId: string }) {
   const service = createAgentOrchestrationService(getDatabasePath())
+  const base = service.getOverview(input.taskId)
+  const database = getDatabase()
+  const operationWorkspace = database
+    .select({ id: savedWorkspaces.id })
+    .from(savedWorkspaces)
+    .where(
+      and(
+        eq(savedWorkspaces.taskId, input.taskId),
+        eq(savedWorkspaces.ownerKind, "orchestration"),
+        isNull(savedWorkspaces.archivedAt),
+      ),
+    )
+    .get()
+  const initiatingChat = base
+    ? database
+        .select({ id: chats.id, archivedAt: chats.archivedAt })
+        .from(chats)
+        .where(eq(chats.id, base.orchestration.initiatingChatId))
+        .get()
+    : null
   return {
-    overview: service.getOverview(input.taskId),
+    overview: base
+      ? {
+          ...base,
+          operationWorkspace: {
+            id: operationWorkspace?.id ?? null,
+            state: operationWorkspace ? ("live" as const) : ("missing" as const),
+          },
+          initiatingChat: {
+            id: base.orchestration.initiatingChatId,
+            state: !initiatingChat
+              ? ("missing" as const)
+              : initiatingChat.archivedAt
+                ? ("archived" as const)
+                : ("live" as const),
+          },
+        }
+      : null,
     lineage: service.getLineage(input.taskId),
   }
 }
@@ -715,14 +1103,25 @@ export function getTestEnvironment(repoPath = process.cwd()) {
   const userDataPath = app.getPath("userData")
   const dbPath = join(userDataPath, "data", "agents.db")
   const bundledNodePath = getBundledNodePathPrefix()
+  const isDev = !app.isPackaged
+  const isPreview = app.isPackaged && isPreviewExecutable()
 
   return {
     app: {
+      version: app.getVersion(),
       name: app.getName(),
       isPackaged: app.isPackaged,
+      channel: isDev ? "development" : isPreview ? "preview" : "production",
+      protocol: resolveFlapstackProtocol(isDev, isPreview),
       userDataPath,
       databasePath: dbPath,
       databaseExists: existsSync(dbPath),
+      processId: process.pid,
+      executablePath: process.execPath,
+      appPath: app.getAppPath(),
+      defaultApp: Boolean(process.defaultApp),
+      windowCount: BrowserWindow.getAllWindows().length,
+      lastProtocolEvent: getLastProtocolReceipt(),
     },
     repo: {
       path: repoPath,
@@ -1075,6 +1474,7 @@ export function getProductMcpState(input: {
       parentRunId: chat.parentRunId,
       ancestorChatIds: chat.ancestorChatIds,
       archived: Boolean(chat.archivedAt),
+      mcpExposureEnabled: Boolean(chat.mcpExposureEnabled),
       runs: db
         .select()
         .from(agentRuns)
@@ -1364,6 +1764,8 @@ export function ensureTestProject(input?: { name?: string }, repoPath = process.
       .returning()
       .get()
     bindRegisteredFilesystemRoot(projectPath)
+    registerStage4FixtureProject({ projectId: project!.id, projectPath })
+    registerStage4TestProject({ projectId: project!.id, projectPath })
     notifyTestControlView({ action: "project-created", projectId: project!.id })
     return { project: project!, created: false, restored: Boolean(existing.archivedAt) }
   }
@@ -1374,6 +1776,8 @@ export function ensureTestProject(input?: { name?: string }, repoPath = process.
     .values({ name: input?.name?.trim() || basename(projectPath), path: projectPath })
     .returning()
     .get()
+  registerStage4FixtureProject({ projectId: project!.id, projectPath })
+  registerStage4TestProject({ projectId: project!.id, projectPath })
   notifyTestControlView({ action: "project-created", projectId: project!.id })
   return { project: project!, created: true, restored: false }
 }

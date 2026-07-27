@@ -140,6 +140,41 @@ describe("process-wide Runtime launch service", () => {
     expect(value.reconcile).not.toHaveBeenCalled()
   })
 
+  it("fails closed before Codex can run profile tools without an approval callback", async () => {
+    seedDirectRun("profile-codex")
+    const factory = vi.fn(() => directAdapter())
+    const permissionHandler = vi.fn(async () => ({ decision: "allow" }))
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: factory,
+      enableCodex: true,
+      permissionHandler,
+    })
+
+    await expect(
+      service.launch({
+        ...queued("profile-codex"),
+        profileRuntimeAuthority: {
+          snapshotId: "snapshot-profile-codex",
+          snapshotDigest: "a".repeat(64),
+          profile: { profileId: "profile-codex", version: 1 },
+          allowedTools: ["Read"],
+          allowedSkills: [],
+          memoryPolicy: { mode: "none" },
+          allowedDescendantProfileIds: [],
+          maxDescendants: 0,
+        },
+      }),
+    ).rejects.toThrow(/cannot prove enforcement of the frozen tool allowlist/i)
+
+    expect(factory).not.toHaveBeenCalled()
+    expect(permissionHandler).not.toHaveBeenCalled()
+    expect(
+      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'profile-codex'").get(),
+    ).toEqual({
+      status: "failure",
+    })
+  })
+
   it("resumes a second Codex turn with the durable provider thread identity", async () => {
     seedDirectRun("first-turn")
     const resumed: RuntimeAdapterSession[] = []
@@ -193,6 +228,35 @@ describe("process-wide Runtime launch service", () => {
     expect(
       sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'prelaunch-cancel'").get(),
     ).toEqual({ status: "cancelled" })
+  })
+
+  it("cancels an unowned durable pending run without requiring provider identity", async () => {
+    seedDirectRun("durable-pending-cancel")
+    sqlite
+      .prepare("UPDATE agent_runs SET status = 'pending' WHERE id = 'durable-pending-cancel'")
+      .run()
+    sqlite
+      .prepare(
+        "UPDATE sub_chats SET run_status = 'pending' WHERE id = 'sub-durable-pending-cancel'",
+      )
+      .run()
+    const value = directAdapter()
+    value.cancel = vi.fn(async () => undefined)
+    const service = getMainRuntimeLaunchService(path, {
+      codexFactory: () => value,
+      enableCodex: true,
+    })
+
+    await expect(service.cancel("durable-pending-cancel", "operator stopped")).resolves.toBe(true)
+    expect(
+      sqlite.prepare("SELECT status FROM agent_runs WHERE id = 'durable-pending-cancel'").get(),
+    ).toEqual({ status: "cancelled" })
+    expect(
+      sqlite
+        .prepare("SELECT run_status FROM sub_chats WHERE id = 'sub-durable-pending-cancel'")
+        .get(),
+    ).toEqual({ run_status: "cancelled" })
+    expect(value.cancel).not.toHaveBeenCalled()
   })
 
   it("loads selected project vault context through provider instructions", async () => {

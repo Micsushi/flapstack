@@ -1,0 +1,94 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-audit:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Verify exact release ref and version
+        id: release
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version v$version."
+          }
+          git fetch origin main
+          if ((git rev-parse origin/main) -ne $env:GITHUB_SHA) {
+            throw "Windows release tags must point at the current origin/main commit."
+          }
+          "package-version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify Windows prerequisites
+        run: npm run windows:prerequisites
+
+      - name: Run release gate
+        run: npm run check
+
+      - name: Reject high-severity production dependency advisories
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build signed Windows release
+        env:
+          WIN_CSC_LINK: ${{ secrets.FLAPSTACK_WINDOWS_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.FLAPSTACK_WINDOWS_CSC_KEY_PASSWORD }}
+        run: npm run package:release:win
+
+      - name: Inspect and smoke-test exact package
+        run: |
+          npm run package:inspect:release:win
+          npm run package:smoke:release:win
+
+      - name: Audit exact signed artifacts
+        run: npm run package:audit:release:win
+
+      - name: Seal and rehash exact release immediately before upload
+        run: |
+          node scripts/verify-windows-security-report.mjs `
+            --release-root=release `
+            --report=release/windows-security-report.json `
+            --version=${{ steps.release.outputs.package-version }} `
+            --expected-sha=${{ github.sha }}
+
+      - name: Upload exact audited Windows release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: flapstack-windows-${{ github.sha }}
+          path: |
+            release/Flapstack-Setup-${{ steps.release.outputs.package-version }}-x64.exe
+            release/Flapstack-Portable-${{ steps.release.outputs.package-version }}-x64.exe
+            release/windows-security-report.json
+            release/windows-security-report.json.sha256
+          if-no-files-found: error
+          retention-days: 3

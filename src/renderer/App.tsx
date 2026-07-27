@@ -37,6 +37,7 @@ import {
   codexOnboardingCompletedAtom,
 } from "./lib/atoms"
 import { appStore } from "./lib/jotai-store"
+import { subscribeCliLaunchDirectories } from "./lib/cli-launch-directory"
 import { VSCodeThemeProvider } from "./lib/themes/theme-provider"
 import { trpc } from "./lib/trpc"
 import { trpcClient } from "./lib/trpc"
@@ -83,6 +84,45 @@ function AppContent() {
   const setDesktopView = useSetAtom(desktopViewAtom)
   const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
+  const { mutateAsync: openLaunchDirectory } = trpc.projects.openLaunchDirectory.useMutation()
+
+  useEffect(
+    () =>
+      subscribeCliLaunchDirectories({
+        subscribe: (callback) => window.desktopApi.onCliOpenDirectory(callback),
+        openNext: openLaunchDirectory,
+        onOpened: async (project) => {
+          await trpcUtils.projects.list.invalidate()
+          setSelectedProject({
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            gitRemoteUrl: project.gitRemoteUrl,
+            gitProvider: project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+            gitOwner: project.gitOwner,
+            gitRepo: project.gitRepo,
+          })
+          setSelectedChatIsRemote(false)
+          setSelectedDraftId(null)
+          setSelectedChatId(null)
+          setChatId(null)
+          setShowNewChatForm(true)
+          setDesktopView(null)
+        },
+        onError: (error) => console.warn("[CLI] Failed to open launch directory:", error),
+      }),
+    [
+      openLaunchDirectory,
+      setChatId,
+      setDesktopView,
+      setSelectedChatId,
+      setSelectedChatIsRemote,
+      setSelectedDraftId,
+      setSelectedProject,
+      setShowNewChatForm,
+      trpcUtils.projects.list,
+    ],
+  )
 
   useEffect(
     () =>

@@ -2,6 +2,7 @@
 
 ### S4-F2-T1 — Implement and persist the vault location policy
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Every project has an explicit, inspectable vault location and tracking policy.
@@ -15,6 +16,7 @@
 
 ### S4-F2-T2 — Implement typed vault storage and scaffold
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Approved projects create and maintain typed Markdown knowledge safely.
@@ -29,6 +31,7 @@
 
 ### S4-F2-T3 — Add vault browser, editor, and search
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Users can inspect and edit project knowledge with honest conflicts.
@@ -36,7 +39,8 @@
 - Out of scope: Full Obsidian plugin or graph support.
 - Acceptance: Search stays inside the selected vault; stale saves preserve both versions; secrets never appear in snippets.
 - Verification: Component/accessibility, search-scope, stale-save, redaction, and live edit tests.
-- Evidence (2026-07-14): Code-ready/manual-verification-remaining. Added the
+- Evidence (2026-07-14): Tier 1 code-ready/Tier 2
+  live-verification-remaining. Added the
   project entry, typed accessible section tree, Markdown preview/editor,
   project-only redacted search, dirty/external indicators, optimistic conflict
   diff and explicit resolution, and verified backup preview/restore services.
@@ -59,6 +63,7 @@
 
 ### S4-F2-T4 — Add explicit run-context loading
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Selected vault sections enter agent context with provenance and budgets.
@@ -76,6 +81,7 @@
 
 ### S4-F2-T5 — Add approved agent vault operations
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
 - Outcome: Authorized agents read and update vault sections through bounded tools.
@@ -100,14 +106,19 @@
 
 ### S4-F2-T6 — Close vault acceptance and recovery
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F2
-- Outcome: Vault setup, use, export, and restore pass in Dev and packaged preview.
+- Outcome: Vault setup, use, export, and restore pass in verified Dev and an
+  isolated fresh profile.
 - Scope: Export/import bundle, schema version, conflict preview, backup restore, full gate, matrix S4-KV01 through S4-KV05, docs and limitations.
 - Out of scope: Private remote sync.
 - Acceptance: One vault survives restart/export/restore; selected context reaches a run; secret and conflict cases remain safe.
-- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and packaged preview matrix evidence.
-- Evidence (2026-07-15): Code-ready/manual-verification-remaining. Vault setup
+- Verification: `npm run check`, strict OpenSpec, `npm run dev:verify`, and
+  production-path vault MCP/live restart/export/restore evidence. Packaged
+  macOS evidence remains the separate S4-I03 release gate.
+- Evidence (2026-07-15): Tier 1 code-ready/Tier 2
+  live-verification-remaining. Vault setup
   now exposes central versus explicit project-owned storage and the independent
   git-tracking opt-in. The vault header routes to the existing reviewed
   export/import surface. Portable import now binds the restored vault root
@@ -121,9 +132,9 @@
   hygiene pass.
   Monolithic `npm run check` passed repository ESLint but stopped on pre-existing
   formatting drift in `docs/stage4-full-feature-test-matrix.md` and Drizzle
-  snapshots `0031` through `0034`. Dev, live restart/edit, package preview,
-  clean-profile UI import, and platform rows remain open, so completion stays
-  unchecked.
+  snapshots `0031` through `0034`. Dev, live restart/edit, and clean-profile UI
+  import remain open, so completion stays unchecked. Packaged-preview and
+  platform certification remain separate.
 - Blocked by: S4-F2-T1, S4-F2-T3, S4-F2-T4, S4-F2-T5
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md`.

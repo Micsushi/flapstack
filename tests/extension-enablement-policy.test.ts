@@ -271,6 +271,47 @@ describe("extension enablement policy", () => {
     }
   })
 
+  it("intersects frozen Agent Profile skills with installed enabled inventory", async () => {
+    writeExtension(join(homeDir, ".claude", "skills"), "alpha/SKILL.md")
+    writeExtension(join(homeDir, ".claude", "skills"), "beta/SKILL.md")
+    const inventory = (await discoverProviderExtensions({ cwd: projectRoot, homeDir })).filter(
+      (extension) => extension.provider === "claude" && extension.kind === "skill",
+    )
+    const alpha = inventory.find((extension) => extension.name === "alpha")!
+    const authority = {
+      snapshotId: "snapshot-1",
+      snapshotDigest: "a".repeat(64),
+      profile: { profileId: "profile-1", version: 1 },
+      allowedTools: [],
+      allowedSkills: [alpha.id],
+      memoryPolicy: { mode: "none" as const },
+      allowedDescendantProfileIds: [],
+      maxDescendants: 0,
+    }
+    const context = await buildExtensionRunContext(database, {
+      chatId: "chat-1",
+      harness: "claude-code",
+      cwd: projectRoot,
+      homeDir,
+      profileRuntimeAuthority: authority,
+    })
+    expect(context.manifest.enabledExtensionIds).toEqual([alpha.id])
+    expect(getClaudeExtensionSdkOptions(context.launchPolicy)).toEqual({ skills: ["alpha"] })
+
+    await expect(
+      buildExtensionRunContext(database, {
+        chatId: "chat-1",
+        harness: "claude-code",
+        cwd: projectRoot,
+        homeDir,
+        profileRuntimeAuthority: {
+          ...authority,
+          allowedSkills: ["missing-skill"],
+        },
+      }),
+    ).rejects.toThrow(/missing, unsupported, or disabled/)
+  })
+
   it("blocks Cursor command disablement before its unsupported native discovery can launch", async () => {
     writeExtension(join(projectRoot, ".cursor", "commands"), "alpha.md")
     const alpha = (await discoverProviderExtensions({ cwd: projectRoot, homeDir })).find(

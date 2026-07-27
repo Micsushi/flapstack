@@ -35,5 +35,9 @@ describe("Windows CI contract", () => {
     expect(steps.Check.run).toBe("npm run check")
     expect(steps["Build Windows Preview"].run).toBe("npm run package:preview:win")
     expect(steps["Inspect Windows Preview"].run).toBe("npm run package:inspect:preview:win")
+    expect(steps["Audit Windows Preview"].run).toBe("npm run package:audit:preview:win")
+    expect(steps["Upload Windows Preview"].with?.path).toContain(
+      "release-preview/windows-security-report.json",
+    )
   })
 })

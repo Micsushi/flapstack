@@ -21,11 +21,11 @@ import {
   type CredentialStatus,
   type CredentialWriteAcknowledgement,
 } from "../../shared/credential-types"
+import { inspectSafeStorageBackend } from "./safe-storage-backend"
 
 const require = createRequire(import.meta.url)
 const STORE_SCHEMA_VERSION = 1
 const STORE_FILE_NAME = "credentials.v1.json"
-const WEAK_BACKENDS = new Set(["basic_text", "plaintext", "unknown"])
 const LEGACY_SOURCE_CREDENTIAL_IDS = new Set<CredentialId>([
   "codex.api-key",
   "openai.voice-api-key",
@@ -194,30 +194,7 @@ function defaultEncryption(): CredentialEncryption {
             getSelectedStorageBackend?(): string
           }
         }
-        const safeStorage = electron.safeStorage
-        if (!safeStorage?.isEncryptionAvailable()) {
-          return {
-            available: false,
-            backend: "unavailable",
-            warning:
-              "Secure OS credential encryption is unavailable. The credential is session-only.",
-          }
-        }
-        const backend =
-          safeStorage.getSelectedStorageBackend?.() ||
-          (process.platform === "darwin"
-            ? "keychain"
-            : process.platform === "win32"
-              ? "dpapi"
-              : "os-keyring")
-        if (WEAK_BACKENDS.has(backend)) {
-          return {
-            available: false,
-            backend,
-            warning: `The OS credential backend (${backend}) is not strong enough. The credential is session-only.`,
-          }
-        }
-        return { available: true, backend }
+        return inspectSafeStorageBackend(electron.safeStorage)
       } catch {
         return {
           available: false,

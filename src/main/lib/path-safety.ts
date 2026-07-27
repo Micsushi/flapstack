@@ -1,6 +1,6 @@
 import { constants } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises"
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, rmdir } from "node:fs/promises"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 type FileIdentity = { dev: number | bigint; ino: number | bigint; fileType: number }
@@ -316,6 +316,61 @@ export async function actOnPathInsideRoot<T>(
   await options.beforeCommit?.(snapshot.targetPath)
   await validateExistingSnapshot(snapshot)
   return action(snapshot.targetPath)
+}
+
+/**
+ * Remove one regular file without following a final or parent symlink. Missing
+ * files are idempotent. When requested, the verified parent is removed only if
+ * it is still the same empty directory and is not the root itself.
+ */
+export async function removeFileInsideRoot(
+  rootPath: string,
+  targetRelativePath: string,
+  options: RootedMutationOptions & { removeEmptyParent?: boolean } = {},
+): Promise<{ removed: boolean; parentRemoved: boolean }> {
+  const lexicalRoot = resolve(rootPath)
+  resolveInsideRoot(lexicalRoot, targetRelativePath)
+  let snapshot: ExistingPathSnapshot
+  try {
+    snapshot = await snapshotExistingPath(lexicalRoot, targetRelativePath)
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { removed: false, parentRemoved: false }
+    }
+    throw error
+  }
+  const targetInfo = await lstat(snapshot.targetPath)
+  if (targetInfo.isSymbolicLink() || !targetInfo.isFile()) {
+    throw new Error("Remove target must be a real file")
+  }
+
+  await options.beforeCommit?.(snapshot.targetPath)
+  await validateExistingSnapshot(snapshot)
+  await rm(snapshot.targetPath)
+
+  let parentRemoved = false
+  if (options.removeEmptyParent && snapshot.parentPath !== snapshot.realRoot) {
+    await validateRootAndParent(
+      snapshot.lexicalRoot,
+      snapshot.realRoot,
+      snapshot.rootIdentity,
+      snapshot.parentPath,
+      snapshot.parentIdentity,
+    )
+    try {
+      await rmdir(snapshot.parentPath)
+      parentRemoved = true
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        !["ENOTEMPTY", "EEXIST", "ENOENT"].includes(String(error.code))
+      ) {
+        throw error
+      }
+    }
+  }
+  return { removed: true, parentRemoved }
 }
 
 async function openNoFollowExclusive(path: string, mode: number) {

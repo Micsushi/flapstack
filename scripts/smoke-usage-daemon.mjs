@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { createRequire } from "node:module"
@@ -24,7 +24,10 @@ function spawnDaemon() {
     },
     stdio: ["ignore", "pipe", "pipe"],
   })
-  const output = { stderr: "" }
+  const output = { stdout: "", stderr: "" }
+  child.stdout.on("data", (chunk) => {
+    output.stdout += String(chunk)
+  })
   child.stderr.on("data", (chunk) => {
     output.stderr += String(chunk)
   })
@@ -55,7 +58,26 @@ function readStatus() {
   try {
     return check
       .prepare(
-        "SELECT enabled, running, pid, last_heartbeat_at, last_poll_at FROM usage_daemon_status WHERE id = 'singleton'",
+        "SELECT enabled, running, pid, last_heartbeat_at, last_poll_at, last_error FROM usage_daemon_status WHERE id = 'singleton'",
+      )
+      .get()
+  } finally {
+    check.close()
+  }
+}
+
+function readDaemonBudgetAlert() {
+  const check = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return check
+      .prepare(
+        `SELECT alert_type, observed_value, threshold_value, delivery_status
+         FROM usage_alert_events
+         WHERE provider_id = 'flapstack-budget'
+           AND account_tag = 'daemon-smoke-budget'
+           AND alert_type = 'budget-soft-alert'
+         ORDER BY created_at DESC
+         LIMIT 1`,
       )
       .get()
   } finally {
@@ -65,13 +87,38 @@ function readStatus() {
 
 try {
   const db = new DatabaseSync(dbPath)
-  db.exec("CREATE TABLE agent_runs (id text PRIMARY KEY)")
-  db.exec(
-    readFileSync(join(root, "drizzle/0009_exotic_red_wolf.sql"), "utf8").replaceAll(
-      "--> statement-breakpoint",
-      "",
-    ),
-  )
+  for (const migration of readdirSync(join(root, "drizzle"))
+    .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+    .sort()) {
+    db.exec(
+      readFileSync(join(root, "drizzle", migration), "utf8").replaceAll(
+        "--> statement-breakpoint",
+        "",
+      ),
+    )
+  }
+  const nowSeconds = Math.floor(Date.now() / 1_000)
+  db.prepare(
+    `INSERT INTO usage_budgets (
+      id, name, enabled, scope_type, provider_id, account_tag, project_id, task_id,
+      automation_id, orchestration_id, threshold_type, threshold_value, action,
+      reset_type, reset_timezone, version, created_at, updated_at
+    ) VALUES (
+      'daemon-smoke-budget', 'Daemon smoke budget', 1, 'provider-account',
+      'codex', 'daemon-smoke', NULL, NULL, NULL, NULL,
+      'total-tokens', 1, 'soft-alert', 'none', NULL, 1, ?, ?
+    )`,
+  ).run(nowSeconds, nowSeconds)
+  db.prepare(
+    `INSERT INTO usage_samples (
+      id, provider_id, account_tag, source, cost_quality, captured_at, total_tokens,
+      attribution_state, source_class, dedupe_strategy, dedupe_key, created_at
+    ) VALUES (
+      'daemon-smoke-sample', 'codex', 'daemon-smoke', 'external-provider',
+      'exact', ?, 2, 'unknown', 'external-provider', 'exact-fact',
+      'daemon-smoke-sample', ?
+    )`,
+  ).run(nowSeconds, nowSeconds)
   db.close()
   writeFileSync(
     settingsPath,
@@ -85,7 +132,16 @@ try {
       throw new Error(`usage daemon exited before its first heartbeat: ${first.output.stderr}`)
     }
     const status = readStatus()
-    return status?.running === 1 && status?.pid === first.child.pid && status?.last_poll_at != null
+    return (
+      status?.running === 1 &&
+      status?.pid === first.child.pid &&
+      status?.last_poll_at != null &&
+      readDaemonBudgetAlert()?.observed_value === 2
+    )
+  }).catch((error) => {
+    throw new Error(
+      `${error.message}; status=${JSON.stringify(readStatus())}; stdout=${first.output.stdout}; stderr=${first.output.stderr}`,
+    )
   })
 
   const duplicate = spawnDaemon()
@@ -108,7 +164,9 @@ try {
     return status?.running === 1 && status?.pid === restarted.child.pid
   })
 
-  restarted.child.kill("SIGTERM")
+  if (process.platform === "win32") {
+    writeFileSync(join(temp, "usage-daemon.stop"), '{"version":1,"requestedAt":0}\n')
+  } else restarted.child.kill("SIGTERM")
   const restartedExit = await waitForExit(restarted.child)
   if (restartedExit.code !== 0) {
     throw new Error(`restarted daemon exited ${restartedExit.code}: ${restarted.output.stderr}`)
@@ -123,7 +181,17 @@ try {
   ) {
     throw new Error(`unexpected final daemon status: ${JSON.stringify(status)}`)
   }
-  console.log("usage daemon smoke passed (duplicate, crash recovery, restart, clean stop)")
+  const alert = readDaemonBudgetAlert()
+  if (
+    alert?.observed_value !== 2 ||
+    alert?.threshold_value !== 1 ||
+    alert?.delivery_status !== "sent"
+  ) {
+    throw new Error(`unexpected daemon budget alert: ${JSON.stringify(alert)}`)
+  }
+  console.log(
+    "usage daemon smoke passed (closed-app alert, duplicate, crash recovery, restart, clean stop)",
+  )
 } finally {
   for (const child of children) {
     child.kill("SIGTERM")

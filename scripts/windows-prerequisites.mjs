@@ -26,17 +26,26 @@ export function evaluateWindowsToolchain(input) {
   if (input.platform !== "win32")
     errors.push(`Stage 5 requires a native Windows host; found ${input.platform}`)
   if (input.arch !== "x64") errors.push(`Stage 5 requires Windows x64; found ${input.arch}`)
+  const windowsRelease = versionParts(input.osRelease)
+  const isExplicitServer2022BuildHost =
+    input.allowWindowsServer2022BuildHost === true &&
+    windowsRelease?.[0] === 10 &&
+    windowsRelease[1] === 0 &&
+    windowsRelease[2] === 20348
+  if (
+    input.platform === "win32" &&
+    !isExplicitServer2022BuildHost &&
+    (!windowsRelease ||
+      windowsRelease[0] !== 10 ||
+      windowsRelease[1] !== 0 ||
+      windowsRelease[2] < 22000)
+  ) {
+    errors.push(`Windows 11 x64 is required; found release ${input.osRelease ?? "missing"}`)
+  }
 
   const node = versionParts(input.node)
   if (!node || node[0] !== 22) errors.push(`Node 22 is required; found ${input.node ?? "missing"}`)
-  requireVersion(
-    errors,
-    tools,
-    "npm",
-    "npm",
-    ([major]) => major >= 10,
-    "npm 10 or newer is required",
-  )
+  requireVersion(errors, tools, "npm", "npm", ([major]) => major === 10, "npm 10 is required")
   requireVersion(
     errors,
     tools,
@@ -75,14 +84,14 @@ export function evaluateWindowsToolchain(input) {
     tools,
     "powershell",
     "PowerShell",
-    ([major]) => major >= 5,
+    ([major, minor]) => major > 5 || (major === 5 && minor >= 1),
     "PowerShell 5.1 or newer is required",
   )
   return { ok: errors.length === 0, errors, tools }
 }
 
 export function redactDiagnosticPath(value, options = {}) {
-  const home = path.resolve(options.home ?? os.homedir())
+  const home = path.win32.resolve(options.home ?? os.homedir())
   const normalizedValue = String(value ?? "")
   if (!normalizedValue) return normalizedValue
   const lowerValue = normalizedValue.toLowerCase()
@@ -218,6 +227,9 @@ function main() {
   const result = evaluateWindowsToolchain({
     platform: process.platform,
     arch: process.arch,
+    osRelease: os.release(),
+    allowWindowsServer2022BuildHost:
+      process.env.CI === "true" && process.env.GITHUB_ACTIONS === "true",
     node: process.versions.node,
     tools,
   })

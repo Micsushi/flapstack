@@ -2,6 +2,7 @@
 
 ### S4-F8-T1 — Define the bundle and scope registry
 
+- Evidence class: `T2-core`.
 - [x] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Every portable scope has a stable schema/version/dependency/sensitivity contract.
@@ -16,6 +17,7 @@
 
 ### S4-F8-T2 — Add secret classification and exclusion reporting
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Export/import/sync pipelines share one fail-closed secret boundary.
@@ -30,6 +32,7 @@
 
 ### S4-F8-T3 — Implement consistent selective export
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Selected scopes produce an integrity-checked bundle from one consistent snapshot.
@@ -44,6 +47,7 @@
 
 ### S4-F8-T4 — Implement staged import verification, migration, and diff
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Any bundle can be evaluated fully before live state changes.
@@ -58,6 +62,7 @@
 
 ### S4-F8-T5 — Apply imports transactionally with rollback and recovery
 
+- Evidence class: `T2-core`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Confirmed import plans publish one valid state or restore the prior state.
@@ -72,6 +77,7 @@
 
 ### S4-F8-T6 — Add explicit user-owned private git sync
 
+- Evidence class: `T2-capability:private-sync`.
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Safe file-backed scopes can synchronize through a user-owned private repository.
@@ -86,28 +92,45 @@
 
 ### S4-F8-T7 — Build portability and sync UI
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core` for portability UI;
+  `T2-capability:private-sync` for sync UI.
+- [ ] Completion: portability UI acceptance and verification passed
+- Separate certification: Private-sync UI remains with S4-IE03.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Users select scopes, review exclusions/diffs/conflicts, apply/restore, and manage private sync.
 - Scope: Settings entry; export scope/project picker; progress/cancel; import dry-run review; conflict resolution; backup/restore; sync link/status/diff/pull/commit/push/unlink; accessibility; destructive confirmations.
 - Out of scope: Hosted account setup and secret export.
 - Acceptance: No import or git mutation occurs without exact preview/confirmation; recovery state is actionable; large results paginate.
 - Verification: `npm test -- portability-ui` plus accessibility and live export/import/private-sync walkthrough.
-- Blocked by: S4-F8-T2, S4-F8-T3, S4-F8-T4, S4-F8-T5, S4-F8-T6
+- Blocked by for `T2-core`: S4-F8-T2, S4-F8-T3, S4-F8-T4, and
+  S4-F8-T5.
+- Separate private-sync UI certification depends on S4-F8-T6.
 - Blocks: S4-F8-T8
 - Context: Settings search, diff viewer, progress dialogs, filesystem pickers, toast/undo patterns.
 - Evidence: Code and five Node 22 UI contract tests pass for the searchable route, native pickers, reviewed target mappings/actual target paths, preview invalidation on mapping edits, canonical confirmation hashes, independent 50-row import and private-sync pagination with reset/clamping, redacted values, truthful keep-both wording, exact sync OIDs/blob deltas, conflict blocking, keyboard-native controls, labeled pagination regions, fieldsets, and live regions. Live visual/accessibility walkthrough remains open because the Mac session is locked.
 
 ### S4-F8-T8 — Close portability and private-sync acceptance
 
-- [ ] Completion: acceptance and verification passed
+- Evidence classes: `T2-core` for S4-IE01 and S4-IE02;
+  `T2-capability:private-sync` for S4-IE03.
+- [ ] Completion: S4-IE01 and S4-IE02 are accepted
+- Separate certification: S4-IE03 retains independent private-sync status.
 - Parent: Project Flapstack / Stage S4 / Feature S4-F8
 - Outcome: Export, import, recovery, and private sync pass automated/live/package evidence.
-- Scope: Full gate; matrix S4-IE01–S4-IE03; selective/full bundles; prior-version migration; tamper/secret/conflict/crash; private remote; docs; package preview.
+- Scope: The `T2-core` closeout covers S4-IE01 and S4-IE02,
+  selective/full bundles, prior-version migration,
+  tamper/secret/conflict/crash, and docs. S4-IE03 retains private-sync
+  capability status; packaged macOS evidence remains S4-I03.
 - Out of scope: Hosted sync and encrypted credentials.
 - Acceptance: A clean machine/profile restores selected state; destructive and secret cases fail closed; private sync never force-updates.
-- Verification: Node 22 `npm run check`, strict OpenSpec, `npm run dev:verify`, fresh-profile matrix, and packaged preview.
-- Blocked by: S4-F8-T3, S4-F8-T4, S4-F8-T5, S4-F8-T6, S4-F8-T7
+- Verification: Node 22 `npm run check`, strict OpenSpec,
+  `npm run dev:verify`, and fresh-profile export/import MCP/live evidence.
+  Private-remote and packaged-preview evidence stays in the separately labeled
+  capability and release rows.
+- Blocked by for `T2-core`: S4-F8-T3, S4-F8-T4, S4-F8-T5, and the
+  `T2-core` scope of S4-F8-T7.
+- Separate private-sync certification depends on S4-F8-T6 and the matching
+  capability scope of S4-F8-T7.
 - Blocks: Stage S4 integrated exit
 - Context: `docs/stage4-full-feature-test-matrix.md` and Stage 4 execution plan.
 - Evidence: The recovered snapshot previously passed its Node 22 repository gate at 185 files, 1,453 passed, and 3 skipped. Against the frozen integration base, the F8/F2 focused gate passed 15 files and 147 tests, including moved/removed export sources, mapping/target ambiguity, marker identity, stale-root independence, exact vault content/type/version/hash/backup/schema, marker replacement, orphan recovery, async singleton drain, rollback, malformed advertisement, and remote move/delete races. The additive F2/KV05 coexistence repair now passes the exact accepted remapping suite plus F8 importer/apply/vault regressions at 4 files and 40 tests; the retained packet slice passes 3 files and 36 tests. Current TypeScript, touched ESLint/Prettier, and diff checks pass; the earlier production build and strict F8/F2 OpenSpec checks remain green. The current full-repository attempt stopped after 245 of 248 files passed, 2,018 tests passed, and 3 skipped because three unrelated integrated stabilization test files remain stale; priority explicitly defers another broad loop. S4-IE01-S4-IE03 remain open pending the full stabilization gate, unlocked UI walkthrough, real clean-profile/package restore, real user-owned private-remote proof, packaged macOS preview, and Windows/Linux package evidence.
