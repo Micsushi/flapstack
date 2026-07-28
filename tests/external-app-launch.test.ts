@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { EventEmitter } from "node:events"
 import { describe, expect, it, vi } from "vitest"
 import {
   assertOpenPathSucceeded,
@@ -39,6 +40,23 @@ describe("external app launch", () => {
       kind: "default",
       path: "C:\\work\\repo",
     })
+  })
+
+  it("uses CREATE_NO_WINDOW when a Windows command resolves to a cmd shim", async () => {
+    let encoded = ""
+    const spawn = vi.fn((_command: string, args: string[]) => {
+      encoded = args.at(-1) ?? ""
+      const child = new EventEmitter()
+      queueMicrotask(() => child.emit("close", 0, null))
+      return child
+    })
+
+    await spawnExternalCommand("win32", "fixture-command", ["C:\\work\\repo"], {
+      spawn: spawn as never,
+    })
+
+    const script = Buffer.from(encoded, "base64").toString("utf16le")
+    expect(script).toContain("CreateNoWindow = $true")
   })
 
   it("rejects Electron openPath false-success results", () => {

@@ -184,6 +184,37 @@ export function windowsDaemonScriptPath(configDir: string): string {
   return join(configDir, "usage-daemon.ps1")
 }
 
+export function windowsDaemonLauncherPath(configDir: string): string {
+  return join(configDir, "usage-daemon.vbs")
+}
+
+export function buildWindowsDaemonLauncher(): string {
+  return [
+    "Option Explicit",
+    "",
+    "Dim arguments, command, index, shell, exitCode",
+    "Set arguments = WScript.Arguments",
+    "",
+    "If arguments.Count < 1 Then",
+    "    WScript.Quit 87",
+    "End If",
+    "",
+    "command = QuoteArgument(arguments(0))",
+    "For index = 1 To arguments.Count - 1",
+    '    command = command & " " & QuoteArgument(arguments(index))',
+    "Next",
+    "",
+    'Set shell = CreateObject("WScript.Shell")',
+    "exitCode = shell.Run(command, 0, True)",
+    "WScript.Quit exitCode",
+    "",
+    "Function QuoteArgument(value)",
+    '    QuoteArgument = Chr(34) & Replace(value, Chr(34), "\\" & Chr(34)) & Chr(34)',
+    "End Function",
+    "",
+  ].join("\r\n")
+}
+
 export function buildWindowsDaemonScript(params: DaemonInstallParams): string {
   const literal = (value: string | number) =>
     `'${String(value).replace(/\r?\n/g, "").replace(/'/g, "''")}'`
@@ -210,16 +241,29 @@ function windowsPowerShellPath(): string {
   return shell
 }
 
+function windowsWScriptPath(): string {
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT
+  if (!systemRoot) throw new Error("Windows usage daemon install requires SystemRoot")
+  const host = join(systemRoot, "System32", "wscript.exe")
+  if (!existsSync(host)) throw new Error(`Windows Script Host was not found at ${host}`)
+  return host
+}
+
 function powerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
-function registerWindowsTaskScript(taskName: string, scriptPath: string): string {
+function registerWindowsTaskScript(
+  taskName: string,
+  scriptPath: string,
+  launcherPath: string,
+): string {
   const shell = windowsPowerShellPath()
-  const actionArguments = `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`
+  const host = windowsWScriptPath()
+  const actionArguments = `//B //Nologo "${launcherPath}" "${shell}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`
   return [
     "$ErrorActionPreference = 'Stop'",
-    `$action = New-ScheduledTaskAction -Execute ${powerShellLiteral(shell)} -Argument ${powerShellLiteral(actionArguments)}`,
+    `$action = New-ScheduledTaskAction -Execute ${powerShellLiteral(host)} -Argument ${powerShellLiteral(actionArguments)}`,
     "$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)",
     "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Days 3)",
     `Register-ScheduledTask -TaskName ${powerShellLiteral(taskName)} -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
@@ -266,6 +310,7 @@ export function installWindowsScheduledTask(params: DaemonInstallParams): void {
     throw new Error("Windows usage daemon install requires Windows")
   mkdirSync(params.configDir, { recursive: true })
   const scriptPath = windowsDaemonScriptPath(params.configDir)
+  const launcherPath = windowsDaemonLauncherPath(params.configDir)
   const taskName = windowsTaskName(params.serviceId ?? daemonServiceIdForConfig(params.configDir))
   // Windows PowerShell 5.1 treats BOM-less scripts as the active ANSI code page.
   // The UTF-8 BOM preserves Unicode profile and database paths without requiring
@@ -273,7 +318,8 @@ export function installWindowsScheduledTask(params: DaemonInstallParams): void {
   writeFileSync(scriptPath, `\uFEFF${buildWindowsDaemonScript(params)}`, {
     mode: 0o600,
   })
-  const registration = registerWindowsTaskScript(taskName, scriptPath)
+  writeFileSync(launcherPath, buildWindowsDaemonLauncher(), { mode: 0o600 })
+  const registration = registerWindowsTaskScript(taskName, scriptPath, launcherPath)
   const encoded = Buffer.from(registration, "utf16le").toString("base64")
   execFileSync(
     windowsPowerShellPath(),
@@ -318,6 +364,7 @@ export function uninstallWindowsScheduledTask(
     }
   }
   rmSync(windowsDaemonScriptPath(configDir), { force: true })
+  rmSync(windowsDaemonLauncherPath(configDir), { force: true })
   rmSync(join(configDir, "usage-daemon.cmd"), { force: true })
 }
 

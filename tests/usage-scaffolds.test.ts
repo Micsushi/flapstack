@@ -16,6 +16,7 @@ import { normalizeUsageSettings, resolveCadenceSeconds } from "../src/main/lib/u
 import {
   buildLaunchAgentPlist,
   buildSystemdUserUnit,
+  buildWindowsDaemonLauncher,
   buildWindowsDaemonScript,
   daemonServiceIdForConfig,
   uninstallLaunchAgent,
@@ -832,6 +833,9 @@ describe("usage Track B scaffolds", () => {
     expect(windows).toContain("$env:ELECTRON_RUN_AS_NODE = '1'")
     expect(windows).toContain("$env:FLAPSTACK_USAGE_SECRET_NAMESPACE = 'flapstack-preview'")
     expect(windows).toContain("& 'C:\\Program Files\\Flapstack\\Flapstack.exe'")
+    const windowsLauncher = buildWindowsDaemonLauncher()
+    expect(windowsLauncher).toContain('CreateObject("WScript.Shell")')
+    expect(windowsLauncher).toContain("shell.Run(command, 0, True)")
     const systemd = buildSystemdUserUnit(params)
     expect(systemd).toContain('Environment="FLAPSTACK_DB_PATH=/tmp/data/agents.db"')
     expect(systemd).toContain('Environment="FLAPSTACK_USAGE_SECRET_NAMESPACE=flapstack-preview"')

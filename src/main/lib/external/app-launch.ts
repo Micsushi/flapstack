@@ -68,7 +68,7 @@ function waitForWrapper(child: ChildProcess): Promise<void> {
 /**
  * Launch an external application without passing user paths through a command shell.
  * Windows PATH entries are often .cmd shims, so a UTF-16LE encoded PowerShell wrapper
- * resolves the shim and delegates to ShellExecute via Start-Process.
+ * resolves the shim and starts cmd.exe with CREATE_NO_WINDOW.
  */
 export async function spawnExternalCommand(
   platform: NodeJS.Platform,
@@ -92,9 +92,26 @@ export async function spawnExternalCommand(
       "} else {",
       "  (Get-Command -Name $requested -CommandType Application,ExternalScript -ErrorAction Stop | Select-Object -First 1).Source",
       "}",
-      argumentLine
-        ? `Start-Process -FilePath $resolved -ArgumentList ${quotePowerShellLiteral(argumentLine)} -ErrorAction Stop | Out-Null`
-        : "Start-Process -FilePath $resolved -ErrorAction Stop | Out-Null",
+      "$extension = [System.IO.Path]::GetExtension($resolved)",
+      "if ($extension -in @('.cmd', '.bat')) {",
+      "  $commandLine = '\"' + $resolved + '\"'",
+      ...(argumentLine ? [`  $commandLine += ' ' + ${quotePowerShellLiteral(argumentLine)}`] : []),
+      "  $startInfo = New-Object System.Diagnostics.ProcessStartInfo",
+      "  $startInfo.FileName = $env:ComSpec",
+      "  $startInfo.Arguments = '/d /s /c \"' + $commandLine + '\"'",
+      "  $startInfo.UseShellExecute = $false",
+      "  $startInfo.CreateNoWindow = $true",
+      "  $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden",
+      "  $process = [System.Diagnostics.Process]::Start($startInfo)",
+      "  $process.WaitForExit()",
+      '  if ($process.ExitCode -ne 0) { throw "Command shim exited with code $($process.ExitCode)" }',
+      "} else {",
+      ...(argumentLine
+        ? [
+            `  Start-Process -FilePath $resolved -ArgumentList ${quotePowerShellLiteral(argumentLine)} -ErrorAction Stop | Out-Null`,
+          ]
+        : ["  Start-Process -FilePath $resolved -ErrorAction Stop | Out-Null"]),
+      "}",
     ].join("; ")
     const encoded = Buffer.from(script, "utf16le").toString("base64")
     const child = spawnProcess(
