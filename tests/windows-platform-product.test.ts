@@ -11,6 +11,20 @@ import {
   windowsUserPathScript,
 } from "../src/main/lib/platform/windows"
 
+async function removeDirectoryWithRetry(directory: string): Promise<void> {
+  let cleanupError: unknown
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      rmSync(directory, { recursive: true, force: true })
+      return
+    } catch (error) {
+      cleanupError = error
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+  }
+  throw cleanupError
+}
+
 describe("Windows product platform behavior", () => {
   it("uses Windows PowerShell by default instead of COMSPEC", () => {
     const previousComspec = process.env.COMSPEC
@@ -87,12 +101,22 @@ describe("Windows product platform behavior", () => {
       const root = mkdtempSync(join(tmpdir(), "flapstack-cli-Unicode-雪-"))
       const executableDirectory = join(root, "app ü")
       const selectedDirectory = join(root, "project 雪 & spaces")
-      const executable = join(executableDirectory, "capture.cmd")
+      const executable = join(executableDirectory, "capture.vbs")
       const launcher = join(root, "flapstack.cmd")
       const marker = join(selectedDirectory, "launched.txt")
       mkdirSync(executableDirectory, { recursive: true })
       mkdirSync(selectedDirectory, { recursive: true })
-      writeFileSync(executable, '@echo off\r\n> "%~1\\launched.txt" echo launched\r\n', "ascii")
+      writeFileSync(
+        executable,
+        [
+          'Set fso = CreateObject("Scripting.FileSystemObject")',
+          'Set marker = fso.CreateTextFile(fso.BuildPath(WScript.Arguments(0), "launched.txt"), True)',
+          'marker.WriteLine "launched"',
+          "marker.Close",
+          "",
+        ].join("\r\n"),
+        "ascii",
+      )
       const template = readFileSync(
         join(process.cwd(), "resources", "cli", "flapstack.cmd"),
         "utf8",
@@ -103,7 +127,11 @@ describe("Windows product platform behavior", () => {
         const result = spawnSync(
           process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
           ["/d", "/s", "/c", `""${launcher}" "${selectedDirectory}""`],
-          { encoding: "utf8", windowsVerbatimArguments: true },
+          {
+            encoding: "utf8",
+            windowsHide: true,
+            windowsVerbatimArguments: true,
+          },
         )
         expect(result.status, result.stderr || result.stdout).toBe(0)
         for (let attempt = 0; attempt < 50 && !existsSync(marker); attempt += 1) {
@@ -111,7 +139,7 @@ describe("Windows product platform behavior", () => {
         }
         expect(readFileSync(marker, "utf8").trim()).toBe("launched")
       } finally {
-        rmSync(root, { recursive: true, force: true })
+        await removeDirectoryWithRetry(root)
       }
     },
   )
