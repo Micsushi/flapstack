@@ -40,6 +40,35 @@ const LINUX_COMMANDS: Partial<Record<ExternalApp, string>> = {
 
 type SpawnProcess = typeof spawn
 
+export interface ExternalAppProbe {
+  command: string
+  args: string[]
+}
+
+export function getPlatformFolderLabel(platform: NodeJS.Platform): string {
+  return platform === "darwin" ? "Finder" : "Open in folder"
+}
+
+export function getExternalAppProbe(
+  platform: NodeJS.Platform,
+  app: ExternalApp,
+): ExternalAppProbe | null {
+  if (app === "finder") return null
+  if (platform === "darwin") {
+    return {
+      command: "open",
+      args: ["-Ra", APP_META[app].macAppName],
+    }
+  }
+
+  const command = platform === "win32" ? WINDOWS_COMMANDS[app] : LINUX_COMMANDS[app]
+  if (!command) return null
+  return {
+    command: platform === "win32" ? "where.exe" : "which",
+    args: [command],
+  }
+}
+
 export function assertOpenPathSucceeded(result: string, targetPath: string): void {
   const error = result.trim()
   if (error) throw new Error(`${error}: ${targetPath}`)

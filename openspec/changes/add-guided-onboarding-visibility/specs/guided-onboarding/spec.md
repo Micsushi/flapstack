@@ -1,9 +1,10 @@
 ## ADDED Requirements
 
-### Requirement: First-run work-style guide
+### Requirement: First-run work-style questionnaire
 
-Flapstack SHALL offer a short tutorial and questionnaire on first install before
-applying optional feature visibility defaults.
+Flapstack SHALL offer a short work-style questionnaire on first install before
+applying optional feature visibility defaults. The main-page product tour is
+owned separately by the Stage 5 guided-tour patch.
 
 #### Scenario: Lightweight user chooses one-to-two-agent work
 

@@ -16,6 +16,7 @@ import {
 } from "../../../../shared/model-catalog"
 import type { FileMentionOption } from "../mentions/agents-mentions-editor"
 import { CHAT_MODES, normalizeChatMode, type ChatMode } from "../../../../shared/chat-mode"
+import { DEFAULT_AGENTS_SIDEBAR_WIDTH } from "../lib/sidebar-width"
 
 export type AgentMode = ChatMode
 
@@ -574,7 +575,7 @@ export const agentsSidebarOpenAtom = atomWithWindowStorage<boolean>("agents-side
 // Sidebar width with localStorage persistence
 export const agentsSidebarWidthAtom = atomWithStorage<number>(
   "agents-sidebar-width",
-  224,
+  DEFAULT_AGENTS_SIDEBAR_WIDTH,
   undefined,
   { getOnInit: true },
 )

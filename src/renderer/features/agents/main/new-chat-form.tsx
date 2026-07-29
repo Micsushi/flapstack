@@ -1572,9 +1572,6 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
           case "write":
             setAgentMode("write")
             return
-          case "read":
-            setAgentMode("read")
-            return
           case "review":
             setAgentMode("review")
             return
@@ -1932,9 +1929,13 @@ export function NewChatForm({ isMobileFullscreen = false, onBackToChats }: NewCh
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <div className="relative w-full cursor-text" onClick={handleContainerClick}>
+            <div
+              className="relative w-full cursor-text"
+              data-tour="prompt"
+              onClick={handleContainerClick}
+            >
               {/* Target selectors - directly above input */}
-              <div className="mb-2 ml-[5px] flex flex-wrap items-center gap-2">
+              <div className="mb-2 ml-[5px] flex flex-wrap items-center gap-2" data-tour="scope">
                 <div className="flex items-center gap-1 rounded-md bg-muted/40 p-0.5">
                   {(["global", "project", "task"] as const).map((scope) => {
                     const disabled =

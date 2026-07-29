@@ -5,9 +5,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { z } from "zod"
 import { publicProcedure, router } from "../index"
-import { externalAppSchema, type ExternalApp } from "../../../../shared/external-apps"
+import {
+  EXTERNAL_APPS,
+  externalAppSchema,
+  type ExternalApp,
+} from "../../../../shared/external-apps"
 import {
   assertOpenPathSucceeded,
+  getExternalAppProbe,
+  getPlatformFolderLabel,
   resolveExternalAppLaunch,
   spawnExternalCommand,
 } from "../../external/app-launch"
@@ -44,6 +50,28 @@ function openPathInApp(app: ExternalApp, targetPath: string): Promise<void> {
  * External router for shell operations (open in finder, open in editor, etc.)
  */
 export const externalRouter = router({
+  listAvailableApps: publicProcedure.query(() => {
+    const apps = EXTERNAL_APPS.filter((app) => {
+      if (app === "finder") return true
+      const probe = getExternalAppProbe(process.platform, app)
+      if (!probe) return false
+      try {
+        execFileSync(probe.command, probe.args, {
+          stdio: "ignore",
+          windowsHide: true,
+        })
+        return true
+      } catch {
+        return false
+      }
+    })
+    return {
+      platform: process.platform,
+      folderLabel: getPlatformFolderLabel(process.platform),
+      apps,
+    }
+  }),
+
   openInFinder: publicProcedure.input(z.string()).mutation(async ({ input: inputPath }) => {
     const expandedPath = expandTilde(inputPath)
     shell.showItemInFolder(expandedPath)

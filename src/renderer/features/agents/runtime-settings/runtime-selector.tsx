@@ -42,6 +42,7 @@ export function RuntimeSelector({
       <DropdownMenuTrigger asChild>
         <button
           id={id}
+          data-tour="runtime"
           type="button"
           aria-label="Runtime"
           disabled={disabled}

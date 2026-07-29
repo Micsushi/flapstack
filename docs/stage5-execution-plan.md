@@ -1,7 +1,11 @@
 # Stage 5 Windows Compatibility Execution Plan
 
 Roadmap note: former Stage 5 product-polish work moved intact to Stage 6. Stage
-5 now owns native Windows development, runtime, packaging, and acceptance.
+5 owns native Windows development, runtime, packaging, and acceptance. A
+focused post-acceptance patch at
+`openspec/changes/add-stage5-ui-polish-and-guided-tour/` owns defects observed
+during native Windows use plus the concise tour of the existing main page. It
+does not absorb Stage 6's broader polish or feature-visibility work.
 
 Stage 5 begins only after one exact Stage 4 source state has all 73
 implementation-gating task checkboxes and all 52 `T2-core` matrix rows

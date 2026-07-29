@@ -1,5 +1,5 @@
 import { useAtom } from "jotai"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   analyticsOptOutAtom,
   autoAdvanceTargetAtom,
@@ -108,7 +108,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -117,6 +116,7 @@ import {
 import { ChevronDown } from "lucide-react"
 import { Switch } from "../../ui/switch"
 import { trpc } from "../../../lib/trpc"
+import { startProductTour } from "../../../features/onboarding/product-tour"
 
 // Hook to detect narrow screen
 function useIsNarrowScreen(): boolean {
@@ -149,6 +149,24 @@ export function AgentsPreferencesTab() {
   const [defaultAgentMode, setDefaultAgentMode] = useAtom(defaultAgentModeAtom)
   const [preferredEditor, setPreferredEditor] = useAtom(preferredEditorAtom)
   const isNarrowScreen = useIsNarrowScreen()
+  const { data: availableAppsResult } = trpc.external.listAvailableApps.useQuery()
+  const availableAppIds = useMemo(
+    () => new Set<ExternalApp>(availableAppsResult?.apps ?? []),
+    [availableAppsResult?.apps],
+  )
+  const availableEditors = EDITORS.filter((app) => availableAppIds.has(app.id))
+  const availableTerminals = TERMINALS.filter((app) => availableAppIds.has(app.id))
+  const availableVsCode = VSCODE.filter((app) => availableAppIds.has(app.id))
+  const availableJetBrains = JETBRAINS.filter((app) => availableAppIds.has(app.id))
+  const detectedApps = [
+    ...availableEditors,
+    ...availableTerminals,
+    ...availableVsCode,
+    ...availableJetBrains,
+  ]
+  const effectivePreferredEditor = availableAppIds.has(preferredEditor)
+    ? preferredEditor
+    : detectedApps[0]?.id
   const { data: runtimeActivityFixtureSettings } =
     trpc.debug.getRuntimeActivityFixtureSettings.useQuery()
   const setRuntimeActivityFixtureSettings =
@@ -367,21 +385,26 @@ export function AgentsPreferencesTab() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                disabled={!effectivePreferredEditor}
                 className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
               >
-                {EDITOR_ICONS[preferredEditor] && (
+                {effectivePreferredEditor && EDITOR_ICONS[effectivePreferredEditor] && (
                   <img
-                    src={EDITOR_ICONS[preferredEditor]}
+                    src={EDITOR_ICONS[effectivePreferredEditor]}
                     alt=""
                     className="h-4 w-4 flex-shrink-0"
                   />
                 )}
-                <span className="truncate">{APP_META[preferredEditor].label}</span>
+                <span className="truncate">
+                  {effectivePreferredEditor
+                    ? APP_META[effectivePreferredEditor].label
+                    : "No editor detected"}
+                </span>
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              {EDITORS.map((editor) => (
+              {availableEditors.map((editor) => (
                 <DropdownMenuItem
                   key={editor.id}
                   onClick={() => setPreferredEditor(editor.id)}
@@ -399,7 +422,7 @@ export function AgentsPreferencesTab() {
                   <span>{editor.label}</span>
                 </DropdownMenuItem>
               ))}
-              {TERMINALS.map((app) => (
+              {availableTerminals.map((app) => (
                 <DropdownMenuItem
                   key={app.id}
                   onClick={() => setPreferredEditor(app.id)}
@@ -417,72 +440,99 @@ export function AgentsPreferencesTab() {
                   <span>{app.label}</span>
                 </DropdownMenuItem>
               ))}
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className="flex items-center gap-2">
-                  <img
-                    src={vscodeBaseIcon}
-                    alt=""
-                    className="h-4 w-4 flex-shrink-0 object-contain"
-                  />
-                  <span>VS Code</span>
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
-                  {VSCODE.map((app) => (
-                    <DropdownMenuItem
-                      key={app.id}
-                      onClick={() => setPreferredEditor(app.id)}
-                      className="flex items-center gap-2"
-                    >
-                      {EDITOR_ICONS[app.id] ? (
-                        <img
-                          src={EDITOR_ICONS[app.id]}
-                          alt=""
-                          className="h-4 w-4 flex-shrink-0 object-contain"
-                        />
-                      ) : (
-                        <div className="h-4 w-4 flex-shrink-0" />
-                      )}
-                      <span>{app.label}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className="flex items-center gap-2">
-                  <img
-                    src={jetbrainsBaseIcon}
-                    alt=""
-                    className="h-4 w-4 flex-shrink-0 object-contain"
-                  />
-                  <span>JetBrains</span>
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent
-                  className="w-48 max-h-[300px] overflow-y-auto"
-                  sideOffset={6}
-                  alignOffset={-4}
-                >
-                  {JETBRAINS.map((app) => (
-                    <DropdownMenuItem
-                      key={app.id}
-                      onClick={() => setPreferredEditor(app.id)}
-                      className="flex items-center gap-2"
-                    >
-                      {EDITOR_ICONS[app.id] ? (
-                        <img
-                          src={EDITOR_ICONS[app.id]}
-                          alt=""
-                          className="h-4 w-4 flex-shrink-0 object-contain"
-                        />
-                      ) : (
-                        <div className="h-4 w-4 flex-shrink-0" />
-                      )}
-                      <span>{app.label}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              {availableVsCode.length > 0 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="flex items-center gap-2">
+                    <img
+                      src={vscodeBaseIcon}
+                      alt=""
+                      className="h-4 w-4 flex-shrink-0 object-contain"
+                    />
+                    <span>VS Code</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
+                    {availableVsCode.map((app) => (
+                      <DropdownMenuItem
+                        key={app.id}
+                        onClick={() => setPreferredEditor(app.id)}
+                        className="flex items-center gap-2"
+                      >
+                        {EDITOR_ICONS[app.id] ? (
+                          <img
+                            src={EDITOR_ICONS[app.id]}
+                            alt=""
+                            className="h-4 w-4 flex-shrink-0 object-contain"
+                          />
+                        ) : (
+                          <div className="h-4 w-4 flex-shrink-0" />
+                        )}
+                        <span>{app.label}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+              {availableJetBrains.length > 0 && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="flex items-center gap-2">
+                    <img
+                      src={jetbrainsBaseIcon}
+                      alt=""
+                      className="h-4 w-4 flex-shrink-0 object-contain"
+                    />
+                    <span>JetBrains</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent
+                    className="w-48 max-h-[300px] overflow-y-auto"
+                    sideOffset={6}
+                    alignOffset={-4}
+                  >
+                    {availableJetBrains.map((app) => (
+                      <DropdownMenuItem
+                        key={app.id}
+                        onClick={() => setPreferredEditor(app.id)}
+                        className="flex items-center gap-2"
+                      >
+                        {EDITOR_ICONS[app.id] ? (
+                          <img
+                            src={EDITOR_ICONS[app.id]}
+                            alt=""
+                            className="h-4 w-4 flex-shrink-0 object-contain"
+                          />
+                        ) : (
+                          <div className="h-4 w-4 flex-shrink-0" />
+                        )}
+                        <span>{app.label}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Help */}
+      <div className="overflow-hidden rounded-lg border border-border bg-background">
+        <div
+          className="flex items-center justify-between gap-6 p-4 outline-none"
+          data-settings-id="preferences-product-tour"
+          tabIndex={-1}
+        >
+          <div className="flex flex-col space-y-1">
+            <span className="text-sm font-medium text-foreground">Main-page tutorial</span>
+            <span className="text-xs text-muted-foreground">
+              Review the projects, chats, models, runtimes, modes, and settings controls.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => startProductTour()}
+            className="h-8 shrink-0 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            Run tutorial
+          </button>
         </div>
       </div>
 

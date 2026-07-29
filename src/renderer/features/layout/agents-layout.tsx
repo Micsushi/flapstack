@@ -38,15 +38,21 @@ import { AgentsSidebar } from "../sidebar/agents-sidebar"
 import { AgentsContent } from "../agents/ui/agents-content"
 import { WindowsTitleBar } from "../../components/windows-title-bar"
 import { useAgentSubChatStore } from "../agents/stores/sub-chat-store"
+import {
+  AGENTS_SIDEBAR_WIDTH_MIGRATION_KEY,
+  MAX_AGENTS_SIDEBAR_WIDTH,
+  migrateAgentsSidebarWidth,
+} from "../agents/lib/sidebar-width"
 import { QueueProcessor } from "../agents/components/queue-processor"
 import { SettingsSidebar } from "../settings/settings-sidebar"
+import { ProductTour } from "../onboarding/product-tour"
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const SIDEBAR_MIN_WIDTH = 160
-const SIDEBAR_MAX_WIDTH = 300
+const SIDEBAR_MAX_WIDTH = MAX_AGENTS_SIDEBAR_WIDTH
 const SIDEBAR_ANIMATION_DURATION = 0
 const SIDEBAR_CLOSE_HOTKEY = "⌘\\"
 
@@ -105,6 +111,17 @@ export function AgentsLayout() {
   const setCodexOnboardingCompleted = useSetAtom(codexOnboardingCompletedAtom)
   const setBillingMethod = useSetAtom(billingMethodAtom)
   const claudeLoginModalConfig = useAtomValue(claudeLoginModalConfigAtom)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const migrationApplied =
+      window.localStorage.getItem(AGENTS_SIDEBAR_WIDTH_MIGRATION_KEY) === "complete"
+    const migratedWidth = migrateAgentsSidebarWidth(sidebarWidth, migrationApplied)
+    if (migratedWidth !== sidebarWidth) setSidebarWidth(migratedWidth)
+    if (!migrationApplied) {
+      window.localStorage.setItem(AGENTS_SIDEBAR_WIDTH_MIGRATION_KEY, "complete")
+    }
+  }, [setSidebarWidth, sidebarWidth])
 
   // Fetch projects to validate selectedProject exists
   const { data: projects, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
@@ -178,11 +195,7 @@ export function AgentsLayout() {
     }
 
     // After initial load, react to project changes
-    if (validatedProject) {
-      setSidebarOpen(true)
-    } else {
-      setSidebarOpen(false)
-    }
+    if (validatedProject) setSidebarOpen(true)
   }, [validatedProject, projects, setSidebarOpen])
 
   // Worktree setup failures from main process
@@ -284,6 +297,7 @@ export function AgentsLayout() {
         autoStartAuth={claudeLoginModalConfig.autoStartAuth}
       />
       <CodexLoginModal />
+      <ProductTour />
       <div className="flex flex-col w-full h-full relative overflow-hidden bg-background select-none">
         {/* Windows Title Bar (only shown on Windows with frameless window) */}
         <WindowsTitleBar />
@@ -309,6 +323,7 @@ export function AgentsLayout() {
             initialWidth={0}
             exitWidth={0}
             showResizeTooltip={!isSettingsView}
+            disableClickToClose={true}
             className="overflow-hidden bg-background border-r"
             style={{ borderRightWidth: "0.5px" }}
           >

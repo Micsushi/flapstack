@@ -39,3 +39,9 @@ Authoritative task board:
 
 Former Stage 5 product-polish scope moved to
 `openspec/stages/s6-product-polish-personalization-reach/README.md`.
+
+Post-acceptance native testing is tracked in the focused
+[Stage 5 UI polish and guided-tour patch](../../changes/add-stage5-ui-polish-and-guided-tour/).
+This patch corrects observed Windows parity defects and owns the concise
+main-page product tour. It does not pull Stage 6's broader product-wide polish
+or feature-visibility system back into Stage 5.

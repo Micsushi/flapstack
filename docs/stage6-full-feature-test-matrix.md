@@ -36,7 +36,7 @@ live, usability, device, provider, package, or native-platform rows.
 - [ ] **S6-ON02** Existing-user upgrade preserves current visibility until opt-in.
 - [ ] **S6-ON03** Hidden features retain data, APIs/MCP, safety, background
       behavior, Settings search, and reversible re-enable paths.
-- [ ] **S6-ON04** Feature explanations agree across tutorial, Settings, empty
+- [ ] **S6-ON04** Feature explanations agree across questionnaire review, Settings, empty
       states, and contextual help; rerun previews before applying.
 
 ## Agent Profiles and reusable personalities

@@ -111,7 +111,6 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
       builtinFiltered = builtinFiltered.filter((cmd) => {
         if (mode === "plan" && cmd.name === "plan") return false
         if (mode === "write" && cmd.name === "write") return false
-        if (mode === "read" && cmd.name === "read") return false
         if (mode === "review" && cmd.name === "review") return false
         return true
       })

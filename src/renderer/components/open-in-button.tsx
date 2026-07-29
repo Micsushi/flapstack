@@ -1,6 +1,6 @@
 import type { ExternalApp } from "../../shared/external-apps"
 import { useAtom } from "jotai"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import { preferredEditorAtom } from "../lib/atoms"
 import { trpc } from "../lib/trpc"
 import { Button } from "./ui/button"
@@ -14,11 +14,10 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu"
-import { ChevronDown, Copy } from "lucide-react"
+import { ChevronDown, Copy, FolderOpen } from "lucide-react"
 
 // ─── Icon imports ───────────────────────────────────────────────────────────
 import cursorIcon from "../assets/app-icons/cursor.svg"
-import finderIcon from "../assets/app-icons/finder.png"
 import zedIcon from "../assets/app-icons/zed.png"
 import sublimeIcon from "../assets/app-icons/sublime.svg"
 import xcodeIcon from "../assets/app-icons/xcode.svg"
@@ -47,12 +46,12 @@ import rustroverIcon from "../assets/app-icons/rustrover.svg"
 interface AppOption {
   id: ExternalApp
   label: string
-  icon: string
+  icon?: string
   displayLabel?: string
 }
 
 const APP_OPTIONS: AppOption[] = [
-  { id: "finder", label: "Finder", icon: finderIcon },
+  { id: "finder", label: "Finder" },
   { id: "cursor", label: "Cursor", icon: cursorIcon },
   { id: "zed", label: "Zed", icon: zedIcon },
   { id: "sublime", label: "Sublime Text", icon: sublimeIcon },
@@ -94,6 +93,18 @@ export function getAppOption(id: ExternalApp): AppOption {
   return ALL_APP_OPTIONS.find((app) => app.id === id) ?? APP_OPTIONS[1]
 }
 
+export function filterAvailableApps(
+  options: AppOption[],
+  availableApps: ReadonlySet<ExternalApp>,
+): AppOption[] {
+  return options.filter((app) => availableApps.has(app.id))
+}
+
+function AppOptionIcon({ app }: { app: AppOption }) {
+  if (app.id === "finder") return <FolderOpen className="size-4" />
+  return <img src={app.icon} alt="" className="size-4 object-contain" />
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export interface OpenInButtonProps {
@@ -105,8 +116,23 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
   const [lastUsedApp, setLastUsedApp] = useAtom(preferredEditorAtom)
   const openInAppMutation = trpc.external.openInApp.useMutation()
   const copyPathMutation = trpc.external.copyPath.useMutation()
+  const { data: availableAppsResult } = trpc.external.listAvailableApps.useQuery()
 
-  const currentApp = getAppOption(lastUsedApp)
+  const availableApps = useMemo(
+    () => new Set<ExternalApp>(availableAppsResult?.apps ?? ["finder"]),
+    [availableAppsResult?.apps],
+  )
+  const folderLabel = availableAppsResult?.folderLabel ?? "Open in folder"
+  const appOptions = filterAvailableApps(APP_OPTIONS, availableApps).map((app) =>
+    app.id === "finder" ? { ...app, label: folderLabel } : app,
+  )
+  const vscodeOptions = filterAvailableApps(VSCODE_OPTIONS, availableApps)
+  const jetbrainsOptions = filterAvailableApps(JETBRAINS_OPTIONS, availableApps)
+  const effectiveLastUsedApp = availableApps.has(lastUsedApp) ? lastUsedApp : "finder"
+  const currentApp =
+    effectiveLastUsedApp === "finder"
+      ? { ...getAppOption("finder"), label: folderLabel }
+      : getAppOption(effectiveLastUsedApp)
 
   const handleOpenIn = useCallback(
     (app: ExternalApp) => {
@@ -124,14 +150,14 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
 
   const handleOpenLastUsed = useCallback(() => {
     if (!path) return
-    openInAppMutation.mutate({ path, app: lastUsedApp })
-  }, [path, lastUsedApp, openInAppMutation])
+    openInAppMutation.mutate({ path, app: effectiveLastUsedApp })
+  }, [path, effectiveLastUsedApp, openInAppMutation])
 
-  // Keyboard shortcut: Cmd+Shift+C - copy path
+  // Keyboard shortcut: Cmd/Ctrl+Shift+C - copy path
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (!path) return
-      if (e.metaKey && e.shiftKey && e.key === "c") {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
         e.preventDefault()
         copyPathMutation.mutate(path)
       }
@@ -150,7 +176,7 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
           onClick={handleOpenLastUsed}
           disabled={!path}
         >
-          <img src={currentApp.icon} alt="" className="size-4 object-contain" />
+          <AppOptionIcon app={currentApp} />
           <span className="font-medium truncate max-w-[120px]">{label}</span>
         </Button>
       )}
@@ -170,59 +196,65 @@ export function OpenInButton({ path, label }: OpenInButtonProps) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
-          {APP_OPTIONS.map((app) => (
+          {appOptions.map((app) => (
             <DropdownMenuItem
               key={app.id}
               onClick={() => handleOpenIn(app.id)}
               className="flex items-center gap-2"
             >
-              <img src={app.icon} alt="" className="size-4 object-contain" />
+              <AppOptionIcon app={app} />
               <span>{app.label}</span>
             </DropdownMenuItem>
           ))}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="flex items-center gap-2">
-              <img src={vscodeIcon} alt="" className="size-4 object-contain" />
-              <span>VS Code</span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
-              {VSCODE_OPTIONS.map((app) => (
-                <DropdownMenuItem
-                  key={app.id}
-                  onClick={() => handleOpenIn(app.id)}
-                  className="flex items-center gap-2"
-                >
-                  <img src={app.icon} alt="" className="size-4 object-contain" />
-                  <span>{app.label}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="flex items-center gap-2">
-              <img src={jetbrainsIcon} alt="" className="size-4 object-contain" />
-              <span>JetBrains</span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
-              {JETBRAINS_OPTIONS.map((app) => (
-                <DropdownMenuItem
-                  key={app.id}
-                  onClick={() => handleOpenIn(app.id)}
-                  className="flex items-center gap-2"
-                >
-                  <img src={app.icon} alt="" className="size-4 object-contain" />
-                  <span>{app.label}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+          {vscodeOptions.length > 0 && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className="flex items-center gap-2">
+                <img src={vscodeIcon} alt="" className="size-4 object-contain" />
+                <span>VS Code</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
+                {vscodeOptions.map((app) => (
+                  <DropdownMenuItem
+                    key={app.id}
+                    onClick={() => handleOpenIn(app.id)}
+                    className="flex items-center gap-2"
+                  >
+                    <AppOptionIcon app={app} />
+                    <span>{app.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
+          {jetbrainsOptions.length > 0 && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className="flex items-center gap-2">
+                <img src={jetbrainsIcon} alt="" className="size-4 object-contain" />
+                <span>JetBrains</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-48" sideOffset={6} alignOffset={-4}>
+                {jetbrainsOptions.map((app) => (
+                  <DropdownMenuItem
+                    key={app.id}
+                    onClick={() => handleOpenIn(app.id)}
+                    className="flex items-center gap-2"
+                  >
+                    <AppOptionIcon app={app} />
+                    <span>{app.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleCopyPath} className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Copy className="size-4" />
               <span>Copy path</span>
             </div>
-            <span className="text-xs text-muted-foreground">⇧⌘C</span>
+            <span className="text-xs text-muted-foreground">
+              {availableAppsResult?.platform === "darwin" ? "⇧⌘C" : "Ctrl+Shift+C"}
+            </span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

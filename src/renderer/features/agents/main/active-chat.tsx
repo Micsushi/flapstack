@@ -8072,12 +8072,10 @@ Make sure to preserve all functionality from both branches when resolving confli
                           style={{
                             // GPU-accelerated visibility switching (нативное ощущение)
                             // transform + opacity быстрее чем visibility для GPU
-                            transform: isActive ? "translateZ(0)" : "translateZ(0) scale(0.98)",
                             opacity: isActive ? 1 : 0,
                             // Prevent pointer events on hidden tabs
                             pointerEvents: isActive ? "auto" : "none",
                             // GPU layer hints
-                            willChange: "transform, opacity",
                             // Изолируем layout - изменения внутри не влияют на другие табы
                             contain: "layout style paint",
                           }}

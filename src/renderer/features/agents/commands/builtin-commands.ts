@@ -72,13 +72,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: "builtin",
   },
   {
-    id: "builtin:read",
-    name: "read",
-    command: "/read",
-    description: "Switch to read-only mode",
-    category: "builtin",
-  },
-  {
     id: "builtin:compact",
     name: "compact",
     command: "/compact",
@@ -92,7 +85,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     description: "Set caveman mode for this thread",
     category: "builtin",
   },
-  // Prompt-based commands
   {
     id: "builtin:review",
     name: "review",

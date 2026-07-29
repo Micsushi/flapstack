@@ -67,7 +67,6 @@ import { Button } from "../../../components/ui/button"
 import { AlignJustify, MessageSquare, Plus, X } from "lucide-react"
 import { AgentsQuickSwitchDialog } from "../components/agents-quick-switch-dialog"
 import { SubChatsQuickSwitchDialog } from "../components/subchats-quick-switch-dialog"
-import { isDesktopApp } from "../../../lib/utils/platform"
 import { SettingsContent } from "../../settings/settings-content"
 import { AgentsUsageTab } from "../../../components/dialogs/settings-tabs/agents-usage-tab"
 import { KanbanView } from "../../kanban"
@@ -100,6 +99,7 @@ import {
   getScopeChatContext,
   scopeChatTimestampMs,
 } from "../lib/scope-chat-card"
+import { SelectRepoPage } from "../../onboarding"
 // Desktop mock
 const useIsAdmin = () => false
 const OPEN_CHAT_TAB_DRAG_THRESHOLD = 4
@@ -224,10 +224,6 @@ function AgentsContentInner() {
   // Refs to avoid effect re-running when dialog state changes (prevents keyup event loss)
   const subChatQuickSwitchOpenRef = useRef(subChatQuickSwitchOpen)
   const subChatQuickSwitchSelectedIndexRef = useRef(subChatQuickSwitchSelectedIndex)
-  const pendingNotificationNavigationRef = useRef<{
-    chatId?: string
-    subChatId?: string
-  } | null>(null)
   subChatQuickSwitchOpenRef.current = subChatQuickSwitchOpen
   subChatQuickSwitchSelectedIndexRef.current = subChatQuickSwitchSelectedIndex
 
@@ -253,30 +249,6 @@ function AgentsContentInner() {
       window.desktopApi.setWindowTitle(activeSubChatName || "")
     }
   }, [activeSubChatName])
-
-  useEffect(() => {
-    if (!isDesktopApp() || !window.desktopApi?.onNotificationClicked) return
-
-    return window.desktopApi.onNotificationClicked(({ chatId, subChatId }) => {
-      if (chatId) {
-        setSelectedChatId(chatId)
-        if (isMobile) {
-          setMobileViewMode("chat")
-        }
-      }
-
-      if (!subChatId) return
-
-      const store = useAgentSubChatStore.getState()
-      if (!chatId || store.chatId === chatId) {
-        store.addToOpenSubChats(subChatId)
-        store.setActiveSubChat(subChatId)
-        return
-      }
-
-      pendingNotificationNavigationRef.current = { chatId, subChatId }
-    })
-  }, [isMobile, setMobileViewMode, setSelectedChatId])
 
   // Fetch teams for header
   const { data: teams } = api.teams.getUserTeams.useQuery()
@@ -1111,20 +1083,6 @@ function AgentsContentInner() {
   const subChatsStoreChatId = useAgentSubChatStore((state) => state.chatId)
   const subChatsCount = useAgentSubChatStore((state) => state.allSubChats.length)
 
-  useEffect(() => {
-    const pending = pendingNotificationNavigationRef.current
-    if (!pending?.subChatId || !pending.chatId || subChatsStoreChatId !== pending.chatId) return
-    if (subChatsCount === 0) return
-
-    const subChatExists = allSubChats.some((subChat) => subChat.id === pending.subChatId)
-    if (!subChatExists) return
-
-    const store = useAgentSubChatStore.getState()
-    store.addToOpenSubChats(pending.subChatId)
-    store.setActiveSubChat(pending.subChatId)
-    pendingNotificationNavigationRef.current = null
-  }, [allSubChats, subChatsCount, subChatsStoreChatId])
-
   // Check if sub-chats are still loading (store not yet initialized for this chat)
   const isLoadingSubChats =
     selectedChatId !== null && (subChatsStoreChatId !== selectedChatId || subChatsCount === 0)
@@ -1596,6 +1554,8 @@ function AgentsContentInner() {
                 )}
               </div>
             </div>
+          ) : !selectedProject ? (
+            <SelectRepoPage embedded />
           ) : (
             <div className="flex h-full items-center justify-center bg-background px-6 text-sm text-muted-foreground">
               Select a chat, project, or task.

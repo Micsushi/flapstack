@@ -367,6 +367,13 @@ export const SETTINGS_CONTROL_REGISTRY: readonly SettingsControlMetadata[] = [
     ["vscode", "cursor", "terminal", "ide"],
   ),
   control(
+    "preferences-product-tour",
+    "preferences",
+    "Main-page tutorial",
+    "Review the main Flapstack controls",
+    ["guide", "help", "onboarding", "tour", "run tutorial"],
+  ),
+  control(
     "preferences-runtime-activity-fixtures",
     "preferences",
     "Runtime activity test controls",

@@ -616,6 +616,32 @@ function ExpandedSectionIndicator() {
   )
 }
 
+function SidebarDisclosure({
+  isCollapsed,
+  className,
+}: {
+  isCollapsed: boolean
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "ml-auto flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+        !isCollapsed && "opacity-100",
+        className,
+      )}
+      aria-hidden="true"
+    >
+      <ChevronDown
+        className={cn(
+          "h-3.5 w-3.5 flex-shrink-0 transition-transform",
+          isCollapsed && "-rotate-90",
+        )}
+      />
+    </span>
+  )
+}
+
 // Component to render chat icon with loading status
 const ChatIcon = React.memo(function ChatIcon({
   isSelected,
@@ -1105,7 +1131,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
           }}
           onMouseLeave={onMouseLeave}
           className={cn(
-            "w-full mb-0.5 last:mb-0 text-left py-1 cursor-pointer group relative",
+            "w-full mb-0.5 last:mb-0 text-left pt-0.5 pb-1.5 cursor-pointer group relative",
             "transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out",
             "border border-transparent text-foreground",
             "outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
@@ -1141,7 +1167,7 @@ const AgentChatItem = React.memo(function AgentChatItem({
           {normalizedTint && (
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute left-1.5 top-1.5 bottom-1.5 w-[2px] rounded-full"
+              className="pointer-events-none absolute left-1.5 top-1 bottom-1.5 w-[2px] rounded-full"
               style={tintMarkerStyle}
             />
           )}
@@ -2457,7 +2483,7 @@ const ChatListSection = React.memo(function ChatListSection({
                 role={canCollapse || getHeaderScope() ? "button" : undefined}
                 tabIndex={canCollapse || getHeaderScope() ? 0 : undefined}
                 className={cn(
-                  "relative flex items-center gap-1 group/section",
+                  "group relative flex items-center gap-1 group/section",
                   "transition-[background-color,box-shadow,filter,opacity,transform] duration-150 ease-out",
                   isTaskSection
                     ? "h-7 mb-0.5 rounded-md pl-2 pr-1"
@@ -2489,22 +2515,6 @@ const ChatListSection = React.memo(function ChatListSection({
                     <Plus className="h-3.5 w-3.5" />
                   </span>
                 )}
-                {canCollapse && (
-                  <span
-                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
-                    aria-hidden="true"
-                  >
-                    <ChevronDown
-                      className={cn(
-                        "h-3.5 w-3.5 flex-shrink-0 transition-transform",
-                        isTopLevelScopedSection || isTaskSection || isReferenceSection
-                          ? "text-white/80"
-                          : "text-muted-foreground",
-                        isCollapsed && "-rotate-90",
-                      )}
-                    />
-                  </span>
-                )}
                 <div
                   className={cn(
                     "flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none group-hover/section:pr-10 group-focus-within/section:pr-10",
@@ -2532,6 +2542,17 @@ const ChatListSection = React.memo(function ChatListSection({
                     {title}
                   </h3>
                 </div>
+                {canCollapse && (
+                  <SidebarDisclosure
+                    isCollapsed={isCollapsed}
+                    className={cn(
+                      isTopLevelScopedSection || isTaskSection || isReferenceSection
+                        ? "text-white/80"
+                        : "text-muted-foreground",
+                      (lifecycleTarget || isGlobalSection) && !isMultiSelectMode && "mr-10",
+                    )}
+                  />
+                )}
                 {(lifecycleTarget || isGlobalSection) && !isMultiSelectMode && (
                   <button
                     type="button"
@@ -2964,7 +2985,7 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
   return (
     <div
       className={cn(
-        "group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
+        "group group/header relative flex h-7 w-full items-center gap-1 rounded-lg px-1 text-muted-foreground transition-colors hover:bg-foreground/5",
         !isCollapsed && "mb-2",
         className,
       )}
@@ -2977,13 +2998,7 @@ const SidebarGroupHeader = memo(function SidebarGroupHeader({
       >
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
         <span className="truncate text-xs font-medium">{title}</span>
-        <ChevronDown
-          className={cn(
-            "h-3.5 w-3.5 flex-shrink-0 opacity-0 transition-[opacity,transform] group-hover/header:opacity-100",
-            isCollapsed && "-rotate-90",
-          )}
-          aria-hidden="true"
-        />
+        <SidebarDisclosure isCollapsed={isCollapsed} />
       </button>
       {actions && (
         <div className="pointer-events-none flex items-center opacity-0 transition-opacity group-hover/header:pointer-events-auto group-hover/header:opacity-100">
@@ -6781,6 +6796,7 @@ export function AgentsSidebar({
       data-pressing={isSidebarPressed || undefined}
       data-mobile-fullscreen={isMobileFullscreen || undefined}
       data-sidebar-content
+      data-tour="sidebar"
     >
       {/* Header area */}
       <SidebarHeader
@@ -7133,7 +7149,7 @@ export function AgentsSidebar({
                 role="button"
                 tabIndex={0}
                 aria-expanded={!collapsedSectionIds.has("drafts")}
-                className="relative flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 mt-1 mb-0.5 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
+                className="group relative mt-1 mb-0.5 flex h-7 cursor-pointer items-center gap-1 rounded-md pl-2 pr-1 transition-[background-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70"
                 style={{
                   backgroundColor: rgbaFromHex(
                     getProjectTint(GLOBAL_SECTION_COLOR).base,
@@ -7141,23 +7157,16 @@ export function AgentsSidebar({
                   ),
                 }}
               >
-                <span
-                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-sm"
-                  aria-hidden="true"
-                >
-                  <ChevronDown
-                    className={cn(
-                      "h-3.5 w-3.5 flex-shrink-0 text-white/80 transition-transform",
-                      collapsedSectionIds.has("drafts") && "-rotate-90",
-                    )}
-                  />
-                </span>
                 <div className="pointer-events-none flex min-w-0 flex-1 items-center gap-1.5 text-left">
                   <FilePenLine className="h-3.5 w-3.5 flex-shrink-0 text-white/90" />
                   <h3 className="flex-1 truncate whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-white">
                     Drafts
                   </h3>
                 </div>
+                <SidebarDisclosure
+                  isCollapsed={collapsedSectionIds.has("drafts")}
+                  className="text-white/80"
+                />
               </div>
               {!collapsedSectionIds.has("drafts") && (
                 <div className="list-none p-0 m-0 mb-1 ml-4 pl-2">
@@ -7302,22 +7311,16 @@ export function AgentsSidebar({
                 }}
                 aria-expanded={isArchiveOpen}
                 className={cn(
-                  "group/archive relative mt-[10px] flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+                  "group group/archive relative mt-[10px] flex h-7 w-full items-center rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
                   isArchiveOpen ? "mb-2" : "mb-1",
                 )}
               >
                 <DiffIcon className="mr-2 h-3.5 w-3.5" />
                 <span className="whitespace-nowrap text-xs font-medium">Archive</span>
-                <ChevronDown
-                  className={cn(
-                    "ml-1 h-3.5 w-3.5 opacity-0 transition-[opacity,transform] group-hover/archive:opacity-100",
-                    !isArchiveOpen && "-rotate-90",
-                  )}
-                  aria-hidden="true"
-                />
                 <span className="ml-auto text-[11px] tabular-nums text-muted-foreground/60">
                   {archivedLifecycleItems.length}
                 </span>
+                <SidebarDisclosure isCollapsed={!isArchiveOpen} className="ml-1" />
                 <AnimatePresence>{isArchiveOpen && <ExpandedSectionIndicator />}</AnimatePresence>
               </button>
               {isArchiveOpen && (
@@ -7530,6 +7533,7 @@ export function AgentsSidebar({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
+                    data-tour="settings"
                     onClick={() => {
                       setSettingsActiveTab("preferences")
                       setSettingsDialogOpen(true)

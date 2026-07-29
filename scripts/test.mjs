@@ -6,6 +6,17 @@ import { packageBinStep, runCommandSequence } from "./lib/project-command.mjs"
 import { runWithIsolatedTestGitEnvironment } from "./lib/test-git-environment.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const requestedArgs = process.argv.slice(2)
+const windowsPlatformProductTest = "tests/windows-platform-product.test.ts"
+const hasExplicitTestFilter = requestedArgs.some(
+  (argument) => argument.startsWith("tests/") || /\.test\.[cm]?[jt]sx?$/i.test(argument),
+)
+const splitWindowsPlatformProductTest = process.platform === "win32" && !hasExplicitTestFilter
+const vitestArgs = [
+  "run",
+  ...requestedArgs,
+  ...(splitWindowsPlatformProductTest ? ["--exclude", windowsPlatformProductTest] : []),
+]
 
 try {
   runWithIsolatedTestGitEnvironment((isolatedGitEnv) =>
@@ -17,7 +28,18 @@ try {
           args: [path.join(root, "scripts", "ensure-native-abi.mjs"), "node"],
           cwd: root,
         },
-        packageBinStep("tests", "vitest", "vitest", ["run", ...process.argv.slice(2)], { root }),
+        packageBinStep("tests", "vitest", "vitest", vitestArgs, { root }),
+        ...(splitWindowsPlatformProductTest
+          ? [
+              packageBinStep(
+                "Windows platform product tests",
+                "vitest",
+                "vitest",
+                ["run", windowsPlatformProductTest, "--maxWorkers=1"],
+                { root },
+              ),
+            ]
+          : []),
       ],
       { env: isolatedGitEnv },
     ),

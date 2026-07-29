@@ -39,12 +39,12 @@
 - Blocks: S6-F2-T4, S6-F2-T6, S6-F2-T8
 - Context: settings persistence, portability registry, product invalidation.
 
-### S6-F2-T4 — Build the first-run tutorial and questionnaire flow
+### S6-F2-T4 — Build the first-run questionnaire and visibility setup flow
 
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
-- Outcome: New users understand the product, answer bounded questions, review visibility, and enter the app without a wall of features.
-- Scope: Welcome; product hierarchy; provider setup routing; questions; preset result; exact visibility review/customize; skip; completion; resume after interruption; keyboard/touch/reader behavior.
+- Outcome: New users answer bounded questions, review visibility, and enter the app without a wall of optional features.
+- Scope: Setup introduction; provider setup routing; questions; preset result; exact visibility review/customize; skip; completion; resume after interruption; keyboard/touch/reader behavior.
 - Out of scope: Provider credential implementation.
 - Acceptance: Interrupted onboarding resumes; skip uses Standard; no feature/data mutation occurs before confirmation; user can reach first project/chat.
 - Verification: State-machine/component tests, fresh-profile E2E, restart at each step, accessibility, responsive visual fixtures.
@@ -57,7 +57,7 @@
 - [ ] Completion: acceptance and verification passed
 - Parent: Project Flapstack / Stage S6 / Feature S6-F2
 - Outcome: Every major feature has concise on-demand purpose, use, prerequisites, risk, and enable guidance.
-- Scope: Versioned content registry; tutorial cards; Settings descriptions; What is this popovers; empty-state links; no-repeat behavior; copy review; help search keywords.
+- Scope: Versioned content registry; questionnaire review copy; Settings descriptions; What is this popovers; empty-state links; copy review; help search keywords.
 - Out of scope: Full documentation portal or remote content service.
 - Acceptance: One source feeds all placements; stale/missing explanations fail tests; popovers do not interrupt experienced users automatically.
 - Verification: Registry parity tests, snapshot/copy review, keyboard/touch/reader popover walkthrough.

@@ -10,7 +10,11 @@ import { Input } from "../../components/ui/input"
 import { trpc } from "../../lib/trpc"
 import { selectedProjectAtom } from "../agents/atoms"
 
-export function SelectRepoPage() {
+export interface SelectRepoPageProps {
+  embedded?: boolean
+}
+
+export function SelectRepoPage({ embedded = false }: SelectRepoPageProps) {
   const [, setSelectedProject] = useAtom(selectedProjectAtom)
   const [showClonePage, setShowClonePage] = useState(false)
   const [githubUrl, setGithubUrl] = useState("")
@@ -95,18 +99,22 @@ export function SelectRepoPage() {
   // Clone from GitHub page
   if (showClonePage) {
     return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-background select-none">
+      <div
+        className={`${embedded ? "h-full w-full" : "h-screen w-screen"} relative flex flex-col items-center justify-center bg-background select-none`}
+      >
         {/* Draggable title bar area */}
-        <div
-          className="fixed top-0 left-0 right-0 h-10"
-          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-        />
+        {!embedded && (
+          <div
+            className="fixed top-0 left-0 right-0 h-10"
+            style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+          />
+        )}
 
         {/* Back button */}
         <button
           onClick={handleBack}
           disabled={cloneFromGitHub.isPending}
-          className="fixed top-12 left-4 flex items-center justify-center h-8 w-8 rounded-full hover:bg-foreground/5 transition-colors disabled:opacity-50"
+          className={`${embedded ? "absolute top-4" : "fixed top-12"} left-4 flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-foreground/5 disabled:opacity-50`}
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -161,12 +169,16 @@ export function SelectRepoPage() {
 
   // Main select repo page
   return (
-    <div className="h-screen w-screen flex flex-col items-center justify-center bg-background select-none">
+    <div
+      className={`${embedded ? "h-full w-full" : "h-screen w-screen"} relative flex flex-col items-center justify-center bg-background select-none`}
+    >
       {/* Draggable title bar area */}
-      <div
-        className="fixed top-0 left-0 right-0 h-10"
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      />
+      {!embedded && (
+        <div
+          className="fixed top-0 left-0 right-0 h-10"
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        />
+      )}
 
       <div className="w-full max-w-[440px] space-y-8 px-4">
         {/* Header */}

@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 describe("AgentModeSelector", () => {
-  it("opens and selects Plan mode", async () => {
+  it("renders a three-stop segmented control and selects Plan", async () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
     root = createRoot(container)
@@ -26,24 +26,16 @@ describe("AgentModeSelector", () => {
       root!.render(React.createElement(AgentModeSelector, { value: "write", onChange }))
     })
 
-    const trigger = container.querySelector('button[aria-label="Chat mode"]') as HTMLButtonElement
-    expect(trigger.textContent).toContain("Write")
-    expect(trigger.textContent).not.toContain("Agent")
-    await act(async () => {
-      trigger.dispatchEvent(
-        new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }),
-      )
-    })
-
-    const plan = [...document.body.querySelectorAll('[role="menuitem"]')].find((item) =>
-      item.textContent?.includes("Plan"),
-    ) as HTMLElement | undefined
-    expect(plan).not.toBeUndefined()
-    await act(async () => plan!.click())
+    const group = container.querySelector('[role="radiogroup"][aria-label="Chat mode"]')
+    const options = [...container.querySelectorAll('[role="radio"]')] as HTMLButtonElement[]
+    expect(group).not.toBeNull()
+    expect(options.map((option) => option.textContent?.trim())).toEqual(["Write", "Plan", "Review"])
+    expect(options[0].getAttribute("aria-checked")).toBe("true")
+    await act(async () => options[1].click())
     expect(onChange).toHaveBeenCalledWith("plan")
   })
 
-  it.each(["read", "review"] as const)("selects %s mode", async (mode) => {
+  it("supports arrow-key selection", async () => {
     const container = document.createElement("div")
     document.body.appendChild(container)
     root = createRoot(container)
@@ -53,16 +45,10 @@ describe("AgentModeSelector", () => {
       root!.render(React.createElement(AgentModeSelector, { value: "write", onChange }))
     })
 
-    const trigger = container.querySelector('button[aria-label="Chat mode"]') as HTMLButtonElement
+    const group = container.querySelector('[role="radiogroup"]') as HTMLElement
     await act(async () => {
-      trigger.dispatchEvent(
-        new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }),
-      )
+      group.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
     })
-    const option = [...document.body.querySelectorAll('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim().toLowerCase() === mode,
-    ) as HTMLElement
-    await act(async () => option.click())
-    expect(onChange).toHaveBeenCalledWith(mode)
+    expect(onChange).toHaveBeenCalledWith("plan")
   })
 })

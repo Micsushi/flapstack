@@ -1,10 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, memo } from "react"
-import { useAtomValue } from "jotai"
 import { cn } from "../../../lib/utils"
-import { TypewriterText } from "../../../components/ui/typewriter-text"
-import { justCreatedIdsAtom } from "../atoms"
 import { Folder } from "lucide-react"
 import { ProviderChipIcon } from "../components/provider-chip-icon"
 import { OpenInButton } from "../../../components/open-in-button"
@@ -57,7 +54,6 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   onSave,
   isMobile = false,
   disabled = false,
-  chatId,
   hasMessages = false,
   isSidebarOpen = true,
   provider,
@@ -74,7 +70,6 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
   const [isSaving, setIsSaving] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const justCreatedIds = useAtomValue(justCreatedIdsAtom)
 
   // Sync editValue when name changes externally
   useEffect(() => {
@@ -157,7 +152,6 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
     }
   }
 
-  const isJustCreated = chatId ? justCreatedIds.has(chatId) : false
   const hasRealName = name && name !== placeholder
   const visibleName =
     name.length > MAX_VISIBLE_CHAT_NAME_LENGTH
@@ -183,7 +177,9 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         heightClass,
       )}
     >
-      {!isMobile && <Folder className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden />}
+      {!isMobile && (
+        <Folder className="h-[18px] w-[18px] shrink-0 text-foreground/80" aria-hidden />
+      )}
       {isEditing ? (
         <input
           ref={inputRef}
@@ -196,7 +192,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           className={cn(
             "min-w-0 flex-1 h-full bg-transparent border-0 outline-none",
             isMobile ? "text-base" : "text-lg",
-            "font-medium text-foreground",
+            "font-medium leading-none text-foreground",
           )}
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         />
@@ -206,19 +202,19 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           className={cn(
             "flex h-full min-w-0 flex-1 items-center text-left",
             isMobile ? "text-base" : "text-lg",
-            "font-medium",
+            "font-medium leading-none",
             hasRealName ? "text-foreground cursor-pointer" : "cursor-default",
           )}
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <span className="block truncate" title={name}>
-            <TypewriterText
-              text={visibleName}
-              placeholder={placeholder}
-              id={chatId}
-              isJustCreated={isJustCreated}
-              showPlaceholder={hasMessages}
-            />
+          <span
+            className={cn(
+              "block truncate leading-none",
+              !hasRealName && hasMessages && "text-muted-foreground/50",
+            )}
+            title={name}
+          >
+            {hasRealName ? visibleName : hasMessages ? placeholder : ""}
           </span>
         </div>
       )}
@@ -226,10 +222,13 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
         <span className="min-w-0 truncate text-xs text-foreground/60">{workspaceBranch}</span>
       )}
       {!isMobile && !isEditing && (
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div
+          className="ml-auto flex shrink-0 items-center gap-2 leading-none"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
           {projectLabel && (
             <span
-              className="inline-flex h-7 shrink-0 items-center rounded-md border px-2.5 text-sm font-medium"
+              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-sm font-medium leading-none"
               style={{
                 color: projectColor ?? undefined,
                 borderColor: projectColor
@@ -246,7 +245,7 @@ export const ChatTitleEditor = memo(function ChatTitleEditor({
           {providerName && (
             <span
               className={cn(
-                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium",
+                "inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-sm font-medium leading-none",
                 providerClassName,
               )}
             >

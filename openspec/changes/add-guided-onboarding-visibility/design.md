@@ -22,8 +22,9 @@ single registry so onboarding, navigation, Settings, search, and help agree.
 - Existing users initially preserve current visibility. The guide is offered,
   never auto-applied.
 - Rerun previews a diff and changes visibility only; data and authority remain.
-- Help copy is local, versioned product content reused across tutorial, Settings,
-  empty states, and What is this popovers.
+- Help copy is local, versioned product content reused across questionnaire
+  review, Settings, empty states, and What is this popovers. The main-page
+  coachmark tour remains a separate Stage 5 patch.
 
 ## Migration Plan
 

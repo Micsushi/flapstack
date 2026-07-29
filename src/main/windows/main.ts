@@ -32,6 +32,7 @@ import {
   windowManager,
 } from "./window-manager"
 import { createInitialLaunchPresentationResolver } from "./launch-presentation"
+import { resolveWindowIconPath } from "./window-icon"
 
 // Flag to bypass close confirmation when app.quit() has already been confirmed
 let isQuitting = false
@@ -654,6 +655,12 @@ export function createWindow(options?: CreateWindowOptions): BrowserWindow {
     minHeight: 600,
     show: false,
     title: "Flapstack",
+    icon: resolveWindowIconPath({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+    }),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#09090b" : "#ffffff",
     // hiddenInset shows native traffic lights inset in the window
     // hiddenInset hides the native title bar but keeps traffic lights visible

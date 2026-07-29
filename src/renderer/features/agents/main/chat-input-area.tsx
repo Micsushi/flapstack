@@ -1737,9 +1737,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           case "write":
             updateMode("write")
             return
-          case "read":
-            updateMode("read")
-            return
           case "review":
             updateMode("review")
             return
@@ -2001,6 +1998,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         >
           <div
             className="relative w-full cursor-text"
+            data-tour="prompt"
             onClick={(event) => {
               if (
                 event.target === event.currentTarget ||

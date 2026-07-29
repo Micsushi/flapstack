@@ -6,6 +6,7 @@ const CLAUDE_DEEP_EFFORTS: readonly ClaudeEffortLevel[] = ["low", "medium", "hig
 // by default. Alias ids ("opus", "best", ...) stay in CLAUDE_MODEL_ID_MAP so
 // previously stored selections keep resolving.
 export const CLAUDE_MODELS = [
+  { id: "claude-opus-5", name: "Opus", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
   { id: "claude-opus-4-8", name: "Opus", version: "4.8", efforts: CLAUDE_DEEP_EFFORTS },
   { id: "claude-fable-5", name: "Fable", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
   { id: "claude-sonnet-5", name: "Sonnet", version: "5", efforts: CLAUDE_DEEP_EFFORTS },
@@ -22,6 +23,7 @@ export const CLAUDE_MODEL_ID_MAP: Record<string, string> = {
   "sonnet[1m]": "sonnet[1m]",
   "opus[1m]": "opus[1m]",
   "claude-fable-5": "claude-fable-5",
+  "claude-opus-5": "claude-opus-5",
   "claude-opus-4-8": "claude-opus-4-8",
   "claude-sonnet-5": "claude-sonnet-5",
   "claude-haiku-4-5": "claude-haiku-4-5-20251001",
@@ -255,9 +257,9 @@ export function formatCodexModelForAcp(modelId: string): string {
   return `${slashMatch[1]}[${slashMatch[2]}]`
 }
 
-export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-4-8"
+export const DEFAULT_CLAUDE_MODEL_ID = "claude-opus-5"
 export const DEFAULT_CLAUDE_EFFORT: ClaudeEffortLevel = "high"
-export const DEFAULT_CODEX_MODEL_ID = "gpt-5.5"
+export const DEFAULT_CODEX_MODEL_ID = "gpt-5.6-sol"
 export const DEFAULT_CODEX_REASONING: CodexReasoningLevel = "high"
 export const DEFAULT_CODEX_MODEL_WITH_REASONING = `${DEFAULT_CODEX_MODEL_ID}/${DEFAULT_CODEX_REASONING}`
 export const DEFAULT_CHATGPT_CODEX_MODEL_ID = "gpt-5.3-codex-spark"

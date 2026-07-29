@@ -735,6 +735,7 @@ export function AgentModelSelector({
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
+          data-tour="model"
           className={cn(
             "flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs transition-[background-color,color,border-color] duration-150 ease-out outline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/70",
             selectedProviderMeta.className,

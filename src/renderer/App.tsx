@@ -27,7 +27,6 @@ import {
   ApiKeyOnboardingPage,
   BillingMethodPage,
   CodexOnboardingPage,
-  SelectRepoPage,
 } from "./features/onboarding"
 import { identify, initAnalytics, shutdown } from "./lib/analytics"
 import {
@@ -82,7 +81,7 @@ function AppContent() {
   const setSelectedDraftId = useSetAtom(selectedDraftIdAtom)
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom)
   const setDesktopView = useSetAtom(desktopViewAtom)
-  const { setActiveSubChat, addToOpenSubChats, setChatId } = useAgentSubChatStore()
+  const { setActiveSubChat, addToOpenSubChats, queueNavigation, setChatId } = useAgentSubChatStore()
   const trpcUtils = trpc.useUtils()
   const { mutateAsync: openLaunchDirectory } = trpc.projects.openLaunchDirectory.useMutation()
 
@@ -123,6 +122,50 @@ function AppContent() {
       trpcUtils.projects.list,
     ],
   )
+
+  useEffect(() => {
+    if (!window.desktopApi?.onNotificationClicked) return
+
+    return window.desktopApi.onNotificationClicked(({ chatId, subChatId }) => {
+      if (!chatId) return
+      void trpcUtils.chats.get
+        .fetch({ id: chatId })
+        .then((chat) => {
+          if (!chat) return
+          if (chat.project) {
+            setSelectedProject({
+              id: chat.project.id,
+              name: chat.project.name,
+              path: chat.project.path,
+              gitRemoteUrl: chat.project.gitRemoteUrl,
+              gitProvider: chat.project.gitProvider as "github" | "gitlab" | "bitbucket" | null,
+              gitOwner: chat.project.gitOwner,
+              gitRepo: chat.project.gitRepo,
+            })
+          }
+          setDesktopView(null)
+          setShowNewChatForm(false)
+          setSelectedDraftId(null)
+          setSelectedChatIsRemote(false)
+          if (subChatId) queueNavigation(chatId, subChatId)
+          setSelectedChatId(chatId)
+          setChatId(chatId)
+        })
+        .catch((error) => {
+          console.warn("[Notification] Failed to open chat:", error)
+        })
+    })
+  }, [
+    queueNavigation,
+    setChatId,
+    setDesktopView,
+    setSelectedChatId,
+    setSelectedChatIsRemote,
+    setSelectedDraftId,
+    setSelectedProject,
+    setShowNewChatForm,
+    trpcUtils.chats.get,
+  ])
 
   useEffect(
     () =>
@@ -376,20 +419,6 @@ function AppContent() {
     }
   }, [codexIntegration.data?.state, setCodexOnboardingCompleted])
 
-  // Fetch projects to validate selectedProject exists
-  const { data: projects, isLoading: isLoadingProjects } = trpc.projects.list.useQuery()
-
-  // Validated project - only valid if exists in DB
-  const validatedProject = useMemo(() => {
-    if (!selectedProject) return null
-    // While loading, trust localStorage value to prevent flicker
-    if (isLoadingProjects) return selectedProject
-    // After loading, validate against DB
-    if (!projects) return null
-    const exists = projects.some((p) => p.id === selectedProject.id)
-    return exists ? selectedProject : null
-  }, [selectedProject, projects, isLoadingProjects])
-
   if (!billingMethod) {
     if (isLoadingCliConfig) return <ProviderCheckPage />
     return <BillingMethodPage />
@@ -437,10 +466,6 @@ function AppContent() {
     !(customClaudeCredential.isError && apiKeyOnboardingCompleted)
   ) {
     return <ApiKeyOnboardingPage />
-  }
-
-  if (!validatedProject && !isLoadingProjects) {
-    return <SelectRepoPage />
   }
 
   return <AgentsLayout />
@@ -498,6 +523,7 @@ export function App() {
               <TRPCProvider>
                 <div
                   data-agents-page
+                  data-tour="workspace"
                   className="h-screen w-screen bg-background text-foreground overflow-hidden"
                 >
                   <AppContent />

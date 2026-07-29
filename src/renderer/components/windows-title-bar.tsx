@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { Minus, Square, X } from "lucide-react"
 import { Button } from "./ui/button"
+import { Logo } from "./ui/logo"
 
 /**
  * Windows title bar component for frameless windows
@@ -76,7 +77,8 @@ export function WindowsTitleBar() {
       }}
     >
       {/* Left side - App title (draggable) */}
-      <div className="flex items-center gap-2 px-3 h-full">
+      <div className="flex h-full items-center gap-2 px-2">
+        <Logo className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden />
         <span className="text-xs font-medium text-foreground/70">Flapstack</span>
       </div>
 

@@ -236,6 +236,10 @@
         ]
       },
       {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
         "from": "build/generated/package-provenance.json",
         "to": "package-provenance.json"
       },

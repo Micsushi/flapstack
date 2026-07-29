@@ -24,6 +24,7 @@ import {
   SparklesIcon,
   WriteFileIcon,
 } from "../../../components/ui/icons"
+import { getPlanningStatus } from "./planning-status"
 
 export type ToolVariant = "simple" | "collapsible"
 
@@ -291,22 +292,12 @@ export const AgentToolRegistry: Record<string, ToolMeta> = {
   // Planning indicator - shown when streaming starts but no content yet
   "tool-planning": {
     icon: PlanningIcon,
-    title: () => {
-      const messages = [
-        "Crafting...",
-        "Whirring...",
-        "Imagining...",
-        "Cooking...",
-        "Sussing...",
-        "Unravelling...",
-        "Creating...",
-        "Spinning...",
-        "Computing...",
-        "Synthesizing...",
-        "Manifesting...",
-      ]
-      return messages[Math.floor(Math.random() * messages.length)]
-    },
+    title: () =>
+      getPlanningStatus(
+        Date.now(),
+        typeof window !== "undefined" &&
+          window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+      ),
     variant: "simple",
   },
 

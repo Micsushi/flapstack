@@ -14,6 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const node = process.execPath
 const portableLinux = process.argv.includes("--portable-linux")
 const vitestArgs = ["run"]
+const windowsPlatformProductTest = "tests/windows-platform-product.test.ts"
 
 if (portableLinux) {
   for (const windowsOnlyTest of [
@@ -22,6 +23,10 @@ if (portableLinux) {
   ]) {
     vitestArgs.push("--exclude", windowsOnlyTest)
   }
+}
+
+if (process.platform === "win32") {
+  vitestArgs.push("--exclude", windowsPlatformProductTest)
 }
 
 assertPortablePackageScripts(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")), [
@@ -50,6 +55,17 @@ try {
           cwd: root,
         },
         packageBinStep("tests", "vitest", "vitest", vitestArgs, { root }),
+        ...(process.platform === "win32"
+          ? [
+              packageBinStep(
+                "Windows platform product tests",
+                "vitest",
+                "vitest",
+                ["run", windowsPlatformProductTest, "--maxWorkers=1"],
+                { root },
+              ),
+            ]
+          : []),
         {
           label: "build",
           command: node,

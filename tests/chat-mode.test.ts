@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  CHAT_MODES,
   applyChatModeInstruction,
   normalizeChatMode,
   resolveChatModePermission,
@@ -10,7 +11,15 @@ describe("chat modes", () => {
     expect(normalizeChatMode("agent")).toBe("write")
   })
 
-  it.each(["plan", "read", "review"] as const)("forces %s mode to read-only", (mode) => {
+  it("migrates legacy read mode to review", () => {
+    expect(normalizeChatMode("read")).toBe("review")
+  })
+
+  it("exposes only the three user-facing modes", () => {
+    expect(CHAT_MODES).toEqual(["write", "plan", "review"])
+  })
+
+  it.each(["plan", "review"] as const)("forces %s mode to read-only", (mode) => {
     expect(resolveChatModePermission(mode, "full-access")).toBe("read-only")
   })
 
