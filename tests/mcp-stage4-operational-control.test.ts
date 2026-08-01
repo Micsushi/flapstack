@@ -16,6 +16,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest"
 import * as schema from "../src/main/lib/db/schema"
 import { closeDatabase, getDatabase, projectVaultPolicies } from "../src/main/lib/db"
 import { bindRegisteredFilesystemRoot } from "../src/main/lib/git/security/path-validation"
+import { currentProjectVaultGraph } from "../src/main/lib/project-vaults/graph-index"
 import { createUsageBudget } from "../src/main/lib/usage/budgets"
 import { AutomationControlService } from "../src/main/lib/automation/control-service"
 import {
@@ -565,6 +566,7 @@ describe("Stage 4 operational MCP control", () => {
       action: "create-project-vault-fixture",
       payload: { projectId: "project-1" },
     })
+    expect(currentProjectVaultGraph(getDatabase(), "project-1").nodes).toHaveLength(2)
     await mutateStage4OperationalState({
       action: "create-workspace-fixture",
       payload: { projectId: "project-1" },
@@ -780,7 +782,7 @@ describe("Stage 4 operational MCP control", () => {
           projectId: "project-1",
         })
       ).sections.find((section) => section.sectionId === "index")?.version,
-    ).toBe(3)
+    ).toBe(4)
     await mutateStage4OperationalState({
       action: "cleanup-project-vault-fixture",
       payload: { fixtureId: vaultFixtureId },

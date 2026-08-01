@@ -6,7 +6,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -158,31 +157,10 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
     overscan: 6,
     rangeExtractor,
     scrollMargin,
+    anchorTo: "end",
     enabled: Boolean(scrollElementRef),
   })
   const virtualItems = virtualizer.getVirtualItems()
-  const previousUserMsgIdsRef = useRef(userMsgIds)
-  const visibleAnchorRef = useRef<{
-    key: string
-    viewportOffset: number
-  } | null>(null)
-  const captureVisibleAnchor = useCallback(() => {
-    if (!scrollElement) return
-    const renderedItems = Array.from(
-      sectionRef.current?.querySelectorAll<HTMLElement>("[data-virtual-message-group]") ?? [],
-    )
-      .map((element) => ({
-        key: element.dataset.virtualMessageGroup,
-        start:
-          Number.parseFloat(element.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN") +
-          scrollMargin,
-      }))
-      .filter(
-        (item): item is { key: string; start: number } =>
-          Boolean(item.key) && Number.isFinite(item.start),
-      )
-    visibleAnchorRef.current = findVisibleTranscriptAnchor(renderedItems, scrollElement.scrollTop)
-  }, [scrollElement, scrollMargin])
 
   useEffect(() => {
     const section = sectionRef.current
@@ -205,66 +183,6 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
     if (section.parentElement) observer.observe(section.parentElement)
     return () => observer.disconnect()
   }, [scrollElementRef, subChatId])
-
-  useLayoutEffect(() => {
-    if (previousUserMsgIdsRef.current !== userMsgIds) return
-    captureVisibleAnchor()
-  }, [captureVisibleAnchor, userMsgIds, virtualItems])
-
-  useLayoutEffect(() => {
-    const previousIds = previousUserMsgIdsRef.current
-    previousUserMsgIdsRef.current = userMsgIds
-    const anchor = visibleAnchorRef.current
-    if (!scrollElement || !anchor || previousIds === userMsgIds) return
-    const previousIndex = previousIds.indexOf(anchor.key)
-    const nextIndex = userMsgIds.indexOf(anchor.key)
-    if (previousIndex < 0 || nextIndex < 0 || previousIndex === nextIndex) return
-    let frame = 0
-    let frameId = 0
-    const restoreAnchor = () => {
-      const anchorElement = Array.from(
-        sectionRef.current?.querySelectorAll<HTMLElement>("[data-virtual-message-group]") ?? [],
-      ).find((element) => element.dataset.virtualMessageGroup === anchor.key)
-      const renderedStart = anchorElement
-        ? Number.parseFloat(anchorElement.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN") +
-          scrollMargin
-        : Number.NaN
-      if (Number.isFinite(renderedStart)) {
-        scrollElement.scrollTo({
-          top: Math.max(0, renderedStart - anchor.viewportOffset),
-          behavior: "auto",
-        })
-      } else {
-        virtualizer.scrollToIndex(nextIndex, { align: "start", behavior: "auto" })
-      }
-      frame += 1
-      if (frame < 8) frameId = requestAnimationFrame(restoreAnchor)
-    }
-    frameId = requestAnimationFrame(restoreAnchor)
-    return () => cancelAnimationFrame(frameId)
-  }, [scrollElement, scrollMargin, userMsgIds, virtualizer])
-
-  useEffect(() => {
-    if (!scrollElement) return
-    let frameId = 0
-    let frame = 0
-    const captureSettledVisibleAnchor = () => {
-      captureVisibleAnchor()
-      frame += 1
-      if (frame < 8) frameId = requestAnimationFrame(captureSettledVisibleAnchor)
-    }
-    const handleScroll = () => {
-      cancelAnimationFrame(frameId)
-      frame = 0
-      captureSettledVisibleAnchor()
-    }
-    captureVisibleAnchor()
-    scrollElement.addEventListener("scroll", handleScroll, { passive: true })
-    return () => {
-      cancelAnimationFrame(frameId)
-      scrollElement.removeEventListener("scroll", handleScroll)
-    }
-  }, [captureVisibleAnchor, scrollElement])
 
   const groupIndexByMessageId = useMemo(() => {
     const indexes = new Map<string, number>()
@@ -315,11 +233,6 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
         const align = options?.align ?? "center"
         const offset = virtualizer.getOffsetForIndex(index, align)?.[0]
         if (offset === undefined) return false
-        const itemStart = virtualizer.getOffsetForIndex(index, "start")?.[0] ?? offset
-        visibleAnchorRef.current = {
-          key: userMsgIds[index]!,
-          viewportOffset: itemStart - offset,
-        }
         virtualizer.scrollToIndex(index, { align, behavior: "auto" })
         if (options?.focus) focusMessageAfterMount(messageId)
         return true

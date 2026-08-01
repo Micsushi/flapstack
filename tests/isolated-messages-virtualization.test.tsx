@@ -494,7 +494,18 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
       await new Promise((resolve) => setTimeout(resolve, 250))
     })
     expect(container.querySelector('[data-rendered-group="user-200"]')).not.toBeNull()
-    const scrollTopBeforePrepend = scrollElementRef.current!.scrollTop
+    const renderedItems = () =>
+      Array.from(container.querySelectorAll<HTMLElement>("[data-virtual-message-group]")).map(
+        (element) => ({
+          key: element.dataset.virtualMessageGroup!,
+          start: Number.parseFloat(element.style.transform.match(/-?\d+(?:\.\d+)?/)?.[0] ?? "NaN"),
+        }),
+      )
+    const anchorBeforePrepend = findVisibleTranscriptAnchor(
+      renderedItems(),
+      scrollElementRef.current!.scrollTop,
+    )
+    expect(anchorBeforePrepend).not.toBeNull()
 
     const prependedIds = Array.from({ length: 50 }, (_, index) => `older-${index}`)
     const nextIds = [...prependedIds, ...initialIds]
@@ -507,7 +518,17 @@ describe("IsolatedMessagesSection transcript virtualization", () => {
     })
 
     await vi.waitFor(() => {
-      expect(scrollElementRef.current!.scrollTop).toBeGreaterThan(scrollTopBeforePrepend)
+      const anchorAfterPrepend = renderedItems().find(
+        (item) => item.key === anchorBeforePrepend!.key,
+      )
+      expect(anchorAfterPrepend).toBeDefined()
+      expect(
+        Math.abs(
+          anchorAfterPrepend!.start -
+            scrollElementRef.current!.scrollTop -
+            anchorBeforePrepend!.viewportOffset,
+        ),
+      ).toBeLessThanOrEqual(1)
       expect(container.querySelector('[data-rendered-group="user-200"]')).not.toBeNull()
     })
     expect(container.querySelectorAll("[data-rendered-group]").length).toBeLessThan(100)

@@ -557,6 +557,7 @@ describe("terminal initial command formatting", () => {
     }
     const terminateMatchingOwnedProcesses = vi.fn(async () => [701])
     const manager = new TerminalManager({
+      platform: "win32",
       waitForOwnedProcesses,
       terminateMatchingOwnedProcesses,
     })
@@ -603,7 +604,7 @@ describe("terminal initial command formatting", () => {
   it("finalizes normal exit without waiting while cleanup awaits the shared release", async () => {
     vi.useFakeTimers()
     try {
-      const manager = new TerminalManager()
+      const manager = new TerminalManager({ platform: "win32" })
       const internals = manager as unknown as {
         setupExitHandler(session: TerminalSession, params: InternalCreateSessionParams): void
       }
@@ -673,7 +674,7 @@ describe("terminal initial command formatting", () => {
   it("releases a no-exit winpty session before forced workspace cleanup returns", async () => {
     vi.useFakeTimers()
     try {
-      const manager = new TerminalManager()
+      const manager = new TerminalManager({ platform: "win32" })
       const events: string[] = []
       const { session } = fakeWindowsSession({
         paneId: "no-exit",
@@ -698,7 +699,7 @@ describe("terminal initial command formatting", () => {
   })
 
   it("releases already-dead and kill-throw winpty sessions before forgetting them", async () => {
-    const manager = new TerminalManager()
+    const manager = new TerminalManager({ platform: "win32" })
     const released: string[] = []
     const alreadyDead = fakeWindowsSession({
       paneId: "already-dead",
@@ -727,6 +728,7 @@ describe("terminal initial command formatting", () => {
 
   it("returns exact owned-process evidence from performance cleanup", async () => {
     const manager = new TerminalManager({
+      platform: "win32",
       waitForOwnedProcesses: async () => [],
     })
     const { session } = fakeWindowsSession({
@@ -766,6 +768,7 @@ describe("terminal initial command formatting", () => {
     }
     const terminateMatchingOwnedProcesses = vi.fn(async () => [601])
     const manager = new TerminalManager({
+      platform: "win32",
       waitForOwnedProcesses: async (processIds) => [...processIds],
       terminateMatchingOwnedProcesses,
     })
@@ -793,7 +796,7 @@ describe("terminal initial command formatting", () => {
     vi.useFakeTimers()
     try {
       const waitForOwnedProcesses = vi.fn(async () => [])
-      const manager = new TerminalManager({ waitForOwnedProcesses })
+      const manager = new TerminalManager({ platform: "win32", waitForOwnedProcesses })
       const events: string[] = []
       const worker = { threadId: 1, terminate: vi.fn(async () => 0) }
       const session = {

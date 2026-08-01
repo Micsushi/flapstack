@@ -31,6 +31,7 @@ import {
 } from "../db"
 import { assertRegisteredWorktree } from "../git/security/path-validation"
 import { getOllamaEndpointConfig } from "../harness/local-model-catalog"
+import { projectVaultGraphIndex } from "../project-vaults/graph-index"
 import { sanitizeStage4ControlBoundary, sanitizeStage4ControlError } from "./stage4-boundary"
 
 const callerContext = { getWindow: () => null }
@@ -1823,6 +1824,7 @@ async function runStage4Mutation(
       rootFingerprint: fingerprint(createdVault.rootPath),
     })
     persistRegistry()
+    await projectVaultGraphIndex(getDatabase()).scheduleRebuild(parsed.projectId, 0)
     return { fixtureId: ownedId, projectId: parsed.projectId }
   }
 

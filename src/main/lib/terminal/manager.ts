@@ -36,6 +36,7 @@ export class TerminalManager extends EventEmitter {
 
   constructor(
     private readonly cleanupOptions?: {
+      platform?: NodeJS.Platform
       waitForOwnedProcesses?: (processIds: readonly number[]) => Promise<number[]>
       terminateMatchingOwnedProcesses?: (
         identities: readonly WindowsProcessIdentity[],
@@ -57,10 +58,19 @@ export class TerminalManager extends EventEmitter {
       performanceOwnershipToken: randomUUID(),
     })
     const session = this.sessions.get(params.paneId)
-    if (session && !(await waitForWindowsPtyReady(session.pty))) {
+    if (
+      session &&
+      !(await waitForWindowsPtyReady(
+        session.pty,
+        this.cleanupOptions?.platform ?? process.platform,
+      ))
+    ) {
       this.captureCleanupProcessOwnership(session)
       const ownedProcessIds = [...this.cleanupOwnedProcessIds]
-      const terminated = await terminateUnreadyWindowsPty(session.pty)
+      const terminated = await terminateUnreadyWindowsPty(
+        session.pty,
+        this.cleanupOptions?.platform ?? process.platform,
+      )
       session.isAlive = false
       const waitForOwnedProcesses =
         this.cleanupOptions?.waitForOwnedProcesses ?? waitForTerminalProcessesToExit
@@ -179,7 +189,10 @@ export class TerminalManager extends EventEmitter {
   ): Promise<void> {
     const { paneId } = params
     session.isAlive = false
-    initiateWindowsPtyConoutWorkerRelease(session.pty)
+    initiateWindowsPtyConoutWorkerRelease(
+      session.pty,
+      this.cleanupOptions?.platform ?? process.platform,
+    )
 
     // Check if shell crashed quickly - try fallback
     const sessionDuration = Date.now() - session.startTime
@@ -234,7 +247,10 @@ export class TerminalManager extends EventEmitter {
     } catch {
       // Continue through the guarded resource release.
     }
-    await releaseWindowsPtyConoutWorker(session.pty)
+    await releaseWindowsPtyConoutWorker(
+      session.pty,
+      this.cleanupOptions?.platform ?? process.platform,
+    )
   }
 
   write(params: { paneId: string; data: string }): void {
@@ -369,7 +385,10 @@ export class TerminalManager extends EventEmitter {
 
   private async killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
     if (!session.isAlive) {
-      await releaseWindowsPtyConoutWorker(session.pty)
+      await releaseWindowsPtyConoutWorker(
+        session.pty,
+        this.cleanupOptions?.platform ?? process.platform,
+      )
       if (this.sessions.get(paneId) === session) {
         this.sessions.delete(paneId)
       }
@@ -389,7 +408,10 @@ export class TerminalManager extends EventEmitter {
         if (sigkillTimeout) clearTimeout(sigkillTimeout)
         void (async () => {
           try {
-            await releaseWindowsPtyConoutWorker(session.pty)
+            await releaseWindowsPtyConoutWorker(
+              session.pty,
+              this.cleanupOptions?.platform ?? process.platform,
+            )
           } catch (error) {
             console.error(`Failed to release terminal ${paneId} resources:`, error)
           }
@@ -540,7 +562,12 @@ export class TerminalManager extends EventEmitter {
       await Promise.allSettled(Array.from(this.inFlightCreations))
     }
     await Promise.all(
-      Array.from(this.sessions.values(), (session) => releaseWindowsPtyConoutWorker(session.pty)),
+      Array.from(this.sessions.values(), (session) =>
+        releaseWindowsPtyConoutWorker(
+          session.pty,
+          this.cleanupOptions?.platform ?? process.platform,
+        ),
+      ),
     )
     this.sessions.clear()
     this.removeAllListeners()
@@ -573,7 +600,10 @@ export class TerminalManager extends EventEmitter {
   }
 
   private captureCleanupProcessOwnership(session: TerminalSession): number[] {
-    const capture = captureTerminalPtyOwnedProcesses(session.pty)
+    const capture = captureTerminalPtyOwnedProcesses(
+      session.pty,
+      this.cleanupOptions?.platform ?? process.platform,
+    )
     for (const processId of capture.processIds) {
       this.cleanupOwnedProcessIds.add(processId)
       if (session.performanceOwnershipToken && processId === session.pty.pid) {

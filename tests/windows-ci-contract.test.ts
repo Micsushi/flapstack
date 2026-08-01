@@ -32,6 +32,12 @@ describe("Windows CI contract", () => {
     expect(steps["Setup Python"].with?.["python-version"]).toBe("3.11")
     expect(steps["Install dependencies"].run).toBe("npm ci --legacy-peer-deps")
     expect(steps["Verify Windows prerequisites"].run).toBe("npm run windows:prerequisites")
+    expect(steps["Configure Stage 6 performance profile"].run).toContain(
+      "powercfg /SETACTIVE SCHEME_BALANCED",
+    )
+    expect(steps["Configure Stage 6 performance profile"].run).toContain(
+      "powercfg /GETACTIVESCHEME",
+    )
     expect(steps.Check.run).toBe("npm run check")
     expect(steps["Build Windows Preview"].run).toBe("npm run package:preview:win")
     expect(steps["Inspect Windows Preview"].run).toBe("npm run package:inspect:preview:win")

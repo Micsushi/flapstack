@@ -83,6 +83,12 @@ jobs:
       - name: Verify Windows prerequisites
         run: npm run windows:prerequisites
 
+      - name: Configure Stage 6 performance profile
+        shell: pwsh
+        run: |
+          powercfg /SETACTIVE SCHEME_BALANCED
+          powercfg /GETACTIVESCHEME
+
       - name: Check
         run: npm run check
 
